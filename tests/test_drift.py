@@ -101,6 +101,34 @@ class DriftTest(unittest.TestCase):
         with mock.patch("builtins.print"):
             self.assertEqual(1, drift.main(["--root", str(self.root)]))
 
+    def test_each_row_names_both_copies_and_when_each_changed(self):
+        """#323: the page says which copy changed and when, and Show both
+        reveals the two, from what drift.json records: both paths, the shared
+        one through the zone's link as the ledger names it, and their dates,
+        read from the files' dates without opening the shared copy."""
+        theirs = self.share / "Acme" / "Terms.docx"
+        theirs.write_bytes(docx("Dana's wording."))
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.write_text(ledger.read_text().replace("| Dana | share |", "| Dana | here |"))
+        os.utime(self.ours, (1791331200, 1791331200))            # 7 October 2026
+        os.utime(theirs, (1793232000, 1793232000))               # 30 October 2026
+        real, reads = drift.Path.read_bytes, []
+        with mock.patch.object(drift.Path, "read_bytes", lambda path: reads.append(path) or real(path)):
+            found = self.one()
+        self.assertEqual("drifted", found["state"])
+        self.assertEqual("Zones/Work/Acme Review/Deliverables/260930 - Terms.docx", found["here"])
+        self.assertEqual("Zones/Work/.shared/team/Acme/Terms.docx", found["shared"])        # through the link, as named
+        day = lambda t: drift.datetime.datetime.fromtimestamp(t).date().isoformat()
+        self.assertEqual((day(1791331200), day(1793232000), "shared"),
+                         (found["here_changed"], found["shared_changed"], found["newer"]))
+        self.assertEqual(2, len(reads))                                                    # the comparison's reads, no more
+        os.utime(self.ours, (1793318400, 1793318400))            # the copy here moved last
+        self.assertEqual("here", self.one()["newer"])
+        theirs.unlink()
+        gone = self.one()
+        self.assertEqual("missing", gone["state"])
+        self.assertNotIn("newer", gone)                                                     # one copy: no dates to set side by side
+
     def test_a_share_row_behind_is_listed_apart_from_a_here_row_that_drifted(self):
         (self.share / "Acme" / "Terms.docx").write_bytes(docx("Dana's wording."))
         (self.acme / "Deliverables" / "261001 - Rates.csv").write_bytes(b"rates")
@@ -262,7 +290,8 @@ class DriftTest(unittest.TestCase):
             self.assertEqual(1, drift.main(["--root", str(self.root), "--save"]))
         sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
         import status
-        self.assertIn("Acme Review: Terms (1).docx is a copy a sync conflict left on the share", status.drifted(self.root))
+        self.assertIn("Acme Review: Terms (1).docx is a copy a sync conflict left on the share",
+                      [f["text"] for f in status.drifted(self.root)])
 
     def test_the_status_page_lists_what_drifted_and_not_what_is_behind(self):
         sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
@@ -271,7 +300,29 @@ class DriftTest(unittest.TestCase):
               json.dumps({"files": [{"project": "Acme Review", "file": "260930 - Terms.docx", "state": "drifted"},
                                     {"project": "Acme Review", "file": "261001 - Rates.csv", "state": "behind"},
                                     {"project": "Acme Review", "file": "x", "state": "same"}]}))
-        self.assertEqual(["Acme Review: 260930 - Terms.docx has drifted from its shared copy"], status.drifted(self.root))
+        self.assertEqual(["Acme Review: 260930 - Terms.docx has drifted from its shared copy"],
+                         [f["text"] for f in status.drifted(self.root)])
+
+    def test_the_status_page_says_which_copy_changed_and_when(self):
+        """#323: with both copies' dates, the row says which changed, and when,
+        the other way round when the copy here is the newer; a file in a
+        thread leads to the thread's row."""
+        sys.path.insert(0, str(Path(drift.__file__).resolve().parents[3] / "extras" / "status"))
+        import status
+        row = {"zone": "Work", "project": "Acme Review", "file": "261007 - Business case.xlsx", "state": "drifted",
+               "here": "Zones/Work/Acme Review/Deliverables/261007 - Business case.xlsx",
+               "shared": "Zones/Work/.shared/team/Acme/Business case.xlsx",
+               "here_changed": "2026-10-07", "shared_changed": "2026-10-30", "newer": "shared"}
+        mine = dict(row, here_changed="2026-10-30", shared_changed="2026-10-07", newer="here", thread="Pricing")
+        kept = {"zone": "Work", "project": "Acme Review", "file": "Threads/Freight/Rates.csv", "state": "missing"}
+        write(self.root / "System" / "generated" / "drift.json", json.dumps({"files": [row, mine, kept]}))
+        found = status.drifted(self.root)
+        self.assertEqual("Acme Review: 261007 - Business case.xlsx: the shared copy changed on 30 Oct, after the copy here (7 Oct)",
+                         found[0]["text"])
+        self.assertEqual("Acme Review, Pricing: 261007 - Business case.xlsx: the copy here changed on 30 Oct, "
+                         "after the shared copy (7 Oct)", found[1]["text"])
+        self.assertEqual(("", "Pricing", "Freight"), (found[0]["thread"], found[1]["thread"], found[2]["thread"]))
+        self.assertEqual((True, True, False), tuple(f["both"] for f in found))      # Show both only with both copies named
 
 
 if __name__ == "__main__":

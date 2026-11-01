@@ -871,6 +871,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
 		if let u = body["open"] as? String, let url = URL(string: u) { return openLink(url, place: body["place"] as? String) }
+		if let row = body["reveal"] as? [String: Any] { return revealBoth(row) }
 		if body["pick"] as? String == "folder" { return pickFolder() }
 		if let save = body["save"] as? [String: Any] { return saveVersion(save) }
 		if let request = body["app"] as? [String: Any] { return setting(request) }
@@ -2374,6 +2375,49 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return
 		}
 		NSWorkspace.shared.open(file)
+	}
+
+	// Show both (#323), on a Needs attention row for a published file drift.py found changed: the copy
+	// here and the shared copy, each in a Finder window of its own, as Reveal in Finder shows a thread.
+	// Finder only selects them; no file's content is read and an online-only copy is not downloaded.
+	func revealBoth(_ row: [String: Any]) {
+		guard let (here, shared) = driftCopies(row) else { return }
+		for copy in [here, shared] {
+			NSWorkspace.shared.selectFile(copy.path, inFileViewerRootedAtPath: copy.deletingLastPathComponent().path)
+		}
+		toast("Showed both copies of \(here.lastPathComponent) in Finder: the one here and the shared one.", alsoNotify: false)
+	}
+
+	// The two copies of one row of a project's published.md, only as System/generated/drift.json
+	// names them for that row: the page sends which row, never a path. The copy here goes through
+	// workspaceFile(), as any link on the page does, and must sit in that project's folder. The
+	// shared copy lives through the zone's .shared/ link by design, so it is the one path let through
+	// a symlink: only under Zones/<zone>/.shared/, with no step back up, and still there (#323).
+	func driftCopies(_ row: [String: Any]) -> (URL, URL)? {
+		let said = "Garrick could not find both copies of that file. Rebuild the page after drift.py runs again."
+		let keys = ["zone", "project", "thread", "file"]
+		guard let data = try? Data(contentsOf: generated.appendingPathComponent("drift.json")),
+		      let files = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["files"] as? [[String: Any]],
+		      let f = files.first(where: { f in f["state"] as? String == "drifted"
+		          && keys.allSatisfy { (f[$0] as? String ?? "") == (row[$0] as? String ?? "") } }),
+		      let zone = f["zone"] as? String, let project = f["project"] as? String,
+		      let here = f["here"] as? String, let shared = f["shared"] as? String else {
+			toast(said)
+			return nil
+		}
+		let plain = { (s: String) in !s.isEmpty && !s.hasPrefix("/") && !s.split(separator: "/").contains { $0 == ".." || $0 == "." } }
+		let root = workspace.standardizedFileURL.path
+		let home = root + "/Zones/" + zone + "/" + project + "/"
+		let share = root + "/Zones/" + zone + "/.shared/"
+		let theirs = workspace.appendingPathComponent(shared).standardizedFileURL
+		guard plain(zone), plain(project), !zone.contains("/"), !project.contains("/"), plain(here), plain(shared),
+		      workspace.appendingPathComponent(here).standardizedFileURL.path.hasPrefix(home),
+		      theirs.path.hasPrefix(share), FileManager.default.fileExists(atPath: theirs.path) else {
+			toast(said)
+			return nil
+		}
+		guard let mine = workspaceFile(workspace.appendingPathComponent(here), said: said) else { return nil }
+		return (mine, theirs)
 	}
 
 	// A cited record, opened as the app opens it anywhere else: a thread's note as its row

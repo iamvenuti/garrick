@@ -281,19 +281,64 @@ DRIFT_SAY = {"drifted": "has drifted from its shared copy", "missing": "is missi
              "conflict": "is a copy a sync conflict left on the share"}
 
 
-def drifted(ws: Path) -> List[str]:
+def row_anchor(zone: str, project: str, thread: str = "") -> str:
+    """The id of a project's or a thread's row on the Threads card, which a
+    Needs attention row links (#323): "row-work-acme-review-pricing"."""
+    return "row-" + re.sub(r"[^a-z0-9]+", "-", "/".join(x for x in (zone, project, thread) if x).lower()).strip("-")
+
+
+def attn_row(k: str, t: str, h) -> str:
+    """One row of Needs attention: a link to the card that explains it, or,
+    for a published file that drifted, to its project's or thread's row,
+    which the page opens and unfolds (`data-go`), with Show both beside it in
+    the app (#323)."""
+    if isinstance(h, dict):
+        row = '<a href="%s" data-go="%s">%s<span>%s</span></a>' % (E(h["href"]), E(json.dumps(h["go"])), ICON[k], E(t))
+        if h.get("reveal"):
+            row = ('<div class="adrift">%s<button class="act apponly" type="button" data-reveal="%s" title="%s">Show both</button></div>'
+                   % (row, E(json.dumps(h["reveal"])), E("Show the copy here and the shared copy in Finder, each in its own window")))
+        return row
+    return '<a href="%s"%s>%s<span>%s</span></a>' % (E(h), ' target="_blank" rel="noopener"' if h.startswith("https://") else "", ICON[k], E(t))
+
+
+def drift_day(iso: object) -> str:
+    """"30 Oct", from the date drift.py recorded; "" for none."""
+    d = as_date(iso)
+    return "%d %s" % (d.day, d.strftime("%b")) if d else ""
+
+
+def drifted(ws: Path) -> List[dict]:
     """What drift.py last found worth a look, from System/generated/drift.json,
     which it writes when run from a session or the app: a launchd job may
-    not read a cloud folder, so the page never compares anything itself."""
+    not read a cloud folder, so the page never compares anything itself.
+    Each with the sentence its Needs attention row says, which copy changed
+    and when for one that drifted, and where its row leads: the thread's row
+    on the Threads card for a file in a thread, else the project's (#323).
+    `both` says drift.json names the two copies, for Show both."""
     try:
         data = json.loads(ws.joinpath(*DRIFT).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     out = []
     for f in data.get("files", []) if isinstance(data, dict) else []:
-        if isinstance(f, dict) and f.get("state") in DRIFT_SAY:
-            where = f.get("project", "?") + (", " + f["thread"] if f.get("thread") else "")
-            out.append("%s: %s %s" % (where, f.get("file") or "published.md", DRIFT_SAY[f["state"]]))
+        if not (isinstance(f, dict) and f.get("state") in DRIFT_SAY):
+            continue
+        project, name = str(f.get("project") or "?"), str(f.get("file") or "")
+        thread = str(f.get("thread") or "")
+        parts = name.split("/")
+        if not thread and len(parts) > 2 and parts[0] == "Threads":
+            thread = parts[1]                       # kept in a thread's folder, named from the project's
+        where = project + (", " + thread if thread else "")
+        here, shared = drift_day(f.get("here_changed")), drift_day(f.get("shared_changed"))
+        if f["state"] == "drifted" and here and shared and f.get("newer") in ("here", "shared"):
+            first, then = ("the shared copy", "the copy here") if f["newer"] == "shared" else ("the copy here", "the shared copy")
+            said = "%s: %s: %s changed on %s, after %s (%s)" % (
+                where, parts[-1], first, shared if f["newer"] == "shared" else here, then, here if f["newer"] == "shared" else shared)
+        else:
+            said = "%s: %s %s" % (where, name or "published.md", DRIFT_SAY[f["state"]])
+        out.append({"text": said, "zone": str(f.get("zone") or ""), "project": project, "thread": thread,
+                    "ledger": str(f.get("thread") or ""), "file": name,
+                    "both": f["state"] == "drifted" and bool(f.get("here")) and bool(f.get("shared"))})
     return out
 
 
@@ -6313,6 +6358,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .legend i{width:10px;height:10px;border-radius:2px;background:var(--none)}.legend i.good{background:var(--good)}.legend i.warning{background:var(--warning)}.legend i.critical{background:var(--critical)}
 .attn{display:flex;flex-direction:column;gap:6px}.attn a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--raise);border:1px solid var(--line)}
 .attn a:hover{text-decoration:none;border-color:var(--base)}.attn svg{width:16px;height:16px;flex:none}
+.attn .adrift{display:flex;align-items:center;gap:6px}.attn .adrift>a{flex:1;min-width:0}.attn .adrift>.act{flex:none}
 .zones{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 22px}
 .zone>summary{display:flex;align-items:baseline;gap:8px;padding:10px 0 8px}
 .zone>summary h3{margin:0;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}.zone>summary .meta{margin-left:auto;font-size:12px;color:var(--muted)}
@@ -6674,6 +6720,17 @@ if(!host)document.body.classList.add('nohost');      /* a browser cannot act: it
    so a handler that took it first, such as a thread's name opening its default, keeps it. */
 document.addEventListener('click',function(e){if(!host||e.defaultPrevented||e.button!==0)return;
 var a=e.target.closest&&e.target.closest('a[data-place]');if(!a)return;e.preventDefault();host.postMessage({open:a.href,place:a.dataset.place})});
+/* A drifted file's line in Needs attention (#323) leads to the row of its thread, or of its project where the thread
+   has none on the card: on its tab, its folds open, scrolled to and with its card open, as a match found opens.
+   Show both asks the host to reveal the copy here and the shared copy; only the app answers it. */
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.attn a[data-go]');if(!a)return;
+var g;try{g=JSON.parse(a.dataset.go)}catch(x){return}var row=document.getElementById(g.row)||document.getElementById(g.up);if(!row)return;
+e.preventDefault();e.stopPropagation();var sec=row.closest('section.tab');if(sec&&window.StatusTab)StatusTab(sec.id.slice(4));
+for(var d=row.closest('details');d;d=d.parentNode&&d.parentNode.closest?d.parentNode.closest('details'):null)d.open=true;
+var sub=row.closest('.subthreads');if(sub&&sub.hidden){var b=document.querySelector('.pchev[data-sub="'+sub.id+'"]');if(b)b.click();else sub.hidden=false}
+row.scrollIntoView({block:'center'});var l=row.querySelector('.t>a');if(l)l.focus({preventScroll:true})},true);
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.attn [data-reveal]');if(!b||!host)return;
+var q;try{q=JSON.parse(b.dataset.reveal)}catch(x){return}host.postMessage({reveal:q});say('Showing both copies in Finder…')});
 function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
 if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
 window.GarrickCopy=put;window.GarrickSay=say;      /* what HOME_JS copies the thought with, and says it in */
@@ -8007,7 +8064,11 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     if notice:
         attn.append(("warning", notice[0], notice[1]))
     for f in drifted(ws):
-        attn.append(("warning", f, "#threads"))
+        # a drift row leads to the row of its project, or of the thread the file is in, and offers Show both (#323)
+        go = {"row": row_anchor(f["zone"], f["project"], f["thread"]), "up": row_anchor(f["zone"], f["project"])}
+        attn.append(("warning", f["text"], {"href": "#" + go["row"], "go": go,
+                                            "reveal": {"zone": f["zone"], "project": f["project"], "thread": f["ledger"],
+                                                       "file": f["file"]} if f["both"] else None}))
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
 
@@ -8092,9 +8153,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     attn_card = ""
     if attn:
         attn_card = '<div class="full">%s</div>' % card("attention", "Needs attention", "%d item%s" % (len(attn), "" if len(attn) == 1 else "s"),
-                                                       '<div class="attn">%s</div>' % "".join('<a href="%s"%s>%s<span>%s</span></a>' % (
-                                                           E(h), ' target="_blank" rel="noopener"' if h.startswith("https://") else "", ICON[k], E(t))
-                                                           for k, t, h in attn),
+                                                       '<div class="attn">%s</div>' % "".join(attn_row(k, t, h) for k, t, h in attn),
                                                        fixed=True)
 
     # ---- threads, one column per zone: a row per project, its threads folding
@@ -8148,11 +8207,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (
                 E("%s since its note moved, toward sixty days" % ("%d days" % days if days is not None else "No date")),
                 max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
-        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s data-r="%s"><div class="t"><a href="%s">%s</a>%s%s</div>%s'
+        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s data-r="%s" id="%s"><div class="t"><a href="%s">%s</a>%s%s</div>%s'
                 '<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s%s</div>'
                 % (" sub" if sub else "", 0 if k else 1,
                    E(thread_card(r, names, link, days, cmux, acting, S, now.date(), DK)),
                    ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "", touched(r),
+                   row_anchor(r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"]),
                    E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"),
                    ('<span class="tchips">%s</span>' % chips if chips else "") + ("<small>%s</small>" % under if under else ""),
                    bar, E(age_said(days, "its note")), "%dd" % days if days is not None else "—",
@@ -8221,10 +8281,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                     max(3.0, min(100.0, (newest if newest is not None else 60) / 60 * 100)))
             bare = 0 if parked else sum(1 for r in items if not r.get("resume"))
             late = 0 if parked else sum(1 for r in items if r.get("late"))
-            head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
+            head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s" id="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
                     'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s%s</span></div>'
                     '%s<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s</div>'
-                    % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), sid, n, "" if n == 1 else "s", CHEV,
+                    % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), row_anchor(zone, project), sid, n, "" if n == 1 else "s", CHEV,
                        E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
                        n, "" if n == 1 else "s", " · %d late" % late if late else "",
                        " · %d without a resume block" % bare if bare else "", bar, E(age_said(newest, "its newest thread")),

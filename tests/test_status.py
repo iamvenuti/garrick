@@ -3310,6 +3310,117 @@ class TestLinksOpenAsChosen(StatusCase):
         self.assertEqual(said.count("refused"), done.stdout.count("toast: refused"))      # every refusal says so
 
 
+class TestDriftRows(StatusCase):
+    """#323: a published file that drifted leads, from Needs attention, to its
+    project's or thread's row, says which copy changed and when, and offers
+    Show both, which the app answers only for the two copies drift.json names."""
+
+    SWIFT = REPO / "extras" / "status" / "app" / "Garrick.swift"
+    body = TestLinksOpenAsChosen.body
+
+    def drift(self, *files):
+        write(self.root / "System" / "generated" / "drift.json", json.dumps({"files": list(files)}))
+
+    def rows(self, html):
+        start = html.index('<div class="attn">')
+        return html[start:html.index("</details>", start)]
+
+    def test_a_drift_row_leads_to_its_project_or_thread_and_offers_show_both(self):
+        self.drift({"zone": "Work", "project": "Acme Review", "file": "261007 - Business case.xlsx", "state": "drifted",
+                    "here": "Zones/Work/Acme Review/Deliverables/261007 - Business case.xlsx",
+                    "shared": "Zones/Work/.shared/team/Acme/Business case.xlsx",
+                    "here_changed": "2026-10-07", "shared_changed": "2026-10-30", "newer": "shared"},
+                   {"zone": "Work", "project": "Acme Review", "file": "Threads/Pricing/Rates.csv", "state": "missing"},
+                   {"zone": "Work", "project": "Birch Entry", "thread": "Gone", "file": "Old.docx", "state": "unread"})
+        html = self.page()
+        rows = self.rows(html)
+        self.assertIn("Acme Review: 261007 - Business case.xlsx: the shared copy changed on 30 Oct, after the copy here (7 Oct)", rows)
+        hrefs = re.findall(r'<a href="([^"]*)"', rows)
+        self.assertNotIn("#threads", hrefs)                     # no row leads to the card alone
+        for target in ("row-work-acme-review", "row-work-acme-review-pricing", "row-work-birch-entry-gone"):
+            self.assertIn("#" + target, hrefs)
+        self.assertIn('id="row-work-acme-review"', html)        # the project's row, and its thread's, are there to lead to
+        self.assertIn('id="row-work-acme-review-pricing"', html)
+        self.assertNotIn('id="row-work-birch-entry-gone"', html)
+        go = [json.loads(htmllib.unescape(g)) for g in re.findall(r'data-go="([^"]*)"', rows)]
+        self.assertEqual({"row": "row-work-birch-entry-gone", "up": "row-work-birch-entry"}, go[2])   # no such row: its project's
+        reveal = re.findall(r'data-reveal="([^"]*)"', rows)
+        self.assertEqual([{"zone": "Work", "project": "Acme Review", "thread": "", "file": "261007 - Business case.xlsx"}],
+                         [json.loads(htmllib.unescape(r)) for r in reveal])   # only with both copies named, and no path in it
+        self.assertIn('class="act apponly" type="button" data-reveal=', rows)
+
+    def test_the_page_opens_the_row_and_asks_the_host_to_show_both(self):
+        js = status.JS
+        go = js[js.index("/* A drifted file's line in Needs attention (#323)"):]
+        go = go[:go.index("say('Showing both copies in Finder…')")]
+        self.assertIn("document.getElementById(g.row)||document.getElementById(g.up)", go)
+        self.assertIn("StatusTab(sec.id.slice(4))", go)
+        self.assertIn(".pchev[data-sub=", go)                    # a thread folded under its project is unfolded
+        self.assertIn("l.focus({preventScroll:true})", go)       # and its card opens, as focus opens it
+        self.assertIn("host.postMessage({reveal:q})", go)
+
+    def test_the_app_shows_only_the_two_copies_drift_json_names(self):
+        reveal = self.body("revealBoth")
+        self.assertIn("guard let (here, shared) = driftCopies(row)", reveal)
+        self.assertIn("selectFile(copy.path, inFileViewerRootedAtPath:", reveal)    # Finder selects them; nothing is opened
+        self.assertNotIn("NSWorkspace.shared.open", reveal)
+        copies = self.body("driftCopies")
+        self.assertIn('generated.appendingPathComponent("drift.json")', copies)
+        self.assertIn('f["state"] as? String == "drifted"', copies)
+        self.assertIn("workspaceFile(workspace.appendingPathComponent(here)", copies)    # the copy here, as any link
+        self.assertIn('let share = root + "/Zones/" + zone + "/.shared/"', copies)       # the shared one only through .shared/
+        self.assertIn('if let row = body["reveal"] as? [String: Any] { return revealBoth(row) }', self.body("userContentController"))
+
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
+    def test_show_both_refuses_anything_but_the_rows_two_copies(self):
+        """driftCopies() and workspaceFile(), compiled on their own and run on real paths."""
+        import subprocess
+        if subprocess.run(["xcrun", "--find", "swiftc"], capture_output=True).returncode:
+            self.skipTest("no swiftc")
+        fns = "\n".join(self.body(n).strip("\n").replace("\n\t", "\n") for n in ("workspaceFile", "driftCopies"))
+        harness = Path(self._tmp.name) / "harness"
+        harness.mkdir()
+        (harness / "main.swift").write_text(
+            "import Foundation\nlet workspace = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)\n"
+            "let generated = workspace.appendingPathComponent(\"System/generated\", isDirectory: true)\n"
+            "func toast(_ s: String) { print(\"toast\") }\n" + fns + "\n"
+            "for f in CommandLine.arguments.dropFirst(2) {\n"
+            "  let row = [\"zone\": \"Work\", \"project\": \"Acme Review\", \"thread\": \"\", \"file\": f]\n"
+            "  if let (a, b) = driftCopies(row) { print(a.path + \" | \" + b.path) } else { print(\"refused\") }\n}\n",
+            encoding="utf-8")
+        built = subprocess.run(["xcrun", "swiftc", "-o", str(harness / "check"), str(harness / "main.swift")], capture_output=True, text=True)
+        self.assertEqual(0, built.returncode, built.stderr)
+        cloud = Path(self._tmp.name).resolve() / "Cloud"
+        write(cloud / "Acme" / "Business case.xlsx", "theirs")
+        write(cloud / "Acme" / "Secret.xlsx", "theirs")
+        (self.root / "Zones" / "Work" / ".shared").mkdir()
+        os.symlink(str(cloud), str(self.root / "Zones" / "Work" / ".shared" / "team"))
+        mine = self.root / "Zones/Work/Acme Review/Deliverables"
+        write(mine / "Business case.xlsx", "ours")
+        os.symlink(str(cloud / "Acme" / "Secret.xlsx"), str(mine / "Linked.xlsx"))
+        row = lambda f, here, shared, state="drifted": {"zone": "Work", "project": "Acme Review", "file": f, "state": state,
+                                                       "here": here, "shared": shared}
+        D = "Zones/Work/Acme Review/Deliverables/"
+        self.drift(row("good", D + "Business case.xlsx", "Zones/Work/.shared/team/Acme/Business case.xlsx"),
+                   row("behind", D + "Business case.xlsx", "Zones/Work/.shared/team/Acme/Business case.xlsx", "behind"),
+                   row("climbs", D + "Business case.xlsx", "Zones/Work/.shared/team/../../../Elsewhere/x.xlsx"),
+                   row("not-shared", D + "Business case.xlsx", "Zones/Work/Acme Review/Deliverables/Business case.xlsx"),
+                   row("absolute", D + "Business case.xlsx", str(cloud / "Acme" / "Business case.xlsx")),
+                   row("other-zone", D + "Business case.xlsx", "Zones/Personal/.shared/team/Acme/Business case.xlsx"),
+                   row("here-linked", D + "Linked.xlsx", "Zones/Work/.shared/team/Acme/Business case.xlsx"),
+                   row("here-elsewhere", "Zones/Work/Birch Entry/Birch Entry.md", "Zones/Work/.shared/team/Acme/Business case.xlsx"),
+                   row("gone", D + "Business case.xlsx", "Zones/Work/.shared/team/Acme/Gone.xlsx"))
+        names = ["good", "behind", "climbs", "not-shared", "absolute", "other-zone", "here-linked", "here-elsewhere", "gone", "unlisted"]
+        done = subprocess.run([str(harness / "check"), str(self.root)] + names, capture_output=True, text=True)
+        self.assertEqual(0, done.returncode, done.stderr)
+        said = [l for l in done.stdout.splitlines() if l != "toast"]
+        here, shared = said[0].split(" | ")
+        self.assertEqual(((mine / "Business case.xlsx").resolve(), self.root / "Zones/Work/.shared/team/Acme/Business case.xlsx"),
+                         (Path(here).resolve(), Path("/private" + shared if shared.startswith("/var/") else shared)))   # the share as named
+        self.assertEqual(["refused"] * 9, said[1:], list(zip(names, said)))
+        self.assertEqual(9, done.stdout.splitlines().count("toast"))
+
+
 @unittest.skipUnless(fixtures.HAVE_GIT, "git is not installed")
 class TestCheckChipFix(StatusCase):
     """#179: a `check` chip's Fix runs Nurture's own mechanical fix, and the

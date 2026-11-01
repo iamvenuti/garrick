@@ -39,7 +39,7 @@ const VIEW = "garrick-status";
 const MAX_AGE_MS = 30 * 60 * 1000;
 // Every kind of message the page posts to the bridge. tests/test_obsidian.py
 // reads status.py's postMessage calls and fails when one is missing here.
-const KINDS = ["act", "app", "copy", "cmux", "launch", "menu", "open", "pick", "rebuild", "save"];
+const KINDS = ["act", "app", "copy", "cmux", "launch", "menu", "open", "pick", "rebuild", "reveal", "save"];
 const BUNDLES = { claude: "com.anthropic.claudefordesktop", codex: "com.openai.codex", cmux: "com.cmuxterm.app" };
 const NAMES = { claude: "Claude", codex: "Codex", cmux: "cmux" };
 const CODEX_CLI = ["Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "Contents/Resources/codex", "Contents/Resources/bin/codex"];
@@ -361,6 +361,8 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 		// A link to a project's hub or a thread's note (#318): Garrick.app opens it as the row does; here,
 		// inside Obsidian, the note opens in Obsidian, as any other link to a note of this vault does.
 		if (typeof body.open === "string") return this.follow(body.open);
+		// Show both, on a drifted file (#323), reveals a shared copy through the zone's .shared/ link: Garrick.app's alone.
+		if (body.reveal) return view.toast("Show both is Garrick.app's: open the page there to see the two copies in Finder.");
 		// A Copy button's own text. A launch carries the phrase too, for a host
 		// older than this one; here the launcher owns the clipboard and says
 		// when it replaced it, so the copy is left to it and never happens twice.

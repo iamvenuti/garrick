@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.50.0] - 2026-11-01
+
+Ask's answers cite the records they rest on, with when each happened and when it was filed, and open them with a click; Ask renews its sessions by size, and New conversation works during a request; a wall reset after Ask's question back puts your question back in the box; the Ask window can be resized and its text sized with ⌘+ and ⌘−; "open X" in Ask does what clicking X's row does; and the find fields of the panel and the menu only find.
+
 ### Added
 
 - **Ask renews its session by size, and New conversation works during a request** ([#261](https://github.com/iamvenuti/garrick/issues/261), slice E). With the preview `ask` on, each turn measures the session's context from its `result` event, input, cache-read and cache-write tokens together. Once the command session or the answer session reaches 60 % of what its tier's model takes, the reply says `"refreshed": true`, and once it is sent both sessions are replaced and started again at once, so the next request finds them warm; the three-hour age stays as it was. A renewal happens only after a request that finished, never after *Stop*, a limit or a failure, never with the preview off, and never while a question back waits for its answer: Garrick's own, an action asked to be done again, or the assistant's, which both briefs now mark with `"asks": true`. It carries nothing over, no summary either, so it can never carry material across a wall: the new processes are sealed as every session is, and told only `<refreshed/>`, so a follow-up that leans on what went asks, or finds its records again. The window keeps the answer and says *Conversation refreshed* under it, and `ask.log` marks the request `refreshed`. `agent.py` has the size per tier, `INPUT_SIZE`: 200,000 tokens for each, a conservative value, since nothing in Garrick says what a tier's model takes. *New conversation* starts a fresh session at once when nothing runs; during a request it reads *Stop and start new*, stops the request and then starts the new conversation, taking no request until it has. A reply that was not stopped stays on screen, with the new conversation under it. A record's text can no longer spell one of the message's tags with a space, a character that shows nothing or full-width letters, and a note's `status:` cannot either.
@@ -1150,7 +1154,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.49.1...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.50.0...HEAD
+[0.50.0]: https://github.com/iamvenuti/garrick/compare/v0.49.1...v0.50.0
 [0.49.1]: https://github.com/iamvenuti/garrick/compare/v0.49.0...v0.49.1
 [0.49.0]: https://github.com/iamvenuti/garrick/compare/v0.48.0...v0.49.0
 [0.48.0]: https://github.com/iamvenuti/garrick/compare/v0.47.2...v0.48.0

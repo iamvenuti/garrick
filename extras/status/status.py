@@ -6715,11 +6715,14 @@ var toast=document.getElementById('toast');function say(s){toast.textContent=s;t
    the page copies and nothing else. */
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 if(!host)document.body.classList.add('nohost');      /* a browser cannot act: its action buttons stay hidden */
-/* A link to a project's hub or a thread's note (data-place) goes to the host, which opens it as the row of that
-   project or thread opens (#318); any other link to a file the host opens as macOS does. Last to hear the click,
-   so a handler that took it first, such as a thread's name opening its default, keeps it. */
+/* Every link to a file goes to the host over its bridge (#318): the app shows the page with read access to its own
+   folder only, so WebKit drops a navigation to any other file before the app sees it. A link to a project's hub or
+   a thread's note carries its place (data-place), and the host opens it as the row of that project or thread opens;
+   any other file the host opens as macOS does, a folder in Finder. Capture, so it is heard wherever the link sits;
+   a handler that took the click first, such as a thread's name opening its default, keeps it. */
 document.addEventListener('click',function(e){if(!host||e.defaultPrevented||e.button!==0)return;
-var a=e.target.closest&&e.target.closest('a[data-place]');if(!a)return;e.preventDefault();host.postMessage({open:a.href,place:a.dataset.place})});
+var a=e.target.closest&&e.target.closest('a[href]');if(!a||!/^file:/i.test(a.href))return;e.preventDefault();
+var m={open:a.href};if(a.dataset.place)m.place=a.dataset.place;host.postMessage(m)},true);
 /* A drifted file's line in Needs attention (#323) leads to the row of its thread, or of its project where the thread
    has none on the card: on its tab, its folds open, scrolled to and with its card open, as a match found opens.
    Show both asks the host to reveal the copy here and the shared copy; only the app answers it. */
@@ -7877,7 +7880,9 @@ window.GarrickGraph={focus:function(u){if(down)return false;if(!u){if(lit&&hover
 var n=null;V.forEach(function(m){if(m.u===u)n=m});if(!n)return false;lit=hover=n;wake();return true},
 /* the place shown, and showing a zone as the drop-down would, without storing it or reordering the card (#142) */
 place:function(){return zsel},follow:function(z){if(held||z===zsel||places.indexOf(z)<0)return false;show(z);return true}};
-cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.u});
+/* a double-click opens the note: in a host, over its bridge, as every file link goes (#318); in a browser, as a link */
+cv.addEventListener('dblclick',function(e){var h=at(e),hb=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+if(!h.n||!h.n.u)return;if(hb&&/^file:/i.test(h.n.u))hb.postMessage({open:h.n.u});else location.href=h.n.u});
 cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();idle=0;auto=false;
 var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k;wake()},{passive:false});
 var esc=Panel.esc;

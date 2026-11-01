@@ -870,7 +870,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return setMenu(m as? [String: Any])
 		}
 		if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }
-		if let u = body["open"] as? String, let url = URL(string: u) { return openLink(url, place: body["place"] as? String) }
+		if let u = body["open"] as? String, let url = URL(string: u) { return follow(url, place: body["place"] as? String) }
 		if let row = body["reveal"] as? [String: Any] { return revealBoth(row) }
 		if body["pick"] as? String == "folder" { return pickFolder() }
 		if let save = body["save"] as? [String: Any] { return saveVersion(save) }
@@ -1675,7 +1675,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if k == "note" {             // only a note of this workspace, by the one check every link goes through (#318)
 			guard let u = a["u"] as? String, let url = URL(string: u),
 			      let file = workspaceFile(url, said: "That note is not in this workspace any more, so nothing was opened.") else { return false }
-			return NSWorkspace.shared.open(file)
+			return openChecked(file)
 		} else if let f = a["f"] as? String {
 			let w = a["w"] as? String ?? ""
 			return launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)
@@ -2349,17 +2349,59 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// A file or folder of this workspace that is still there, as a cited record or a link on
 	// the page names it, or nil with `said` as the toast: checked on the paths with every link
-	// resolved, and never a path that is itself a link. The one check for both (#318).
+	// resolved, and with no symlink anywhere below the workspace's folder, the last part or one
+	// on the way. The one check for both (#318).
 	func workspaceFile(_ named: URL, said: String) -> URL? {
 		let named = named.standardizedFileURL
 		let file = named.resolvingSymlinksInPath()
 		let root = workspace.standardizedFileURL.resolvingSymlinksInPath().path
-		let link = (try? FileManager.default.attributesOfItem(atPath: named.path)[.type] as? FileAttributeType) == .typeSymbolicLink
-		guard named.isFileURL, !link, file.path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: file.path) else {
+		let base = [workspace.standardizedFileURL.path, root].first { named.path.hasPrefix($0 + "/") }
+		var through = base == nil
+		if let base {                         // every part below the workspace's folder, lstat'ed, never followed
+			var at = base
+			for part in named.path.dropFirst(base.count + 1).split(separator: "/") {
+				at += "/" + part
+				if (try? FileManager.default.attributesOfItem(atPath: at)[.type] as? FileAttributeType) == .typeSymbolicLink { through = true }
+			}
+		}
+		guard named.isFileURL, !through, file.path.hasPrefix(root + "/"), FileManager.default.fileExists(atPath: file.path) else {
 			toast(said)
 			return nil
 		}
 		return file
+	}
+
+	// What opening a file could run or follow rather than show (#318): an app or any other
+	// package, an alias, a link to the web or elsewhere (.webloc, .inetloc, .fileloc), and
+	// anything executable or a script, a Terminal setting among them. Such a file is shown in
+	// Finder instead, so what the page links can never start a program.
+	func runsSomething(_ file: URL) -> Bool {
+		let v = try? file.resourceValues(forKeys: [.contentTypeKey, .isApplicationKey, .isAliasFileKey, .isPackageKey])
+		if v == nil || v?.isApplication == true || v?.isAliasFile == true || v?.isPackage == true { return true }
+		guard let type = v?.contentType else { return false }
+		return type.identifier == "com.apple.terminal.settings"
+			|| [UTType.application, .executable, .script, .aliasFile, .internetLocation].contains { type.conforms(to: $0) }
+	}
+
+	// A checked file opened as macOS opens it, or, where that could run something, shown in Finder.
+	@discardableResult
+	func openChecked(_ file: URL) -> Bool {
+		if runsSomething(file) {
+			NSWorkspace.shared.activateFileViewerSelecting([file])
+			toast("\(file.lastPathComponent) could run something, so it is shown in Finder rather than opened.", alsoNotify: false)
+			return true
+		}
+		return NSWorkspace.shared.open(file)
+	}
+
+	// Every link the page follows, whichever way it arrives (#318): the page's own click handler
+	// over the bridge, decidePolicyFor or window.open. A job's log first, the one file outside the
+	// workspace the page links; then a file of the workspace, as openLink() opens it; then the
+	// web, http and https only. Anything else opens nothing.
+	func follow(_ url: URL, place: String? = nil) {
+		if openJobLog(url) { return }
+		if url.isFileURL { return openLink(url, place: place) }
+		if ["http", "https"].contains(url.scheme?.lowercased() ?? "") { NSWorkspace.shared.open(url) }
 	}
 
 	// A link on the page to a file or a folder (#318), from decidePolicyFor or, for a project's
@@ -2375,7 +2417,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			           "note": file.path])
 			return
 		}
-		NSWorkspace.shared.open(file)
+		openChecked(file)
 	}
 
 	// Show both (#323), on a Needs attention row for a published file drift.py found changed: the copy
@@ -2769,9 +2811,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		decisionHandler(.cancel)
 		if checking { return heard.append("link:" + (url.scheme ?? "")) }
-		if openJobLog(url) { return }               // a job's log, the one file outside the workspace the page links
-		if url.isFileURL { return openLink(url) }   // inside the workspace only, as the row or as macOS opens it (#318)
-		NSWorkspace.shared.open(url)
+		follow(url)          // a file link the page did not hand over itself, as the bridge's open does (#318)
 	}
 
 	// A job's log, from its panel's Open log (#273), opens in the app this Mac
@@ -2787,10 +2827,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return true
 	}
 
-	// target=_blank and window.open land here; nothing opens a second window.
+	// target=_blank and window.open land here; nothing opens a second window, and the link goes
+	// the one way every link goes (follow()), never straight to macOS (#318).
 	func webView(_ webView: WKWebView, createWebViewWith config: WKWebViewConfiguration,
 	             for nav: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-		if let url = nav.request.url, !checking { NSWorkspace.shared.open(url) }
+		if let url = nav.request.url, !checking { follow(url) }
 		return nil
 	}
 

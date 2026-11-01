@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -121,6 +122,31 @@ class TodoTest(unittest.TestCase):
         archived = (self.zone / "archive" / "Todo-2026.md").read_text()
         self.assertIn("- [x] [[Pricing]]: old one ✅ 2026-10-01\n    - [ ] a step left open under it", archived)
         self.assertNotIn("a step left open", self.text())                  # it went with its task
+
+    def test_a_moved_lines_relative_source_still_leads_to_its_page(self):
+        """#318: a line's meeting source is a link relative to Todo.md. Moved
+        into archive/, archived or expired, it is written again from there;
+        a wikilink, an obsidian: link and a web link stay as they were."""
+        page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260310-acme-kickoff.md"
+        src = "[Acme kick-off](../../Wikis/Meetings/wiki/sources/260310-acme-kickoff.md)"
+        write(self.zone / "Todo.md", LIST.replace("- [x] [[Pricing]]: old one ✅ 2026-10-01",
+                                                  "- [x] [[Pricing]]: old one · %s ✅ 2026-10-01" % src)
+              .replace("- [ ] [[Pricing]]: send the sheet",
+                       "- [ ] [[Pricing]]: send the sheet · %s (also in [[260312-birch-kickoff]]) see https://example.com/a" % src))
+        todo.archive(self.zone, dt.date(2026, 10, 12))
+        day = dt.date(2026, 10, 1)
+        todo.expire(self.root, self.zone, day)
+        todo.expire(self.root, self.zone, day + dt.timedelta(days=14))
+        deeper = "[Acme kick-off](../../../Wikis/Meetings/wiki/sources/260310-acme-kick-off.md)".replace("kick-off.md", "kickoff.md")
+        archived = (self.zone / "archive" / "Todo-2026.md").read_text()
+        expired = (self.zone / "archive" / "Todo-expired-2026.md").read_text()
+        self.assertIn("- [x] [[Pricing]]: old one · %s ✅ 2026-10-01" % deeper, archived)
+        self.assertIn("- [ ] [[Pricing]]: send the sheet · %s (also in [[260312-birch-kickoff]]) see https://example.com/a" % deeper, expired)
+        target = re.search(r"\]\(([^)]+)\)", deeper).group(1)
+        self.assertEqual(page.resolve(), (self.zone / "archive" / target).resolve())      # it leads to the page from there
+        self.assertEqual("[x](obsidian://open?vault=W&file=a)", todo.relinked("[x](obsidian://open?vault=W&file=a)", self.zone,
+                                                                              self.zone / "archive"))
+        self.assertEqual("[x](../../../A%20b.md#h)", todo.relinked("[x](../../A%20b.md#h)", self.zone, self.zone / "archive"))
 
     def test_tidy_puts_fields_last_and_the_inbox_in_thread_order(self):
         self.assertGreater(todo.tidy(self.zone), 0)

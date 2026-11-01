@@ -1064,13 +1064,12 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         with mock.patch.object(update, "on_mac", lambda: True), \
                 mock.patch.object(update, "make_app", return_value=(0, "/Applications/Garrick.app")) as make:
             p = self.plan()
-            self.assertIn("Rebuild Garrick.app in %s, with the flags it was built with: --no-graph --obsidian Acme Vault."
-                          % (self.base / "Applications"), self.report_of(p))
+            self.assertIn("Rebuild Garrick.app in %s, with the flags it was built with: --no-graph."
+                          % (self.base / "Applications"), self.report_of(p))        # less the flags gone in 0.51.0 (#318)
             self.assertFalse(make.called)                       # the report changes nothing
             result = update.apply(self.root, p)
         make.assert_called_once_with(["/bin/bash", str(self.root / "System/status/app/make-app.sh"), "--workspace",
-                                      str(self.root), "--dest", str(self.base / "Applications"), "--",
-                                      "--no-graph", "--obsidian", "Acme Vault"])
+                                      str(self.root), "--dest", str(self.base / "Applications"), "--", "--no-graph"])
         self.assertIn("Rebuilt Garrick.app: /Applications/Garrick.app.", result["then"])
 
     def report_of(self, p):
@@ -1137,10 +1136,10 @@ class TestWhatExtrasNeedNext(ExtrasCase):
                 mock.patch.object(update, "build_page", return_value=(0, str(self.root / update.PAGE))) as build:
             p = self.plan()
             self.assertIn("Rebuild the status page, System/generated/status.html, with the flags Garrick.app was built "
-                          "with: --no-graph --obsidian Acme Vault.", self.report_of(p))
+                          "with: --no-graph.", self.report_of(p))
             result = update.apply(self.root, p)
         build.assert_called_once_with([sys.executable, str(self.root / "System/status/status.py"), "--workspace",
-                                       str(self.root), "--no-graph", "--obsidian", "Acme Vault"])
+                                       str(self.root), "--no-graph"])
         app = result["then"].index("Rebuilt Garrick.app: /Applications/Garrick.app.")
         self.assertEqual(app + 1, result["then"].index("Rebuilt the status page: %s." % (self.root / update.PAGE)))
 

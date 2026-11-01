@@ -83,7 +83,9 @@ check and the status page find the thread in `System/`.
    It moves Inbox lines nobody triaged in 14 days (or the days the zone sets
    as `todo-expire-days` in `System/garrick-checks.json`), and `Waiting on`
    lines left as long with no day to chase, to the expired archive,
-   unchanged and still open, so any can be pasted back; moves lines ticked before today to the
+   still open, so any can be pasted back: a relative source link in a
+   moved line is written again from `archive/`, so it still leads to its
+   page, and a line pasted back into `Todo.md` takes one `../` off it; moves lines ticked before today to the
    year's archive; and moves dates written mid-line to the end, keeping the
    Inbox in thread order: each thread where it first appears, or by the
    thread's name when `todo-inbox-order` is `thread`.

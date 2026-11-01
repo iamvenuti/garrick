@@ -15,13 +15,16 @@ expire   Records, in the zone's .todo-seen.json (never committed), the first
          An Inbox line with no date, or a Waiting on line with no `⏳` day to
          chase, still there after the zone's days (14, or `todo-expire-days`
          in System/garrick-checks.json: a number, or a number per zone)
-         moves, unchanged and still open, to archive/Todo-expired-<YYYY>.md,
-         so it can be pasted back. A line the user has triaged has left the
+         moves, still open, to archive/Todo-expired-<YYYY>.md, so it can be
+         pasted back. A line keeps its words; a relative link in it, such
+         as its meeting source, is written again from archive/ so it still
+         leads to the page, and one more `../` comes off when it is pasted
+         back into Todo.md. A line the user has triaged has left the
          Inbox, carries a date, or waits with a day to chase, so expiry
          never reaches it.
 archive  Moves ticked lines (`- [x]`) done before today to
          archive/Todo-<YYYY>.md, so the list is only as long as what is
-         open. A line ticked today stays, for the page's *Done today*.
+         open, their relative links written again from there as expire's. A line ticked today stays, for the page's *Done today*.
 tidy     Moves priority and date fields written mid-line to the end, where
          Obsidian Tasks reads them, keeping each moved line's first-seen
          date, and keeps the Inbox in thread order: lines that open with the
@@ -50,6 +53,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -112,10 +116,28 @@ def write(zone: Path, lines: List[str]) -> None:
     os.replace(tmp, path)
 
 
+# A Markdown link by a path relative to the note it is in, such as a line's
+# meeting source, `[title](../../Wikis/Meetings/wiki/sources/<slug>.md)` (#318).
+RELATIVE_LINK = re.compile(r"(\]\()(?![A-Za-z][\w+.-]*:|#|/)([^)\s#]+)((?:#[^)\s]*)?\))")
+
+
+def relinked(line: str, here: Path, there: Path) -> str:
+    """`line`, moved from a note in folder `here` to one in folder `there`,
+    with each relative link written again from `there`, so it still leads
+    where it led. A wikilink or a web link is left as it is."""
+    def one(m):
+        target = os.path.normpath(os.path.join(str(here), urllib.parse.unquote(m.group(2))))
+        again = os.path.relpath(target, str(there)).replace(os.sep, "/")
+        return m.group(1) + urllib.parse.quote(again) + m.group(3)
+    return RELATIVE_LINK.sub(one, line) if "](" in line else line
+
+
 def keep_out(zone: Path, name: str, title: str, moved: List[str]) -> Path:
-    """Append lines to archive/<name>, a file that opens with its title."""
+    """Append lines to archive/<name>, a file that opens with its title,
+    each relative link written again from there (relinked())."""
     path = zone / "archive" / name
     path.parent.mkdir(exist_ok=True)
+    moved = [relinked(line, zone, path.parent) for line in moved]
     text = path.read_text(encoding="utf-8") if path.is_file() else "# %s\n\n" % title
     if not text.endswith("\n"):
         text += "\n"

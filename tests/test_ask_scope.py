@@ -1645,8 +1645,8 @@ class TestTheWindowCites(unittest.TestCase):
         self.assertIn('file.path.hasPrefix(root + "/")', checked)          # inside this workspace, or nothing
         self.assertIn("let file = named.resolvingSymlinksInPath()", checked)            # with every link resolved,
         self.assertIn("workspace.standardizedFileURL.resolvingSymlinksInPath().path", checked)   # on both sides
-        self.assertIn("attributesOfItem(atPath: named.path)[.type]", checked)          # and never a link itself
-        self.assertIn("!link, file.path.hasPrefix", checked)
+        self.assertIn("attributesOfItem(atPath: at)[.type]", checked)                  # and no link on the way, the last part included
+        self.assertIn("!through, file.path.hasPrefix", checked)
         self.assertIn("FileManager.default.fileExists", checked)
         self.assertIn("acts(place)", opened)                               # a thread as its row opens it
         self.assertIn('run(["k": "note", "u": file.absoluteString])', opened)   # else the default app

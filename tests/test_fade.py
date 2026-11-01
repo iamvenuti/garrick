@@ -517,6 +517,25 @@ class ApplyTest(Base):
                       "[Acme review](../../Wikis/Meetings/dormant/wiki/sources/260401-acme-review.md)\n", todo)
         self.assertIn("[Acme old](../../Wikis/Meetings/wiki/sources/250101-acme-old.md)", todo)
 
+    def test_a_todo_lists_relative_link_is_read_from_where_the_list_is(self):
+        """A relative link leads where it leads from its own file, never to a
+        page that merely ends the same: one read wrongly is neither a pin nor
+        rewritten. An archived list's links, one level deeper, follow the page."""
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n"
+              "- [ ] [[Pricing]]: book the call · [Not it](../Meetings/wiki/sources/250101-acme-old.md)\n"
+              "- [ ] [[Pricing]]: chase the rates · [[260310-acme-kickoff]]\n\n## Done\n")
+        write(self.work / "archive" / "Todo-2026.md", "# Work: done, 2026\n\n"
+              "- [x] [[Freight]]: send the terms · [Acme review](../../../Wikis/Meetings/wiki/sources/260401-acme-review.md)\n")
+        self.commit_all()
+        moves = {m["page"].rsplit("/", 1)[1] for m in self.propose()["moves"]}
+        self.assertIn("250101-acme-old.md", moves)                        # the link that only ends like it pins nothing
+        self.apply()
+        self.assertIn("[Not it](../Meetings/wiki/sources/250101-acme-old.md)", self.text(self.work / "Todo.md"))   # nor is it rewritten
+        self.assertIn("[Acme review](../../../Wikis/Meetings/dormant/wiki/sources/260401-acme-review.md)",
+                      self.text(self.work / "archive" / "Todo-2026.md"))
+        self.assertEqual("Wikis/Meetings/x.md", fade.from_note("../../Wikis/Meetings/x.md", "Zones/Work/Todo.md"))
+        self.assertIsNone(fade.from_note("../../../Elsewhere/x.md", "Zones/Work/Todo.md"))
+
     def test_a_full_path_in_code_to_a_walled_page_is_reported_before_and_after_it_fades(self):
         """Fade leaves a link in code as written (#256), and a Markdown link
         too; the walls still find the page behind it once it has faded (#297)."""

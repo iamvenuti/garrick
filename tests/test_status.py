@@ -3228,35 +3228,166 @@ class TestLinksOpenAsChosen(StatusCase):
         self.assertNotIn("obsidian", (inbox + wikis).lower())
         self.assertNotIn("data-place", inbox + wikis)
 
-    def test_the_page_hands_a_place_to_the_host_and_nothing_else(self):
+    HANDLER = "/* Every link to a file goes to the host over its bridge (#318)"
+
+    def handler(self):
         js = status.JS
-        handler = js[js.index("/* A link to a project's hub or a thread's note (data-place)"):]
-        handler = handler[:handler.index("});") + 3]
+        h = js[js.index(self.HANDLER):]
+        return h[:h.index("},true);") + 8]
+
+    def test_the_page_hands_every_file_link_to_the_host(self):
+        """The app shows the page with read access to System/generated/ alone,
+        so WebKit drops a navigation to any other file before the app hears
+        of it: every file link, and the graph's double-click, goes over the
+        bridge instead, with its place where it has one."""
+        handler = self.handler()
         self.assertIn("if(!host||e.defaultPrevented||e.button!==0)return;", handler)    # a browser follows the link; a handler before it keeps it
-        self.assertIn("closest('a[data-place]')", handler)
-        self.assertIn("host.postMessage({open:a.href,place:a.dataset.place})", handler)
-        self.assertNotIn(",true)", handler)                                             # last to hear the click, not first
+        self.assertIn("closest('a[href]')", handler)
+        self.assertIn("/^file:/i.test(a.href)", handler)
+        self.assertIn("var m={open:a.href};if(a.dataset.place)m.place=a.dataset.place;host.postMessage(m)", handler)
+        self.assertTrue(handler.endswith("},true);"))                                   # capture: heard wherever the link sits
+        self.assertIn("if(hb&&/^file:/i.test(h.n.u))hb.postMessage({open:h.n.u});else location.href=h.n.u", status.GRAPH_JS)
         plugin = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn('if (typeof body.open === "string") return this.follow(body.open);', plugin)   # Obsidian's tab opens it there
 
     def test_the_app_opens_a_link_as_chosen(self):
         swift = self.SWIFT.read_text(encoding="utf-8")
         decide = swift[swift.index("decidePolicyFor nav: WKNavigationAction"):swift.index("func openJobLog(")]
-        self.assertLess(decide.index("if openJobLog(url) { return }"), decide.index("if url.isFileURL { return openLink(url) }"))
-        self.assertNotIn("obsidian", decide.lower())
+        self.assertIn("follow(url)", decide)
+        self.assertNotIn("NSWorkspace", decide)
+        follow = self.body("follow")
+        self.assertLess(follow.index("if openJobLog(url) { return }"), follow.index("if url.isFileURL { return openLink(url, place: place) }"))
+        self.assertIn('if ["http", "https"].contains(url.scheme?.lowercased() ?? "") { NSWorkspace.shared.open(url) }', follow)
+        self.assertNotIn("obsidian", (decide + follow).lower())
+        made = swift[swift.index("createWebViewWith config: WKWebViewConfiguration"):swift.index("func webViewWebContentProcessDidTerminate")]
+        self.assertIn("if let url = nav.request.url, !checking { follow(url) }", made)  # window.open goes the same way
+        self.assertNotIn("NSWorkspace", made)
         bridge = self.body("userContentController")
-        self.assertIn('if let u = body["open"] as? String, let url = URL(string: u) { return openLink(url, place: body["place"] as? String) }',
+        self.assertIn('if let u = body["open"] as? String, let url = URL(string: u) { return follow(url, place: body["place"] as? String) }',
                       bridge)
+        # --check clicks a file link and hears it over the bridge, the way a real click goes, without acting on it
+        self.assertIn("a.href='file:///garrick-check';document.body.appendChild(a);a.click()", swift)
+        self.assertLess(bridge.index('if checking { return heard.append(body.keys.sorted().joined(separator: "+")) }'),
+                        bridge.index('body["open"]'))
         opened = self.body("openLink")
         self.assertIn("guard let file = workspaceFile(url,", opened)                     # the one check, before anything opens
         self.assertIn("openAsRow([", opened)                                             # a note with its place: as its row
-        self.assertIn("NSWorkspace.shared.open(file)", opened)                           # anything else: macOS's own app, Finder for a folder
+        self.assertIn("openChecked(file)", opened)                                       # anything else: macOS's own app, Finder for a folder
         self.assertLess(opened.index("workspaceFile("), opened.index("openAsRow(["))
         self.assertIn('case "note": return "Open the note"', self.body("label"))
         run = self.body("run")
         self.assertIn("let file = workspaceFile(url,", run)                              # the note's action too: nothing outside
-        self.assertIn("return NSWorkspace.shared.open(file)", run)
-        self.assertNotIn("obsidian", self.SWIFT.read_text(encoding="utf-8").split("lazy var iconJSON", 1)[1].split("}()", 1)[0])
+        self.assertIn("return openChecked(file)", run)
+        checked = self.body("openChecked")
+        self.assertLess(checked.index("if runsSomething(file) {"), checked.index("return NSWorkspace.shared.open(file)"))
+        self.assertIn("activateFileViewerSelecting([file])", checked)                    # shown, never run
+        self.assertEqual(1, swift.count("NSWorkspace.shared.open(file)"))                 # the one place a workspace file opens
+        self.assertNotIn("obsidian", swift.split("lazy var iconJSON", 1)[1].split("}()", 1)[0])
+
+    def compile(self, name, source):
+        import subprocess
+        if subprocess.run(["xcrun", "--find", "swiftc"], capture_output=True).returncode:
+            self.skipTest("no swiftc")
+        harness = Path(self._tmp.name) / name
+        harness.mkdir()
+        (harness / "main.swift").write_text(source, encoding="utf-8")
+        built = subprocess.run(["xcrun", "swiftc", "-o", str(harness / "check"), str(harness / "main.swift")],
+                               capture_output=True, text=True)
+        self.assertEqual(0, built.returncode, built.stderr)
+        return harness / "check"
+
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
+    def test_a_file_that_could_run_something_is_shown_in_finder_instead(self):
+        """runsSomething() itself, on real files: an app or package, an alias,
+        a web or file location, a script or anything executable."""
+        import subprocess
+        check = self.compile("runs", "import AppKit\nimport UniformTypeIdentifiers\n" + self.body("runsSomething").strip("\n").replace("\n\t", "\n")
+                             + "\nlet d = URL(fileURLWithPath: CommandLine.arguments[1])\n"
+                             "let target = d.appendingPathComponent(\"Proj.md\")\n"
+                             "let mark = try! target.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil)\n"
+                             "try! URL.writeBookmarkData(mark, to: d.appendingPathComponent(\"alias.md\"))\n"
+                             "for n in CommandLine.arguments.dropFirst(2) { print(n + \" \" + (runsSomething(d.appendingPathComponent(n)) ? \"shown\" : \"opens\")) }\n")
+        d = Path(self._tmp.name).resolve() / "kinds"
+        for n in ("run.command", "x.fileloc", "y.webloc", "w.inetloc", "z.terminal", "s.sh", "b.jar", "c.scpt", "tool.py",
+                  "Proj.md", "data.json", "deck.pptx", "rates.csv"):
+            write(d / n, "x\n")
+        (d / "Evil.app" / "Contents" / "MacOS").mkdir(parents=True)
+        (d / "a.workflow" / "Contents").mkdir(parents=True)
+        (d / "Folder").mkdir()
+        shown = ["run.command", "x.fileloc", "y.webloc", "w.inetloc", "z.terminal", "s.sh", "b.jar", "c.scpt", "tool.py",
+                 "Evil.app", "a.workflow", "alias.md"]
+        opens = ["Proj.md", "data.json", "deck.pptx", "rates.csv", "Folder"]
+        done = subprocess.run([str(check), str(d)] + shown + opens, capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertEqual(["%s shown" % n for n in shown] + ["%s opens" % n for n in opens], done.stdout.splitlines())
+
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("xcrun"), "needs the Swift compiler")
+    def test_a_real_click_on_a_file_link_reaches_the_app_over_the_bridge(self):
+        """The page in a WKWebView set up as the app sets it up, read access to
+        its own folder alone, and a real mouse click on a link to a file
+        elsewhere: the page's handler hands it over the bridge, where WebKit
+        alone would have dropped it."""
+        import subprocess
+        check = self.compile("click", r"""
+import AppKit
+import WebKit
+setvbuf(stdout, nil, _IONBF, 0)
+class D: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler {
+  var web: WKWebView!; var win: NSWindow!
+  func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+    if let b = m.body as? [String: Any], let u = b["open"] as? String { print("open " + u + " " + (b["place"] as? String ?? "-")) }
+  }
+  func applicationDidFinishLaunching(_ n: Notification) {
+    let c = WKWebViewConfiguration()
+    c.userContentController.add(self, name: "garrick")
+    web = WKWebView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), configuration: c)
+    web.navigationDelegate = self
+    win = NSWindow(contentRect: NSRect(x: -5000, y: -5000, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+    win.contentView = web; win.orderFront(nil)
+    let page = URL(fileURLWithPath: CommandLine.arguments[1])
+    web.loadFileURL(page, allowingReadAccessTo: page.deletingLastPathComponent())
+  }
+  func webView(_ w: WKWebView, didFinish n: WKNavigation!) {
+    print("loaded")
+    for (i, y) in [75.0, 225.0].enumerated() {
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5 + Double(i)) {
+        for t in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+          let ev = NSEvent.mouseEvent(with: t, location: NSPoint(x: 200, y: y), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                      windowNumber: self.win.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+          if t == .leftMouseDown { self.web.mouseDown(with: ev) } else { self.web.mouseUp(with: ev) }
+        }
+      }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) { exit(0) }
+  }
+  func webView(_ w: WKWebView, decidePolicyFor nav: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    if nav.request.url?.lastPathComponent == "page.html" { return decisionHandler(.allow) }
+    print("navigation " + (nav.request.url?.absoluteString ?? ""))
+    decisionHandler(.cancel)
+  }
+}
+let app = NSApplication.shared
+let d = D()
+app.delegate = d
+app.setActivationPolicy(.accessory)
+DispatchQueue.main.asyncAfter(deadline: .now() + 20) { exit(3) }
+app.run()
+""")
+        page = Path(self._tmp.name).resolve() / "generated" / "page.html"
+        note = self.root / "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        todo = self.root / "Zones/Work/Todo.md"
+        link = status.Links(self.root)
+        write(page, '<!DOCTYPE html><html><body style="margin:0">'
+              '<a style="display:block;height:150px" %s>Pricing</a><a style="display:block;height:150px" %s>Todo</a>'
+              '<script>var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;\n%s</script>'
+              '</body></html>' % (link.attrs(note), link.attrs(todo), self.handler()))
+        done = subprocess.run([str(check), str(page)], capture_output=True, text=True, timeout=60)
+        if "loaded" not in done.stdout:
+            self.skipTest("no window server to load the page in (%s)" % done.returncode)
+        said = done.stdout.splitlines()
+        self.assertEqual("loaded", said[0])
+        self.assertEqual(sorted(["open %s %s" % (note.as_uri(), note.parent), "open %s -" % todo.as_uri()]), sorted(said[1:]),
+                         done.stderr)                       # both clicks over the bridge, the note with its place; no navigation
 
     def test_nothing_garrick_ships_writes_an_obsidian_link(self):
         """#318's grep: in the page, the app, the plugin and what a workspace
@@ -3294,12 +3425,14 @@ class TestLinksOpenAsChosen(StatusCase):
         os.symlink(str(outside / "secret.md"), str(pricing / "Linked.md"))         # a note that is a link out
         os.symlink(str(outside), str(self.root / "Zones" / "Work" / ".shared"))      # a folder that is one
         os.symlink(str(pricing / "Pricing.md"), str(pricing / "Alias.md"))          # a link to a note inside: still a link
+        os.symlink(str(self.root / "Zones/Work/Acme Review"), str(self.root / "Zones/Work/Shortcut"))   # a folder link inside
         cases = [
             ((pricing / "Pricing.md").as_uri(), "opens"),
             ((self.root / "Zones/Work/Inbox").as_uri(), "opens"),                    # a folder of the workspace
             ((pricing / "Linked.md").as_uri(), "refused"),
             ((pricing / "Alias.md").as_uri(), "refused"),
             ((self.root / "Zones/Work/.shared/secret.md").as_uri(), "refused"),      # through a symlinked folder, out
+            ((self.root / "Zones/Work/Shortcut/Acme Review.md").as_uri(), "refused"),   # through one that stays inside: still through a link
             ((outside / "secret.md").as_uri(), "refused"),
             ((self.root / "Zones/Work/../../Elsewhere/secret.md").as_uri(), "refused"),
             ((self.root / "Zones/Work/Gone.md").as_uri(), "refused"),                 # not there any more

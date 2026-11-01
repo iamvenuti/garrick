@@ -470,6 +470,7 @@ class Links:
         self.root = root
         self.by_name: Dict[str, List[Tuple[str, List[str], bool, bool]]] = {}
         self.notes: List[str] = []           # every Markdown note a link may come from
+        self.files: Set[str] = set()          # every file, by its path from the workspace's folder
         wikis = root / "Wikis"
         if wikis.is_dir():
             for f in walk(wikis, md_only=False):
@@ -483,6 +484,7 @@ class Links:
 
     def _add(self, f: Path) -> None:
         rel = f.relative_to(self.root).as_posix()
+        self.files.add(rel)
         low = rel.lower().split("/")
         if rel.lower().endswith(".md"):
             low[-1] = low[-1][:-3]
@@ -496,6 +498,8 @@ class Links:
                 self.by_name.setdefault(stem, []).append((rel, low[:-1] + [stem], False, True))
 
     def resolve(self, written: str) -> List[str]:
+        if written.startswith(EXACT):              # a relative link, read from its note: that file or none
+            return [written[1:]] if written[1:] in self.files else []
         comps = clean(written)
         if not comps:
             return []
@@ -544,7 +548,18 @@ def todo_file(rel: str) -> bool:
                                     or (len(parts) == 4 and parts[2] == "archive" and parts[3].startswith("Todo")))
 
 
-def links_in(text: str, relative: bool = False) -> Iterable[Tuple[int, str]]:
+EXACT = "\x00"          # before a whole path from the workspace's folder: Links.resolve() takes that file or nothing
+
+
+def from_note(target: str, here: str) -> Optional[str]:
+    """A relative link's target, read from the note it is in (`here`, from
+    the workspace's folder): the file it leads to, from the workspace's
+    folder, or None when it leads out of it. Never matched by its ending."""
+    path = posixpath.normpath(posixpath.join(posixpath.dirname(here), urllib.parse.unquote(target)))
+    return None if path == ".." or path.startswith("../") or path.startswith("/") else path
+
+
+def links_in(text: str, relative: bool = False, here: str = "") -> Iterable[Tuple[int, str]]:
     """(line number, target as written) for every wikilink and obsidian://
     link, and with `relative`, every relative Markdown link to a note (a
     Todo list's sources). One in a code block, fenced or inline, is text and
@@ -562,7 +577,9 @@ def links_in(text: str, relative: bool = False) -> Iterable[Tuple[int, str]]:
                     yield n, urllib.parse.unquote(m.group(2))
             if relative and "](" in part:
                 for m in RELATIVE.finditer(part):
-                    yield n, urllib.parse.unquote(m.group(2))
+                    path = from_note(m.group(2), here)          # the file it leads to, its whole path
+                    if path is not None:
+                        yield n, EXACT + path
 
 
 def might_link(text: str, relative: bool = False) -> bool:
@@ -634,7 +651,7 @@ def scan_links(root: Path, links: Links, pages: Dict[str, Page], where: Where,
             continue
         kind = where.of(src)
         lines = text.split("\n") if kind == "todo" else None
-        for n, written in links_in(text, relative):
+        for n, written in links_in(text, relative, src):
             hits = [h for h in links.resolve(written) if h in pages or h in raws]
             if not hits:
                 continue
@@ -1236,14 +1253,13 @@ def relink(text: str, moved: Dict[str, str], links: Links, here: str) -> str:
             target, _ = respell(written, hits[0], moved[hits[0]], "")
             return m.group(1) + urllib.parse.quote(target)
 
-        def relink_relative(m):              # written again from the Todo list to where the page went
-            written = urllib.parse.unquote(m.group(2))
-            hits = links.resolve(written)
-            if len(hits) != 1 or hits[0] not in moved:
+        def relink_relative(m):              # read from the Todo list's own place; written again to where the page went
+            path = from_note(m.group(2), here)
+            if path is None or path not in moved:
                 return m.group(0)
-            if waking(moved[hits[0]]) and still_leads(written, moved[hits[0]]):
+            if waking(moved[path]) and still_leads(path, moved[path]):
                 return m.group(0)
-            target = posixpath.relpath(moved[hits[0]], posixpath.dirname(here) or ".")
+            target = posixpath.relpath(moved[path], posixpath.dirname(here) or ".")
             return m.group(1) + urllib.parse.quote(target) + m.group(3)
 
         def both(part):

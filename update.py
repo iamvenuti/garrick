@@ -1068,9 +1068,24 @@ def app_folders():
     return [Path.home() / "Applications", Path("/Applications")]
 
 
+def kept_flags(args):
+    """An app's stored flags, less the ones status.py no longer takes: --obsidian
+    VAULT and --no-obsidian went in 0.51.0 (#318), and make-app.sh drops them too."""
+    out, i = [], 0
+    while i < len(args):
+        if args[i] == "--obsidian":
+            i += 2
+            continue
+        if args[i] != "--no-obsidian" and not args[i].startswith("--obsidian="):
+            out.append(args[i])
+        i += 1
+    return out
+
+
 def garrick_apps(root):
     """Each Garrick.app built for this workspace, with the flags make-app.sh
-    stored in it: [(app, [flags])]. macOS only."""
+    stored in it, as a rebuild keeps them (kept_flags()): [(app, [flags])].
+    macOS only."""
     if not on_mac():
         return []
     out = []
@@ -1084,7 +1099,7 @@ def garrick_apps(root):
             continue
         if info.get("CFBundleIdentifier") == APP_ID and same:
             args = info.get("GarrickStatusArgs")
-            out.append((app, [str(a) for a in args] if isinstance(args, list) else []))
+            out.append((app, kept_flags([str(a) for a in args]) if isinstance(args, list) else []))
     return out
 
 

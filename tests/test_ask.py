@@ -1398,6 +1398,43 @@ class TestTheAskWindow(unittest.TestCase):
     def between(self, start, end):
         return self.swift[self.swift.index(start):self.swift.index(end, self.swift.index(start))]
 
+    def test_the_window_resizes_and_its_text_size_follows_the_keys(self):
+        """#309: resizable, the exchange taking the height the window has; ⌘+,
+        ⌘− and ⌘0 caught by the panel itself, so they work wherever the cursor
+        is; size and text size kept in the app's own defaults; 15 points."""
+        show = self.body("showAsk")
+        self.assertIn("styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel]", show)
+        self.assertNotIn("equalToConstant: 320", show)                     # no fixed exchange height
+        self.assertNotIn("equalToConstant: 620", show)                     # no fixed width
+        self.assertIn("askWidthHeld.priority = .init(400)", show)          # below a drag's
+        self.assertIn("stack.distribution = .fill", show)
+        self.assertIn("askLogBox.setContentHuggingPriority(.init(1), for: .vertical)", show)
+        self.assertIn("NSWindow.didEndLiveResizeNotification", show)
+        self.assertIn("p.textSize = { [weak self] step in self?.askTextStep(step) }", show)
+        panel = self.between("final class AskPanel: NSPanel {", "\n}\n")
+        keys = panel[panel.index("override func performKeyEquivalent"):]
+        self.assertIn("mods == .command", keys)
+        for key in ('case "+", "=": textSize(1)', 'case "-": textSize(-1)', 'case "0": textSize(0)'):
+            self.assertIn(key, keys)
+        self.assertIn('let kAskWidth = "askWidth", kAskHeight = "askHeight", kAskTextSize = "askTextSize"', self.swift)
+        self.assertIn("let askTextDefault: CGFloat = 15", self.swift)
+        resized = self.body("askResized")
+        self.assertIn("defaults.set(Double(size.width), forKey: kAskWidth)", resized)
+        self.assertIn("if askExpanded { defaults.set(Double(size.height), forKey: kAskHeight) }", resized)
+        step = self.body("askTextStep")
+        self.assertIn("defaults.set(Double(next), forKey: kAskTextSize)", step)
+        for font in ("askField.font", "askReply.font", "askSaid.font"):
+            self.assertIn(font, step)
+        self.assertIn("askRender()", step)                                # the turns shown are drawn again
+        shown = self.body("askTranscript")
+        self.assertIn("let size = askText()", shown)
+        self.assertNotIn("ofSize: 13", shown)
+        self.assertNotIn("ofSize: 12", shown)                             # the sources and their links follow too
+        fit = self.body("askFit")
+        self.assertIn("p.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: fit.height)", fit)   # compact keeps its height
+        self.assertIn("forKey: kAskHeight", fit)
+        self.assertNotIn("workspace", self.body("askResized") + step)       # never written to the workspace
+
     def test_return_sends_and_shift_return_breaks_the_line(self):
         typed = self.between("final class AskInput: NSTextView {", "\n}\n")
         command = typed[typed.index("override func doCommand(by sel: Selector)"):typed.index("override func didChangeText()")]

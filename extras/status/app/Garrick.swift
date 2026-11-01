@@ -160,6 +160,21 @@ func askOn() -> Bool {
 	return flags["ask"] as? Bool == true
 }
 let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
+// The Ask window's size and its text size (#309), kept in the app's own defaults,
+// never the workspace: the width, the height it has once grown for an answer, and
+// the exchange's text size in points. ⌘+ and ⌘− step through askTextSizes, ⌘0
+// goes back to askTextDefault; the field is askFieldExtra points larger, and
+// the sources under an answer, with their numbered links, one point smaller.
+let kAskWidth = "askWidth", kAskHeight = "askHeight", kAskTextSize = "askTextSize"
+let askTextSizes: [CGFloat] = [11, 12, 13, 15, 17, 19, 22, 25, 28]
+let askTextDefault: CGFloat = 15
+let askFieldExtra: CGFloat = 5
+let askWidthDefault: CGFloat = 620, askWidthLeast: CGFloat = 400
+let askLogDefault: CGFloat = 320    // the exchange's height the first time the window grows
+func askText() -> CGFloat {
+	let saved = CGFloat(defaults.double(forKey: kAskTextSize))
+	return askTextSizes.contains(saved) ? saved : askTextDefault
+}
 // Above the turn a wall reset came with (#261, slice C sends it as "reset": "wall"): the earlier
 // exchange stays on screen, and nothing of it reaches the new session.
 let askAfresh = "———  The assistant started afresh here. What is above is on screen only.  ———"
@@ -288,8 +303,26 @@ struct AskTurn {
 // The Ask window (preview ask): it takes the keys without bringing the app forward, as
 // Spotlight does. Escape hides it and keeps the exchange; the hotkey brings the same one back.
 final class AskPanel: NSPanel {
+	// ⌘+ (or ⌘=), ⌘− and ⌘0: the text size one step up, one down, or back to the
+	// default (#309). The window takes them before any view or menu does, so they
+	// work with the cursor in the field or in the exchange. +1, -1 or 0.
+	var textSize: (Int) -> Void = { _ in }
+
 	override var canBecomeKey: Bool { true }
 	override func cancelOperation(_ sender: Any?) { orderOut(nil) }
+
+	override func performKeyEquivalent(with event: NSEvent) -> Bool {
+		let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .numericPad, .function, .capsLock])
+		if event.type == .keyDown, mods == .command, let key = event.charactersIgnoringModifiers {
+			switch key {
+			case "+", "=": textSize(1); return true
+			case "-": textSize(-1); return true
+			case "0": textSize(0); return true
+			default: break
+			}
+		}
+		return super.performKeyEquivalent(with: event)
+	}
 }
 
 // The field the request is typed in: Return sends it, Shift-Return starts a new line, and
@@ -584,6 +617,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askKept = false               // whether this app has a background session kept, for quit to stop it
 	var askField: AskInput!
 	var askInputHeight: NSLayoutConstraint!
+	var askWidthHeld: NSLayoutConstraint!   // the width the window was left at, below what a drag asks (#309)
+	var askLogLeast: NSLayoutConstraint!    // the exchange's least height: one line at the text size (#309)
 	var askLog: NSTextView!           // the exchange, once the window has expanded
 	var askLogBox: NSScrollView!
 	var askWorking: NSStackView!      // what is happening now, with Stop
@@ -1888,9 +1923,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	@objc func showAsk(_ sender: Any? = nil) {
 		guard askOn() else { return }
 		if askPanel == nil {
-			let p = AskPanel(contentRect: NSRect(x: 0, y: 0, width: 620, height: 132),
-			                 styleMask: [.titled, .closable, .fullSizeContentView, .nonactivatingPanel],
+			let width = max(CGFloat(defaults.double(forKey: kAskWidth)), askWidthLeast)
+			let p = AskPanel(contentRect: NSRect(x: 0, y: 0, width: defaults.object(forKey: kAskWidth) == nil ? askWidthDefault : width, height: 132),
+			                 styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
 			                 backing: .buffered, defer: false)
+			p.textSize = { [weak self] step in self?.askTextStep(step) }
 			p.titleVisibility = .hidden
 			p.titlebarAppearsTransparent = true
 			p.isMovableByWindowBackground = true
@@ -1917,7 +1954,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 			askField = AskInput(frame: NSRect(x: 0, y: 0, width: 580, height: 28))
 			askField.placeholder = askHint
-			askField.font = .systemFont(ofSize: 20)
+			askField.font = .systemFont(ofSize: askText() + askFieldExtra)
 			askField.isRichText = false
 			askField.allowsUndo = true
 			askField.drawsBackground = false
@@ -1942,7 +1979,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			askSpinner.controlSize = .small
 			askSaid = NSTextField(labelWithString: "")
 			askSaid.textColor = .secondaryLabelColor
-			askSaid.font = .systemFont(ofSize: 13)
+			askSaid.font = .systemFont(ofSize: askText())
 			askStopButton = NSButton(title: "Stop", target: self, action: #selector(askStop(_:)))
 			askStopButton.controlSize = .small
 			askStopButton.bezelStyle = .rounded
@@ -1952,7 +1989,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 			askReply = NSTextField(wrappingLabelWithString: "")
 			askReply.textColor = .secondaryLabelColor
-			askReply.font = .systemFont(ofSize: 13)
+			askReply.font = .systemFont(ofSize: askText())
 			askReply.isSelectable = true
 
 			askNewButton = NSButton(title: "New conversation", target: self, action: #selector(askNew(_:)))
@@ -1964,19 +2001,35 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let stack = NSStackView(views: [askLogBox, input, askWorking, askReply, askFoot])
 			stack.orientation = .vertical
 			stack.alignment = .leading
+			// The exchange takes whatever height the window has (#309); everything else keeps its own.
+			stack.distribution = .fill
+			askLogBox.setContentHuggingPriority(.init(1), for: .vertical)
+			askLogBox.setContentCompressionResistancePriority(.init(1), for: .vertical)
+			for v in [askWorking, askReply, askFoot] as [NSView] {
+				v.setContentHuggingPriority(.defaultHigh, for: .vertical)
+				v.setContentCompressionResistancePriority(.required, for: .vertical)
+			}
 			stack.spacing = 10
 			stack.edgeInsets = NSEdgeInsets(top: 30, left: 20, bottom: 16, right: 20)
 			stack.translatesAutoresizingMaskIntoConstraints = false
 			let content = NSView()
 			content.addSubview(stack)
 			p.contentView = content
+			// Below a drag's priority, so the window can be dragged to any width, and kept for the next fit.
+			askWidthHeld = content.widthAnchor.constraint(equalToConstant: p.contentRect(forFrameRect: p.frame).width)
+			askWidthHeld.priority = .init(400)
+			askLogLeast = askLogBox.heightAnchor.constraint(greaterThanOrEqualToConstant: askLogLine())
+			// A size dragged to is kept, here and in the app's defaults, across hiding and quitting (#309).
+			NotificationCenter.default.addObserver(forName: NSWindow.didEndLiveResizeNotification, object: p, queue: .main) { [weak self] _ in
+				self?.askResized()
+			}
 			NSLayoutConstraint.activate([
 				stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
 				stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
 				stack.topAnchor.constraint(equalTo: content.topAnchor),
 				stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-				content.widthAnchor.constraint(equalToConstant: 620),
-				askLogBox.heightAnchor.constraint(equalToConstant: 320),
+				askWidthHeld,
+				askLogLeast,
 				askInputHeight,
 			])
 			for v in [askLogBox, input, askWorking, askReply, askFoot] as [NSView] {
@@ -2206,9 +2259,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// stop or a failure said as such; a wall reset as a divider above the turn it came with.
 	func askTranscript() -> NSAttributedString {
 		let out = NSMutableAttributedString()
-		let asked: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
-		let said: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
-		var aside: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor]
+		// At the text size ⌘+ and ⌘− set (#309): every turn is drawn again from askTurns, so one already
+		// shown follows it, and so do the sources under an answer and their numbered links, which take `aside`.
+		let size = askText()
+		let asked: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: size), .foregroundColor: NSColor.labelColor]
+		let said: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: size), .foregroundColor: NSColor.labelColor]
+		var aside: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: size - 1), .foregroundColor: NSColor.secondaryLabelColor]
 		for (i, turn) in askTurns.enumerated() {
 			if turn.afresh && i > 0 {
 				let centred = NSMutableParagraphStyle()
@@ -2320,18 +2376,63 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// The field grows with what is typed, up to five lines; the window keeps its top edge where it is.
+	// Compact, the window is as tall as what it shows, and only its width can be dragged. Grown for an
+	// answer, it takes the height it was last dragged to, or the exchange at askLogDefault the first
+	// time, and never less than the field and one line of the exchange need (#309).
 	func askFit() {
 		guard let p = askPanel, let content = p.contentView, let lm = askField.layoutManager, let tc = askField.textContainer else { return }
 		lm.ensureLayout(for: tc)
-		let line = lm.defaultLineHeight(for: askField.font ?? .systemFont(ofSize: 20))
+		let line = lm.defaultLineHeight(for: askField.font ?? .systemFont(ofSize: askText() + askFieldExtra))
 		let used = max(lm.usedRect(for: tc).height, line)
 		askInputHeight.constant = ceil(min(used, line * 5) + askField.textContainerInset.height * 2)
+		askLogLeast.constant = askLogLine()
 		content.layoutSubtreeIfNeeded()
-		let size = content.fittingSize
-		guard size.height > 0, size != content.frame.size else { return }
+		let fit = content.fittingSize
+		guard fit.height > 0 else { return }
+		var size = NSSize(width: askWidthHeld.constant, height: fit.height)
+		if askExpanded {
+			let saved = CGFloat(defaults.double(forKey: kAskHeight))
+			size.height = max(fit.height, saved > 0 ? saved : fit.height - askLogLeast.constant + askLogDefault)
+			p.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+		} else {
+			p.contentMaxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: fit.height)
+		}
+		p.contentMinSize = NSSize(width: askWidthLeast, height: fit.height)
+		guard size != content.frame.size else { return }
 		let top = p.frame.maxY
 		p.setContentSize(size)
 		p.setFrameTopLeftPoint(NSPoint(x: p.frame.minX, y: top))
+	}
+
+	// A drag that ended (#309): its width is kept for every later fit, and, grown for an answer, its
+	// height too, both in the app's own defaults, so hiding the window or quitting the app keeps them.
+	func askResized() {
+		guard let content = askPanel?.contentView else { return }
+		let size = content.frame.size
+		askWidthHeld.constant = size.width
+		defaults.set(Double(size.width), forKey: kAskWidth)
+		if askExpanded { defaults.set(Double(size.height), forKey: kAskHeight) }
+		askFit()                          // compact, its height follows the new width
+	}
+
+	// The exchange's least height: one line at the text size, with the text view's insets.
+	func askLogLine() -> CGFloat {
+		ceil(NSLayoutManager().defaultLineHeight(for: .systemFont(ofSize: askText()))) + 8
+	}
+
+	// ⌘+, ⌘− and ⌘0 (#309): the exchange, the reply, what is being done and the field together,
+	// one step of askTextSizes up or down, or back to askTextDefault; kept in the app's defaults.
+	func askTextStep(_ step: Int) {
+		let now = askText()
+		let at = askTextSizes.firstIndex(of: now) ?? askTextSizes.firstIndex(of: askTextDefault) ?? 0
+		let next = step == 0 ? askTextDefault : askTextSizes[min(max(at + step, 0), askTextSizes.count - 1)]
+		if next == now && step != 0 { return NSSound.beep() }
+		defaults.set(Double(next), forKey: kAskTextSize)
+		askField.font = .systemFont(ofSize: next + askFieldExtra)
+		askReply.font = .systemFont(ofSize: next)
+		askSaid.font = .systemFont(ofSize: next)
+		askField.needsDisplay = true      // its placeholder, drawn in its font
+		askRender()                       // every turn shown again at the new size, and the window fitted to it
 	}
 
 	// File › Ask Garrick… is there only with the preview on.

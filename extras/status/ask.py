@@ -62,10 +62,12 @@ STOP ends the session process: `claude -p` documents no way to interrupt a
 turn in stream-json mode, so the conversation goes with it, and the next
 request starts a fresh session, told the whole list. The final line then
 says `"stopped": true`, and nothing the session proposed has run, because
-it had proposed nothing yet. A client that leaves is not a Stop: the turn
-runs on, as before. `call()` sends STOP when it is interrupted (Ctrl-C, or
-the app's Stop, which sends SIGINT). With Codex the one call runs to its
-end, and Stop is heard too late to matter.
+it had proposed nothing yet. Stop while the answer session writes ends
+that session only (StoppedAnswer): the command session and its
+conversation go on, and the final line says so (#294). A client that
+leaves is not a Stop: the turn runs on, as before. `call()` sends STOP when
+it is interrupted (Ctrl-C, or the app's Stop, which sends SIGINT). With
+Codex the one call runs to its end, and Stop is heard too late to matter.
 
 A Claude session that reports an error, its budget spent say, is stopped,
 so the next request starts a fresh one. One server per workspace: a lock
@@ -214,6 +216,9 @@ GONE = ("done",)
 STOP = b'{"stop": true}\n'    # said on a request's own connection: stop that request
 KINDS = ("command", "clarify", "answer")    # what a final line's `kind` says it is
 STOPPED = "Stopped. Nothing was done, and the next request starts a new conversation."
+# Stop while the answer session writes ends that session only: the command
+# session, and the conversation it holds, go on (#294).
+STOPPED_ANSWER = "Stopped. Nothing was done. The conversation goes on, and the next question reads its records afresh."
 APPS = ("claude", "codex", "cmux", "finder")
 VERBS = ("open", "park", "wake", "todo-add")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
@@ -235,6 +240,16 @@ class Bad(Exception):
 
 class Stopped(Bad):
     """The request was stopped on its connection, and the session with it."""
+
+    def said(self) -> str:
+        return STOPPED
+
+
+class StoppedAnswer(Stopped):
+    """Stopped while the answer session wrote: that session ended, the command session goes on."""
+
+    def said(self) -> str:
+        return STOPPED_ANSWER
 
 
 class Capped(Bad):
@@ -980,6 +995,8 @@ class Asker:
         self.answers.watch = getattr(self.session, "watch", None)     # Stop is heard in either session
         try:
             text, more = self.answers.turn("\n".join(parts), cap=False, record=False)
+        except Stopped as e:
+            raise StoppedAnswer(str(e))
         finally:
             self.answers.watch = None
             turns.append(self.answers.last)
@@ -1340,9 +1357,9 @@ def serve_locked(ws: Path, path: Path) -> None:
                         break
                     else:
                         out = {"say": "Unknown op %r." % (op,), "ok": False}
-                except Stopped:
+                except Stopped as e:
                     asker.results, asker.asked = "", {}     # said to a process that is gone
-                    out = {"kind": "command", "say": STOPPED, "done": [], "launch": [], "ok": False, "stopped": True}
+                    out = {"kind": "command", "say": e.said(), "done": [], "launch": [], "ok": False, "stopped": True}
                 except Capped as e:                     # Ask's own limit: said plainly, nothing asked (#282)
                     out = {"kind": "command", "say": str(e), "done": [], "launch": [], "ok": False, "capped": True}
                 except Bad as e:

@@ -348,14 +348,46 @@ class TestAnswers(AnswerCase):
                 time.sleep(0.05)
         threading.Thread(target=stop_once_answering, daemon=True).start()
         t0 = time.time()
-        with self.assertRaises(ask.Stopped):
+        with self.assertRaises(ask.StoppedAnswer) as stopped:
             a.ask("What did Dana say about the pallet quote?")
+        self.assertEqual(ask.STOPPED_ANSWER, stopped.exception.said())
         self.assertLess(time.time() - t0, 10)
         self.assertFalse(a.answers.alive())         # ended, never left to finish
         self.assertTrue(a.session.alive())          # the command session was not the one asked
         ledger = [json.loads(line) for line in (self.jobs / "ledger.jsonl").read_text().splitlines()]
         self.assertEqual(1, len(ledger))            # the find and the stopped answer: one call
         self.assertEqual("stopped", ledger[0]["subtype"])
+
+    def test_stop_while_the_answer_is_written_says_only_what_was_reset(self):
+        """#294: Stop in the answer turn ends the answer session alone, but the
+        box said the next request starts a new conversation."""
+        import socket
+        self.answers.write_text(json.dumps({"haiku": HAIKU, "sonnet": [["pallet quote", 30]]}))
+        msgs = Path(str(self.args) + ".msgs")
+        t = self.serve_in_thread()
+        try:
+            for _ in range(200):                        # the socket refuses until the server listens
+                if ask.call(self.root, "status", start=False) is not None:
+                    break
+                time.sleep(0.05)
+            c = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            c.connect(str(ask.sock_path(self.root)))
+            c.sendall((json.dumps({"op": "ask", "text": "What did Dana say about the pallet quote?"}) + "\n").encode("utf-8"))
+            until = time.time() + 10
+            while time.time() < until and not (msgs.exists() and '"model": "sonnet"' in msgs.read_text()):
+                time.sleep(0.05)
+            c.sendall(ask.STOP)
+            with c:
+                final = [json.loads(line) for line in c.makefile("rb")][-1]
+            self.assertEqual((True, ask.STOPPED_ANSWER), (final.get("stopped"), final["say"]))
+            self.assertNotIn("new conversation", final["say"])
+            self.assertTrue(self.op_status()["session"])     # the command session, and its conversation, go on
+        finally:
+            ask.call(self.root, "stop", start=False)
+            t.join(10)
+
+    def op_status(self):
+        return ask.call(self.root, "status", start=False)
 
     def test_one_ledger_line_per_find_and_its_answer(self):
         a = self.asker()

@@ -184,11 +184,14 @@ One meeting at a time, even when several files are waiting.
    page. Re-read it right before appending (another session may be writing
    to it too), then append under `## Inbox`:
    ```markdown
-   - [ ] [[<Thread>]]: <action> · [[<slug>]] 📅 <YYYY-MM-DD>
+   - [ ] [[<Thread>]]: <action> · [<short title>](../../Wikis/Meetings/wiki/sources/<slug>.md) 📅 <YYYY-MM-DD>
    ```
-   The source is the meeting page as this prints it: `[[<slug>]]`, or an
-   `obsidian://` link when the zone and the wikis are Obsidian vaults of
-   their own, where a wikilink would point nowhere:
+   The source is the meeting page as this prints it: a Markdown link to the
+   page's file, relative to the zone's `Todo.md`, which every Markdown reader
+   follows, Obsidian included, however its vaults are set up. Never an
+   `obsidian:` link, which opens Obsidian whatever the user chose to open
+   notes in. A line written earlier with a `[[<slug>]]` or an `obsidian:`
+   source keeps it; every reader takes all three:
    ```sh
    python3 System/skills/meetings/ingest.py link --zone <Zone> --slug <slug> --title "<short title>"
    ```
@@ -596,7 +599,8 @@ something needs it.
    `threads` skill's *Wrap* fills it, with the filed page linked as the
    citation and the one thing due as the Next action. That action is a line
    in the zone's `Todo.md` as well, in the one shape every skill writes:
-   `- [ ] [[<Thread>]]: <action> · [[<slug>]] 📅 <YYYY-MM-DD>`. A file in
+   `- [ ] [[<Thread>]]: <action> · [<short title>](../../Wikis/Meetings/wiki/sources/<slug>.md) 📅 <YYYY-MM-DD>`,
+   its source as step 8 says. A file in
    `Deliverables/` is offered rather than written: step 10 ends on *Prep*'s
    save offer, and a yes saves it as *Prep* step 7 does, with this thread
    in focus.

@@ -349,8 +349,10 @@ class SkillsTest(unittest.TestCase):
             lines = re.findall(r"- \[ \] \[\[<Thread>\]\]: <action>[^`\n]*?<YYYY-MM-DD>", text)
             self.assertTrue(lines, path)
             # the thread first, the date last as Obsidian Tasks reads it; a meeting adds its page as the source
+            # (a relative link to the page's file, never obsidian://, #318)
             self.assertLessEqual(set(lines), {"- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>",
-                                              "- [ ] [[<Thread>]]: <action> · [[<slug>]] 📅 <YYYY-MM-DD>"}, path)
+                                              "- [ ] [[<Thread>]]: <action> · [<short title>]"
+                                              "(../../Wikis/Meetings/wiki/sources/<slug>.md) 📅 <YYYY-MM-DD>"}, path)
             self.assertNotIn("<project>, <thread>", text, path)
         threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for needle in ("that is how a later wrap or finish finds its lines", "Touch no line that names another thread",

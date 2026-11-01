@@ -62,8 +62,11 @@ check and the status page find the thread in `System/`.
    the lines ticked in the last 14 days and the rest of this batch. Two lines
    are the same action when they share the thread, the person and the thing
    to deliver, whatever the wording. A match is not added: the source goes on
-   the line already there, as `(also in [[<slug>]])`, and that is the only
-   change this skill makes to an existing line.
+   the line already there, as `(also in [<short title>](../../Wikis/Meetings/wiki/sources/<slug>.md))`,
+   the link `ingest.py link` prints (the `meetings` skill's step 8), and that
+   is the only change this skill makes to an existing line. A source is a
+   relative link to the page's file, never an `obsidian:` link; one
+   written before as `[[<slug>]]` or `obsidian:` stays as it is.
 6. **Append only, and only under `## Inbox`** (and `## Waiting on` for step
    4's second kind), each line opening with its thread as the `meetings`
    skill's step 8 says. A line the user moved to another section is never
@@ -80,7 +83,9 @@ check and the status page find the thread in `System/`.
    It moves Inbox lines nobody triaged in 14 days (or the days the zone sets
    as `todo-expire-days` in `System/garrick-checks.json`), and `Waiting on`
    lines left as long with no day to chase, to the expired archive,
-   unchanged and still open, so any can be pasted back; moves lines ticked before today to the
+   still open, so any can be pasted back: a relative source link in a
+   moved line is written again from `archive/`, so it still leads to its
+   page, and a line pasted back into `Todo.md` takes one `../` off it; moves lines ticked before today to the
    year's archive; and moves dates written mid-line to the end, keeping the
    Inbox in thread order: each thread where it first appears, or by the
    thread's name when `todo-inbox-order` is `thread`.

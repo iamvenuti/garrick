@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The status page for a Garrick workspace. An optional extra.
 
-    python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--obsidian VAULT | --no-obsidian] [--no-cmux] [--no-graph]
+    python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--no-cmux] [--no-graph]
                       [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...] [--same-flags] [--reuse-check SECONDS]
 
 One self-contained HTML file that answers "is anything wrong, and where was I"
@@ -42,11 +42,12 @@ action and Waiting on, the newest dated entry, a note's opening sentence,
 its Needs you questions and the names of the files in its folder. It still
 lives in System/generated/, never committed and outside the wall check.
 
-**It offers what this machine has**, and asks at every build. A note's link
-opens it in Obsidian when Obsidian has registered the workspace, or the zone or
-wiki the note is in, as a vault; otherwise it opens the file itself, in
-whatever app you use for Markdown. `--obsidian VAULT` names the workspace root
-as the vault instead, and `--no-obsidian` keeps every link a file link. In
+**It offers what this machine has**, and asks at every build. Every link to
+a note, a file or a folder is a file link (#318), and nothing opens Obsidian
+unless it was chosen: in Garrick.app a project's hub or a thread's note opens
+as its row does, through the default Settings › Opening a thread picks, and
+anything else in the app macOS opens it in, a folder in Finder; in Obsidian's
+tab the plugin opens a note there; in a browser the link is the browser's. In
 Garrick.app (see `app/`), projects and threads also offer Reveal in
 Finder and Open in Claude, Codex or cmux, for each one installed and switched
 on in Settings, where one of them can also be what clicking a thread's name
@@ -280,19 +281,64 @@ DRIFT_SAY = {"drifted": "has drifted from its shared copy", "missing": "is missi
              "conflict": "is a copy a sync conflict left on the share"}
 
 
-def drifted(ws: Path) -> List[str]:
+def row_anchor(zone: str, project: str, thread: str = "") -> str:
+    """The id of a project's or a thread's row on the Threads card, which a
+    Needs attention row links (#323): "row-work-acme-review-pricing"."""
+    return "row-" + re.sub(r"[^a-z0-9]+", "-", "/".join(x for x in (zone, project, thread) if x).lower()).strip("-")
+
+
+def attn_row(k: str, t: str, h) -> str:
+    """One row of Needs attention: a link to the card that explains it, or,
+    for a published file that drifted, to its project's or thread's row,
+    which the page opens and unfolds (`data-go`), with Show both beside it in
+    the app (#323)."""
+    if isinstance(h, dict):
+        row = '<a href="%s" data-go="%s">%s<span>%s</span></a>' % (E(h["href"]), E(json.dumps(h["go"])), ICON[k], E(t))
+        if h.get("reveal"):
+            row = ('<div class="adrift">%s<button class="act apponly" type="button" data-reveal="%s" title="%s">Show both</button></div>'
+                   % (row, E(json.dumps(h["reveal"])), E("Show the copy here and the shared copy in Finder, each in its own window")))
+        return row
+    return '<a href="%s"%s>%s<span>%s</span></a>' % (E(h), ' target="_blank" rel="noopener"' if h.startswith("https://") else "", ICON[k], E(t))
+
+
+def drift_day(iso: object) -> str:
+    """"30 Oct", from the date drift.py recorded; "" for none."""
+    d = as_date(iso)
+    return "%d %s" % (d.day, d.strftime("%b")) if d else ""
+
+
+def drifted(ws: Path) -> List[dict]:
     """What drift.py last found worth a look, from System/generated/drift.json,
     which it writes when run from a session or the app: a launchd job may
-    not read a cloud folder, so the page never compares anything itself."""
+    not read a cloud folder, so the page never compares anything itself.
+    Each with the sentence its Needs attention row says, which copy changed
+    and when for one that drifted, and where its row leads: the thread's row
+    on the Threads card for a file in a thread, else the project's (#323).
+    `both` says drift.json names the two copies, for Show both."""
     try:
         data = json.loads(ws.joinpath(*DRIFT).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
     out = []
     for f in data.get("files", []) if isinstance(data, dict) else []:
-        if isinstance(f, dict) and f.get("state") in DRIFT_SAY:
-            where = f.get("project", "?") + (", " + f["thread"] if f.get("thread") else "")
-            out.append("%s: %s %s" % (where, f.get("file") or "published.md", DRIFT_SAY[f["state"]]))
+        if not (isinstance(f, dict) and f.get("state") in DRIFT_SAY):
+            continue
+        project, name = str(f.get("project") or "?"), str(f.get("file") or "")
+        thread = str(f.get("thread") or "")
+        parts = name.split("/")
+        if not thread and len(parts) > 2 and parts[0] == "Threads":
+            thread = parts[1]                       # kept in a thread's folder, named from the project's
+        where = project + (", " + thread if thread else "")
+        here, shared = drift_day(f.get("here_changed")), drift_day(f.get("shared_changed"))
+        if f["state"] == "drifted" and here and shared and f.get("newer") in ("here", "shared"):
+            first, then = ("the shared copy", "the copy here") if f["newer"] == "shared" else ("the copy here", "the shared copy")
+            said = "%s: %s: %s changed on %s, after %s (%s)" % (
+                where, parts[-1], first, shared if f["newer"] == "shared" else here, then, here if f["newer"] == "shared" else shared)
+        else:
+            said = "%s: %s %s" % (where, name or "published.md", DRIFT_SAY[f["state"]])
+        out.append({"text": said, "zone": str(f.get("zone") or ""), "project": project, "thread": thread,
+                    "ledger": str(f.get("thread") or ""), "file": name,
+                    "both": f["state"] == "drifted" and bool(f.get("here")) and bool(f.get("shared"))})
     return out
 
 
@@ -806,8 +852,8 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
             else:
                 thread, note = None, None
             return dict(t, when=when, late=late, done=done, field=field if when else "", label=thread,
-                        link=link(note) if note else "", zone=zone.name,
-                        alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), re.sub(r"[*_`]", "", t["text"]))).casefold())
+                        link=link.attrs(note) if note else "", zone=zone.name,
+                        alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), plain_text(t["text"]))).casefold())
 
         rows = [row(t) for t in tl.tasks(str(zone)) if t["text"] and "<action>" not in t["text"]]
         if not rows and not todo_md.is_file():
@@ -850,7 +896,7 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
         chip = "%s %s" % ("Chase" if r["waiting"] else "Due", rel)
         cls = "late" if r["late"] else "today" if when == today else ""
     name = r["label"] or ("thread?" if r["unsure"] else "")
-    thr = ('<a class="thr" href="%s">%s</a>' % (E(r["link"]), E(name)) if r["link"] and name
+    thr = ('<a class="thr" %s>%s</a>' % (r["link"], E(name)) if r["link"] and name
            else '<span class="thr%s">%s</span>' % (" unsure" if r["unsure"] and not r["label"] else "", E(name)) if name else "")
     meta = []
     if r["priority"] in ("🔺", "⏫"):
@@ -862,7 +908,7 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
     if said_late and r["late"] and when is not None:
         meta.append('<span class="lateby">%s</span>' % E(late_said(r, today)))
     tick = ('<button class="tick" type="button" title="%s" aria-label="%s: %s"></button>'
-            % ("Reopen" if r["done"] else "Mark done", "Reopen" if r["done"] else "Mark done", E(r["text"][:80])) if actions else "")
+            % ("Reopen" if r["done"] else "Mark done", "Reopen" if r["done"] else "Mark done", E(plain_text(r["text"])[:80])) if actions else "")
     date = ('<button class="tdate %s" type="button" title="Set the date">%s</button>' % (cls, E(chip)) if actions
             else '<span class="tdate %s">%s</span>' % (cls, E(chip)))
     return ('<div class="trow%s%s%s" data-z="%s" data-f="%s" data-k="%s" data-sec="%s" data-w="%d" data-d="%s" data-a="%s">'
@@ -1066,42 +1112,103 @@ def debt_history(ws: Path, today: dt.date) -> Tuple[List[Tuple[dt.date, dict]], 
         return [], N.scope_said
 
 
+DEBT_LEAST = 3         # fewer records than this and the figure stands alone, with no chart (#321)
+
+
+def debt_scale(values: List[float], threshold: float) -> Tuple[float, float, float]:
+    """(bottom, top, cap) of the chart's vertical scale (#321). The cap is
+    twice the threshold, or the highest value that is no spike (at most twice
+    the median), whichever is larger; a value above it is drawn at the cap.
+    The scale runs from a little under the lowest value or the threshold to a
+    little over the cap, so one night far above the rest leaves the
+    difference between the others to be seen."""
+    ordered = sorted(values)
+    median = ordered[len(ordered) // 2]
+    usual = [v for v in values if v <= 2 * median] or ordered[:1]
+    cap = max(2 * threshold, max(usual), 1)
+    low = min(min(v for v in values if v <= cap) if any(v <= cap for v in values) else cap, threshold)
+    bottom = max(0.0, low - (cap - low) * 0.1)
+    return bottom, cap + (cap - bottom) * 0.08, cap
+
+
 def debt_chart(history: List[Tuple[dt.date, dict]], today: dt.date, threshold: float) -> str:
-    """The last DEBT_DAYS days as a small line, one point a day that has a
-    record, broken where a day has none, against the threshold, dashed. In
-    the page's own tokens, so it reads in light and dark."""
-    w, h, pad = 300.0, 56.0, 5.0
-    top = max([x["total"] for _, x in history] + [threshold, 1]) * 1.1
-    first = today - dt.timedelta(days=DEBT_DAYS - 1)
-    at = lambda d: pad + (d - first).days / (DEBT_DAYS - 1) * (w - 2 * pad)
-    y = lambda v: h - pad - v / top * (h - 2 * pad)
-    runs, run, last = [], [], None
+    """The line of the context debt (#321): from the first record, or
+    DEBT_DAYS back, whichever is later, to the latest, so the line fills the
+    width; one point a day that has a record, broken where a day has none,
+    and a tick on the axis for each such night, saying so when pointed at.
+    The scale is capped (debt_scale()): a night above the cap is an open dot
+    at the cap with its value beside it. The first and latest values and the
+    threshold, dashed, are written on the chart. In the page's own tokens, so
+    it reads in light and dark. Nothing with fewer than DEBT_LEAST records."""
+    if len(history) < DEBT_LEAST:
+        return ""
+    w, h, pad = 300.0, 64.0, 5.0
+    first, last = max(history[0][0], today - dt.timedelta(days=DEBT_DAYS - 1)), history[-1][0]
+    history = [(d, x) for d, x in history if d >= first]
+    span = max(1, (last - first).days)
+    bottom, top, cap = debt_scale([x["total"] for _, x in history], threshold)
+    at = lambda d: pad + (d - first).days / span * (w - 2 * pad)
+    y = lambda v: h - pad - (min(v, cap) - bottom) / (top - bottom) * (h - 2 * pad)
+    pct = lambda v, of: "%.2f%%" % (v / of * 100)
+    runs, run, prev = [], [], None
     for d, x in history:
-        if last is not None and (d - last).days != 1:
+        if prev is not None and (d - prev).days != 1:
             runs.append(run)
             run = []
         run.append((at(d), y(x["total"])))
-        last = d
+        prev = d
     runs.append(run)
-    lines = "".join('<polyline class="dl" points="%s"/>' % " ".join("%.1f,%.1f" % p for p in r) for r in runs if len(r) > 1)
-    areas = "".join('<polygon class="da" points="%.1f,%.1f %s %.1f,%.1f"/>' % (r[0][0], h - pad, " ".join("%.1f,%.1f" % p for p in r),
+    lines = "".join('<polyline class="dl" points="%s"/>' % " ".join("%.1f,%.1f" % q for q in r) for r in runs if len(r) > 1)
+    areas = "".join('<polygon class="da" points="%.1f,%.1f %s %.1f,%.1f"/>' % (r[0][0], h - pad, " ".join("%.1f,%.1f" % q for q in r),
                                                                           r[-1][0], h - pad) for r in runs if len(r) > 1)
-    # A dot is a line of no length with round ends, so it stays round however the chart is stretched.
-    dots = "".join('<line class="dd%s" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" data-tip="%s"/>'
-                   % (" now" if i == len(history) - 1 else "", at(d), at(d), y(x["total"]), y(x["total"]),
-                      E("%s · %s" % (d.strftime("%a %d %b"), x["total"]))) for i, (d, x) in enumerate(history))
+    # A dot is a line of no length with round ends, so it stays round however the chart is stretched;
+    # a night above the cap is an open one, a narrower dot in the card's colour over it.
+    dots, notes = "", ""
+    for i, (d, x) in enumerate(history):
+        v, cls = x["total"], " now" if i == len(history) - 1 else ""
+        tip = E("%s · %s" % (d.strftime("%a %d %b"), debt_points(v)))
+        dots += '<line class="dd%s%s" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" data-tip="%s"/>' % (
+            cls, " over" if v > cap else "", at(d), at(d), y(v), y(v), tip)
+        if v > cap:
+            dots += '<line class="dhole" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f"/>' % (at(d), at(d), y(v), y(v))
+            notes += '<span class="dval dspike" style="left:%s;top:%s">%s</span>' % (pct(at(d), w), pct(y(v), h), E(str(debt_points(v))))
+    have = {d for d, _ in history}
+    for n in range(1, span):
+        d = first + dt.timedelta(days=n)
+        if d not in have:
+            notes += '<i class="dmiss" style="left:%s" data-tip="%s"></i>' % (
+                pct(at(d), w), E("No Nurture record for %s" % d.strftime("%a %d %b")))
+    v0, v1 = history[0][1]["total"], history[-1][1]["total"]
+    notes += ('<span class="dval dfirst" style="top:%s">%s</span><span class="dval dlast" style="top:%s">%s</span>'
+              '<span class="dthr" style="top:%s">threshold %s</span>'
+              % (pct(y(v0), h), E(str(debt_points(v0))), pct(y(v1), h), E(str(debt_points(v1))), pct(y(threshold), h),
+                 E(str(debt_points(threshold)))))
     bar = '<line class="dt" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f"/>' % (pad, w - pad, y(threshold), y(threshold))
-    said = "Context debt, last %d days: %s on %s, %s on %s, against a threshold of %s" % (
-        DEBT_DAYS, history[0][1]["total"], history[0][0].strftime("%d %b"), history[-1][1]["total"],
-        history[-1][0].strftime("%d %b"), threshold)
-    return ('<svg class="dchart" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="%s">%s%s%s%s</svg>'
-            '<div class="dticks"><span>%s</span><span>today</span></div>'
-            % (w, h, E(said), areas, bar, lines, dots, E(first.strftime("%d %b").lstrip("0"))))
+    said = "Context debt from %s to %s: %s on %s, %s on %s, against a threshold of %s" % (
+        first.strftime("%d %b"), last.strftime("%d %b"), debt_points(v0), history[0][0].strftime("%d %b"),
+        debt_points(v1), last.strftime("%d %b"), debt_points(threshold))
+    return ('<div class="dwrap"><svg class="dchart" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="%s">'
+            '%s%s%s%s</svg>%s</div><div class="dticks"><span>%s</span><span>%s</span></div>'
+            % (w, h, E(said), areas, bar, lines, dots, notes, E(first.strftime("%d %b").lstrip("0")),
+               "today" if last == today else E(last.strftime("%d %b").lstrip("0"))))
+
+
+def debt_kinds(debt: dict) -> str:
+    """What the figure is made of, by kind as Nurture weighs them (#321):
+    "49: judgment 38, attribution 10, mechanical 1", the heaviest first, and
+    a wall finding first of all, in the critical colour."""
+    kinds = {k: v for k, v in (debt.get("kinds") or {}).items() if isinstance(v, (int, float)) and v}
+    if not kinds:
+        return ""
+    order = sorted(kinds, key=lambda k: (k != "wall", -kinds[k], k))
+    return '<p class="dkinds">%s: %s</p>' % (E(str(debt_points(debt["total"]))), ", ".join(
+        '<span%s>%s %s</span>' % (' class="dwall"' if k == "wall" else "", E(k), E(str(debt_points(kinds[k])))) for k in order))
 
 
 def debt_block(ws: Path, today: dt.date) -> str:
-    """The figure, its trend over the last DEBT_DAYS days and the scopes
-    carrying most of it, for the Checks card; "" with no record."""
+    """The figure, what it is made of, its trend over the last DEBT_DAYS days
+    and the scopes carrying most of it, for the Checks card; "" with no
+    record."""
     history, said = debt_history(ws, today)
     if not history:
         return ""
@@ -1126,10 +1233,10 @@ def debt_block(ws: Path, today: dt.date) -> str:
             "build's quick check." % (day.strftime("%a %d %b"), outcome.get("fixed", 0), outcome.get("answered", 0),
                                        outcome.get("left", 0)))
     return ('<div class="debt" id="debt"><div class="dhead"><span class="dfig">%s</span><span class="dlbl">context debt%s</span>'
-            '<span class="chip%s" data-tip="%s">%s %s</span></div>%s<p class="hint dmost">%s%s</p>%s</div>'
+            '<span class="chip%s" data-tip="%s">%s %s</span></div>%s%s<p class="hint dmost">%s%s</p>%s</div>'
             % (E(str(total)), E(when), " late" if over else "",
                E("Each finding Nurture left, weighed by kind; the threshold is nurture-threshold in System/garrick-checks.json"),
-               "over" if over else "under", E(str(threshold)), debt_chart(history, today, threshold),
+               "over" if over else "under", E(str(threshold)), debt_kinds(debt), debt_chart(history, today, threshold),
                ("Most in " + named + ". ") if named else "Nothing weighs anything. ", button, lines))
 
 
@@ -1186,8 +1293,8 @@ def check_groups(ws: Path, C: dict, link: "Links") -> str:
     for f in C.get("findings", []):
         for kind, line, act in sorted_finding(ws, lib, f):
             rows.setdefault(kind, []).append(
-                '<li>%s<span class="cline"><a href="%s">%s</a>: %s</span>%s</li>'
-                % (ICON["critical" if f.get("severity") == "error" else "warning"], E(link(ws / line[0])), E(line[0]),
+                '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s</li>'
+                % (ICON["critical" if f.get("severity") == "error" else "warning"], link.attrs(ws / line[0]), E(line[0]),
                    E(line[1]), act))
             errors[kind] = errors.get(kind, 0) + (f.get("severity") == "error")
     if not rows:
@@ -1282,13 +1389,20 @@ def review_block(ws: Path) -> str:
 
 
 DEBT_CSS = r"""
-/* Context debt, on the Checks card: the figure, a line over thirty days against the threshold, dashed, and the scopes carrying most */
+/* Context debt, on the Checks card: the figure and what it is made of, a line from the first record against the threshold,
+   dashed, with the first, latest and threshold values written and a tick for a night with no record, and the scopes carrying most */
 .debt{margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--line)}.dhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .dfig{font:600 28px/1 var(--display);letter-spacing:-.01em}.dlbl{color:var(--ink2);font-size:12.5px}
-.dchart{display:block;width:100%;height:56px;margin:8px 0 2px;overflow:visible}
+.dkinds{margin:2px 0 0;font-size:12.5px;color:var(--ink2)}.dkinds .dwall{color:var(--critical);font-weight:600}
+.dwrap{position:relative;margin:18px 0 2px}.dchart{display:block;width:100%;height:64px;overflow:visible}
 .dchart .dl{fill:none;stroke:var(--accent);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
 .dchart .da{fill:var(--wash);stroke:none}.dchart .dt{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
 .dchart .dd{stroke:var(--accent);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke}.dchart .dd.now{stroke-width:8}
+.dchart .dd.over{stroke-width:8}.dchart .dhole{stroke:var(--surface);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke;pointer-events:none}
+.dval,.dthr{position:absolute;font-size:11px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
+.dval{color:var(--ink2);font-weight:600;transform:translateY(-150%)}.dfirst{left:0}.dlast{right:0}.dspike{transform:translate(8px,-50%)}
+.dthr{left:50%;transform:translate(-50%,-130%);color:var(--muted)}
+.dmiss{position:absolute;bottom:-3px;width:9px;height:8px;margin-left:-4.5px;background:linear-gradient(var(--muted),var(--muted)) center/1.5px 100% no-repeat}
 .dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
 .review{align-items:center;margin:0 0 12px}
 """
@@ -2533,31 +2647,68 @@ def say_kinds(changes) -> str:
 
 # One line per ingest in each wiki's log: `- 2026-09-24: [[wiki/sources/slug|Title]] (…)`.
 LOG_ENTRY = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]")
+# A dated line with no link first, as the knowledge skill wrote its log before
+# 0.51.0: its title is its text up to the first parenthesis or semicolon. And
+# a dated `## ` heading, as a wiki whose schema.json says `"log": "section"`
+# keeps it: its title is the rest of the heading, or the first line under it (#322).
+LOG_DATED = re.compile(r"^\s*-\s+(\d{4}-\d\d-\d\d):\s+(.*)$")
+LOG_SECTION = re.compile(r"^##\s+(\d{4}-\d\d-\d\d)\b[\s:·,—–-]*(.*)$")
+LOG_NOT_READ = "log not read"
+
+
+def log_entries(text: str) -> Tuple[List[Tuple[dt.date, int, str, str]], bool]:
+    """(date, -line, title, page target or "") for every entry a wiki's log
+    holds, in the three forms (#322); and whether it holds lines that look
+    like entries, a list item or a `## ` section, so a log that reads as none
+    of them says so rather than "nothing logged yet"."""
+    lines = text.splitlines()
+    entries, tried = [], False
+    for n, line in enumerate(lines):
+        m = LOG_ENTRY.match(line)
+        if m:
+            when = as_date(m.group(1))
+            if when:
+                target = m.group(2).strip()
+                entries.append((when, -n, (m.group(3) or target.rsplit("/", 1)[-1]).strip(), target))
+                continue
+        m = LOG_DATED.match(line) or LOG_SECTION.match(line)
+        if m and as_date(m.group(1)):
+            rest = m.group(2).strip()
+            if not rest and line.startswith("##"):          # the section's first line says what it holds
+                rest = next((l.strip().lstrip("-* ").strip() for l in lines[n + 1:n + 6] if l.strip() and not l.startswith("#")), "")
+                k = LOG_ENTRY.match("- %s: %s" % (m.group(1), rest))
+                if k:
+                    target = k.group(2).strip()
+                    entries.append((as_date(m.group(1)), -n, (k.group(3) or target.rsplit("/", 1)[-1]).strip(), target))
+                    continue
+            title = plain_text(re.split(r"[(;]", rest, 1)[0]).strip(" .,:") or "an entry"
+            entries.append((as_date(m.group(1)), -n, title, ""))
+            continue
+        tried = tried or line.lstrip().startswith(("- ", "* ")) or line.startswith("## ")
+    return entries, tried
 
 
 def wikis(ws: Path) -> List[dict]:
     """Per wiki: its log, how many entries it holds, and the newest entry's
-    date and title. Nothing else from the line: not its zone, not its parties."""
+    date and title. Nothing else from the line: not its zone, not its parties.
+    An entry with a link opens its page; a log whose entries it cannot read
+    at all says so (`unread`)."""
     out = []
     for w in visible_dirs(ws / "Wikis"):
         log = w / "wiki" / "log.md"
         if not log.is_file():
             continue
-        entries = []
-        for n, line in enumerate(log.read_text(encoding="utf-8", errors="replace").splitlines()):
-            m = LOG_ENTRY.match(line)
-            when = as_date(m.group(1)) if m else None
-            if when:
-                target = m.group(2).strip()
-                title = (m.group(3) or target.rsplit("/", 1)[-1]).strip()
-                entries.append((when, -n, title, target))
-        row = {"name": w.name, "log": log, "count": len(entries), "when": None, "title": "", "page": None}
+        entries, tried = log_entries(log.read_text(encoding="utf-8", errors="replace"))
+        row = {"name": w.name, "log": log, "count": len(entries), "when": None, "title": "", "page": None,
+               "unread": tried and not entries}
         if entries:
             when, _, title, target = max(entries)   # the newest; on a tie, the line nearer the top
-            page = (w / (target if target.endswith(".md") else target + ".md")).resolve()
-            inside = str(page).startswith(str(w.resolve()) + os.sep)
-            row.update(when=when, title=title[:100] + ("…" if len(title) > 100 else ""),
-                       page=page if inside and page.is_file() else None)
+            page = None
+            if target:
+                page = (w / (target if target.endswith(".md") else target + ".md")).resolve()
+                if not (str(page).startswith(str(w.resolve()) + os.sep) and page.is_file()):
+                    page = None
+            row.update(when=when, title=title[:100] + ("…" if len(title) > 100 else ""), page=page)
         out.append(row)
     return out
 
@@ -2596,11 +2747,14 @@ KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
 # page of `type: entity` is an entity. A type the model does not know, shared
 # by at least KIND_FROM_PAGES pages of one wiki, is a kind of its own, named
 # from the type (`domain`, Domains), coloured from PAGE_COLOURS (#250). Any
-# other page is drawn as other notes. A place opens on its hubs: a zone's
-# projects and threads, the people in Meetings, the concepts and entities in
-# any other wiki.
+# other page is drawn as other notes. A place's hubs are what its core view
+# joins: a zone's projects and threads, the people and entities in Meetings
+# (#320), the concepts and entities in any other wiki. A place opens on its
+# hubs, but Meetings on its people (OPENS): entities are in the legend there,
+# off until turned on.
 WIKI_KINDS = ("meeting", "mail", "person", "source", "concept", "entity")
-HUBS = {"": ("project", "thread"), "Meetings": ("person",), "*": ("concept", "entity")}
+HUBS = {"": ("project", "thread"), "Meetings": ("person", "entity"), "*": ("concept", "entity")}
+OPENS = {"Meetings": ("person",)}
 KIND_FROM_PAGES = 3
 # Colours for the kinds found from pages, after KINDS's: none near a shipped
 # kind's, amber, red or another of these, and each at least 2.9 to 1 against
@@ -2795,6 +2949,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                       "t": party, "d": days, "s": 1 if parked else 0,
                       "c": 1 if hub else 0, "h": 1 if kind == "project" else 0,
                       "w": say, "u": link(path), "m": path.relative_to(root).as_posix()[:-3]})
+        if link.place(path):
+            nodes[-1]["pl"] = link.place(path)       # a hub or a thread's note: a double-click opens it as its row (#318)
         if moving and urgent and (place, project, folder_thread) in urgent:
             nodes[-1]["lt"] = 1                  # its next action is late
         if wiki and nodes[-1]["n"] != title:
@@ -2858,18 +3014,22 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
                 edges.add((min(a, b), max(a, b)))
     used = sorted({n["k"] for n in nodes})        # each kind the legend offers as a filter (#250)
     # In a wiki's core view the hubs are joined when one page links both: two
-    # people in the same meeting, two concepts cited by the same source. The
-    # third number is how many pages do.
+    # people in the same meeting, a person and the entity met in it (#320),
+    # two concepts cited by the same source. The third number is how many
+    # pages do. A page that joins is any not of the kinds the place opens on
+    # (OPENS), or not a hub where it names none: so in Meetings an entity's
+    # page still joins two people, as before entities were hubs.
     wikis = {place for place, root, _ in notes if root.parent.name != "Zones"}
+    opens = {place: {keys.index(k) for k in OPENS[place] if k in keys} for place in wikis if place in OPENS}
     neighbours: Dict[int, set] = {}
     for a, b in edges:
         neighbours.setdefault(a, set()).add(b)
         neighbours.setdefault(b, set()).add(a)
     co: Dict[Tuple[int, int], int] = {}
     for i, n in enumerate(nodes):
-        if n["z"] not in wikis or n["c"]:
+        if n["z"] not in wikis or (n["k"] in opens[n["z"]] if n["z"] in opens else n["c"]):
             continue
-        hubs = sorted(j for j in neighbours.get(i, ()) if nodes[j]["c"] and nodes[j]["z"] == n["z"])
+        hubs = sorted(j for j in neighbours.get(i, ()) if j != i and nodes[j]["c"] and nodes[j]["z"] == n["z"])
         for x in range(len(hubs)):
             for y in range(x + 1, len(hubs)):
                 co[(hubs[x], hubs[y])] = co.get((hubs[x], hubs[y]), 0) + 1
@@ -2881,7 +3041,8 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             "mode": "all" if len(nodes) <= 150 else "core",
             "modes": {z: "all" if c <= 150 else "core" for z, c in counts.items()},
             "pr": {place: root.relative_to(ws).as_posix() for place, root in places},
-            "ce": [[a, b, w] for (a, b), w in sorted(co.items())]}
+            "ce": [[a, b, w] for (a, b), w in sorted(co.items())],
+            "op": {place: sorted(ks) for place, ks in opens.items()}}
 
 
 def launch_agents() -> Path:
@@ -3519,44 +3680,6 @@ def mac_app(name: str, apps: Optional[List[Path]] = None) -> Optional[Path]:
     return None
 
 
-def obsidian_config() -> List[Path]:
-    """Where Obsidian keeps its list of vaults: macOS, Linux, Windows."""
-    home = Path.home()
-    found = [home / "Library" / "Application Support" / "obsidian" / "obsidian.json",
-             home / ".config" / "obsidian" / "obsidian.json"]
-    if os.environ.get("APPDATA"):
-        found.append(Path(os.environ["APPDATA"]) / "obsidian" / "obsidian.json")
-    return found
-
-
-def obsidian_vaults(ws: Path, config: Optional[Path] = None, apps: Optional[List[Path]] = None) -> List[Tuple[Path, str]]:
-    """The vaults Obsidian has registered that hold this workspace's notes:
-    the root, or a zone or wiki opened on its own, or a folder above the
-    workspace. Each comes with the name a link gives it: the folder's name,
-    or the vault's id when two registered vaults share a name. On a Mac,
-    Obsidian must still be installed. Deepest first, so a note opens in the
-    vault closest to it."""
-    if sys.platform == "darwin" and mac_app("Obsidian", apps) is None:
-        return []
-    data = None
-    for f in ([config] if config else obsidian_config()):
-        try:
-            data = json.loads(Path(f).read_text(encoding="utf-8"))
-            break
-        except (OSError, ValueError):
-            continue
-    vaults = data.get("vaults") if isinstance(data, dict) else None
-    known = [(str(vid), Path(v["path"])) for vid, v in (vaults or {}).items() if isinstance(v, dict) and v.get("path")]
-    names = [p.name for _, p in known]
-    root = ws.resolve()
-    out = []
-    for vid, folder in known:
-        where = folder.resolve()
-        if where.is_dir() and (where == root or root in where.parents or where in root.parents):
-            out.append((where, folder.name if names.count(folder.name) == 1 else vid))
-    return sorted(out, key=lambda v: len(v[0].parts), reverse=True)
-
-
 def cmux_installed(apps: Optional[List[Path]] = None) -> bool:
     """cmux is a macOS app; the page offers it where it is installed."""
     return "cmux" in launchers_installed(apps)
@@ -3628,30 +3751,42 @@ def launchers_installed(apps: Optional[List[Path]] = None) -> Tuple[str, ...]:
 
 
 class Links:
-    def __init__(self, ws: Path, vault: Optional[str] = None, vaults: Optional[List[Tuple[Path, str]]] = None):
-        """`vault` names the workspace root as a vault; `vaults` are the
-        vaults found on this machine, deepest first."""
+    """Every link the page makes to a file or a folder (#318): a file:// URL
+    to the path as it stands in the workspace, never resolved, so a link that
+    is itself a symlink stays one and Garrick.app refuses it, as it refuses a
+    cited record that is. Nothing here asks Obsidian, or any other app, where
+    a note should open: Garrick.app opens a hub or a thread's note as its row
+    does and anything else in the app macOS opens it in, the Obsidian plugin
+    opens a note of its vault in Obsidian, and a browser follows the link."""
+
+    def __init__(self, ws: Path):
         self.ws = ws
-        self.vaults = [(ws, vault)] if vault else list(vaults or [])
 
     def __call__(self, path: Path) -> str:
-        """A link to the file. In Obsidian a file is named by its path in the
-        vault, so a note that is a symlink to a file elsewhere keeps the path
-        of the link; a file in no vault, such as a job's log, is linked as a
-        file."""
-        for root, name in self.vaults:
-            for candidate in (Path(os.path.abspath(path)), path.resolve()):
-                rel = None
-                for base in (Path(os.path.abspath(root)), Path(root).resolve()):
-                    try:
-                        rel = candidate.relative_to(base).as_posix()
-                        break
-                    except ValueError:
-                        continue
-                if rel is not None:
-                    rel = rel[:-3] if rel.endswith(".md") else rel
-                    return "obsidian://open?vault=%s&file=%s" % (urllib.parse.quote(name), urllib.parse.quote(rel))
-        return path.resolve().as_uri()
+        return Path(os.path.abspath(str(path))).as_uri()
+
+    def place(self, path: Path) -> Optional[str]:
+        """The folder of the project or thread whose note `path` is: a hub,
+        `Zones/<zone>/<project>/<project>.md` or `System/<project>/<project>.md`,
+        or a thread's note, `.../Threads/<thread>/<thread>.md`. None for any
+        other file, which opens as itself."""
+        p = Path(os.path.abspath(str(path)))
+        try:
+            parts = p.relative_to(Path(os.path.abspath(str(self.ws)))).parts
+        except ValueError:
+            return None
+        if p.suffix != ".md" or len(parts) < 3 or p.stem != p.parent.name:
+            return None
+        hub = (parts[0] == "Zones" and len(parts) == 4) or (parts[0] == "System" and len(parts) == 3)
+        thread = len(parts) >= 5 and parts[-3] == "Threads" and parts[0] in ("Zones", "System")
+        return str(p.parent) if hub or thread else None
+
+    def attrs(self, path: Path) -> str:
+        """An <a>'s href to `path`, and where it is a hub or a thread's note,
+        its place, `data-place`: the page hands such a link to the host, which
+        opens it as the row of that project or thread opens (#318)."""
+        place = self.place(path)
+        return 'href="%s"%s' % (E(self(path)), ' data-place="%s"' % E(place) if place else "")
 
 
 def day_cells(runs: List[Tuple[dt.datetime, int]], now: dt.datetime, quiet: Tuple[int, ...] = ()) -> List[Tuple[str, str]]:
@@ -3977,6 +4112,13 @@ REBUILD = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><
            'stroke-linecap="round" stroke-linejoin="round" d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5v3.4h-3.4"/></svg>')
 
 
+def plain_text(s: str) -> str:
+    """A line of Markdown as a reader hears it, for a label or a sort key: a
+    link's text and never its address, so a Todo line's source, whatever its
+    form, is its title (#318)."""
+    return re.sub(r"[*_`]", "", guide_mod().plain(s))
+
+
 def md_inline(s: str) -> str:
     """A line of Markdown, through guide.py's renderer: a link keeps its text, since the page links only to Garrick."""
     return guide_mod().inline(s)
@@ -4044,9 +4186,10 @@ def desk_agent(ws: Path) -> str:
     return agent if agent in dict(DESK_AGENTS) else "claude"
 
 
-def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
-                     why: Optional[Dict[str, Optional[str]]] = None, agent: Optional[str] = None) -> str:
-    """Settings › Opening a thread: the note's own link, then each app Garrick
+def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optional[str]]] = None,
+                     agent: Optional[str] = None) -> str:
+    """Settings › Opening a thread: the note's own link, *Open the note* in
+    the app macOS opens a .md file in, whatever is installed (#318), then each app Garrick
     can open a project in, with a checkbox (offered on the cards) and a radio
     (what clicking a thread's name does), each with its card icon. Explore's
     Preview has the box alone, after the note's link (#219). A launcher that
@@ -4058,8 +4201,7 @@ def launcher_choices(installed: Tuple[str, ...], obsidian: bool = False,
     adds which assistant a tab starts under Open in cmux (#279); the app
     saves that one in System/desk.json when Settings closes."""
     why = launcher_state() if why is None else why
-    rows = [("note", "Open in Obsidian" if obsidian else "Open the note", True, "",
-             LAUNCH_ICON % ("var(--icon-obsidian,var(--icon-note))" if obsidian else "var(--icon-note)"))]
+    rows = [("note", "Open the note", True, "", LAUNCH_ICON % "var(--icon-note)")]
     rows += [(k, VERB[k], k in installed, "" if k in installed else E(why[k]) if why.get(k) else LEFT_OUT,
               LAUNCH_ICON % "var(--icon-%s)" % k)
              for k, _, _, _ in LAUNCHERS]
@@ -4164,7 +4306,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     most saying what they are for; how a feature works is behind its "?"
     and in docs/extras/status-page.md (#227)."""
     agent = desk_agent(ws) if "cmux" in installed and CMUXLIB.is_file() else None
-    filed = {"look": [home_settings(layout), launcher_choices(installed, bool(mac_app("Obsidian")), agent=agent),
+    filed = {"look": [home_settings(layout), launcher_choices(installed, agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings(),
                       wait_settings(ws)],
@@ -4492,13 +4634,11 @@ def script_json(data) -> str:
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
 
-def rebuild_command(ws: Path, vault: Optional[str] = None, show_graph: bool = True, out: Optional[Path] = None,
+def rebuild_command(ws: Path, show_graph: bool = True, out: Optional[Path] = None,
                     flags: Tuple[str, ...] = ()) -> str:
     """The command that builds this page again, with the flags it was built
     with, absolute and quoted so it runs from any folder."""
     words = ["python3", str(Path(__file__).resolve()), "--workspace", str(ws)]
-    if vault:
-        words += ["--obsidian", vault]
     words += list(flags)
     if not show_graph:
         words.append("--no-graph")
@@ -6220,6 +6360,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .legend i{width:10px;height:10px;border-radius:2px;background:var(--none)}.legend i.good{background:var(--good)}.legend i.warning{background:var(--warning)}.legend i.critical{background:var(--critical)}
 .attn{display:flex;flex-direction:column;gap:6px}.attn a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:10px;background:var(--raise);border:1px solid var(--line)}
 .attn a:hover{text-decoration:none;border-color:var(--base)}.attn svg{width:16px;height:16px;flex:none}
+.attn .adrift{display:flex;align-items:center;gap:6px}.attn .adrift>a{flex:1;min-width:0}.attn .adrift>.act{flex:none}
 .zones{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:0 22px}
 .zone>summary{display:flex;align-items:baseline;gap:8px;padding:10px 0 8px}
 .zone>summary h3{margin:0;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}.zone>summary .meta{margin-left:auto;font-size:12px;color:var(--muted)}
@@ -6305,7 +6446,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .gacts{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 4px}.gacts a.act:hover{text-decoration:none}
 /* In Garrick.app, which sets --icon-<app> and .appicons: each way to open a note is its app's icon, as in its
    menu bar, the default on a tinted square. A browser keeps the words. */
-.act[data-k=note]{--ic:var(--icon-note)}.act[data-k=note][href^="obsidian:"]{--ic:var(--icon-obsidian,var(--icon-note))}
+.act[data-k=note]{--ic:var(--icon-note)}
 .act[data-k=finder]{--ic:var(--icon-finder)}.act[data-k=cmux]{--ic:var(--icon-cmux)}.act[data-k=codex]{--ic:var(--icon-codex)}.act[data-k=claude]{--ic:var(--icon-claude)}
 .appicons .gacts{align-items:center}
 .appicons .act[data-k]{width:34px;height:34px;padding:0;font-size:0;color:transparent;border-color:transparent;border-radius:8px;background:transparent var(--ic) center/26px no-repeat}
@@ -6576,6 +6717,26 @@ var toast=document.getElementById('toast');function say(s){toast.textContent=s;t
    the page copies and nothing else. */
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 if(!host)document.body.classList.add('nohost');      /* a browser cannot act: its action buttons stay hidden */
+/* Every link to a file goes to the host over its bridge (#318): the app shows the page with read access to its own
+   folder only, so WebKit drops a navigation to any other file before the app sees it. A link to a project's hub or
+   a thread's note carries its place (data-place), and the host opens it as the row of that project or thread opens;
+   any other file the host opens as macOS does, a folder in Finder. Capture, so it is heard wherever the link sits;
+   a handler that took the click first, such as a thread's name opening its default, keeps it. The attribute as
+   written is read, never a.href, which resolves "#checks" against the page into a file link of its own. */
+document.addEventListener('click',function(e){if(!host||e.defaultPrevented||e.button!==0)return;
+var a=e.target.closest&&e.target.closest('a[href]');if(!a||!/^file:/i.test(a.getAttribute('href')||''))return;e.preventDefault();
+host.postMessage({open:a.href,place:a.dataset.place||undefined})},true);
+/* A drifted file's line in Needs attention (#323) leads to the row of its thread, or of its project where the thread
+   has none on the card: on its tab, its folds open, scrolled to and with its card open, as a match found opens.
+   Show both asks the host to reveal the copy here and the shared copy; only the app answers it. */
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('.attn a[data-go]');if(!a)return;
+var g;try{g=JSON.parse(a.dataset.go)}catch(x){return}var row=document.getElementById(g.row)||document.getElementById(g.up);if(!row)return;
+e.preventDefault();e.stopPropagation();var sec=row.closest('section.tab');if(sec&&window.StatusTab)StatusTab(sec.id.slice(4));
+for(var d=row.closest('details');d;d=d.parentNode&&d.parentNode.closest?d.parentNode.closest('details'):null)d.open=true;
+var sub=row.closest('.subthreads');if(sub&&sub.hidden){var b=document.querySelector('.pchev[data-sub="'+sub.id+'"]');if(b)b.click();else sub.hidden=false}
+row.scrollIntoView({block:'center'});var l=row.querySelector('.t>a');if(l)l.focus({preventScroll:true})},true);
+document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('.attn [data-reveal]');if(!b||!host)return;
+var q;try{q=JSON.parse(b.dataset.reveal)}catch(x){return}host.postMessage({reveal:q});say('Showing both copies in Finder…')});
 function put(text){if(host){host.postMessage({copy:text});return Promise.resolve()}
 if(navigator.clipboard&&window.isSecureContext){return navigator.clipboard.writeText(text)}var a=document.createElement('textarea');a.value=text;a.style.position='fixed';a.style.opacity=0;document.body.appendChild(a);a.select();try{document.execCommand('copy')}finally{document.body.removeChild(a)}return Promise.resolve()}
 window.GarrickCopy=put;window.GarrickSay=say;      /* what HOME_JS copies the thought with, and says it in */
@@ -7544,7 +7705,8 @@ var held=false;function cardZone(z){return[].some.call(document.querySelectorAll
    was left, every kind for Everything and the hubs for the other; else the hubs, or every kind the model knows where
    the place is small (G.modes) or has no hub. A kind found from the pages starts hidden. */
 function kindsFor(z){var o={},s=st.get('garrick-graph-kinds-'+z),m=st.get('garrick-graph-mode-'+z),all={},hub={},model={},k;
-G.nodes.forEach(function(n){if(n.z!==z)return;all[n.k]=1;if(n.c)hub[n.k]=1;if(n.k<G.known)model[n.k]=1});
+var op=(G.op||{})[z];      /* Meetings opens on its people, though its entities are hubs too (#320) */
+G.nodes.forEach(function(n){if(n.z!==z)return;all[n.k]=1;if(n.c&&(!op||op.indexOf(n.k)>=0))hub[n.k]=1;if(n.k<G.known)model[n.k]=1});
 if(s)try{JSON.parse(s).forEach(function(x){var i=G.keys.indexOf(x);if(i>=0)o[i]=1});return o}catch(e){}
 var pick=m==='all'?all:m==='core'?hub:((G.modes&&G.modes[z])||G.mode)==='all'?model:hub;for(k in pick)return pick;for(k in model)return model;return all}
 function keep(){st.set('garrick-graph-kinds-'+zsel,JSON.stringify(Object.keys(ks).map(function(k){return G.keys[k]})))}
@@ -7676,7 +7838,8 @@ ctx.globalAlpha=1}
    card, which frees the count for those still on it (#252). */
 var FONT='system-ui,-apple-system,sans-serif';
 function names(P,f,near,zs){var want=[],out=[],cells={},M=q?mt:null,few=M&&hits.length<=20;
-V.forEach(function(n){want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c?3:4,n])});
+/* a hub of the kinds its place opens on is named before the rest: in Meetings its people, then its entities with the other notes (#320) */
+var op=(G.op||{})[zsel];V.forEach(function(n){want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c&&(!op||op.indexOf(n.k)>=0)?3:4,n])});
 want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i});
 function each(b,fn){for(var x=Math.floor(b[0]/64);x<=Math.floor(b[2]/64);x++)for(var y=Math.floor(b[1]/64);y<=Math.floor(b[3]/64);y++)if(fn(x+' '+y))return true;return false}
 function free(b){return!each(b,function(k){return(cells[k]||[]).some(function(o){return b[0]<o[2]&&o[0]<b[2]&&b[1]<o[3]&&o[1]<b[3]})})}
@@ -7720,7 +7883,9 @@ window.GarrickGraph={focus:function(u){if(down)return false;if(!u){if(lit&&hover
 var n=null;V.forEach(function(m){if(m.u===u)n=m});if(!n)return false;lit=hover=n;wake();return true},
 /* the place shown, and showing a zone as the drop-down would, without storing it or reordering the card (#142) */
 place:function(){return zsel},follow:function(z){if(held||z===zsel||places.indexOf(z)<0)return false;show(z);return true}};
-cv.addEventListener('dblclick',function(e){var h=at(e);if(h.n)location.href=h.n.u});
+/* a double-click opens the note: in a host, over its bridge, as every file link goes (#318); in a browser, as a link */
+cv.addEventListener('dblclick',function(e){var h=at(e),hb=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+if(!h.n||!h.n.u)return;if(!hb||!/^file:/i.test(h.n.u)){location.href=h.n.u;return}hb.postMessage({open:h.n.u,place:h.n.pl||undefined})});
 cv.addEventListener('wheel',function(e){if(!e.ctrlKey&&!e.metaKey)return;e.preventDefault();idle=0;auto=false;
 var r=cv.getBoundingClientRect(),x=e.clientX-r.left-W/2,y=e.clientY-r.top-H/2,k=Math.exp(-e.deltaY*.01);k=Math.max(.2,Math.min(5,scale*k))/scale;px=x-(x-px)*k;py=y-(y-py)*k;scale*=k;wake()},{passive:false});
 var esc=Panel.esc;
@@ -7821,14 +7986,14 @@ document.addEventListener('click',function(e){if(!on()||!(e.target&&e.target.clo
 """
 
 
-def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
-          show_graph: bool = True, out: Optional[Path] = None, vaults: Optional[List[Tuple[Path, str]]] = None,
+def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
+          show_graph: bool = True, out: Optional[Path] = None,
           cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None,
           also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None,
           managed: Optional[List[Path]] = None, cli: Optional[bool] = None, page_at: Optional[Path] = None,
           reuse_check: Optional[float] = None) -> str:
-    """The page. `vaults` and `launchers` say what this machine has (main()
-    asks obsidian_vaults() and launchers_installed()); `cmux=True` alone
+    """The page. `launchers` says what this machine has (main() asks
+    launchers_installed()); `cmux=True` alone
     stands for launchers=("cmux",). `flags` go into the rebuild command as
     given. `also` and `moved` reach effort.py: folders the workspace used to
     live in, and folders renamed or moved since, old path to new. `managed`
@@ -7849,7 +8014,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     cmux = bool(launch)                       # a card carries its folder when anything can open it
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
-    link = Links(ws, vault, vaults)
+    link = Links(ws)
     T, TD, IB, C, R, W = (threads(ws), todo(ws), inboxes(ws), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
                            repos(ws), wikis(ws))
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
@@ -7907,7 +8072,11 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     if notice:
         attn.append(("warning", notice[0], notice[1]))
     for f in drifted(ws):
-        attn.append(("warning", f, "#threads"))
+        # a drift row leads to the row of its project, or of the thread the file is in, and offers Show both (#323)
+        go = {"row": row_anchor(f["zone"], f["project"], f["thread"]), "up": row_anchor(f["zone"], f["project"])}
+        attn.append(("warning", f["text"], {"href": "#" + go["row"], "go": go,
+                                            "reveal": {"zone": f["zone"], "project": f["project"], "thread": f["ledger"],
+                                                       "file": f["file"]} if f["both"] else None}))
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
 
@@ -7963,7 +8132,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     controls = ('<div class="bacts">' + simple_bar + '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
                 '%s<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s%s</div>'
-                % (E(rebuild_command(ws, vault, show_graph, out, flags)), REBUILD, catch_button(ws), GEAR, THEME_SEG, desk_acts))
+                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, catch_button(ws), GEAR, THEME_SEG, desk_acts))
 
     # ---- hero and tiles
     if attn:
@@ -7992,9 +8161,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
     attn_card = ""
     if attn:
         attn_card = '<div class="full">%s</div>' % card("attention", "Needs attention", "%d item%s" % (len(attn), "" if len(attn) == 1 else "s"),
-                                                       '<div class="attn">%s</div>' % "".join('<a href="%s"%s>%s<span>%s</span></a>' % (
-                                                           E(h), ' target="_blank" rel="noopener"' if h.startswith("https://") else "", ICON[k], E(t))
-                                                           for k, t, h in attn),
+                                                       '<div class="attn">%s</div>' % "".join(attn_row(k, t, h) for k, t, h in attn),
                                                        fixed=True)
 
     # ---- threads, one column per zone: a row per project, its threads folding
@@ -8048,11 +8215,12 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
             '<div class="fresh age mu" title="%s"><i style="width:%.1f%%"></i></div>' % (
                 E("%s since its note moved, toward sixty days" % ("%d days" % days if days is not None else "No date")),
                 max(3.0, min(100.0, (days if days is not None else 60) / 60 * 100)))
-        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s data-r="%s"><div class="t"><a href="%s">%s</a>%s%s</div>%s'
+        return ('<div class="thread%s" data-ok="%d" data-card="%s"%s data-r="%s" id="%s"><div class="t"><a href="%s">%s</a>%s%s</div>%s'
                 '<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s%s</div>'
                 % (" sub" if sub else "", 0 if k else 1,
                    E(thread_card(r, names, link, days, cmux, acting, S, now.date(), DK)),
                    ' data-a="%d"%s' % (place, EV.attrs(figures) if EV else "") if sub else "", touched(r),
+                   row_anchor(r["zone"], r["project"], "" if r["note"] == r["hub"] else r["thread"]),
                    E(link(r["note"])), E(r["thread"]), live_dot(session_in(S, r["note"].parent), "it"),
                    ('<span class="tchips">%s</span>' % chips if chips else "") + ("<small>%s</small>" % under if under else ""),
                    bar, E(age_said(days, "its note")), "%dd" % days if days is not None else "—",
@@ -8121,10 +8289,10 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                     max(3.0, min(100.0, (newest if newest is not None else 60) / 60 * 100)))
             bare = 0 if parked else sum(1 for r in items if not r.get("resume"))
             late = 0 if parked else sum(1 for r in items if r.get("late"))
-            head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
+            head = ('<div class="thread proj" data-ok="%d" data-card="%s" data-r="%s" id="%s"><div class="t"><button type="button" class="pchev" data-sub="%s" '
                     'aria-expanded="false" title="Show its %d thread%s">%s</button><a href="%s">%s</a>%s <span class="muted subn">%d thread%s%s%s</span></div>'
                     '%s<span class="num muted mu" style="text-align:right" title="%s">%s</span>%s</div>'
-                    % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), sid, n, "" if n == 1 else "s", CHEV,
+                    % (0 if k else 1, E(project_card(zone, project, items, newest)), touched(*items), row_anchor(zone, project), sid, n, "" if n == 1 else "s", CHEV,
                        E(hub_link), E(project), live_dot(session_in(S, (items[0]["hub"] or items[0]["note"]).parent), "the project"),
                        n, "" if n == 1 else "s", " · %d late" % late if late else "",
                        " · %d without a resume block" % bare if bare else "", bar, E(age_said(newest, "its newest thread")),
@@ -8270,7 +8438,7 @@ def build(ws: Path, vault: Optional[str] = None, now: Optional[dt.datetime] = No
                       if rr else '<p class="muted">No git repositories found.</p>')
     def newest(w):
         if not w["when"]:
-            return "nothing logged yet"
+            return LOG_NOT_READ if w.get("unread") else "nothing logged yet"
         title = ('<a href="%s">%s</a>' % (E(link(w["page"])), E(w["title"]))) if w["page"] else E(w["title"])
         return "%s · %s" % (E(w["when"].strftime("%d %b %Y").lstrip("0")), title)
     wr = "".join('<div class="row" style="grid-template-columns:1fr"><div class="name"><a href="%s">%s</a><small style="white-space:normal">%s</small></div></div>' % (
@@ -8494,7 +8662,11 @@ def write_page(out: Path, text: str) -> None:
 # the page, and a build with --same-flags draws with them, as scaffold.py's and
 # correct.py's do: the page a tool rebuilds stays as the app or the plugin
 # last drew it, whatever flags they pass (#246).
-PAGE_FLAGS = ("obsidian", "no_obsidian", "no_cmux", "no_graph", "also", "moved")
+PAGE_FLAGS = ("no_cmux", "no_graph", "also", "moved")
+# Flags a Garrick before 0.51.0 took, which an app or a plugin built then may
+# still pass, or a page built then may have stored: read and ignored, so the
+# build that meets them still draws the page, and never stored again (#318).
+GONE_FLAGS = ("obsidian", "no_obsidian")
 
 
 def flags_file(out: Path) -> Path:
@@ -8504,9 +8676,7 @@ def flags_file(out: Path) -> Path:
 
 def page_words(args: argparse.Namespace, moved: Dict[str, str]) -> List[str]:
     """The command-line words that gave this build its page flags."""
-    words = ["--obsidian", args.obsidian] if args.obsidian else []
-    words += [f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux),
-                              ("--no-graph", args.no_graph)) if on]
+    words = [f for f, on in (("--no-cmux", args.no_cmux), ("--no-graph", args.no_graph)) if on]
     return (words + [w for a in args.also for w in ("--also", a)]
             + [w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n))])
 
@@ -8528,9 +8698,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     "keeps go beside it, named after it: status.check.json, the check's last result, and status.effort.json, "
                     "every session's working folder and the paths it wrote, in every zone. Inside a zone, a commit can carry "
                     "them into its history")
-    ap.add_argument("--obsidian", metavar="VAULT", help="link into Obsidian, with the workspace root opened as this vault "
-                    "(by default the page uses the vaults Obsidian has registered)")
-    ap.add_argument("--no-obsidian", action="store_true", help="link to the files themselves, even where Obsidian has a vault")
+    ap.add_argument("--obsidian", metavar="VAULT", help=argparse.SUPPRESS)       # GONE_FLAGS: read and ignored
+    ap.add_argument("--no-obsidian", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--no-cmux", action="store_true", help="leave Open in cmux out, even where cmux is installed")
     ap.add_argument("--open", action="store_true", help="open the page when it is built")
     ap.add_argument("--no-graph", action="store_true", help="leave the graph out: the page then reads nothing but frontmatter")
@@ -8543,7 +8712,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--reuse-check", type=float, metavar="SECONDS", help="show the check's last result, kept beside the "
                     "page, while it is younger than this, instead of running the check again: a tool's rebuild")
     ap.add_argument("--same-flags", action="store_true", help="build with the page flags the last build stored, as a tool's "
-                    "rebuild does; not with --obsidian, --no-obsidian, --no-cmux, --no-graph, --also or --moved")
+                    "rebuild does; not with --no-cmux, --no-graph, --also or --moved")
     args = ap.parse_args(argv)
     given = ["--" + k.replace("_", "-") for k in PAGE_FLAGS if getattr(args, k)]
     if args.same_flags and given:
@@ -8580,8 +8749,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             setattr(args, k, getattr(kept, k))
     out.parent.mkdir(parents=True, exist_ok=True)
     prefs().migrate(ws)          # choices a Garrick before 0.25.0 left in System/generated/, kept where they belong
-    vaults = [] if args.obsidian or args.no_obsidian else obsidian_vaults(ws)
-    flags = tuple(f for f, on in (("--no-obsidian", args.no_obsidian and not args.obsidian), ("--no-cmux", args.no_cmux)) if on)
+    flags = ("--no-cmux",) if args.no_cmux else ()
     moved = {}
     for m in args.moved:
         if "=" not in m:
@@ -8590,8 +8758,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         old, new = m.split("=", 1)
         moved[old] = new
     flags += tuple(w for a in args.also for w in ("--also", a)) + tuple(w for o, n in moved.items() for w in ("--moved", "%s=%s" % (o, n)))
-    page = build(ws, args.obsidian, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
-                 vaults=vaults, flags=flags, also=tuple(args.also), moved=moved,
+    page = build(ws, show_graph=not args.no_graph, out=out.resolve() if args.out else None,
+                 flags=flags, also=tuple(args.also), moved=moved,
                  managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
                  launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux")),
                  page_at=out, reuse_check=args.reuse_check)

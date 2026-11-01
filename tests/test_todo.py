@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import re
 import sys
 import tempfile
 import unittest
@@ -122,6 +123,37 @@ class TodoTest(unittest.TestCase):
         self.assertIn("- [x] [[Pricing]]: old one ✅ 2026-10-01\n    - [ ] a step left open under it", archived)
         self.assertNotIn("a step left open", self.text())                  # it went with its task
 
+    def test_a_moved_lines_relative_source_still_leads_to_its_page(self):
+        """#318: a line's meeting source is a link relative to Todo.md. Moved
+        into archive/, archived or expired, it is written again from there;
+        a wikilink, an obsidian: link and a web link stay as they were."""
+        page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260310-acme-kickoff.md"
+        src = "[Acme kick-off](../../Wikis/Meetings/wiki/sources/260310-acme-kickoff.md)"
+        write(self.zone / "Todo.md", LIST.replace("- [x] [[Pricing]]: old one ✅ 2026-10-01",
+                                                  "- [x] [[Pricing]]: old one · %s ✅ 2026-10-01" % src)
+              .replace("- [ ] [[Pricing]]: send the sheet",
+                       "- [ ] [[Pricing]]: send the sheet · %s (also in [[260312-birch-kickoff]]) see https://example.com/a" % src))
+        todo.archive(self.zone, dt.date(2026, 10, 12))
+        day = dt.date(2026, 10, 1)
+        todo.expire(self.root, self.zone, day)
+        todo.expire(self.root, self.zone, day + dt.timedelta(days=14))
+        deeper = "[Acme kick-off](../../../Wikis/Meetings/wiki/sources/260310-acme-kick-off.md)".replace("kick-off.md", "kickoff.md")
+        archived = (self.zone / "archive" / "Todo-2026.md").read_text()
+        expired = (self.zone / "archive" / "Todo-expired-2026.md").read_text()
+        self.assertIn("- [x] [[Pricing]]: old one · %s ✅ 2026-10-01" % deeper, archived)
+        self.assertIn("- [ ] [[Pricing]]: send the sheet · %s (also in [[260312-birch-kickoff]]) see https://example.com/a" % deeper, expired)
+        target = re.search(r"\]\(([^)]+)\)", deeper).group(1)
+        self.assertEqual(page.resolve(), (self.zone / "archive" / target).resolve())      # it leads to the page from there
+        self.assertEqual("[x](obsidian://open?vault=W&file=a)", todo.relinked("[x](obsidian://open?vault=W&file=a)", self.zone,
+                                                                              self.zone / "archive"))
+        self.assertEqual("[x](../../../A%20b.md#h)", todo.relinked("[x](../../A%20b.md#h)", self.zone, self.zone / "archive"))
+        moved = lambda line: todo.relinked(line, self.zone, self.zone / "archive")
+        self.assertEqual("see `[code](../x.md)` and [x](../../x.md)", moved("see `[code](../x.md)` and [x](../x.md)"))   # code stays code
+        self.assertEqual("[q](../a.md?x=1&y=2) [t](../../../W.md#Sec%20one)", moved("[q](a.md?x=1&y=2) [t](../../W.md#Sec%20one)"))
+        self.assertEqual("[p](../../../Wikis/Meetings/wiki/sources/a(1).md) ✅", moved("[p](../../Wikis/Meetings/wiki/sources/a(1).md) ✅"))
+        self.assertEqual("[a](#h) [w](https://e.com/a.md) [abs](/etc/hosts)", moved("[a](#h) [w](https://e.com/a.md) [abs](/etc/hosts)"))
+        self.assertEqual("![i](../pic.png)", moved("![i](pic.png)"))
+
     def test_tidy_puts_fields_last_and_the_inbox_in_thread_order(self):
         self.assertGreater(todo.tidy(self.zone), 0)
         inbox = self.text().split("## Inbox\n\n", 1)[1].split("\n\n", 1)[0].splitlines()
@@ -213,6 +245,28 @@ class TodoTest(unittest.TestCase):
         self.assertIn("old one", (self.zone / "archive" / "Todo-2026.md").read_text())
         self.assertIn("- [ ] Dana: confirm volumes", after)                           # nothing open moves
         self.assertIn("- [ ] Theo: the signed letter #waiting", after)
+
+
+class SourceFormsTest(unittest.TestCase):
+    """#318: a Todo line's source is written as a relative link to the meeting
+    page's file now; the lines already written keep a wikilink or an
+    obsidian: link. The digest and the page's reader take all three."""
+
+    LINES = ("- [ ] [[Pricing]]: chase Dana · [Acme kick-off](../../Wikis/Meetings/wiki/sources/260310-acme-kickoff.md) 📅 2026-03-12",
+             "- [ ] [[Pricing]]: chase Dana · [Acme kick-off](obsidian://open?vault=Wikis&file=Meetings%2Fwiki%2Fsources%2F260310-acme-kickoff) 📅 2026-03-12",
+             "- [ ] [[Pricing]]: chase Dana · [[260310-acme-kickoff]] 📅 2026-03-12")
+
+    def test_the_digest_says_the_action_whatever_the_source(self):
+        for line in self.LINES[:2]:                                     # a Markdown link's source is left out
+            self.assertEqual("Pricing: chase Dana", todo.plain(line), line)
+        self.assertTrue(todo.plain(self.LINES[2]).startswith("Pricing: chase Dana"))   # a wikilink's, as before
+
+    def test_the_page_reads_the_line_whatever_the_source(self):
+        for line in self.LINES:
+            t = todo_lines.parse(line)
+            self.assertEqual(("Pricing", "2026-03-12"), (t["thread"], t["due"]), line)
+            self.assertTrue(t["text"].startswith("chase Dana · "), line)
+            self.assertEqual(todo_lines.same_action(self.LINES[0]).split(" · ")[0], todo_lines.same_action(line).split(" · ")[0])
 
 
 class SweepJobTest(unittest.TestCase):

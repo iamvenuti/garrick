@@ -449,5 +449,88 @@ class TestWhatALaunchSays(ActionCase):
             self.assertNotIn("clipboard", [r[0] for r in ran[name]], name)
 
 
+# The plugin's follow() alone, with Obsidian and Electron's shell stood in for:
+# what a link on the page would open, and how.
+FOLLOW = textwrap.dedent(r"""
+    const Module = require("module");
+    const fs = require("fs");
+    const [plugin_path, root, out_path] = process.argv.slice(2);
+    const ran = [];
+    const stubs = {
+      obsidian: { Plugin: class {}, ItemView: class {}, PluginSettingTab: class {}, Setting: class {},
+                  Notice: class { constructor(t) { ran.push(["notice", t]); } }, addIcon: () => {} },
+      electron: { shell: { openPath: (p) => ran.push(["openPath", p]), showItemInFolder: (p) => ran.push(["finder", p]),
+                           openExternal: (u) => ran.push(["web", u]) }, clipboard: {} },
+    };
+    const load = Module._load;
+    Module._load = function (req, ...rest) { return stubs[req] || load.call(this, req, ...rest); };
+    const Plugin = require(plugin_path);
+    const p = new Plugin();
+    p.settings = { workspace: root, python: "/usr/bin/python3", script: "", flags: "", hideParked: true };
+    p.app = { vault: { getName: () => "Workspace", adapter: { getBasePath: () => root },
+                       getAbstractFileByPath: (rel) => rel.endsWith(".md") ? {} : null },
+              workspace: { openLinkText: (rel) => ran.push(["obsidian", rel]) } };
+    const out = {};
+    for (const [name, url] of JSON.parse(process.env.LINKS)) {
+      ran.length = 0;
+      p.last = null;
+      p.follow(url);
+      out[name] = ran.slice();
+    }
+    fs.writeFileSync(out_path, JSON.stringify(out));
+""")
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestFollowAsTheAppDoes(ActionCase):
+    """#318: in Obsidian's tab a link on the page follows the app's rules: a
+    file of the workspace only, no symlink anywhere below its folder, a file
+    that could run something shown in Finder, and the web, http and https only."""
+
+    def test_a_link_opens_only_what_the_app_would(self):
+        base = Path(self._tmp.name).resolve()
+        outside = base / "Elsewhere"
+        write(outside / "secret.md", "x\n")
+        acme = self.work / "Acme Review"
+        write(acme / "data.json", "{}\n")
+        write(acme / "run.command", "echo hi\n")
+        write(acme / "tool.bin", "x\n")
+        (acme / "tool.bin").chmod(0o755)
+        (acme / "alias.txt").write_bytes(b"book\x00\x00\x00\x00mark\x00\x00\x00\x00rest")
+        os.symlink(str(outside / "secret.md"), str(acme / "Linked.md"))
+        os.symlink(str(acme), str(self.work / "Shortcut"))
+        jobs = base / "jobs"
+        write(jobs / "brief.log", "ran\n")
+        links = [["note", (acme / "Acme Review.md").as_uri()], ["json", (acme / "data.json").as_uri()],
+                 ["folder", (self.work / "Inbox").as_uri()], ["command", (acme / "run.command").as_uri()],
+                 ["executable", (acme / "tool.bin").as_uri()], ["alias", (acme / "alias.txt").as_uri()],
+                 ["outside", (outside / "secret.md").as_uri()], ["linked", (acme / "Linked.md").as_uri()],
+                 ["through", (self.work / "Shortcut" / "Acme Review.md").as_uri()],
+                 ["climb", (self.work / "Acme Review").as_uri() + "/../../../Elsewhere/secret.md"],
+                 ["log", (jobs / "brief.log").as_uri()], ["web", "https://example.com/a"],
+                 ["app", "file:///System/Applications/Calculator.app"], ["script", "javascript:alert(1)"],
+                 ["mail", "mailto:a@example.com"]]
+        with tempfile.TemporaryDirectory() as tmp:
+            harness, out = Path(tmp) / "follow.js", Path(tmp) / "out.json"
+            harness.write_text(FOLLOW)
+            done = subprocess.run(["node", str(harness), str(PLUGIN / "main.js"), str(self.root), str(out)], capture_output=True,
+                                  text=True, env=dict(os.environ, LINKS=json.dumps(links), GARRICK_JOBS_DIR=str(jobs)), timeout=60)
+            self.assertEqual(0, done.returncode, done.stderr)
+            ran = json.loads(out.read_text())
+        rel = lambda p: p.relative_to(self.root).as_posix()
+        self.assertEqual([["obsidian", rel(acme / "Acme Review.md")]], ran["note"])           # a note of the vault, here
+        self.assertEqual([["openPath", str(acme / "data.json")]], ran["json"])
+        self.assertEqual([["openPath", str(self.work / "Inbox")]], ran["folder"])
+        for name, path in (("command", acme / "run.command"), ("executable", acme / "tool.bin"), ("alias", acme / "alias.txt")):
+            self.assertEqual("finder", ran[name][-1][0], name)                                     # shown, never run
+            self.assertEqual(str(path), ran[name][-1][1], name)
+        for name in ("outside", "linked", "through", "climb", "app"):
+            self.assertEqual([["notice", "That link leads outside this workspace, so nothing was opened."]], ran[name], name)
+        self.assertEqual([["openPath", str(jobs / "brief.log")]], ran["log"])
+        self.assertEqual([["web", "https://example.com/a"]], ran["web"])
+        self.assertEqual([], ran["script"])
+        self.assertEqual([], ran["mail"])
+
+
 if __name__ == "__main__":
     unittest.main()

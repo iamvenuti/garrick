@@ -399,31 +399,16 @@ def append_log(root: Path, slug: str, title: str, zone: str = "", parties: Optio
 # --------------------------------------------------------------------------- the link an action carries
 
 
-def vault_of(root: Path, folder: Path) -> Optional[Path]:
-    """The Obsidian vault a folder is in: the nearest folder at or above it,
-    up to the workspace root, that holds a .obsidian folder."""
-    root = root.resolve()
-    for f in (folder.resolve(), *folder.resolve().parents):
-        if (f / ".obsidian").is_dir():
-            return f
-        if f == root:
-            return None
-    return None
-
-
 def source_link(root: Path, zone: str, slug: str, title: str = "") -> str:
-    """How a line in a zone's Todo.md links to a meeting page. `[[<slug>]]`
-    when one Obsidian vault holds both, or neither is in one. When the zone
-    and the wikis are vaults of their own, a wikilink would point nowhere,
-    so it is an obsidian://open link into the wikis' vault instead."""
+    """How a line in a zone's Todo.md links to a meeting page: a Markdown link
+    to the page's file, relative to the zone's Todo.md,
+    `[<title>](../../Wikis/Meetings/wiki/sources/<slug>.md)`, which every
+    Markdown reader follows, Obsidian included, whichever folders it opens as
+    vaults. Never an obsidian: link, which opens Obsidian whatever the user
+    chose (#318). Lines written before keep theirs: the readers take both."""
     page = meetings_root(root) / "wiki" / "sources" / (slug + ".md")
-    zone_vault = vault_of(root, root / "Zones" / zone)
-    page_vault = vault_of(root, page.parent)
-    if zone_vault is None or page_vault is None or zone_vault == page_vault:
-        return "[[%s]]" % slug
-    rel = page.resolve().relative_to(page_vault).with_suffix("").as_posix()
-    url = "obsidian://open?vault=%s&file=%s" % (urllib.parse.quote(page_vault.name), urllib.parse.quote(rel))
-    return "[%s](%s)" % ((title or slug).replace("[", "(").replace("]", ")"), url)
+    rel = os.path.relpath(str(page), str(root / "Zones" / zone)).replace(os.sep, "/")
+    return "[%s](%s)" % ((title or slug).replace("[", "(").replace("]", ")"), urllib.parse.quote(rel))
 
 
 # --------------------------------------------------------------------------- CLI
@@ -455,7 +440,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     k = sub.add_parser("link", help="how a Todo.md line in a zone links to a meeting page")
     k.add_argument("--zone", required=True)
     k.add_argument("--slug", required=True)
-    k.add_argument("--title", default="", help="the text of the link, when it cannot be a wikilink")
+    k.add_argument("--title", default="", help="the text of the link (default: the slug)")
 
     args = ap.parse_args(argv)
     try:

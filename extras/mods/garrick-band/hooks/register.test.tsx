@@ -851,12 +851,13 @@ describe('while you wait, a preview', () => {
   const RENEWAL = `${ROOT}/Zones/Personal/Birch/Threads/Renewal/Renewal.md`
   const opened = (w: any) => w.ran.filter((r: any) => r.argv[0] === '/usr/bin/open').map((r: any) => r.argv.slice(1))
 
-  test('open follows the default: the note in Obsidian', async ($, on) => {
+  test('open follows the default: the note by its file, in the Mac\'s own app, never Obsidian\'s link (#318)', async ($, on) => {
     const w = await waiting($, on, { launchers: { note: true, finder: true, cmux: true }, default: 'note' }, VAULT)
     await w.start()
     await w.clock.advance(46_000)
-    expect(await w.garrick('open')).toBe('Opened Renewal in Obsidian.')
-    expect(opened(w)).toEqual([[obsidianUrl(RENEWAL)]])
+    expect(await w.garrick('open')).toBe('Opened Renewal.')
+    expect(opened(w)).toEqual([[RENEWAL]])
+    expect(JSON.stringify(w.ran)).not.toContain('obsidian:')
   })
 
   test('open follows the default: Finder, even in a vault', async ($, on) => {

@@ -2022,6 +2022,25 @@ class TestNotePreview(ActionCase):
                 self.act(verb="note-open", path="Wikis/Meetings/wiki/people/rowan-ash.md")
             self.assertEqual(1, opened.call_count)
 
+    def test_open_refuses_a_link_on_the_way_and_an_alias(self):
+        """#318: as Garrick.app's workspaceFile(): no symlink anywhere below the
+        workspace's folder, and never a Finder alias named as a note."""
+        note = self.root / self.NOTE
+        os.symlink(str(note.parent), str(note.parent.parent / "Shortcut"))
+        os.symlink(str(note), str(note.parent / "Linked.md"))
+        (note.parent / "alias.md").write_bytes(b"book\x00\x00\x00\x00mark\x00\x00\x00\x00rest")
+        shortcut = "/".join(self.NOTE.split("/")[:-2] + ["Shortcut", self.NOTE.split("/")[-1]])
+        linked = "/".join(self.NOTE.split("/")[:-1] + ["Linked.md"])
+        alias = "/".join(self.NOTE.split("/")[:-1] + ["alias.md"])
+        with mock.patch.object(pa, "open_path") as opened:
+            for path, said in ((shortcut, "is reached through a link"), (linked, "is reached through a link"),
+                               (alias, "is an alias, not a note")):
+                with self.assertRaises(pa.Refused, msg=path) as refused:
+                    self.act(verb="note-open", path=path)
+                self.assertIn(said, str(refused.exception))
+            self.assertEqual("Opened lead-times", self.act(verb="note-open", path=self.NOTE))
+            self.assertEqual(1, opened.call_count)
+
     def test_open_runs_the_opener_with_the_file(self):
         stub, log = Path(self._tmp.name) / "open", Path(self._tmp.name) / "opened"
         write(stub, '#!/bin/sh\nprintf "%s\\n" "$@" >> "$OPEN_LOG"\n')

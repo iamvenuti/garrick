@@ -15,13 +15,16 @@ expire   Records, in the zone's .todo-seen.json (never committed), the first
          An Inbox line with no date, or a Waiting on line with no `⏳` day to
          chase, still there after the zone's days (14, or `todo-expire-days`
          in System/garrick-checks.json: a number, or a number per zone)
-         moves, unchanged and still open, to archive/Todo-expired-<YYYY>.md,
-         so it can be pasted back. A line the user has triaged has left the
+         moves, still open, to archive/Todo-expired-<YYYY>.md, so it can be
+         pasted back. A line keeps its words; a relative link in it, such
+         as its meeting source, is written again from archive/ so it still
+         leads to the page, and one more `../` comes off when it is pasted
+         back into Todo.md. A line the user has triaged has left the
          Inbox, carries a date, or waits with a day to chase, so expiry
          never reaches it.
 archive  Moves ticked lines (`- [x]`) done before today to
          archive/Todo-<YYYY>.md, so the list is only as long as what is
-         open. A line ticked today stays, for the page's *Done today*.
+         open, their relative links written again from there as expire's. A line ticked today stays, for the page's *Done today*.
 tidy     Moves priority and date fields written mid-line to the end, where
          Obsidian Tasks reads them, keeping each moved line's first-seen
          date, and keeps the Inbox in thread order: lines that open with the
@@ -50,6 +53,7 @@ import json
 import os
 import re
 import sys
+import urllib.parse
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -112,10 +116,43 @@ def write(zone: Path, lines: List[str]) -> None:
     os.replace(tmp, path)
 
 
+# A Markdown link by a path relative to the note it is in, such as a line's
+# meeting source, `[title](../../Wikis/Meetings/wiki/sources/<slug>.md)` (#318):
+# its target, which may hold a pair of parentheses, as `a(1).md`.
+RELATIVE_LINK = re.compile(r"(\]\()((?:[^()\s]|\([^()\s]*\))+)(\))")
+INLINE_CODE = re.compile(r"`[^`\n]*`")
+
+
+def relinked(line: str, here: Path, there: Path) -> str:
+    """`line`, moved from a note in folder `here` to one in folder `there`,
+    with the path of each relative link written again from `there`, so it
+    still leads where it led; its query or anchor stays as written. A
+    wikilink, a web link, an anchor, a path from the top and anything in
+    inline code are left as they are."""
+    def one(m):
+        target = m.group(2)
+        if re.match(r"^[A-Za-z][\w+.-]*:|^[#/]", target):
+            return m.group(0)
+        cut = min([i for i in (target.find("?"), target.find("#")) if i >= 0] or [len(target)])
+        path, rest = target[:cut], target[cut:]
+        if not path:
+            return m.group(0)
+        full = os.path.normpath(os.path.join(str(here), urllib.parse.unquote(path)))
+        again = os.path.relpath(full, str(there)).replace(os.sep, "/")
+        return m.group(1) + urllib.parse.quote(again, safe="/()") + rest + m.group(3)
+
+    if "](" not in line:
+        return line
+    parts, codes = INLINE_CODE.split(line), INLINE_CODE.findall(line) + [""]
+    return "".join(RELATIVE_LINK.sub(one, part) + code for part, code in zip(parts, codes))
+
+
 def keep_out(zone: Path, name: str, title: str, moved: List[str]) -> Path:
-    """Append lines to archive/<name>, a file that opens with its title."""
+    """Append lines to archive/<name>, a file that opens with its title,
+    each relative link written again from there (relinked())."""
     path = zone / "archive" / name
     path.parent.mkdir(exist_ok=True)
+    moved = [relinked(line, zone, path.parent) for line in moved]
     text = path.read_text(encoding="utf-8") if path.is_file() else "# %s\n\n" % title
     if not text.endswith("\n"):
         text += "\n"

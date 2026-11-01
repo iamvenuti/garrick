@@ -61,6 +61,14 @@ someone edited a copy nobody was meant to edit. An Office copy that is
 empty, or does not open, is `drifted` whichever copy counts: that is a
 fault, not a colleague's save.
 
+Each row compared also names both copies, `here` and `shared`, from the
+workspace's folder, the shared one through the zone's `.shared/` link as the
+ledger names it, and, where both are there, the day each last changed,
+`here_changed` and `shared_changed`, and which is `newer`: read from the
+files' dates, as listing does, so an online-only copy is not downloaded. The
+status page says from them which copy changed and when, and its *Show both*
+reveals the two (#323).
+
 macOS keeps a scheduled job out of ~/Library/CloudStorage, so this runs
 from a session or the app, never from launchd. It changes nothing but
 System/generated/drift.json, and only with --save.
@@ -267,6 +275,31 @@ def compare(ours: Path, theirs: Path, share: bool = False) -> Tuple[str, str]:
                                           "s" if len(parts) == 1 else ""))
 
 
+def changed_on(path: Path) -> Optional[datetime.datetime]:
+    """When a file last changed, from its date alone: never its content."""
+    try:
+        return datetime.datetime.fromtimestamp(path.stat().st_mtime)
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def both_copies(root: Path, ours: Path, theirs: Path) -> dict:
+    """Where the two copies are, from the workspace's folder, the shared one
+    through the link as named; and, where both are there, the day each last
+    changed and which is newer (#323)."""
+    out: dict = {}
+    for key, path in (("here", ours), ("shared", theirs)):
+        try:
+            out[key] = path.relative_to(root).as_posix()
+        except ValueError:
+            continue
+    a, b = changed_on(ours), changed_on(theirs)
+    if a is not None and b is not None:
+        out.update(here_changed=a.date().isoformat(), shared_changed=b.date().isoformat(),
+                   newer="shared" if b > a else "here" if a > b else "")
+    return out
+
+
 def differs(share: bool, what: str) -> Tuple[str, str]:
     """Two copies whose content differs: behind when the shared copy is the
     one that counts, as the ledger expects after a colleague's save;
@@ -363,8 +396,9 @@ def survey(root: Path) -> List[dict]:
                 top = theirs.parent if ":" in row["destination"] else hub_shared
                 watched.setdefault(top, where)
                 published.setdefault(theirs.parent, where)
+            copies = both_copies(root, ours, theirs) if theirs is not None else {}
             out.append(dict(where, file=row["file"], destination=row["destination"], authoritative=row["authoritative"],
-                            date=row["date"], state=state, say=say))
+                            date=row["date"], state=state, say=say, **copies))
     return out + conflicts({k: v for k, v in watched.items() if k.is_dir()}, published)
 
 

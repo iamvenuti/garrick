@@ -3639,10 +3639,30 @@ def note_read(ws: Path, req: dict) -> dict:
             "html": ('<dl class="nv-props">%s</dl>' % shown if shown else "") + (body or '<p class="nv-none">This note is empty.</p>')}
 
 
+ALIAS_MAGIC = b"book\x00\x00\x00\x00mark"      # how a Finder alias file begins, whatever it is named
+
+
 def note_open(ws: Path, req: dict) -> str:
     """Open in default app (#206): {"path"}, the note opened by `open`, in the
-    app the Mac uses for a .md file, never one of Garrick's launchers."""
+    app the Mac uses for a .md file, never one of Garrick's launchers. Only a
+    note reached with no symlink anywhere below the workspace's folder, and
+    never a Finder alias named as a note, which `open` would follow, as
+    Garrick.app's workspaceFile() and runsSomething() refuse them (#318)."""
     p = note_file(ws, req.get("path"))
+    rel = str(req.get("path"))
+    name = p.stem
+    at = ws
+    for part in rel.split("/"):
+        at = at / part
+        if at.is_symlink():
+            raise Refused("%s is reached through a link, so Garrick does not open it" % name)
+    try:
+        with p.open("rb") as f:
+            alias = f.read(len(ALIAS_MAGIC)) == ALIAS_MAGIC
+    except OSError as e:
+        raise Refused("%s could not be read: %s" % (name, (e.strerror or str(e)).lower()))
+    if alias:
+        raise Refused("%s is an alias, not a note, so Garrick does not open it" % name)
     open_path(p)
     return "Opened %s" % p.stem
 # ---- end of a note previewed ----------------------------------------------------

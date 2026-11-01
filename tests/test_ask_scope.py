@@ -488,6 +488,33 @@ class TestScopeFirst(AnswerCase):
         self.assertIn("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", said)
         self.assertNotIn("Zones/Personal", said)
 
+    def test_a_zone_settles_only_said_plainly_and_only_the_name_asked_about(self):
+        """#294, from the wall review: "Not the one in Work." settled to Work,
+        and so did "The one I work on."; and a zone named in the answer
+        settled every other name the request left open."""
+        from fixtures import project_hub
+        home = self.root / "Zones" / "Personal" / "Home"
+        write(home / "Home.md", project_hub("Personal", "Home", party="", threads=["Pricing", "Budget"]))
+        for t in ("Pricing", "Budget"):
+            write(home / "Threads" / t / (t + ".md"), thread_note("Home", t, ""))
+        write(self.work / "Birch Entry" / "Threads" / "Budget" / "Budget.md", thread_note("Birch Entry", "Budget", "birch"))
+        lib = ask.scope_lib().lib(self.root)
+        ctx, names = lib.load_context(self.root), ask.scan(self.root)
+
+        def settled(asked, answer):
+            got = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, ctx, lib, answer=len(asked) + 1)
+            return got.question or got.places
+        asked = "Where does Pricing stand?"
+        question = "Which do you mean: Acme Review, Pricing or Home, Pricing?"
+        for answer in ("The one in Work.", "In Work", "Work", "the Work one", "from work", "WORK."):
+            self.assertEqual([("Work", "Acme Review", "Pricing")], settled(asked, answer), answer)
+        self.assertEqual([("Personal", "Home", "Pricing")], settled(asked, "In Personal"))
+        for answer in ("Not the one in Work.", "Not Work, the other one.", "The one I work on.", "Anything but Personal",
+                       "Work isn't it", "Not the Acme one.", "Work, except not", "Personal rather than Work"):
+            self.assertEqual(question, settled(asked, answer), answer)
+        self.assertEqual("Which do you mean: Birch Entry, Budget or Home, Budget?",       # Pricing settled, Budget asked
+                         settled("Compare Pricing with Budget", "In Work"))
+
     def test_a_clarify_is_settled_by_an_option_as_it_was_offered(self):
         """#294: one company under two tags, one in each zone. "What did Dana
         say?" could be settled only by typing the bare tag."""
@@ -506,9 +533,10 @@ class TestScopeFirst(AnswerCase):
         self.assertEqual(question, settled(""))
         for answer, parties in (("In Work", {"acme"}), ("in work", {"acme"}), ("The Personal one.", {"acme-adv"}),
                                 ("Dana Whitlock of Acme Corp in Personal", {"acme-adv"}),
-                                ("Dana Whitlock of Acme Corp in Work, please", {"acme"})):
+                                ("dana whitlock of acme corp in work.", {"acme"})):
             self.assertEqual(parties, settled(answer), answer)
         for answer in ("Acme Corp", "Work or Personal", "Dana Whitlock of Acme Corp in Work or in Personal",
+                       "Dana Whitlock of Acme Corp in Work, please", "Not Dana Whitlock of Acme Corp in Work",
                        "The Birch one", "The other one"):
             self.assertEqual(question, settled(answer), answer)               # both options, or neither: asked again
         got = ask.scope_lib().mentions(self.root, "What did Dana say about work?", names, ctx, lib)

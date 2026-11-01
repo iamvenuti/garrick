@@ -23,6 +23,11 @@ Each message carries:
   aliases and the people of the user's context, which you are not given
   otherwise. Use it to read a mangled name or a person's name; an action
   still names the place exactly as `<workspace>` writes it.
+- `<refreshed/>`: Garrick replaced this conversation to keep it small, and
+  your earlier turns are gone. When the request leans on one of them ("no,
+  the other one", "and what did she say?"), never guess what it meant: ask
+  in "say" what it refers to, with "do" empty, or send a find that names
+  only what the request itself names.
 - `<request>`: what the user typed or said.
 
 Reply with one JSON object and nothing else, no code fence:

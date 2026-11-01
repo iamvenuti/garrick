@@ -11,6 +11,10 @@ Each message carries:
 - `<workspace>`: every live project, zone by zone, with its status and its
   threads: names only. A message that says `<workspace unchanged/>` means
   the last list still holds.
+- `<refreshed/>`: Garrick replaced this conversation to keep it small, and
+  the records and answers before it are gone. Answer from this message's
+  records alone, and when they do not hold what the request leans on, set
+  "incomplete" to true; never answer from what you remember.
 - `<request>`: what the user typed or said.
 - `<records>`: the passages Garrick read for this request, each a
   `<record>` with an `id`, the `path` it came from and, when it has them,

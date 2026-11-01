@@ -1133,6 +1133,73 @@ class TestOneConnection(ServerCase):
         self.assertNotIn("park Pricing", told)
 
 
+@unittest.skipIf(sys.platform == "win32", "a stand-in executable on PATH")
+class TestRenewal(ServerCase):
+    """#261, slice E: a session renewed by its size, after an exchange that
+    finished, with nothing of the old conversation carried over."""
+
+    def small(self, size=150):
+        """The stand-in measures 100 tokens a turn: of 150 that is past RENEW_AT."""
+        return mock.patch.dict(ask.agent().INPUT_SIZE, {"haiku": size, "sonnet": size})
+
+    def test_the_context_is_measured_from_the_result(self):
+        self.assertEqual(1110, ask.measured({"input_tokens": 10, "cache_read_input_tokens": 100,
+                                             "cache_creation_input_tokens": 1000, "output_tokens": 5}))
+        self.assertEqual(0, ask.measured(None))
+        s = ask.ClaudeSession(self.root, "haiku")
+        try:
+            s.turn("<request>\nwhat's open\n</request>")
+            self.assertEqual(100, s.context)                    # the stand-in's result: input_tokens 100
+        finally:
+            s.stop()
+        self.assertEqual(0, s.context)
+
+    def test_every_tier_has_an_input_size_and_renews_at_sixty_per_cent(self):
+        a = ask.agent()
+        self.assertEqual(set(a.TIERS), set(a.INPUT_SIZE))
+        self.assertTrue(all(isinstance(n, int) and n > 0 for n in a.INPUT_SIZE.values()))
+        self.assertEqual(0.6, ask.RENEW_AT)
+        s = ask.ClaudeSession(self.root, "haiku")
+        try:
+            with self.small(1000):
+                s.start()
+                s.context = 599
+                self.assertFalse(s.full())
+                s.context = 600
+                self.assertTrue(s.full())
+        finally:
+            s.stop()
+        self.assertFalse(s.full())                              # no process, nothing to renew
+
+    def test_a_full_session_is_renewed_once_the_reply_is_sent(self):
+        self.answers.write_text(json.dumps(['{"say": "Parked.", "do": [{"verb": "park", "zone": "Work", '
+                                            '"project": "Acme Review", "thread": "Pricing"}]}']))
+        self.up()
+        self.op("keep")
+        (first,) = self.procs()
+        out = self.op("ask", "park Pricing")
+        self.assertNotIn("refreshed", out)                      # 100 tokens of 200,000: far from full
+        with self.small():
+            out = self.op("ask", "what's open")
+        self.assertTrue(out["refreshed"])
+        self.assertEqual(("command", "ok"), (out["kind"], out["say"]))   # the reply, as it was
+        second = self.procs(2)[1]                               # warmed before anything is asked of it
+        self.assertTrue(self.gone(first["pid"]))
+        self.op("ask", "and the other one?")
+        told = self.first_message(second["pid"])
+        self.assertIn("<refreshed/>", told)
+        self.assertIn("<workspace>\n", told)                    # told the whole list
+        for said in ("park Pricing", "what's open", "<last-results>", "Parked"):
+            self.assertNotIn(said, told)                        # and nothing of what went before
+        self.op("ask", "and Birch?")
+        msgs = [json.loads(line) for line in Path(str(self.args) + ".msgs").read_text().splitlines()]
+        self.assertNotIn("<refreshed/>", [m for m in msgs if m["pid"] == second["pid"]][1]["content"])   # said once
+        self.assertRegex((self.jobs / "ask.log").read_text(), r"  ask command refreshed \d+ ms ")
+
+    def test_a_record_cannot_say_refreshed(self):
+        self.assertEqual("&lt;refreshed/>", ask.inert("<refreshed/>"))
+
+
 class TestTheAppKeepsIt(unittest.TestCase):
     """#261: what Garrick.swift does with the session, read from its source,
     since CI compiles no Swift."""

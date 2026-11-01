@@ -21,6 +21,7 @@ import time
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -1092,6 +1093,63 @@ class TestSealed(AnswerCase):
         self.assertIn('- "Pricing": the thread Pricing of Acme Review in Work\n', self.msgs(cmd["pid"])[0])
         a.ask("open the list")                                            # no name heard: no block
         self.assertNotIn("<names>", self.msgs(cmd["pid"])[1])
+
+
+class TestRenewal(AnswerCase):
+    """#261, slice E: a renewal by size is no way to carry anything over, a
+    wall above all, and it waits for the answer to a question."""
+
+    def small(self):
+        """The stand-in measures 100 tokens a turn: of 150 that is past RENEW_AT."""
+        return mock.patch.dict(ask.agent().INPUT_SIZE, {"haiku": 150, "sonnet": 150})
+
+    def started(self, pids, n):
+        for _ in range(200):                        # the stand-in writes itself down once it runs
+            got = [p for p in self.procs() if p["pid"] not in pids]
+            if len(got) >= n:
+                return got
+            time.sleep(0.05)
+        self.fail("%d new processes, not %d" % (len(got), n))
+
+    def test_a_renewal_after_a_wall_reset_holds_nothing_from_before_it(self):
+        os.environ[ask.MARKER] = "ask"                                      # as serve_locked() sets it
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        self.assertEqual("wall", a.ask("What did Theo say about the pallet launch?")["reset"])
+        before = {p["pid"] for p in self.procs()}
+        with self.small():
+            self.assertTrue(a.due())
+        a.renew()
+        renewed = self.started(before, 2)
+        self.assertEqual(["haiku", "sonnet"], sorted(p["model"] for p in renewed))   # both, warmed at once
+        for pid in before:
+            self.assertTrue(self.gone(pid), pid)
+        for p in renewed:
+            assert_sealed(self, p, self.root)                               # sealed as every session is
+        self.assertEqual((set(), [], {}, ""), (a.seen, a.passages, a.asked, a.results))
+        a.ask("what's open")
+        a.ask("What does the supply chain report say about pallets?")        # read by the renewed answer session
+        self.assertEqual(2, len(self.procs()) - len(before))                 # no other process started
+        said = [m for p in renewed for m in self.msgs(p["pid"])]
+        self.assertTrue(any(KNOWN in m for m in said))
+        for p in renewed:
+            self.assertIn("<refreshed/>", self.msgs(p["pid"])[0])
+        for m in said:                                                    # nothing from before the wall, or after it
+            for mark in (ACME, BIRCH, "Dana", "Theo", "<last-results>", "<earlier-request>"):
+                self.assertNotIn(mark, m)
+
+    def test_a_question_waiting_for_its_answer_holds_the_renewal(self):
+        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        a = self.asker()
+        with self.small():
+            a.ask("What did Dana say about the pallet quote?")
+            self.assertTrue(a.due())
+            self.assertEqual("clarify", a.ask("Where does Pricing stand?")["kind"])
+            self.assertFalse(a.due())                                       # full, and waiting for the answer
+            self.assertEqual("answer", a.ask("The Acme one.")["kind"])
+            self.assertTrue(a.due())
+            a.asked = {"an action": "asked to be done again"}
+            self.assertFalse(a.due())
 
 
 class TestCodex(base.AskCase):

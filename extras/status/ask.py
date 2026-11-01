@@ -28,6 +28,17 @@ mode: each request is one `codex exec` through agent.py, read-only, given
 the last few exchanges again, run in an empty folder outside the workspace
 that is removed when it returns, so no AGENTS.md of the workspace's is found.
 
+**Renewed by size (#261, slice E).** Each Claude turn measures its
+session's context from the `result` event (measured()). Once either session
+holds RENEW_AT of what its tier's model takes (agent.INPUT_SIZE), the reply
+says `"refreshed": true` and, once it is sent, both sessions are replaced
+and started again, so the next request finds them warm (Asker.renew()).
+Only after an exchange that finished: never after a Stop, a cap or a
+failure, and never while a question waits for its answer. Nothing is
+carried over, no summary either: the new processes start sealed, as every
+one does, and are told only `<refreshed/>`, so a follow-up that leans on
+what went is asked about, or finds its records again.
+
 **The session starts with the app, belongs to it, and is marked.** With Ask
 on, Garrick.app sends `keep` a second after its window shows and every two
 minutes after: the server starts the session when it is not running, and
@@ -226,6 +237,7 @@ DEFAULT_TIER = "haiku"
 DEFAULT_ANSWER_TIER = "sonnet"
 LOG_TEXT = "GARRICK_ASK_LOG_TEXT"   # =1: ask.log keeps the request's and the reply's text too
 CLEAR_AFTER = 3 * 3600      # seconds: a session older than this is replaced, a server idle this long exits
+RENEW_AT = 0.6              # of the tier's input (agent.INPUT_SIZE): a session measured this full is renewed
 SEND_TIMEOUT = 10           # seconds: the server waits this long for a client to take its answer
 SERVE_WAIT = 5              # seconds: a second server waits this long for the first to go, then leaves it be
 HISTORY = 6                 # exchanges a harness with no warm session is given again
@@ -572,6 +584,14 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]
 # ---------------------------------------------------------------- the session
 
 
+def measured(usage) -> int:
+    """The context a turn's `result` event measures: everything the model
+    was given, the input read from the cache and written to it included."""
+    usage = usage if isinstance(usage, dict) else {}
+    return sum(usage.get(k) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+               if isinstance(usage.get(k), int))
+
+
 def cost_of(event: dict) -> Optional[float]:
     v = event.get("total_cost_usd")
     return float(v) if isinstance(v, (int, float)) else None
@@ -662,6 +682,7 @@ class ClaudeSession:
         self.started = 0.0
         self.turns = 0
         self.spent = 0.0            # what the session has cost so far, as Claude reports it
+        self.context = 0            # the context its last turn measured (measured())
         self.watch = None           # the connection a turn listens to for STOP, while one is asked on it
 
     def alive(self) -> bool:
@@ -688,7 +709,7 @@ class ClaudeSession:
         if self.home is not None:
             shutil.rmtree(self.home, ignore_errors=True)
             self.home = None
-        self.proc, self.turns, self.spent, self.pending = None, 0, 0.0, b""
+        self.proc, self.turns, self.spent, self.pending, self.context = None, 0, 0.0, b"", 0
 
     def command(self) -> List[str]:
         a = agent()
@@ -725,6 +746,11 @@ class ClaudeSession:
     def ready(self) -> None:
         if self.fresh():
             self.start()
+
+    def full(self) -> bool:
+        """Whether the context its last turn measured has reached RENEW_AT of
+        what the tier's model takes, so the next exchange wants a new process."""
+        return self.alive() and self.context >= RENEW_AT * agent().INPUT_SIZE[self.tier]
 
     def line(self, deadline: float) -> str:
         """The session's next line of output. Read from the pipe itself, so a
@@ -782,6 +808,7 @@ class ClaudeSession:
                 bill([self.last])
             raise
         self.turns += 1
+        self.context = measured(event.get("usage"))
         # The cost Claude reports runs for the whole session; the ledger wants this request's.
         total = cost_of(event)
         cost = None if total is None else (total - self.spent if total >= self.spent else total)
@@ -913,6 +940,7 @@ class Asker:
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
         self.afresh = False         # a wall reset ran during the request under way, whatever ends it
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
+        self.refreshed = set()      # the sessions renewed by size, "command" and "answer", not yet told so
         self.progress = lambda text: None
 
     def ask(self, request: str, today: Optional[dt.date] = None) -> dict:
@@ -957,6 +985,8 @@ class Asker:
             self.results, self.asked = "", {}
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
+        if "command" in self.refreshed:             # renewed by size: what it said before is gone
+            parts.append("<refreshed/>")
         if self.results:
             parts.append("<last-results>\n%s\n</last-results>" % self.results)
         if earlier is not None:                     # the request the box asked about, which this one answers
@@ -974,6 +1004,7 @@ class Asker:
                     turns.append(getattr(self.session, "last", None))
                     self.hear(named.parties)            # whatever became of the turn, the process was sent it
                 self.sent, self.told = sent, self.session.started
+                self.refreshed.discard("command")
                 find = wanted(text)
                 if find is not None:
                     out, again = self.answer(heard, find, named, names, today, turns, usage,
@@ -1046,9 +1077,11 @@ class Asker:
         whole = sent != self.answer_sent or self.answers.started != self.answer_told
         before = len(self.passages)                 # the ids admitted from here on are this turn's
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
-                 "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>",
-                 "<request>\n%s\n</request>" % request[-MAX_REQUEST:],
-                 self.admit(records, {p for r in records for p in r["parties"]})]
+                 "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
+        if "answer" in self.refreshed:              # renewed by size: the records it held are gone
+            parts.append("<refreshed/>")
+        parts += ["<request>\n%s\n</request>" % request[-MAX_REQUEST:],
+                  self.admit(records, {p for r in records for p in r["parties"]})]
         self.seen |= named.parties                  # it is sent the request too, and so the names in it
         self.answers.watch = getattr(self.session, "watch", None)     # Stop is heard in either session
         try:
@@ -1057,6 +1090,7 @@ class Asker:
             self.answers.watch = None
             turns.append(self.answers.last)
         self.answer_sent, self.answer_told = sent, self.answers.started
+        self.refreshed.discard("answer")
         # Only this turn's records may be cited: an id from an earlier turn, a
         # process since replaced or nowhere at all is refused, and leaves no
         # trace in the reply (#261, slice D).
@@ -1184,6 +1218,33 @@ class Asker:
         self.seen, self.seen_for, self.passages = set(), None, []
         self.heard, self.heard_for = set(), None
         self.sent = self.told = self.answer_sent = self.answer_told = None
+        self.refreshed = set()
+
+    def due(self) -> bool:
+        """Whether a session is full enough to renew (#261, slice E): a warm
+        one that measured RENEW_AT of its tier's input at its last turn. Never
+        while a question waits for its answer, a name asked about or an
+        action asked to be done again: the renewal waits for the answer."""
+        if self.unclear is not None or self.asked:
+            return False
+        return any(getattr(s, "remembers", False) and getattr(s, "full", lambda: False)()
+                   for s in (self.session, self.answers) if s is not None)
+
+    def renew(self) -> None:
+        """Renewal by size, after a completed exchange: both sessions
+        replaced together through reset(), which clears all that stop()
+        clears, and started again at once, so the next request finds them
+        warm. Nothing is carried over: not the results, the questions
+        waiting, the parties either process held (`seen`, `heard`), the
+        records or a summary of any of it, so a renewal can never carry material
+        across a wall. Each new process is told only that the conversation
+        was refreshed (`<refreshed/>`), so a follow-up that leans on what went
+        is asked about, or finds its records again."""
+        answering = self.answers is not None and self.answers.alive()
+        self.reset()
+        if answering:
+            self.answers.start()
+        self.refreshed = {"command", "answer"} if answering else {"command"}
 
     def wall(self) -> str:
         """System/rules.md's sentence for a wall that held something back, as
@@ -1272,7 +1333,8 @@ def clarify(question: str) -> dict:
 
 
 # The tags a message is built from: a record's own text never opens or closes one.
-_TAGS = re.compile(r"<(?=/?(?:records?|request|earlier-request|workspace|names|today|last-results|correction)\b)", re.I)
+_TAGS = re.compile(r"<(?=/?(?:records?|request|earlier-request|workspace|names|today|last-results|correction|refreshed)\b)",
+                   re.I)
 
 
 def inert(text: str) -> str:
@@ -1336,7 +1398,7 @@ def request_line(conn) -> bytes:
 
 def log_line(request: str, out: dict) -> str:
     """ask.log's line for one request: the op, the kind of reply, whether a
-    wall reset ran, how it ended when not well (`stopped` by Stop, `capped`
+    wall reset ran, whether the sessions were renewed after it, how it ended when not well (`stopped` by Stop, `capped`
     by Ask's cap, `not ok` otherwise), the milliseconds and the tokens. No request or answer
     text, since an answer carries what the records say, unless LOG_TEXT is 1."""
     if out.get("stopped"):
@@ -1345,8 +1407,9 @@ def log_line(request: str, out: dict) -> str:
         how = " capped"                     # by Ask's own cap, and nothing was asked (#282)
     else:
         how = "" if out.get("ok", True) else " not ok"
-    line = "ask %s%s%s %d ms %s" % (out.get("kind", "-"), " reset" if out.get("reset") else "",
-                                    how, out.get("ms", 0), json.dumps(out.get("usage", {})))
+    line = "ask %s%s%s%s %d ms %s" % (out.get("kind", "-"), " reset" if out.get("reset") else "",
+                                      " refreshed" if out.get("refreshed") else "",
+                                      how, out.get("ms", 0), json.dumps(out.get("usage", {})))
     if os.environ.get(LOG_TEXT) == "1":
         line += "  %s  ->  %s %s" % (json.dumps(request[:200], ensure_ascii=False),
                                      json.dumps(out.get("say", ""), ensure_ascii=False),
@@ -1491,10 +1554,20 @@ def serve_locked(ws: Path, path: Path) -> None:
                     # A wall reset ran before the request stopped, was capped or failed:
                     # the app draws its divider all the same (#294).
                     out["reset"] = "wall"
+                # Renewal by size, after a completed exchange only: said with
+                # the reply, done once it is sent, so nobody waits for it. Never
+                # after a wall reset, whose sessions are new already.
+                if op == "ask" and not any(out.get(k) for k in ("stopped", "capped", "failed", "reset")) and asker.due():
+                    out["refreshed"] = True
                 out["ms"] = round((time.time() - t0) * 1000)
                 if op == "ask":
                     log(log_line(str(msg.get("text", "")), out))
                 send(conn, out)
+                if out.get("refreshed"):
+                    try:
+                        asker.renew()
+                    except Exception as e:      # the next request starts a session, as after any failure
+                        log("session not renewed: %s" % e)
     finally:
         asker.stop()
         srv.close()

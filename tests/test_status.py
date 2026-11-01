@@ -2941,7 +2941,8 @@ class TestApp(unittest.TestCase):
     def test_the_app_changes_no_file(self):
         swift = (self.APP / "Garrick.swift").read_text()
         # It only looks, but for what it last filled its menu with, in the jobs folder, outside the workspace.
-        self.assertEqual({"attributesOfItem", "fileExists", "isExecutableFile", "createDirectory"},
+        # contentsOfDirectory lists the zones for the Ask window's selector (#317).
+        self.assertEqual({"attributesOfItem", "fileExists", "isExecutableFile", "createDirectory", "contentsOfDirectory"},
                          set(re.findall(r"FileManager\.default\.(\w+)", swift)))
         self.assertEqual(["try? FileManager.default.createDirectory(at: jobsDir,"], re.findall(r"try\? FileManager\.default\.createDirectory\(at: \w+,", swift))
         self.assertEqual(["write(to: menuReport,"], re.findall(r"write\(to: \w+,", swift))
@@ -3062,7 +3063,7 @@ class TestApp(unittest.TestCase):
         for gone in ("askFrom", "askItem", "askRow", "canAsk", "Ask Garrick first", "panel:ask", "menu:ask"):
             self.assertNotIn(gone, swift)
         self.assertEqual(1, swift.count("askGarrick(text"))                           # the Ask box's call, and only that
-        self.assertIn("askGarrick(text, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in",
+        self.assertIn("askGarrick(text, picked: picked, progress: { [weak self] said in self?.askProgress(said) }) { [weak self] reply, ranAway, out in",
                       swift)
 
     def test_the_ask_hotkey_is_a_setting(self):

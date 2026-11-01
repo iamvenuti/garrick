@@ -1672,9 +1672,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			act(["verb": "continue", "zone": oc[0], "file": oc[1]])
 			return true
 		}
-		if k == "note" {
-			guard let u = a["u"] as? String, let url = URL(string: u) else { return false }
-			return NSWorkspace.shared.open(url)
+		if k == "note" {             // only a note of this workspace, by the one check every link goes through (#318)
+			guard let u = a["u"] as? String, let url = URL(string: u),
+			      let file = workspaceFile(url, said: "That note is not in this workspace any more, so nothing was opened.") else { return false }
+			return NSWorkspace.shared.open(file)
 		} else if let f = a["f"] as? String {
 			let w = a["w"] as? String ?? ""
 			return launch(k, f, phrase: w.isEmpty ? "" : "open " + w, desk: a["dk"] != nil)

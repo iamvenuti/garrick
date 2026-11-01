@@ -3253,6 +3253,9 @@ class TestLinksOpenAsChosen(StatusCase):
         self.assertIn("NSWorkspace.shared.open(file)", opened)                           # anything else: macOS's own app, Finder for a folder
         self.assertLess(opened.index("workspaceFile("), opened.index("openAsRow(["))
         self.assertIn('case "note": return "Open the note"', self.body("label"))
+        run = self.body("run")
+        self.assertIn("let file = workspaceFile(url,", run)                              # the note's action too: nothing outside
+        self.assertIn("return NSWorkspace.shared.open(file)", run)
         self.assertNotIn("obsidian", self.SWIFT.read_text(encoding="utf-8").split("lazy var iconJSON", 1)[1].split("}()", 1)[0])
 
     def test_nothing_garrick_ships_writes_an_obsidian_link(self):

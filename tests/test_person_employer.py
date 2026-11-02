@@ -926,6 +926,75 @@ class ShapeTest(Workspace):
                               if p.name == "pat-newcomer.md"])
 
 
+class SymlinkedPersonPageTest(Workspace):
+    """A person page reached through a symbolic link is not read, so its
+    `organisation:` could cross a wall unseen: the walls refuse the link
+    itself, a page, a folder under `people/`, or `people/` as a whole, in the
+    full check and in the commit hook."""
+
+    def outside(self, organisation="[[wiki/entities/birch-co]]") -> Path:
+        cards = Path(self._tmp.name) / "cards"
+        write(cards / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", organisation))
+        return cards
+
+    def refused(self):
+        return [f for f in self.findings("walls") if f.message.startswith(check.PERSON_PLAIN)]
+
+    def test_a_symlinked_page_is_refused(self):
+        self.people.mkdir(parents=True, exist_ok=True)
+        os.symlink(str(self.outside() / "pat-newcomer.md"), str(self.people / "Pat-Newcomer.MD"))
+        self.assertEqual(["Wikis/Meetings/wiki/people/Pat-Newcomer.MD"], [f.path for f in self.refused()])
+        self.assertEqual("error", self.refused()[0].severity)
+
+    def test_a_symlinked_folder_under_people_is_refused(self):
+        self.people.mkdir(parents=True, exist_ok=True)
+        os.symlink(str(self.outside()), str(self.people / "team"))
+        self.assertEqual(["Wikis/Meetings/wiki/people/team"], [f.path for f in self.refused()])
+
+    def test_people_itself_as_a_symlink_is_refused(self):
+        self.people.rmdir()
+        os.symlink(str(self.outside()), str(self.people))
+        self.assertEqual(["Wikis/Meetings/wiki/people"], [f.path for f in self.refused()])
+
+    def test_a_plain_page_is_not_refused_for_its_form(self):
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/acme-corp]]"))
+        self.assertEqual([], self.refused())
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_a_staged_symlink_under_people(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        cards = self.meetings / "wiki" / "cards"
+        write(cards / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        self.people.mkdir(parents=True, exist_ok=True)
+        os.symlink("../cards/pat-newcomer.md", str(self.people / "pat-newcomer.md"))
+        os.symlink("../cards", str(self.people / "team"))
+        git(wikis, "add", "-A")
+        found = [f for f in check.run_checks(self.root, walls_only=True, staged=wikis)
+                 if f.message.startswith(check.PERSON_PLAIN)]
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.md", "Wikis/Meetings/wiki/people/team"],
+                         sorted(f.path for f in found))
+        self.assertTrue(all(f.severity == "error" and f.check == "walls" for f in found))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_people_staged_as_a_symlink(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        write(self.meetings / "wiki" / "cards" / "pat-newcomer.md",
+              person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        if self.people.exists():
+            self.people.rmdir()
+        os.symlink("cards", str(self.people))
+        git(wikis, "add", "-A")
+        found = [f for f in check.run_checks(self.root, walls_only=True, staged=wikis)
+                 if f.message.startswith(check.PERSON_PLAIN)]
+        self.assertEqual(["Wikis/Meetings/wiki/people"], [f.path for f in found])
+
+
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class OrganisationActionTest(Workspace):
     def setUp(self):

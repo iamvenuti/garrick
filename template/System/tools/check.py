@@ -3328,8 +3328,9 @@ def organisation_entity(ws: Workspace, fm: dict) -> Tuple[str, Optional[Path]]:
 
 
 def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
-    """Every person page and its text, symbolic links to a page or a folder
-    passed over: they may lead out of the wiki."""
+    """Every person page and its text. Symbolic links to a
+    page or a folder are passed over, as they may lead out of the wiki; the
+    walls refuse them instead (person_links)."""
     folder = ws.root.joinpath(*PEOPLE)
     if not folder.is_dir() or folder.is_symlink():
         return []
@@ -3343,14 +3344,53 @@ def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
     return sorted(out)
 
 
-def staged_people(ws: Workspace, staged: List[Tuple[Path, str]]) -> List[Tuple[Path, str]]:
-    """The person pages a commit's wall check reads: each staged one, and,
+PERSON_PLAIN = "a person page must be a plain file in wiki/people"
+
+
+def person_link_finding(ws: Workspace, path: Path) -> Finding:
+    """The refusal of a symbolic link where the walls read person pages."""
+    return Finding(ERROR, "walls", rel(ws, path),
+                   PERSON_PLAIN + ", not a symbolic link: the walls do not follow one, so where it leads is never "
+                   "checked; put the page itself there", "A person page is reached through a symbolic link")
+
+
+def person_links(ws: Workspace) -> List[Path]:
+    """Every symbolic link where a person page could be read: `wiki/people`
+    itself, a folder under it, or a page in it (`.md` in any case). Fail
+    closed: person_pages() passes them over, so each is a walls error."""
+    folder = ws.root.joinpath(*PEOPLE)
+    if folder.is_symlink():
+        return [folder]
+    if not folder.is_dir():
+        return []
+    out = []
+    for here, dirs, files in os.walk(str(folder)):
+        out += [Path(here) / d for d in dirs if os.path.islink(os.path.join(here, d))]
+        dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(here, d)))
+        out += [Path(here) / f for f in files if f.lower().endswith(".md") and os.path.islink(os.path.join(here, f))]
+    return sorted(out)
+
+
+def lexical_folder(ws: Workspace, parts) -> Path:
+    """A wiki folder by its path as git names it: the folder above resolved,
+    the folder itself not, so a symbolic link in its place is still found
+    there."""
+    folder = ws.root.joinpath(*parts)
+    return folder.parent.resolve() / folder.name
+
+
+def staged_people(ws: Workspace, staged: List[Tuple[Path, str]],
+                  links: frozenset = frozenset()) -> List[Tuple[Path, str]]:
+    """The person pages a commit's wall check reads: each staged one, but for
+    the symbolic links in `links`, which are refused for what they are, and,
     where an entity page is staged, every person page that links it, as git
     holds it, since a party changed on the entity page can put the link
     across a wall without the person page changing."""
     def under(path: Path, parts) -> bool:
-        return path.suffix.lower() == ".md" and ws.root.joinpath(*parts).resolve() in path.resolve().parents
-    out = [(path, text) for path, text in staged if under(path, PEOPLE)]
+        # By the path git stages it at, not where it leads: a symbolic link
+        # under people/ is a person page here, and refused (staged_person_links).
+        return path.suffix.lower() == ".md" and lexical_folder(ws, parts) in path.parents
+    out = [(path, text) for path, text in staged if under(path, PEOPLE) and path not in links]
     entities = [path for path, _ in staged if under(path, MEETINGS_ENTITIES)]
     if not entities:
         return out
@@ -4740,6 +4780,7 @@ def check_walls(ws: Workspace) -> List[Finding]:
             if text:
                 out.extend(walls_for_file(ws, project, ptags, path, text))
     out.extend(f for f in all_sources_findings(ws) if f.check == "walls")
+    out.extend(person_link_finding(ws, p) for p in person_links(ws))
     out.extend(organisation_walls(ws, person_pages(ws)))
     return out
 
@@ -4751,10 +4792,48 @@ def staged_names(repo: Path) -> Optional[Tuple[Path, List[str]]]:
     if top is None:
         return None
     top_path = Path(top.strip()).resolve()
-    names = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMR"], top_path)
+    names = _git(["diff", "--cached", "--name-only", "-z", "--diff-filter=ACMRT"], top_path)
     if names is None:
         return None
     return top_path, [n for n in names.split("\0") if n]
+
+
+def staged_links(repo: Path) -> Optional[Tuple[Path, set]]:
+    """(top of the repository holding `repo`, the paths added, copied,
+    modified, renamed or changed in type in its index that git holds as
+    symbolic links). None when it is not a repository."""
+    top = _git(["rev-parse", "--show-toplevel"], repo)
+    if top is None:
+        return None
+    top_path = Path(top.strip()).resolve()
+    raw = _git(["diff", "--cached", "--raw", "-z", "--no-abbrev", "--diff-filter=ACMRT"], top_path)
+    if raw is None:
+        return None
+    fields, out, i = raw.split("\0"), set(), 0
+    while i < len(fields):
+        head = fields[i]
+        if not head.startswith(":"):
+            i += 1
+            continue
+        parts = head[1:].split()
+        paths = 2 if parts[-1][:1] in ("R", "C") else 1
+        name = fields[i + paths] if i + paths < len(fields) else ""
+        if len(parts) >= 2 and parts[1] == "120000" and name:
+            out.add(name)
+        i += 1 + paths
+    return top_path, out
+
+
+def staged_person_links(ws: Workspace, repo: Path) -> Tuple[List[Finding], frozenset]:
+    """The refusal of each symbolic link staged at or under `wiki/people`, by
+    the path git stages it at, and those paths."""
+    links = staged_links(repo)
+    if links is None:
+        return [], frozenset()
+    top_path, names = links
+    people = lexical_folder(ws, PEOPLE)
+    hits = sorted(top_path / n for n in names if top_path / n == people or people in (top_path / n).parents)
+    return [person_link_finding(ws, h) for h in hits], frozenset(hits)
 
 
 def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
@@ -4913,7 +4992,9 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                 ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
                 out.extend(sources_for_file(ws, project, ptags, top_path / name, res.stdout))
     staged_texts = staged_files(repo) or []
-    out.extend(organisation_walls(ws, staged_people(ws, staged_texts)))
+    refused, links = staged_person_links(ws, repo)
+    out.extend(refused)
+    out.extend(organisation_walls(ws, staged_people(ws, staged_texts, links)))
     files = [(path, text, project_of(ws, path)) for path, text in staged_texts]
     files = [f for f in files if f[2] is not None]  # not inside a project: no party, so no wall to hold
     # The wording check asks only after the runs of words these files hold:

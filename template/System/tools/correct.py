@@ -323,15 +323,16 @@ def _git(args: List[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True)
 
 
-def walls_refusal(root: Path, repo: Path) -> str:
+def walls_refusal(root: Path, repo: Path, paths: Optional[List[str]] = None) -> str:
     """The walls check on what a repository has staged, as its commit hook
     would run it: "" when it passes, else the refusing check and the paths
-    it refused (garrick_lib's staged_walls_refusal). A check that does not
+    it refused (garrick_lib's staged_walls_refusal). `paths`, from the top
+    of `repo`, are what this correction changed. A check that does not
     finish is a refusal."""
-    return staged_walls_refusal(root, repo)
+    return staged_walls_refusal(root, repo, paths)
 
 
-def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path], str]) -> Tuple[bool, str]:
+def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path, List[str]], str]) -> Tuple[bool, str]:
     """One commit in `repo` of `files` and nothing else: (done, commit or reason).
     `verify` is asked first, with the change staged, why it must not be
     committed (#330): a repository may have no hook, `Wikis/` above all.
@@ -344,7 +345,7 @@ def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path]
         return False, " ".join((added.stderr or added.stdout).split()) or "git add failed"
     if not _git(["diff", "--cached", "--quiet", "--"] + names, repo).returncode:
         return False, "nothing to commit"
-    said = verify(repo)
+    said = verify(repo, names)
     if not said and _git(["diff", "--quiet", "--"] + names, repo).returncode:
         said = "a file changed again after the walls check read it, so nothing was committed"
     if said:
@@ -359,16 +360,16 @@ def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path]
 
 
 def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str = "", today: Optional[str] = None,
-          commit: bool = True, rebuild: bool = True, verify: Optional[Callable[[Path], str]] = None) -> Applied:
+          commit: bool = True, rebuild: bool = True, verify: Optional[Callable[[Path, List[str]], str]] = None) -> Applied:
     """Put NEW in place of OLD in every live file `hits` names, mark the pages
     that rest on a raw record holding OLD as superseded, rebuild what is built
     from them, and commit once per repository. Raw records are never touched.
     Each repository's change is committed only when the walls check, run on
     it staged, says nothing against it (walls_refusal, or the caller's own
-    `verify` in its place; none may go without one); when it does, that
+    `verify(repo, paths)` in its place; none may go without one); when it does, that
     repository's files are put back as they were, and the refusal is in
     `refused`."""
-    verify = verify or (lambda repo: walls_refusal(root, repo))
+    verify = verify or (lambda repo, paths: walls_refusal(root, repo, paths))
     root = Path(root).resolve()
     if not old or not old.strip():
         raise ValueError("Say which value is wrong: --old cannot be empty.")

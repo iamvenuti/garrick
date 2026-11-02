@@ -120,7 +120,7 @@ from garrick_lib import (  # noqa: E402
     TODO_ALSO_RE,
 )
 from garrick_lib import (  # noqa: E402  (#330)
-    FRONTMATTER_PLAIN, WALLS_KEYS, frontmatter_form_problem,
+    FRONTMATTER_PLAIN, PERSON_PLAIN, PERSON_SHAPE, WALLS_KEYS, frontmatter_form_problem,
     entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, organisation_link,
     organisation_proposal,
 )
@@ -3230,7 +3230,6 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
 ORGANISATION_ONE = "`organisation:` must be one link to an entity page"
 
 
-PERSON_SHAPE = "a person page's frontmatter must be plain `key: value` lines"
 # What str.splitlines() ends a line at and YAML reads as text (#330).
 _LINE_BREAKS = frozenset("\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 _SHAPE_KEY = re.compile(r"^([a-z][a-z0-9_-]*):(?: +(.*?))? *$")
@@ -3371,9 +3370,6 @@ def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
             if f.endswith(".md") and not path.is_symlink():
                 out.append((path, read_text(path) or ""))
     return sorted(out)
-
-
-PERSON_PLAIN = "a person page must be a plain file in wiki/people"
 
 
 def person_link_finding(ws: Workspace, path: Path) -> Finding:

@@ -1142,6 +1142,40 @@ class EveryCommitCheckedTest(Workspace):
         self.assertEqual("the walls check refused it (walls: Wikis/Meetings/wiki/people/theo-marsh.md)", said)
         self.assertEqual(said, correct.walls_refusal(self.root, self.wikis))
 
+    def test_a_refusal_for_a_pages_form_is_not_called_a_wall(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer.").replace("type: person\n",
+                                                                                       "type: person\n# a note\n"))
+        git(self.wikis, "add", "-A")
+        said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis, ["Meetings/wiki/people/kit-avery.md"])
+        self.assertTrue(said.startswith("the walls check refused it for a page's form, not for a wall"), said)
+        self.assertTrue(said.endswith("(walls: Wikis/Meetings/wiki/people/kit-avery.md)"), said)
+
+    def test_another_sessions_staged_file_is_named_as_such(self):
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Consultant.", "[[wiki/entities/acme-corp]]"))
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer."))
+        git(self.wikis, "add", "-A")
+        said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis, ["Meetings/wiki/people/kit-avery.md"])
+        self.assertEqual("the walls check refused a file another session has staged, which this change did not touch "
+                         "(walls: Wikis/Meetings/wiki/people/theo-marsh.md)", said)
+        said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis, ["Meetings/wiki/people/theo-marsh.md"])
+        self.assertEqual("the walls check refused it (walls: Wikis/Meetings/wiki/people/theo-marsh.md)", said)
+
+    def test_a_check_that_does_not_finish_says_so(self):
+        def slow(cmd, *a, **k):
+            raise subprocess.TimeoutExpired(cmd, 600)
+        with mock.patch.object(garrick_lib.subprocess, "run", slow):
+            said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis, [])
+        self.assertTrue(said.startswith("the walls check did not finish in time"), said)
+
+    def test_a_correction_held_for_a_pages_form_names_it_and_says_no_wall(self):
+        page = self.people / "pat-newcomer.md"
+        page.write_text(page.read_text().replace("type: person\n", "type: person\n# a note\n"))
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "a note")
+        code, said, _ = self.run_tool("correct", "--old", "Buyer.", "--new", "Lead buyer.")
+        self.assertNotIn(nurture.WALL_REFUSAL, said)
+        self.assertIn("Wikis/Meetings/wiki/people/pat-newcomer.md: its frontmatter is not plain key: value lines", said)
+
     def run_tool(self, *args: str):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -1161,7 +1195,7 @@ class EveryCommitCheckedTest(Workspace):
 
     def test_a_fix_refused_by_the_walls_check_is_put_back(self):
         calls = []
-        with mock.patch.object(nurture, "walls_refusal", lambda ctx, repo: calls.append(repo) or "refused here"):
+        with mock.patch.object(nurture, "walls_refusal", lambda ctx, repo, *a, **kw: calls.append(repo) or "refused here"):
             code, said, _ = self.run_tool("correct", "--old", "Buyer.", "--new", "Lead buyer.", "--yes")
         self.assertEqual([self.wikis.resolve()], [Path(r).resolve() for r in calls])
         self.assertNotEqual(0, code)
@@ -1176,8 +1210,8 @@ class EveryCommitCheckedTest(Workspace):
         git(self.wikis, "add", "--", "Meetings/wiki/scratch.md")                 # staged by somebody else
         real = nurture.walls_refusal
 
-        def changed_after_reading(ctx, repo):                                     # the page changes once checked
-            said = real(ctx, repo)
+        def changed_after_reading(ctx, repo, *a, **kw):                           # the page changes once checked
+            said = real(ctx, repo, *a, **kw)
             page = self.people / "kit-avery.md"
             page.write_text(page.read_text().replace("Architect", "Architect and buyer"))
             return said
@@ -1260,11 +1294,11 @@ class CorrectPyTest(Workspace):
         git(wikis, "add", "-A")
         git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
         seen = []
-        with mock.patch.object(correct, "walls_refusal", lambda root, repo: seen.append(repo) or ""):
+        with mock.patch.object(correct, "walls_refusal", lambda root, repo, *a, **kw: seen.append(repo) or ""):
             done = correct.apply(self.root, "Buyer at", "Lead buyer at", rebuild=False)
         self.assertEqual([wikis.resolve()], [Path(r).resolve() for r in seen])
         self.assertEqual(1, len(done.commits))
-        done = correct.apply(self.root, "Lead buyer at", "Buyer at", rebuild=False, verify=lambda repo: "no")
+        done = correct.apply(self.root, "Lead buyer at", "Buyer at", rebuild=False, verify=lambda repo, paths: "no")
         self.assertEqual([("Wikis", "no")], done.refused)
         self.assertIn("Lead buyer at", (self.people / "kit-avery.md").read_text())
 

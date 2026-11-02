@@ -1227,14 +1227,16 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
     return go, held, withheld
 
 
-def person_links_held(ctx: Ctx, hits: list, old: str, new: str) -> Tuple[list, bool]:
+def person_links_held(ctx: Ctx, hits: list, old: str, new: str) -> Tuple[list, bool, List[Item]]:
     """correct's hits less every person page in Meetings whose corrected text
-    the walls check would refuse: an `organisation:` across a wall, or a
-    frontmatter out of shape (#330). A correction may not put a link across
-    a wall. Whether any was left out, so the run says the rule's sentence
-    and nothing else."""
+    the walls check would refuse (#330): an `organisation:` across a wall,
+    which a correction may not put there, or a frontmatter out of the plain
+    shape the walls read. Whether any was left out for a wall, so the run
+    says the rule's sentence and nothing else; and a held item for each left
+    out for its shape alone, which names the page and says so plainly, since
+    no wall stands there."""
     people = ctx.root.joinpath("Wikis", "Meetings", "wiki", "people").resolve()
-    keep, crossing, ws = [], False, None
+    keep, crossing, shaped, ws = [], False, [], None
     for hit in hits:
         path = hit.path.resolve()
         if people not in path.parents or hit.kind == "raw":
@@ -1245,13 +1247,20 @@ def person_links_held(ctx: Ctx, hits: list, old: str, new: str) -> Tuple[list, b
         except (OSError, UnicodeDecodeError):
             keep.append(hit)
             continue
+        fixed = correct.replaced(text, old, new)
+        if garrick_check.person_shape_problem(fixed):
+            shaped.append(Item("correct", "correction", ctx.rel(path), "holds the value being corrected",
+                               kind="correction",
+                               held="its frontmatter is not plain key: value lines, which the walls need to read "
+                                    "a person page; make it plain, then correct it"))
+            continue
         if ws is None:
             ws = garrick_check.discover(ctx.root, None)
-        if garrick_check.organisation_walls(ws, [(path, correct.replaced(text, old, new))]):
+        if garrick_check.organisation_walls(ws, [(path, fixed)]):
             crossing = True
             continue
         keep.append(hit)
-    return keep, crossing
+    return keep, crossing, shaped
 
 
 def correction_item(ctx: Ctx, old: str, new: str, go: list, path: str = "") -> Item:
@@ -1302,8 +1311,9 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     left_out = {(ctx.root / Path(p).expanduser()).resolve() for p in leave or []}
     hits = [h for h in hits if h.path.resolve() not in left_out]
     go, held, withheld = sort_hits(ctx, hits, scopes)
-    go, crossing = person_links_held(ctx, go, old, new)
+    go, crossing, shaped = person_links_held(ctx, go, old, new)
     withheld = withheld or crossing
+    held = held + shaped
     item = correction_item(ctx, old, new, go, path)
     out = {"old": old, "new": new, "item": item, "hits": correct.listing(go, ctx.root), "held": held, "done": None,
            "wall": WALL_REFUSAL if withheld else ""}
@@ -1314,7 +1324,7 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     leftover = list(held)
     if yes and go:
         done = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat(),
-                             verify=lambda repo: walls_refusal(ctx, repo))
+                             verify=lambda repo, paths: walls_refusal(ctx, repo, paths))
         out["done"] = done
         item.said = "%s in %s" % (plural(len(done.commits), "commit"), ", ".join(r for r, _ in done.commits)) \
             if done.commits else "nothing committed"
@@ -1526,17 +1536,17 @@ def hold_unsafe(ctx: Ctx, items: List[Item]) -> Dict[Path, List[Item]]:
     return by_repo
 
 
-def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path], str]] = None) -> dict:
+def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path, List[str]], str]] = None) -> dict:
     """Apply every fix of an applying kind among `items`, one commit per
     repository, of the files the fixes changed and nothing else. In a run
     with nobody watching, only the kinds registered as unattended, and of
     those no op in ATTENDED_OPS. Before each commit the walls check runs
-    on the change as staged (walls_refusal, or `verify` in its place), since
+    on the change as staged (walls_refusal, or `verify(repo, paths)` in its place), since
     a repository may have no hook, `Wikis/` above all: a refusal is put back
     as a refused commit is. What is committed is these paths as the check
     read them, staged: a file changed again on disk since is refused, and
     what another session has staged stays staged (#330)."""
-    verify = verify or (lambda repo: walls_refusal(ctx, repo))
+    verify = verify or (lambda repo, paths: walls_refusal(ctx, repo, paths))
     wanted = [i for i in items if i.kind in KINDS and KINDS[i.kind].apply and i.fix
               and (not ctx.headless or (KINDS[i.kind].unattended and i.fix.get("op") not in ATTENDED_OPS))]
     seen, unique = set(), []
@@ -1569,7 +1579,7 @@ def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path], str]] =
         add = ctx.git(repo, "add", "-A", "--", *paths)
         c = add
         if add.returncode == 0:
-            said = verify(repo)
+            said = verify(repo, paths)
             if not said and ctx.git(repo, "diff", "--quiet", "--", *paths).returncode:
                 said = "a file changed again after the walls check read it, so nothing was committed"
             # These paths as staged, which is what the check read, and nothing another session has staged.
@@ -2131,11 +2141,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     return code
 
 
-def walls_refusal(ctx: Ctx, repo: Path) -> str:
+def walls_refusal(ctx: Ctx, repo: Path, paths: Optional[List[str]] = None) -> str:
     """The walls check on what a repository has staged, as its commit hook
     would run it: "" when it passes, else the refusing check and the paths
-    it refused (garrick_lib's staged_walls_refusal)."""
-    return staged_walls_refusal(ctx.root, repo)
+    it refused (garrick_lib's staged_walls_refusal). `paths`, from the top
+    of `repo`, are what this command changed."""
+    return staged_walls_refusal(ctx.root, repo, paths)
 
 
 def main_organisation(ctx: Ctx, a) -> int:

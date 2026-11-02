@@ -199,6 +199,9 @@ __all__ = [
     "ignore_block",
     "ignore_parts",
     "FRONTMATTER_PLAIN",
+    "FORM_PROBLEMS",
+    "PERSON_PLAIN",
+    "PERSON_SHAPE",
     "WALLS_KEYS",
     "frontmatter_form_problem",
     "with_ignore_block",
@@ -316,6 +319,11 @@ def _frontmatter_body(text: str) -> Optional[List[str]]:
 
 
 FRONTMATTER_PLAIN = "frontmatter must be plain key: value lines"
+# What the walls say of a person page they cannot read (check.py), and so,
+# with FRONTMATTER_PLAIN, what a refusal calls a page's form, not a wall.
+PERSON_SHAPE = "a person page's frontmatter must be plain `key: value` lines"
+PERSON_PLAIN = "a person page must be a plain file in wiki/people"
+FORM_PROBLEMS = (FRONTMATTER_PLAIN, PERSON_SHAPE, PERSON_PLAIN)
 # What opens a YAML node other than a plain key at the left margin: a quoted
 # key, an explicit `?` key, a tag, an anchor, an alias, a merge key, a flow
 # mapping or sequence. YAML honours each as a key this reader never sees.
@@ -2984,34 +2992,64 @@ def foreign_git_env(env: Optional[Dict[str, str]] = None) -> Optional[Dict[str, 
     return source
 
 
-def staged_walls_refusal(root: PathLike, repo: PathLike) -> str:
+def staged_walls_refusal(root: PathLike, repo: PathLike, paths: Optional[Iterable[str]] = None) -> str:
     """The walls check on what `repo` has staged, as its commit hook runs it
     (check.py --staged): "" when it passes, else why, as each refusing check
     and the paths it refused, and nothing of what they hold, since the reason
     is said where the far side of a wall may read it. A check that does not
-    finish, or whose report cannot be read, is a refusal (#330)."""
+    finish, or whose report cannot be read, is a refusal (#330).
+
+    `paths`, from the top of `repo`, are what the command changed. The words,
+    and only the words, then tell a wall apart from a page whose form the
+    walls cannot read (FORM_PROBLEMS) and from a file staged there that the
+    command did not change, another session's: each still refuses."""
     check = Path(__file__).resolve().parent / "check.py"
     try:
         r = subprocess.run([sys.executable, str(check), "--root", str(root), "--staged", "--walls-only", "--json"],
                            cwd=str(repo), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
                            env=foreign_git_env())
-    except (subprocess.TimeoutExpired, OSError) as why:
-        return "the walls check did not finish (%s), so nothing was committed" % type(why).__name__
+    except subprocess.TimeoutExpired:
+        return "the walls check did not finish in time, so nothing was committed; try again when the machine is less busy"
+    except OSError as why:
+        return "the walls check could not run (%s), so nothing was committed" % type(why).__name__
     if r.returncode == 0:
         return ""
     try:
-        errors = [f for f in json.loads(r.stdout)["findings"] if f.get("severity") == "error"]
-        refused: Dict[str, List[str]] = {}
-        for f in errors:
-            here = refused.setdefault(str(f["check"]), [])
-            if str(f["path"]) not in here:
-                here.append(str(f["path"]))
+        errors = [(str(f["check"]), str(f["path"]), str(f.get("message") or ""))
+                  for f in json.loads(r.stdout)["findings"] if f.get("severity") == "error"]
     except (ValueError, KeyError, TypeError):
         return "the walls check refused it, and what it said could not be read"
-    if not refused:
+    if not errors:
         return "the walls check refused it, and named no file"
-    return "the walls check refused it (%s)" % "; ".join(
-        "%s: %s" % (c, ", ".join(sorted(paths))) for c, paths in sorted(refused.items()))
+    top, base = Path(repo).resolve(), Path(root).resolve()
+
+    def from_root(name: str) -> str:
+        try:
+            return (top / name).relative_to(base).as_posix()
+        except ValueError:
+            return (top / name).as_posix()
+    foreign: set = set()
+    if paths is not None:
+        listed = subprocess.run(["git", "diff", "--cached", "--name-only", "-z"], cwd=str(top), capture_output=True,
+                                text=True, env=foreign_git_env())
+        mine = {from_root(p) for p in paths}
+        foreign = {from_root(n) for n in listed.stdout.split("\0") if n} - mine if listed.returncode == 0 else set()
+    kinds: Dict[str, Dict[str, List[str]]] = {}
+    for check_name, path, message in errors:
+        kind = "foreign" if path in foreign else "form" if message.startswith(FORM_PROBLEMS) else "wall"
+        here = kinds.setdefault(kind, {}).setdefault(check_name, [])
+        if path not in here:
+            here.append(path)
+
+    def where(found: Dict[str, List[str]]) -> str:
+        return "; ".join("%s: %s" % (c, ", ".join(sorted(ps))) for c, ps in sorted(found.items()))
+    said = {
+        "wall": "the walls check refused it (%s)",
+        "form": "the walls check refused it for a page's form, not for a wall: its frontmatter is not plain "
+                "key: value lines, or it is a symbolic link (%s)",
+        "foreign": "the walls check refused a file another session has staged, which this change did not touch (%s)",
+    }
+    return "; and ".join(said[k] % where(kinds[k]) for k in ("wall", "form", "foreign") if k in kinds)
 
 
 class GitError(RuntimeError):

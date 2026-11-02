@@ -1,6 +1,6 @@
 # The three-minute demo: shot list
 
-Sam Rivera runs his day by voice on the demo workspace. It is Tuesday 29 September 2026. Theo Marsh at Birch & Co rang last night straight out of his board meeting, and the recorder has already put that call in the Meetings inbox. Four mails from the same day are saved in the Work zone's inbox. Build the workspace fresh before every take (see *Capture*).
+Sam Rivera runs his day by voice on the demo workspace. It is the Tuesday after the demo's month (Tuesday 29 September as `content/` is written; the build moves the month to end on the day you build). Theo Marsh at Birch & Co rang last night straight out of his board meeting, and the recorder has already put that call in the Meetings inbox. Four mails from the same day are saved in the Work zone's inbox. Build the workspace fresh before every take (see *Capture*).
 
 Each beat gives what Sam says, what the assistant should say back, and what is on screen. The replies are the spoken forms the skills prescribe: `threads` for open, list, wrap and close, `intake` for the inbox, `meetings` for the prep. If a reply comes out longer or different on the day, the skill is what's wrong, not the script. Note it and fix the skill.
 
@@ -38,7 +38,7 @@ Each beat gives what Sam says, what the assistant should say back, and what is o
 
 **Assistant:** "Cobalt: you last met Marta Quill on the 22nd, with Iris, and she quoted about 140 euros a pallet from March. You owe her Birch's volume forecast by Friday the 2nd. A wall holds some material back from this project, so I have not used it. Nothing was written."
 
-**Screen:** first the Meetings index with both Cobalt calls visible, *Cobalt Freight renewal, for Acme* on 15 September and *Cobalt Freight northern lane, for Birch* on 22 September. Then the Walls table in `System/context.md`, with `acme` and `birch` on one row. Caption: *Sam met Cobalt twice, once for each client. Only one of those calls is Birch's to use.*
+**Screen:** first the Meetings index with both Cobalt calls visible, *Cobalt Freight renewal, for Acme* and *Cobalt Freight northern lane, for Birch*, a week apart. Then the Walls table in `System/context.md`, with `acme` and `birch` on one row. Caption: *Sam met Cobalt twice, once for each client. Only one of those calls is Birch's to use.*
 
 The video is built around this beat. The brief is for Birch, because Launch Plan is the thread in focus. The Acme-side call is left out entirely: Cobalt's offer to Acme and what Marta said about northern capacity. The only trace is that last sentence, which never says what was held back or whose it was.
 
@@ -48,7 +48,7 @@ The video is built around this beat. The brief is for Birch, because Launch Plan
 
 **Assistant:** "Launch plan wrapped. Next is the draft for Theo, due Friday the 9th; his budget should land Wednesday."
 
-**Screen:** the Resume here block rewritten in place, a new dated entry above the older ones, then `git log` in the Work zone showing the new commit on top of September's history. Caption: *Wrapped means anyone can pick it up cold. Git keeps every version.*
+**Screen:** the Resume here block rewritten in place, a new dated entry above the older ones, then `git log` in the Work zone showing the new commit on top of the month's history. Caption: *Wrapped means anyone can pick it up cold. Git keeps every version.*
 
 ## 6. Close for the day (2:20 to 2:40)
 
@@ -76,4 +76,4 @@ Then "run the check" again. It fails with one error under Walls, naming the Laun
 
 ## Capture
 
-The workspace comes from `python3 examples/demo/build.py --target ~/Garrick-demo`. Rebuild into an empty folder before each take (it takes about half a minute), so the inboxes hold Theo's call and the four mails, and the history ends on 26 September. Record on a Mac with the built-in screen recorder (Cmd-Shift-5) and a decent microphone. On screen is one terminal at the workspace root running Claude Code or Codex. Sam speaks through macOS Dictation or through the assistant's own voice input. Before recording, tell the assistant you are listening, so it answers in spoken form from the first beat. Everything else is optional and not part of Garrick. Obsidian beside the terminal makes the notes, meeting pages and to-do lists visible as they change. A terminal app such as cmux gives one tab per thread. A phone app (Claude Code Remote Control, Codex Remote, or a third-party client) lets you film Sam talking from a phone instead of the desk. macOS Spoken Content can read the replies aloud if you want them heard as well as shown. The wrap writes the machine's own date into the note: film on the 29th with the clock left alone, or accept that the dated entry shows the day you filmed.
+The workspace comes from `python3 examples/demo/build.py --target ~/Garrick-demo`. Rebuild into an empty folder before each take (it takes about half a minute), so the inboxes hold Theo's call and the four mails, and the history ends two days before Theo's call, which falls on the day you build or in the six days before it. Build on the day you film, or pass `--today` with the day you will film. Record on a Mac with the built-in screen recorder (Cmd-Shift-5) and a decent microphone. On screen is one terminal at the workspace root running Claude Code or Codex. Sam speaks through macOS Dictation or through the assistant's own voice input. Before recording, tell the assistant you are listening, so it answers in spoken form from the first beat. Everything else is optional and not part of Garrick. Obsidian beside the terminal makes the notes, meeting pages and to-do lists visible as they change. A terminal app such as cmux gives one tab per thread. A phone app (Claude Code Remote Control, Codex Remote, or a third-party client) lets you film Sam talking from a phone instead of the desk. macOS Spoken Content can read the replies aloud if you want them heard as well as shown. Theo's call always lands on a Monday, the most recent one on or before the build day, and the wrap writes the machine's own date into the note: build and film on a Tuesday and the script's "last night" and the dated entry both line up.

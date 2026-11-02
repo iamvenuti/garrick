@@ -567,7 +567,8 @@ class ThreadListingTest(unittest.TestCase):
                                             str(REPO / "examples" / "acme.json"), "--target", str(cls.fresh)],
                                            env=env, capture_output=True, text=True)
             cls.built = subprocess.run([sys.executable, str(REPO / "examples" / "demo" / "build.py"),
-                                        "--target", str(cls.demo)], env=env, capture_output=True, text=True)
+                                        "--target", str(cls.demo), "--today", "2026-09-28"],
+                                       env=env, capture_output=True, text=True)  # the month as written
         cls.snippet = listing_snippet()
 
     @classmethod

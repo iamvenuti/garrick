@@ -977,7 +977,11 @@ def cmd_rename(root, args, today):
                 continue                                    # not text it can rewrite; its links, if any, stay
             changed = relink(text, swaps, prefixes, old, new, heads)
             if not is_thread and moved in path.parents:
-                changed = re.sub(r'(?m)^(project|parent): "?\[\[%s\]\]"?$' % re.escape(old),
+                # `parent:` names the project only in a thread's own note and a note at the project's
+                # top; a thread's working note names its thread, which may share the project's name.
+                own = path.parent == moved or (path.parent.parent == moved / "Threads"
+                                               and path.name == path.parent.name + ".md")
+                changed = re.sub(r'(?m)^(%s): "?\[\[%s\]\]"?$' % ("project|parent" if own else "project", re.escape(old)),
                                  lambda m: f'{m.group(1)}: "[[{new}]]"', changed)
             if path == new_note:
                 changed = re.sub(r"(?m)^title: .*$", f"title: {new}", changed, count=1)

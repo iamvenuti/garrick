@@ -81,7 +81,8 @@ thread whose name another note shares.
    python3 System/tools/nurture.py fix --scope "<path>" --yes
    ```
    It applies them all, one commit per repository, naming only the files it
-   changed, through each repository's wall check. Relay the commits, and any
+   changed, each only after the walls check passes on what it staged, hook
+   or no hook (a refusal puts the change back). Relay the commits, and any
    fix it held with the reason. A no leaves them for the report.
 4. **Walls.** For each, say the file and the wall ("the Pricing notes, the
    wall between Acme and Birch") and nothing of what matched: not quoted,
@@ -105,9 +106,9 @@ thread whose name another note shares.
    python3 System/tools/nurture.py organisation --path "<person page>" --yes [--entity "<entity>"]
    ```
    It works the link out again, refuses one across a wall, runs the walls
-   check on that page's change as staged and commits it only if that
-   passes, since `Wikis/` has no commit hook unless you added one, and
-   records the answer. It refuses a page whose frontmatter is not plain
+   check on that page's change as staged and commits exactly that index
+   only if it passes and nothing else is staged there, since `Wikis/` has
+   no commit hook unless you added one, and records the answer. It refuses a page whose frontmatter is not plain
    `key: value` lines, or that has an organisation line already. Never batch
    these, and never run it for a page the user has not said yes to.
    "Skip" leaves it in the report. Never guess.

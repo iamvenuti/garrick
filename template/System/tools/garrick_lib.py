@@ -293,7 +293,13 @@ def parse_frontmatter_text(text: str) -> dict:
     """Parse the YAML frontmatter at the top of `text`. See parse_frontmatter."""
     if text.startswith("﻿"):
         text = text[1:]
-    lines = text.splitlines()
+    # Lines end at \n alone, a \r before it dropped, as a YAML reader ends them:
+    # str.splitlines() also breaks at U+2028, U+2029, U+0085 and the like,
+    # which YAML reads as text, so a quoted value holding one could hide
+    # every key after it from this reader and from no other (#330).
+    lines = [l[:-1] if l.endswith("\r") else l for l in text.split("\n")]
+    if lines and lines[-1] == "":
+        lines.pop()
     if not lines or lines[0].strip() != "---":
         return {}
     body = []

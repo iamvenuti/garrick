@@ -1310,7 +1310,8 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     key = scope_key(scopes)
     leftover = list(held)
     if yes and go:
-        done = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat())
+        done = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat(),
+                             verify=lambda repo: walls_refusal(ctx, repo))
         out["done"] = done
         item.said = "%s in %s" % (plural(len(done.commits), "commit"), ", ".join(r for r, _ in done.commits)) \
             if done.commits else "nothing committed"
@@ -1526,9 +1527,12 @@ def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path], str]] =
     """Apply every fix of an applying kind among `items`, one commit per
     repository, of the files the fixes changed and nothing else. In a run
     with nobody watching, only the kinds registered as unattended, and of
-    those no op in ATTENDED_OPS. `verify`, given a repository with the
-    change staged, says why it must not be committed, or "": a refusal is
-    put back as a refused commit is."""
+    those no op in ATTENDED_OPS. Before each commit the walls check runs
+    on the change as staged (walls_refusal, or `verify` in its place), since
+    a repository may have no hook, `Wikis/` above all: a refusal is put back
+    as a refused commit is. What is committed is the index that was checked,
+    and only when it holds nothing staged but this change (#330)."""
+    verify = verify or (lambda repo: walls_refusal(ctx, repo))
     wanted = [i for i in items if i.kind in KINDS and KINDS[i.kind].apply and i.fix
               and (not ctx.headless or (KINDS[i.kind].unattended and i.fix.get("op") not in ATTENDED_OPS))]
     seen, unique = set(), []
@@ -1560,12 +1564,12 @@ def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path], str]] =
         message = commit_message(ctx, repo, applied)
         add = ctx.git(repo, "add", "-A", "--", *paths)
         c = add
-        if add.returncode == 0 and verify is not None:
-            said = verify(repo)
-            if said:
-                c = subprocess.CompletedProcess([], 1, "", said)
-        if c is add and add.returncode == 0:
-            c = ctx.git(repo, "commit", "-q", "-m", message, "--", *paths)
+        if add.returncode == 0:
+            staged = ctx.git(repo, "diff", "--cached", "--name-only", "-z").stdout.split("\0")
+            others = sorted(set(staged) - set(paths) - {""})
+            said = ("something else is staged there too (%s); it is not committed with this" % ", ".join(others[:3])
+                    if others else verify(repo))
+            c = subprocess.CompletedProcess([], 1, "", said) if said else ctx.git(repo, "commit", "-q", "-m", message)
         if c.returncode != 0:
             ctx.git(repo, "reset", "-q", "--", *paths)
             journal.rollback(start)
@@ -2125,9 +2129,12 @@ def main(argv: Optional[List[str]] = None) -> int:
 def walls_refusal(ctx: Ctx, repo: Path) -> str:
     """The walls check on what a repository has staged, as its commit hook
     would run it: "" when it passes, else what it found, in its own words."""
-    r = subprocess.run([sys.executable, str(HERE / "check.py"), "--root", str(ctx.root), "--staged", "--walls-only"],
-                       cwd=str(repo), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
-                       env=foreign_git_env())
+    try:
+        r = subprocess.run([sys.executable, str(HERE / "check.py"), "--root", str(ctx.root), "--staged",
+                            "--walls-only"], cwd=str(repo), capture_output=True, text=True, timeout=600,
+                           stdin=subprocess.DEVNULL, env=foreign_git_env())
+    except (subprocess.TimeoutExpired, OSError) as why:
+        return "the walls check did not finish (%s), so nothing was committed" % type(why).__name__
     if r.returncode == 0:
         return ""
     said = [l.strip() for l in (r.stdout + r.stderr).splitlines() if l.strip()]
@@ -2177,7 +2184,7 @@ def main_organisation(ctx: Ctx, a) -> int:
     rel = ctx.rel(path)
     item = Item(source="nurture", check="organisation", path=rel, message="", kind="mechanical",
                 fix={"op": "organisation", "link": link}, touches=[rel])
-    done = apply(ctx, [item], verify=lambda repo: walls_refusal(ctx, repo))
+    done = apply(ctx, [item])
     for i in done["held"]:
         print("nurture: held: %s" % i.held, file=sys.stderr)
     for c in done["commits"]:
@@ -2229,19 +2236,22 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
             said = "%s the old value. Correct them all?" % ("One place has" if len(files) == 1
                                                              else "%d places have" % len(files))
         else:
-            said = "Nothing live holds the old value."
+            said = "" if out["wall"] else "Nothing live holds the old value."
         if back:
             said += " %s held back, named in the report." % ("One more is" if back == 1 else "%d more are" % back)
         if out["wall"]:
             said += " " + out["wall"]
-        print(said)
+        print(said.strip())
         return code
     lines = []
     if done is None:
         for h in out["hits"]:
             lines.append("%s\t%s" % (h["kind"], h["path"]))
             lines += ["\t%d: %s" % (l["line"], l["text"][:160]) for l in h["lines"]]
-        lines.append(item.line() if files or item.fix["raw"] else 'Nothing live holds "%s".' % a.old)
+        if files or item.fix["raw"]:
+            lines.append(item.line())
+        elif not out["wall"]:              # held back by a wall: the rule's sentence alone says it
+            lines.append('Nothing live holds "%s".' % a.old)
         if files:
             lines.append("On a yes, run again with --yes: one commit per repository.")
     else:

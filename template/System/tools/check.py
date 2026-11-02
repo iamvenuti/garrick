@@ -3077,6 +3077,8 @@ ORGANISATION_ONE = "`organisation:` must be one link to an entity page"
 
 
 PERSON_SHAPE = "a person page's frontmatter must be plain `key: value` lines"
+# What str.splitlines() ends a line at and YAML reads as text (#330).
+_LINE_BREAKS = frozenset("\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 _SHAPE_KEY = re.compile(r"^([a-z][a-z0-9_-]*):(?: +(.*?))? *$")
 _SHAPE_ITEM = re.compile(r"^(?:  )?- +(.*?) *$")
 _FLOW_ITEM = re.compile(r"""^(?:[A-Za-z0-9_#. -]+|"[^"\\,]*"|'[^',]*')$""")
@@ -3086,13 +3088,16 @@ def _plain_scalar(value: str) -> bool:
     """A value as one plain or simply quoted scalar: double quotes with no
     escape inside, single quotes with no quote inside, a wikilink
     `[[...]]` written bare, or a plain word that opens with none of the
-    characters that start another kind of YAML node."""
+    characters that start another kind of YAML node and holds no `: `, nor
+    ends in `:`, which would make it a mapping."""
     if value.startswith('"'):
         return re.fullmatch(r'"[^"\\]*"', value) is not None
     if value.startswith("'"):
         return re.fullmatch(r"'[^']*'", value) is not None
     if value.startswith("[["):
         return re.fullmatch(r"\[\[[^\[\]{}]+\]\]", value) is not None
+    if ": " in value or value.endswith(":"):
+        return False                      # YAML reads `organisation: x` there as a mapping
     return value[:1] not in set("{[]}&*|>!%@`?#,'\"") and not value.startswith("- ") and value != "-"
 
 
@@ -3120,7 +3125,9 @@ def person_shape_problem(text: str) -> bool:
     ` # comment` after it allowed; and
     `- item` lines, at the margin or two spaces in, straight under a key
     with no value. No key twice, no key but `organisation` spelled after
-    it, no list under `organisation`, no tab, no lone carriage return.
+    it, no list under `organisation`, no tab, no lone carriage return, and
+    no character str.splitlines() ends a line at but YAML reads as text
+    (U+2028, U+2029, U+0085, \v, \f, \x1c to \x1e).
     A file with no frontmatter has nothing to misread."""
     if text.startswith("﻿"):
         text = text[1:]
@@ -3134,7 +3141,7 @@ def person_shape_problem(text: str) -> bool:
         return True
     keys, open_key = set(), None
     for line in lines[:end]:
-        if "\t" in line or "\r" in line:
+        if "\t" in line or "\r" in line or any(ch in _LINE_BREAKS for ch in line):
             return True
         if not line.strip():
             open_key = None

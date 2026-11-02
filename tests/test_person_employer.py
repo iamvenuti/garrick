@@ -1005,5 +1005,138 @@ class CorrectionAcrossAWallTest(Workspace):
         self.assertEqual([], [f for f in check.run_checks(self.root, walls_only=True)])
 
 
+
+# ---------------------------------------------------------------------------
+# The fourth review
+# ---------------------------------------------------------------------------
+
+class LineBreakTest(Workspace):
+    """A character str.splitlines() ends a line at, and YAML reads as text,
+    cannot hide or shadow a key from Garrick's frontmatter reader."""
+
+    BREAKS = (" ", " ", "\x85", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e")
+
+    def test_the_shape_refuses_each_of_them(self):
+        for ch in self.BREAKS:
+            text = doc(HEAD + "note: 'x%s---%sy'\norganisation: %s" % (ch, ch, B))
+            self.assertTrue(check.person_shape_problem(text), repr(ch))
+
+    def test_the_reader_ends_lines_at_newline_alone(self):
+        for ch in (" ", " ", "\x85"):
+            text = doc(HEAD + "note: 'x%s---%sy'\norganisation: %s" % (ch, ch, B))
+            fm = garrick_lib.parse_frontmatter_text(text)
+            self.assertEqual("[[wiki/entities/birch-co]]", fm.get("organisation"), repr(ch))
+            self.assertEqual("x%s---%sy" % (ch, ch), fm.get("note"), repr(ch))
+        self.assertEqual({"title": "Ana", "party": "none"},
+                         garrick_lib.parse_frontmatter_text("---\r\ntitle: Ana\r\nparty: none\r\n---\r\nBody.\r\n"))
+
+    def test_the_hook_refuses_a_hidden_link(self):
+        write(self.people / "pat-newcomer.md", doc(HEAD + "note: 'x --- y'\norganisation: " + B))
+        found = self.findings("walls")
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.md"], [f.path for f in found])
+
+    def test_a_colon_space_in_a_plain_value_or_item_is_a_mapping(self):
+        for front in (HEAD + 'aliases:\n- organisation: ' + B, HEAD + "aliases:\n  - organisation:",
+                      HEAD + 'note: 2026-03-10 # organisation: ' + B, HEAD + "note: Lead: Pricing"):
+            self.assertTrue(check.person_shape_problem(doc(front)), front)
+        self.assertFalse(check.person_shape_problem(doc(HEAD + 'note: "Lead: Pricing"')))
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class EveryCommitCheckedTest(Workspace):
+    """Every Nurture commit runs the walls check on its staged change first,
+    whether or not the repository has a hook, and puts it back if refused."""
+
+    def setUp(self):
+        super().setUp()
+        env = {k: v for k, v in GIT_ENV.items() if k.startswith("GIT_")}
+        env.pop("GIT_DIR", None)
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop("GARRICK_HEADLESS", None)
+        write(self.root / "System" / "context.md", CONTEXT)        # Cedar is walled from nobody
+        self.context = garrick_lib.load_context(self.root)
+        self.wikis = self.root / "Wikis"
+        git(self.wikis, "init", "-q")
+        write(self.entities / "ledger.md", entity("Ledger Co", "cedar"))
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer.", "[[wiki/entities/ledger]]"))
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        self.head = git(self.wikis, "rev-parse", "HEAD").strip()
+
+    def run_tool(self, *args: str):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = nurture.main(list(args) + ["--root", str(self.root), "--today", "2026-10-17"])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_correction_to_an_entity_page_that_puts_a_link_across_a_wall_is_put_back(self):
+        ledger = (self.entities / "ledger.md").read_text()
+        for old, new in (("Ledger Co", "Birch & Co"), ("party: cedar", "party: birch")):
+            code, said, _ = self.run_tool("correct", "--old", old, "--new", new, "--yes")
+            self.assertNotEqual(0, code, (old, said))
+            self.assertIn("the walls check refused it", said)
+            self.assertEqual(ledger, (self.entities / "ledger.md").read_text(), old)
+            self.assertEqual(self.head, git(self.wikis, "rev-parse", "HEAD").strip(), old)
+            self.assertEqual("", git(self.wikis, "diff", "--cached", "--name-only").strip(), old)
+        self.assertEqual([], check.run_checks(self.root, walls_only=True))
+
+    def test_a_fix_refused_by_the_walls_check_is_put_back(self):
+        calls = []
+        with mock.patch.object(nurture, "walls_refusal", lambda ctx, repo: calls.append(repo) or "refused here"):
+            code, said, _ = self.run_tool("correct", "--old", "Buyer.", "--new", "Lead buyer.", "--yes")
+        self.assertEqual([self.wikis.resolve()], [Path(r).resolve() for r in calls])
+        self.assertNotEqual(0, code)
+        self.assertIn("Buyer.", (self.people / "pat-newcomer.md").read_text())
+        self.assertEqual(self.head, git(self.wikis, "rev-parse", "HEAD").strip())
+
+    def test_the_organisation_action_commits_only_what_it_checked(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect at Larch Partners."))
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "kit")
+        head = git(self.wikis, "rev-parse", "HEAD").strip()
+        write(self.wikis / "Meetings" / "wiki" / "scratch.md", "Another session's work.\n")
+        git(self.wikis, "add", "--", "Meetings/wiki/scratch.md")                 # staged by somebody else
+        before = (self.people / "kit-avery.md").read_text()
+        code, _, err = self.run_tool("organisation", "--path", "Wikis/Meetings/wiki/people/kit-avery.md", "--yes")
+        self.assertNotEqual(0, code)
+        self.assertIn("something else is staged", err)
+        self.assertEqual(before, (self.people / "kit-avery.md").read_text())
+        self.assertEqual(head, git(self.wikis, "rev-parse", "HEAD").strip())
+        self.assertEqual("Meetings/wiki/scratch.md", git(self.wikis, "diff", "--cached", "--name-only").strip())
+        git(self.wikis, "reset", "-q")
+        code, _, err = self.run_tool("organisation", "--path", "Wikis/Meetings/wiki/people/kit-avery.md", "--yes")
+        self.assertEqual(0, code, err)
+        self.assertEqual(["Meetings/wiki/people/kit-avery.md"],
+                         git(self.wikis, "show", "--name-only", "--format=", "HEAD").split())
+
+    def test_a_walls_check_that_does_not_finish_puts_the_page_back(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect at Larch Partners."))
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "kit")
+        head = git(self.wikis, "rev-parse", "HEAD").strip()
+        before = (self.people / "kit-avery.md").read_text()
+        real = subprocess.run
+
+        def slow(cmd, *a, **k):
+            if any(str(c).endswith("check.py") for c in cmd):
+                raise subprocess.TimeoutExpired(cmd, 600)
+            return real(cmd, *a, **k)
+        with mock.patch.object(nurture.subprocess, "run", slow):
+            code, _, err = self.run_tool("organisation", "--path", "Wikis/Meetings/wiki/people/kit-avery.md", "--yes")
+        self.assertNotEqual(0, code)
+        self.assertIn("did not finish", err)
+        self.assertEqual(before, (self.people / "kit-avery.md").read_text())
+        self.assertEqual(head, git(self.wikis, "rev-parse", "HEAD").strip())
+
+    def test_a_correction_held_back_by_a_wall_says_only_the_wall_sentence(self):
+        code, said, _ = self.run_tool("correct", "--old", "wiki/entities/ledger", "--new", "wiki/entities/birch-co",
+                                      "--yes")
+        self.assertIn(nurture.WALL_REFUSAL, said)
+        self.assertNotIn("Nothing live holds", said)
+        self.assertIn("[[wiki/entities/ledger]]", (self.people / "pat-newcomer.md").read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

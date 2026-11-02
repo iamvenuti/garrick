@@ -4,6 +4,8 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.52.0] - 2026-11-02
+
 Ask's list of what you owe shows the period asked about first, ten items in the window, and opens the rest. A Meetings person page links the entity page of where the person works, whatever their party, asked page by page inside the walls, and every Nurture and `correct.py` commit runs the walls check on its staged change first. The checks on Garrick's own conventions stop warning about files that follow them, and wording carried between two walled threads of one project is refused. The walls check now refuses a person page reached through a symbolic link, and a page the walls read whose frontmatter a YAML reader could read another way.
 
 **Upgrading.** An entity page in `Wikis/Meetings/wiki/entities/` that stands for no party needs `party: none`; Nurture asks only about the ones that stop a person page's link, and a link written by hand to an entity page with no `party:` is now refused by the walls check. A person page whose frontmatter is not plain `key: value` lines is now refused too: four-space indents on a list, an upper-case key, a comment line, an escaped quote, or a comma inside an item of a flow list, such as `["Smith, Jo"]`; write it in the plain form. An entity page, a meeting page, a project hub or a thread note is now a walls error as well when a key is given twice; when a key is written quoted, with `?`, with a tag or an anchor, or as a flow; when a value is a block (`|`, `>`), carries a tag or an anchor, or runs on to the next line through an open list, an open quote or an indented line (`description: >` followed by indented lines, say); when its frontmatter is closed by anything but a `---` alone; or when a `party`, `parties` or `zone` value is not a tag, `none` or a zone the workspace knows. On a Knowledge page or another Meetings page this applies to `party`, `parties` and `zone` alone. `python3 System/tools/check.py --walls-only` lists them, each with its path.
@@ -1195,7 +1197,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.51.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.52.0...HEAD
+[0.52.0]: https://github.com/iamvenuti/garrick/compare/v0.51.0...v0.52.0
 [0.51.0]: https://github.com/iamvenuti/garrick/compare/v0.50.0...v0.51.0
 [0.50.0]: https://github.com/iamvenuti/garrick/compare/v0.49.1...v0.50.0
 [0.49.1]: https://github.com/iamvenuti/garrick/compare/v0.49.0...v0.49.1

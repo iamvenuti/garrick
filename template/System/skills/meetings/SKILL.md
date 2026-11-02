@@ -126,9 +126,11 @@ One meeting at a time, even when several files are waiting.
    (`Acme`, `The Acme Corp`, `Acme Corp Ltd` are Acme's);
    when the People table has the name under two parties a wall keeps apart,
    since one page that two hats share links neither hat's entity page; and
-   when the page names no party or more than one. A page written before the
-   link existed is offered it by the `nurture` skill, on a yes, from its
-   first line ("Identity architect at Birch & Co") or else its party.
+   when the page names no party or more than one. For a page written before
+   the link existed, the `nurture` skill asks, one page at a time, whether
+   the person works at the entity page its first line names ("Identity
+   architect at Birch & Co") or else its party's, and writes it only on that
+   page's own yes.
 5. **Land the raw file.** This is the only step that touches `raw/`, and the
    only time this file is ever touched again:
    ```sh

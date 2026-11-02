@@ -44,9 +44,9 @@ own: a new kind of problem gets a check in `check.py` first.
 
 | Kind | Examples | What this skill does |
 |---|---|---|
-| Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's; a person page in Meetings with no `organisation:`, given the entity page of where they work: the one its first line names, or else its party's | Lists them, and applies them all on one yes, one commit per repository. The organisation link never goes in overnight: it writes into a page written by hand |
+| Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's | Lists them, and applies them all on one yes, one commit per repository |
 | Correction | a value written down wrong, an address, an account, a name, which the user corrects | Lists every live copy as one finding, and corrects them all on one yes, one commit per repository |
-| Attribution and category | a meeting page with no zone or parties; a person under no party; a person page whose first line could mean two entity pages ("Where does Kit Avery work: Birch & Co or Larch Partners?"); an entity page in Meetings with no `party:` that a person page's first line names, its party's link would reach, or a person page links by hand ("Whose is Larch Partners: none, or a party?"), which no tool links a person page to until it says; one nothing points at, such as a topic or an event, is not asked about; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses across a wall |
+| Attribution and category | a meeting page with no zone or parties; a person under no party; a person page in Meetings with no `organisation:`, for the one entity page its first line names or else its party's, asked one page at a time ("Does Theo Marsh work at AC Corp? (yes / no / another page)") and never a batch fix, since a name can stand for the wrong organisation however it is spelled; a person page whose first line could mean two entity pages ("Where does Kit Avery work: Birch & Co or Larch Partners?"); an entity page in Meetings with no `party:` that a person page's first line names, its party's link would reach, or a person page links by hand ("Whose is Larch Partners: none, or a party?"), which no tool links a person page to until it says; one nothing points at, such as a topic or an event, is not asked about; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses across a wall |
 | Wall | a project file that names, links or quotes a party across a wall | Says which file and which wall, never the material, and offers to take it out |
 | Judgment | a stale resume point, a published file drifted from its shared copy, an orphan page, two pages that disagree | Leaves the text alone and names the page to open |
 | Behind the share | a published file whose ledger row ends in `share`, and whose copy here differs from the shared one: colleagues edit it there, so the copy here is a snapshot | Names it last, as low urgency, and changes nothing |
@@ -95,13 +95,18 @@ thread whose name another note shares.
    addresses, the People table and the page's text, as the `intake` skill
    reads them; when the evidence points to both sides of a wall, propose
    nothing and ask. Ask in one line: "260310 Kick-off: Work, Acme?" On an
-   answer, make the edit, commit it in its repository, and record it. Where
-   someone works is one line under the page's `party:`, `organisation:
-   "[[wiki/entities/<slug>]]"`, naming one of the pages asked about and
-   nothing else:
+   answer, make the edit, commit it in its repository, and record it:
    ```sh
    python3 System/tools/nurture.py answered --path "<file>" --asked "<question>" --answer "<answer>"
    ```
+   Where someone works is never edited by hand. On that page's own yes, or
+   on "another page" and the entity the user names, run, for that page alone:
+   ```sh
+   python3 System/tools/nurture.py organisation --path "<person page>" --yes [--entity "<entity>"]
+   ```
+   It works the link out again, refuses one across a wall, commits that page
+   through its repository's wall check and records the answer. Never batch
+   these, and never run it for a page the user has not said yes to.
    "Skip" leaves it in the report. Never guess.
 6. **Judgment.** Name each with the page to open, and change nothing,
    unless the user answers one with the right value: that is a correction.
@@ -425,8 +430,8 @@ only on "keep". A page carrying `superseded:` never wakes, whatever links it.
 The jobs extra's nightly job, `gr-nightly`, applies the mechanical
 kind with nobody watching, and nothing else: attribution, wall and judgment
 findings, and corrections, never change headless. Nor does a person page's
-`organisation:` link, though it is mechanical: it waits for the yes, and the
-digest counts it among the fixes held. It commits only the files
+`organisation:` link: it is a question, asked page by page, and its
+`organisation` action refuses to run headless. It commits only the files
 it changed, by name, never `-a` or `git add .`, and leaves alone any file
 another session has changes in, since another session may have uncommitted
 work in the same repository. Its line in the morning digest says what was fixed first, then

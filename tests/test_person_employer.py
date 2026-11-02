@@ -1095,21 +1095,27 @@ class EveryCommitCheckedTest(Workspace):
         write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect at Larch Partners."))
         git(self.wikis, "add", "-A")
         git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "kit")
-        head = git(self.wikis, "rev-parse", "HEAD").strip()
         write(self.wikis / "Meetings" / "wiki" / "scratch.md", "Another session's work.\n")
         git(self.wikis, "add", "--", "Meetings/wiki/scratch.md")                 # staged by somebody else
-        before = (self.people / "kit-avery.md").read_text()
-        code, _, err = self.run_tool("organisation", "--path", "Wikis/Meetings/wiki/people/kit-avery.md", "--yes")
+        real = nurture.walls_refusal
+
+        def changed_after_reading(ctx, repo):                                     # the page changes once checked
+            said = real(ctx, repo)
+            page = self.people / "kit-avery.md"
+            page.write_text(page.read_text().replace("Architect", "Architect and buyer"))
+            return said
+        head = git(self.wikis, "rev-parse", "HEAD").strip()
+        with mock.patch.object(nurture, "walls_refusal", changed_after_reading):
+            code, _, err = self.run_tool("organisation", "--path", "Wikis/Meetings/wiki/people/kit-avery.md", "--yes")
         self.assertNotEqual(0, code)
-        self.assertIn("something else is staged", err)
-        self.assertEqual(before, (self.people / "kit-avery.md").read_text())
+        self.assertIn("changed again after the walls check read it", err)
         self.assertEqual(head, git(self.wikis, "rev-parse", "HEAD").strip())
-        self.assertEqual("Meetings/wiki/scratch.md", git(self.wikis, "diff", "--cached", "--name-only").strip())
-        git(self.wikis, "reset", "-q")
+        git(self.wikis, "checkout", "--", "Meetings/wiki/people/kit-avery.md")
         code, _, err = self.run_tool("organisation", "--path", "Wikis/Meetings/wiki/people/kit-avery.md", "--yes")
         self.assertEqual(0, code, err)
         self.assertEqual(["Meetings/wiki/people/kit-avery.md"],
                          git(self.wikis, "show", "--name-only", "--format=", "HEAD").split())
+        self.assertEqual("Meetings/wiki/scratch.md", git(self.wikis, "diff", "--cached", "--name-only").strip())
 
     def test_a_walls_check_that_does_not_finish_puts_the_page_back(self):
         write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect at Larch Partners."))

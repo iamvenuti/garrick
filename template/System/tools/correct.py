@@ -343,20 +343,23 @@ def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path]
     """One commit in `repo` of `files` and nothing else: (done, commit or reason).
     `verify` is asked first, with the change staged, why it must not be
     committed (#330): a repository may have no hook, `Wikis/` above all.
-    Then the index it saw is committed, and only when nothing else is
-    staged there."""
+    Then these paths are committed as the check read them, staged, and
+    nothing else: a file changed again on disk since is refused, and what
+    another session has staged stays staged."""
     names = [f.resolve().relative_to(repo).as_posix() for f in files]
     added = _git(["add", "--"] + names, repo)
     if added.returncode != 0:
         return False, " ".join((added.stderr or added.stdout).split()) or "git add failed"
     if not _git(["diff", "--cached", "--quiet", "--"] + names, repo).returncode:
         return False, "nothing to commit"
-    others = sorted(set(_git(["diff", "--cached", "--name-only", "-z"], repo).stdout.split("\0")) - set(names) - {""})
-    said = "something else is staged there too; it is not committed with this" if others else verify(repo)
+    said = verify(repo)
+    if not said and _git(["diff", "--quiet", "--"] + names, repo).returncode:
+        said = "a file changed again after the walls check read it, so nothing was committed"
     if said:
         _git(["reset", "-q", "--"] + names, repo)
         return False, said
-    done = _git(["commit", "-q", "-m", message], repo)
+    # These paths as staged, which is what the check read, and nothing another session has staged.
+    done = _git(["commit", "-q", "-m", message, "--"] + names, repo)
     if done.returncode != 0:
         _git(["reset", "-q", "--"] + names, repo)    # left changed, and not staged for somebody else's commit
         return False, " ".join((done.stderr or done.stdout).split()) or "git commit failed"

@@ -1530,8 +1530,9 @@ def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path], str]] =
     those no op in ATTENDED_OPS. Before each commit the walls check runs
     on the change as staged (walls_refusal, or `verify` in its place), since
     a repository may have no hook, `Wikis/` above all: a refusal is put back
-    as a refused commit is. What is committed is the index that was checked,
-    and only when it holds nothing staged but this change (#330)."""
+    as a refused commit is. What is committed is these paths as the check
+    read them, staged: a file changed again on disk since is refused, and
+    what another session has staged stays staged (#330)."""
     verify = verify or (lambda repo: walls_refusal(ctx, repo))
     wanted = [i for i in items if i.kind in KINDS and KINDS[i.kind].apply and i.fix
               and (not ctx.headless or (KINDS[i.kind].unattended and i.fix.get("op") not in ATTENDED_OPS))]
@@ -1565,11 +1566,12 @@ def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path], str]] =
         add = ctx.git(repo, "add", "-A", "--", *paths)
         c = add
         if add.returncode == 0:
-            staged = ctx.git(repo, "diff", "--cached", "--name-only", "-z").stdout.split("\0")
-            others = sorted(set(staged) - set(paths) - {""})
-            said = ("something else is staged there too (%s); it is not committed with this" % ", ".join(others[:3])
-                    if others else verify(repo))
-            c = subprocess.CompletedProcess([], 1, "", said) if said else ctx.git(repo, "commit", "-q", "-m", message)
+            said = verify(repo)
+            if not said and ctx.git(repo, "diff", "--quiet", "--", *paths).returncode:
+                said = "a file changed again after the walls check read it, so nothing was committed"
+            # These paths as staged, which is what the check read, and nothing another session has staged.
+            c = subprocess.CompletedProcess([], 1, "", said) if said else \
+                ctx.git(repo, "commit", "-q", "-m", message, "--", *paths)
         if c.returncode != 0:
             ctx.git(repo, "reset", "-q", "--", *paths)
             journal.rollback(start)

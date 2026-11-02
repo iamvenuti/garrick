@@ -106,8 +106,9 @@ thread whose name another note shares.
    python3 System/tools/nurture.py organisation --path "<person page>" --yes [--entity "<entity>"]
    ```
    It works the link out again, refuses one across a wall, runs the walls
-   check on that page's change as staged and commits exactly that index
-   only if it passes and nothing else is staged there, since `Wikis/` has
+   check on that page's change as staged and commits that page as the
+   check read it only if it passes, leaving what another session staged
+   alone, since `Wikis/` has
    no commit hook unless you added one, and records the answer. It refuses a page whose frontmatter is not plain
    `key: value` lines, or that has an organisation line already. Never batch
    these, and never run it for a page the user has not said yes to.

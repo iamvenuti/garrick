@@ -20,7 +20,7 @@ When some of your work comes from people whose confidences you hold, such as two
 
 Your folders stay as they are. Garrick reads them and writes nothing there unless you ask it to move the files in. Its own record is plain Markdown in folders on your Mac, and updates keep your edits. Claude does the work underneath. Codex works too, in its app or a terminal, without the home's Continue.
 
-https://github.com/user-attachments/assets/7c05ec23-577d-4bf2-9275-81f9b70767cc
+https://github.com/user-attachments/assets/54996021-8e82-4c7e-b5be-fe9be6f3167e
 
 *The walkthrough, 54 seconds, with [captions](docs/assets/garrick-launch-video.srt). Recorded in Garrick 0.51.0 on the demo workspace, whose people and companies are made up.*
 

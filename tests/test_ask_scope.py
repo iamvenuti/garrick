@@ -2064,19 +2064,31 @@ class TestActions(AnswerCase):
         self.assertEqual("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", more["sources"][0]["path"])
         self.assertIn("place", more["sources"][0])                      # opens as a thread's row, as the others do
 
-    def test_a_period_lists_every_item_due_in_it(self):
-        """However many fall due in the period, the window lists them all,
-        and the ear keeps five, the period's own first."""
-        self.only("- [ ] [[Pricing]]: Late task 1 📅 2026-10-01\n" + "".join(
-            "- [ ] [[Pricing]]: Due task %02d 📅 2026-10-13\n" % n for n in range(1, 12)))
+    def test_a_period_lists_ten_at_most(self):
+        """Sixty lines due tomorrow: the window lists ten, the rest opens
+        under "And 50 more.", and the ear says the window's first five and
+        counts the other fifty-five."""
+        self.only("".join("- [ ] [[Pricing]]: Due task %02d 📅 2026-10-13\n" % n for n in range(1, 61)))
         out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
         said = self.texts(out)
-        self.assertEqual(12, len(said))                                  # past the ten the window lists otherwise
-        self.assertEqual("11 days late: Late task 1 (Pricing, in Work).", said[0])
-        self.assertEqual([], out["after"])
-        self.assertNotIn("more", out)
-        self.assertEqual(" ".join(["Due tomorrow: Due task %02d (Pricing, in Work)." % n for n in range(1, 6)]
-                                  + ["And 7 more."]), out["say"])
+        self.assertEqual(["Due tomorrow: Due task %02d (Pricing, in Work)." % n for n in range(1, 11)], said)
+        self.assertEqual(["And 50 more."], out["after"])
+        self.assertEqual(50, len(out["more"]["claims"]))
+        self.assertEqual("Due tomorrow: Due task 11 (Pricing, in Work).", out["more"]["claims"][0]["text"])
+        self.assertEqual(" ".join(said[:5] + ["And 55 more."]), out["say"])
+
+    def test_a_period_fills_ten_after_the_overdue(self):
+        """Two overdue lines and nine due tomorrow: both overdue, eight of
+        tomorrow's, and "And 1 more.", since what is left is not overdue."""
+        self.only("- [ ] [[Pricing]]: Late task 1 📅 2026-10-01\n- [ ] [[Pricing]]: Late task 2 📅 2026-10-02\n"
+                  + "".join("- [ ] [[Pricing]]: Due task %d 📅 2026-10-13\n" % n for n in range(1, 10)))
+        out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
+        said = self.texts(out)
+        self.assertEqual(["11 days late: Late task 1 (Pricing, in Work).", "10 days late: Late task 2 (Pricing, in Work)."]
+                         + ["Due tomorrow: Due task %d (Pricing, in Work)." % n for n in range(1, 9)], said)
+        self.assertEqual(["And 1 more."], out["after"])
+        self.assertEqual(["Due tomorrow: Due task 9 (Pricing, in Work)."], [c["text"] for c in out["more"]["claims"]])
+        self.assertEqual(" ".join(said[:5] + ["And 6 more."]), out["say"])
 
     def test_no_period_lists_ten_and_says_five_aloud(self):
         """#329: with no `until`, the list is as before, ten in the window;
@@ -2131,20 +2143,30 @@ class TestActions(AnswerCase):
             for item in ("Late task", "sizing deck"):
                 self.assertNotIn(item, m)
 
-    def test_the_ear_keeps_the_period(self):
+    def test_the_listing_and_the_ear_agree(self):
         sc = ask.scope_lib()
         late = [{"kind": "overdue", "n": n} for n in range(6)]
-        due = [{"kind": "due", "n": n} for n in range(4)]
+        due = [{"kind": "due", "n": n} for n in range(12)]
         listed, rest = sc.listing(late + due, True)
-        self.assertEqual(late[:3] + due, listed)
-        self.assertEqual(late[3:], rest)
-        self.assertEqual(late[:1] + due, sc.said_aloud(listed, True))
-        self.assertEqual(listed[:5], sc.said_aloud(listed, False))
-        self.assertEqual((late + due)[:10], sc.listing(late + due, False)[0])
-        self.assertEqual("And 3 more overdue.", sc.more_said(rest))
-        self.assertEqual("And 4 more.", sc.more_said(rest[:3] + due[:1]))
+        self.assertEqual(late[:3] + due[:7], listed)                     # ten in all
+        self.assertEqual(due[7:] + late[3:], rest)                       # the period's first, then the overdue
+        listed, rest = sc.listing(late + due[:2], True)
+        self.assertEqual((late[:3] + due[:2], late[3:]), (listed, rest))
+        self.assertEqual(((late + due)[:10], (late + due)[10:]), sc.listing(late + due, False))
+        self.assertEqual("And 3 more overdue.", sc.more_said(late[3:]))
+        self.assertEqual("And 4 more.", sc.more_said(late[3:] + due[:1]))
         self.assertEqual("", sc.more_said([]))
         self.assertEqual((10, 5, 3), (sc.MOST_ACTIONS, sc.MOST_SAID, sc.MOST_LATE))
+
+    def test_the_window_and_the_ear_say_the_same_order(self):
+        self.only("".join("- [ ] [[Pricing]]: Late task %d 📅 2026-10-0%d\n" % (n, n) for n in range(1, 5))
+                  + "".join("- [ ] [[Pricing]]: Due task %d 📅 2026-10-13\n" % n for n in range(1, 4)))
+        for request in ("What's most urgent tomorrow?", "What do I owe Dana?"):
+            out = self.asker().ask(request, today=self.TODAY)
+            said = self.texts(out)
+            left = len(said) + len(out.get("more", {}).get("claims", [])) - 5
+            self.assertEqual(" ".join(said[:5] + (["And %d more." % left] if left > 0 else [])), out["say"], request)
+            self.assertTrue(out["say"].startswith(" ".join(said[:5])), request)
 
     def test_a_source_folded_onto_a_line_leaves_nothing_behind(self):
         """#318's relative link inside an `(also in …)`: the reply says the

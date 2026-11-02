@@ -194,8 +194,8 @@ what you wait on comes back from the command session as a find with route
 reader, and each live thread's Next action, Waiting on and Deadline rows,
 keeps what falls inside the find's place, the parties the request names and
 its period, orders them as the digest does, and says them itself
-(Asker.listed()): ten at most in the window, or, for a period, every item
-due in it after three overdue lines, and five aloud; the rest comes back as
+(Asker.listed()): ten at most in the window, for a period its own items
+after three overdue lines, and the first five aloud; the rest comes back as
 `more`, for the window to list when "And N more" is clicked (#329). No
 session is told the items, so nothing either holds changes and a list may
 cover every zone and both sides of a wall, each item labelled with its zone. Meeting pages are never read for it. Codex answers
@@ -1434,9 +1434,9 @@ class Asker:
         the open Todo lines and the live threads' Next action, Waiting on and
         Deadline rows, inside the find's place, the parties the request
         names and its period, in the digest's order (ask_scope.actions()).
-        The window lists MOST_ACTIONS at most, or, for a period, every item
-        due in it after MOST_LATE overdue lines (ask_scope.listing()), and
-        `say`, for the ear, MOST_SAID; each names the count of the rest. The
+        The window lists MOST_ACTIONS at most, for a period its own items
+        after MOST_LATE overdue lines (ask_scope.listing()), and `say`, for
+        the ear, the first MOST_SAID of them; each names the count of the rest. The
         rest comes back as `more`, from the same reading, for the window to
         list when "And N more" is clicked (#329). No session is told any of
         it, and nothing it holds changes: not `seen`, not `heard`, not the
@@ -1460,7 +1460,6 @@ class Asker:
         found = sc.actions(self.ws, where, names, self.ctx, lib, day)
         period = bool(where.until) and not where.waiting
         shown, rest = sc.listing(found, period)
-        heard = sc.said_aloud(shown, period)
         claims, cited_ = [], []
         for n, it in enumerate(shown + rest, 1):
             aid = "a%d" % n
@@ -1474,10 +1473,9 @@ class Asker:
             after, say = [NOTHING_OPEN], NOTHING_OPEN
         else:
             after = [sc.more_said(rest)] if rest else []
-            # For the ear (`say`), MOST_SAID at most and the count of the rest, as the rules say.
-            aloud = [sc.action_said(it, names, day) for it in heard]
-            left = [it for it in found if not any(it is h for h in heard)]
-            say = " ".join(aloud + ([sc.more_said(left)] if left else []))
+            # For the ear (`say`), the window's first MOST_SAID, in its order, and the count of the rest.
+            left = (shown + rest)[sc.MOST_SAID:]
+            say = " ".join([c["text"] for c in claims[:sc.MOST_SAID]] + ([sc.more_said(left)] if left else []))
         out = reply(say, "answer")
         out.update(claims=claims, after=after, incomplete=False, listed=True, sources=sources)
         if rest:

@@ -1088,28 +1088,21 @@ def actions(ws: Path, sc: Scope, names: Dict[str, Dict[str, dict]], ctx: dict, l
 
 def listing(found: List[dict], period: bool, most: int = MOST_ACTIONS) -> Tuple[List[dict], List[dict]]:
     """An actions list as the window shows it (#329): (listed, rest), both
-    from the one reading, in its order. With a period (`until`: tomorrow,
-    this week), at most MOST_LATE overdue lines, the longest overdue first,
-    then every item due inside the period, however many: the period asked
-    about is always shown, and the rest are overdue lines. With none, the
-    first `most`."""
+    from the one reading, `most` listed in every case. With a period
+    (`until`: tomorrow, this week), at most MOST_LATE overdue lines, the
+    longest overdue first, then the period's own items, in the reading's
+    order, up to `most` in all: the period asked about comes before the
+    overdue lines past MOST_LATE. The rest is what is left, the period's
+    items first, then the overdue lines. With no period, the first `most`.
+    A reply read aloud says the first MOST_SAID of the listed, in the same
+    order, and counts the rest of both."""
     if not period:
         return found[:most], found[most:]
     late = [i for i in found if i["kind"] == "overdue"]
     due = [i for i in found if i["kind"] != "overdue"]
-    return late[:MOST_LATE] + due, late[MOST_LATE:]
-
-
-def said_aloud(listed: List[dict], period: bool, most: int = MOST_SAID) -> List[dict]:
-    """The items of a listing a reply read aloud says: MOST_SAID at most. With
-    a period, its own items keep their place and the overdue lines give way:
-    "what's due tomorrow?" heard says tomorrow's first of all."""
-    if not period or len(listed) <= most:
-        return listed[:most]
-    late = [i for i in listed if i["kind"] == "overdue"]
-    due = [i for i in listed if i["kind"] != "overdue"]
-    keep = min(len(late), max(0, most - len(due)))
-    return late[:keep] + due[:most - keep]
+    first = late[:min(MOST_LATE, most)]
+    room = most - len(first)
+    return first + due[:room], due[room:] + late[len(first):]
 
 
 def more_said(rest: List[dict]) -> str:

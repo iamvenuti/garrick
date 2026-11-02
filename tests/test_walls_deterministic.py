@@ -384,6 +384,260 @@ class TestStaged(WallCase):
         self.assertIn("--install-hooks", " ".join(f.message for f in found))
 
 
+# Each way a YAML reader finds a key at the left margin that a line reader
+# does not, and a key given twice, of which YAML keeps the last. `{key}` is
+# the key the walls read on the page, `{value}` the party it would say.
+OTHER_KEYS = {
+    "double-quoted": '"{key}": {value}',
+    "single-quoted": "'{key}': {value}",
+    "complex": "? {key}\n: {value}",
+    "tagged": "!!str {key}: {value}",
+    "anchored": "&k {key}: {value}",
+    "aliased": "*k : {value}",
+    "merged": "<<: {{{key}: {value}}}",
+    "flow mapping": "{{{key}: {value}}}",
+    "flow sequence": "[{key}]: {value}",
+    "duplicate": "{key}: {value}",
+}
+
+NORTHWIND = "---\ntitle: Northwind Labs\ntype: entity\nparty: none\n%s\n---\n\n# Northwind Labs\n"
+
+
+class TestFrontmatterForm(WallCase):
+    """A page the walls read must say its keys one way (#330): a quoted,
+    complex, tagged, anchored, aliased, merged or flow key, or a key given
+    twice, could give a YAML reader another party from the one the walls
+    read, so each is refused."""
+
+    def entity(self, form: str) -> Path:
+        line = OTHER_KEYS[form].format(key="party", value="birch")
+        return write(self.meetings / "wiki" / "entities" / "northwind-labs.md", NORTHWIND % line)
+
+    def meeting(self, form: str) -> Path:
+        page = self.meetings / "wiki" / "sources" / "260314-second-kickoff.md"
+        line = OTHER_KEYS[form].format(key="parties", value="[birch]")
+        write(page, meeting_page("Work", "[acme]", "Second kick-off").replace("people:", line + "\npeople:"))
+        pricing = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        write(pricing, pricing.read_text() + "\nAlso [[260314-second-kickoff]].\n")
+        return page
+
+    def form_errors(self, findings):
+        return sorted(f.path for f in findings if f.severity == "error" and f.message.startswith(check.FRONTMATTER_PLAIN))
+
+    def test_an_entity_page_in_each_form_is_refused(self):
+        for form in OTHER_KEYS:
+            with self.subTest(form=form):
+                self.entity(form)
+                self.assertEqual(["Wikis/Meetings/wiki/entities/northwind-labs.md"], self.form_errors(self.walls()))
+
+    def test_an_entity_page_read_two_ways_is_whose_to_no_one(self):
+        self.entity("double-quoted")
+        write(self.meetings / "wiki" / "people" / "dana-whitlock.md",
+              '---\ntitle: Dana Whitlock\ntype: person\nparty: acme\norganisation: "[[wiki/entities/northwind-labs]]"\n'
+              "---\n\n# Dana Whitlock\n\nHead of procurement.\n")
+        found = [f for f in self.walls() if f.path.endswith("dana-whitlock.md")]
+        self.assertEqual(1, len(found), found)
+        self.assertEqual("error", found[0].severity)
+        index = check.entity_index(check.discover(self.root))
+        self.assertFalse(next(e for e in index if e["rel"] == "northwind-labs")["tagged"])
+        self.entity("duplicate")
+        self.assertNotIn("northwind-labs", sum(check.party_entities(self.root).values(), []))
+
+    def test_a_meeting_page_in_each_form_is_refused_and_so_is_its_use(self):
+        for form in OTHER_KEYS:
+            with self.subTest(form=form):
+                self.meeting(form)
+                found = self.walls()
+                self.assertEqual(["Wikis/Meetings/wiki/sources/260314-second-kickoff.md"], self.form_errors(found))
+                use = [f for f in found if f.path.endswith("Pricing.md") and "260314-second-kickoff" in f.message]
+                self.assertEqual(["error"], [f.severity for f in use], [f.message for f in found])
+
+    def test_plain_pages_pass(self):
+        write(self.meetings / "wiki" / "entities" / "northwind-labs.md",
+              "---\n# a comment\ntitle: Northwind Labs\ntype: entity\nparty: none\naliases:\n  - Northwind\n"
+              "---\n\n# Northwind Labs\n")
+        self.assertEqual([], self.form_errors(self.walls()))
+
+    def test_a_knowledge_page_counts_only_its_party_keys_twice(self):
+        page = self.knowledge / "wiki" / "sources" / "supply-chain-report.md"
+        base = "---\ntitle: Supply chains\ntype: source\nconfidence: medium\n%s---\n\nSee [[resilience]].\n"
+        write(page, base % "tags: [a]\ntags: [b]\n")
+        self.assertEqual([], self.form_errors(self.walls()))
+        write(page, base % '"party": birch\n')
+        self.assertEqual(["Wikis/Knowledge/wiki/sources/supply-chain-report.md"], self.form_errors(self.walls()))
+        write(page, base % "zone: Work\nzone: Personal\n")
+        self.assertEqual(["Wikis/Knowledge/wiki/sources/supply-chain-report.md"], self.form_errors(self.walls()))
+
+    def test_a_hub_and_a_thread_note_are_read_for_their_form(self):
+        hub = self.acme / "Acme Review.md"
+        write(hub, hub.read_text().replace("party: acme", 'party: acme\n"party": birch', 1))
+        note = self.birch / "Threads" / "Market Sizing" / "Market Sizing.md"
+        write(note, note.read_text().replace("party: birch", "party: birch\nparty: acme", 1))
+        self.assertEqual(["Zones/Work/Acme Review/Acme Review.md",
+                          "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"],
+                         self.form_errors(self.walls()))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_each_form_staged(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        commit_all(wikis, "start")
+        for form in OTHER_KEYS:
+            with self.subTest(form=form):
+                entity, meeting = self.entity(form), self.meeting(form)
+                git(wikis, "add", "-A")
+                found = check.run_checks(self.root, walls_only=True, staged=wikis)
+                self.assertEqual(["Wikis/Meetings/wiki/entities/northwind-labs.md",
+                                  "Wikis/Meetings/wiki/sources/260314-second-kickoff.md"], self.form_errors(found))
+                git(wikis, "reset", "-q")
+                entity.unlink()
+                meeting.unlink()
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_reads_the_hub_of_a_staged_project_file(self):
+        zone = self.root / "Zones" / "Work"
+        hub = self.acme / "Acme Review.md"
+        write(hub, hub.read_text().replace("party: acme", "party: acme\n? party\n: birch", 1))
+        _real_repo(zone)
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "Three scenarios.\n")
+        git(zone, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=zone)
+        self.assertEqual(["Zones/Work/Acme Review/Acme Review.md"], self.form_errors(found))
+
+
+# Each way a value says more to a YAML reader than to a line reader: `{key}`
+# is the key the walls read, `{value}` the party a YAML reader would find.
+VALUE_FORMS = {
+    "block scalar holding a dash": "notes: |\n  ---\n{key}: {value}",
+    "quote over two lines": 'title: "Second\n{key}: {value}\ntype: x"',
+    "flow list over two lines": "{key}: [cedar,\n  {value}]",
+    "folded block": "{key}: >-\n  {value}",
+    "literal block": "{key}: |\n  {value}",
+    "tagged value": "{key}: !!str {value}",
+    "anchored value": "{key}: &p {value}",
+    "aliased value": "{key}: *p",
+    "plain value continued": "{key}: cedar\n  {value}",
+    "value on the next line": "{key}:\n  {value}",
+    "item under a key with a value": "{key}: cedar\n  - {value}",
+}
+
+CEDAR = "| Cedar Ltd | Supplier | Work | `cedar` | cedar.example |\n| Birch & Co | Client."
+
+
+class TestFrontmatterValues(WallCase):
+    """A value the walls read as text where a YAML reader finds a party, a
+    frontmatter a YAML reader ends somewhere else, or a party or zone the
+    walls do not know, is refused rather than read as no party (#330)."""
+
+    def setUp(self):
+        super().setUp()
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client.", CEDAR, 1))
+
+    def meeting(self, lines: str) -> Path:
+        page = self.meetings / "wiki" / "sources" / "260314-second-kickoff.md"
+        write(page, "---\ntitle: Second\ntype: meeting\ndate: 2026-03-14\nzone: Work\n%s\n---\n\n# Second\n" % lines)
+        pricing = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        if "260314-second-kickoff" not in pricing.read_text():
+            write(pricing, pricing.read_text() + "\nAlso [[260314-second-kickoff]].\n")
+        return page
+
+    def entity(self, lines: str) -> Path:
+        return write(self.meetings / "wiki" / "entities" / "northwind-labs.md",
+                     "---\ntitle: Northwind Labs\ntype: entity\n%s\n---\n\n# Northwind Labs\n" % lines)
+
+    def errors_on(self, findings, *names):
+        return sorted({f.path.rsplit("/", 1)[-1] for f in findings if f.severity == "error"} & set(names))
+
+    def test_only_a_plain_dash_line_ends_the_frontmatter(self):
+        import garrick_lib
+        text = "---\ntitle: a\nnotes: |\n  ---\nparty: birch\n--- \nparty: acme\n---\nBody.\n"
+        self.assertEqual("acme", garrick_lib.parse_frontmatter_text(text)["party"])
+        self.assertEqual({}, garrick_lib.parse_frontmatter_text("---\nparty: birch\n  ---\nBody.\n"))
+        self.assertTrue(garrick_lib.frontmatter_form_problem("---\nparty: none\n--- \nparty: birch\n"))
+
+    def test_a_meeting_page_in_each_value_form_is_refused_and_so_is_its_use(self):
+        for form, line in VALUE_FORMS.items():
+            with self.subTest(form=form):
+                self.meeting(line.format(key="parties", value="birch"))
+                found = self.walls()
+                self.assertEqual(["260314-second-kickoff.md", "Pricing.md"],
+                                 self.errors_on(found, "260314-second-kickoff.md", "Pricing.md"),
+                                 [f.message for f in found])
+
+    def test_an_entity_page_in_each_value_form_is_refused(self):
+        for form, line in VALUE_FORMS.items():
+            with self.subTest(form=form):
+                lead = "party: none\n" if form.startswith(("block", "quote")) else ""
+                self.entity(lead + line.format(key="party", value="birch"))
+                self.assertEqual(["northwind-labs.md"], self.errors_on(self.walls(), "northwind-labs.md"))
+
+    def test_a_hub_and_a_thread_note_in_each_value_form_are_refused(self):
+        hub = self.birch / "Birch Entry.md"
+        note = self.birch / "Threads" / "Market Sizing" / "Market Sizing.md"
+        plain = {p: p.read_text() for p in (hub, note)}
+        for form, line in VALUE_FORMS.items():
+            if form.startswith(("block", "quote")):
+                continue                                # the party line is the duplicate: covered above
+            with self.subTest(form=form):
+                for p, text in plain.items():
+                    write(p, text.replace("party: birch", line.format(key="party", value="birch"), 1))
+                self.assertEqual(["Birch Entry.md", "Market Sizing.md"],
+                                 self.errors_on(self.walls(), "Birch Entry.md", "Market Sizing.md"))
+
+    def test_a_party_or_zone_the_walls_do_not_know_turns_them_on(self):
+        for lines in ("parties: [birch-co]", "parties: [cedar, birch\u200b]"):
+            with self.subTest(lines=lines):
+                self.meeting(lines)
+                found = self.walls()
+                self.assertEqual(["260314-second-kickoff.md", "Pricing.md"],
+                                 self.errors_on(found, "260314-second-kickoff.md", "Pricing.md"))
+                self.assertTrue(any(f.message.startswith(check.WALLS_VALUE) for f in found))
+        page = self.meeting("parties: [cedar]")
+        write(page, page.read_text().replace("zone: Work", "zone: Wrok"))
+        self.assertEqual(["260314-second-kickoff.md", "Pricing.md"],
+                         self.errors_on(self.walls(), "260314-second-kickoff.md", "Pricing.md"))
+        self.entity("party: birchco")
+        self.assertIn("northwind-labs.md", self.errors_on(self.walls(), "northwind-labs.md"))
+        hub = self.birch / "Birch Entry.md"
+        write(hub, hub.read_text().replace("party: birch", "party: birch\u200b", 1))
+        self.assertIn("Birch Entry.md", self.errors_on(self.walls(), "Birch Entry.md"))
+
+    def test_plain_values_pass(self):
+        self.meeting('parties: [cedar]      # from the Parties table\npeople: ["[[wiki/people/dana-whitlock]]"]\n'
+                     'aliases:\n  - "Second, again"\n  - other\nnote: "a # b" # c\nsee: [[wiki/entities/acme-corp]]')
+        self.entity("party: none\naliases: [Northwind, \"NW Labs\"]")
+        self.assertEqual([], [f for f in self.walls() if f.severity == "error"])
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_the_use_of_a_meeting_page_committed_before(self):
+        # A line reader stopping at the indented `---` reads `parties: [cedar]`; YAML reads `[birch]`.
+        self.meeting('summary: "Second meeting\nparties: [cedar]\nsaid: none"\nnotes: |\n  ---\nparties: [birch]')
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        commit_all(wikis, "start")
+        zone = self.root / "Zones" / "Work"
+        pricing = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        text = pricing.read_text()
+        write(pricing, text.replace("\nAlso [[260314-second-kickoff]].\n", ""))
+        _real_repo(zone)
+        write(pricing, text)
+        git(zone, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=zone)
+        self.assertEqual(["Pricing.md"], self.errors_on(found, "Pricing.md"), [f.message for f in found])
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_reads_a_tagged_party_on_the_hub_of_a_staged_file(self):
+        zone = self.root / "Zones" / "Work"
+        for p in (self.birch / "Birch Entry.md", self.birch / "Threads" / "Market Sizing" / "Market Sizing.md"):
+            write(p, p.read_text().replace("party: birch", "party: !!str birch", 1))
+        _real_repo(zone)
+        write(self.birch / "Threads" / "Market Sizing" / "Notes.md", "Three scenarios.\n")
+        git(zone, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=zone)
+        self.assertEqual(["Birch Entry.md", "Market Sizing.md"], self.errors_on(found, "Birch Entry.md", "Market Sizing.md"))
+
+
 # Wording only the Acme side wrote, in an Acme note. Never allowed in a finding either.
 PLAN = "The client intends to fold its three northern warehouses into one bonded hub by spring"
 PLAN_WORDS = ("warehouses", "bonded", "spring")

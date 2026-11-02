@@ -926,6 +926,89 @@ class ShapeTest(Workspace):
                               if p.name == "pat-newcomer.md"])
 
 
+class SymlinkedPersonPageTest(Workspace):
+    """A person page reached through a symbolic link is not read, so its
+    `organisation:` could cross a wall unseen: the walls refuse the link
+    itself, a page, a folder under `people/`, or `people/` as a whole, in the
+    full check and in the commit hook."""
+
+    def outside(self, organisation="[[wiki/entities/birch-co]]") -> Path:
+        cards = Path(self._tmp.name) / "cards"
+        write(cards / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", organisation))
+        return cards
+
+    def refused(self):
+        return [f for f in self.findings("walls") if f.message.startswith(check.PERSON_PLAIN)]
+
+    def test_a_symlinked_page_is_refused(self):
+        self.people.mkdir(parents=True, exist_ok=True)
+        os.symlink(str(self.outside() / "pat-newcomer.md"), str(self.people / "Pat-Newcomer.MD"))
+        self.assertEqual(["Wikis/Meetings/wiki/people/Pat-Newcomer.MD"], [f.path for f in self.refused()])
+        self.assertEqual("error", self.refused()[0].severity)
+
+    def test_a_symlinked_folder_under_people_is_refused(self):
+        self.people.mkdir(parents=True, exist_ok=True)
+        os.symlink(str(self.outside()), str(self.people / "team"))
+        self.assertEqual(["Wikis/Meetings/wiki/people/team"], [f.path for f in self.refused()])
+
+    def test_people_itself_as_a_symlink_is_refused(self):
+        self.people.rmdir()
+        os.symlink(str(self.outside()), str(self.people))
+        self.assertEqual(["Wikis/Meetings/wiki/people"], [f.path for f in self.refused()])
+
+    def test_an_upper_case_suffix_is_still_a_person_page(self):
+        write(self.people / "pat-newcomer.MD", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.MD"], [f.path for f in self.findings("walls")])
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_reads_an_upper_case_suffix_too(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        write(self.people / "pat-newcomer.Md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        git(wikis, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=wikis)
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.Md"],
+                         [f.path for f in found if f.severity == "error"])
+
+    def test_a_plain_page_is_not_refused_for_its_form(self):
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/acme-corp]]"))
+        self.assertEqual([], self.refused())
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_a_staged_symlink_under_people(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        cards = self.meetings / "wiki" / "cards"
+        write(cards / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        self.people.mkdir(parents=True, exist_ok=True)
+        os.symlink("../cards/pat-newcomer.md", str(self.people / "pat-newcomer.md"))
+        os.symlink("../cards", str(self.people / "team"))
+        git(wikis, "add", "-A")
+        found = [f for f in check.run_checks(self.root, walls_only=True, staged=wikis)
+                 if f.message.startswith(check.PERSON_PLAIN)]
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.md", "Wikis/Meetings/wiki/people/team"],
+                         sorted(f.path for f in found))
+        self.assertTrue(all(f.severity == "error" and f.check == "walls" for f in found))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_people_staged_as_a_symlink(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        write(self.meetings / "wiki" / "cards" / "pat-newcomer.md",
+              person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        if self.people.exists():
+            self.people.rmdir()
+        os.symlink("cards", str(self.people))
+        git(wikis, "add", "-A")
+        found = [f for f in check.run_checks(self.root, walls_only=True, staged=wikis)
+                 if f.message.startswith(check.PERSON_PLAIN)]
+        self.assertEqual(["Wikis/Meetings/wiki/people"], [f.path for f in found])
+
+
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class OrganisationActionTest(Workspace):
     def setUp(self):
@@ -1065,6 +1148,68 @@ class EveryCommitCheckedTest(Workspace):
         git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
         self.head = git(self.wikis, "rev-parse", "HEAD").strip()
 
+    def test_a_refusal_says_the_check_and_the_paths_alone(self):
+        import correct
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Consultant.", "[[wiki/entities/acme-corp]]"))
+        git(self.wikis, "add", "-A")
+        said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis)
+        self.assertEqual("the walls check refused it (walls: Wikis/Meetings/wiki/people/theo-marsh.md)", said)
+        self.assertEqual(said, correct.walls_refusal(self.root, self.wikis))
+
+    def test_a_refused_correction_takes_away_an_index_it_made(self):
+        import correct
+        write(self.root / "System" / "skills" / "meetings" / "ingest.py", INGEST.read_text(encoding="utf-8"))
+        write(self.root / "System" / "tools" / "garrick_lib.py", (TOOLS / "garrick_lib.py").read_text(encoding="utf-8"))
+        index = self.meetings / "wiki" / "index.md"
+        git(self.wikis, "rm", "-q", "--", "Meetings/wiki/index.md")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "no index")
+        done = correct.apply(self.root, "Buyer.", "Lead buyer.", verify=lambda repo, paths: "no")
+        self.assertEqual([("Wikis", "no")], done.refused)
+        self.assertFalse(index.exists())
+        self.assertEqual([], done.rebuilt)
+        self.assertEqual("", git(self.wikis, "status", "--porcelain").strip())
+
+    def test_the_organisation_action_refuses_a_page_not_in_utf8(self):
+        page = self.people / "kit-avery.md"
+        page.write_bytes(person("Kit Avery", "none", "Architect at Larch Partners.").encode("utf-8") + b"\xff\xfe\n")
+        code, _, err = self.run_tool("organisation", "--path", "Wikis/Meetings/wiki/people/kit-avery.md", "--yes")
+        self.assertEqual(nurture.EXIT_FAILED, code)
+        self.assertIn("not readable as UTF-8 text", err)
+
+    def test_a_refusal_for_a_pages_form_is_not_called_a_wall(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer.").replace("type: person\n",
+                                                                                       "type: person\n# a note\n"))
+        git(self.wikis, "add", "-A")
+        said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis, ["Meetings/wiki/people/kit-avery.md"])
+        self.assertTrue(said.startswith("the walls check refused it for a page's form, not for a wall"), said)
+        self.assertTrue(said.endswith("(walls: Wikis/Meetings/wiki/people/kit-avery.md)"), said)
+
+    def test_another_sessions_staged_file_is_named_as_such(self):
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Consultant.", "[[wiki/entities/acme-corp]]"))
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer."))
+        git(self.wikis, "add", "-A")
+        said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis, ["Meetings/wiki/people/kit-avery.md"])
+        self.assertEqual("the walls check refused a file another session has staged, which this change did not touch "
+                         "(walls: Wikis/Meetings/wiki/people/theo-marsh.md)", said)
+        said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis, ["Meetings/wiki/people/theo-marsh.md"])
+        self.assertEqual("the walls check refused it (walls: Wikis/Meetings/wiki/people/theo-marsh.md)", said)
+
+    def test_a_check_that_does_not_finish_says_so(self):
+        def slow(cmd, *a, **k):
+            raise subprocess.TimeoutExpired(cmd, 600)
+        with mock.patch.object(garrick_lib.subprocess, "run", slow):
+            said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis, [])
+        self.assertTrue(said.startswith("the walls check did not finish in time"), said)
+
+    def test_a_correction_held_for_a_pages_form_names_it_and_says_no_wall(self):
+        page = self.people / "pat-newcomer.md"
+        page.write_text(page.read_text().replace("type: person\n", "type: person\n# a note\n"))
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "a note")
+        code, said, _ = self.run_tool("correct", "--old", "Buyer.", "--new", "Lead buyer.")
+        self.assertNotIn(nurture.WALL_REFUSAL, said)
+        self.assertIn("Wikis/Meetings/wiki/people/pat-newcomer.md: its frontmatter is not plain key: value lines", said)
+
     def run_tool(self, *args: str):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -1084,7 +1229,7 @@ class EveryCommitCheckedTest(Workspace):
 
     def test_a_fix_refused_by_the_walls_check_is_put_back(self):
         calls = []
-        with mock.patch.object(nurture, "walls_refusal", lambda ctx, repo: calls.append(repo) or "refused here"):
+        with mock.patch.object(nurture, "walls_refusal", lambda ctx, repo, *a, **kw: calls.append(repo) or "refused here"):
             code, said, _ = self.run_tool("correct", "--old", "Buyer.", "--new", "Lead buyer.", "--yes")
         self.assertEqual([self.wikis.resolve()], [Path(r).resolve() for r in calls])
         self.assertNotEqual(0, code)
@@ -1099,8 +1244,8 @@ class EveryCommitCheckedTest(Workspace):
         git(self.wikis, "add", "--", "Meetings/wiki/scratch.md")                 # staged by somebody else
         real = nurture.walls_refusal
 
-        def changed_after_reading(ctx, repo):                                     # the page changes once checked
-            said = real(ctx, repo)
+        def changed_after_reading(ctx, repo, *a, **kw):                           # the page changes once checked
+            said = real(ctx, repo, *a, **kw)
             page = self.people / "kit-avery.md"
             page.write_text(page.read_text().replace("Architect", "Architect and buyer"))
             return said
@@ -1183,11 +1328,11 @@ class CorrectPyTest(Workspace):
         git(wikis, "add", "-A")
         git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
         seen = []
-        with mock.patch.object(correct, "walls_refusal", lambda root, repo: seen.append(repo) or ""):
+        with mock.patch.object(correct, "walls_refusal", lambda root, repo, *a, **kw: seen.append(repo) or ""):
             done = correct.apply(self.root, "Buyer at", "Lead buyer at", rebuild=False)
         self.assertEqual([wikis.resolve()], [Path(r).resolve() for r in seen])
         self.assertEqual(1, len(done.commits))
-        done = correct.apply(self.root, "Lead buyer at", "Buyer at", rebuild=False, verify=lambda repo: "no")
+        done = correct.apply(self.root, "Lead buyer at", "Buyer at", rebuild=False, verify=lambda repo, paths: "no")
         self.assertEqual([("Wikis", "no")], done.refused)
         self.assertIn("Lead buyer at", (self.people / "kit-avery.md").read_text())
 

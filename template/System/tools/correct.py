@@ -91,9 +91,9 @@ sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
     INBOX,
-    foreign_git_env,
     memory_folders,
     parse_frontmatter_text,
+    staged_walls_refusal,
     status_command,
     workspace_root,
 )
@@ -301,7 +301,7 @@ def superseded(text: str, new: str, why: str, today: str) -> str:
         _day(today), new, " " + why.strip() if why.strip() else "")
     lines = text.split("\n")
     if lines and lines[0].strip() == "---":
-        end = next((i for i in range(1, len(lines)) if lines[i].strip() in ("---", "...")), None)
+        end = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r") in ("---", "...")), None)
         if end is not None and not any(re.match(r"superseded\s*:", l) for l in lines[1:end]):
             lines.insert(end, "superseded: %s" % _quoted(reason))
     else:
@@ -323,23 +323,16 @@ def _git(args: List[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True)
 
 
-def walls_refusal(root: Path, repo: Path) -> str:
+def walls_refusal(root: Path, repo: Path, paths: Optional[List[str]] = None) -> str:
     """The walls check on what a repository has staged, as its commit hook
-    would run it: "" when it passes, else what it found, in its own words.
-    A check that does not finish is a refusal."""
-    try:
-        r = subprocess.run([sys.executable, str(HERE / "check.py"), "--root", str(root), "--staged", "--walls-only"],
-                           cwd=str(repo), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
-                           env=foreign_git_env())
-    except (subprocess.TimeoutExpired, OSError) as why:
-        return "the walls check did not finish (%s), so nothing was committed" % type(why).__name__
-    if r.returncode == 0:
-        return ""
-    said = [l.strip() for l in (r.stdout + r.stderr).splitlines() if l.strip()]
-    return "the walls check refused it: %s" % (said[0] if said else "it said no more")
+    would run it: "" when it passes, else the refusing check and the paths
+    it refused (garrick_lib's staged_walls_refusal). `paths`, from the top
+    of `repo`, are what this correction changed. A check that does not
+    finish is a refusal."""
+    return staged_walls_refusal(root, repo, paths)
 
 
-def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path], str]) -> Tuple[bool, str]:
+def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path, List[str]], str]) -> Tuple[bool, str]:
     """One commit in `repo` of `files` and nothing else: (done, commit or reason).
     `verify` is asked first, with the change staged, why it must not be
     committed (#330): a repository may have no hook, `Wikis/` above all.
@@ -352,7 +345,7 @@ def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path]
         return False, " ".join((added.stderr or added.stdout).split()) or "git add failed"
     if not _git(["diff", "--cached", "--quiet", "--"] + names, repo).returncode:
         return False, "nothing to commit"
-    said = verify(repo)
+    said = verify(repo, names)
     if not said and _git(["diff", "--quiet", "--"] + names, repo).returncode:
         said = "a file changed again after the walls check read it, so nothing was committed"
     if said:
@@ -367,16 +360,16 @@ def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path]
 
 
 def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str = "", today: Optional[str] = None,
-          commit: bool = True, rebuild: bool = True, verify: Optional[Callable[[Path], str]] = None) -> Applied:
+          commit: bool = True, rebuild: bool = True, verify: Optional[Callable[[Path, List[str]], str]] = None) -> Applied:
     """Put NEW in place of OLD in every live file `hits` names, mark the pages
     that rest on a raw record holding OLD as superseded, rebuild what is built
     from them, and commit once per repository. Raw records are never touched.
     Each repository's change is committed only when the walls check, run on
     it staged, says nothing against it (walls_refusal, or the caller's own
-    `verify` in its place; none may go without one); when it does, that
+    `verify(repo, paths)` in its place; none may go without one); when it does, that
     repository's files are put back as they were, and the refusal is in
     `refused`."""
-    verify = verify or (lambda repo: walls_refusal(root, repo))
+    verify = verify or (lambda repo, paths: walls_refusal(root, repo, paths))
     root = Path(root).resolve()
     if not old or not old.strip():
         raise ValueError("Say which value is wrong: --old cannot be empty.")
@@ -393,6 +386,7 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
     done = Applied()
     touched: Dict[Path, Optional[Path]] = {}
     before: Dict[Path, str] = {}                         # what a refused repository's files are put back to
+    made: set = set()                                    # what this correction made, which was not there before
     pages: List[Path] = []
     for hit in hits:
         if hit.kind == "raw":
@@ -433,6 +427,8 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
                 touched.setdefault(index, repo_of(index))
                 if was is not None:
                     before.setdefault(index, was)
+                else:
+                    made.add(index)                      # nothing to put back: a refusal takes it away
         else:
             done.uncommitted.append((_rel(root, index), "the index was not rebuilt: %s" % " ".join(r.stderr.split())))
     if commit:
@@ -451,7 +447,10 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
                 done.refused.append((_rel(root, repo) if repo != root else ".", said))
                 if said != "nothing to commit":
                     for f in files:                      # put back: a refused correction leaves nothing changed
-                        if f in before:
+                        if f in made:
+                            f.unlink()
+                            done.rebuilt = [c for c in done.rebuilt if c != _rel(root, f)]
+                        elif f in before:
                             f.write_text(before[f], encoding="utf-8")
                             rel_f = _rel(root, f)
                             done.changed = [c for c in done.changed if c != rel_f]

@@ -334,6 +334,22 @@ class TestRename(ManageCase):
                       (self.work / "Apex" / "Threads" / "Freight" / "Freight.md").read_text())
         self.assertEqual("", self.git("status", "--porcelain").stdout)
 
+    def test_a_project_renamed_leaves_a_same_named_threads_working_notes_on_their_thread(self):
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Acme")
+        self.assertEqual(0, r.returncode, r.stderr)
+        call = self.work / "Acme" / "Threads" / "Acme" / "Call.md"
+        call.write_text('---\ntitle: Call\nparent: "[[Acme]]"\n---\n# Call\n')
+        top = self.work / "Acme" / "Brief.md"
+        top.write_text('---\ntitle: Brief\nparent: "[[Acme]]"\n---\n# Brief\n')
+        self.commit("a thread named after its project")
+        r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--to", "Apex")
+        self.assertEqual(0, r.returncode, r.stderr)
+        thread = self.work / "Apex" / "Threads" / "Acme"
+        self.assertIn('parent: "[[Acme]]"', (thread / "Call.md").read_text())          # its thread, still Acme
+        self.assertIn('project: "[[Apex]]"', (thread / "Acme.md").read_text())
+        self.assertIn('parent: "[[Apex]]"', (self.work / "Apex" / "Brief.md").read_text())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
     def test_refusals_change_nothing(self):
         cases = [
             (["--thread", "Pricing", "--to", "Freight"], "already has a thread called Freight"),

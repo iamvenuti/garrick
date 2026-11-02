@@ -984,7 +984,13 @@ tomorrow. When the user says "that's wrong, it's Y", "no, it's Y" or
    uncommitted or refused. The walls check runs on each repository's change
    before it is committed, hook or no hook; where it refused one, that
    repository's files were put back as they were, and nothing there
-   changed: the correction would have crossed a wall.
+   changed. The refusal names the check and the paths, and says which
+   cause it was: the correction would have crossed a wall; a page's
+   frontmatter is not plain key: value lines, or the page is a symbolic
+   link, which is its form and no wall; the check did not finish, so run
+   it again later; or a file another session has staged there failed the
+   check, not this correction. Say the cause it gave, and only the wall
+   sentence for a wall.
 
 Never leave a trail of the old value: no "was X", no "not X". Live files
 say what is true now, and git holds what was.

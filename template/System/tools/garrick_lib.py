@@ -198,6 +198,12 @@ __all__ = [
     "garrick_ignores",
     "ignore_block",
     "ignore_parts",
+    "FRONTMATTER_PLAIN",
+    "FORM_PROBLEMS",
+    "PERSON_PLAIN",
+    "PERSON_SHAPE",
+    "WALLS_KEYS",
+    "frontmatter_form_problem",
     "with_ignore_block",
     "SKILL_FOLDERS",
     "LOCAL_EMAIL",
@@ -206,6 +212,7 @@ __all__ = [
     "LOCAL_ENV_VARS",
     "git_local_env_vars",
     "foreign_git_env",
+    "staged_walls_refusal",
     "skill_links",
     "init_repo",
     "table_row",
@@ -289,26 +296,140 @@ def _scalar(value: str):
     return _unquote(value)
 
 
-def parse_frontmatter_text(text: str) -> dict:
-    """Parse the YAML frontmatter at the top of `text`. See parse_frontmatter."""
-    if text.startswith("﻿"):
+def _frontmatter_lines(text: str) -> List[str]:
+    """`text` as lines, ended where a YAML reader ends them: at \n, \r\n or
+    a lone \r. str.splitlines() also breaks at U+2028, U+2029, U+0085 and
+    the like, which YAML reads as text, so a quoted value holding one could
+    hide every key after it from this reader and from no other (#330)."""
+    if text.startswith("\ufeff"):
         text = text[1:]
-    # Lines end where a YAML reader ends them: at \n, \r\n or a lone \r.
-    # str.splitlines() also breaks at U+2028, U+2029, U+0085 and the like,
-    # which YAML reads as text, so a quoted value holding one could hide
-    # every key after it from this reader and from no other (#330).
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     if lines and lines[-1] == "":
         lines.pop()
+    return lines
+
+
+def _frontmatter_body(text: str) -> Optional[List[str]]:
+    """The lines between the `---` that opens `text` and the one that closes
+    its frontmatter, or None when it has none. Only a line that is `---` or
+    `...` and nothing else, at the left margin, closes it, as YAML reads a
+    document's end: an indented `---` inside a block scalar, or one with
+    anything after it, does not (#330)."""
+    lines = _frontmatter_lines(text)
     if not lines or lines[0].strip() != "---":
-        return {}
+        return None
     body = []
     for line in lines[1:]:
-        if line.strip() in ("---", "..."):
-            break
+        if line in ("---", "..."):
+            return body
         body.append(line)
-    else:
-        return {}  # never closed: not frontmatter
+    return None  # never closed: not frontmatter
+
+
+FRONTMATTER_PLAIN = "frontmatter must be plain key: value lines"
+# What the walls say of a person page they cannot read (check.py), and so,
+# with FRONTMATTER_PLAIN, what a refusal calls a page's form, not a wall.
+PERSON_SHAPE = "a person page's frontmatter must be plain `key: value` lines"
+PERSON_PLAIN = "a person page must be a plain file in wiki/people"
+FORM_PROBLEMS = (FRONTMATTER_PLAIN, PERSON_SHAPE, PERSON_PLAIN)
+# What opens a YAML node other than a plain key at the left margin: a quoted
+# key, an explicit `?` key, a tag, an anchor, an alias, a merge key, a flow
+# mapping or sequence. YAML honours each as a key this reader never sees.
+_NODE_OPENERS = ('"', "'", "?", "!", "&", "*", "<<", "{", "[")
+# The keys the walls read on a page that is not theirs alone to read.
+WALLS_KEYS = ("party", "parties", "zone")
+
+
+_ITEM_LINE = re.compile(r"-(?:[ \t]+(.*))?$")
+
+
+def _value_problem(value: str) -> str:
+    """What makes one value, its ` # comment` taken off, readable two ways,
+    or "": a YAML node marker this reader takes for text (a block scalar
+    `|` or `>`, a tag `!`, an anchor `&`, an alias `*`), a flow list that
+    does not close on its line, or a quote that does not close on it."""
+    if value[:1] in ("|", ">", "!", "&", "*"):
+        return "opens with `%s`, which a YAML reader takes for more than the text" % value[0]
+    if value.startswith("[") and not value.endswith("]"):
+        return "opens a list that does not close on its line"
+    if value[:1] in ('"', "'"):
+        closed = re.match(r'"(?:[^"\\]|\\.)*"' if value[0] == '"' else r"'(?:[^']|'')*'", value)
+        if closed is None:
+            return "opens a quote that does not close on its line"
+        if value[closed.end():].strip():
+            return "has text after its closing quote"
+    return ""
+
+
+def frontmatter_form_problem(text: str, keys: Optional[Tuple[str, ...]] = None) -> str:
+    """What makes the frontmatter of `text` readable two ways, or "" (#330):
+    a frontmatter that opens with `---` and is closed by no line of `---`
+    or `...` alone; a line at the left margin that opens with one of
+    _NODE_OPENERS; a key given twice, of which YAML keeps the last and this
+    reader may keep another; a value that opens with a YAML node marker, or a
+    list or a quote it does not close on its line (_value_problem); or an
+    indented line, or a `- item`, anywhere but as an item straight under a
+    key with no value, where YAML would read it as more of the value and
+    this reader reads nothing. With `keys`, only those keys' values, lines
+    and repeats count (the opening lines count on every page). Not the
+    person page's strict shape (check.py's person_shape_problem)."""
+    lines = _frontmatter_lines(text)
+    opened = bool(lines) and lines[0].strip() == "---"
+    body = _frontmatter_body(text)
+    if opened and body is None and (keys is None or any(l.strip() in ("---", "...") for l in lines[1:])):
+        return "no line of `---` alone, at the left margin, closes it"
+
+    def counts(key: Optional[str]) -> bool:
+        return key is None or keys is None or key in keys
+    seen, key, empty = set(), None, False          # the last key, and whether its value was empty
+    for line in body or []:
+        if not line.strip():
+            continue
+        margin = not line[:1].isspace()
+        bare = line.lstrip()
+        if margin and bare.startswith("#"):
+            continue
+        item = _ITEM_LINE.match(bare)
+        if item:
+            if not (key is not None and empty):
+                if counts(key):
+                    return "a `- item` line stands under %s" % ("`%s`, which has a value" % key if key else "no key")
+                continue
+            if counts(key):
+                problem = _value_problem(_strip_comment(item.group(1) or ""))
+                if problem:
+                    return "an item of `%s` %s" % (key, problem)
+            continue
+        if not margin:
+            if counts(key):
+                return "an indented line stands under %s, which a YAML reader reads as part of it" % (
+                    "`%s`" % key if key else "no key")
+            continue
+        if line.startswith(_NODE_OPENERS):
+            opener = next(o for o in _NODE_OPENERS if line.startswith(o))
+            return "a line opens with `%s`, which a YAML reader takes for a key written another way" % opener
+        m = _KEY_RE.match(line)
+        if m is None:
+            key, empty = None, False
+            continue
+        key = m.group(1)
+        if key in seen and counts(key):
+            return "`%s` is given twice, and a YAML reader keeps the last" % key
+        seen.add(key)
+        value = _strip_comment(m.group(2))
+        empty = value == ""
+        if counts(key):
+            problem = _value_problem(value)
+            if problem:
+                return "`%s` %s" % (key, problem)
+    return ""
+
+
+def parse_frontmatter_text(text: str) -> dict:
+    """Parse the YAML frontmatter at the top of `text`. See parse_frontmatter."""
+    body = _frontmatter_body(text)
+    if body is None:
+        return {}
 
     result: dict = {}
     current_key: Optional[str] = None
@@ -332,6 +453,14 @@ def parse_frontmatter_text(text: str) -> dict:
         current_key = m.group(1)
         result[current_key] = _scalar(m.group(2))
     return result
+
+
+def _page_text(path: PathLike) -> str:
+    """The text of the file at `path` as parse_frontmatter reads it, or ""."""
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def parse_frontmatter(path: PathLike) -> dict:
@@ -878,7 +1007,7 @@ def memory_origin(text: str) -> dict:
     block: List[str] = []
     inside = False
     for line in text.lstrip("﻿").splitlines()[1:]:
-        if line.strip() in ("---", "..."):
+        if line in ("---", "..."):
             break
         if inside:
             if line.strip() and not line[:1].isspace():
@@ -1133,11 +1262,15 @@ def party_entities(root: PathLike) -> Dict[str, List[str]]:
     counts when its `type:` is `entity` or missing, since the folder holds
     entity pages; it names one party in `party:`; and it carries no
     `parties:`, as Ask reads a page's `party:` alone (ask_scope.PARTY_ALONE).
-    One naming several, `none` or nothing stands for no party here."""
+    One naming several, `none` or nothing stands for no party here.
+    One whose frontmatter can be read two ways (frontmatter_form_problem)
+    stands for none either."""
     out: Dict[str, List[str]] = {}
     for rel, page in entity_pages(root):
-        fm = parse_frontmatter(page)
-        if str(fm.get("type") or "entity").strip().lower() != "entity" or fm.get("parties") is not None:
+        text = _page_text(page)
+        fm = parse_frontmatter_text(text)
+        if str(fm.get("type") or "entity").strip().lower() != "entity" or fm.get("parties") is not None \
+                or frontmatter_form_problem(text):
             continue
         tags = sorted(set(tag_list(fm.get("party"))))
         if len(tags) == 1 and tags[0] != "none":
@@ -1351,19 +1484,23 @@ def suspect_name(name) -> bool:
 
 def entity_names(root: PathLike, texts: Optional[Dict[Path, str]] = None) -> List[dict]:
     """Every entity page under the Meetings wiki's `wiki/entities/`, as
-    {rel, path, title, names, keys, parties, tagged, suspect}: the names it
+    {rel, path, title, names, keys, parties, tagged, misread, suspect}: the names it
     goes by (its title, its file name, each of its `aliases:`), their
     org_key()s, every tag its `party:` or `parties:` names but `none`,
     whether it says `party:` at all (`party: none` counts), and whether one
     of its names is a suspect_name(). `texts` is what git holds for a page,
     where it differs from the disk: both are read, what either says counts,
-    and it is tagged only when both say `party:`."""
+    and it is tagged only when both say `party:` in frontmatter that cannot
+    be read two ways (frontmatter_form_problem)."""
     out = []
     for rel, page in entity_pages(root):
-        views = [parse_frontmatter(page)]
-        if texts and page in texts:
-            views.append(parse_frontmatter_text(texts[page]))
+        seen = [_page_text(page)] + ([texts[page]] if texts and page in texts else [])
+        views = [parse_frontmatter_text(t) for t in seen]
         names, parties, title, tagged = [Path(rel).name], set(), "", True
+        # One whose frontmatter can be read two ways says whose it is to no
+        # one: a link to it is refused as to a page with no `party:` (#330).
+        misread = any(frontmatter_form_problem(t) for t in seen)
+        tagged = not misread
         for fm in views:
             said = str(fm.get("title") or "").strip()
             title = title or said
@@ -1372,7 +1509,7 @@ def entity_names(root: PathLike, texts: Optional[Dict[Path, str]] = None) -> Lis
             tagged = tagged and bool(tag_list(fm.get("party")))
         keys = {org_key(n) for n in names} - {""}
         out.append({"rel": rel, "path": page, "title": title or Path(rel).name, "names": names, "keys": keys,
-                    "parties": parties - {"none"}, "tagged": tagged,
+                    "parties": parties - {"none"}, "tagged": tagged, "misread": misread,
                     "suspect": any(suspect_name(n) for n in names)})
     return out
 
@@ -2923,6 +3060,66 @@ def foreign_git_env(env: Optional[Dict[str, str]] = None) -> Optional[Dict[str, 
     return source
 
 
+def staged_walls_refusal(root: PathLike, repo: PathLike, paths: Optional[Iterable[str]] = None) -> str:
+    """The walls check on what `repo` has staged, as its commit hook runs it
+    (check.py --staged): "" when it passes, else why, as each refusing check
+    and the paths it refused, and nothing of what they hold, since the reason
+    is said where the far side of a wall may read it. A check that does not
+    finish, or whose report cannot be read, is a refusal (#330).
+
+    `paths`, from the top of `repo`, are what the command changed. The words,
+    and only the words, then tell a wall apart from a page whose form the
+    walls cannot read (FORM_PROBLEMS) and from a file staged there that the
+    command did not change, another session's: each still refuses."""
+    check = Path(__file__).resolve().parent / "check.py"
+    try:
+        r = subprocess.run([sys.executable, str(check), "--root", str(root), "--staged", "--walls-only", "--json"],
+                           cwd=str(repo), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
+                           env=foreign_git_env())
+    except subprocess.TimeoutExpired:
+        return "the walls check did not finish in time, so nothing was committed; try again when the machine is less busy"
+    except OSError as why:
+        return "the walls check could not run (%s), so nothing was committed" % type(why).__name__
+    if r.returncode == 0:
+        return ""
+    try:
+        errors = [(str(f["check"]), str(f["path"]), str(f.get("message") or ""))
+                  for f in json.loads(r.stdout)["findings"] if f.get("severity") == "error"]
+    except (ValueError, KeyError, TypeError):
+        return "the walls check refused it, and what it said could not be read"
+    if not errors:
+        return "the walls check refused it, and named no file"
+    top, base = Path(repo).resolve(), Path(root).resolve()
+
+    def from_root(name: str) -> str:
+        try:
+            return (top / name).relative_to(base).as_posix()
+        except ValueError:
+            return (top / name).as_posix()
+    foreign: set = set()
+    if paths is not None:
+        listed = subprocess.run(["git", "diff", "--cached", "--name-only", "-z"], cwd=str(top), capture_output=True,
+                                text=True, env=foreign_git_env())
+        mine = {from_root(p) for p in paths}
+        foreign = {from_root(n) for n in listed.stdout.split("\0") if n} - mine if listed.returncode == 0 else set()
+    kinds: Dict[str, Dict[str, List[str]]] = {}
+    for check_name, path, message in errors:
+        kind = "foreign" if path in foreign else "form" if message.startswith(FORM_PROBLEMS) else "wall"
+        here = kinds.setdefault(kind, {}).setdefault(check_name, [])
+        if path not in here:
+            here.append(path)
+
+    def where(found: Dict[str, List[str]]) -> str:
+        return "; ".join("%s: %s" % (c, ", ".join(sorted(ps))) for c, ps in sorted(found.items()))
+    said = {
+        "wall": "the walls check refused it (%s)",
+        "form": "the walls check refused it for a page's form, not for a wall: its frontmatter is not plain "
+                "key: value lines, or it is a symbolic link (%s)",
+        "foreign": "the walls check refused a file another session has staged, which this change did not touch (%s)",
+    }
+    return "; and ".join(said[k] % where(kinds[k]) for k in ("wall", "form", "foreign") if k in kinds)
+
+
 class GitError(RuntimeError):
     """A git command that failed, with git's own reason."""
 
@@ -3234,7 +3431,7 @@ def _strip_text_recipients(text: str, own: Iterable[str]) -> str:
     dropping = False
     in_header, seen_body = True, False       # the body may open with a header block
     for i, line in enumerate(lines):
-        if in_fm and i > 0 and line.strip() in ("---", "..."):
+        if in_fm and i > 0 and line.rstrip("\r\n") in ("---", "..."):
             in_fm, dropping = False, False
             keep.append(line)
             continue
@@ -3379,7 +3576,7 @@ def _parse_text(text: str) -> dict:
     fm = parse_frontmatter_text(text)
     lines = text.splitlines()
     if fm:
-        end = next(i for i, l in enumerate(lines[1:], 1) if l.strip() in ("---", "..."))
+        end = next(i for i, l in enumerate(lines[1:], 1) if l in ("---", "..."))
         headers = {k.lower(): [", ".join(v) if isinstance(v, list) else str(v)] for k, v in fm.items() if v}
         body_lines = lines[end + 1:]
     else:

@@ -3356,7 +3356,8 @@ def organisation_entity(ws: Workspace, fm: dict) -> Tuple[str, Optional[Path]]:
 
 
 def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
-    """Every person page and its text. Symbolic links to a
+    """Every person page and its text, `.md` in any case, as the commit
+    hook's staged_people() finds one. Symbolic links to a
     page or a folder are passed over, as they may lead out of the wiki; the
     walls refuse them instead (person_links)."""
     folder = ws.root.joinpath(*PEOPLE)
@@ -3367,7 +3368,7 @@ def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
         dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(here, d)))
         for f in sorted(files):
             path = Path(here) / f
-            if f.endswith(".md") and not path.is_symlink():
+            if f.lower().endswith(".md") and not path.is_symlink():
                 out.append((path, read_text(path) or ""))
     return sorted(out)
 

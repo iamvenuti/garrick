@@ -2171,7 +2171,12 @@ def main_organisation(ctx: Ctx, a) -> int:
     if people not in path.parents or not path.is_file() or path.suffix != ".md":
         print("nurture: %s is not a person page in Wikis/Meetings/wiki/people/" % a.path, file=sys.stderr)
         return EXIT_USAGE
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        print("nurture: %s is not readable as UTF-8 text, so the walls cannot read it; nothing was written" % a.path,
+              file=sys.stderr)
+        return EXIT_FAILED
     if garrick_check.person_shape_problem(text):
         print("nurture: %s: %s; nothing was written" % (a.path, garrick_check.PERSON_SHAPE), file=sys.stderr)
         return EXIT_FAILED

@@ -956,6 +956,20 @@ class SymlinkedPersonPageTest(Workspace):
         os.symlink(str(self.outside()), str(self.people))
         self.assertEqual(["Wikis/Meetings/wiki/people"], [f.path for f in self.refused()])
 
+    def test_an_upper_case_suffix_is_still_a_person_page(self):
+        write(self.people / "pat-newcomer.MD", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.MD"], [f.path for f in self.findings("walls")])
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_reads_an_upper_case_suffix_too(self):
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        write(self.people / "pat-newcomer.Md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        git(wikis, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=wikis)
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.Md"],
+                         [f.path for f in found if f.severity == "error"])
+
     def test_a_plain_page_is_not_refused_for_its_form(self):
         write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/acme-corp]]"))
         self.assertEqual([], self.refused())
@@ -1141,6 +1155,26 @@ class EveryCommitCheckedTest(Workspace):
         said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis)
         self.assertEqual("the walls check refused it (walls: Wikis/Meetings/wiki/people/theo-marsh.md)", said)
         self.assertEqual(said, correct.walls_refusal(self.root, self.wikis))
+
+    def test_a_refused_correction_takes_away_an_index_it_made(self):
+        import correct
+        write(self.root / "System" / "skills" / "meetings" / "ingest.py", INGEST.read_text(encoding="utf-8"))
+        write(self.root / "System" / "tools" / "garrick_lib.py", (TOOLS / "garrick_lib.py").read_text(encoding="utf-8"))
+        index = self.meetings / "wiki" / "index.md"
+        git(self.wikis, "rm", "-q", "--", "Meetings/wiki/index.md")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "no index")
+        done = correct.apply(self.root, "Buyer.", "Lead buyer.", verify=lambda repo, paths: "no")
+        self.assertEqual([("Wikis", "no")], done.refused)
+        self.assertFalse(index.exists())
+        self.assertEqual([], done.rebuilt)
+        self.assertEqual("", git(self.wikis, "status", "--porcelain").strip())
+
+    def test_the_organisation_action_refuses_a_page_not_in_utf8(self):
+        page = self.people / "kit-avery.md"
+        page.write_bytes(person("Kit Avery", "none", "Architect at Larch Partners.").encode("utf-8") + b"\xff\xfe\n")
+        code, _, err = self.run_tool("organisation", "--path", "Wikis/Meetings/wiki/people/kit-avery.md", "--yes")
+        self.assertEqual(nurture.EXIT_FAILED, code)
+        self.assertIn("not readable as UTF-8 text", err)
 
     def test_a_refusal_for_a_pages_form_is_not_called_a_wall(self):
         write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer.").replace("type: person\n",

@@ -386,6 +386,7 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
     done = Applied()
     touched: Dict[Path, Optional[Path]] = {}
     before: Dict[Path, str] = {}                         # what a refused repository's files are put back to
+    made: set = set()                                    # what this correction made, which was not there before
     pages: List[Path] = []
     for hit in hits:
         if hit.kind == "raw":
@@ -426,6 +427,8 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
                 touched.setdefault(index, repo_of(index))
                 if was is not None:
                     before.setdefault(index, was)
+                else:
+                    made.add(index)                      # nothing to put back: a refusal takes it away
         else:
             done.uncommitted.append((_rel(root, index), "the index was not rebuilt: %s" % " ".join(r.stderr.split())))
     if commit:
@@ -444,7 +447,10 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
                 done.refused.append((_rel(root, repo) if repo != root else ".", said))
                 if said != "nothing to commit":
                     for f in files:                      # put back: a refused correction leaves nothing changed
-                        if f in before:
+                        if f in made:
+                            f.unlink()
+                            done.rebuilt = [c for c in done.rebuilt if c != _rel(root, f)]
+                        elif f in before:
                             f.write_text(before[f], encoding="utf-8")
                             rel_f = _rel(root, f)
                             done.changed = [c for c in done.changed if c != rel_f]

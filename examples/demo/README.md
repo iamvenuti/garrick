@@ -1,6 +1,6 @@
 # The demo workspace
 
-A made-up advisor's workspace, about four weeks into real use. The 84-second walkthrough that Garrick's README links to is a dramatised take on it. `video-script.md` is the shot list for a separate, longer demo on this workspace: three minutes, by voice. It's also what you open at the start of a guided session when there's nothing of the client's in the workspace yet. Every name in it is invented.
+A made-up advisor's workspace, about four weeks into real use. The 54-second walkthrough that Garrick's README links to is recorded on it. `video-script.md` is the shot list for a separate, longer demo on this workspace: three minutes, by voice. It's also what you open at the start of a guided session when there's nothing of the client's in the workspace yet. Every name in it is invented.
 
 ## The world
 

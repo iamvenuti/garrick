@@ -981,9 +981,10 @@ tomorrow. When the user says "that's wrong, it's Y", "no, it's Y" or
 5. **A memory entry whose only source was inbound** now rests on the user's
    word: add `user` to its `source:`.
 6. **Report** how many files changed and each commit, and anything left
-   uncommitted or refused. Where a zone's check refused its commit, those
-   files stay changed and uncommitted: take the material out as under *The
-   wall check*, and commit again.
+   uncommitted or refused. The walls check runs on each repository's change
+   before it is committed, hook or no hook; where it refused one, that
+   repository's files were put back as they were, and nothing there
+   changed: the correction would have crossed a wall.
 
 Never leave a trail of the old value: no "was X", no "not X". Live files
 say what is true now, and git holds what was.

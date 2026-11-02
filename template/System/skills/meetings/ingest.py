@@ -8,7 +8,7 @@ meeting was about, which zone and parties apply, what was decided -- stays
 with whoever is running the skill; this script only does the rest.
 
     python3 ingest.py land   --root PATH --inbox FILE --date YYYY-MM-DD --title "..."
-    python3 ingest.py person --root PATH --name "..." [--party TAG]
+    python3 ingest.py person --root PATH --name "..." [--party TAG] [--organisation ENTITY]
     python3 ingest.py index  --root PATH
     python3 ingest.py log    --root PATH --slug YYMMDD-slug --title "..." [--zone Z] [--parties a,b]
 
@@ -39,7 +39,7 @@ sys.path.insert(0, str(TOOLS))
 from garrick_lib import (  # noqa: E402
     OffCourse, landing, move_new, parse_frontmatter, workspace_root, write_new, write_over,
 )
-from garrick_lib import load_context, organisation_link  # noqa: E402  (the person page's entity link)
+from garrick_lib import load_context, organisation_link, organisation_named  # noqa: E402  (the person page's entity link)
 
 RAW_EXTS = {".txt", ".md", ".vtt"}
 SLUG_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
@@ -239,23 +239,33 @@ def person_slug(name: str) -> str:
     return slugify(name)
 
 
-def ensure_person(root: Path, name: str, party: str, today: str) -> Tuple[Path, bool]:
+def ensure_person(root: Path, name: str, party: str, today: str, organisation: str = "",
+                  why: Optional[List[str]] = None) -> Tuple[Path, bool]:
     """Create `wiki/people/<slug>.md` if it does not exist yet.
 
     Never overwrites an existing person page: identity and party, once
     written, are corrected by hand, not regenerated. Returns (path, created).
 
-    A new page links the entity page of its party, `organisation:`, when
-    exactly one entity page names that party, and nothing otherwise: the
-    link is identity alone, and garrick_lib's organisation_link() leaves it
-    out wherever it could say more than `party:` does, such as for a name
-    the People table places on both sides of a wall.
+    A new page links the entity page of where the person works,
+    `organisation:` (#330). With `organisation`, the entity page the user
+    named, by its file name, its link, or a title or alias one page alone
+    goes by, as garrick_lib's organisation_named() finds it: never made
+    here. Without, the entity page of its party, when exactly one entity
+    page names that party (organisation_link). Nothing otherwise: the link
+    is identity alone, and both leave it out across a wall, such as for a
+    name the People table places on both sides of one. Why a named entity
+    page was not linked goes into `why`, when given.
     """
     path = meetings_root(root) / "wiki" / "people" / ("%s.md" % person_slug(name))
     if path.is_file():
         return path, False
     party_line = "party: %s\n" % party if party else ""
-    link = organisation_link(root, load_context(root), name, party) if party else ""
+    if organisation:
+        link, problem = organisation_named(root, load_context(root), name, party, organisation)
+        if problem and why is not None:
+            why.append(problem)
+    else:
+        link = organisation_link(root, load_context(root), name, party) if party else ""
     if link:
         party_line += 'organisation: "%s"\n' % link
     text = (
@@ -428,6 +438,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     q = sub.add_parser("person", help="create a person page if one does not exist yet")
     q.add_argument("--name", required=True)
     q.add_argument("--party", default="", help="tag from Parties in System/context.md")
+    q.add_argument("--organisation", default="",
+                   help="the entity page of where they work: its file name in wiki/entities/, or a title or alias")
 
     sub.add_parser("index", help="rebuild wiki/index.md from every page's frontmatter")
 
@@ -455,8 +467,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             slug, dest = land(root, args.inbox, args.date, args.title)
             print("%s\t%s" % (slug, dest.relative_to(root)))
         elif args.command == "person":
-            path, created = ensure_person(root, args.name, args.party, today)
+            why: List[str] = []
+            path, created = ensure_person(root, args.name, args.party, today, args.organisation, why)
             print("%s\t%s" % ("created" if created else "exists", path.relative_to(root)))
+            for line in why:
+                print("no organisation link: %s" % line, file=sys.stderr)
+            if args.organisation and not created:
+                print("no organisation link: the page was there already, and is changed by hand or by Nurture",
+                      file=sys.stderr)
         elif args.command == "index":
             path, n = rebuild_index(root)
             print("%s: %d page%s" % (path.relative_to(root), n, "" if n == 1 else "s"))

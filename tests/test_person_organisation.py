@@ -292,7 +292,9 @@ class CheckTest(Workspace):
         for f in found:
             self.assertEqual("warning", f.severity)
             self.assertIn("names party acme, and so does", f.message)
-        self.assertEqual([], self.findings("people"))                     # so Dana is owed no link
+        # So Dana is owed no link by her party; her first line names Acme Corp, which one page goes by (#330).
+        self.assertEqual(["%s, [[wiki/entities/acme-corp]]" % check.NO_EMPLOYER],
+                         [f.message for f in self.findings("people")])
 
     def test_an_entity_page_naming_an_unknown_party_is_warned(self):
         write(self.entities / "fernway.md", entity("fernway", "Fernway"))
@@ -306,12 +308,14 @@ class CheckTest(Workspace):
         self.assertEqual(1, len(found))
         self.assertIn("leads to no entity page", found[0].message)
 
-    def test_a_link_to_another_partys_entity_page(self):
+    def test_a_link_to_another_partys_entity_page_is_where_they_work(self):
+        """#330: `organisation:` names where the person works, whatever the
+        page's party, so another party's entity page no wall divides from
+        it is no finding."""
         write(self.entities / "cedar-ltd.md", entity("cedar", "Cedar Ltd"))
         write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme", "[[wiki/entities/cedar-ltd]]"))
-        found = self.findings("people")
-        self.assertEqual(1, len(found))
-        self.assertIn("links the entity page of cedar, and the page names acme", found[0].message)
+        self.assertEqual([], self.findings("people"))
+        self.assertEqual([], self.findings("walls"))
 
     def test_a_link_across_a_wall_is_a_wall_finding(self):
         write(self.entities / "birch-co.md", entity("birch", "Birch & Co"))
@@ -512,61 +516,79 @@ class NurtureTest(Workspace):
             code = nurture.main(list(args) + ["--root", str(self.root), "--json", "--today", "2026-10-17"])
         return code, json.loads(out.getvalue())
 
-    def offered(self, items):
-        return {Path(i["path"]).name: i["fix"]["link"] for i in items
-                if i["kind"] == "mechanical" and (i.get("fix") or {}).get("op") == "organisation"}
+    def asked(self, items):
+        """What Nurture asks about each person page's organisation (#330): one
+        question per page, never a mechanical fix."""
+        return {Path(i["path"]).name: (i["question"], i["proposal"]) for i in items
+                if i["kind"] == "attribution" and i["question"].startswith("Does ")}
 
-    def test_the_list_names_every_page_that_lacks_the_link_and_no_other(self):
+    def organisation(self, page: str, *more: str, env=None):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env or {}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = nurture.main(["organisation", "--path", "Wikis/Meetings/wiki/people/%s" % page, "--root",
+                                 str(self.root), "--today", "2026-10-17"] + list(more))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_each_page_that_lacks_the_link_is_one_question_and_no_fix(self):
         _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
-        self.assertEqual({"dana-whitlock.md": "[[wiki/entities/acme-corp]]",
-                          "mira-holt.md": "[[wiki/entities/acme-corp]]",
-                          "theo-marsh.md": "[[wiki/entities/birch-co]]"}, self.offered(out["items"]))
-        line = next(i["line"] for i in out["items"] if i["path"].endswith("theo-marsh.md"))
-        self.assertIn('add organisation: "[[wiki/entities/birch-co]]"', line)
+        self.assertEqual({"dana-whitlock.md": ("Does Dana Whitlock work at Acme Corp? (yes / no / another page)",
+                                               "[[wiki/entities/acme-corp]]"),
+                          "mira-holt.md": ("Does Mira Holt work at Acme Corp? (yes / no / another page)",
+                                           "[[wiki/entities/acme-corp]]"),
+                          "theo-marsh.md": ("Does Theo Marsh work at Birch & Co? (yes / no / another page)",
+                                            "[[wiki/entities/birch-co]]")}, self.asked(out["items"]))
+        self.assertEqual([], [i for i in out["items"] if (i.get("fix") or {}).get("op") == "organisation"])
         self.assertEqual(self.before, {p.name: p.read_text() for p in self.people.glob("*.md")})
 
-    def test_one_yes_adds_only_those_frontmatter_lines(self):
+    def test_a_batch_yes_writes_none_of_them(self):
         code, out = self.run_tool("fix", "--scope", "Wikis/Meetings", "--yes")
         self.assertEqual(0, code, out)
-        fixed = {Path(i["path"]).name for i in out["fixed"] if i["fix"]["op"] == "organisation"}
-        self.assertEqual({"dana-whitlock.md", "mira-holt.md", "theo-marsh.md"}, fixed)
-        after = {p.name: p.read_text() for p in self.people.glob("*.md")}
-        for name in ("rowan-blake.md", "r-blake.md", "ines-varga.md"):
-            self.assertEqual(self.before[name], after[name])
-        for name, link in (("dana-whitlock.md", "acme-corp"), ("mira-holt.md", "acme-corp"), ("theo-marsh.md", "birch-co")):
-            old, new = self.before[name].splitlines(), after[name].splitlines()
-            added = [l for l in new if l not in old]
-            self.assertEqual(['organisation: "[[wiki/entities/%s]]"' % link], added, name)
-            self.assertEqual(old, [l for l in new if l not in added], name)
-            fm = garrick_lib.parse_frontmatter_text(after[name])
-            self.assertEqual("[[wiki/entities/%s]]" % link, fm["organisation"])
-        self.assertEqual(["acme"], garrick_lib.parse_frontmatter_text(after["mira-holt.md"])["party"])
-        changed = git(self.wikis, "show", "--name-only", "--format=", "HEAD").split()
-        self.assertEqual(sorted("Meetings/wiki/people/%s" % n for n in fixed), sorted(changed))
-        self.assertEqual("", git(self.wikis, "status", "--porcelain").strip())
-        # Once there, nothing is owed and nothing is offered again.
-        _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
-        self.assertEqual({}, self.offered(out["items"]))
-        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check == "people"])
+        self.assertEqual([], [i for i in out["fixed"] if i["fix"].get("op") == "organisation"])
+        self.assertEqual(self.before, {p.name: p.read_text() for p in self.people.glob("*.md")})
 
-    def test_with_nobody_watching_it_is_offered_and_never_written(self):
+    def test_one_pages_own_yes_adds_only_its_line(self):
+        head = git(self.wikis, "rev-parse", "HEAD")
+        code, said, err = self.organisation("mira-holt.md", "--yes")
+        self.assertEqual(0, code, err)
+        self.assertIn("Committed", said)
+        after = {p.name: p.read_text() for p in self.people.glob("*.md")}
+        old, new = self.before["mira-holt.md"].splitlines(), after["mira-holt.md"].splitlines()
+        added = [l for l in new if l not in old]
+        self.assertEqual(['organisation: "[[wiki/entities/acme-corp]]"'], added)
+        self.assertEqual(old, [l for l in new if l not in added])
+        self.assertEqual(["acme"], garrick_lib.parse_frontmatter_text(after["mira-holt.md"])["party"])
+        for name in self.before:
+            if name != "mira-holt.md":
+                self.assertEqual(self.before[name], after[name], name)
+        self.assertEqual(["Meetings/wiki/people/mira-holt.md"],
+                         git(self.wikis, "diff", "--name-only", head.strip(), "HEAD").split())
+        _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
+        self.assertNotIn("mira-holt.md", self.asked(out["items"]))
+        # Another page the user names instead goes through the same rules: a walled one is refused.
+        code, _, err = self.organisation("theo-marsh.md", "--yes", "--entity", "acme-corp")
+        self.assertNotEqual(0, code)
+        self.assertIn("a wall stands between", err)
+        self.assertNotIn("organisation", (self.people / "theo-marsh.md").read_text())
+
+    def test_with_nobody_watching_it_is_asked_and_never_written(self):
         head = git(self.wikis, "rev-parse", "HEAD")
         for args, env in ((("nightly",), None), (("fix", "--yes"), {"GARRICK_HEADLESS": "1"})):
             code, out = self.run_tool(*args, env=env)
             self.assertTrue(out["headless"])
             self.assertEqual([], [i for i in out["fixed"] if i["fix"].get("op") == "organisation"])
-            self.assertEqual(3, len(self.offered(out["items"])))
-            self.assertGreaterEqual(out["waiting"], 3)
-            self.assertIn("Waiting for you:", out["digest"])
+            self.assertEqual(3, len(self.asked(out["items"])))
+        code, _, err = self.organisation("mira-holt.md", "--yes", env={"GARRICK_HEADLESS": "1"})
+        self.assertNotEqual(0, code)
+        self.assertIn("never with nobody watching", err)
         self.assertEqual(head, git(self.wikis, "rev-parse", "HEAD"))
         self.assertEqual(self.before, {p.name: p.read_text() for p in self.people.glob("*.md")})
 
     def test_a_page_with_changes_not_committed_is_held(self):
         page = self.people / "theo-marsh.md"
         page.write_text(page.read_text() + "\nA line being written.\n")
-        _, out = self.run_tool("fix", "--scope", "Wikis/Meetings", "--yes")
-        held = [i for i in out["held"] if i["path"].endswith("theo-marsh.md")]
-        self.assertEqual(1, len(held))
+        code, _, err = self.organisation("theo-marsh.md", "--yes")
+        self.assertNotEqual(0, code)
+        self.assertIn("held", err)
         self.assertNotIn("organisation", page.read_text())
 
 

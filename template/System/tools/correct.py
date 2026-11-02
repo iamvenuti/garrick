@@ -22,8 +22,10 @@ It lists every hit by file and line, and changes nothing. With `--apply`,
 the user's one yes, it puts NEW in place of OLD in each of them, then commits
 once per repository the files it changed, staged by name and nothing else.
 A file in no repository, such as a memory kept outside the workspace, is
-changed and reported as not committed. A zone's wall check still runs on its
-commit, and a refusal is reported: the files stay changed, uncommitted.
+changed and reported as not committed. The walls check runs on each
+repository's change as staged before it is committed, hook or no hook
+(`Wikis/` has none by default), and a refusal is reported and puts that
+repository's files back as they were (#330).
 Live files show only the current value: no "was OLD" is written anywhere.
 Git holds the old one.
 
@@ -81,7 +83,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 HERE = Path(__file__).resolve().parent
@@ -89,6 +91,7 @@ sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
     INBOX,
+    foreign_git_env,
     memory_folders,
     parse_frontmatter_text,
     status_command,
@@ -320,14 +323,42 @@ def _git(args: List[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True)
 
 
-def _commit(repo: Path, files: List[Path], message: str) -> Tuple[bool, str]:
-    """One commit in `repo` of `files` and nothing else: (done, commit or reason)."""
+def walls_refusal(root: Path, repo: Path) -> str:
+    """The walls check on what a repository has staged, as its commit hook
+    would run it: "" when it passes, else what it found, in its own words.
+    A check that does not finish is a refusal."""
+    try:
+        r = subprocess.run([sys.executable, str(HERE / "check.py"), "--root", str(root), "--staged", "--walls-only"],
+                           cwd=str(repo), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
+                           env=foreign_git_env())
+    except (subprocess.TimeoutExpired, OSError) as why:
+        return "the walls check did not finish (%s), so nothing was committed" % type(why).__name__
+    if r.returncode == 0:
+        return ""
+    said = [l.strip() for l in (r.stdout + r.stderr).splitlines() if l.strip()]
+    return "the walls check refused it: %s" % (said[0] if said else "it said no more")
+
+
+def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path], str]) -> Tuple[bool, str]:
+    """One commit in `repo` of `files` and nothing else: (done, commit or reason).
+    `verify` is asked first, with the change staged, why it must not be
+    committed (#330): a repository may have no hook, `Wikis/` above all.
+    Then these paths are committed as the check read them, staged, and
+    nothing else: a file changed again on disk since is refused, and what
+    another session has staged stays staged."""
     names = [f.resolve().relative_to(repo).as_posix() for f in files]
     added = _git(["add", "--"] + names, repo)
     if added.returncode != 0:
         return False, " ".join((added.stderr or added.stdout).split()) or "git add failed"
     if not _git(["diff", "--cached", "--quiet", "--"] + names, repo).returncode:
         return False, "nothing to commit"
+    said = verify(repo)
+    if not said and _git(["diff", "--quiet", "--"] + names, repo).returncode:
+        said = "a file changed again after the walls check read it, so nothing was committed"
+    if said:
+        _git(["reset", "-q", "--"] + names, repo)
+        return False, said
+    # These paths as staged, which is what the check read, and nothing another session has staged.
     done = _git(["commit", "-q", "-m", message, "--"] + names, repo)
     if done.returncode != 0:
         _git(["reset", "-q", "--"] + names, repo)    # left changed, and not staged for somebody else's commit
@@ -336,10 +367,16 @@ def _commit(repo: Path, files: List[Path], message: str) -> Tuple[bool, str]:
 
 
 def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str = "", today: Optional[str] = None,
-          commit: bool = True, rebuild: bool = True) -> Applied:
+          commit: bool = True, rebuild: bool = True, verify: Optional[Callable[[Path], str]] = None) -> Applied:
     """Put NEW in place of OLD in every live file `hits` names, mark the pages
     that rest on a raw record holding OLD as superseded, rebuild what is built
-    from them, and commit once per repository. Raw records are never touched."""
+    from them, and commit once per repository. Raw records are never touched.
+    Each repository's change is committed only when the walls check, run on
+    it staged, says nothing against it (walls_refusal, or the caller's own
+    `verify` in its place; none may go without one); when it does, that
+    repository's files are put back as they were, and the refusal is in
+    `refused`."""
+    verify = verify or (lambda repo: walls_refusal(root, repo))
     root = Path(root).resolve()
     if not old or not old.strip():
         raise ValueError("Say which value is wrong: --old cannot be empty.")
@@ -355,6 +392,7 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
     hits = find_hits(root, old, new) if hits is None else hits
     done = Applied()
     touched: Dict[Path, Optional[Path]] = {}
+    before: Dict[Path, str] = {}                         # what a refused repository's files are put back to
     pages: List[Path] = []
     for hit in hits:
         if hit.kind == "raw":
@@ -365,6 +403,7 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
             continue
         fixed = replaced(text, old, new)
         if fixed != text:
+            before.setdefault(hit.path, text)
             hit.path.write_text(fixed, encoding="utf-8")
             touched[hit.path] = hit.repo
             done.changed.append(_rel(root, hit.path))
@@ -374,6 +413,7 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
             continue
         marked = superseded(replaced(text, old, new), new, why, today)
         if marked != text:
+            before.setdefault(page, text)
             page.write_text(marked, encoding="utf-8")
             touched.setdefault(page, repo_of(page))
             done.superseded.append(_rel(root, page))
@@ -385,12 +425,14 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
     ingest = root.joinpath(*INGEST)
     if rebuild and ingest.is_file() and any(meetings in p.parents for p in touched):
         index = meetings / "index.md"
-        before = _read(index)
+        was = _read(index)
         r = subprocess.run([sys.executable, str(ingest), "--root", str(root), "index"], capture_output=True, text=True)
         if r.returncode == 0:
             done.rebuilt.append(_rel(root, index))
-            if _read(index) != before:
+            if _read(index) != was:
                 touched.setdefault(index, repo_of(index))
+                if was is not None:
+                    before.setdefault(index, was)
         else:
             done.uncommitted.append((_rel(root, index), "the index was not rebuilt: %s" % " ".join(r.stderr.split())))
     if commit:
@@ -402,11 +444,18 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
                 groups.setdefault(repo, []).append(path)
         message = 'Correct "%s" to "%s"' % (old, new) + ("\n\n" + why.strip() if why.strip() else "")
         for repo, files in sorted(groups.items()):
-            ok, said = _commit(repo, sorted(files), message)
+            ok, said = _commit(repo, sorted(files), message, verify)
             if ok:
                 done.commits.append((_rel(root, repo) if repo != root else ".", said))
             else:
                 done.refused.append((_rel(root, repo) if repo != root else ".", said))
+                if said != "nothing to commit":
+                    for f in files:                      # put back: a refused correction leaves nothing changed
+                        if f in before:
+                            f.write_text(before[f], encoding="utf-8")
+                            rel_f = _rel(root, f)
+                            done.changed = [c for c in done.changed if c != rel_f]
+                            done.superseded = [c for c in done.superseded if c != rel_f]
     status = status_command(root) if rebuild else None
     if status:
         r = subprocess.run(status, capture_output=True, text=True, timeout=300)
@@ -481,7 +530,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                           "commits": done.commits, "uncommitted": done.uncommitted, "refused": done.refused,
                           "rebuilt": done.rebuilt}, indent=1))
     else:
-        if not done.changed:
+        if not done.changed and done.refused:
+            print("Nothing changed: the walls check refused the correction, and it was put back.")
+        elif not done.changed:
             print('Nothing live holds "%s"; nothing changed.' % a.old)
         else:
             print("Corrected %d file%s." % (len(done.changed), "" if len(done.changed) == 1 else "s"))

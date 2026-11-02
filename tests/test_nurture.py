@@ -534,14 +534,16 @@ class CorrectionTest(Base):
         self.assertIn("Corrections, 1", left)
 
     def test_one_yes_applies_them_in_one_commit_per_repository_of_only_what_it_touched(self):
+        # The Birch note would then name Acme's own domain, which the walls check run before every Nurture
+        # commit refuses (#330); it is left out here, and the refusal has its own test.
         work, wikis = self.log(self.work), self.log(self.wikis)
-        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes", "--why", "no hyphen")
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes", "--why", "no hyphen",
+                                  "--leave", str(self.birch_note))
         self.assertEqual(0, code, out)
         self.assertEqual(len(work) + 1, len(self.log(self.work)))
         self.assertEqual(len(wikis) + 1, len(self.log(self.wikis)))
         self.assertEqual({"Zones/Work", "Wikis"}, {r for r, _ in out["commits"]})
-        self.assertEqual({"Acme Review/Acme Review.md", "Acme Review/Threads/Freight/Freight.md", "Todo.md",
-                          "Birch Entry/Threads/Market Sizing/Market Sizing.md"},
+        self.assertEqual({"Acme Review/Acme Review.md", "Acme Review/Threads/Freight/Freight.md", "Todo.md"},
                          set(git(self.work, "show", "--name-only", "--format=", "HEAD").split("\n")) - {""})
         self.assertEqual(["Meetings/wiki/sources/260310-acme-start.md"],
                          git(self.wikis, "show", "--name-only", "--format=", "HEAD").split())
@@ -563,8 +565,21 @@ class CorrectionTest(Base):
         self.assertIn('"acme-corp.example" is now "acmecorp.example" in Zones/Work/Acme Review/Acme Review.md', fixed)
         self.assertIn(git(self.work, "rev-parse", "--short", "HEAD").strip(), fixed)
         asked = text.split("## Asked and answered", 1)[1].split("## Left", 1)[0]
-        self.assertIn('Correct "acme-corp.example" to "acmecorp.example" in 5 files? Answer: yes, no hyphen.', asked)
+        self.assertIn('Correct "acme-corp.example" to "acmecorp.example" in 4 files? Answer: yes, no hyphen.', asked)
         self.assertNotIn("Corrections", text.split("## Left", 1)[1])
+
+    def test_a_correction_the_walls_check_refuses_is_put_back(self):
+        """Every Nurture commit runs the walls check on its staged change first,
+        hook or no hook (#330): the Birch note would name Acme's own domain."""
+        work = self.log(self.work)
+        before = {f: f.read_text() for f in (self.acme / "Acme Review.md", self.work / "Todo.md", self.birch_note)}
+        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes")
+        self.assertEqual(1, code)
+        self.assertEqual(["Zones/Work"], [r for r, _ in out["refused"]])
+        self.assertIn("the walls check refused it", out["refused"][0][1])
+        self.assertEqual(work, self.log(self.work))
+        self.assertEqual(before, {f: f.read_text() for f in before})
+        self.assertEqual("", git(self.work, "diff", "--cached", "--name-only").strip())
 
     def test_a_file_with_changes_not_committed_is_held(self):
         self.birch_note.write_text(self.birch_note.read_text() + "\nHalf a line.\n")

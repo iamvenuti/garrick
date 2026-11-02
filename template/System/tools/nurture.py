@@ -7,6 +7,7 @@ what a fix needs, and the mechanical ones applied on one yes.
     python3 System/tools/nurture.py nightly [--scope PATH]... [--json]
     python3 System/tools/nurture.py answered --path PATH --asked "<question>" --answer "<answer>"
     python3 System/tools/nurture.py correct --old OLD --new NEW [--scope PATH]... [--yes] [--why "..."] [--leave PATH]...
+    python3 System/tools/nurture.py organisation --path PERSON_PAGE --yes [--entity ENTITY]
 
 It adds no checks of its own. Its sources are the existing tools, each run
 as it runs for anyone: `check.py --json`, `wiki_lint.py --json` for each
@@ -38,15 +39,23 @@ holds only the key, so it names no file, check or material.
   `parked`); a note path written as code that, as a wikilink, leads to
   exactly one live note in the same zone; a note inside a thread's folder
   with no `parent:`, given its thread's, when that thread note is there and
-  its name leads nowhere else; a person page in Meetings with no link to the
-  entity page of its party, given `organisation:` as ingest.py writes it on
-  a new page. No fix writes a link to a note across a wall
+  its name leads nowhere else. No fix writes a link to a note across a wall
   from the note it is in: that one stays for a person. `fix --yes` applies
   them all, one commit per
   repository, of the files it changed and nothing else. A fix whose files
   have changes not committed, or that no repository holds, is held and left
   in the report.
-- *attribution*: which zone, party, wiki or type a thing belongs to. Each
+- *attribution*: which zone, party, wiki or type a thing belongs to, and
+  where a person works (#330): a person page in Meetings with no
+  `organisation:` is asked about one page at a time, "Does Theo Marsh work
+  at AC Corp? (yes / no / another page)", for the one entity page its first
+  line names or else its party's, and a line that could mean two is asked
+  which. Never a batch fix: a name can match the wrong organisation however
+  it is spelled. Only that page's own yes writes it, through `organisation
+  --path <page> --yes`, which works the link out again, checks the walls
+  and commits that one page only once the walls check passes on it as
+  staged; never at night, nor with GARRICK_HEADLESS set to anything but 0.
+  Each
   carries one line to ask, and a proposal where the context file settles one
   without crossing a wall. The skill asks; this changes none of them.
 - *judgment*: everything else. Reported, with the page to open.
@@ -81,8 +90,9 @@ wiki's count reaches the `"memory"` setting's nightly minimum.
 **The nightly run**, `nightly`, applies the kinds registered as unattended,
 which in this release is the mechanical kind alone, and nothing else ever
 changes with nobody watching. Of the mechanical kind, the ops in
-ATTENDED_OPS wait for a yes too: the organisation link writes into a person
-page written by hand. It reads drift from `System/generated/
+ATTENDED_OPS wait for a yes too; the organisation link, which writes into a
+person page written by hand, is never a mechanical fix at all, and its own
+action refuses to run with nobody watching. It reads drift from `System/generated/
 drift.json`, since macOS keeps a scheduled job out of cloud folders. Under
 GARRICK_HEADLESS=1, as the jobs extra sets it, `fix --yes` behaves the same.
 
@@ -144,13 +154,16 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import check as garrick_check  # noqa: E402  (the walls check, read on a change before it is made)
 import correct  # noqa: E402
 from operations import WALL_REFUSAL  # noqa: E402
 from garrick_lib import (  # noqa: E402
     foreign_git_env,
+    entity_names,
     live_files,
     load_context,
-    organisation_link,
+    organisation_named,
+    organisation_proposal,
     parse_frontmatter_text,
     party_entities,
     strip_tag,
@@ -218,6 +231,7 @@ class Ctx:
         self._texts: Dict[Path, List[Tuple[Path, str]]] = {}
         self.light = False                    # sort_item(light=True): a kind without the costly part of a fix
         self._entities: Optional[Dict[str, List[str]]] = None
+        self._entity_index: Optional[List[dict]] = None
 
     def rel(self, path: Path) -> str:
         try:
@@ -531,6 +545,9 @@ PARENT_RE = re.compile(r"^`parent: \[\[(.+)\]\]` leads to no live note$")
 CODE_NOTE_RE = re.compile(r"^names `(.+)` as code; write it as a wikilink")
 NO_PARENT = "no `parent:`, a link to its thread note or hub"
 NO_ORGANISATION = "no `organisation:` link to the entity page of its party"
+NO_EMPLOYER = "no `organisation:` link to the entity page of where they work"
+ORGANISATION_ASK = "no `organisation:` link, and its first line could mean more than one entity page"
+NO_ENTITY_PARTY = "no `party:`"     # an entity page that does not say whose it is (#330)
 # Ops that write into a page a person wrote by hand: offered on a yes, and
 # never applied in a run with nobody watching, whatever their kind allows.
 ATTENDED_OPS = ("organisation",)
@@ -597,8 +614,6 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
             return codelink_fix(ctx, item, m.group(1))
         if item.message.startswith(NO_PARENT):
             return parent_fix(ctx, item)
-    if item.source == "check" and item.check == "people" and item.message.startswith(NO_ORGANISATION):
-        return organisation_fix(ctx, item, path)
     return None
 
 
@@ -766,29 +781,42 @@ def parent_fix(ctx: Ctx, item: Item) -> Optional[dict]:
     return {"op": "parent", "thread": thread}
 
 
-def organisation_fix(ctx: Ctx, item: Item, path: Path) -> Optional[dict]:
-    """A person page with no link to the entity page of its party gets the
-    one ingest.py writes on a new page, `organisation: "[[wiki/entities/<x>]]"`.
-    It is worked out again here, by garrick_lib's organisation_link(), never
-    taken from the finding: a name the People table places on both sides of a
-    wall, a page naming two parties, or a party two entity pages claim, gets
-    none. It writes into a page written by hand, so it is in ATTENDED_OPS:
-    offered on a yes, never applied with nobody watching."""
+def organisation_proposed(ctx: Ctx, path: Path) -> Tuple[str, List[str], str]:
+    """garrick_lib's organisation_proposal() for a person page, worked out
+    again from the page as it is now, never taken from a finding: ("<link>",
+    [], title) for one, ("", [entity title, ...], title) to ask between, and
+    ("", [], title) for nothing."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return None
+        return "", [], path.stem
     fm = parse_frontmatter_text(text)
+    title = str(fm.get("title") or path.stem)
     if not fm or "organisation" in fm:
-        return None
+        return "", [], title
     if ctx._entities is None:
         ctx._entities = party_entities(ctx.root)
-    names = (str(fm.get("title") or path.stem), path.stem)
-    link = organisation_link(ctx.root, ctx.context, names, fm.get("party"), ctx._entities)
-    if not link:
-        return None
-    item.touches = [item.path]
-    return {"op": "organisation", "link": link}
+    if ctx._entity_index is None:
+        ctx._entity_index = entity_names(ctx.root)
+    link, choices = organisation_proposal(ctx.root, ctx.context, (title, path.stem), fm.get("party"), text,
+                                          ctx._entities, ctx._entity_index)
+    titles = {e["rel"]: e["title"] for e in ctx._entity_index}
+    return link, [titles.get(c, c) for c in choices], title
+
+
+def organisation_question(ctx: Ctx, path: Path) -> Tuple[str, str]:
+    """The one question for a person page with no `organisation:`, and the
+    link a yes would write (#330): "Does Theo Marsh work at AC Corp? (yes /
+    no / another page)". Worked out again from the page, never taken from a
+    finding, so a wall that stops the proposal stops the question too: ("",
+    "") then. Never a mechanical fix: a name can match the wrong
+    organisation, so each page is asked about, one at a time."""
+    link, choices, title = organisation_proposed(ctx, path)
+    if not link or choices:
+        return "", ""
+    rel = link[len("[[wiki/entities/"):-2]
+    entity = next((e["title"] for e in ctx._entity_index or [] if e["rel"] == rel), rel)
+    return "Does %s work at %s? (yes / no / another page)" % (title, entity), link
 
 
 def follow(ctx: Ctx, repo: Path, path: str) -> Optional[str]:
@@ -978,12 +1006,28 @@ def claim_attribution(ctx: Ctx, item: Item) -> bool:
             item.proposal = meeting_zone(ctx, item)
         elif "is not a zone" in msg:
             q = "Which zone is %s?" % name
+        elif c == "meetings" and msg.startswith(NO_ENTITY_PARTY) and "/wiki/entities/" in "/" + item.path:
+            try:
+                title = str(parse_frontmatter_text((ctx.root / item.path).read_text(encoding="utf-8")).get("title")
+                            or name)
+            except (OSError, UnicodeDecodeError):
+                title = name
+            q = "Whose is %s: none, or a party?" % title
+            item.proposal = ""
         elif "is not a tag in the Parties table" in msg:
             q = "Which party is %s on %s?" % (msg.split("`")[1], name)
         elif msg.startswith("`type` is"):
             q = "Is %s a meeting or an email?" % name
         elif "split-with" in msg:
             q = "Are %s and the pages that share its record one conversation filed twice, or a split?" % name
+    elif c == "people" and msg.startswith((NO_ORGANISATION, NO_EMPLOYER)):
+        q, link = organisation_question(ctx, ctx.root / item.path)
+        q = q or None
+        item.proposal = link
+    elif c == "people" and msg.startswith(ORGANISATION_ASK):
+        _, choices, title = organisation_proposed(ctx, ctx.root / item.path)
+        if len(choices) > 1:          # worked out again: the finding may be older than the page
+            q = "Where does %s work: %s or %s?" % (title, ", ".join(choices[:-1]), choices[-1])
     elif c == "people":
         if msg.startswith("no `party`") or "is not a tag in the Parties table" in msg:
             q = "Which party does %s belong to?" % name
@@ -1182,6 +1226,33 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
     return go, held, withheld
 
 
+def person_links_held(ctx: Ctx, hits: list, old: str, new: str) -> Tuple[list, bool]:
+    """correct's hits less every person page in Meetings whose corrected text
+    the walls check would refuse: an `organisation:` across a wall, or a
+    frontmatter out of shape (#330). A correction may not put a link across
+    a wall. Whether any was left out, so the run says the rule's sentence
+    and nothing else."""
+    people = ctx.root.joinpath("Wikis", "Meetings", "wiki", "people").resolve()
+    keep, crossing, ws = [], False, None
+    for hit in hits:
+        path = hit.path.resolve()
+        if people not in path.parents or hit.kind == "raw":
+            keep.append(hit)
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            keep.append(hit)
+            continue
+        if ws is None:
+            ws = garrick_check.discover(ctx.root, None)
+        if garrick_check.organisation_walls(ws, [(path, correct.replaced(text, old, new))]):
+            crossing = True
+            continue
+        keep.append(hit)
+    return keep, crossing
+
+
 def correction_item(ctx: Ctx, old: str, new: str, go: list, path: str = "") -> Item:
     live = [h for h in go if h.kind != "raw"]
     pages = sorted({ctx.rel(p) for h in go if h.kind == "raw" for p in h.pages})
@@ -1230,6 +1301,8 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     left_out = {(ctx.root / Path(p).expanduser()).resolve() for p in leave or []}
     hits = [h for h in hits if h.path.resolve() not in left_out]
     go, held, withheld = sort_hits(ctx, hits, scopes)
+    go, crossing = person_links_held(ctx, go, old, new)
+    withheld = withheld or crossing
     item = correction_item(ctx, old, new, go, path)
     out = {"old": old, "new": new, "item": item, "hits": correct.listing(go, ctx.root), "held": held, "done": None,
            "wall": WALL_REFUSAL if withheld else ""}
@@ -1239,7 +1312,8 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     key = scope_key(scopes)
     leftover = list(held)
     if yes and go:
-        done = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat())
+        done = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat(),
+                             verify=lambda repo: walls_refusal(ctx, repo))
         out["done"] = done
         item.said = "%s in %s" % (plural(len(done.commits), "commit"), ", ".join(r for r, _ in done.commits)) \
             if done.commits else "nothing committed"
@@ -1253,8 +1327,8 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
             rec["fixed"].append({"line": '"%s" is now "%s" in %s, %s' % (old, new, p, reason), "path": p,
                                  "commit": "not committed", "repo": "none"})
         for repo, reason in done.refused:
-            leftover.append(Item("correct", "correction", repo, "the commit was refused: %s; the files stay changed, "
-                                 "not committed" % reason, kind="correction"))
+            leftover.append(Item("correct", "correction", repo, "the commit was refused: %s; its files were put back "
+                                 "as they were" % reason, kind="correction"))
         rec["answered"].append({"path": item.path, "asked": "Correct \"%s\" to \"%s\" in %s?"
                                 % (old, new, plural(len(item.fix["files"]), "file")),
                                 "answer": "yes" + (", %s" % why.strip() if why.strip() else "")})
@@ -1451,11 +1525,17 @@ def hold_unsafe(ctx: Ctx, items: List[Item]) -> Dict[Path, List[Item]]:
     return by_repo
 
 
-def apply(ctx: Ctx, items: List[Item]) -> dict:
+def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path], str]] = None) -> dict:
     """Apply every fix of an applying kind among `items`, one commit per
     repository, of the files the fixes changed and nothing else. In a run
     with nobody watching, only the kinds registered as unattended, and of
-    those no op in ATTENDED_OPS."""
+    those no op in ATTENDED_OPS. Before each commit the walls check runs
+    on the change as staged (walls_refusal, or `verify` in its place), since
+    a repository may have no hook, `Wikis/` above all: a refusal is put back
+    as a refused commit is. What is committed is these paths as the check
+    read them, staged: a file changed again on disk since is refused, and
+    what another session has staged stays staged (#330)."""
+    verify = verify or (lambda repo: walls_refusal(ctx, repo))
     wanted = [i for i in items if i.kind in KINDS and KINDS[i.kind].apply and i.fix
               and (not ctx.headless or (KINDS[i.kind].unattended and i.fix.get("op") not in ATTENDED_OPS))]
     seen, unique = set(), []
@@ -1486,7 +1566,14 @@ def apply(ctx: Ctx, items: List[Item]) -> dict:
         paths = [p for p in paths if (repo / p).exists() or known(ctx, repo, p)]   # a path moved away: git has it
         message = commit_message(ctx, repo, applied)
         add = ctx.git(repo, "add", "-A", "--", *paths)
-        c = ctx.git(repo, "commit", "-q", "-m", message, "--", *paths) if add.returncode == 0 else add
+        c = add
+        if add.returncode == 0:
+            said = verify(repo)
+            if not said and ctx.git(repo, "diff", "--quiet", "--", *paths).returncode:
+                said = "a file changed again after the walls check read it, so nothing was committed"
+            # These paths as staged, which is what the check read, and nothing another session has staged.
+            c = subprocess.CompletedProcess([], 1, "", said) if said else \
+                ctx.git(repo, "commit", "-q", "-m", message, "--", *paths)
         if c.returncode != 0:
             ctx.git(repo, "reset", "-q", "--", *paths)
             journal.rollback(start)
@@ -1951,7 +2038,8 @@ def item_json(item: Item) -> dict:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Sort the workspace's findings by what a fix needs; apply the mechanical ones on a yes.")
-    ap.add_argument("action", nargs="?", default="list", choices=("list", "fix", "nightly", "answered", "correct"))
+    ap.add_argument("action", nargs="?", default="list",
+                    choices=("list", "fix", "nightly", "answered", "correct", "organisation"))
     ap.add_argument("--root", help="the workspace (default: the one this script sits in)")
     ap.add_argument("--scope", action="append", default=[], help="a zone, project, thread or wiki, from the workspace's top")
     ap.add_argument("--yes", action="store_true", help="fix, correct: apply them; without it, only say what would change")
@@ -1965,6 +2053,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--new", help="correct: what the user says it is")
     ap.add_argument("--why", default="", help="correct: why, in a few words, for the commit")
     ap.add_argument("--leave", action="append", default=[], metavar="PATH", help="correct: a file to leave as it is")
+    ap.add_argument("--entity", default="",
+                    help="organisation: the entity page the user named instead, by file name, title or alias")
     ap.add_argument("--today", help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     try:
@@ -1976,6 +2066,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("nurture: %s" % exc, file=sys.stderr)
         return EXIT_USAGE
     headless = a.action == "nightly" or os.environ.get("GARRICK_HEADLESS") == "1"
+    if a.action == "organisation":
+        # Here, any value but empty or `0` means nobody is watching (#330); the other tools read only `1`.
+        headless = headless or os.environ.get("GARRICK_HEADLESS", "").strip() not in ("", "0")
     ctx = Ctx(root, headless=headless, today=datetime.date.fromisoformat(a.today) if a.today else None)
 
     if a.action == "answered":
@@ -1993,6 +2086,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if a.action == "correct":
         return main_correct(ctx, scopes, a)
+
+    if a.action == "organisation":
+        return main_organisation(ctx, a)
 
     items = gather(ctx, scopes)
     done = None
@@ -2034,6 +2130,81 @@ def main(argv: Optional[List[str]] = None) -> int:
     return code
 
 
+def walls_refusal(ctx: Ctx, repo: Path) -> str:
+    """The walls check on what a repository has staged, as its commit hook
+    would run it: "" when it passes, else what it found, in its own words."""
+    try:
+        r = subprocess.run([sys.executable, str(HERE / "check.py"), "--root", str(ctx.root), "--staged",
+                            "--walls-only"], cwd=str(repo), capture_output=True, text=True, timeout=600,
+                           stdin=subprocess.DEVNULL, env=foreign_git_env())
+    except (subprocess.TimeoutExpired, OSError) as why:
+        return "the walls check did not finish (%s), so nothing was committed" % type(why).__name__
+    if r.returncode == 0:
+        return ""
+    said = [l.strip() for l in (r.stdout + r.stderr).splitlines() if l.strip()]
+    return "the walls check refused it: %s" % (said[0] if said else "it said no more")
+
+
+def main_organisation(ctx: Ctx, a) -> int:
+    """Write one person page's `organisation:` on that page's own yes (#330):
+    the link its question offered, worked out again now, or, with
+    `--entity`, the entity page the user named instead, as `ingest.py person
+    --organisation` takes it. Walls, two hats and an entity page with no
+    `party:` stop it as they stop the question, and so does a frontmatter
+    not in the strict shape. One page, one commit, made only after the
+    walls check passes on that change as staged, whether or not the
+    repository has a hook (`Wikis/` has none by default); never with nobody
+    watching."""
+    if ctx.headless:
+        print("nurture: a person page's organisation is written only on its own yes, never with nobody watching",
+              file=sys.stderr)
+        return EXIT_USAGE
+    if not (a.path and a.yes):
+        print("nurture: organisation needs --path and --yes", file=sys.stderr)
+        return EXIT_USAGE
+    path = (ctx.root / a.path).resolve()
+    people = ctx.root.joinpath("Wikis", "Meetings", "wiki", "people").resolve()
+    if people not in path.parents or not path.is_file() or path.suffix != ".md":
+        print("nurture: %s is not a person page in Wikis/Meetings/wiki/people/" % a.path, file=sys.stderr)
+        return EXIT_USAGE
+    text = path.read_text(encoding="utf-8")
+    if garrick_check.person_shape_problem(text):
+        print("nurture: %s: %s; nothing was written" % (a.path, garrick_check.PERSON_SHAPE), file=sys.stderr)
+        return EXIT_FAILED
+    if any(str(k).strip().lower() in ("organisation", "organization") for k in parse_frontmatter_text(text)):
+        print("nurture: %s has an organisation line already" % a.path, file=sys.stderr)
+        return EXIT_FAILED
+    asked, link = organisation_question(ctx, path)
+    if a.entity:
+        fm = parse_frontmatter_text(text)
+        title = str(fm.get("title") or path.stem)
+        link, why = organisation_named(ctx.root, ctx.context, (title, path.stem), fm.get("party"), a.entity)
+        if why:
+            print("nurture: no organisation link: %s" % why, file=sys.stderr)
+            return EXIT_FAILED
+    if not link:
+        print("nurture: nothing to write for %s" % a.path, file=sys.stderr)
+        return EXIT_FAILED
+    rel = ctx.rel(path)
+    item = Item(source="nurture", check="organisation", path=rel, message="", kind="mechanical",
+                fix={"op": "organisation", "link": link}, touches=[rel])
+    done = apply(ctx, [item])
+    for i in done["held"]:
+        print("nurture: held: %s" % i.held, file=sys.stderr)
+    for c in done["commits"]:
+        print("Committed %s in %s: %s" % (c["commit"], c["repo"], ", ".join(c["paths"])))
+    if done["fixed"]:
+        rec = read_record(ctx)
+        rec["answered"].append({"path": rel, "asked": asked or "Where does this person work?",
+                                "answer": "yes" if not a.entity else "another page: %s" % a.entity})
+        asked_here = lambda i: i.get("path") == rel and i.get("kind") == "attribution"
+        for items in rec["left"].values():
+            items[:] = [i for i in items if not asked_here(i)]
+        settle(ctx, rec, asked_here, [])
+        write_report(ctx, rec)
+    return 0 if done["fixed"] else EXIT_FAILED
+
+
 def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
     if not (a.old and a.new):
         print("nurture: correct needs --old and --new, the value as written and the one the user gave", file=sys.stderr)
@@ -2069,19 +2240,22 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
             said = "%s the old value. Correct them all?" % ("One place has" if len(files) == 1
                                                              else "%d places have" % len(files))
         else:
-            said = "Nothing live holds the old value."
+            said = "" if out["wall"] else "Nothing live holds the old value."
         if back:
             said += " %s held back, named in the report." % ("One more is" if back == 1 else "%d more are" % back)
         if out["wall"]:
             said += " " + out["wall"]
-        print(said)
+        print(said.strip())
         return code
     lines = []
     if done is None:
         for h in out["hits"]:
             lines.append("%s\t%s" % (h["kind"], h["path"]))
             lines += ["\t%d: %s" % (l["line"], l["text"][:160]) for l in h["lines"]]
-        lines.append(item.line() if files or item.fix["raw"] else 'Nothing live holds "%s".' % a.old)
+        if files or item.fix["raw"]:
+            lines.append(item.line())
+        elif not out["wall"]:              # held back by a wall: the rule's sentence alone says it
+            lines.append('Nothing live holds "%s".' % a.old)
         if files:
             lines.append("On a yes, run again with --yes: one commit per repository.")
     else:

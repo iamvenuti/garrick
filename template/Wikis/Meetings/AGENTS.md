@@ -76,7 +76,7 @@ A mail with a Message-ID also carries it as `source-id:`; a mail or a recording 
 title: <their name>
 type: person
 party: <tag>                 # from the Parties table; `none` for someone who belongs to no party
-organisation: "[[wiki/entities/<slug>]]"   # the entity page of that party, when there is one
+organisation: "[[wiki/entities/<slug>]]"   # the entity page of where they work
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 ---
@@ -84,11 +84,11 @@ updated: YYYY-MM-DD
 
 Then one sentence: who they are, and which party. Nothing learned in a meeting, and no status: a person page is read on both sides of every wall.
 
-`organisation:` links the entity page of that party and carries nothing else; `ingest.py person` writes it, and the `meetings` skill's *Ingest a transcript*, step 4, says when there is none.
+`organisation:` links the entity page of where they work, whatever their party, and carries nothing else; the `meetings` skill's *Ingest a transcript*, step 4, says how it is found and when there is none.
 
 ## An entity page
 
-`wiki/entities/<slug>.md`, one per organisation, with `type: entity` and, when it stands for a party, `party: <tag>`. At most one entity page names a party; `check.py` warns about two.
+`wiki/entities/<slug>.md`, one per organisation, with `type: entity`, its other names in `aliases:`, and `party:`: its tag when it stands for a party, else `none`. A page with no `party:` is never linked by a tool. One entity page per party, and per name; `check.py` warns about two.
 
 ## A question
 

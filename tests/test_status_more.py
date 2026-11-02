@@ -494,6 +494,22 @@ class TestVaultGraph(StatusCase):
         self.assertIn("if(n.c&&(!op||op.indexOf(n.k)>=0))hub[n.k]=1", status.GRAPH_JS)
         self.assertIn("var op=(G.op||{})[z];", status.GRAPH_JS)
 
+    def test_in_meetings_a_person_and_the_entity_page_of_where_they_work_are_joined(self):
+        """#330: a person page's `organisation:` names the entity page of
+        where the person works, whatever its party, and Explore draws the two
+        joined: the link is an edge between two hubs of Meetings, drawn in
+        its core view as #320's joins are."""
+        m = self.root / "Wikis" / "Meetings" / "wiki"
+        write(m / "people" / "kit-avery.md", '---\ntitle: Kit Avery\ntype: person\nparty: none\n'
+              'organisation: "[[wiki/entities/birch-co]]"\n---\n# Kit Avery\n\nIdentity architect at Birch & Co.\n')
+        write(m / "entities" / "birch-co.md", "---\ntitle: Birch & Co\ntype: entity\n---\n# Birch & Co\n")
+        data = graph_data(self.page())
+        by = {n.get("N", n["n"]): n for n in data["nodes"]}
+        kit, birch = data["nodes"].index(by["Kit Avery"]), data["nodes"].index(by["Birch & Co"])
+        self.assertEqual((1, 1), (by["Kit Avery"]["c"], by["Birch & Co"]["c"]))       # both hubs of Meetings
+        self.assertIn([min(kit, birch), max(kit, birch)], [list(e) for e in data["edges"]])
+        self.assertIn("V.every(function(n){return n.c})?G.edges.concat(G.ce||[]):G.edges", status.GRAPH_JS)
+
     def test_any_note_in_a_project_opens_where_its_card_would(self):
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Call notes.md", "# Call notes\n")
         nodes = {n["n"]: n for n in graph_data(self.page(launchers=("finder", "claude")))["nodes"]}

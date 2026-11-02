@@ -1138,5 +1138,67 @@ class EveryCommitCheckedTest(Workspace):
         self.assertIn("[[wiki/entities/ledger]]", (self.people / "pat-newcomer.md").read_text())
 
 
+
+# ---------------------------------------------------------------------------
+# The final review
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class CorrectPyTest(Workspace):
+    """`correct.py --apply`, run directly as the threads skill runs it, has
+    the walls check run on every commit inside correct.apply() itself."""
+
+    def test_a_direct_correction_that_crosses_a_wall_is_refused_and_put_back(self):
+        write(self.root / "System" / "context.md", CONTEXT)
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        write(self.entities / "ledger.md", entity("Ledger Co", "cedar"))
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer.", "[[wiki/entities/ledger]]"))
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        head = git(wikis, "rev-parse", "HEAD").strip()
+        files = {p: p.read_bytes() for p in (self.entities / "ledger.md", self.people / "pat-newcomer.md")}
+        for old, new in (("Ledger Co", "Birch & Co"), ("party: cedar", "party: birch"),
+                         ("wiki/entities/ledger", "wiki/entities/birch-co")):
+            r = subprocess.run([sys.executable, str(TOOLS / "correct.py"), "--root", str(self.root), "--old", old,
+                                "--new", new, "--apply", "--why", "test"], capture_output=True, text=True, env=GIT_ENV)
+            self.assertEqual(1, r.returncode, (old, r.stdout, r.stderr))
+            self.assertIn("the walls check refused it", r.stdout)
+            self.assertNotIn("Nothing live holds", r.stdout)
+            self.assertEqual(files, {p: p.read_bytes() for p in files}, old)
+            self.assertEqual(head, git(wikis, "rev-parse", "HEAD").strip(), old)
+            self.assertEqual("", git(wikis, "diff", "--cached", "--name-only").strip(), old)
+
+    def test_correct_apply_checks_walls_unless_given_its_own_check(self):
+        import correct
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer at Larch Partners."))
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        seen = []
+        with mock.patch.object(correct, "walls_refusal", lambda root, repo: seen.append(repo) or ""):
+            done = correct.apply(self.root, "Buyer at", "Lead buyer at", rebuild=False)
+        self.assertEqual([wikis.resolve()], [Path(r).resolve() for r in seen])
+        self.assertEqual(1, len(done.commits))
+        done = correct.apply(self.root, "Lead buyer at", "Buyer at", rebuild=False, verify=lambda repo: "no")
+        self.assertEqual([("Wikis", "no")], done.refused)
+        self.assertIn("Lead buyer at", (self.people / "kit-avery.md").read_text())
+
+
+class LoneCarriageReturnTest(Workspace):
+    def test_a_lone_cr_ends_a_line_for_every_reader(self):
+        self.assertEqual({"title": "Acme Corp", "party": "acme"},
+                         garrick_lib.parse_frontmatter_text("---\rtitle: Acme Corp\rparty: acme\r---\r\rBody.\r"))
+        for nl in ("\n", "\r", "\r\n"):
+            text = "---\ntitle: Acme Corp\ntype: entity\nparty: acme\n---\n\n# Acme Corp\n\nSee [[260312-birch-kickoff]].\n"
+            (self.entities / "acme-corp.md").write_bytes(text.replace("\n", nl).encode())
+            found = [f for f in check.run_checks(self.root) if f.path.endswith("acme-corp.md") and "across a wall" in f.message]
+            self.assertEqual(1, len(found), repr(nl))
+
+    def test_the_shape_still_refuses_a_lone_cr_in_a_person_page(self):
+        self.assertTrue(check.person_shape_problem("---\rtitle: Kit Avery\rtype: person\rparty: none\r---\r"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1325,8 +1325,8 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
             rec["fixed"].append({"line": '"%s" is now "%s" in %s, %s' % (old, new, p, reason), "path": p,
                                  "commit": "not committed", "repo": "none"})
         for repo, reason in done.refused:
-            leftover.append(Item("correct", "correction", repo, "the commit was refused: %s; the files stay changed, "
-                                 "not committed" % reason, kind="correction"))
+            leftover.append(Item("correct", "correction", repo, "the commit was refused: %s; its files were put back "
+                                 "as they were" % reason, kind="correction"))
         rec["answered"].append({"path": item.path, "asked": "Correct \"%s\" to \"%s\" in %s?"
                                 % (old, new, plural(len(item.fix["files"]), "file")),
                                 "answer": "yes" + (", %s" % why.strip() if why.strip() else "")})

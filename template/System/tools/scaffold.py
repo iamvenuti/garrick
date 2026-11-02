@@ -977,7 +977,8 @@ def cmd_rename(root, args, today):
                 continue                                    # not text it can rewrite; its links, if any, stay
             changed = relink(text, swaps, prefixes, old, new, heads)
             if not is_thread and moved in path.parents:
-                changed = re.sub(r'(?m)^project: "?\[\[%s\]\]"?$' % re.escape(old), f'project: "[[{new}]]"', changed)
+                changed = re.sub(r'(?m)^(project|parent): "?\[\[%s\]\]"?$' % re.escape(old),
+                                 lambda m: f'{m.group(1)}: "[[{new}]]"', changed)
             if path == new_note:
                 changed = re.sub(r"(?m)^title: .*$", f"title: {new}", changed, count=1)
                 # The old spoken form goes with the old name, which becomes a heard alias below.

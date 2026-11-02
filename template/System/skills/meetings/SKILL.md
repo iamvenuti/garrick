@@ -37,7 +37,7 @@ All paths are relative to the workspace root.
 | Meeting or mail page | `Wikis/Meetings/wiki/sources/<YYMMDD-slug>.md` |
 | Person page | `Wikis/Meetings/wiki/people/<slug>.md` |
 | Entity page, one per party at most | `Wikis/Meetings/wiki/entities/<slug>.md` |
-| A person page's link to the entity page of its party | `organisation: "[[wiki/entities/<slug>]]"` in its frontmatter |
+| A person page's link to the entity page of where they work | `organisation: "[[wiki/entities/<slug>]]"` in its frontmatter |
 | A question only the user can answer | `Wikis/Meetings/questions/<YYMMDD> - <slug>.md` |
 | Index | `Wikis/Meetings/wiki/index.md` |
 | Pages that faded: dormant, listed in `wiki/index-dormant.md`; archived, in no index | `Wikis/Meetings/dormant/wiki/`, `Wikis/Meetings/archive/wiki/` |
@@ -97,24 +97,35 @@ One meeting at a time, even when several files are waiting.
    Aliases) in `System/context.md`. A name not there: ask which party they
    belong to and add the People row, with its Learned cell, `<today>,
    user`, then either way run
-   `python3 System/skills/meetings/ingest.py person --name "<Name>" --party <tag>`.
+   `python3 System/skills/meetings/ingest.py person --name "<Name>" --party <tag>`,
+   adding `--organisation <entity>` when the conversation says where they
+   work (below).
    It creates `wiki/people/<slug>.md` if that person has no page yet, and
    leaves an existing one untouched (a page, once written, is corrected by
    hand, not regenerated). If the command printed `created`, replace the
    angle-bracket line with who they are and which party, in one sentence.
    Nothing learned in a meeting goes on a person page: it is read on both
    sides of every wall.
-   **The link to their organisation.** When one entity page in
-   `wiki/entities/` names the person's party (`party: acme`), the new page
-   links it in its frontmatter, `organisation: "[[wiki/entities/<slug>]]"`,
-   so the graph and a search for links to the entity page show who works
-   there. The command writes it; never write it by hand. It is identity
-   alone, like the page: the entity page's link and nothing else. It writes
-   none when no entity page names the party, when two do (`check.py` warns
-   about those two), when the page names no party or more than one, and when
-   the People table has the name under two parties a wall keeps apart: one
-   page that two hats share links neither hat's entity page. A page written
-   before the link existed gets it from the `nurture` skill, on a yes.
+   **The link to where they work.** A new page links the entity page of
+   the person's employer in its frontmatter, `organisation:
+   "[[wiki/entities/<slug>]]"`, whatever their party: a customer's architect
+   with `party: none` links the customer's page, so the graph and a search
+   for links to the entity page show who works there. When the transcript
+   or the mail says where someone works ("Kit, from Birch & Co"), find that
+   entity page in `wiki/entities/` by its title or its `aliases:`, and pass
+   its file name, `--organisation birch-co`. Never make an entity page for
+   it: with none, or two that could be meant, pass nothing and say so. When
+   nothing says where they work, the command links the entity page of their
+   party, when exactly one entity page names it (`party: acme`). The command
+   writes the link; never write it by hand. It is identity alone, like the
+   page: the entity page's link and nothing else. It writes none, and says
+   why, across a wall: when the entity page, or another going by the same
+   name, names a party walled from the person's, or is named after one;
+   when the People table has the name under two parties a wall keeps apart,
+   since one page that two hats share links neither hat's entity page; and
+   when the page names no party or more than one. A page written before the
+   link existed is offered it by the `nurture` skill, on a yes, from its
+   first line ("Identity architect at Birch & Co") or else its party.
 5. **Land the raw file.** This is the only step that touches `raw/`, and the
    only time this file is ever touched again:
    ```sh

@@ -120,6 +120,7 @@ from garrick_lib import (  # noqa: E402
     TODO_ALSO_RE,
 )
 from garrick_lib import (  # noqa: E402  (#330)
+    FRONTMATTER_PLAIN, WALLS_KEYS, frontmatter_form_problem,
     entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, organisation_link,
     organisation_proposal,
 )
@@ -262,6 +263,7 @@ class Workspace:
     raw_records: Optional[Dict[str, List[Path]]] = None  # Meetings raw records by stem, any depth, on first use
     cache: Optional["NoteCache"] = None  # staged mode: what the last commits read, kept between them
     entity_index: Optional[List[dict]] = None  # Meetings entity pages by name, as staged too, on first use (#330)
+    misread: set = field(default_factory=set)  # meeting pages whose frontmatter reads two ways: no parties for the walls
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +401,31 @@ def note_frontmatter(ws: "Workspace", path: Path) -> dict:
         return parse_frontmatter(path)
     fm = ws.cache.get("fm", path, lambda: parse_frontmatter(path))
     return {k: list(v) if isinstance(v, list) else v for k, v in fm.items()}  # a copy: callers may change it
+
+
+def note_form(ws: "Workspace", path: Path, keys: Optional[Tuple[str, ...]] = None) -> str:
+    """garrick_lib's frontmatter_form_problem() for the file at `path`; in
+    staged mode, from the cache while the file is unchanged."""
+    def make() -> str:
+        try:
+            return frontmatter_form_problem(path.read_text(encoding="utf-8", errors="replace"), keys)
+        except OSError:
+            return ""
+    if ws.cache is None:
+        return make()
+    return ws.cache.get("form" if keys is None else "form:" + ",".join(keys), path, make)
+
+
+def meeting_view(ws: "Workspace", page: Path, fm: dict, text: Optional[str] = None) -> dict:
+    """A meeting page's frontmatter as the walls read it: without its zone and
+    parties, so unfinished, when the frontmatter can be read two ways
+    (frontmatter_form_problem), since a YAML reader may find other parties
+    there. Fail closed: nothing on it is used until it is plain."""
+    problem = frontmatter_form_problem(text) if text is not None else note_form(ws, page)
+    if not problem:
+        return fm
+    ws.misread.add(page)
+    return {k: v for k, v in fm.items() if k not in ("parties", "zone")}
 
 
 def folder_elsewhere(ws: "Workspace", project: Path, where: Path) -> str:
@@ -844,12 +871,12 @@ def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
     for sources in meeting_sources(root):
         if sources.is_dir():
             for page in sorted(sources.rglob("*.md")):
-                ws.meetings[page] = note_frontmatter(ws, page)
+                ws.meetings[page] = meeting_view(ws, page, note_frontmatter(ws, page))
     # A Meetings question (#224) carries a conversation's material under its
     # zone and parties, as a page does, so the walls read it with the pages:
     # a project may not link or quote one across a wall, nor an unfinished one.
     for question in wiki_questions(root / "Wikis" / "Meetings"):
-        ws.meetings[question] = note_frontmatter(ws, question)
+        ws.meetings[question] = meeting_view(ws, question, note_frontmatter(ws, question))
         ws.meeting_questions.add(question)
     return ws
 
@@ -2920,7 +2947,7 @@ def check_entities(ws: Workspace) -> List[Finding]:
                                "Two entity pages stand for one party"))
     blocked = untagged_in_the_way(ws)
     for e in entity_index(ws):
-        if not e["tagged"] and e["rel"] in blocked:
+        if not e["tagged"] and not e["misread"] and e["rel"] in blocked:   # a misread one is the walls' to refuse
             out.append(Finding(WARNING, "meetings", rel(ws, e["path"]),
                                "%s; write `party: none` for an organisation that is not a party, or its tag, and "
                                "until it says one no tool links a person page to it" % NO_ENTITY_PARTY,
@@ -3318,6 +3345,8 @@ def organisation_entity(ws: Workspace, fm: dict) -> Tuple[str, Optional[Path]]:
     if page is None:
         return ORGANISATION_ONE + " in wiki/entities/, reached by no symbolic link", None
     for e in entity_index(ws):
+        if same_page(e["path"], page) and e["misread"]:
+            return ORGANISATION_ONE + " whose frontmatter is plain key: value lines", None
         if same_page(e["path"], page) and (not e["tagged"] or any(t not in ws.context["parties"] for t in e["parties"])):
             return (ORGANISATION_ONE + " that says whose it is: give it `party: none`, or its party's tag from the "
                     "Parties table, before a person page links it"), None
@@ -4435,8 +4464,10 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             if not mtags or not mfm.get("zone"):
                 reported.add(page)
                 noun = meeting_noun(ws, page, "meeting page")
+                why = ("frontmatter that is not plain key: value lines, so its parties cannot be read"
+                       if page in ws.misread else "no zone or parties")
                 out.append(Finding(ERROR, "walls", r,
-                                   "uses %s, an unfinished %s (no zone or parties)" % (page.stem, noun),
+                                   "uses %s, an unfinished %s (%s)" % (page.stem, noun, why),
                                    "A note in %s uses an unfinished %s" % (where, noun)))
                 continue
             if not tags:
@@ -4782,6 +4813,74 @@ def check_walls(ws: Workspace) -> List[Finding]:
     out.extend(f for f in all_sources_findings(ws) if f.check == "walls")
     out.extend(person_link_finding(ws, p) for p in person_links(ws))
     out.extend(organisation_walls(ws, person_pages(ws)))
+    out.extend(form_findings(ws, [(p, None) for p in form_candidates(ws)]))
+    return out
+
+
+def form_scope(ws: Workspace, path: Path) -> Optional[Tuple[str, ...]]:
+    """Which keys of a page's frontmatter the walls read, for
+    frontmatter_form_problem(): () for every key on an entity page, a meeting
+    page at any grade, a Meetings question, a project hub and a thread note;
+    WALLS_KEYS on any other page of the two wikis, where only a party or a
+    zone counts (a Knowledge page must carry none, and a Meetings page
+    written for a party cites no meeting across a wall); None where the walls
+    read no frontmatter: a raw record, a person page, which has its own
+    shape (person_shape_problem), and any other file."""
+    if path.suffix.lower() != ".md":
+        return None
+    here = path.parent.resolve() / path.name
+    if lexical_folder(ws, PEOPLE) in here.parents:
+        return None
+    meetings = lexical_folder(ws, ("Wikis", "Meetings"))
+    for wiki in (meetings, lexical_folder(ws, ("Wikis", "Knowledge"))):
+        if wiki not in here.parents:
+            continue
+        inner = here.relative_to(wiki).parts
+        if "raw" in inner[:-1]:
+            return None
+        if wiki == meetings and (inner[0] == WIKI_QUESTIONS or inner[:2] in (("wiki", "entities"), ("wiki", "sources"))
+                                 or (inner[0] in FADED and inner[1:3] == ("wiki", "sources"))):
+            return ()
+        return WALLS_KEYS
+    owner = project_of(ws, here) or project_of(ws, path)
+    if owner is None:
+        return None
+    project = owner[0].parent.resolve() / owner[0].name
+    hub = here == project / (project.name + ".md")
+    thread = here.parent.parent == project / "Threads" and here.name == here.parent.name + ".md"
+    return () if hub or thread else None
+
+
+def form_candidates(ws: Workspace) -> List[Path]:
+    """Every page whose frontmatter the full walls check reads for its form:
+    the wiki pages, the meeting pages and questions, and each project's hub
+    and thread notes."""
+    pages = set(ws.wiki_files) | {p for p in ws.meetings if p.exists()}
+    for project, _ in ws.projects:
+        pages.add(project / (project.name + ".md"))
+        pages.update(t / (t.name + ".md") for t in visible_dirs(project / "Threads"))
+    return sorted(p for p in pages if p.is_file())
+
+
+def form_findings(ws: Workspace, pages: List[Tuple[Path, Optional[str]]]) -> List[Finding]:
+    """A page the walls read (form_scope) whose frontmatter can be read two
+    ways (garrick_lib's frontmatter_form_problem): a key quoted, tagged,
+    written with `?`, anchored, aliased, merged or in a flow, or given twice.
+    YAML honours each, and keeps the last of two, so the page could say one
+    party to the walls and another to every other reader. Refused, by the
+    full check and the commit hook (#330). Each is (path, its text, or None
+    to read it from disk)."""
+    out = []
+    for path, text in pages:
+        scope = form_scope(ws, path)
+        if scope is None:
+            continue
+        keys = scope or None
+        problem = frontmatter_form_problem(text, keys) if text is not None else note_form(ws, path, keys)
+        if problem:
+            out.append(Finding(ERROR, "walls", rel(ws, path),
+                               "%s: %s; write each key once, at the left margin, as `key: value`"
+                               % (FRONTMATTER_PLAIN, problem), "A page's frontmatter can be read two ways"))
     return out
 
 
@@ -4916,7 +5015,7 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
     for path, text in sorted(ws.git_view.items()):
         question = asked in path.parents
         if (question or any(f in path.parents for f in folders)) and path.suffix.lower() == ".md":
-            then = parse_frontmatter_text(text)
+            then = meeting_view(ws, path, parse_frontmatter_text(text), text)
             if path not in ws.meetings:
                 if not path.exists():
                     ws.meetings[path] = then
@@ -4924,6 +5023,10 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
                         ws.meeting_questions.add(path)
                 continue
             now = ws.meetings[path]
+            if path in ws.misread:
+                now.pop("parties", None)
+                now.pop("zone", None)
+                continue
             parties = as_list(now.get("parties"))
             now["parties"] = parties + [p for p in as_list(then.get("parties")) if p not in parties]
     out = []
@@ -4995,6 +5098,24 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
     refused, links = staged_person_links(ws, repo)
     out.extend(refused)
     out.extend(organisation_walls(ws, staged_people(ws, staged_texts, links)))
+    # The form of every staged page the walls read, and of the hub and thread
+    # note each staged project file is checked against.
+    forms = [(path, text) for path, text in staged_texts if path not in links]
+    have = {path for path, _ in forms}
+    for path, _ in staged_texts:
+        owner = project_of(ws, path)
+        if owner is None:
+            continue
+        project = owner[0]
+        notes = [project / (project.name + ".md")]
+        inner = path.relative_to(project).parts if project in path.parents else ()
+        if len(inner) > 2 and inner[0] == "Threads":
+            notes.append(project / "Threads" / inner[1] / (inner[1] + ".md"))
+        for note in notes:
+            if note not in have and note.is_file():
+                have.add(note)
+                forms.append((note, None))
+    out.extend(form_findings(ws, forms))
     files = [(path, text, project_of(ws, path)) for path, text in staged_texts]
     files = [f for f in files if f[2] is not None]  # not inside a project: no party, so no wall to hold
     # The wording check asks only after the runs of words these files hold:

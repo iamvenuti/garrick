@@ -198,6 +198,9 @@ __all__ = [
     "garrick_ignores",
     "ignore_block",
     "ignore_parts",
+    "FRONTMATTER_PLAIN",
+    "WALLS_KEYS",
+    "frontmatter_form_problem",
     "with_ignore_block",
     "SKILL_FOLDERS",
     "LOCAL_EMAIL",
@@ -289,9 +292,10 @@ def _scalar(value: str):
     return _unquote(value)
 
 
-def parse_frontmatter_text(text: str) -> dict:
-    """Parse the YAML frontmatter at the top of `text`. See parse_frontmatter."""
-    if text.startswith("﻿"):
+def _frontmatter_body(text: str) -> Optional[List[str]]:
+    """The lines between the `---` that opens `text` and the one that closes
+    its frontmatter, or None when it has none."""
+    if text.startswith("\ufeff"):
         text = text[1:]
     # Lines end where a YAML reader ends them: at \n, \r\n or a lone \r.
     # str.splitlines() also breaks at U+2028, U+2029, U+0085 and the like,
@@ -301,14 +305,54 @@ def parse_frontmatter_text(text: str) -> dict:
     if lines and lines[-1] == "":
         lines.pop()
     if not lines or lines[0].strip() != "---":
-        return {}
+        return None
     body = []
     for line in lines[1:]:
         if line.strip() in ("---", "..."):
-            break
+            return body
         body.append(line)
-    else:
-        return {}  # never closed: not frontmatter
+    return None  # never closed: not frontmatter
+
+
+FRONTMATTER_PLAIN = "frontmatter must be plain key: value lines"
+# What opens a YAML node other than a plain key at the left margin: a quoted
+# key, an explicit `?` key, a tag, an anchor, an alias, a merge key, a flow
+# mapping or sequence. YAML honours each as a key this reader never sees.
+_NODE_OPENERS = ('"', "'", "?", "!", "&", "*", "<<", "{", "[")
+# The keys the walls read on a page that is not theirs alone to read.
+WALLS_KEYS = ("party", "parties", "zone")
+
+
+def frontmatter_form_problem(text: str, keys: Optional[Tuple[str, ...]] = None) -> str:
+    """What makes the frontmatter of `text` readable two ways, or "": a line
+    at the left margin that opens with one of _NODE_OPENERS, or a key given
+    twice, of which YAML keeps the last and this reader may keep another.
+    With `keys`, only those count twice. Not the person page's strict shape
+    (check.py's person_shape_problem): only what puts a key past this reader
+    (#330)."""
+    body = _frontmatter_body(text)
+    seen = set()
+    for line in body or []:
+        if not line.strip() or line[:1].isspace() or line.startswith("#"):
+            continue
+        if line.startswith(_NODE_OPENERS):
+            opener = next(o for o in _NODE_OPENERS if line.startswith(o))
+            return "a line opens with `%s`, which a YAML reader takes for a key written another way" % opener
+        m = _KEY_RE.match(line)
+        if m is None:
+            continue
+        key = m.group(1)
+        if key in seen and (keys is None or key in keys):
+            return "`%s` is given twice, and a YAML reader keeps the last" % key
+        seen.add(key)
+    return ""
+
+
+def parse_frontmatter_text(text: str) -> dict:
+    """Parse the YAML frontmatter at the top of `text`. See parse_frontmatter."""
+    body = _frontmatter_body(text)
+    if body is None:
+        return {}
 
     result: dict = {}
     current_key: Optional[str] = None
@@ -332,6 +376,14 @@ def parse_frontmatter_text(text: str) -> dict:
         current_key = m.group(1)
         result[current_key] = _scalar(m.group(2))
     return result
+
+
+def _page_text(path: PathLike) -> str:
+    """The text of the file at `path` as parse_frontmatter reads it, or ""."""
+    try:
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def parse_frontmatter(path: PathLike) -> dict:
@@ -1133,11 +1185,15 @@ def party_entities(root: PathLike) -> Dict[str, List[str]]:
     counts when its `type:` is `entity` or missing, since the folder holds
     entity pages; it names one party in `party:`; and it carries no
     `parties:`, as Ask reads a page's `party:` alone (ask_scope.PARTY_ALONE).
-    One naming several, `none` or nothing stands for no party here."""
+    One naming several, `none` or nothing stands for no party here.
+    One whose frontmatter can be read two ways (frontmatter_form_problem)
+    stands for none either."""
     out: Dict[str, List[str]] = {}
     for rel, page in entity_pages(root):
-        fm = parse_frontmatter(page)
-        if str(fm.get("type") or "entity").strip().lower() != "entity" or fm.get("parties") is not None:
+        text = _page_text(page)
+        fm = parse_frontmatter_text(text)
+        if str(fm.get("type") or "entity").strip().lower() != "entity" or fm.get("parties") is not None \
+                or frontmatter_form_problem(text):
             continue
         tags = sorted(set(tag_list(fm.get("party"))))
         if len(tags) == 1 and tags[0] != "none":
@@ -1351,19 +1407,23 @@ def suspect_name(name) -> bool:
 
 def entity_names(root: PathLike, texts: Optional[Dict[Path, str]] = None) -> List[dict]:
     """Every entity page under the Meetings wiki's `wiki/entities/`, as
-    {rel, path, title, names, keys, parties, tagged, suspect}: the names it
+    {rel, path, title, names, keys, parties, tagged, misread, suspect}: the names it
     goes by (its title, its file name, each of its `aliases:`), their
     org_key()s, every tag its `party:` or `parties:` names but `none`,
     whether it says `party:` at all (`party: none` counts), and whether one
     of its names is a suspect_name(). `texts` is what git holds for a page,
     where it differs from the disk: both are read, what either says counts,
-    and it is tagged only when both say `party:`."""
+    and it is tagged only when both say `party:` in frontmatter that cannot
+    be read two ways (frontmatter_form_problem)."""
     out = []
     for rel, page in entity_pages(root):
-        views = [parse_frontmatter(page)]
-        if texts and page in texts:
-            views.append(parse_frontmatter_text(texts[page]))
+        seen = [_page_text(page)] + ([texts[page]] if texts and page in texts else [])
+        views = [parse_frontmatter_text(t) for t in seen]
         names, parties, title, tagged = [Path(rel).name], set(), "", True
+        # One whose frontmatter can be read two ways says whose it is to no
+        # one: a link to it is refused as to a page with no `party:` (#330).
+        misread = any(frontmatter_form_problem(t) for t in seen)
+        tagged = not misread
         for fm in views:
             said = str(fm.get("title") or "").strip()
             title = title or said
@@ -1372,7 +1432,7 @@ def entity_names(root: PathLike, texts: Optional[Dict[Path, str]] = None) -> Lis
             tagged = tagged and bool(tag_list(fm.get("party")))
         keys = {org_key(n) for n in names} - {""}
         out.append({"rel": rel, "path": page, "title": title or Path(rel).name, "names": names, "keys": keys,
-                    "parties": parties - {"none"}, "tagged": tagged,
+                    "parties": parties - {"none"}, "tagged": tagged, "misread": misread,
                     "suspect": any(suspect_name(n) for n in names)})
     return out
 

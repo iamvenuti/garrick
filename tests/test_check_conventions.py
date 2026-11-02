@@ -13,15 +13,18 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import build_workspace, project_hub, thread_note, write  # noqa: E402
+from fixtures import HAVE_GIT, build_workspace, commit_all, git, project_hub, thread_note, write  # noqa: E402
 from test_setup import Installed  # noqa: E402
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
@@ -115,6 +118,74 @@ class TestNurtureThreadParty(Case):
         self.assertEqual("", item.proposal)
 
 
+BRIEF = "The board plans to close the northern plant by the end of the third quarter and move the pump line south.\n"
+
+
+class TestThreadsWalledFromEachOther(Case):
+    """A project for cedar with one thread for acme and one for birch, walled
+    from each other and from neither the hub: the threads check says so, and
+    wording carried from one thread's notes into the other's is refused, by
+    the full check and by the commit check alike."""
+
+    def setUp(self):
+        super().setUp()
+        self.fair = self.work / "Trade Fair"
+        write(self.fair / "Trade Fair.md", project_hub("Work", "Trade Fair", "cedar", ["Stand A", "Stand B", "Stand C"]))
+        write(self.fair / "Threads" / "Stand A" / "Stand A.md", thread_note("Trade Fair", "Stand A", "acme"))
+        write(self.fair / "Threads" / "Stand B" / "Stand B.md", thread_note("Trade Fair", "Stand B", "birch"))
+        write(self.fair / "Threads" / "Stand C" / "Stand C.md", thread_note("Trade Fair", "Stand C", "cedar"))
+        write(self.fair / "Threads" / "Stand B" / "Brief.md", '---\nparent: "[[Stand B]]"\n---\n\n' + BRIEF)
+        self.notes = self.fair / "Threads" / "Stand A" / "Notes.md"
+
+    def quotes(self, found):
+        return [f for f in found if f.check == "walls" and f.path.endswith("Stand A/Notes.md")
+                and "repeats wording from" in f.message]
+
+    def test_the_threads_check_names_the_wall(self):
+        hits = [f for f in self.findings("threads") if "walled from thread Stand A's" in f.message]
+        self.assertEqual(["Zones/Work/Trade Fair/Threads/Stand B/Stand B.md"], [f.path for f in hits])
+        self.assertIn("a wall stands between acme and birch", hits[0].message)
+
+    def test_wording_copied_between_the_threads_is_refused(self):
+        write(self.notes, '---\nparent: "[[Stand A]]"\n---\n\n' + BRIEF)
+        hits = self.quotes(check.run_checks(self.root))
+        self.assertEqual(1, len(hits))
+        self.assertEqual("error", hits[0].severity)
+        self.assertIn("Stand B/Brief.md", hits[0].message)
+
+    def test_the_commit_check_refuses_it_too(self):
+        if not HAVE_GIT:
+            self.skipTest("git is not installed")
+        shutil.rmtree(self.work / ".git")
+        git(self.work, "init", "-q")
+        commit_all(self.work, "start")
+        write(self.notes, '---\nparent: "[[Stand A]]"\n---\n\n' + BRIEF)
+        git(self.work, "add", "-A")
+        hits = self.quotes(check.run_checks(self.root, walls_only=True, staged=self.work))
+        self.assertEqual(["error"], [f.severity for f in hits])
+
+    def test_wording_shared_with_an_unwalled_thread_of_the_project_is_not_refused(self):
+        write(self.fair / "Threads" / "Stand C" / "Notes.md", '---\nparent: "[[Stand C]]"\n---\n\n' + BRIEF)
+        write(self.fair / "Threads" / "Stand B" / "Brief.md", '---\nparent: "[[Stand B]]"\n---\n\nNothing here.\n')
+        write(self.notes, '---\nparent: "[[Stand A]]"\n---\n\n' + BRIEF)
+        self.assertEqual([], self.quotes(check.run_checks(self.root)))
+
+    def test_nurture_names_it_as_a_wall(self):
+        ctx = nurture.Ctx(self.root)
+        items = [nurture.sort_item(ctx, i) for i in nurture.from_check(ctx) if i.check == "threads"]
+        self.assertEqual([("wall", "acme and birch", "")], [(i.kind, i.wall, i.message) for i in items])
+
+
+class TestThreadHoldingBothSides(Case):
+    def test_a_thread_naming_both_sides_of_a_wall_warns_under_any_hub(self):
+        fair = self.work / "Trade Fair"
+        write(fair / "Trade Fair.md", project_hub("Work", "Trade Fair", "cedar", ["Stand"]))
+        write(fair / "Threads" / "Stand" / "Stand.md", thread_note("Trade Fair", "Stand", "[acme, birch]"))
+        hits = [f for f in self.findings("threads") if f.path.endswith("Stand/Stand.md")]
+        self.assertEqual(1, len(hits))
+        self.assertIn("holds both sides of a wall; a wall stands between acme and birch", hits[0].message)
+
+
 class TestKnowledgeLintReport(Case):
     def setUp(self):
         super().setUp()
@@ -182,6 +253,65 @@ class TestResumeSiblingProject(Case):
                          self.unfound())
 
 
+class TestResumeSiblingGuards(Case):
+    """A sibling project is searched only where the note may draw: never
+    through a link that leads out of the sibling's folder, and never into a
+    sibling's thread written for a party walled from the note's."""
+
+    def setUp(self):
+        super().setUp()
+        self.launch = self.work / "Acme Launch"
+        write(self.launch / "Acme Launch.md", project_hub("Work", "Acme Launch", "acme", ["Deck"]))
+        write(self.launch / "Threads" / "Deck" / "Deck.md", thread_note("Acme Launch", "Deck", "acme"))
+        write(self.launch / "Deliverables" / "260301 - Launch deck.md", "# Deck\n")
+        write(self.work / "Birch Entry" / "Deliverables" / "260304 - Entry plan.md", "# Plan\n")
+        self.fair = self.work / "Trade Fair"
+        write(self.fair / "Trade Fair.md", project_hub("Work", "Trade Fair", "cedar", ["Stand B"]))
+        write(self.fair / "Threads" / "Stand B" / "Stand B.md", thread_note("Trade Fair", "Stand B", "birch"))
+        write(self.fair / "Threads" / "Stand B" / "Deliverables" / "260305 - Stand plan.md", "# Plan\n")
+        self.home = self.root / "Zones" / "Personal" / "Home"
+        write(self.home / "Home.md", project_hub("Personal", "Home", "acme"))
+        write(self.home / "Deliverables" / "260303 - Budget.md", "# Budget\n")
+
+    def unfound(self, note, row):
+        note.write_text(note.read_text() + "\n| | |\n|---|---|\n| Keep in mind | %s |\n" % row)
+        return [f.message for f in check.run_checks(self.root)
+                if f.check == "resume" and f.path.endswith(note.name) and "is not there" in f.message]
+
+    def test_a_link_into_a_walled_project_confirms_nothing(self):
+        os.symlink(self.work / "Birch Entry" / "Deliverables", self.launch / "Linked")
+        self.assertEqual(["Resume here names `Linked/260304 - Entry plan.md`, which is not there"],
+                         self.unfound(self.pricing, "`Linked/260304 - Entry plan.md`"))
+
+    def test_a_link_into_another_zone_confirms_nothing(self):
+        os.symlink(self.home / "Deliverables", self.launch / "Linked")
+        self.assertEqual(["Resume here names `Linked/260303 - Budget.md`, which is not there"],
+                         self.unfound(self.pricing, "`Linked/260303 - Budget.md`"))
+
+    def test_a_link_inside_the_sibling_still_counts(self):
+        os.symlink(self.launch / "Deliverables", self.launch / "Linked")
+        self.assertEqual([], self.unfound(self.pricing, "`Linked/260301 - Launch deck.md`"))
+
+    def test_a_siblings_thread_walled_from_the_note_is_not_searched(self):
+        self.assertEqual(["Resume here names `Deliverables/260305 - Stand plan.md`, which is not there",
+                          "Resume here names `Threads/Stand B/Deliverables/260305 - Stand plan.md`, which is not there"],
+                         self.unfound(self.pricing, "`Deliverables/260305 - Stand plan.md` and "
+                                                    "`Threads/Stand B/Deliverables/260305 - Stand plan.md`"))
+
+    def test_the_notes_own_thread_party_is_held_against_the_sibling(self):
+        # Stand B is for birch under a cedar hub: the acme project is walled from its note.
+        note = self.fair / "Threads" / "Stand B" / "Stand B.md"
+        self.assertEqual(["Resume here names `Deliverables/260301 - Launch deck.md`, which is not there"],
+                         self.unfound(note, "`Deliverables/260301 - Launch deck.md`"))
+
+    def test_the_sibling_bases_are_worked_out_once_per_note(self):
+        with mock.patch.object(check, "sibling_bases", wraps=check.sibling_bases) as spy:
+            self.unfound(self.pricing, "`Deliverables/gone one.md` and `Deliverables/gone two.md`")
+        notes = [c.args[2] for c in spy.call_args_list]
+        self.assertEqual(len(notes), len(set(notes)))
+        self.assertIn(self.pricing, notes)
+
+
 class TestThreadProjectLink(Case):
     """A thread note's `project:` links its hub, so the parent-links rule
     asks it for no `parent:` as well."""
@@ -200,6 +330,21 @@ class TestThreadProjectLink(Case):
         self.pricing.write_text(self.pricing.read_text().replace(
             'project: "[[Acme Review]]"', 'project: "[[Zones/Work/Acme Review/Acme Review]]"'))
         self.assertNotIn("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", self.missing())
+
+    def test_a_hub_of_the_same_name_in_another_zone_is_not_its_hub(self):
+        other = self.root / "Zones" / "Personal" / "Acme Review"
+        write(other / "Acme Review.md", project_hub("Personal", "Acme Review", "acme"))
+        for link in ("Zones/Personal/Acme Review/Acme Review", "Personal/Acme Review/Acme Review"):
+            self.pricing.write_text(self.pricing.read_text().replace(
+                self.pricing.read_text().split('project: "[[', 1)[1].split("]]", 1)[0], link, 1))
+            self.assertIn("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", self.missing(), link)
+
+    def test_links_hub_takes_only_the_three_forms(self):
+        for link, ok in (("Acme Review", True), ("Acme Review/Acme Review", True),
+                         ("Zones/Work/Acme Review/Acme Review", True), ("Zones/Work/Acme Review/Acme Review.md", True),
+                         ("Zones/Personal/Acme Review/Acme Review", False), ("Work/Acme Review/Acme Review", False),
+                         ("Old/Acme Review/Acme Review", False), ("Birch Entry", False)):
+            self.assertEqual(ok, check.links_hub('project: "[[%s]]"' % link, "Work", "Acme Review"), link)
 
     def test_a_project_link_elsewhere_is_still_asked(self):
         self.pricing.write_text(self.pricing.read_text().replace('project: "[[Acme Review]]"', 'project: "[[Birch Entry]]"'))

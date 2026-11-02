@@ -1778,9 +1778,11 @@ def check_threads(ws: Workspace) -> List[Finding]:
             elif ttags:
                 written.append((thread.name, ttags, r, spoken))
         # Two threads of one project written for parties walled from each
-        # other: the project's notes would carry both sides of the wall.
-        for i, (name, ttags, r, spoken) in enumerate(written):
-            other = next(((n, wall_pair(ws, ttags, t)) for n, t, _, _ in written[:i] if wall_pair(ws, ttags, t)), None)
+        # other: the project's notes would carry both sides of the wall. Each
+        # note is told, naming the first thread across the wall from it.
+        for name, ttags, r, spoken in written:
+            other = next(((n, wall_pair(ws, ttags, t)) for n, t, _, _ in written
+                          if n != name and wall_pair(ws, ttags, t)), None)
             if other:
                 out.append(Finding(WARNING, "threads", r,
                                    "`party` %s is walled from thread %s's, in the same project; a wall stands between "
@@ -1853,7 +1855,10 @@ def path_bases(ws: Workspace, project: Path, note: Path) -> List[Path]:
     return bases
 
 
-def sibling_bases(ws: Workspace, project: Path, note: Path) -> Tuple[set, List[Tuple[Path, Path]]]:
+Siblings = Tuple[set, List[Tuple[Path, Path]], Dict[Path, set]]
+
+
+def sibling_bases(ws: Workspace, project: Path, note: Path) -> Siblings:
     """Where a path into another project of the same zone may start, as
     (base, the sibling project): each sibling's own folder and its threads'
     folders, with the tags `note` is written for. A note may name a file one
@@ -1861,10 +1866,11 @@ def sibling_bases(ws: Workspace, project: Path, note: Path) -> Tuple[set, List[T
     from. Never a project outside the zone, nor one under System/, nor a
     project or thread whose party is walled from the note's; sibling_found
     holds every hit to the same, so a path found only there is reported as
-    missing. Worked out once per note."""
+    missing. Worked out once per note; the third part caches each sibling's
+    files as they are named on disk, listed on its first hit."""
     zone = project.parent
     if zone not in ws.zones:
-        return set(), []
+        return set(), [], {}
     pfm = next((fm for folder, fm in ws.projects if folder == project), {})
     mine, _ = file_tags(ws, project, {strip_tag(t) for t in as_list(pfm.get("party"))}, note)
     out: List[Tuple[Path, Path]] = []
@@ -1878,16 +1884,19 @@ def sibling_bases(ws: Workspace, project: Path, note: Path) -> Tuple[set, List[T
         for thread in visible_dirs(other / "Threads"):
             if not wall_pair(ws, mine, project_file_tags(ws, other, thread / (thread.name + ".md"))):
                 out.append((thread, other))
-    return mine, out
+    return mine, out, {}
 
 
-def sibling_found(ws: Workspace, siblings: Tuple[set, List[Tuple[Path, Path]]], path: str) -> bool:
+def sibling_found(ws: Workspace, siblings: Siblings, path: str) -> bool:
     """Is `path` a file of a sibling project, read from one of its bases? Its
-    real path must stay inside that project's folder, which itself sits in the
-    zone, so a link or `..` leading into a walled project or another zone
-    confirms nothing; and the file it reaches must be written for no party
-    walled from the note's."""
-    mine, bases = siblings
+    real path must be one of that project's files as they are named on disk,
+    in a project folder that sits in the zone: so a link or `..` leading into
+    a walled project or another zone confirms nothing, and nor does a path
+    or a link spelt in another case, which a case-insensitive disk opens but
+    which would read as no thread. The file must be written for no party
+    walled from the note's, read from its real path; a folder, every file
+    in it."""
+    mine, bases, listed = siblings
     for base, other in bases:
         candidate = base / path
         try:
@@ -1896,17 +1905,25 @@ def sibling_found(ws: Workspace, siblings: Tuple[set, List[Tuple[Path, Path]]], 
             home = other.resolve()
             if home.parent != other.parent.resolve():
                 continue  # the project folder is itself a link out of the zone
-            inner = candidate.resolve().relative_to(home)
-        except (OSError, RuntimeError, ValueError):
-            continue  # unreadable, or it leads out of the sibling's folder
-        if not wall_pair(ws, mine, project_file_tags(ws, other, other / inner)):
+            real = candidate.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if other not in listed:
+            listed[other] = {home / f.relative_to(other) for f in walk_files(other, nested=True)}
+        if real in listed[other]:
+            files = [real]
+        else:
+            # A folder counts when it holds files, every one of them clear.
+            files = [f for f in listed[other] if real in f.parents] if real.is_dir() else []
+        if files and not any(wall_pair(ws, mine, project_file_tags(ws, other, other / f.relative_to(home)))
+                             for f in files):
             return True
     return False
 
 
 def unfound_paths(ws: Workspace, project: Path, note: Path, line: str, bases: List[Path],
                   inside: List[Optional[List[str]]], shared: bool,
-                  siblings: Optional[List[Optional[Tuple[set, List[Tuple[Path, Path]]]]]] = None) -> List[str]:
+                  siblings: Optional[List[Optional[Siblings]]] = None) -> List[str]:
     """The `backticked` paths on one line that are not there. Placeholders,
     commands, web addresses, globs, Office parts and anything on another
     machine are not paths, and a line that says its file sits on a shared drive
@@ -1964,7 +1981,7 @@ def resume_findings(ws: Workspace, project: Path, note: Path, block: List[str], 
                            "Thread %s has no real resume point yet" % spoken))
     bases = path_bases(ws, project, note)
     inside: List[Optional[List[str]]] = [None]  # the project's files, listed on the first path not found
-    siblings: List[Optional[Tuple[set, List[Tuple[Path, Path]]]]] = [None]  # the zone's other projects, likewise
+    siblings: List[Optional[Siblings]] = [None]  # the zone's other projects, likewise
     for line in block:
         for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):
             target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
@@ -2096,7 +2113,7 @@ def checkpoint_findings(ws: Workspace, project: Path, note: Path, text: str, spo
              "Thread %s has a checkpoint older than its resume point" % spoken)
     bases = path_bases(ws, project, note)
     inside: List[Optional[List[str]]] = [None]
-    siblings: List[Optional[Tuple[set, List[Tuple[Path, Path]]]]] = [None]
+    siblings: List[Optional[Siblings]] = [None]
     for item in block["items"]:
         if item["kind"] == "made":
             for path in unfound_paths(ws, project, note, item["text"], bases, inside, shared, siblings):

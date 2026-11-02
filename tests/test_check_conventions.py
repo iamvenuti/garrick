@@ -142,9 +142,13 @@ class TestThreadsWalledFromEachOther(Case):
                 and "repeats wording from" in f.message]
 
     def test_the_threads_check_names_the_wall(self):
-        hits = [f for f in self.findings("threads") if "walled from thread Stand A's" in f.message]
-        self.assertEqual(["Zones/Work/Trade Fair/Threads/Stand B/Stand B.md"], [f.path for f in hits])
-        self.assertIn("a wall stands between acme and birch", hits[0].message)
+        hits = sorted((f.path, f.message) for f in self.findings("threads") if "in the same project" in f.message)
+        self.assertEqual(["Zones/Work/Trade Fair/Threads/Stand A/Stand A.md",
+                          "Zones/Work/Trade Fair/Threads/Stand B/Stand B.md"], [path for path, _ in hits])
+        self.assertIn("walled from thread Stand B's", hits[0][1])
+        self.assertIn("walled from thread Stand A's", hits[1][1])
+        for _, message in hits:
+            self.assertIn("a wall stands between acme and birch", message)
 
     def test_wording_copied_between_the_threads_is_refused(self):
         write(self.notes, '---\nparent: "[[Stand A]]"\n---\n\n' + BRIEF)
@@ -173,7 +177,7 @@ class TestThreadsWalledFromEachOther(Case):
     def test_nurture_names_it_as_a_wall(self):
         ctx = nurture.Ctx(self.root)
         items = [nurture.sort_item(ctx, i) for i in nurture.from_check(ctx) if i.check == "threads"]
-        self.assertEqual([("wall", "acme and birch", "")], [(i.kind, i.wall, i.message) for i in items])
+        self.assertEqual([("wall", "acme and birch", "")] * 2, [(i.kind, i.wall, i.message) for i in items])
 
 
 class TestThreadHoldingBothSides(Case):
@@ -303,6 +307,34 @@ class TestResumeSiblingGuards(Case):
         note = self.fair / "Threads" / "Stand B" / "Stand B.md"
         self.assertEqual(["Resume here names `Deliverables/260301 - Launch deck.md`, which is not there"],
                          self.unfound(note, "`Deliverables/260301 - Launch deck.md`"))
+
+    def case_blind(self):
+        """Does this machine's disk open a name spelt in another case?"""
+        probe = write(Path(self._tmp.name) / "CaseProbe.txt", "x")
+        return probe.with_name("caseprobe.txt").exists()
+
+    def test_a_walled_thread_spelt_in_another_case_is_not_searched(self):
+        if not self.case_blind():
+            self.skipTest("this disk tells names apart by case, so the spelling opens nothing")
+        self.assertEqual(["Resume here names `THREADS/Stand B/Deliverables/260305 - Stand plan.md`, which is not there",
+                          "Resume here names `threads/Stand B/Deliverables/260305 - Stand plan.md`, which is not there"],
+                         sorted(self.unfound(self.pricing, "`threads/Stand B/Deliverables/260305 - Stand plan.md` and "
+                                                    "`THREADS/Stand B/Deliverables/260305 - Stand plan.md`")))
+
+    def test_a_link_into_a_walled_thread_spelt_in_another_case_confirms_nothing(self):
+        # Broken on a disk that tells case apart, opened on one that does not: reported either way.
+        os.symlink("threads/Stand B/Deliverables", self.fair / "Plans")
+        self.assertEqual(["Resume here names `Plans/260305 - Stand plan.md`, which is not there"],
+                         self.unfound(self.pricing, "`Plans/260305 - Stand plan.md`"))
+
+    def test_a_link_into_a_walled_thread_in_its_own_case_confirms_nothing(self):
+        os.symlink("Threads/Stand B/Deliverables", self.fair / "Plans")
+        self.assertEqual(["Resume here names `Plans/260305 - Stand plan.md`, which is not there"],
+                         self.unfound(self.pricing, "`Plans/260305 - Stand plan.md`"))
+
+    def test_a_folder_counts_only_when_every_file_in_it_is_clear(self):
+        self.assertEqual(["Resume here names `Threads/Stand B/`, which is not there"],
+                         self.unfound(self.pricing, "`Threads/Deck/` and `Threads/Stand B/`"))
 
     def test_the_sibling_bases_are_worked_out_once_per_note(self):
         with mock.patch.object(check, "sibling_bases", wraps=check.sibling_bases) as spy:

@@ -1459,7 +1459,7 @@ class Asker:
         self.progress("Reading the Todo lists")
         found = sc.actions(self.ws, where, names, self.ctx, lib, day)
         period = bool(where.until) and not where.waiting
-        shown, rest = sc.listing(found, period)
+        shown, rest = sc.listing(found, period, today=day)
         claims, cited_ = [], []
         for n, it in enumerate(shown + rest, 1):
             aid = "a%d" % n
@@ -1472,10 +1472,10 @@ class Asker:
         if not shown:
             after, say = [NOTHING_OPEN], NOTHING_OPEN
         else:
-            after = [sc.more_said(rest)] if rest else []
+            after = [sc.more_said(rest, day)] if rest else []
             # For the ear (`say`), the window's first MOST_SAID, in its order, and the count of the rest.
             left = (shown + rest)[sc.MOST_SAID:]
-            say = " ".join([c["text"] for c in claims[:sc.MOST_SAID]] + ([sc.more_said(left)] if left else []))
+            say = " ".join([c["text"] for c in claims[:sc.MOST_SAID]] + ([sc.more_said(left, day)] if left else []))
         out = reply(say, "answer")
         out.update(claims=claims, after=after, incomplete=False, listed=True, sources=sources)
         if rest:

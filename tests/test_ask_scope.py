@@ -2158,6 +2158,21 @@ class TestActions(AnswerCase):
         self.assertEqual("", sc.more_said([]))
         self.assertEqual((10, 5, 3), (sc.MOST_ACTIONS, sc.MOST_SAID, sc.MOST_LATE))
 
+    def test_a_next_action_past_its_deadline_counts_as_overdue(self):
+        import datetime as _dt
+        sc = ask.scope_lib()
+        today = _dt.date(2026, 10, 12)
+        late = [{"kind": "overdue", "date": "2026-10-0%d" % n, "n": n} for n in (2, 5)]
+        past = [{"kind": "next", "date": "2026-10-01", "n": "a"}, {"kind": "next", "date": "2026-10-04", "n": "b"}]
+        ahead = [{"kind": "next", "date": "2026-10-14", "n": "c"}]
+        due = [{"kind": "due", "date": "2026-10-12", "n": n} for n in range(9)]
+        listed, rest = sc.listing(late + due + past + ahead, True, today=today)
+        self.assertEqual([past[0], late[0], past[1]] + due[:7], listed)  # three overdue, longest first
+        self.assertEqual(due[7:] + ahead + [late[1]], rest)
+        self.assertEqual("And 2 more overdue.", sc.more_said([late[1], past[1]], today))
+        self.assertEqual("And 1 more.", sc.more_said(ahead, today))
+        self.assertFalse(sc.is_late({"kind": "next", "date": ""}, today))
+
     def test_the_window_and_the_ear_say_the_same_order(self):
         self.only("".join("- [ ] [[Pricing]]: Late task %d 📅 2026-10-0%d\n" % (n, n) for n in range(1, 5))
                   + "".join("- [ ] [[Pricing]]: Due task %d 📅 2026-10-13\n" % n for n in range(1, 4)))

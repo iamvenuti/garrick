@@ -1086,31 +1086,42 @@ def actions(ws: Path, sc: Scope, names: Dict[str, Dict[str, dict]], ctx: dict, l
     return [i for _, i in first]
 
 
-def listing(found: List[dict], period: bool, most: int = MOST_ACTIONS) -> Tuple[List[dict], List[dict]]:
+def is_late(it: dict, today=None) -> bool:
+    """Is an item of an actions list overdue: an overdue Todo line, or a live
+    thread's Next action whose Deadline has passed (#329)."""
+    import datetime as _dt
+    if it["kind"] == "overdue":
+        return True
+    day = today or _dt.date.today()
+    return it["kind"] == "next" and bool(it.get("date")) and it["date"] < day.isoformat()
+
+
+def listing(found: List[dict], period: bool, most: int = MOST_ACTIONS, today=None) -> Tuple[List[dict], List[dict]]:
     """An actions list as the window shows it (#329): (listed, rest), both
     from the one reading, `most` listed in every case. With a period
-    (`until`: tomorrow, this week), at most MOST_LATE overdue lines, the
-    longest overdue first, then the period's own items, in the reading's
-    order, up to `most` in all: the period asked about comes before the
-    overdue lines past MOST_LATE. The rest is what is left, the period's
-    items first, then the overdue lines. With no period, the first `most`.
-    A reply read aloud says the first MOST_SAID of the listed, in the same
-    order, and counts the rest of both."""
+    (`until`: tomorrow, this week), at most MOST_LATE overdue items
+    (is_late: a Next action past its Deadline counts with the overdue Todo
+    lines), the longest overdue first, then the period's own items, in the
+    reading's order, up to `most` in all: the period asked about comes
+    before the overdue items past MOST_LATE. The rest is what is left, the
+    period's items first, then the overdue ones. With no period, the first
+    `most`. A reply read aloud says the first MOST_SAID of the listed, in
+    the same order, and counts the rest of both."""
     if not period:
         return found[:most], found[most:]
-    late = [i for i in found if i["kind"] == "overdue"]
-    due = [i for i in found if i["kind"] != "overdue"]
+    late = sorted((i for i in found if is_late(i, today)), key=lambda i: i.get("date") or "")   # stable: ties keep order
+    due = [i for i in found if not is_late(i, today)]
     first = late[:min(MOST_LATE, most)]
     room = most - len(first)
     return first + due[:room], due[room:] + late[len(first):]
 
 
-def more_said(rest: List[dict]) -> str:
+def more_said(rest: List[dict], today=None) -> str:
     """The count of what a list leaves out: "And 3 more overdue." when every
-    item left is an overdue line, else "And 3 more."; "" for none."""
+    item left is overdue (is_late), else "And 3 more."; "" for none."""
     if not rest:
         return ""
-    late = all(i["kind"] == "overdue" for i in rest)
+    late = all(is_late(i, today) for i in rest)
     return "And %d more%s." % (len(rest), " overdue" if late else "")
 
 

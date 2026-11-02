@@ -519,13 +519,37 @@ class UntaggedEntityTest(Workspace):
         self.assertNotIn("wall", r.stderr)
         self.assertNotIn("organisation", (self.people / "kit-avery.md").read_text())
 
-    def test_check_warns_and_nurture_asks_whose_it_is(self):
+    def untagged_warnings(self):
+        return [f for f in self.findings("meetings") if f.message.startswith(check.NO_ENTITY_PARTY)]
+
+    def test_an_untagged_page_nothing_points_at_is_not_warned(self):
+        write(self.entities / "spring-summit.md", untagged("Spring Summit"))      # an event, not an organisation
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect at Larch Partners."))
+        self.assertEqual([], self.untagged_warnings())
+        _, out = self.nurture_list()
+        self.assertEqual([], [i for i in out["items"] if i["path"].endswith("spring-summit.md") and i["check"] != "orphan"])
+
+    def test_one_a_first_line_names_is_warned_and_asked_about(self):
         write(self.entities / "acme.md", untagged("Acme"))
-        found = [f for f in self.findings("meetings") if f.path.endswith("entities/acme.md")]
-        self.assertEqual(1, len(found))
-        self.assertTrue(found[0].message.startswith(check.NO_ENTITY_PARTY), found[0].message)
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Managing partner; formerly at Acme."))
+        found = self.untagged_warnings()
+        self.assertEqual(["Wikis/Meetings/wiki/entities/acme.md"], [f.path for f in found])
+        for leak in ("theo", "Theo", "birch"):
+            self.assertNotIn(leak, found[0].message + found[0].ear)
         item = nurture.sort_item(nurture.Ctx(self.root), nurture.check_items(vars(found[0]))[0])
         self.assertEqual(("attribution", "Whose is Acme: none, or a party?"), (item.kind, item.question))
+
+    def test_one_the_party_default_would_reach_is_warned(self):
+        write(self.entities / "acme-two.md", untagged("Acme Corp"))               # a namesake of Acme's own page
+        write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme", "Head of procurement."))
+        self.assertEqual(["Wikis/Meetings/wiki/entities/acme-two.md"], [f.path for f in self.untagged_warnings()])
+
+    def nurture_list(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            code = nurture.main(["list", "--scope", "Wikis/Meetings", "--root", str(self.root), "--json",
+                                 "--today", "2026-10-17"])
+        return code, json.loads(out.getvalue())
 
     def test_the_hook_refuses_a_hand_written_link_to_an_untagged_page(self):
         write(self.entities / "acme.md", untagged("Acme"))
@@ -533,6 +557,7 @@ class UntaggedEntityTest(Workspace):
         found = self.findings("walls")
         self.assertEqual(["Wikis/Meetings/wiki/people/kit-avery.md"], [f.path for f in found])
         self.assertTrue(found[0].message.startswith(check.ORGANISATION_ONE), found[0].message)
+        self.assertEqual(["Wikis/Meetings/wiki/entities/acme.md"], [f.path for f in self.untagged_warnings()])
 
 
 class NamedAfterTest(Workspace):

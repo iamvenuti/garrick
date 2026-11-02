@@ -120,7 +120,8 @@ from garrick_lib import (  # noqa: E402
     TODO_ALSO_RE,
 )
 from garrick_lib import (  # noqa: E402  (#330)
-    entity_names, entity_parties, entity_rel, links_in, name_group, organisation_link, organisation_proposal,
+    entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, organisation_link,
+    organisation_proposal,
 )
 
 
@@ -2790,8 +2791,9 @@ def check_entities(ws: Workspace) -> List[Finding]:
                                "names party %s, and so does %s; one entity page per party, and until there is one "
                                "no person page links either" % (tag, others),
                                "Two entity pages stand for one party"))
+    blocked = untagged_in_the_way(ws)
     for e in entity_index(ws):
-        if not e["tagged"]:
+        if not e["tagged"] and e["rel"] in blocked:
             out.append(Finding(WARNING, "meetings", rel(ws, e["path"]),
                                "%s; write `party: none` for an organisation that is not a party, or its tag, and "
                                "until it says one no tool links a person page to it" % NO_ENTITY_PARTY,
@@ -2800,6 +2802,36 @@ def check_entities(ws: Workspace) -> List[Finding]:
 
 
 NO_ENTITY_PARTY = "no `party:`"
+
+
+def untagged_in_the_way(ws: Workspace) -> set:
+    """The rel of each entity page with no `party:` that stops a person page's
+    `organisation:` (#330): one a person page's first line names, by any name
+    it goes by, as the proposal reads it (a shorter name inside a longer one
+    included); one going by the name of the entity page #319's party default
+    would link; or one a person page links by hand. Only those are warned:
+    most entity pages are topics or events no person page points at, and an
+    untagged page nothing points at stops nothing. Nothing of the person page
+    is said."""
+    index = entity_index(ws)
+    if all(e["tagged"] for e in index):
+        return set()
+    entities = party_entities(ws.root)
+    hit = set()
+    for page, text in person_pages(ws):
+        fm = parse_frontmatter_text(text)
+        rels = []
+        if organisation_keys(fm):
+            for l in [l for k in organisation_keys(fm) for v in as_list(fm.get(k)) for l in links_in(v)]:
+                target = entity_page(ws.root, entity_rel(l)) if entity_rel(l) else None
+                rels += [e["rel"] for e in index if target is not None and same_page(e["path"], target)]
+        else:
+            rels += named_in(first_line(text), index, every=True)
+            tags = sorted(set(tag_list(fm.get("party"))))
+            if len(tags) == 1 and len(entities.get(tags[0], [])) == 1:
+                rels += entities[tags[0]]
+        hit |= {e["rel"] for e in name_group(index, rels) if not e["tagged"]}
+    return hit
 
 
 def same_named_entities(ws: Workspace) -> List[Finding]:

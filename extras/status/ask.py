@@ -193,10 +193,12 @@ what you wait on comes back from the command session as a find with route
 `actions`. Garrick reads the zones' Todo lists through the todo skill's own
 reader, and each live thread's Next action, Waiting on and Deadline rows,
 keeps what falls inside the find's place, the parties the request names and
-its period, orders them as the digest does, and says up to five itself
-(Asker.listed()). No session is told the items, so nothing either holds
-changes and a list may cover every zone and both sides of a wall, each item
-labelled with its zone. Meeting pages are never read for it. Codex answers
+its period, orders them as the digest does, and says them itself
+(Asker.listed()): ten at most in the window, or, for a period, every item
+due in it after three overdue lines, and five aloud; the rest comes back as
+`more`, for the window to list when "And N more" is clicked (#329). No
+session is told the items, so nothing either holds changes and a list may
+cover every zone and both sides of a wall, each item labelled with its zone. Meeting pages are never read for it. Codex answers
 it too: no model writes it.
 
 **An answer cites its records (#261, slice D).** The answer session replies
@@ -1431,10 +1433,14 @@ class Asker:
         """What the user owes, or waits on, said by Garrick itself (#316):
         the open Todo lines and the live threads' Next action, Waiting on and
         Deadline rows, inside the find's place, the parties the request
-        names and its period, in the digest's order (ask_scope.actions()),
-        MOST_ACTIONS at most. No session is told any of it, and nothing it
-        holds changes: not `seen`, not `heard`, not the records admitted, not
-        `<last-results>`. So a list may hold both sides of a wall, each item
+        names and its period, in the digest's order (ask_scope.actions()).
+        The window lists MOST_ACTIONS at most, or, for a period, every item
+        due in it after MOST_LATE overdue lines (ask_scope.listing()), and
+        `say`, for the ear, MOST_SAID; each names the count of the rest. The
+        rest comes back as `more`, from the same reading, for the window to
+        list when "And N more" is clicked (#329). No session is told any of
+        it, and nothing it holds changes: not `seen`, not `heard`, not the
+        records admitted, not `<last-results>`. So a list may hold both sides of a wall, each item
         labelled with its zone, and no wall resets for it. Meeting pages are
         never read for it. Each item cites the note it came from, opened as
         an answer's records are."""
@@ -1452,22 +1458,32 @@ class Asker:
             raise Bad(str(e))
         self.progress("Reading the Todo lists")
         found = sc.actions(self.ws, where, names, self.ctx, lib, day)
-        shown = found[:sc.MOST_ACTIONS]
+        period = bool(where.until) and not where.waiting
+        shown, rest = sc.listing(found, period)
+        heard = sc.said_aloud(shown, period)
         claims, cited_ = [], []
-        for n, it in enumerate(shown, 1):
+        for n, it in enumerate(shown + rest, 1):
             aid = "a%d" % n
             claims.append({"text": sc.action_said(it, names, day), "ids": [aid]})
             title = it["thread"] or it["project"] or "%s Todo list" % it["zone"]
             cited_.append({"id": aid, "path": it["note"], "title": title, "date": it["date"], "imported": ""})
-        after = []
+        claims, later = claims[:len(shown)], claims[len(shown):]
+        sources = self.sources(cited_, names)
+        sources, later_sources = sources[:len(shown)], sources[len(shown):]
         if not shown:
-            after.append(NOTHING_OPEN)
-        elif len(found) > len(shown):
-            more = len(found) - len(shown)
-            after.append("And %d more." % more)
-        say = " ".join([c["text"] for c in claims] + after)
+            after, say = [NOTHING_OPEN], NOTHING_OPEN
+        else:
+            after = [sc.more_said(rest)] if rest else []
+            # For the ear (`say`), MOST_SAID at most and the count of the rest, as the rules say.
+            aloud = [sc.action_said(it, names, day) for it in heard]
+            left = [it for it in found if not any(it is h for h in heard)]
+            say = " ".join(aloud + ([sc.more_said(left)] if left else []))
         out = reply(say, "answer")
-        out.update(claims=claims, after=after, incomplete=False, listed=True, sources=self.sources(cited_, names))
+        out.update(claims=claims, after=after, incomplete=False, listed=True, sources=sources)
+        if rest:
+            # The rest of the same reading, for the window to list under the answer when its
+            # "And N more" is clicked (#329): no new request, and no session told anything.
+            out["more"] = {"said": after[0], "claims": later, "sources": later_sources}
         self.asking = False
         return out
 

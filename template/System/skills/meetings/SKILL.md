@@ -119,8 +119,11 @@ One meeting at a time, even when several files are waiting.
    party, when exactly one entity page names it (`party: acme`). The command
    writes the link; never write it by hand. It is identity alone, like the
    page: the entity page's link and nothing else. It writes none, and says
-   why, across a wall: when the entity page, or another going by the same
-   name, names a party walled from the person's, or is named after one;
+   why, for an entity page with no `party:` at all: a customer's or an
+   integrator's page says `party: none`, and only then is it linked. It
+   writes none across a wall: when the entity page, or another going by the
+   same name, names a party walled from the person's, or is named after one
+   (`Acme`, `The Acme Corp`, `Acme Corp Ltd` are Acme's);
    when the People table has the name under two parties a wall keeps apart,
    since one page that two hats share links neither hat's entity page; and
    when the page names no party or more than one. A page written before the

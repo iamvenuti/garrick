@@ -88,7 +88,7 @@ Then one sentence: who they are, and which party. Nothing learned in a meeting, 
 
 ## An entity page
 
-`wiki/entities/<slug>.md`, one per organisation, with `type: entity`, its other names in `aliases:`, and, when it stands for a party, `party: <tag>`. At most one entity page names a party, or goes by a name; `check.py` warns about two.
+`wiki/entities/<slug>.md`, one per organisation, with `type: entity`, its other names in `aliases:`, and `party:`: its tag when it stands for a party, else `none`. A page with no `party:` is never linked by a tool. One entity page per party, and per name; `check.py` warns about two.
 
 ## A question
 

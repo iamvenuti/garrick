@@ -1,0 +1,490 @@
+"""A Meetings person page links the entity page of where the person works,
+whatever their party (#330).
+
+    cd tests && python3 -m unittest test_person_employer
+
+`organisation:` names the employer's entity page: `ingest.py person
+--organisation` writes it, Nurture proposes it from the page's first line
+("Identity architect at Birch & Co"), and #319's link to the party's own
+entity page holds when nothing else is known. The walls hold as in #319: no
+proposal, and the commit hook refuses a link written by hand, when the
+entity page, or any entity page that goes by the same name under another
+spelling, names a party walled from the person's, or when the People table
+has the person under two walled parties. An entity page with no `party:` is
+walled from nobody. Every workspace here is built in a temporary folder.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.dont_write_bytecode = True
+
+import fixtures  # noqa: E402  (puts the tools folder on sys.path)
+from fixtures import GIT_ENV, HAVE_GIT, build_workspace, git, write  # noqa: E402
+
+import check  # noqa: E402
+import garrick_lib  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
+TOOLS = REPO / "template" / "System" / "tools"
+INGEST = REPO / "template" / "System" / "skills" / "meetings" / "ingest.py"
+
+
+def load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ingest = load("garrick_meetings_ingest_330", INGEST)
+nurture = load("garrick_nurture_330", TOOLS / "nurture.py")
+
+# Acme and Birch are walled, as in the shared fixture; Cedar is walled from
+# nobody. Dana Whitlock is Acme's, Theo Marsh Birch's. Rowan Blake and Søren
+# Kjær are known under both Acme and Birch: one name, two hats. Kit Avery is
+# in no row at all, as a customer's architect would be.
+CONTEXT = fixtures.CONTEXT.replace(
+    "| Birch & Co | Client.",
+    "| Cedar Ltd | Supplier to Acme | Work | `cedar` | cedarltd.example |\n| Birch & Co | Client.",
+).replace(
+    "| Theo Marsh | `birch` | Managing partner |",
+    "| Theo Marsh | `birch` | Managing partner |\n"
+    "| Rowan Blake | `acme` | Adviser |\n"
+    "| Rowan Blake | `birch` | Adviser |\n"
+    "| Søren Kjær | `acme` | Engineer |\n"
+    "| Søren Kjær | `birch` | Engineer |\n",
+)
+
+
+def entity(title: str, party: str = "", aliases: str = "") -> str:
+    lines = ["---", "title: %s" % title, "type: entity"]
+    lines += ["party: %s" % party] if party else []
+    lines += ["aliases: %s" % aliases] if aliases else []
+    return "\n".join(lines + ["---", "", "# %s" % title, "", "An organisation.", ""])
+
+
+def person(name: str, party: str, line: str, organisation: str = "") -> str:
+    org = 'organisation: "%s"\n' % organisation if organisation else ""
+    party_line = "party: %s\n" % party if party else ""
+    return ("---\ntitle: %s\ntype: person\n%s%screated: 2026-03-10\nupdated: 2026-03-10\n---\n\n# %s\n\n%s\n"
+            % (name, party_line, org, name, line))
+
+
+class Workspace(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        write(self.root / "System" / "context.md", CONTEXT)
+        self.meetings = self.root / "Wikis" / "Meetings"
+        self.entities = self.meetings / "wiki" / "entities"
+        self.people = self.meetings / "wiki" / "people"
+        (self.people / "dana-whitlock.md").unlink()            # each test writes the people it needs
+        self.context = garrick_lib.load_context(self.root)
+        write(self.entities / "acme-corp.md", entity("Acme Corp", "acme"))
+        write(self.entities / "birch-co.md", entity("Birch & Co", "birch"))
+        write(self.entities / "cedar-ltd.md", entity("Cedar Ltd", "cedar"))
+        write(self.entities / "larch-partners.md", entity("Larch Partners", aliases="[Larch]"))   # a customer: no party
+
+    def propose(self, name: str, party, line: str):
+        text = person(name, party if isinstance(party, str) else "", line)
+        return garrick_lib.organisation_proposal(self.root, self.context, (name, ingest.person_slug(name)),
+                                                 party, text)
+
+    def findings(self, name: str):
+        return [f for f in check.run_checks(self.root) if f.check == name]
+
+
+# ---------------------------------------------------------------------------
+# The rule: garrick_lib.organisation_proposal
+# ---------------------------------------------------------------------------
+
+class ProposalTest(Workspace):
+    def test_a_first_line_naming_one_entity_page_proposes_it_whatever_the_party(self):
+        self.assertEqual(("[[wiki/entities/birch-co]]", []),
+                         self.propose("Kit Avery", "none", "Identity architect at Birch & Co, a customer."))
+        self.assertEqual(("[[wiki/entities/larch-partners]]", []),
+                         self.propose("Kit Avery", "cedar", "Buyer at Larch Partners."))
+
+    def test_the_first_line_wins_over_the_party_and_the_party_holds_when_it_names_none(self):
+        self.assertEqual(("[[wiki/entities/cedar-ltd]]", []),
+                         self.propose("Pat Newcomer", "acme", "Now at Cedar Ltd."))
+        self.assertEqual(("[[wiki/entities/acme-corp]]", []), self.propose("Pat Newcomer", "acme", "Buyer."))
+        self.assertEqual(("", []), self.propose("Pat Newcomer", "none", "Buyer."))
+
+    def test_spellings_of_an_entity_name_all_find_its_page(self):
+        write(self.entities / "sorvik-freight.md", entity("Sørvik Freight", aliases='["Hüttelmoor Logistik"]'))
+        for line, rel in (("at birch and co", "birch-co"), ("at Birch-Co.", "birch-co"), ("at BIRCH & CO", "birch-co"),
+                          ("at BirchCo", "birch-co"), ("at Ｂirch & Co", "birch-co"), ("at Larch", "larch-partners"),
+                          ("at Larch Partner", "larch-partners"), ("at larch-partners", "larch-partners"),
+                          ("at Soervik Freight", "sorvik-freight"), ("at Sorvik Freights", "sorvik-freight"),
+                          ("at SØRVIK FREIGHT", "sorvik-freight"), ("at Huettelmoor Logistik", "sorvik-freight"),
+                          ("at Huttelmoor logistik", "sorvik-freight")):
+            self.assertEqual(("[[wiki/entities/%s]]" % rel, []), self.propose("Kit Avery", "none", line), line)
+
+    def test_a_name_inside_a_longer_one_gives_way_to_it(self):
+        write(self.entities / "larch-digital.md", entity("Larch Digital"))
+        self.assertEqual(("[[wiki/entities/larch-digital]]", []),
+                         self.propose("Kit Avery", "none", "Designer at Larch Digital."))
+
+    def test_two_entity_pages_named_are_asked_about(self):
+        self.assertEqual(("", ["birch-co", "larch-partners"]),
+                         self.propose("Kit Avery", "none", "Analyst at Larch Partners, seconded to Birch & Co."))
+
+    def test_one_name_two_pages_go_by_is_asked_about(self):
+        write(self.entities / "larch-uk.md", entity("LARCH-partners", aliases="[Larch UK]"))
+        self.assertEqual(("", ["larch-partners", "larch-uk"]), self.propose("Kit Avery", "none", "Buyer at Larch."))
+
+    def test_no_party_several_or_an_unknown_one_proposes_nothing(self):
+        for party in ("", None, "fernway", ["none", "cedar"], ["acme", "cedar"]):
+            self.assertEqual(("", []), self.propose("Kit Avery", party, "Buyer at Larch Partners."), party)
+
+    def test_the_placeholder_line_and_headings_are_not_read(self):
+        self.assertEqual("", garrick_lib.first_line(person("Kit Avery", "none", "<Who they are, and which party.>")))
+        self.assertEqual("At Birch & Co.", garrick_lib.first_line("---\ntitle: x\n---\n# Kit\n\n## Role\n\nAt Birch & Co.\n"))
+
+
+class ProposalWallTest(Workspace):
+    """No proposal, and no question either, wherever a wall stands in the way."""
+
+    def test_an_entity_page_of_a_party_walled_from_the_persons_is_not_proposed(self):
+        self.assertEqual(("", []), self.propose("Pat Newcomer", "acme", "Consultant at Birch & Co."))
+        self.assertEqual(("", []), self.propose("Pat Newcomer", "birch", "Consultant at Acme Corp."))
+
+    def test_a_page_saying_none_does_not_hide_its_people_rows(self):
+        # Theo is Birch's in the People table: Acme's page is walled from him, whatever his page says.
+        self.assertEqual(("", []), self.propose("Theo Marsh", "none", "Now at Acme Corp."))
+        self.assertEqual(("[[wiki/entities/larch-partners]]", []), self.propose("Theo Marsh", "none", "Now at Larch."))
+
+    def test_a_person_under_two_walled_parties_gets_nothing_even_from_an_entity_with_no_party(self):
+        for name in ("Rowan Blake", "ROWAN-BLAKE", "Søren Kjær", "Soren Kjaer", "Soeren Kjaer", "Sören Kjaer"):
+            self.assertEqual(("", []), self.propose(name, "none", "Buyer at Larch Partners."), name)
+            self.assertEqual(("", []), self.propose(name, "acme", "Buyer at Acme Corp."), name)
+
+    def test_an_entity_page_with_no_party_is_walled_from_nobody(self):
+        for name, party in (("Dana Whitlock", "acme"), ("Theo Marsh", "birch"), ("Kit Avery", "none")):
+            self.assertEqual(("[[wiki/entities/larch-partners]]", []),
+                             self.propose(name, party, "Buyer at Larch Partners."), name)
+
+    def test_a_variant_spelled_page_with_no_party_cannot_carry_a_link_past_the_wall(self):
+        """A second page for Acme, under another spelling and with no party,
+        goes by Acme's name: proposing it would be proposing Acme."""
+        for title, aliases in (("ACME-Corp.", ""), ("Acmé Corp", ""), ("Acme Corps", ""), ("AcmeCorp", ""),
+                               ("Ａcme Corp", ""), ("Ledger Co", '["Ácme Corp"]')):
+            write(self.entities / "variant.md", entity(title, aliases=aliases))
+            for line in ("Buyer at %s." % title, "Buyer at Acme Corp.", "Buyer at acme-corp."):
+                self.assertEqual(("", []), self.propose("Theo Marsh", "birch", line), (title, line))
+                self.assertEqual(("", []), self.propose("Kit Avery", "birch", line), (title, line))
+        # The party default stops too: no link for Acme's people to a name a Birch page goes by as well.
+        write(self.entities / "variant.md", entity("Acme Corp", "birch"))
+        self.assertEqual(("", []), self.propose("Dana Whitlock", "acme", "Buyer."))
+        self.assertEqual("", garrick_lib.organisation_link(self.root, self.context, "Dana Whitlock", "acme"))
+
+    def test_a_question_never_offers_a_page_across_a_wall(self):
+        self.assertEqual(("", []), self.propose("Pat Newcomer", "acme", "Between Larch Partners and Birch & Co."))
+        write(self.entities / "larch-birch.md", entity("Larch Partners", "birch"))
+        self.assertEqual(("", []), self.propose("Pat Newcomer", "acme", "Buyer at Larch Partners."))
+
+    def test_a_page_named_after_a_party_is_read_as_that_partys(self):
+        """An entity page with no `party:` is walled from nobody, unless its
+        name is a party's, in the Parties table or a heard form the Aliases
+        table gives for it."""
+        write(self.entities / "birch-co.md", entity("Birch & Co"))                              # no `party:`
+        self.assertEqual(("", []), self.propose("Pat Newcomer", "acme", "Consultant at Birch & Co."))
+        self.assertEqual(("[[wiki/entities/birch-co]]", []), self.propose("Kit Avery", "none", "At Birch & Co."))
+        write(self.entities / "birchen.md", entity("Birchen Co"))
+        self.assertEqual(("", []), self.propose("Pat Newcomer", "acme", "Consultant at Birchen Co."))
+
+    def test_one_company_under_two_walled_tags_still_links_each_hats_own_page(self):
+        context = CONTEXT.replace("| Cedar Ltd | Supplier to Acme | Work | `cedar` | cedarltd.example |",
+                                  "| Birch & Co | Advisory client | Work | `birch-adv` | |")
+        write(self.root / "System" / "context.md", context.replace(
+            "| `acme` | `birch` | Competitors, and both are clients |",
+            "| `acme` | `birch` | Competitors, and both are clients |\n| `birch` | `birch-adv` | Two hats |"))
+        self.context = garrick_lib.load_context(self.root)
+        write(self.entities / "birch-adv.md", entity("Birch & Co (advisory)", "birch-adv"))
+        self.assertEqual(("[[wiki/entities/birch-co]]", []), self.propose("Theo Marsh", "birch", "Partner at Birch & Co."))
+        self.assertEqual(("[[wiki/entities/birch-adv]]", []), self.propose("Ivy Stone", "birch-adv", "Founder."))
+        write(self.entities / "untagged.md", entity("Birch and Co"))                            # either hat's name, no tag
+        self.assertEqual(("", []), self.propose("Kit Avery", "none", "At Birch and Co."))
+
+
+# ---------------------------------------------------------------------------
+# ingest.py person --organisation
+# ---------------------------------------------------------------------------
+
+class IngestTest(Workspace):
+    def run_person(self, *args: str):
+        return subprocess.run([sys.executable, str(INGEST), "--root", str(self.root), "--today", "2026-03-10",
+                               "person"] + list(args), capture_output=True, text=True)
+
+    def test_it_writes_the_link_named(self):
+        r = self.run_person("--name", "Kit Avery", "--party", "none", "--organisation", "birch-co")
+        self.assertEqual((0, ""), (r.returncode, r.stderr))
+        self.assertEqual("created\tWikis/Meetings/wiki/people/kit-avery.md", r.stdout.strip())
+        self.assertEqual(
+            '---\ntitle: Kit Avery\ntype: person\nparty: none\norganisation: "[[wiki/entities/birch-co]]"\n'
+            "created: 2026-03-10\nupdated: 2026-03-10\n---\n\n# Kit Avery\n\n"
+            "<Who they are, and which party, in a sentence.>\n", (self.people / "kit-avery.md").read_text())
+
+    def test_by_title_alias_or_link_too(self):
+        for name, value, rel in (("Ana One", "Birch & Co", "birch-co"), ("Ana Two", "birch and co", "birch-co"),
+                                 ("Ana Three", "Larch", "larch-partners"),
+                                 ("Ana Four", "[[wiki/entities/cedar-ltd]]", "cedar-ltd")):
+            path, created = ingest.ensure_person(self.root, name, "none", "2026-03-10", value)
+            self.assertTrue(created)
+            self.assertIn('organisation: "[[wiki/entities/%s]]"' % rel, path.read_text(), value)
+
+    def test_never_an_entity_page_made_and_never_a_guess(self):
+        before = sorted(p.name for p in self.entities.iterdir())
+        r = self.run_person("--name", "Kit Avery", "--party", "none", "--organisation", "Fernway Bank")
+        self.assertEqual(0, r.returncode)
+        self.assertIn("no organisation link: no entity page", r.stderr)
+        self.assertNotIn("organisation", (self.people / "kit-avery.md").read_text())
+        self.assertEqual(before, sorted(p.name for p in self.entities.iterdir()))
+        write(self.entities / "larch-uk.md", entity("Larch", "cedar"))
+        why = []
+        path, _ = ingest.ensure_person(self.root, "Ana Five", "none", "2026-03-10", "Larch", why)
+        self.assertNotIn("organisation", path.read_text())
+        self.assertIn("wiki/entities/larch-partners or wiki/entities/larch-uk", why[0])
+
+    def test_across_a_wall_the_page_is_written_without_it(self):
+        r = self.run_person("--name", "Pat Newcomer", "--party", "acme", "--organisation", "birch-co")
+        self.assertEqual(0, r.returncode)
+        self.assertIn("no organisation link: a wall stands between", r.stderr)
+        text = (self.people / "pat-newcomer.md").read_text()
+        for leak in ("organisation", "birch", "Birch"):
+            self.assertNotIn(leak, text)
+
+    def test_two_hats_and_variant_spelled_duplicates_get_no_link(self):
+        why = []
+        path, _ = ingest.ensure_person(self.root, "Rowan Blake", "none", "2026-03-10", "larch-partners", why)
+        self.assertNotIn("organisation", path.read_text())
+        self.assertIn("both sides of a wall", why[0])
+        write(self.entities / "acme-customer.md", entity("ACME-Corps"))       # Acme's name, no party
+        why = []
+        path, _ = ingest.ensure_person(self.root, "Theo Marsh", "birch", "2026-03-10", "acme-customer", why)
+        self.assertNotIn("organisation", path.read_text())
+        self.assertIn("a wall stands between", why[0])
+
+    def test_an_existing_page_is_left_as_it_is(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect."))
+        before = (self.people / "kit-avery.md").read_text()
+        r = self.run_person("--name", "Kit Avery", "--party", "none", "--organisation", "birch-co")
+        self.assertEqual(0, r.returncode)
+        self.assertTrue(r.stdout.startswith("exists"))
+        self.assertIn("the page was there already", r.stderr)
+        self.assertEqual(before, (self.people / "kit-avery.md").read_text())
+
+
+# ---------------------------------------------------------------------------
+# check.py
+# ---------------------------------------------------------------------------
+
+class CheckTest(Workspace):
+    def test_a_page_owed_the_link_of_where_they_work(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Identity architect at Birch & Co, a customer."))
+        self.assertEqual([("warning", "%s, [[wiki/entities/birch-co]]" % check.NO_EMPLOYER)],
+                         [(f.severity, f.message) for f in self.findings("people")])
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Identity architect at Birch & Co.",
+                                                   "[[wiki/entities/birch-co]]"))
+        self.assertEqual([], self.findings("people"))
+        self.assertEqual([], self.findings("walls"))
+
+    def test_a_line_that_could_mean_two_pages_is_a_question(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "At Larch Partners, then Birch & Co."))
+        self.assertEqual(["%s: [[wiki/entities/birch-co]], [[wiki/entities/larch-partners]]" % check.ORGANISATION_ASK],
+                         [f.message for f in self.findings("people")])
+
+    def test_where_a_wall_stands_nothing_is_said(self):
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant at Birch & Co."))
+        write(self.people / "rowan-blake.md", person("Rowan Blake", "none", "Buyer at Larch Partners."))
+        self.assertEqual([], self.findings("people"))
+
+    def test_a_link_to_no_entity_page_is_warned_as_before(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect.", "[[wiki/entities/birch-and-co]]"))
+        found = self.findings("people")
+        self.assertEqual(1, len(found))
+        self.assertIn("leads to no entity page", found[0].message)
+
+    def test_two_entity_pages_going_by_one_name_are_warned(self):
+        for title, aliases in (("LARCH-partners", ""), ("Larch Partner", ""), ("Lärch Partners", ""),
+                               ("Ledger Co", '["Larch & Partners"]'), ("Ledger Co", "[larch]")):
+            write(self.entities / "variant.md", entity(title, aliases=aliases))
+            found = [f for f in self.findings("meetings") if "entities" in f.path]
+            self.assertEqual({"Wikis/Meetings/wiki/entities/larch-partners.md", "Wikis/Meetings/wiki/entities/variant.md"},
+                             {f.path for f in found}, title)
+            for f in found:
+                self.assertEqual("warning", f.severity)
+                self.assertIn("goes by a name that wiki/entities/", f.message)
+        (self.entities / "variant.md").unlink()
+        self.assertEqual([], [f for f in self.findings("meetings") if "entities" in f.path])
+
+    def test_a_hand_written_link_to_a_variant_spelled_page_is_a_wall_finding(self):
+        write(self.entities / "acme-customer.md", entity("Acmé-Corp"))
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Partner.", "[[wiki/entities/acme-customer]]"))
+        found = self.findings("walls")
+        self.assertEqual(["Wikis/Meetings/wiki/people/theo-marsh.md"], [f.path for f in found])
+        self.assertTrue(found[0].message.endswith("a wall stands between acme and birch"), found[0].message)
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class HookTest(Workspace):
+    """`check.py --staged --walls-only`, the commit hook's check, on a link
+    written by hand."""
+
+    def setUp(self):
+        super().setUp()
+        self.wikis = self.root / "Wikis"
+        git(self.wikis, "init", "-q")
+
+    def staged(self):
+        git(self.wikis, "add", "-A")
+        return sorted((f.severity, f.check, f.path) for f in check.run_checks(self.root, walls_only=True,
+                                                                               staged=self.wikis))
+
+    def commit(self):
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+
+    def refused(self, *names: str):
+        return [("error", "walls", "Wikis/Meetings/wiki/people/%s.md" % n) for n in names]
+
+    def test_the_link_of_where_they_work_passes(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect at Birch & Co.",
+                                                   "[[wiki/entities/birch-co]]"))
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Buyer.", "[[wiki/entities/larch-partners]]"))
+        self.assertEqual([], self.staged())
+
+    def test_a_link_to_a_walled_partys_page_is_refused(self):
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "none", "Partner.", "[[wiki/entities/acme-corp]]"))
+        self.assertEqual(self.refused("pat-newcomer", "theo-marsh"), self.staged())
+        r = subprocess.run([sys.executable, str(TOOLS / "check.py"), "--root", str(self.root), "--staged",
+                            "--walls-only"], cwd=str(self.wikis), capture_output=True, text=True, env=GIT_ENV)
+        self.assertEqual(1, r.returncode, r.stdout + r.stderr)
+
+    def test_a_person_under_two_walled_parties_is_refused_any_link(self):
+        write(self.people / "rowan-blake.md", person("Rowan Blake", "none", "Buyer.", "[[wiki/entities/larch-partners]]"))
+        write(self.people / "soeren-kjaer.md", person("Soeren Kjaer", "cedar", "Engineer.",
+                                                      "[[wiki/entities/cedar-ltd]]"))
+        self.assertEqual(self.refused("rowan-blake", "soeren-kjaer"), self.staged())
+
+    def test_a_link_to_a_variant_spelled_page_of_a_walled_name_is_refused(self):
+        variants = (("ACME-Corp.", ""), ("Acmé Corp", ""), ("Acme Corps", ""), ("Ａcme Corp", ""),
+                    ("Ledger Co", '["Ácme Corp"]'), ("Ledger Co", '["acme and corp"]'))
+        for i, (title, aliases) in enumerate(variants):
+            write(self.entities / ("variant-%d.md" % i), entity(title, aliases=aliases))
+            write(self.people / ("theo-%d.md" % i), person("Theo Marsh", "birch", "Partner.",
+                                                           "[[wiki/entities/variant-%d]]" % i))
+        self.assertEqual(self.refused(*("theo-%d" % i for i in range(len(variants)))), self.staged())
+
+    def test_committing_an_entity_page_that_takes_a_walled_name_reads_the_links_to_its_namesakes(self):
+        write(self.entities / "ledger-co.md", entity("Ledger Co"))
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Partner.", "[[wiki/entities/ledger-co]]"))
+        self.commit()
+        self.assertEqual([], self.staged())
+        write(self.entities / "ledger-co.md", entity("Ledger Co", aliases='["Acme Corp"]'))    # an alias, staged
+        self.assertEqual(self.refused("theo-marsh"), self.staged())
+        write(self.entities / "ledger-co.md", entity("Ledger Co"))
+        self.assertEqual([], self.staged())
+        write(self.entities / "ledger-acme.md", entity("Ledger Co", "acme"))                   # a namesake, staged
+        self.assertEqual(self.refused("theo-marsh"), self.staged())
+
+    def test_a_page_named_after_a_party_is_that_partys_though_it_names_none(self):
+        (self.entities / "acme-corp.md").unlink()
+        write(self.entities / "acme.md", entity("Acme Corp"))                                   # no `party:`
+        write(self.entities / "birchen.md", entity("Birchen Co"))                               # an alias of Birch's
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Partner.", "[[wiki/entities/acme]]"))
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer.", "[[wiki/entities/birchen]]"))
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect.", "[[wiki/entities/acme]]"))
+        self.assertEqual(self.refused("pat-newcomer", "theo-marsh"), self.staged())
+
+
+# ---------------------------------------------------------------------------
+# nurture.py
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class NurtureTest(Workspace):
+    def setUp(self):
+        super().setUp()
+        env = {k: v for k, v in GIT_ENV.items() if k.startswith("GIT_")}
+        env.pop("GIT_DIR", None)
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop("GARRICK_HEADLESS", None)
+        self.wikis = self.root / "Wikis"
+        git(self.wikis, "init", "-q")
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Identity architect at Birch & Co, a customer."))
+        write(self.people / "ana-holt.md", person("Ana Holt", "none", "Analyst at Larch Partners, seconded to Birch & Co."))
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant at Birch & Co."))
+        write(self.people / "rowan-blake.md", person("Rowan Blake", "none", "Buyer at Larch Partners."))
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "none", "Now at Acme Corp."))
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        self.before = {p.name: p.read_text() for p in self.people.glob("*.md")}
+
+    def run_tool(self, *args: str, env=None):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, env or {}), contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(io.StringIO()):
+            code = nurture.main(list(args) + ["--root", str(self.root), "--json", "--today", "2026-10-17"])
+        return code, json.loads(out.getvalue())
+
+    def about(self, items, name: str):
+        """What the run says of a person page, but the wiki lint's orphan, which every page here is."""
+        return [i for i in items if i["path"].endswith("/" + name) and i["check"] != "orphan"]
+
+    def test_one_page_one_proposal_and_an_ambiguous_one_asked(self):
+        _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
+        kit = self.about(out["items"], "kit-avery.md")
+        self.assertEqual([("mechanical", {"op": "organisation", "link": "[[wiki/entities/birch-co]]"})],
+                         [(i["kind"], i["fix"]) for i in kit])
+        ana = self.about(out["items"], "ana-holt.md")
+        self.assertEqual([("attribution", "Where does Ana Holt work: Birch & Co or Larch Partners?")],
+                         [(i["kind"], i["question"]) for i in ana])
+        self.assertEqual(self.before, {p.name: p.read_text() for p in self.people.glob("*.md")})
+
+    def test_across_a_wall_no_proposal_and_no_question(self):
+        _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
+        for name in ("pat-newcomer.md", "rowan-blake.md", "theo-marsh.md"):
+            self.assertEqual([], self.about(out["items"], name), name)
+
+    def test_the_link_on_a_yes_and_only_that_line(self):
+        code, out = self.run_tool("fix", "--scope", "Wikis/Meetings", "--yes")
+        self.assertEqual(0, code, out)
+        self.assertEqual(["kit-avery.md"], [Path(i["path"]).name for i in out["fixed"]
+                                            if i["fix"]["op"] == "organisation"])
+        after = {p.name: p.read_text() for p in self.people.glob("*.md")}
+        old, new = self.before["kit-avery.md"].splitlines(), after["kit-avery.md"].splitlines()
+        self.assertEqual(['organisation: "[[wiki/entities/birch-co]]"'], [l for l in new if l not in old])
+        self.assertEqual(old, [l for l in new if l != 'organisation: "[[wiki/entities/birch-co]]"'])
+        for name in ("ana-holt.md", "pat-newcomer.md", "rowan-blake.md", "theo-marsh.md"):
+            self.assertEqual(self.before[name], after[name], name)
+        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check == "walls"])
+
+    def test_never_overnight(self):
+        for args, env in ((("nightly",), None), (("fix", "--yes"), {"GARRICK_HEADLESS": "1"})):
+            _, out = self.run_tool(*args, env=env)
+            self.assertEqual([], [i for i in out["fixed"] if i["fix"].get("op") == "organisation"])
+        self.assertEqual(self.before, {p.name: p.read_text() for p in self.people.glob("*.md")})
+
+
+if __name__ == "__main__":
+    unittest.main()

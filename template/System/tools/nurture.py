@@ -39,8 +39,9 @@ holds only the key, so it names no file, check or material.
   exactly one live note in the same zone; a note inside a thread's folder
   with no `parent:`, given its thread's, when that thread note is there and
   its name leads nowhere else; a person page in Meetings with no link to the
-  entity page of its party, given `organisation:` as ingest.py writes it on
-  a new page. No fix writes a link to a note across a wall
+  entity page of where the person works, given `organisation:` as ingest.py
+  writes it: the one entity page its first line names, or else its party's;
+  a line that could mean two is asked about, as attribution. No fix writes a link to a note across a wall
   from the note it is in: that one stays for a person. `fix --yes` applies
   them all, one commit per
   repository, of the files it changed and nothing else. A fix whose files
@@ -148,9 +149,10 @@ import correct  # noqa: E402
 from operations import WALL_REFUSAL  # noqa: E402
 from garrick_lib import (  # noqa: E402
     foreign_git_env,
+    entity_names,
     live_files,
     load_context,
-    organisation_link,
+    organisation_proposal,
     parse_frontmatter_text,
     party_entities,
     strip_tag,
@@ -218,6 +220,7 @@ class Ctx:
         self._texts: Dict[Path, List[Tuple[Path, str]]] = {}
         self.light = False                    # sort_item(light=True): a kind without the costly part of a fix
         self._entities: Optional[Dict[str, List[str]]] = None
+        self._entity_index: Optional[List[dict]] = None
 
     def rel(self, path: Path) -> str:
         try:
@@ -531,6 +534,8 @@ PARENT_RE = re.compile(r"^`parent: \[\[(.+)\]\]` leads to no live note$")
 CODE_NOTE_RE = re.compile(r"^names `(.+)` as code; write it as a wikilink")
 NO_PARENT = "no `parent:`, a link to its thread note or hub"
 NO_ORGANISATION = "no `organisation:` link to the entity page of its party"
+NO_EMPLOYER = "no `organisation:` link to the entity page of where they work"
+ORGANISATION_ASK = "no `organisation:` link, and its first line could mean more than one entity page"
 # Ops that write into a page a person wrote by hand: offered on a yes, and
 # never applied in a run with nobody watching, whatever their kind allows.
 ATTENDED_OPS = ("organisation",)
@@ -597,7 +602,7 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
             return codelink_fix(ctx, item, m.group(1))
         if item.message.startswith(NO_PARENT):
             return parent_fix(ctx, item)
-    if item.source == "check" and item.check == "people" and item.message.startswith(NO_ORGANISATION):
+    if item.source == "check" and item.check == "people" and item.message.startswith((NO_ORGANISATION, NO_EMPLOYER)):
         return organisation_fix(ctx, item, path)
     return None
 
@@ -766,25 +771,40 @@ def parent_fix(ctx: Ctx, item: Item) -> Optional[dict]:
     return {"op": "parent", "thread": thread}
 
 
-def organisation_fix(ctx: Ctx, item: Item, path: Path) -> Optional[dict]:
-    """A person page with no link to the entity page of its party gets the
-    one ingest.py writes on a new page, `organisation: "[[wiki/entities/<x>]]"`.
-    It is worked out again here, by garrick_lib's organisation_link(), never
-    taken from the finding: a name the People table places on both sides of a
-    wall, a page naming two parties, or a party two entity pages claim, gets
-    none. It writes into a page written by hand, so it is in ATTENDED_OPS:
-    offered on a yes, never applied with nobody watching."""
+def organisation_proposed(ctx: Ctx, path: Path) -> Tuple[str, List[str], str]:
+    """garrick_lib's organisation_proposal() for a person page, worked out
+    again from the page as it is now, never taken from a finding: ("<link>",
+    [], title) for one, ("", [entity title, ...], title) to ask between, and
+    ("", [], title) for nothing."""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        return None
+        return "", [], path.stem
     fm = parse_frontmatter_text(text)
+    title = str(fm.get("title") or path.stem)
     if not fm or "organisation" in fm:
-        return None
+        return "", [], title
     if ctx._entities is None:
         ctx._entities = party_entities(ctx.root)
-    names = (str(fm.get("title") or path.stem), path.stem)
-    link = organisation_link(ctx.root, ctx.context, names, fm.get("party"), ctx._entities)
+    if ctx._entity_index is None:
+        ctx._entity_index = entity_names(ctx.root)
+    link, choices = organisation_proposal(ctx.root, ctx.context, (title, path.stem), fm.get("party"), text,
+                                          ctx._entities, ctx._entity_index)
+    titles = {e["rel"]: e["title"] for e in ctx._entity_index}
+    return link, [titles.get(c, c) for c in choices], title
+
+
+def organisation_fix(ctx: Ctx, item: Item, path: Path) -> Optional[dict]:
+    """A person page with no `organisation:` gets the one entity page of
+    where the person works (#330): the one its first line names, or else its
+    party's, as ingest.py writes it on a new page, `organisation:
+    "[[wiki/entities/<x>]]"`. One page, one proposal; a line that could mean
+    two is the attribution kind's question. Nothing for a name the People
+    table places on both sides of a wall, a page naming two parties, or an
+    entity page, or one going by its name, of a party walled from the
+    person's. It writes into a page written by hand, so it is in
+    ATTENDED_OPS: offered on a yes, never applied with nobody watching."""
+    link, _, _ = organisation_proposed(ctx, path)
     if not link:
         return None
     item.touches = [item.path]
@@ -984,6 +1004,10 @@ def claim_attribution(ctx: Ctx, item: Item) -> bool:
             q = "Is %s a meeting or an email?" % name
         elif "split-with" in msg:
             q = "Are %s and the pages that share its record one conversation filed twice, or a split?" % name
+    elif c == "people" and msg.startswith(ORGANISATION_ASK):
+        _, choices, title = organisation_proposed(ctx, ctx.root / item.path)
+        if len(choices) > 1:          # worked out again: the finding may be older than the page
+            q = "Where does %s work: %s or %s?" % (title, ", ".join(choices[:-1]), choices[-1])
     elif c == "people":
         if msg.startswith("no `party`") or "is not a tag in the Parties table" in msg:
             q = "Which party does %s belong to?" % name

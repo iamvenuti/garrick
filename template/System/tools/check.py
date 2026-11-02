@@ -116,9 +116,10 @@ from garrick_lib import (  # noqa: E402
     workspace_root,
 )
 from garrick_lib import (  # noqa: E402
-    MEETINGS_ENTITIES, ENTITY_LINK_RE, entity_page, entity_pages, organisation_link, party_entities, people_parties, tag_list,
+    MEETINGS_ENTITIES, ENTITY_LINK_RE, entity_page, entity_pages, party_entities, people_parties, tag_list,
     TODO_ALSO_RE,
 )
+from garrick_lib import entity_names, entity_parties, name_group, organisation_link, organisation_proposal  # noqa: E402  (#330)
 
 
 ERROR = "error"
@@ -257,6 +258,7 @@ class Workspace:
     apart: Optional[set] = None  # what the checks leave out of a project's own files, listed on first use
     raw_records: Optional[Dict[str, List[Path]]] = None  # Meetings raw records by stem, any depth, on first use
     cache: Optional["NoteCache"] = None  # staged mode: what the last commits read, kept between them
+    entity_index: Optional[List[dict]] = None  # Meetings entity pages by name, as staged too, on first use (#330)
 
 
 # ---------------------------------------------------------------------------
@@ -2786,7 +2788,34 @@ def check_entities(ws: Workspace) -> List[Finding]:
                                "names party %s, and so does %s; one entity page per party, and until there is one "
                                "no person page links either" % (tag, others),
                                "Two entity pages stand for one party"))
+    return out + same_named_entities(ws)
+
+
+def same_named_entities(ws: Workspace) -> List[Finding]:
+    """Two entity pages whose titles, `aliases:` or file names are one name,
+    as garrick_lib's org_key() spells it (#330). A first line naming it is
+    asked about rather than proposed, and a person page linking either is
+    read against the parties of both, so the warning says why."""
+    out = []
+    index = entity_index(ws)
+    for e in index:
+        others = sorted(o["rel"] for o in name_group(index, [e["rel"]]) if o["rel"] != e["rel"])
+        if others:
+            out.append(Finding(WARNING, "meetings", rel(ws, e["path"]),
+                               "goes by a name that %s goes by too, in its title, `aliases:` or file name; one entity "
+                               "page per organisation, and until there is one a first line naming it is asked about, "
+                               "and a link to either is read against the parties of both"
+                               % ", ".join("wiki/entities/%s" % o for o in others),
+                               "Two entity pages go by one name"))
     return out
+
+
+def entity_index(ws: Workspace) -> List[dict]:
+    """garrick_lib's entity_names(), once a run, with what git holds for an
+    entity page read beside the disk's in staged mode."""
+    if ws.entity_index is None:
+        ws.entity_index = entity_names(ws.root, ws.git_view)
+    return ws.entity_index
 
 
 def cited_across_walls(ws: Workspace) -> List[Finding]:
@@ -2859,7 +2888,7 @@ def check_people(ws: Workspace) -> List[Finding]:
             out.append(Finding(ERROR, "people", r, problem, "The page for %s has a date in the wrong form" % name))
         if entities is None:
             entities = party_entities(ws.root)
-        out += organisation_findings(ws, page, fm, name, entities)
+        out += organisation_findings(ws, page, fm, name, entities, text)
         if ws.quick:
             continue
         if common is None:
@@ -2878,6 +2907,8 @@ def check_people(ws: Workspace) -> List[Finding]:
 
 
 NO_ORGANISATION = "no `organisation:` link to the entity page of its party"
+NO_EMPLOYER = "no `organisation:` link to the entity page of where they work"
+ORGANISATION_ASK = "no `organisation:` link, and its first line could mean more than one entity page"
 
 
 def organisation_target(ws: Workspace, value) -> Tuple[str, Optional[Path]]:
@@ -2899,40 +2930,60 @@ def organisation_target(ws: Workspace, value) -> Tuple[str, Optional[Path]]:
 def organisation_wall(ws: Workspace, fm: dict, names, entity: Optional[Path]) -> Optional[Tuple[str, str]]:
     """The two parties a wall keeps apart that a person page's `organisation:`
     joins, through the page's own party, the entity page's (on disk and as
-    staged) or the People rows for any name the page goes by; None if none."""
+    staged), those of every entity page that goes by one of its names, with a
+    page naming no party read as the party it is named after (garrick_lib's
+    entity_parties), or the People rows for any name the page goes by; None
+    if none."""
     theirs = set()
     if entity is not None:
         theirs = set(tag_list(parse_frontmatter(entity).get("party")))
         if entity in ws.git_view:
             theirs |= set(tag_list(parse_frontmatter_text(ws.git_view[entity]).get("party")))
+        theirs |= entity_parties(ws.context, same_name(ws, entity))
     every = sorted(set(tag_list(fm.get("party"))) | theirs | people_parties(ws.context, names))
     return next(((a, b) for a in every for b in every if a < b and walled(ws.context, a, b)), None)
 
 
+def same_name(ws: Workspace, entity: Path) -> List[dict]:
+    """The entity pages that go by a name `entity` goes by, itself included
+    (garrick_lib's name_group): a link to one is read against them all."""
+    index = entity_index(ws)
+    here = entity.resolve()
+    return name_group(index, [e["rel"] for e in index if e["path"].resolve() == here])
+
+
 def organisation_findings(ws: Workspace, page: Path, fm: dict, name: str,
-                          entities: Dict[str, List[str]]) -> List[Finding]:
-    """A person page links the entity page of its own party as
-    `organisation:`, where garrick_lib's organisation_link() gives one, and no
-    other. A link that joins two parties a wall keeps apart is the walls
-    check's (organisation_walls), so it is not said here as well."""
+                          entities: Dict[str, List[str]], text: str = "") -> List[Finding]:
+    """A person page links the entity page of where the person works as
+    `organisation:` (#330), whatever its party. One with none is told the
+    link garrick_lib's organisation_proposal() offers, from its first line or
+    else its party's entity page, or that its first line could mean more than
+    one; nothing where a wall stands in the way. A link that joins two
+    parties a wall keeps apart is the walls check's (organisation_walls), so
+    it is not said here as well."""
     r, names = rel(ws, page), (name, page.stem)
-    ours = sorted(set(tag_list(fm.get("party"))))
     if "organisation" not in fm:
-        want = organisation_link(ws.root, ws.context, names, fm.get("party"), entities)
-        return [Finding(WARNING, "people", r, "%s, %s" % (NO_ORGANISATION, want),
-                        "The page for %s does not link its party's entity page" % name)] if want else []
+        want, choices = organisation_proposal(ws.root, ws.context, names, fm.get("party"), text,
+                                              entities, entity_index(ws))
+        if choices:
+            return [Finding(WARNING, "people", r, "%s: %s" % (ORGANISATION_ASK, ", ".join(
+                "[[wiki/entities/%s]]" % c for c in choices)), "Where %s works could be more than one page" % name)]
+        if not want:
+            return []
+        default = want == organisation_link_default(ws, names, fm, entities)
+        return [Finding(WARNING, "people", r, "%s, %s" % (NO_ORGANISATION if default else NO_EMPLOYER, want),
+                        "The page for %s does not link the entity page of %s" % (name, "its party" if default
+                                                                                 else "where they work"))]
     problem, entity = organisation_target(ws, fm.get("organisation"))
     if problem:
-        return [Finding(WARNING, "people", r, problem, "The page for %s links its party's entity page wrongly" % name)]
-    if organisation_wall(ws, fm, names, entity):
-        return []
-    theirs = sorted(set(tag_list(parse_frontmatter(entity).get("party"))))
-    if theirs != ours:
-        return [Finding(WARNING, "people", r, "`organisation:` links the entity page of %s, and the page names %s; it "
-                        "links its own party's entity page or none" % (", ".join(theirs) or "no party",
-                                                                      ", ".join(ours) or "no party"),
-                        "The page for %s links another party's entity page" % name)]
+        return [Finding(WARNING, "people", r, problem, "The page for %s links its entity page wrongly" % name)]
     return []
+
+
+def organisation_link_default(ws: Workspace, names, fm: dict, entities: Dict[str, List[str]]) -> str:
+    """#319's link, the entity page of the page's own party, which holds when
+    the page's first line names no entity page."""
+    return organisation_link(ws.root, ws.context, names, fm.get("party"), entities, entity_index(ws))
 
 
 def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Finding]:
@@ -2972,6 +3023,9 @@ def staged_people(ws: Workspace, staged: List[Tuple[Path, str]]) -> List[Tuple[P
     entities = {path.resolve() for path, _ in staged if under(path, MEETINGS_ENTITIES)}
     if not entities:
         return out
+    # A link to any page that goes by a staged page's name is read with it (#330).
+    for page in list(entities):
+        entities |= {e["path"].resolve() for e in same_name(ws, page)}
     have = {path.resolve() for path, _ in out}
     for page, text in person_pages(ws):
         if page.resolve() in have:

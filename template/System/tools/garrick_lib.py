@@ -124,6 +124,15 @@ __all__ = [
     "person_forms",
     "people_parties",
     "organisation_link",
+    "org_words",
+    "org_key",
+    "entity_names",
+    "name_group",
+    "entity_parties",
+    "named_in",
+    "first_line",
+    "organisation_named",
+    "organisation_proposal",
     "workspace_root",
     "SKIP_DIRS",
     "NOT_LIVE_DIR_RE",
@@ -1121,15 +1130,28 @@ def name_words(name) -> List[str]:
     return re.findall(r"[a-z0-9]+", text)
 
 
+# Two letters a reader writes for one: ü as ue, ö and ø as oe, ä and æ as ae,
+# ß as ss. Each is folded to its first letter, on both sides of a comparison,
+# so `Soeren Kjaer` meets `Søren Kjær` and `Gruen` meets `Grün` (#330).
+_PAIRS = (("ae", "a"), ("oe", "o"), ("ue", "u"), ("ss", "s"))
+
+
+def _fold_pairs(word: str) -> str:
+    for a, b in _PAIRS:
+        word = word.replace(a, b)
+    return word
+
+
 def _name_readings(name) -> List[List[str]]:
     """A name's words as written, and, where one comma splits it in two, read
-    the other way round too, so `Whitlock, Dana` is also `Dana Whitlock`."""
+    the other way round too, so `Whitlock, Dana` is also `Dana Whitlock`.
+    Each word has its two-letter spellings of one letter folded (_PAIRS)."""
     text = str(name or "")
     out = [name_words(text)]
     head, comma, tail = text.partition(",")
     if comma and "," not in tail:
         out.append(name_words(tail) + name_words(head))
-    return [w for w in out if w]
+    return [[_fold_pairs(x) for x in w] for w in out if w]
 
 
 def name_keys(name) -> set:
@@ -1202,17 +1224,24 @@ def people_parties(context: dict, names) -> set:
 
 
 def organisation_link(root: PathLike, context: dict, names, party,
-                      entities: Optional[Dict[str, List[str]]] = None) -> str:
-    """The `organisation:` a person page carries, `[[wiki/entities/<rel>]]`,
-    or "" when it carries none. `names` is the person's name, or the names a
-    page goes by (its title and its file name). Fail closed, at every step:
+                      entities: Optional[Dict[str, List[str]]] = None,
+                      index: Optional[List[dict]] = None) -> str:
+    """The `organisation:` a person page carries by default, the entity page
+    of its own party, `[[wiki/entities/<rel>]]`, or "" when it carries none.
+    `names` is the person's name, or the names a page goes by (its title and
+    its file name). Where a page's first line or the user says where the
+    person works, organisation_proposal() and organisation_named() decide
+    instead (#330); this is what holds when nothing else is known. Fail
+    closed, at every step:
 
     - the page names exactly one party, a tag in the Parties table, not `none`;
     - where the People table has rows for the name, under any name the row
       goes by and in any short form names_meet() reads as it, one of them is
       that party, and no two of them are walled from each other: one page a
       name shares between two hats links neither hat's entity page;
-    - exactly one entity page stands for that party alone.
+    - exactly one entity page stands for that party alone;
+    - no entity page that goes by the same name (name_group) names a party
+      walled from it, or two parties walled from each other.
     """
     tags = sorted(set(tag_list(party)))
     if len(tags) != 1 or tags[0] == "none" or tags[0] not in context.get("parties", {}):
@@ -1221,7 +1250,229 @@ def organisation_link(root: PathLike, context: dict, names, party,
     if rows and (tag not in rows or any(walled(context, a, b) for a in rows for b in rows)):
         return ""
     pages = (party_entities(root) if entities is None else entities).get(tag, [])
-    return "[[wiki/entities/%s]]" % pages[0] if len(pages) == 1 else ""
+    if len(pages) != 1:
+        return ""
+    group = name_group(entity_names(root) if index is None else index, [pages[0]])
+    if _any_wall(context, {tag} | rows | entity_parties(context, group)):
+        return ""
+    return "[[wiki/entities/%s]]" % pages[0]
+
+
+# ---------------------------------------------------------------------------
+# Meetings: the entity page of where a person works (#330)
+# ---------------------------------------------------------------------------
+#
+# A person page's `party:` names whose confidence it holds, not where the
+# person works. `organisation:` names the employer's entity page, whatever
+# the party: from `ingest.py person --organisation`, or proposed by Nurture
+# from the page's first line, "Identity architect at Birch & Co". An entity
+# page is found by its title, its `aliases:` and its file name, spelled
+# loosely (org_words), and every page that goes by the same name is read
+# with it: a link to one is a link to the name, so a second page under a
+# variant spelling, with no `party:`, cannot carry a link past a wall that
+# the first page's party would stop. An entity page with no `party:` is
+# walled from nobody, unless it is named after a party (entity_parties).
+
+def org_words(name) -> List[str]:
+    """An organisation's name as words spelled so that its variants meet:
+    name_words() (case, accents, ø, æ, ß, full-width letters, any mark
+    between words), then `and` dropped, so `&` and `and` meet, each two-letter
+    spelling of one letter folded (_PAIRS), and a plural's `s`, or `ies`
+    for `y`, taken off. Loose on purpose: two pages it puts under one name are
+    read as one name, which errs toward a question or a wall."""
+    out = []
+    for w in name_words(name):
+        if w == "and":
+            continue
+        w = _fold_pairs(w)
+        if len(w) > 3 and w.endswith("ies"):
+            w = w[:-3] + "y"
+        elif len(w) > 2 and w.endswith("s"):
+            w = w[:-1]
+        out.append(w)
+    return out
+
+
+def org_key(name) -> str:
+    """The key two spellings of one organisation's name share: org_words()
+    run together, so `Birch-Co`, `BirchCo` and `Birch & Co` meet."""
+    return "".join(org_words(name))
+
+
+def _as_values(value) -> List[str]:
+    values = value if isinstance(value, list) else [value] if value not in (None, "") else []
+    return [str(v).strip() for v in values if str(v).strip()]
+
+
+def entity_names(root: PathLike, texts: Optional[Dict[Path, str]] = None) -> List[dict]:
+    """Every entity page under the Meetings wiki's `wiki/entities/`, as
+    {rel, path, title, names, keys, parties}: the names it goes by (its
+    title, its file name, each of its `aliases:`), their org_key()s, and
+    every tag its `party:` or `parties:` names but `none`. `texts` is what
+    git holds for a page, where it differs from the disk: both are read, and
+    what either says counts."""
+    out = []
+    for rel, page in entity_pages(root):
+        views = [parse_frontmatter(page)]
+        if texts and page in texts:
+            views.append(parse_frontmatter_text(texts[page]))
+        names, parties, title = [Path(rel).name], set(), ""
+        for fm in views:
+            said = str(fm.get("title") or "").strip()
+            title = title or said
+            names += ([said] if said else []) + _as_values(fm.get("aliases")) + _as_values(fm.get("alias"))
+            parties |= set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties")))
+        keys = {org_key(n) for n in names} - {""}
+        out.append({"rel": rel, "path": page, "title": title or Path(rel).name, "names": names, "keys": keys,
+                    "parties": parties - {"none"}})
+    return out
+
+
+def name_group(index: List[dict], rels) -> List[dict]:
+    """The entity pages `rels` name, and every other that goes by one of their
+    names, by org_key(): what a link to any of them stands for."""
+    rels = set(rels)
+    keys = set().union(set(), *(e["keys"] for e in index if e["rel"] in rels))
+    return [e for e in index if e["rel"] in rels or e["keys"] & keys]
+
+
+def entity_parties(context: dict, group: List[dict]) -> set:
+    """The parties a wall reads for a group of entity pages: each page's own
+    `party:` and `parties:`, and, for a page naming none, every party whose
+    name in the Parties table, or a heard form the Aliases table gives for
+    that name, is one the page goes by (org_key). A page called `Birch & Co`
+    is Birch's whether or not it says so; a customer's page is nobody's."""
+    out = set()
+    named: Optional[Dict[str, set]] = None
+    for e in group:
+        if e["parties"]:
+            out |= e["parties"]
+            continue
+        if named is None:
+            named = {}
+            for tag, row in context.get("parties", {}).items():
+                said = org_key(row.get("party") if isinstance(row, dict) else row)
+                keys = {said} | {org_key(heard) for heard, means in context.get("aliases", {}).items()
+                                 if org_key(means) == said}
+                named[tag] = keys - {""}
+        out |= {tag for tag, keys in named.items() if keys & e["keys"]}
+    return out
+
+
+def _any_wall(context: dict, tags: set) -> bool:
+    return any(walled(context, a, b) for a in tags for b in tags if a < b)
+
+
+def named_in(line: str, index: List[dict]) -> List[str]:
+    """The rel of each entity page a line names, by any name it goes by, as
+    org_words() spell them, word for word or run together (`Birch-Co`). A
+    name inside a longer one named there gives way to it: `Acme Labs` is
+    not `Acme` as well."""
+    words = org_words(line)
+    spans = []
+    for e in index:
+        for key in e["keys"]:
+            for i in range(len(words)):
+                run = ""
+                for j in range(i, len(words)):
+                    run += words[j]
+                    if run == key:
+                        spans.append((i, j + 1, e["rel"]))
+                    if not key.startswith(run):
+                        break
+    keep = {r for a, b, r in spans
+            if not any(x <= a and b <= y and y - x > b - a for x, y, _ in spans)}
+    return sorted(keep)
+
+
+def first_line(text: str) -> str:
+    """The first line of a page's body that says something: not its
+    frontmatter, a heading, a blank line, or a line in angle brackets left
+    for someone to fill in."""
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    if text.startswith("---"):
+        m = re.match(r"---[^\n]*\n.*?\n(?:---|\.\.\.)[^\n]*(?:\n|$)", text, re.S)
+        text = text[m.end():] if m else text
+    for line in text.splitlines():
+        said = line.strip()
+        if said and not said.startswith("#") and not (said.startswith("<") and said.endswith(">")):
+            return said
+    return ""
+
+
+def _person_tags(context: dict, names, party) -> Optional[set]:
+    """The parties a person page answers to, or None when it may link
+    nothing: exactly one tag, `none` or one in the Parties table, and no two
+    of it and the People table's rows for the name walled from each other."""
+    tags = sorted(set(tag_list(party)))
+    if len(tags) != 1 or (tags[0] != "none" and tags[0] not in context.get("parties", {})):
+        return None
+    every = ({tags[0]} - {"none"}) | people_parties(context, names)
+    return None if _any_wall(context, every) else every
+
+
+def organisation_named(root: PathLike, context: dict, names, party, entity: str,
+                       index: Optional[List[dict]] = None) -> Tuple[str, str]:
+    """The `organisation:` for an entity the user named, as `ingest.py person
+    --organisation` takes it: its file name in `wiki/entities/` (`birch-co`),
+    its link, or a title or alias one page alone goes by. ("<link>", "") or
+    ("", why there is none). Never an entity page made here: one not found is
+    said so. Fail closed, as organisation_proposal() is, on the person's
+    party, on two hats, and on the entity's name group."""
+    index = entity_names(root) if index is None else index
+    value = entity.strip()
+    m = ENTITY_LINK_RE.match(value)
+    value = m.group(1) if m else value
+    value = value[len("wiki/entities/"):] if value.startswith("wiki/entities/") else value
+    value = value[:-3] if value.endswith(".md") else value
+    page = next((e for e in index if e["rel"] == value), None) if entity_page(root, value) else None
+    if page is None:
+        hits = [e for e in index if org_key(value) and org_key(value) in e["keys"]]
+        if not hits:
+            return "", "no entity page in wiki/entities/ goes by %s; one is written by hand, never here" % entity
+        if len(hits) > 1:
+            return "", "%s could be %s; name one by its file name" % (
+                entity, " or ".join("wiki/entities/%s" % e["rel"] for e in hits))
+        page = hits[0]
+    every = _person_tags(context, names, party)
+    if every is None:
+        return "", "the page names no one known party, or the People table has the name on both sides of a wall"
+    if _any_wall(context, every | entity_parties(context, name_group(index, [page["rel"]]))):
+        return "", "a wall stands between this person and that entity page"
+    return "[[wiki/entities/%s]]" % page["rel"], ""
+
+
+def organisation_proposal(root: PathLike, context: dict, names, party, text: str,
+                          entities: Optional[Dict[str, List[str]]] = None,
+                          index: Optional[List[dict]] = None) -> Tuple[str, List[str]]:
+    """What a person page with no `organisation:` is offered: ("<link>", [])
+    for one, ("", [rel, ...]) for the entity pages to ask between, or ("", [])
+    for nothing. From the page's first line (first_line), matched against
+    every entity page's names (named_in): one page, one proposal; two pages
+    named, or one name two pages go by, asked about. Where the line names
+    none, #319's default, the entity page of the page's party
+    (organisation_link). Nothing at all, and no question, when:
+
+    - the page names no party, several, or one not in the Parties table;
+    - the People table has the name under two walled parties, or under one
+      walled from the page's;
+    - any entity page the line names, or one going by the same name, names a
+      party walled from the person's, or two walled from each other.
+    """
+    every = _person_tags(context, names, party)
+    if every is None:
+        return "", []
+    index = entity_names(root) if index is None else index
+    named = named_in(first_line(text), index)
+    if not named:
+        return organisation_link(root, context, names, party, entities, index), []
+    group = name_group(index, named)
+    if _any_wall(context, every | entity_parties(context, group)):
+        return "", []
+    if len(group) == 1:
+        return "[[wiki/entities/%s]]" % group[0]["rel"], []
+    return "", [e["rel"] for e in group]
 
 
 # ---------------------------------------------------------------------------

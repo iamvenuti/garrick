@@ -292,7 +292,9 @@ class CheckTest(Workspace):
         for f in found:
             self.assertEqual("warning", f.severity)
             self.assertIn("names party acme, and so does", f.message)
-        self.assertEqual([], self.findings("people"))                     # so Dana is owed no link
+        # So Dana is owed no link by her party; her first line names Acme Corp, which one page goes by (#330).
+        self.assertEqual(["%s, [[wiki/entities/acme-corp]]" % check.NO_EMPLOYER],
+                         [f.message for f in self.findings("people")])
 
     def test_an_entity_page_naming_an_unknown_party_is_warned(self):
         write(self.entities / "fernway.md", entity("fernway", "Fernway"))
@@ -306,12 +308,14 @@ class CheckTest(Workspace):
         self.assertEqual(1, len(found))
         self.assertIn("leads to no entity page", found[0].message)
 
-    def test_a_link_to_another_partys_entity_page(self):
+    def test_a_link_to_another_partys_entity_page_is_where_they_work(self):
+        """#330: `organisation:` names where the person works, whatever the
+        page's party, so another party's entity page no wall divides from
+        it is no finding."""
         write(self.entities / "cedar-ltd.md", entity("cedar", "Cedar Ltd"))
         write(self.people / "dana-whitlock.md", person("Dana Whitlock", "acme", "[[wiki/entities/cedar-ltd]]"))
-        found = self.findings("people")
-        self.assertEqual(1, len(found))
-        self.assertIn("links the entity page of cedar, and the page names acme", found[0].message)
+        self.assertEqual([], self.findings("people"))
+        self.assertEqual([], self.findings("walls"))
 
     def test_a_link_across_a_wall_is_a_wall_finding(self):
         write(self.entities / "birch-co.md", entity("birch", "Birch & Co"))

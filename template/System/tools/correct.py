@@ -301,7 +301,7 @@ def superseded(text: str, new: str, why: str, today: str) -> str:
         _day(today), new, " " + why.strip() if why.strip() else "")
     lines = text.split("\n")
     if lines and lines[0].strip() == "---":
-        end = next((i for i in range(1, len(lines)) if lines[i].strip() in ("---", "...")), None)
+        end = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r") in ("---", "...")), None)
         if end is not None and not any(re.match(r"superseded\s*:", l) for l in lines[1:end]):
             lines.insert(end, "superseded: %s" % _quoted(reason))
     else:

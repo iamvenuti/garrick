@@ -296,23 +296,31 @@ def _scalar(value: str):
     return _unquote(value)
 
 
-def _frontmatter_body(text: str) -> Optional[List[str]]:
-    """The lines between the `---` that opens `text` and the one that closes
-    its frontmatter, or None when it has none."""
+def _frontmatter_lines(text: str) -> List[str]:
+    """`text` as lines, ended where a YAML reader ends them: at \n, \r\n or
+    a lone \r. str.splitlines() also breaks at U+2028, U+2029, U+0085 and
+    the like, which YAML reads as text, so a quoted value holding one could
+    hide every key after it from this reader and from no other (#330)."""
     if text.startswith("\ufeff"):
         text = text[1:]
-    # Lines end where a YAML reader ends them: at \n, \r\n or a lone \r.
-    # str.splitlines() also breaks at U+2028, U+2029, U+0085 and the like,
-    # which YAML reads as text, so a quoted value holding one could hide
-    # every key after it from this reader and from no other (#330).
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     if lines and lines[-1] == "":
         lines.pop()
+    return lines
+
+
+def _frontmatter_body(text: str) -> Optional[List[str]]:
+    """The lines between the `---` that opens `text` and the one that closes
+    its frontmatter, or None when it has none. Only a line that is `---` or
+    `...` and nothing else, at the left margin, closes it, as YAML reads a
+    document's end: an indented `---` inside a block scalar, or one with
+    anything after it, does not (#330)."""
+    lines = _frontmatter_lines(text)
     if not lines or lines[0].strip() != "---":
         return None
     body = []
     for line in lines[1:]:
-        if line.strip() in ("---", "..."):
+        if line in ("---", "..."):
             return body
         body.append(line)
     return None  # never closed: not frontmatter
@@ -332,28 +340,88 @@ _NODE_OPENERS = ('"', "'", "?", "!", "&", "*", "<<", "{", "[")
 WALLS_KEYS = ("party", "parties", "zone")
 
 
+_ITEM_LINE = re.compile(r"-(?:[ \t]+(.*))?$")
+
+
+def _value_problem(value: str) -> str:
+    """What makes one value, its ` # comment` taken off, readable two ways,
+    or "": a YAML node marker this reader takes for text (a block scalar
+    `|` or `>`, a tag `!`, an anchor `&`, an alias `*`), a flow list that
+    does not close on its line, or a quote that does not close on it."""
+    if value[:1] in ("|", ">", "!", "&", "*"):
+        return "opens with `%s`, which a YAML reader takes for more than the text" % value[0]
+    if value.startswith("[") and not value.endswith("]"):
+        return "opens a list that does not close on its line"
+    if value[:1] in ('"', "'"):
+        closed = re.match(r'"(?:[^"\\]|\\.)*"' if value[0] == '"' else r"'(?:[^']|'')*'", value)
+        if closed is None:
+            return "opens a quote that does not close on its line"
+        if value[closed.end():].strip():
+            return "has text after its closing quote"
+    return ""
+
+
 def frontmatter_form_problem(text: str, keys: Optional[Tuple[str, ...]] = None) -> str:
-    """What makes the frontmatter of `text` readable two ways, or "": a line
-    at the left margin that opens with one of _NODE_OPENERS, or a key given
-    twice, of which YAML keeps the last and this reader may keep another.
-    With `keys`, only those count twice. Not the person page's strict shape
-    (check.py's person_shape_problem): only what puts a key past this reader
-    (#330)."""
+    """What makes the frontmatter of `text` readable two ways, or "" (#330):
+    a frontmatter that opens with `---` and is closed by no line of `---`
+    or `...` alone; a line at the left margin that opens with one of
+    _NODE_OPENERS; a key given twice, of which YAML keeps the last and this
+    reader may keep another; a value that opens with a YAML node marker, or a
+    list or a quote it does not close on its line (_value_problem); or an
+    indented line, or a `- item`, anywhere but as an item straight under a
+    key with no value, where YAML would read it as more of the value and
+    this reader reads nothing. With `keys`, only those keys' values, lines
+    and repeats count (the opening lines count on every page). Not the
+    person page's strict shape (check.py's person_shape_problem)."""
+    lines = _frontmatter_lines(text)
+    opened = bool(lines) and lines[0].strip() == "---"
     body = _frontmatter_body(text)
-    seen = set()
+    if opened and body is None and (keys is None or any(l.strip() in ("---", "...") for l in lines[1:])):
+        return "no line of `---` alone, at the left margin, closes it"
+
+    def counts(key: Optional[str]) -> bool:
+        return key is None or keys is None or key in keys
+    seen, key, empty = set(), None, False          # the last key, and whether its value was empty
     for line in body or []:
-        if not line.strip() or line[:1].isspace() or line.startswith("#"):
+        if not line.strip():
+            continue
+        margin = not line[:1].isspace()
+        bare = line.lstrip()
+        if margin and bare.startswith("#"):
+            continue
+        item = _ITEM_LINE.match(bare)
+        if item:
+            if not (key is not None and empty):
+                if counts(key):
+                    return "a `- item` line stands under %s" % ("`%s`, which has a value" % key if key else "no key")
+                continue
+            if counts(key):
+                problem = _value_problem(_strip_comment(item.group(1) or ""))
+                if problem:
+                    return "an item of `%s` %s" % (key, problem)
+            continue
+        if not margin:
+            if counts(key):
+                return "an indented line stands under %s, which a YAML reader reads as part of it" % (
+                    "`%s`" % key if key else "no key")
             continue
         if line.startswith(_NODE_OPENERS):
             opener = next(o for o in _NODE_OPENERS if line.startswith(o))
             return "a line opens with `%s`, which a YAML reader takes for a key written another way" % opener
         m = _KEY_RE.match(line)
         if m is None:
+            key, empty = None, False
             continue
         key = m.group(1)
-        if key in seen and (keys is None or key in keys):
+        if key in seen and counts(key):
             return "`%s` is given twice, and a YAML reader keeps the last" % key
         seen.add(key)
+        value = _strip_comment(m.group(2))
+        empty = value == ""
+        if counts(key):
+            problem = _value_problem(value)
+            if problem:
+                return "`%s` %s" % (key, problem)
     return ""
 
 
@@ -939,7 +1007,7 @@ def memory_origin(text: str) -> dict:
     block: List[str] = []
     inside = False
     for line in text.lstrip("﻿").splitlines()[1:]:
-        if line.strip() in ("---", "..."):
+        if line in ("---", "..."):
             break
         if inside:
             if line.strip() and not line[:1].isspace():
@@ -3363,7 +3431,7 @@ def _strip_text_recipients(text: str, own: Iterable[str]) -> str:
     dropping = False
     in_header, seen_body = True, False       # the body may open with a header block
     for i, line in enumerate(lines):
-        if in_fm and i > 0 and line.strip() in ("---", "..."):
+        if in_fm and i > 0 and line.rstrip("\r\n") in ("---", "..."):
             in_fm, dropping = False, False
             keep.append(line)
             continue
@@ -3508,7 +3576,7 @@ def _parse_text(text: str) -> dict:
     fm = parse_frontmatter_text(text)
     lines = text.splitlines()
     if fm:
-        end = next(i for i, l in enumerate(lines[1:], 1) if l.strip() in ("---", "..."))
+        end = next(i for i, l in enumerate(lines[1:], 1) if l in ("---", "..."))
         headers = {k.lower(): [", ".join(v) if isinstance(v, list) else str(v)] for k, v in fm.items() if v}
         body_lines = lines[end + 1:]
     else:

@@ -454,7 +454,7 @@ def frontmatter(path: Path, ws: Optional[Path] = None) -> dict:
     out: dict = {}
     key = None
     for line in lines[1:]:
-        if line.strip() in ("---", "..."):
+        if line in ("---", "..."):             # a `---` alone at the margin closes it, as for YAML
             break
         item = re.match(r"^\s*-\s+(.*)$", line)
         if item and key is not None:

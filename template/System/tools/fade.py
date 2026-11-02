@@ -1691,7 +1691,7 @@ def keep(root: Path, given: str, today: Optional[datetime.date] = None) -> dict:
     if not page.pinned:
         lines = text.split("\n")
         if lines and lines[0].strip() == "---":
-            end = next((i for i in range(1, len(lines)) if lines[i].strip() in ("---", "...")), None)
+            end = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r") in ("---", "...")), None)
             if end is None:
                 raise Refused("%s has frontmatter that does not read." % page.path)
             at = next((i for i in range(1, end) if re.match(r"pinned\s*:", lines[i])), None)

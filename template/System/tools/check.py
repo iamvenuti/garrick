@@ -420,12 +420,33 @@ def meeting_view(ws: "Workspace", page: Path, fm: dict, text: Optional[str] = No
     """A meeting page's frontmatter as the walls read it: without its zone and
     parties, so unfinished, when the frontmatter can be read two ways
     (frontmatter_form_problem), since a YAML reader may find other parties
-    there. Fail closed: nothing on it is used until it is plain."""
+    there, or when a party or its zone is one the walls do not know
+    (walls_value_problem). Fail closed: nothing on it is used until then."""
     problem = frontmatter_form_problem(text) if text is not None else note_form(ws, page)
-    if not problem:
+    if not problem and not walls_value_problem(ws, fm):
         return fm
     ws.misread.add(page)
     return {k: v for k, v in fm.items() if k not in ("parties", "zone")}
+
+
+WALLS_VALUE = "the walls read no party or zone they know here"
+
+
+def walls_value_problem(ws: "Workspace", fm: dict) -> str:
+    """Which of the keys the walls read holds a value they do not know, or
+    "": a `party:` or `parties:` value that is no tag in the Parties table
+    nor `none`, or a `zone:` that is no zone of the workspace. Such a value
+    is read as no party, which would turn the walls off where a YAML reader,
+    or the writer, meant one; so it turns them on (#330)."""
+    for key in ("party", "parties"):
+        for v in as_list(fm.get(key)):
+            tag = strip_tag(str(v))
+            if tag and tag != "none" and tag not in ws.context["parties"]:
+                return "`%s:` names no tag from the Parties table, nor `none`" % key
+    zone = fm.get("zone")
+    if zone not in (None, "") and (not isinstance(zone, str) or zone.strip() not in {z.name for z in ws.zones}):
+        return "`zone:` names no zone of this workspace"
+    return ""
 
 
 def folder_elsewhere(ws: "Workspace", project: Path, where: Path) -> str:
@@ -3524,7 +3545,7 @@ def transcript_text(path: Path, text: str) -> str:
 def body_of(text: str) -> str:
     """Text without its frontmatter."""
     if text.startswith("---"):
-        m = re.match(r"---[^\n]*\n.*?\n(?:---|\.\.\.)[^\n]*(?:\n|$)", text, re.S)
+        m = re.match(r"---[^\n]*\n.*?\n(?:---|\.\.\.)\r?(?:\n|$)", text, re.S)
         if m:
             return text[m.end():]
     return text
@@ -3537,7 +3558,7 @@ def without_party_field(text: str) -> str:
     lines = text.split("\n")
     in_party = False
     for i, line in enumerate(lines[1:], 1):
-        if line.strip() in ("---", "..."):
+        if line.rstrip("\r") in ("---", "..."):        # a `---` alone at the margin ends it, as for YAML
             break
         if re.match(r"party\s*:", line):
             lines[i], in_party = "", True
@@ -4862,11 +4883,14 @@ def form_candidates(ws: Workspace) -> List[Path]:
 def form_findings(ws: Workspace, pages: List[Tuple[Path, Optional[str]]]) -> List[Finding]:
     """A page the walls read (form_scope) whose frontmatter can be read two
     ways (garrick_lib's frontmatter_form_problem): a key quoted, tagged,
-    written with `?`, anchored, aliased, merged or in a flow, or given twice.
-    YAML honours each, and keeps the last of two, so the page could say one
-    party to the walls and another to every other reader. Refused, by the
-    full check and the commit hook (#330). Each is (path, its text, or None
-    to read it from disk)."""
+    written with `?`, anchored, aliased, merged or in a flow, or given twice;
+    a value opening a block, a tag, an anchor, an alias, or a list or quote
+    not closed on its line; an indented line YAML reads as more of a value;
+    or a frontmatter no plain `---` line closes. YAML honours each, so the
+    page could say one party to the walls and another to every other
+    reader. Or one whose party or zone the walls do not know
+    (walls_value_problem). Refused, by the full check and the commit hook
+    (#330). Each is (path, its text, or None to read it from disk)."""
     out = []
     for path, text in pages:
         scope = form_scope(ws, path)
@@ -4878,6 +4902,13 @@ def form_findings(ws: Workspace, pages: List[Tuple[Path, Optional[str]]]) -> Lis
             out.append(Finding(ERROR, "walls", rel(ws, path),
                                "%s: %s; write each key once, at the left margin, as `key: value`"
                                % (FRONTMATTER_PLAIN, problem), "A page's frontmatter can be read two ways"))
+            continue
+        fm = parse_frontmatter_text(text) if text is not None else note_frontmatter(ws, path)
+        problem = walls_value_problem(ws, fm)
+        if problem:
+            out.append(Finding(ERROR, "walls", rel(ws, path),
+                               "%s: %s; until it does, the walls read nothing on it as safe to use"
+                               % (WALLS_VALUE, problem), "A page names a party or zone the walls do not know"))
     return out
 
 

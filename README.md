@@ -22,7 +22,7 @@ Your folders stay as they are. Garrick reads them and writes nothing there unles
 
 https://github.com/user-attachments/assets/7c05ec23-577d-4bf2-9275-81f9b70767cc
 
-*The walkthrough, 98 seconds, with [captions](docs/assets/garrick-launch-video.srt). Dramatised with fictional data; it illustrates the intended workflow.*
+*The walkthrough, 54 seconds, with [captions](docs/assets/garrick-launch-video.srt). Recorded in Garrick 0.51.0 on the demo workspace, whose people and companies are made up.*
 
 ## Start small
 

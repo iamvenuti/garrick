@@ -105,7 +105,9 @@ One meeting at a time, even when several files are waiting.
    hand, not regenerated). If the command printed `created`, replace the
    angle-bracket line with who they are and which party, in one sentence.
    Nothing learned in a meeting goes on a person page: it is read on both
-   sides of every wall.
+   sides of every wall. Its frontmatter is plain `key: value` lines, with
+   `- item` lines under a key with no value; the walls check refuses any
+   other shape, since a YAML reader can find a link in one.
    **The link to where they work.** A new page links the entity page of
    the person's employer in its frontmatter, `organisation:
    "[[wiki/entities/<slug>]]"`, whatever their party: a customer's architect

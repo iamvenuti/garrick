@@ -104,8 +104,11 @@ thread whose name another note shares.
    ```sh
    python3 System/tools/nurture.py organisation --path "<person page>" --yes [--entity "<entity>"]
    ```
-   It works the link out again, refuses one across a wall, commits that page
-   through its repository's wall check and records the answer. Never batch
+   It works the link out again, refuses one across a wall, runs the walls
+   check on that page's change as staged and commits it only if that
+   passes, since `Wikis/` has no commit hook unless you added one, and
+   records the answer. It refuses a page whose frontmatter is not plain
+   `key: value` lines, or that has an organisation line already. Never batch
    these, and never run it for a page the user has not said yes to.
    "Skip" leaves it in the report. Never guess.
 6. **Judgment.** Name each with the page to open, and change nothing,

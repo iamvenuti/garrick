@@ -446,7 +446,9 @@ def frontmatter(path: Path, ws: Optional[Path] = None) -> dict:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    lines = text.lstrip("﻿").splitlines()
+    # Lines end where garrick_lib's parse_frontmatter_text ends them, as YAML
+    # does: at \n, \r\n or a lone \r, never at U+2028 and the like (#330).
+    lines = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     if not lines or lines[0].strip() != "---":
         return {}
     out: dict = {}

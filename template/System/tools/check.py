@@ -1709,6 +1709,7 @@ def check_threads(ws: Workspace) -> List[Finding]:
     out = []
     for project, pfm in ws.projects:
         ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+        written: List[Tuple[str, set, str, str]] = []  # threads with a party, none walled from the hub's
         for thread in visible_dirs(project / "Threads"):
             note = thread / (thread.name + ".md")
             r = rel(ws, note)
@@ -1761,11 +1762,41 @@ def check_threads(ws: Workspace) -> List[Finding]:
             for tag in sorted(ttags - set(ws.context["parties"])):
                 out.append(Finding(ERROR, "threads", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Thread %s names an unknown party" % spoken))
-            if ttags and ptags and ttags != ptags:
+            # A thread may hold a confidence its project does not, so it may
+            # name a party the hub lacks; only a party across a wall from the
+            # hub's says the thread is filed under the wrong project.
+            own = wall_pair(ws, ttags, ttags)
+            if ttags and ptags and wall_pair(ws, ttags, ptags):
                 out.append(Finding(WARNING, "threads", r,
                                    "`party` %s differs from the project's %s" % (", ".join(sorted(ttags)), ", ".join(sorted(ptags))),
-                                   "Thread %s names a different party from its project" % spoken))
+                                   "Thread %s names a party walled from its project's" % spoken))
+            elif own:
+                out.append(Finding(WARNING, "threads", r,
+                                   "`party` %s holds both sides of a wall; a wall stands between %s and %s"
+                                   % ((", ".join(sorted(ttags)),) + own),
+                                   "Thread %s names two parties a wall keeps apart" % spoken))
+            elif ttags:
+                written.append((thread.name, ttags, r, spoken))
+        # Two threads of one project written for parties walled from each
+        # other: the project's notes would carry both sides of the wall. Each
+        # note is told, naming the first thread across the wall from it.
+        for name, ttags, r, spoken in written:
+            other = next(((n, wall_pair(ws, ttags, t)) for n, t, _, _ in written
+                          if n != name and wall_pair(ws, ttags, t)), None)
+            if other:
+                out.append(Finding(WARNING, "threads", r,
+                                   "`party` %s is walled from thread %s's, in the same project; a wall stands between "
+                                   "%s and %s" % ((", ".join(sorted(ttags)), other[0]) + other[1]),
+                                   "Thread %s and thread %s of one project are written for parties a wall keeps apart"
+                                   % (spoken, other[0])))
     return out
+
+
+def wall_pair(ws: Workspace, tags_a, tags_b) -> Optional[Tuple[str, str]]:
+    """The first pair, in sorted order, of a tag from each set with a wall
+    between them, or None."""
+    pairs = sorted(tuple(sorted((a, b))) for a in tags_a for b in tags_b if walled(ws.context, a, b))
+    return pairs[0] if pairs else None
 
 
 RESUME_END_RE = re.compile(r"^(#{1,3} |---\s*$)")
@@ -1824,15 +1855,84 @@ def path_bases(ws: Workspace, project: Path, note: Path) -> List[Path]:
     return bases
 
 
+Siblings = Tuple[set, List[Tuple[Path, Path]], Dict[Path, set]]
+
+
+def sibling_bases(ws: Workspace, project: Path, note: Path) -> Siblings:
+    """Where a path into another project of the same zone may start, as
+    (base, the sibling project): each sibling's own folder and its threads'
+    folders, with the tags `note` is written for. A note may name a file one
+    project over, `Deliverables/<deck>.pptx` of the project the work goes on
+    from. Never a project outside the zone, nor one under System/, nor a
+    project or thread whose party is walled from the note's; sibling_found
+    holds every hit to the same, so a path found only there is reported as
+    missing. Worked out once per note; the third part caches each sibling's
+    files as they are named on disk, listed on its first hit."""
+    zone = project.parent
+    if zone not in ws.zones:
+        return set(), [], {}
+    pfm = next((fm for folder, fm in ws.projects if folder == project), {})
+    mine, _ = file_tags(ws, project, {strip_tag(t) for t in as_list(pfm.get("party"))}, note)
+    out: List[Tuple[Path, Path]] = []
+    for other, _ in ws.projects:
+        if other.parent != zone or other == project:
+            continue
+        hub = project_file_tags(ws, other, other / (other.name + ".md"))
+        if wall_pair(ws, mine, hub):
+            continue
+        out.append((other, other))
+        for thread in visible_dirs(other / "Threads"):
+            if not wall_pair(ws, mine, project_file_tags(ws, other, thread / (thread.name + ".md"))):
+                out.append((thread, other))
+    return mine, out, {}
+
+
+def sibling_found(ws: Workspace, siblings: Siblings, path: str) -> bool:
+    """Is `path` a file of a sibling project, read from one of its bases? Its
+    real path must be one of that project's files as they are named on disk,
+    in a project folder that sits in the zone: so a link or `..` leading into
+    a walled project or another zone confirms nothing, and nor does a path
+    or a link spelt in another case, which a case-insensitive disk opens but
+    which would read as no thread. The file must be written for no party
+    walled from the note's, read from its real path; a folder, every file
+    in it."""
+    mine, bases, listed = siblings
+    for base, other in bases:
+        candidate = base / path
+        try:
+            if not candidate.exists():
+                continue
+            home = other.resolve()
+            if home.parent != other.parent.resolve():
+                continue  # the project folder is itself a link out of the zone
+            real = candidate.resolve()
+        except (OSError, RuntimeError):
+            continue
+        if other not in listed:
+            listed[other] = {home / f.relative_to(other) for f in walk_files(other, nested=True)}
+        if real in listed[other]:
+            files = [real]
+        else:
+            # A folder counts when it holds files, every one of them clear.
+            files = [f for f in listed[other] if real in f.parents] if real.is_dir() else []
+        if files and not any(wall_pair(ws, mine, project_file_tags(ws, other, other / f.relative_to(home)))
+                             for f in files):
+            return True
+    return False
+
+
 def unfound_paths(ws: Workspace, project: Path, note: Path, line: str, bases: List[Path],
-                  inside: List[Optional[List[str]]], shared: bool) -> List[str]:
+                  inside: List[Optional[List[str]]], shared: bool,
+                  siblings: Optional[List[Optional[Siblings]]] = None) -> List[str]:
     """The `backticked` paths on one line that are not there. Placeholders,
     commands, web addresses, globs, Office parts and anything on another
     machine are not paths, and a line that says its file sits on a shared drive
     is left alone: the check does not read one. Nor is anything under
     System/generated/, which a tool writes only in some states. `inside` caches
     the project's own files, nested repositories included, listed on the first
-    path not found. The Resume here block and
+    path not found. A path not in the project is looked for in the other
+    projects of its zone, and never beyond; `siblings` caches where
+    (sibling_bases), worked out on the first path not found. The Resume here block and
     the checkpoint beside it are read the same way, which is why this is one
     function and not two."""
     out = []
@@ -1856,6 +1956,11 @@ def unfound_paths(ws: Workspace, project: Path, note: Path, line: str, bases: Li
                     inside[0] = ["/" + f.relative_to(project).as_posix() for f in walk_files(project, nested=True)]
                 tail = "/" + path.strip("./").rstrip("/")
                 found = any(f.endswith(tail) or (path.endswith("/") and tail + "/" in f) for f in inside[0])
+            if not found:
+                siblings = siblings if siblings is not None else [None]
+                if siblings[0] is None:
+                    siblings[0] = sibling_bases(ws, project, note)
+                found = sibling_found(ws, siblings[0], path)
         if not found and (shared or SHARE_RE.search(line)):
             continue  # on a shared drive, which the check does not read
         if not found:
@@ -1876,6 +1981,7 @@ def resume_findings(ws: Workspace, project: Path, note: Path, block: List[str], 
                            "Thread %s has no real resume point yet" % spoken))
     bases = path_bases(ws, project, note)
     inside: List[Optional[List[str]]] = [None]  # the project's files, listed on the first path not found
+    siblings: List[Optional[Siblings]] = [None]  # the zone's other projects, likewise
     for line in block:
         for m in WIKILINK_RE.finditer(re.sub(r"`[^`]*`", "", line)):
             target = m.group(1).split("|")[0].split("#")[0].strip().rstrip("\\")
@@ -1887,7 +1993,7 @@ def resume_findings(ws: Workspace, project: Path, note: Path, block: List[str], 
                 out.append(Finding(WARNING, "resume", rel(ws, note),
                                    "Resume here links [[%s]], which leads nowhere" % target,
                                    "Thread %s points at a note that is not there" % spoken))
-        for path in unfound_paths(ws, project, note, line, bases, inside, shared):
+        for path in unfound_paths(ws, project, note, line, bases, inside, shared, siblings):
             out.append(Finding(WARNING, "resume", rel(ws, note),
                                "Resume here names `%s`, which is not there" % path,
                                "Thread %s names a file that is not there" % spoken))
@@ -2007,9 +2113,10 @@ def checkpoint_findings(ws: Workspace, project: Path, note: Path, text: str, spo
              "Thread %s has a checkpoint older than its resume point" % spoken)
     bases = path_bases(ws, project, note)
     inside: List[Optional[List[str]]] = [None]
+    siblings: List[Optional[Siblings]] = [None]
     for item in block["items"]:
         if item["kind"] == "made":
-            for path in unfound_paths(ws, project, note, item["text"], bases, inside, shared):
+            for path in unfound_paths(ws, project, note, item["text"], bases, inside, shared, siblings):
                 warn("its checkpoint records making `%s`, which is not there; the item stands as a note that "
                      "the file has gone, and the wrap asks about it" % path,
                      "Thread %s has a checkpoint naming a file that is not there" % spoken)
@@ -2599,13 +2706,29 @@ def wiki_name_links(ws: Workspace) -> List[Finding]:
 
 
 PARENT_RE = re.compile(r'^parent:\s*["\']?\[\[([^\]|#]+)', re.M)
+PROJECT_LINK_RE = re.compile(r'^project:\s*["\']?\[\[([^\]|#]+)', re.M)
+
+
+def links_hub(fm_text: str, zone: str, project: str) -> bool:
+    """Does a thread note's `project:` link its own hub: `[[<Project>]]`,
+    `[[<Project>/<Project>]]` or `[[Zones/<its zone>/<Project>/<Project>]]`?
+    The thread template writes the first, and it places the note in the graph
+    as a `parent:` would. A path to a hub of the same name in another zone is
+    not its hub."""
+    m = PROJECT_LINK_RE.search(fm_text)
+    if not m:
+        return False
+    target = m.group(1).strip()
+    target = target[:-3] if target.endswith(".md") else target
+    return target in (project, "%s/%s" % (project, project), "Zones/%s/%s/%s" % (zone, project, project))
 
 
 def parent_links(ws: Workspace, zone: Path) -> List[Finding]:
     """Every live note in a project, other than its hub and the ledger of
     what it published, carries `parent:`, a link to its thread note or hub
     that leads to a live note, so the graph attaches it to its project
-    whatever its prose says. The ledger, `Deliverables/published.md` in the
+    whatever its prose says. A thread note whose `project:` links its hub
+    needs no `parent:` as well. The ledger, `Deliverables/published.md` in the
     project or in a thread of a thread-first one, is a table for drift.py, and
     its folder already says whose it is."""
     out = []
@@ -2617,7 +2740,11 @@ def parent_links(ws: Workspace, zone: Path) -> List[Finding]:
             continue  # loose in the zone, outside any project, or the hub itself
         if parts[-2:] == ("Deliverables", "published.md") and (len(parts) == 3 or len(parts) == 5 and parts[1] == "Threads"):
             continue  # the ledger of what was published
-        m = PARENT_RE.search(parse_frontmatter_block(text))
+        block = parse_frontmatter_block(text)
+        m = PARENT_RE.search(block)
+        if not m and len(parts) == 4 and parts[1] == "Threads" and parts[3] == parts[2] + ".md" \
+                and links_hub(block, zone.name, parts[0]):
+            continue  # a thread note, whose `project:` links its hub
         if not m:
             out.append(Finding(WARNING, "links", rel(ws, path), "no `parent:`, a link to its thread note or hub",
                                "A note in %s does not say which thread it belongs to" % zone.name))
@@ -4105,7 +4232,8 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # of another project, or by this project's own Sources/, is not evidence of
     # a leak, and nor is wording found in one of the shared files every side
     # reads. This project's own notes are neither: a leak copied twice must
-    # not vouch for itself. A file in Sources/ is what a party sent, which may
+    # not vouch for itself. A note of a thread of this project written for a
+    # party walled from this file's is the far side, as another project's is. A file in Sources/ is what a party sent, which may
     # repeat what another party sent too: like the name check, the file check
     # leaves it out, and only meetings count against it.
     if ws.quick:
@@ -4135,8 +4263,9 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                 else:
                     clear = True
                     break
-            elif sent or (index.project.get(o) == project and not _in_sources(project, o)):
-                continue
+            elif sent or (index.project.get(o) == project and not _in_sources(project, o)
+                          and not any(walled(ws.context, a, b) for a in tags for b in index.tags.get(o, ()))):
+                continue  # this project's own note, written for no party walled from this file's
             elif any(walled(ws.context, a, b) for a in tags for b in index.tags.get(o, ())):
                 files.append(o)
             else:
@@ -4716,7 +4845,9 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                                            stype, ", ".join("`%s`" % f for f in sfields)),
                                        "A Knowledge source page does not follow the wiki's schema"))
             elif suffix == ".md" and fm.get("type") and fm.get("type") not in known_types \
-                    and kroot / "wiki" in path.parents:
+                    and kroot / "wiki" in path.parents \
+                    and not (fm.get("type") == "report" and kroot / "wiki" / "lint" in path.parents):
+                # A lint report, `wiki/lint/<date>.md`, is the knowledge skill's own output.
                 out.append(Finding(WARNING, "knowledge", rel(ws, path),
                                    "`type: %s` is not a kind of page the wiki's schema knows (%s); the graph draws it "
                                    "as other notes" % (fm.get("type"), ", ".join(sorted(known_types))),

@@ -2,6 +2,7 @@
 title: {{THREAD}}
 type: thread
 project: "[[{{PROJECT}}]]"
+parent: "[[{{PROJECT}}]]"
 party: {{PARTY}}
 status: active
 created: {{DATE}}

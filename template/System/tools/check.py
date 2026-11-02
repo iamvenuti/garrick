@@ -264,6 +264,7 @@ class Workspace:
     cache: Optional["NoteCache"] = None  # staged mode: what the last commits read, kept between them
     entity_index: Optional[List[dict]] = None  # Meetings entity pages by name, as staged too, on first use (#330)
     misread: set = field(default_factory=set)  # meeting pages whose frontmatter reads two ways: no parties for the walls
+    meeting_raw: Dict[Path, dict] = field(default_factory=dict)  # those pages' frontmatter as written, for their own checks
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +427,7 @@ def meeting_view(ws: "Workspace", page: Path, fm: dict, text: Optional[str] = No
     if not problem and not walls_value_problem(ws, fm):
         return fm
     ws.misread.add(page)
+    ws.meeting_raw.setdefault(page, fm)           # what the page's own checks name: its unknown party, its zone
     return {k: v for k, v in fm.items() if k not in ("parties", "zone")}
 
 
@@ -444,7 +446,8 @@ def walls_value_problem(ws: "Workspace", fm: dict) -> str:
             if tag and tag != "none" and tag not in ws.context["parties"]:
                 return "`%s:` names no tag from the Parties table, nor `none`" % key
     zone = fm.get("zone")
-    if zone not in (None, "") and (not isinstance(zone, str) or zone.strip() not in {z.name for z in ws.zones}):
+    zones = {z.name for z in ws.zones} | set(ws.context["zones"])
+    if zone not in (None, "") and (not isinstance(zone, str) or zone.strip() not in zones):
         return "`zone:` names no zone of this workspace"
     return ""
 
@@ -2659,7 +2662,7 @@ def check_questions(ws: Workspace) -> List[Finding]:
         for f in wiki_questions(wiki):
             out += question_findings(ws, f, "Garrick", "A %s question Garrick cannot read" % wiki.name)
             if f in ws.meeting_questions:
-                out += party_findings(ws, "questions", rel(ws, f), ws.meetings[f], "Meetings question",
+                out += party_findings(ws, "questions", rel(ws, f), ws.meeting_raw.get(f, ws.meetings[f]), "Meetings question",
                                       "ask it once for each side")
     return out
 
@@ -2921,7 +2924,7 @@ def check_meetings(ws: Workspace) -> List[Finding]:
         if is_faded(ws, page) or page in ws.meeting_questions:
             continue                                  # read by the walls only; a question, by check_questions
         r = rel(ws, page)
-        out += party_findings(ws, "meetings", r, fm, "meeting page",
+        out += party_findings(ws, "meetings", r, ws.meeting_raw.get(page, fm), "meeting page",
                               "if it was two conversations, file them as two pages")
         if fm and fm.get("type") not in (None, "meeting", "email"):
             out.append(Finding(WARNING, "meetings", r, "`type` is %r, should be meeting or email" % fm.get("type"),

@@ -1004,9 +1004,11 @@ def claim_attribution(ctx: Ctx, item: Item) -> bool:
             item.proposal = "move it under ## Finished"
     elif c == "threads":
         if "differs from the project's" in msg:
+            # The check warns only for a party walled from the hub's, which
+            # the wall kind takes first. A thread may carry a party its hub
+            # lacks, so the hub's party is never the answer to propose: it
+            # would erase the one place that marks the thread's confidence.
             q = "%s names another party than its project; which is it?" % name
-            m = re.search(r"differs from the project's (.+)$", msg)
-            item.proposal = m.group(1) if m else ""
         elif "status is done but there is no `### Outcome`" in msg:
             q = "%s is marked done with no outcome; what did it deliver, or is it still active?" % name
         elif msg.startswith("`project` is"):

@@ -306,10 +306,10 @@ ordinary edit.
      which is the vendor that sells it;
    - **missing pages**: a name or idea that turns up in three or more
      sources with no concept or entity page of its own.
-3. **Write the report** as `wiki/lint/<YYYY-MM-DD>.md`: one section per
-   kind, each finding with its pages linked and a suggested fix in a line.
-   Nothing found under a heading says so. It names no party, as every
-   Knowledge page does not.
+3. **Write the report** as `wiki/lint/<YYYY-MM-DD>.md`, with `type: report`
+   in its frontmatter: one section per kind, each finding with its pages
+   linked and a suggested fix in a line. Nothing found under a heading says
+   so. It names no party, as every Knowledge page does not.
 4. **A finding only the user can settle**, such as a contradiction no
    later source decides, is also a question file, as *A question for the
    user* says. The report links it.

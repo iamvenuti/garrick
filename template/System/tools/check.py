@@ -3050,6 +3050,11 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
     out = []
     for page, text in pages:
         fm = parse_frontmatter_text(text)
+        if organisation_misread(text):
+            out.append(Finding(ERROR, "walls", rel(ws, page),
+                               ORGANISATION_ONE + ", written as one `organisation:` line with its link on it, "
+                               "and no other line naming it", "A person page's organisation link is not one entity page"))
+            continue
         if not organisation_keys(fm):
             continue
         problem, entity = organisation_entity(ws, fm)
@@ -3069,6 +3074,52 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
 
 
 ORGANISATION_ONE = "`organisation:` must be one link to an entity page"
+
+
+_CLEAN_ORGANISATION = re.compile(r"^organisation:[ \t]*(\S.*?)?[ \t]*$")
+
+
+def _folded(text: str) -> str:
+    """A line as a reader sees it: Unicode compatibility forms plain, accents
+    and invisible marks dropped, letters that only look different (a dotless
+    ı) spelled out, lower case."""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch) and unicodedata.category(ch) != "Cf")
+    return text.casefold().replace("ı", "i")
+
+
+def organisation_misread(text: str) -> bool:
+    """Does a person page's frontmatter name `organisation` in a way the
+    frontmatter reader may not see as the one clean `organisation:` line
+    (#330)? Valid YAML it reads otherwise: the value on the next line, a
+    quoted key, an explicit `? organisation` key, another case or spelling
+    (`Organisation`, `organization`, a dotless ı), the key twice, or a value
+    carried on to an indented line. Any line whose key, or whole text where
+    it has no key, names organisation or organization counts; only one
+    `organisation: <value>` line at the left margin, with nothing indented
+    after it, is clean. Fail closed: the hook refuses the rest."""
+    if not text.startswith("---"):
+        return False
+    lines = text.splitlines()[1:]
+    end = next((i for i, l in enumerate(lines) if l.strip() in ("---", "...")), None)
+    if end is None:
+        return False
+    lines = lines[:end]
+    named = []
+    for i, line in enumerate(lines):
+        folded = _folded(line)
+        key = folded.split(":", 1)[0] if ":" in folded else folded
+        if "organisation" in key.replace(" ", "") or "organization" in key.replace(" ", "") or (
+                ("organis" in folded or "organiz" in folded) and ":" not in folded):
+            named.append(i)
+    if not named:
+        return False
+    if len(named) > 1:
+        return True
+    i = named[0]
+    if not _CLEAN_ORGANISATION.match(lines[i]):
+        return True
+    return i + 1 < len(lines) and lines[i + 1][:1] in (" ", "\t") and lines[i + 1].strip() != ""
 
 
 def organisation_keys(fm: dict) -> List[str]:
@@ -3099,6 +3150,9 @@ def organisation_entity(ws: Workspace, fm: dict) -> Tuple[str, Optional[Path]]:
         if same_page(e["path"], page) and (not e["tagged"] or any(t not in ws.context["parties"] for t in e["parties"])):
             return (ORGANISATION_ONE + " that says whose it is: give it `party: none`, or its party's tag from the "
                     "Parties table, before a person page links it"), None
+    if any(e["suspect"] for e in same_name(ws, page)):
+        return (ORGANISATION_ONE + " whose names hold only letters the checks read: one written in lookalike "
+                "letters, or with an invisible mark, may stand for another organisation"), None
     return "", page
 
 

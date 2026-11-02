@@ -1379,43 +1379,53 @@ def name_group(index: List[dict], rels) -> List[dict]:
     return [e for e in index if e["rel"] in rels or e["keys"] & keys]
 
 
-_QUALIFIER = re.compile(r"\(([^()]*)\)")
-_QUALIFIER_WORDS = re.compile(r"^\s*(?:formerly|previously|now|aka|also|ex|once|trading as|t/a)\b[\s:.-]*", re.I)
+_QUALIFIER = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
 _LEADING = ("the",)
 
 
-def _party_names(context: dict, tag: str, row) -> List[List[str]]:
-    """The names a party goes by, each as org_words(): its cell in the
-    Parties table, without its markup and with a qualifier in brackets read
-    as a name of its own (`**Acme Corp** (formerly Anvil)` is `Acme Corp`
-    and `Anvil`), each heard form the Aliases table gives for one of those,
-    and its tag."""
+def _party_names(context: dict, tag: str, row) -> List[Tuple[List[str], bool]]:
+    """The names a party goes by, each as org_words() and whether a page
+    opening with its first word is read as the party's: its cell in the
+    Parties table, without its markup; every name in brackets in it, read as
+    a name of its own whatever its lead word, so `**Seventh Gate**
+    (product Lanternfish)` is `Seventh Gate`, `Lanternfish` and, without its
+    first-word rule, `product Lanternfish`; each heard form the Aliases table
+    gives for one of those; and its tag."""
     cell = str(row.get("party") if isinstance(row, dict) else row or "")
     cell = cell.replace("*", " ").replace("`", " ")
-    said = [_QUALIFIER.sub(" ", cell)] + [_QUALIFIER_WORDS.sub("", q) for q in _QUALIFIER.findall(cell)]
-    keys = {org_key(n) for n in said} - {""}
-    said += [heard for heard, means in context.get("aliases", {}).items() if org_key(means) in keys]
-    said.append(tag.replace("-", " "))
+    strong = [_QUALIFIER.sub(" ", cell)]
+    weak = []
+    for q in _QUALIFIER.findall(cell):
+        words = q.split()
+        if len(words) > 1:
+            weak.append(q)
+            strong.append(" ".join(words[1:]))
+        elif words:
+            strong.append(q)
+    keys = {org_key(n) for n in strong + weak} - {""}
+    strong += [heard for heard, means in context.get("aliases", {}).items() if org_key(means) in keys]
+    strong.append(tag.replace("-", " "))
     out = []
-    for n in said:
+    for n, first in [(n, True) for n in strong] + [(n, False) for n in weak]:
         words = org_words(n)
         while words and words[0] in _LEADING:
             words = words[1:]
         if words:
-            out.append(words)
+            out.append((words, first))
     return out
 
 
-def _named_after(name_words_: List[str], party: List[str]) -> bool:
+def _named_after(name_words_: List[str], party: List[str], first: bool = True) -> bool:
     """Is a page's name, as org_words(), named after a party's: the same run
-    together, holding all of the party name's words, or opening with its
-    first word (`Acme` and `Acme Corporation` for `Acme Corp`)."""
+    together, holding all of the party name's words, or, where `first`,
+    opening with its first word (`Acme` and `Acme Corporation` for `Acme
+    Corp`)."""
     words = list(name_words_)
     while words and words[0] in _LEADING:
         words = words[1:]
     if not words:
         return False
-    return ("".join(words) == "".join(party) or set(party) <= set(words) or words[0] == party[0])
+    return ("".join(words) == "".join(party) or set(party) <= set(words) or (first and words[0] == party[0]))
 
 
 def entity_parties(context: dict, group: List[dict]) -> set:
@@ -1426,7 +1436,7 @@ def entity_parties(context: dict, group: List[dict]) -> set:
     Ltd` is Acme's whether or not it says so. A customer's page, named after
     no party, is nobody's."""
     out = set()
-    named: Optional[Dict[str, List[List[str]]]] = None
+    named: Optional[Dict[str, List[Tuple[List[str], bool]]]] = None
     for e in group:
         if e["parties"]:
             out |= e["parties"]
@@ -1434,7 +1444,7 @@ def entity_parties(context: dict, group: List[dict]) -> set:
         if named is None:
             named = {tag: _party_names(context, tag, row) for tag, row in context.get("parties", {}).items()}
         words = [org_words(n) for n in e["names"]]
-        out |= {tag for tag, forms in named.items() if any(_named_after(w, f) for w in words for f in forms)}
+        out |= {tag for tag, forms in named.items() if any(_named_after(w, f, first) for w in words for f, first in forms)}
     return out
 
 
@@ -1565,6 +1575,8 @@ def organisation_named(root: PathLike, context: dict, names, party, entity: str,
     party, on two hats, and on the entity's name group."""
     index = entity_names(root) if index is None else index
     value = entity_rel(entity) or entity.strip()
+    if not entity_rel(entity) and value.lower().endswith(".md"):
+        value = value[:-3].strip()                  # `birch-co.md`: the file, named without its folder
     found = entity_page(root, value)
     page = next((e for e in index if found is not None and _same_file(e["path"], found)), None)
     if page is None:

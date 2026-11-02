@@ -454,8 +454,9 @@ class NurtureTest(Workspace):
     def test_one_page_one_proposal_and_an_ambiguous_one_asked(self):
         _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
         kit = self.about(out["items"], "kit-avery.md")
-        self.assertEqual([("mechanical", {"op": "organisation", "link": "[[wiki/entities/birch-co]]"})],
-                         [(i["kind"], i["fix"]) for i in kit])
+        self.assertEqual([("attribution", "Does Kit Avery work at Birch & Co? (yes / no / another page)",
+                           "[[wiki/entities/birch-co]]", None)],
+                         [(i["kind"], i["question"], i["proposal"], i["fix"]) for i in kit])
         ana = self.about(out["items"], "ana-holt.md")
         self.assertEqual([("attribution", "Where does Ana Holt work: Birch & Co or Larch Partners?")],
                          [(i["kind"], i["question"]) for i in ana])
@@ -466,11 +467,21 @@ class NurtureTest(Workspace):
         for name in ("pat-newcomer.md", "rowan-blake.md", "theo-marsh.md"):
             self.assertEqual([], self.about(out["items"], name), name)
 
-    def test_the_link_on_a_yes_and_only_that_line(self):
+    def organisation(self, page: str, *more: str, env=None):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env or {}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = nurture.main(["organisation", "--path", "Wikis/Meetings/wiki/people/%s" % page, "--root",
+                                 str(self.root), "--today", "2026-10-17"] + list(more))
+        return code, err.getvalue()
+
+    def test_the_link_on_that_pages_own_yes_and_only_that_line(self):
         code, out = self.run_tool("fix", "--scope", "Wikis/Meetings", "--yes")
-        self.assertEqual(0, code, out)
-        self.assertEqual(["kit-avery.md"], [Path(i["path"]).name for i in out["fixed"]
-                                            if i["fix"]["op"] == "organisation"])
+        self.assertEqual([], [i for i in out["fixed"] if i["fix"]["op"] == "organisation"])   # never a batch
+        self.assertEqual(self.before, {p.name: p.read_text() for p in self.people.glob("*.md")})
+        code, err = self.organisation("kit-avery.md", "--yes")
+        self.assertEqual(0, code, err)
+        for name in ("ana-holt.md", "pat-newcomer.md", "rowan-blake.md", "theo-marsh.md"):
+            self.assertNotEqual(0, self.organisation(name, "--yes")[0], name)    # a question, or a wall: nothing
         after = {p.name: p.read_text() for p in self.people.glob("*.md")}
         old, new = self.before["kit-avery.md"].splitlines(), after["kit-avery.md"].splitlines()
         self.assertEqual(['organisation: "[[wiki/entities/birch-co]]"'], [l for l in new if l not in old])
@@ -713,6 +724,107 @@ class NurtureUntaggedTest(Workspace):
             self.assertEqual([], [i for i in data["items"] if i["path"].endswith("theo-marsh.md")
                                   and (i.get("fix") or {}).get("op") == "organisation"], args)
         self.assertEqual(before, (self.people / "theo-marsh.md").read_text())
+
+
+
+# ---------------------------------------------------------------------------
+# The second review's ways past the wall, each closed
+# ---------------------------------------------------------------------------
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class MisreadFrontmatterTest(Workspace):
+    """Valid YAML the frontmatter reader misreads: any line naming
+    organisation that is not the one clean `organisation:` line is refused."""
+
+    def setUp(self):
+        super().setUp()
+        self.wikis = self.root / "Wikis"
+        git(self.wikis, "init", "-q")
+
+    def page(self, slug: str, front: str, title: str = "Pat Newcomer"):
+        write(self.people / (slug + ".md"),
+              "---\ntitle: %s\ntype: person\nparty: acme\n%s\ncreated: 2026-03-10\nupdated: 2026-03-10\n---\n\n"
+              "# %s\n\nConsultant.\n" % (title, front, title))
+
+    def test_each_misread_form_is_refused_in_plain_words(self):
+        b = "[[wiki/entities/birch-co]]"
+        forms = ('organisation:\n  "%s"' % b, '"organisation": "%s"' % b, "'organisation': \"%s\"" % b,
+                 '? organisation\n: "%s"' % b, 'organisatıon: "%s"' % b, 'ORGANISATION: "%s"' % b,
+                 'organisation: "%s"\norganisation: ""' % b, 'organisation:\n  - "%s"' % b,
+                 'organisation: >\n  %s' % b, 'organisation: "[[wiki/entities/\n  birch-co]]"',
+                 'organisation : "%s"' % b, 'organi­sation: "%s"' % b)
+        for i, front in enumerate(forms):
+            self.page("pat-%d" % i, front)
+        git(self.wikis, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=self.wikis)
+        self.assertEqual(sorted("Wikis/Meetings/wiki/people/pat-%d.md" % i for i in range(len(forms))),
+                         sorted(f.path for f in found))
+        for f in found:
+            self.assertTrue(f.message.startswith(check.ORGANISATION_ONE), f.message)
+
+    def test_a_clean_line_and_a_title_naming_an_organisation_pass(self):
+        self.page("kit-avery", 'organisation: "[[wiki/entities/larch-partners]]"', title="Organisation Design Lead")
+        self.page("ana-holt", "organisation:")
+        git(self.wikis, "add", "-A")
+        self.assertEqual([], check.run_checks(self.root, walls_only=True, staged=self.wikis))
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class AskedPageByPageTest(Workspace):
+    """A name can stand for a walled party under a form no matching reads
+    (initials, digits, a translated name), so an employer link is never a
+    batch fix: each page is asked about, and only its own yes writes it."""
+
+    def test_a_page_the_matching_cannot_place_is_asked_never_written_by_a_batch(self):
+        env = {k: v for k, v in GIT_ENV.items() if k.startswith("GIT_")}
+        env.pop("GIT_DIR", None)
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop("GARRICK_HEADLESS", None)
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        write(self.entities / "ac-corp.md", entity("AC Corp"))          # Acme's, under initials: no rule reads it
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Managing partner; formerly at AC Corp."))
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        before = (self.people / "theo-marsh.md").read_text()
+        for args, extra in ((("list", "--scope", "Wikis/Meetings"), {}), (("nightly",), {}),
+                            (("fix", "--scope", "Wikis/Meetings", "--yes"), {}),
+                            (("fix", "--yes"), {"GARRICK_HEADLESS": "1"})):
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, extra), contextlib.redirect_stdout(out), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                nurture.main(list(args) + ["--root", str(self.root), "--json", "--today", "2026-10-17"])
+            data = json.loads(out.getvalue())
+            theo = [i for i in data["items"] if i["path"].endswith("theo-marsh.md") and i["check"] != "orphan"]
+            self.assertEqual([("attribution", "Does Theo Marsh work at AC Corp? (yes / no / another page)")],
+                             [(i["kind"], i["question"]) for i in theo], args)
+            self.assertEqual([], [i for i in data.get("fixed", []) if i["fix"].get("op") == "organisation"], args)
+        self.assertEqual(before, (self.people / "theo-marsh.md").read_text())
+
+
+class LesserFaultsTest(Workspace):
+    def test_the_hook_refuses_a_link_to_a_party_none_page_with_a_suspect_name(self):
+        write(self.entities / "asme.md", entity("Асме Corp"))
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer.", "[[wiki/entities/asme]]"))
+        found = self.findings("walls")
+        self.assertEqual(["Wikis/Meetings/wiki/people/kit-avery.md"], [f.path for f in found])
+        self.assertTrue(found[0].message.startswith(check.ORGANISATION_ONE), found[0].message)
+
+    def test_ingest_takes_a_file_name_with_md(self):
+        path, created = ingest.ensure_person(self.root, "Kit Avery", "none", "2026-03-10", "larch-partners.md")
+        self.assertTrue(created)
+        self.assertIn('organisation: "[[wiki/entities/larch-partners]]"', path.read_text())
+
+    def test_every_bracketed_name_in_a_parties_cell_is_a_name_of_its_own(self):
+        write(self.root / "System" / "context.md",
+              CONTEXT.replace("| Acme Corp | Client.", "| **Acme Corp** (product Lanternfish) | Client."))
+        self.context = garrick_lib.load_context(self.root)
+        write(self.entities / "lanternfish.md", entity("Lanternfish"))
+        self.assertEqual(("", []), self.propose("Theo Marsh", "birch", "Now at Lanternfish."))
+        write(self.entities / "product-hall.md", entity("Product Hall"))   # the lead word alone reads as nobody's
+        self.assertEqual(("[[wiki/entities/product-hall]]", []), self.propose("Theo Marsh", "birch", "At Product Hall."))
 
 
 if __name__ == "__main__":

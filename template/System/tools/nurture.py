@@ -7,6 +7,7 @@ what a fix needs, and the mechanical ones applied on one yes.
     python3 System/tools/nurture.py nightly [--scope PATH]... [--json]
     python3 System/tools/nurture.py answered --path PATH --asked "<question>" --answer "<answer>"
     python3 System/tools/nurture.py correct --old OLD --new NEW [--scope PATH]... [--yes] [--why "..."] [--leave PATH]...
+    python3 System/tools/nurture.py organisation --path PERSON_PAGE --yes [--entity ENTITY]
 
 It adds no checks of its own. Its sources are the existing tools, each run
 as it runs for anyone: `check.py --json`, `wiki_lint.py --json` for each
@@ -38,16 +39,22 @@ holds only the key, so it names no file, check or material.
   `parked`); a note path written as code that, as a wikilink, leads to
   exactly one live note in the same zone; a note inside a thread's folder
   with no `parent:`, given its thread's, when that thread note is there and
-  its name leads nowhere else; a person page in Meetings with no link to the
-  entity page of where the person works, given `organisation:` as ingest.py
-  writes it: the one entity page its first line names, or else its party's;
-  a line that could mean two is asked about, as attribution. No fix writes a link to a note across a wall
+  its name leads nowhere else. No fix writes a link to a note across a wall
   from the note it is in: that one stays for a person. `fix --yes` applies
   them all, one commit per
   repository, of the files it changed and nothing else. A fix whose files
   have changes not committed, or that no repository holds, is held and left
   in the report.
-- *attribution*: which zone, party, wiki or type a thing belongs to. Each
+- *attribution*: which zone, party, wiki or type a thing belongs to, and
+  where a person works (#330): a person page in Meetings with no
+  `organisation:` is asked about one page at a time, "Does Theo Marsh work
+  at AC Corp? (yes / no / another page)", for the one entity page its first
+  line names or else its party's, and a line that could mean two is asked
+  which. Never a batch fix: a name can match the wrong organisation however
+  it is spelled. Only that page's own yes writes it, through `organisation
+  --path <page> --yes`, which works the link out again, checks the walls
+  and commits that one page; never at night or under GARRICK_HEADLESS=1.
+  Each
   carries one line to ask, and a proposal where the context file settles one
   without crossing a wall. The skill asks; this changes none of them.
 - *judgment*: everything else. Reported, with the page to open.
@@ -82,8 +89,9 @@ wiki's count reaches the `"memory"` setting's nightly minimum.
 **The nightly run**, `nightly`, applies the kinds registered as unattended,
 which in this release is the mechanical kind alone, and nothing else ever
 changes with nobody watching. Of the mechanical kind, the ops in
-ATTENDED_OPS wait for a yes too: the organisation link writes into a person
-page written by hand. It reads drift from `System/generated/
+ATTENDED_OPS wait for a yes too; the organisation link, which writes into a
+person page written by hand, is never a mechanical fix at all, and its own
+action refuses to run with nobody watching. It reads drift from `System/generated/
 drift.json`, since macOS keeps a scheduled job out of cloud folders. Under
 GARRICK_HEADLESS=1, as the jobs extra sets it, `fix --yes` behaves the same.
 
@@ -152,6 +160,7 @@ from garrick_lib import (  # noqa: E402
     entity_names,
     live_files,
     load_context,
+    organisation_named,
     organisation_proposal,
     parse_frontmatter_text,
     party_entities,
@@ -603,8 +612,6 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
             return codelink_fix(ctx, item, m.group(1))
         if item.message.startswith(NO_PARENT):
             return parent_fix(ctx, item)
-    if item.source == "check" and item.check == "people" and item.message.startswith((NO_ORGANISATION, NO_EMPLOYER)):
-        return organisation_fix(ctx, item, path)
     return None
 
 
@@ -795,21 +802,19 @@ def organisation_proposed(ctx: Ctx, path: Path) -> Tuple[str, List[str], str]:
     return link, [titles.get(c, c) for c in choices], title
 
 
-def organisation_fix(ctx: Ctx, item: Item, path: Path) -> Optional[dict]:
-    """A person page with no `organisation:` gets the one entity page of
-    where the person works (#330): the one its first line names, or else its
-    party's, as ingest.py writes it on a new page, `organisation:
-    "[[wiki/entities/<x>]]"`. One page, one proposal; a line that could mean
-    two is the attribution kind's question. Nothing for a name the People
-    table places on both sides of a wall, a page naming two parties, or an
-    entity page, or one going by its name, of a party walled from the
-    person's. It writes into a page written by hand, so it is in
-    ATTENDED_OPS: offered on a yes, never applied with nobody watching."""
-    link, _, _ = organisation_proposed(ctx, path)
-    if not link:
-        return None
-    item.touches = [item.path]
-    return {"op": "organisation", "link": link}
+def organisation_question(ctx: Ctx, path: Path) -> Tuple[str, str]:
+    """The one question for a person page with no `organisation:`, and the
+    link a yes would write (#330): "Does Theo Marsh work at AC Corp? (yes /
+    no / another page)". Worked out again from the page, never taken from a
+    finding, so a wall that stops the proposal stops the question too: ("",
+    "") then. Never a mechanical fix: a name can match the wrong
+    organisation, so each page is asked about, one at a time."""
+    link, choices, title = organisation_proposed(ctx, path)
+    if not link or choices:
+        return "", ""
+    rel = link[len("[[wiki/entities/"):-2]
+    entity = next((e["title"] for e in ctx._entity_index or [] if e["rel"] == rel), rel)
+    return "Does %s work at %s? (yes / no / another page)" % (title, entity), link
 
 
 def follow(ctx: Ctx, repo: Path, path: str) -> Optional[str]:
@@ -1013,6 +1018,10 @@ def claim_attribution(ctx: Ctx, item: Item) -> bool:
             q = "Is %s a meeting or an email?" % name
         elif "split-with" in msg:
             q = "Are %s and the pages that share its record one conversation filed twice, or a split?" % name
+    elif c == "people" and msg.startswith((NO_ORGANISATION, NO_EMPLOYER)):
+        q, link = organisation_question(ctx, ctx.root / item.path)
+        q = q or None
+        item.proposal = link
     elif c == "people" and msg.startswith(ORGANISATION_ASK):
         _, choices, title = organisation_proposed(ctx, ctx.root / item.path)
         if len(choices) > 1:          # worked out again: the finding may be older than the page
@@ -1982,7 +1991,8 @@ def item_json(item: Item) -> dict:
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Sort the workspace's findings by what a fix needs; apply the mechanical ones on a yes.")
-    ap.add_argument("action", nargs="?", default="list", choices=("list", "fix", "nightly", "answered", "correct"))
+    ap.add_argument("action", nargs="?", default="list",
+                    choices=("list", "fix", "nightly", "answered", "correct", "organisation"))
     ap.add_argument("--root", help="the workspace (default: the one this script sits in)")
     ap.add_argument("--scope", action="append", default=[], help="a zone, project, thread or wiki, from the workspace's top")
     ap.add_argument("--yes", action="store_true", help="fix, correct: apply them; without it, only say what would change")
@@ -1996,6 +2006,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--new", help="correct: what the user says it is")
     ap.add_argument("--why", default="", help="correct: why, in a few words, for the commit")
     ap.add_argument("--leave", action="append", default=[], metavar="PATH", help="correct: a file to leave as it is")
+    ap.add_argument("--entity", default="",
+                    help="organisation: the entity page the user named instead, by file name, title or alias")
     ap.add_argument("--today", help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     try:
@@ -2024,6 +2036,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if a.action == "correct":
         return main_correct(ctx, scopes, a)
+
+    if a.action == "organisation":
+        return main_organisation(ctx, a)
 
     items = gather(ctx, scopes)
     done = None
@@ -2063,6 +2078,60 @@ def main(argv: Optional[List[str]] = None) -> int:
     for f in ctx.failed:
         print("nurture: did not run: %s" % f, file=sys.stderr)
     return code
+
+
+def main_organisation(ctx: Ctx, a) -> int:
+    """Write one person page's `organisation:` on that page's own yes (#330):
+    the link its question offered, worked out again now, or, with
+    `--entity`, the entity page the user named instead, as `ingest.py person
+    --organisation` takes it. Walls, two hats and an entity page with no
+    `party:` stop it as they stop the question. One page, one commit, through
+    its repository's wall check; never with nobody watching."""
+    if ctx.headless:
+        print("nurture: a person page's organisation is written only on its own yes, never with nobody watching",
+              file=sys.stderr)
+        return EXIT_USAGE
+    if not (a.path and a.yes):
+        print("nurture: organisation needs --path and --yes", file=sys.stderr)
+        return EXIT_USAGE
+    path = (ctx.root / a.path).resolve()
+    people = ctx.root.joinpath("Wikis", "Meetings", "wiki", "people").resolve()
+    if people not in path.parents or not path.is_file() or path.suffix != ".md":
+        print("nurture: %s is not a person page in Wikis/Meetings/wiki/people/" % a.path, file=sys.stderr)
+        return EXIT_USAGE
+    asked, link = organisation_question(ctx, path)
+    if a.entity:
+        text = path.read_text(encoding="utf-8")
+        fm = parse_frontmatter_text(text)
+        if "organisation" in fm:
+            print("nurture: %s has an organisation line already" % a.path, file=sys.stderr)
+            return EXIT_FAILED
+        title = str(fm.get("title") or path.stem)
+        link, why = organisation_named(ctx.root, ctx.context, (title, path.stem), fm.get("party"), a.entity)
+        if why:
+            print("nurture: no organisation link: %s" % why, file=sys.stderr)
+            return EXIT_FAILED
+    if not link:
+        print("nurture: nothing to write for %s" % a.path, file=sys.stderr)
+        return EXIT_FAILED
+    rel = ctx.rel(path)
+    item = Item(source="nurture", check="organisation", path=rel, message="", kind="mechanical",
+                fix={"op": "organisation", "link": link}, touches=[rel])
+    done = apply(ctx, [item])
+    for i in done["held"]:
+        print("nurture: held: %s" % i.held, file=sys.stderr)
+    for c in done["commits"]:
+        print("Committed %s in %s: %s" % (c["commit"], c["repo"], ", ".join(c["paths"])))
+    if done["fixed"]:
+        rec = read_record(ctx)
+        rec["answered"].append({"path": rel, "asked": asked or "Where does this person work?",
+                                "answer": "yes" if not a.entity else "another page: %s" % a.entity})
+        asked_here = lambda i: i.get("path") == rel and i.get("kind") == "attribution"
+        for items in rec["left"].values():
+            items[:] = [i for i in items if not asked_here(i)]
+        settle(ctx, rec, asked_here, [])
+        write_report(ctx, rec)
+    return 0 if done["fixed"] else EXIT_FAILED
 
 
 def main_correct(ctx: Ctx, scopes: List[str], a) -> int:

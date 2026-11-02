@@ -91,9 +91,9 @@ sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
     INBOX,
-    foreign_git_env,
     memory_folders,
     parse_frontmatter_text,
+    staged_walls_refusal,
     status_command,
     workspace_root,
 )
@@ -325,18 +325,10 @@ def _git(args: List[str], cwd: Path) -> subprocess.CompletedProcess:
 
 def walls_refusal(root: Path, repo: Path) -> str:
     """The walls check on what a repository has staged, as its commit hook
-    would run it: "" when it passes, else what it found, in its own words.
-    A check that does not finish is a refusal."""
-    try:
-        r = subprocess.run([sys.executable, str(HERE / "check.py"), "--root", str(root), "--staged", "--walls-only"],
-                           cwd=str(repo), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
-                           env=foreign_git_env())
-    except (subprocess.TimeoutExpired, OSError) as why:
-        return "the walls check did not finish (%s), so nothing was committed" % type(why).__name__
-    if r.returncode == 0:
-        return ""
-    said = [l.strip() for l in (r.stdout + r.stderr).splitlines() if l.strip()]
-    return "the walls check refused it: %s" % (said[0] if said else "it said no more")
+    would run it: "" when it passes, else the refusing check and the paths
+    it refused (garrick_lib's staged_walls_refusal). A check that does not
+    finish is a refusal."""
+    return staged_walls_refusal(root, repo)
 
 
 def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path], str]) -> Tuple[bool, str]:

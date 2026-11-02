@@ -209,6 +209,7 @@ __all__ = [
     "LOCAL_ENV_VARS",
     "git_local_env_vars",
     "foreign_git_env",
+    "staged_walls_refusal",
     "skill_links",
     "init_repo",
     "table_row",
@@ -2981,6 +2982,36 @@ def foreign_git_env(env: Optional[Dict[str, str]] = None) -> Optional[Dict[str, 
     for name in names:
         source.pop(name, None)
     return source
+
+
+def staged_walls_refusal(root: PathLike, repo: PathLike) -> str:
+    """The walls check on what `repo` has staged, as its commit hook runs it
+    (check.py --staged): "" when it passes, else why, as each refusing check
+    and the paths it refused, and nothing of what they hold, since the reason
+    is said where the far side of a wall may read it. A check that does not
+    finish, or whose report cannot be read, is a refusal (#330)."""
+    check = Path(__file__).resolve().parent / "check.py"
+    try:
+        r = subprocess.run([sys.executable, str(check), "--root", str(root), "--staged", "--walls-only", "--json"],
+                           cwd=str(repo), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
+                           env=foreign_git_env())
+    except (subprocess.TimeoutExpired, OSError) as why:
+        return "the walls check did not finish (%s), so nothing was committed" % type(why).__name__
+    if r.returncode == 0:
+        return ""
+    try:
+        errors = [f for f in json.loads(r.stdout)["findings"] if f.get("severity") == "error"]
+        refused: Dict[str, List[str]] = {}
+        for f in errors:
+            here = refused.setdefault(str(f["check"]), [])
+            if str(f["path"]) not in here:
+                here.append(str(f["path"]))
+    except (ValueError, KeyError, TypeError):
+        return "the walls check refused it, and what it said could not be read"
+    if not refused:
+        return "the walls check refused it, and named no file"
+    return "the walls check refused it (%s)" % "; ".join(
+        "%s: %s" % (c, ", ".join(sorted(paths))) for c, paths in sorted(refused.items()))
 
 
 class GitError(RuntimeError):

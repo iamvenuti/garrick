@@ -1134,6 +1134,14 @@ class EveryCommitCheckedTest(Workspace):
         git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
         self.head = git(self.wikis, "rev-parse", "HEAD").strip()
 
+    def test_a_refusal_says_the_check_and_the_paths_alone(self):
+        import correct
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Consultant.", "[[wiki/entities/acme-corp]]"))
+        git(self.wikis, "add", "-A")
+        said = nurture.walls_refusal(nurture.Ctx(self.root), self.wikis)
+        self.assertEqual("the walls check refused it (walls: Wikis/Meetings/wiki/people/theo-marsh.md)", said)
+        self.assertEqual(said, correct.walls_refusal(self.root, self.wikis))
+
     def run_tool(self, *args: str):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):

@@ -159,6 +159,7 @@ import correct  # noqa: E402
 from operations import WALL_REFUSAL  # noqa: E402
 from garrick_lib import (  # noqa: E402
     foreign_git_env,
+    staged_walls_refusal,
     entity_names,
     live_files,
     load_context,
@@ -2132,17 +2133,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 def walls_refusal(ctx: Ctx, repo: Path) -> str:
     """The walls check on what a repository has staged, as its commit hook
-    would run it: "" when it passes, else what it found, in its own words."""
-    try:
-        r = subprocess.run([sys.executable, str(HERE / "check.py"), "--root", str(ctx.root), "--staged",
-                            "--walls-only"], cwd=str(repo), capture_output=True, text=True, timeout=600,
-                           stdin=subprocess.DEVNULL, env=foreign_git_env())
-    except (subprocess.TimeoutExpired, OSError) as why:
-        return "the walls check did not finish (%s), so nothing was committed" % type(why).__name__
-    if r.returncode == 0:
-        return ""
-    said = [l.strip() for l in (r.stdout + r.stderr).splitlines() if l.strip()]
-    return "the walls check refused it: %s" % (said[0] if said else "it said no more")
+    would run it: "" when it passes, else the refusing check and the paths
+    it refused (garrick_lib's staged_walls_refusal)."""
+    return staged_walls_refusal(ctx.root, repo)
 
 
 def main_organisation(ctx: Ctx, a) -> int:

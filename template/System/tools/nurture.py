@@ -53,7 +53,8 @@ holds only the key, so it names no file, check or material.
   which. Never a batch fix: a name can match the wrong organisation however
   it is spelled. Only that page's own yes writes it, through `organisation
   --path <page> --yes`, which works the link out again, checks the walls
-  and commits that one page; never at night or under GARRICK_HEADLESS=1.
+  and commits that one page only once the walls check passes on it as
+  staged; never at night, nor with GARRICK_HEADLESS set to anything but 0.
   Each
   carries one line to ask, and a proposal where the context file settles one
   without crossing a wall. The skill asks; this changes none of them.
@@ -153,6 +154,7 @@ sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import check as garrick_check  # noqa: E402  (the walls check, read on a change before it is made)
 import correct  # noqa: E402
 from operations import WALL_REFUSAL  # noqa: E402
 from garrick_lib import (  # noqa: E402
@@ -1222,6 +1224,33 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
     return go, held, withheld
 
 
+def person_links_held(ctx: Ctx, hits: list, old: str, new: str) -> Tuple[list, bool]:
+    """correct's hits less every person page in Meetings whose corrected text
+    the walls check would refuse: an `organisation:` across a wall, or a
+    frontmatter out of shape (#330). A correction may not put a link across
+    a wall. Whether any was left out, so the run says the rule's sentence
+    and nothing else."""
+    people = ctx.root.joinpath("Wikis", "Meetings", "wiki", "people").resolve()
+    keep, crossing, ws = [], False, None
+    for hit in hits:
+        path = hit.path.resolve()
+        if people not in path.parents or hit.kind == "raw":
+            keep.append(hit)
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            keep.append(hit)
+            continue
+        if ws is None:
+            ws = garrick_check.discover(ctx.root, None)
+        if garrick_check.organisation_walls(ws, [(path, correct.replaced(text, old, new))]):
+            crossing = True
+            continue
+        keep.append(hit)
+    return keep, crossing
+
+
 def correction_item(ctx: Ctx, old: str, new: str, go: list, path: str = "") -> Item:
     live = [h for h in go if h.kind != "raw"]
     pages = sorted({ctx.rel(p) for h in go if h.kind == "raw" for p in h.pages})
@@ -1270,6 +1299,8 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     left_out = {(ctx.root / Path(p).expanduser()).resolve() for p in leave or []}
     hits = [h for h in hits if h.path.resolve() not in left_out]
     go, held, withheld = sort_hits(ctx, hits, scopes)
+    go, crossing = person_links_held(ctx, go, old, new)
+    withheld = withheld or crossing
     item = correction_item(ctx, old, new, go, path)
     out = {"old": old, "new": new, "item": item, "hits": correct.listing(go, ctx.root), "held": held, "done": None,
            "wall": WALL_REFUSAL if withheld else ""}
@@ -1491,11 +1522,13 @@ def hold_unsafe(ctx: Ctx, items: List[Item]) -> Dict[Path, List[Item]]:
     return by_repo
 
 
-def apply(ctx: Ctx, items: List[Item]) -> dict:
+def apply(ctx: Ctx, items: List[Item], verify: Optional[Callable[[Path], str]] = None) -> dict:
     """Apply every fix of an applying kind among `items`, one commit per
     repository, of the files the fixes changed and nothing else. In a run
     with nobody watching, only the kinds registered as unattended, and of
-    those no op in ATTENDED_OPS."""
+    those no op in ATTENDED_OPS. `verify`, given a repository with the
+    change staged, says why it must not be committed, or "": a refusal is
+    put back as a refused commit is."""
     wanted = [i for i in items if i.kind in KINDS and KINDS[i.kind].apply and i.fix
               and (not ctx.headless or (KINDS[i.kind].unattended and i.fix.get("op") not in ATTENDED_OPS))]
     seen, unique = set(), []
@@ -1526,7 +1559,13 @@ def apply(ctx: Ctx, items: List[Item]) -> dict:
         paths = [p for p in paths if (repo / p).exists() or known(ctx, repo, p)]   # a path moved away: git has it
         message = commit_message(ctx, repo, applied)
         add = ctx.git(repo, "add", "-A", "--", *paths)
-        c = ctx.git(repo, "commit", "-q", "-m", message, "--", *paths) if add.returncode == 0 else add
+        c = add
+        if add.returncode == 0 and verify is not None:
+            said = verify(repo)
+            if said:
+                c = subprocess.CompletedProcess([], 1, "", said)
+        if c is add and add.returncode == 0:
+            c = ctx.git(repo, "commit", "-q", "-m", message, "--", *paths)
         if c.returncode != 0:
             ctx.git(repo, "reset", "-q", "--", *paths)
             journal.rollback(start)
@@ -2019,6 +2058,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("nurture: %s" % exc, file=sys.stderr)
         return EXIT_USAGE
     headless = a.action == "nightly" or os.environ.get("GARRICK_HEADLESS") == "1"
+    if a.action == "organisation":
+        # Here, any value but empty or `0` means nobody is watching (#330); the other tools read only `1`.
+        headless = headless or os.environ.get("GARRICK_HEADLESS", "").strip() not in ("", "0")
     ctx = Ctx(root, headless=headless, today=datetime.date.fromisoformat(a.today) if a.today else None)
 
     if a.action == "answered":
@@ -2080,13 +2122,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     return code
 
 
+def walls_refusal(ctx: Ctx, repo: Path) -> str:
+    """The walls check on what a repository has staged, as its commit hook
+    would run it: "" when it passes, else what it found, in its own words."""
+    r = subprocess.run([sys.executable, str(HERE / "check.py"), "--root", str(ctx.root), "--staged", "--walls-only"],
+                       cwd=str(repo), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL,
+                       env=foreign_git_env())
+    if r.returncode == 0:
+        return ""
+    said = [l.strip() for l in (r.stdout + r.stderr).splitlines() if l.strip()]
+    return "the walls check refused it: %s" % (said[0] if said else "it said no more")
+
+
 def main_organisation(ctx: Ctx, a) -> int:
     """Write one person page's `organisation:` on that page's own yes (#330):
     the link its question offered, worked out again now, or, with
     `--entity`, the entity page the user named instead, as `ingest.py person
     --organisation` takes it. Walls, two hats and an entity page with no
-    `party:` stop it as they stop the question. One page, one commit, through
-    its repository's wall check; never with nobody watching."""
+    `party:` stop it as they stop the question, and so does a frontmatter
+    not in the strict shape. One page, one commit, made only after the
+    walls check passes on that change as staged, whether or not the
+    repository has a hook (`Wikis/` has none by default); never with nobody
+    watching."""
     if ctx.headless:
         print("nurture: a person page's organisation is written only on its own yes, never with nobody watching",
               file=sys.stderr)
@@ -2099,13 +2156,16 @@ def main_organisation(ctx: Ctx, a) -> int:
     if people not in path.parents or not path.is_file() or path.suffix != ".md":
         print("nurture: %s is not a person page in Wikis/Meetings/wiki/people/" % a.path, file=sys.stderr)
         return EXIT_USAGE
+    text = path.read_text(encoding="utf-8")
+    if garrick_check.person_shape_problem(text):
+        print("nurture: %s: %s; nothing was written" % (a.path, garrick_check.PERSON_SHAPE), file=sys.stderr)
+        return EXIT_FAILED
+    if any(str(k).strip().lower() in ("organisation", "organization") for k in parse_frontmatter_text(text)):
+        print("nurture: %s has an organisation line already" % a.path, file=sys.stderr)
+        return EXIT_FAILED
     asked, link = organisation_question(ctx, path)
     if a.entity:
-        text = path.read_text(encoding="utf-8")
         fm = parse_frontmatter_text(text)
-        if "organisation" in fm:
-            print("nurture: %s has an organisation line already" % a.path, file=sys.stderr)
-            return EXIT_FAILED
         title = str(fm.get("title") or path.stem)
         link, why = organisation_named(ctx.root, ctx.context, (title, path.stem), fm.get("party"), a.entity)
         if why:
@@ -2117,7 +2177,7 @@ def main_organisation(ctx: Ctx, a) -> int:
     rel = ctx.rel(path)
     item = Item(source="nurture", check="organisation", path=rel, message="", kind="mechanical",
                 fix={"op": "organisation", "link": link}, touches=[rel])
-    done = apply(ctx, [item])
+    done = apply(ctx, [item], verify=lambda repo: walls_refusal(ctx, repo))
     for i in done["held"]:
         print("nurture: held: %s" % i.held, file=sys.stderr)
     for c in done["commits"]:

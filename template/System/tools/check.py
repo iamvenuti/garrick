@@ -3050,10 +3050,10 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
     out = []
     for page, text in pages:
         fm = parse_frontmatter_text(text)
-        if organisation_misread(text):
+        if person_shape_problem(text):
             out.append(Finding(ERROR, "walls", rel(ws, page),
-                               ORGANISATION_ONE + ", written as one `organisation:` line with its link on it, "
-                               "and no other line naming it", "A person page's organisation link is not one entity page"))
+                               PERSON_SHAPE + ", and `- item` lines under a key with no value; a YAML reader can "
+                               "find a link in any other form", "A person page's frontmatter is not plain lines"))
             continue
         if not organisation_keys(fm):
             continue
@@ -3076,50 +3076,87 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
 ORGANISATION_ONE = "`organisation:` must be one link to an entity page"
 
 
-_CLEAN_ORGANISATION = re.compile(r"^organisation:[ \t]*(\S.*?)?[ \t]*$")
+PERSON_SHAPE = "a person page's frontmatter must be plain `key: value` lines"
+_SHAPE_KEY = re.compile(r"^([a-z][a-z0-9_-]*):(?: +(.*?))? *$")
+_SHAPE_ITEM = re.compile(r"^(?:  )?- +(.*?) *$")
+_FLOW_ITEM = re.compile(r"""^(?:[A-Za-z0-9_#. -]+|"[^"\\,]*"|'[^',]*')$""")
 
 
-def _folded(text: str) -> str:
-    """A line as a reader sees it: Unicode compatibility forms plain, accents
-    and invisible marks dropped, letters that only look different (a dotless
-    ı) spelled out, lower case."""
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(ch for ch in text if not unicodedata.combining(ch) and unicodedata.category(ch) != "Cf")
-    return text.casefold().replace("ı", "i")
+def _plain_scalar(value: str) -> bool:
+    """A value as one plain or simply quoted scalar: double quotes with no
+    escape inside, single quotes with no quote inside, a wikilink
+    `[[...]]` written bare, or a plain word that opens with none of the
+    characters that start another kind of YAML node."""
+    if value.startswith('"'):
+        return re.fullmatch(r'"[^"\\]*"', value) is not None
+    if value.startswith("'"):
+        return re.fullmatch(r"'[^']*'", value) is not None
+    if value.startswith("[["):
+        return re.fullmatch(r"\[\[[^\[\]{}]+\]\]", value) is not None
+    return value[:1] not in set("{[]}&*|>!%@`?#,'\"") and not value.startswith("- ") and value != "-"
 
 
-def organisation_misread(text: str) -> bool:
-    """Does a person page's frontmatter name `organisation` in a way the
-    frontmatter reader may not see as the one clean `organisation:` line
-    (#330)? Valid YAML it reads otherwise: the value on the next line, a
-    quoted key, an explicit `? organisation` key, another case or spelling
-    (`Organisation`, `organization`, a dotless ı), the key twice, or a value
-    carried on to an indented line. Any line whose key, or whole text where
-    it has no key, names organisation or organization counts; only one
-    `organisation: <value>` line at the left margin, with nothing indented
-    after it, is clean. Fail closed: the hook refuses the rest."""
-    if not text.startswith("---"):
+def _flow_list(value: str) -> bool:
+    """A one-line flow list of plain or simply quoted words, `[acme, birch]`,
+    with no brackets, braces, `&`, `*` or `:` inside it."""
+    m = re.fullmatch(r"\[([^\[\]{}&*:]*)\]", value)
+    if m is None:
         return False
-    lines = text.splitlines()[1:]
-    end = next((i for i, l in enumerate(lines) if l.strip() in ("---", "...")), None)
+    inner = m.group(1).strip()
+    return not inner or all(_FLOW_ITEM.match(item.strip()) for item in inner.split(","))
+
+
+def person_shape_problem(text: str) -> bool:
+    """Is a person page's frontmatter anything but the strict shape every
+    tool here writes (#330)? A YAML reader can find an `organisation:` in
+    forms a line reader never sees: a byte-order mark, a value on the next
+    line or after a comment, a quoted, escaped, tagged or `?` key, an anchor
+    and a merge key, a block scalar holding `---`, the whole frontmatter as
+    one flow mapping. So, rather than guess at YAML, only this passes, from
+    a `---` that opens the file (a byte-order mark aside) to the next `---`
+    at the left margin: blank lines; `key: value` lines, the key lower-case
+    ASCII and unquoted, the value empty, one plain or simply quoted scalar
+    (_plain_scalar) or a one-line flow list of words (_flow_list), with a
+    ` # comment` after it allowed; and
+    `- item` lines, at the margin or two spaces in, straight under a key
+    with no value. No key twice, no key but `organisation` spelled after
+    it, no list under `organisation`, no tab, no lone carriage return.
+    A file with no frontmatter has nothing to misread."""
+    if text.startswith("﻿"):
+        text = text[1:]
+    first = text.split("\n", 1)[0].rstrip("\r")
+    if first != "---":
+        return first.strip().startswith("---") or first.strip() == "..."
+    text = text.replace("\r\n", "\n")
+    lines = text.split("\n")[1:]
+    end = next((i for i, l in enumerate(lines) if l == "---"), None)
     if end is None:
-        return False
-    lines = lines[:end]
-    named = []
-    for i, line in enumerate(lines):
-        folded = _folded(line)
-        key = folded.split(":", 1)[0] if ":" in folded else folded
-        if "organisation" in key.replace(" ", "") or "organization" in key.replace(" ", "") or (
-                ("organis" in folded or "organiz" in folded) and ":" not in folded):
-            named.append(i)
-    if not named:
-        return False
-    if len(named) > 1:
         return True
-    i = named[0]
-    if not _CLEAN_ORGANISATION.match(lines[i]):
-        return True
-    return i + 1 < len(lines) and lines[i + 1][:1] in (" ", "\t") and lines[i + 1].strip() != ""
+    keys, open_key = set(), None
+    for line in lines[:end]:
+        if "\t" in line or "\r" in line:
+            return True
+        if not line.strip():
+            open_key = None
+            continue
+        item = _SHAPE_ITEM.match(line)
+        if item and open_key is not None and line[:1] in (" ", "-"):
+            if open_key == "organisation" or not _plain_scalar(item.group(1)):
+                return True
+            continue
+        m = _SHAPE_KEY.match(line)
+        if m is None:
+            return True
+        key, value = m.group(1), m.group(2) or ""
+        if key in keys or (key != "organisation" and ("organis" in key or "organiz" in key)):
+            return True
+        keys.add(key)
+        if value[:1] in ('"', "'", "["):
+            value = re.sub(r"(?<=[\]\"'])[ ]+#.*$", "", value)     # a comment after a quoted value, as the schema shows
+        if value and not (_plain_scalar(value) or _flow_list(value)):
+            return True
+        open_key = key if not value else None
+    return False
 
 
 def organisation_keys(fm: dict) -> List[str]:
@@ -3157,8 +3194,19 @@ def organisation_entity(ws: Workspace, fm: dict) -> Tuple[str, Optional[Path]]:
 
 
 def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
+    """Every person page and its text, symbolic links to a page or a folder
+    passed over: they may lead out of the wiki."""
     folder = ws.root.joinpath(*PEOPLE)
-    return [(p, read_text(p) or "") for p in sorted(folder.rglob("*.md"))] if folder.is_dir() else []
+    if not folder.is_dir() or folder.is_symlink():
+        return []
+    out = []
+    for here, dirs, files in os.walk(str(folder)):
+        dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(here, d)))
+        for f in sorted(files):
+            path = Path(here) / f
+            if f.endswith(".md") and not path.is_symlink():
+                out.append((path, read_text(path) or ""))
+    return sorted(out)
 
 
 def staged_people(ws: Workspace, staged: List[Tuple[Path, str]]) -> List[Tuple[Path, str]]:

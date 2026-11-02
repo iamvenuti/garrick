@@ -684,7 +684,7 @@ class HookFormsTest(Workspace):
                          sorted(f.path for f in found))
         for f in found:
             self.assertEqual("error", f.severity)
-            self.assertTrue(f.message.startswith(check.ORGANISATION_ONE), f.message)
+            self.assertTrue(f.message.startswith((check.ORGANISATION_ONE, check.PERSON_SHAPE)), f.message)
 
     def test_an_unwalled_link_in_another_form_passes_the_hook(self):
         self.write_org("kit-avery", "Kit Avery", "none", 'organisation: "[[wiki/entities/larch-partners|Larch]]"')
@@ -760,7 +760,7 @@ class MisreadFrontmatterTest(Workspace):
         self.assertEqual(sorted("Wikis/Meetings/wiki/people/pat-%d.md" % i for i in range(len(forms))),
                          sorted(f.path for f in found))
         for f in found:
-            self.assertTrue(f.message.startswith(check.ORGANISATION_ONE), f.message)
+            self.assertTrue(f.message.startswith(check.PERSON_SHAPE), f.message)
 
     def test_a_clean_line_and_a_title_naming_an_organisation_pass(self):
         self.page("kit-avery", 'organisation: "[[wiki/entities/larch-partners]]"', title="Organisation Design Lead")
@@ -825,6 +825,184 @@ class LesserFaultsTest(Workspace):
         self.assertEqual(("", []), self.propose("Theo Marsh", "birch", "Now at Lanternfish."))
         write(self.entities / "product-hall.md", entity("Product Hall"))   # the lead word alone reads as nobody's
         self.assertEqual(("[[wiki/entities/product-hall]]", []), self.propose("Theo Marsh", "birch", "At Product Hall."))
+
+
+
+# ---------------------------------------------------------------------------
+# The third review: a person page's frontmatter has a strict shape
+# ---------------------------------------------------------------------------
+
+B = '"[[wiki/entities/birch-co]]"'
+HEAD = "title: Pat Newcomer\ntype: person\nparty: acme\n"
+TAIL = "created: 2026-03-10\nupdated: 2026-03-10\n"
+
+
+def doc(front: str, opener: str = "---", closer: str = "---", nl: str = "\n", bom: str = "") -> str:
+    return ("%s%s\n%s\n%s%s\n\n# Pat Newcomer\n\nConsultant.\n" % (bom, opener, front, TAIL, closer)).replace("\n", nl)
+
+
+class ShapeTest(Workspace):
+    """Every form a YAML reader turns into an `organisation:` link and a line
+    reader does not, refused; every shape the tools write, passed."""
+
+    MISREAD = {
+        "bom_next_line": doc(HEAD + "organisation:\n  " + B, bom="﻿"),
+        "bom_quoted_key": doc(HEAD + '"organisation": ' + B, bom="﻿"),
+        "crlf_next_line": doc(HEAD + "organisation:\n  " + B, nl="\r\n"),
+        "cr_only": doc(HEAD + "organisation:\n  " + B, nl="\r"),
+        "opener_trailing_space": doc(HEAD + "organisation:\n  " + B, opener="--- "),
+        "closer_dots": doc(HEAD + "organisation:\n  " + B, closer="..."),
+        "block_scalar_dashes": doc(HEAD + "note: |\n  ---\norganisation:\n  " + B),
+        "block_scalar_dots": doc(HEAD + "note: |\n  ...\norganisation:\n  " + B),
+        "flow_whole_doc": doc("{title: Pat Newcomer, type: person, party: acme, organisation: %s}" % B),
+        "flow_anchor_merge": doc(HEAD + "base: &b {organisation: %s}\n<<: *b" % B),
+        "block_anchor_merge": doc(HEAD + "base: &b\n  organisation: %s\n<<: *b" % B),
+        "escaped_key_x": doc(HEAD + '"organi\\x73ation": ' + B),
+        "escaped_key_u": doc(HEAD + '"organi\\u0073ation": ' + B),
+        "single_quoted_key": doc(HEAD + "'organisation': " + B),
+        "cyrillic_o_key": doc(HEAD + "оrganisation: " + B),
+        "fullwidth_key": doc(HEAD + "ｏrganisation: " + B),
+        "zero_width_key": doc(HEAD + "organi​sation: " + B),
+        "complex_key": doc(HEAD + "? [organisation]\n: " + B),
+        "tag_key": doc(HEAD + "!!str organisation: " + B),
+        "anchor_key": doc(HEAD + "&k organisation: " + B),
+        "value_tag": doc(HEAD + "organisation: !!str " + B),
+        "value_alias": doc(HEAD + "x: &v " + B + "\norganisation: *v"),
+        "json_style": doc(HEAD + '{"organisation": %s}' % B),
+        "tab_value": doc(HEAD + "organisation:\n\t" + B),
+        "comment_between": doc(HEAD + "organisation:\n# c\n  " + B),
+        "blank_between": doc(HEAD + "organisation:\n\n  " + B),
+        "organization": doc(HEAD + "organization: " + B),
+        "twice": doc(HEAD + 'organisation: ""\norganisation: ' + B),
+        "list_under_it": doc(HEAD + "organisation:\n  - " + B),
+        "no_closer": "---\n" + HEAD + "organisation: " + B + "\n\n# Pat\n",
+    }
+
+    def test_every_misread_form_fails_the_shape(self):
+        for name, text in self.MISREAD.items():
+            self.assertTrue(check.person_shape_problem(text), name)
+
+    def test_the_shapes_the_tools_write_pass(self):
+        texts = [person("Kit \"Kestrel\" Avery", "none", "Architect.", "[[wiki/entities/birch-co]]"),
+                 "---\ntitle: Mira Holt\ntype: person\nparty:\n  - acme\naliases:\n- Mira\norganisation:\n---\n",
+                 "---\ntitle: Rowan Blake\ntype: person\nparty: [acme, birch]\n---\n\n# Rowan Blake\n",
+                 "---\ntitle: Ana\ntype: person\nparty: ['acme', \"birch\"]\norganisation: [[wiki/entities/x|X]]\n---\n",
+                 "# No frontmatter at all\n", "---\r\ntitle: Ana\r\ntype: person\r\nparty: none\r\n---\r\n"]
+        path, _ = ingest.ensure_person(self.root, "Mira Holt", "acme", "2026-03-10", "acme-corp")
+        texts.append(path.read_text())
+        demo = REPO / "examples" / "demo" / "content" / "Wikis" / "Meetings" / "wiki" / "people"
+        texts += [p.read_text(encoding="utf-8") for p in sorted(demo.glob("*.md"))]
+        schema = (REPO / "template" / "Wikis" / "Meetings" / "AGENTS.md").read_text(encoding="utf-8")
+        block = schema.split("## A person page", 1)[1].split("```yaml\n", 1)[1].split("```", 1)[0]
+        texts.append(block.replace("<their name>", "Kit Avery").replace("<tag>", "none"))
+        for text in texts:
+            self.assertFalse(check.person_shape_problem(text), text[:120])
+
+    def test_a_two_hat_flow_list_passes_the_shape_and_still_meets_the_wall(self):
+        text = "---\ntitle: Pat Newcomer\ntype: person\nparty: [acme, birch]\n---\n\n# Pat Newcomer\n\nAt Larch Partners.\n"
+        self.assertFalse(check.person_shape_problem(text))
+        write(self.people / "pat-newcomer.md", text.replace("party: [acme, birch]\n",
+                                                            'party: [acme, birch]\norganisation: "[[wiki/entities/larch-partners]]"\n'))
+        found = self.findings("walls")
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.md"], [f.path for f in found])
+        self.assertTrue(found[0].message.endswith("a wall stands between acme and birch"), found[0].message)
+        self.assertEqual(("", []), self.propose("Pat Newcomer", ["acme", "birch"], "At Larch Partners."))
+
+    def test_the_hook_refuses_a_misread_page_in_plain_words(self):
+        for name, text in self.MISREAD.items():
+            write(self.people / ("pat-%s.md" % name.replace("_", "-")), text)
+        found = self.findings("walls")
+        self.assertEqual(sorted("Wikis/Meetings/wiki/people/pat-%s.md" % n.replace("_", "-") for n in self.MISREAD),
+                         sorted(f.path for f in found))
+        for f in found:
+            self.assertTrue(f.message.startswith(check.PERSON_SHAPE), (f.path, f.message))
+
+    def test_a_symlinked_person_page_is_not_read(self):
+        outside = write(Path(self._tmp.name) / "outside.md", person("Pat Newcomer", "acme", "x.",
+                                                                    "[[wiki/entities/birch-co]]"))
+        self.people.mkdir(parents=True, exist_ok=True)
+        os.symlink(str(outside), str(self.people / "pat-newcomer.md"))
+        self.assertEqual([], [p for p, _ in check.person_pages(check.discover(self.root, None))
+                              if p.name == "pat-newcomer.md"])
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class OrganisationActionTest(Workspace):
+    def setUp(self):
+        super().setUp()
+        env = {k: v for k, v in GIT_ENV.items() if k.startswith("GIT_")}
+        env.pop("GIT_DIR", None)
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop("GARRICK_HEADLESS", None)
+        self.wikis = self.root / "Wikis"
+        git(self.wikis, "init", "-q")
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant at Larch Partners."))
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect at Birch & Co.")
+              .replace("party: none\n", 'party: none\nOrganisation: "[[wiki/entities/larch-partners]]"\n'))
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        self.head = git(self.wikis, "rev-parse", "HEAD").strip()
+
+    def organisation(self, page: str, *more: str, env=None):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env or {}), contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = nurture.main(["organisation", "--path", "Wikis/Meetings/wiki/people/%s" % page, "--root",
+                                 str(self.root), "--today", "2026-10-17", "--yes"] + list(more))
+        return code, err.getvalue()
+
+    def test_the_walls_check_runs_on_the_staged_change_with_no_hook(self):
+        before = (self.people / "pat-newcomer.md").read_text()
+        with mock.patch.object(nurture, "organisation_proposal",
+                               lambda *a, **k: ("[[wiki/entities/birch-co]]", [])):      # a proposal gone wrong
+            code, err = self.organisation("pat-newcomer.md")
+        self.assertNotEqual(0, code)
+        self.assertIn("the walls check refused it", err)
+        self.assertEqual(before, (self.people / "pat-newcomer.md").read_text())
+        self.assertEqual(self.head, git(self.wikis, "rev-parse", "HEAD").strip())
+        self.assertEqual("", git(self.wikis, "diff", "--cached", "--name-only").strip())
+
+    def test_a_variant_organisation_key_already_there_is_refused(self):
+        before = (self.people / "kit-avery.md").read_text()
+        code, err = self.organisation("kit-avery.md")
+        self.assertNotEqual(0, code)
+        self.assertIn("nothing was written", err)
+        self.assertEqual(before, (self.people / "kit-avery.md").read_text())
+
+    def test_any_value_of_garrick_headless_but_0_means_nobody_is_watching(self):
+        for value in ("1", "yes", "true", " on "):
+            code, err = self.organisation("pat-newcomer.md", env={"GARRICK_HEADLESS": value})
+            self.assertNotEqual(0, code, value)
+            self.assertIn("never with nobody watching", err)
+        code, err = self.organisation("pat-newcomer.md", env={"GARRICK_HEADLESS": "0"})
+        self.assertEqual(0, code, err)
+        self.assertIn('organisation: "[[wiki/entities/larch-partners]]"', (self.people / "pat-newcomer.md").read_text())
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class CorrectionAcrossAWallTest(Workspace):
+    def test_correct_never_rewrites_an_organisation_across_a_wall(self):
+        env = {k: v for k, v in GIT_ENV.items() if k.startswith("GIT_")}
+        env.pop("GIT_DIR", None)
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop("GARRICK_HEADLESS", None)
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer.", "[[wiki/entities/larch-partners]]"))
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer.", "[[wiki/entities/larch-partners]]"))
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            nurture.main(["correct", "--old", "wiki/entities/larch-partners", "--new", "wiki/entities/birch-co", "--yes",
+                          "--root", str(self.root), "--today", "2026-10-17"])
+        self.assertIn("[[wiki/entities/larch-partners]]", (self.people / "pat-newcomer.md").read_text())
+        self.assertIn("[[wiki/entities/birch-co]]", (self.people / "kit-avery.md").read_text())   # walled from nobody
+        self.assertIn(nurture.WALL_REFUSAL, out.getvalue())
+        self.assertEqual([], [f for f in check.run_checks(self.root, walls_only=True)])
 
 
 if __name__ == "__main__":

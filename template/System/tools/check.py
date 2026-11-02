@@ -119,7 +119,9 @@ from garrick_lib import (  # noqa: E402
     MEETINGS_ENTITIES, ENTITY_LINK_RE, entity_page, entity_pages, party_entities, people_parties, tag_list,
     TODO_ALSO_RE,
 )
-from garrick_lib import entity_names, entity_parties, name_group, organisation_link, organisation_proposal  # noqa: E402  (#330)
+from garrick_lib import (  # noqa: E402  (#330)
+    entity_names, entity_parties, entity_rel, links_in, name_group, organisation_link, organisation_proposal,
+)
 
 
 ERROR = "error"
@@ -2788,7 +2790,16 @@ def check_entities(ws: Workspace) -> List[Finding]:
                                "names party %s, and so does %s; one entity page per party, and until there is one "
                                "no person page links either" % (tag, others),
                                "Two entity pages stand for one party"))
+    for e in entity_index(ws):
+        if not e["tagged"]:
+            out.append(Finding(WARNING, "meetings", rel(ws, e["path"]),
+                               "%s; write `party: none` for an organisation that is not a party, or its tag, and "
+                               "until it says one no tool links a person page to it" % NO_ENTITY_PARTY,
+                               "An entity page does not say whose it is"))
     return out + same_named_entities(ws)
+
+
+NO_ENTITY_PARTY = "no `party:`"
 
 
 def same_named_entities(ws: Workspace) -> List[Finding]:
@@ -2940,7 +2951,8 @@ def organisation_wall(ws: Workspace, fm: dict, names, entity: Optional[Path]) ->
         if entity in ws.git_view:
             theirs |= set(tag_list(parse_frontmatter_text(ws.git_view[entity]).get("party")))
         theirs |= entity_parties(ws.context, same_name(ws, entity))
-    every = sorted(set(tag_list(fm.get("party"))) | theirs | people_parties(ws.context, names))
+    ours = set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties")))
+    every = sorted(ours | theirs | people_parties(ws.context, names))
     return next(((a, b) for a in every for b in every if a < b and walled(ws.context, a, b)), None)
 
 
@@ -2948,8 +2960,17 @@ def same_name(ws: Workspace, entity: Path) -> List[dict]:
     """The entity pages that go by a name `entity` goes by, itself included
     (garrick_lib's name_group): a link to one is read against them all."""
     index = entity_index(ws)
-    here = entity.resolve()
-    return name_group(index, [e["rel"] for e in index if e["path"].resolve() == here])
+    return name_group(index, [e["rel"] for e in index if same_page(e["path"], entity)])
+
+
+def same_page(a: Path, b: Path) -> bool:
+    """One page under two paths, whatever case either is written in: the
+    same file, or, for one git holds and the disk no longer does, the same
+    path resolved."""
+    try:
+        return os.path.samefile(str(a), str(b))
+    except OSError:
+        return a.resolve() == b.resolve()
 
 
 def organisation_findings(ws: Workspace, page: Path, fm: dict, name: str,
@@ -2989,15 +3010,23 @@ def organisation_link_default(ws: Workspace, names, fm: dict, entities: Dict[str
 def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Finding]:
     """A person page whose `organisation:` joins it to two parties a wall keeps
     apart: an entity page of a party walled from the page's, or any entity
-    page on a page the People table has under two walled parties. A person
-    page is read on every side of a wall, so this is refused like any other
-    file that crosses one, by the full check and by the commit hook."""
+    page on a page the People table has under two walled parties; or whose
+    `organisation:`, in any case or form, opens no one entity page that says
+    whose it is (organisation_entity). A person page is read on every side of
+    a wall, so this is refused like any other file that crosses one, by the
+    full check and by the commit hook."""
     out = []
     for page, text in pages:
         fm = parse_frontmatter_text(text)
-        if "organisation" not in fm:
+        if not organisation_keys(fm):
             continue
-        _, entity = organisation_target(ws, fm.get("organisation"))
+        problem, entity = organisation_entity(ws, fm)
+        if problem:
+            out.append(Finding(ERROR, "walls", rel(ws, page), problem,
+                               "A person page's organisation link is not one entity page"))
+            continue
+        if entity is None:
+            continue
         hit = organisation_wall(ws, fm, (str(fm.get("title") or page.stem), page.stem), entity)
         if hit:
             out.append(Finding(ERROR, "walls", rel(ws, page),
@@ -3005,6 +3034,40 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
                                "carries identity alone; take the link out: a wall stands between %s and %s" % hit,
                                "A person page links an entity page across a wall"))
     return out
+
+
+ORGANISATION_ONE = "`organisation:` must be one link to an entity page"
+
+
+def organisation_keys(fm: dict) -> List[str]:
+    """The keys of a person page's frontmatter that say where the person
+    works, however written: `organisation`, `Organisation`, `organization`."""
+    return [k for k in fm if str(k).strip().lower() in ("organisation", "organization")]
+
+
+def organisation_entity(ws: Workspace, fm: dict) -> Tuple[str, Optional[Path]]:
+    """The entity page a person page's `organisation:` opens, for the walls:
+    ("", page), ("", None) for a key with nothing in it, or (problem, None).
+    The link is read as garrick_lib's entity_rel() reads it, so an alias, a
+    heading, `.md`, a full path or a Markdown link is checked against the page
+    it opens. Fail closed: more than one link, under one key or several, a
+    value that is no link, one that opens no entity page or opens it through
+    a symbolic link, and one to an entity page that says no `party:` at all
+    (#330), are refused."""
+    values = [v for k in organisation_keys(fm) for v in as_list(fm.get(k)) if str(v).strip()]
+    if not values:
+        return "", None
+    links = [l for v in values for l in links_in(v)]
+    if len(links) != 1 or any(not links_in(v) for v in values):
+        return ORGANISATION_ONE + ", one value holding one link", None
+    page = entity_page(ws.root, entity_rel(links[0])) if entity_rel(links[0]) else None
+    if page is None:
+        return ORGANISATION_ONE + " in wiki/entities/, reached by no symbolic link", None
+    for e in entity_index(ws):
+        if same_page(e["path"], page) and (not e["tagged"] or any(t not in ws.context["parties"] for t in e["parties"])):
+            return (ORGANISATION_ONE + " that says whose it is: give it `party: none`, or its party's tag from the "
+                    "Parties table, before a person page links it"), None
+    return "", page
 
 
 def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
@@ -3020,23 +3083,28 @@ def staged_people(ws: Workspace, staged: List[Tuple[Path, str]]) -> List[Tuple[P
     def under(path: Path, parts) -> bool:
         return path.suffix.lower() == ".md" and ws.root.joinpath(*parts).resolve() in path.resolve().parents
     out = [(path, text) for path, text in staged if under(path, PEOPLE)]
-    entities = {path.resolve() for path, _ in staged if under(path, MEETINGS_ENTITIES)}
+    entities = [path for path, _ in staged if under(path, MEETINGS_ENTITIES)]
     if not entities:
         return out
     # A link to any page that goes by a staged page's name is read with it (#330).
     for page in list(entities):
-        entities |= {e["path"].resolve() for e in same_name(ws, page)}
+        entities += [e["path"] for e in same_name(ws, page)]
     have = {path.resolve() for path, _ in out}
     for page, text in person_pages(ws):
         if page.resolve() in have:
             continue
         text = ws.git_view.get(page, text)
         fm = parse_frontmatter_text(text)
-        if "organisation" not in fm:
+        if not organisation_keys(fm):
             continue
-        _, entity = organisation_target(ws, fm.get("organisation"))
-        if entity is not None and entity.resolve() in entities:
-            out.append((page, text))
+        folder = ws.root.joinpath(*MEETINGS_ENTITIES)
+        rels = [entity_rel(l) for k in organisation_keys(fm) for v in as_list(fm.get(k)) for l in links_in(v)]
+        for r in filter(None, rels):
+            target = entity_page(ws.root, r)
+            if any(same_page(target, e) if target is not None
+                   else (folder / (r + ".md")).as_posix().casefold() == e.as_posix().casefold() for e in entities):
+                out.append((page, text))
+                break
     return out
 
 

@@ -69,7 +69,7 @@ CONTEXT = fixtures.CONTEXT.replace(
 )
 
 
-def entity(title: str, party: str = "", aliases: str = "") -> str:
+def entity(title: str, party: str = "none", aliases: str = "") -> str:
     lines = ["---", "title: %s" % title, "type: entity"]
     lines += ["party: %s" % party] if party else []
     lines += ["aliases: %s" % aliases] if aliases else []
@@ -484,6 +484,210 @@ class NurtureTest(Workspace):
             _, out = self.run_tool(*args, env=env)
             self.assertEqual([], [i for i in out["fixed"] if i["fix"].get("op") == "organisation"])
         self.assertEqual(self.before, {p.name: p.read_text() for p in self.people.glob("*.md")})
+
+
+
+# ---------------------------------------------------------------------------
+# The release review's ways past the wall, each closed
+# ---------------------------------------------------------------------------
+
+def untagged(title: str, aliases: str = "") -> str:
+    """An entity page with no `party:` key at all."""
+    return entity(title, party="", aliases=aliases)
+
+
+class UntaggedEntityTest(Workspace):
+    """An entity page with no `party:` key is never linked by a tool: it may be
+    a walled party's under a name no folding reads as that party's."""
+
+    FORMS = ("Acme", "Acme Corporation", "Acme Corp Ltd", "The Acme Corp", "Асме Corp", "Αcme Corp",
+             "Ac​me Corp", "Ac­me Corp", "Larch Logistics")
+
+    def test_no_proposal_for_an_untagged_page_under_any_name(self):
+        for title in self.FORMS:
+            write(self.entities / "probe.md", untagged(title))
+            for who, party in (("Theo Marsh", "none"), ("Theo Marsh", "birch"), ("Kit Avery", "none")):
+                self.assertEqual(("", []), self.propose(who, party, "Now at %s." % title), (title, who))
+
+    def test_ingest_writes_no_link_to_an_untagged_page_and_names_no_wall(self):
+        write(self.entities / "acme.md", untagged("Acme"))
+        r = subprocess.run([sys.executable, str(INGEST), "--root", str(self.root), "--today", "2026-03-10", "person",
+                            "--name", "Kit Avery", "--party", "none", "--organisation", "acme"],
+                           capture_output=True, text=True)
+        self.assertEqual(0, r.returncode)
+        self.assertIn("needs a `party:`", r.stderr)
+        self.assertNotIn("wall", r.stderr)
+        self.assertNotIn("organisation", (self.people / "kit-avery.md").read_text())
+
+    def test_check_warns_and_nurture_asks_whose_it_is(self):
+        write(self.entities / "acme.md", untagged("Acme"))
+        found = [f for f in self.findings("meetings") if f.path.endswith("entities/acme.md")]
+        self.assertEqual(1, len(found))
+        self.assertTrue(found[0].message.startswith(check.NO_ENTITY_PARTY), found[0].message)
+        item = nurture.sort_item(nurture.Ctx(self.root), nurture.check_items(vars(found[0]))[0])
+        self.assertEqual(("attribution", "Whose is Acme: none, or a party?"), (item.kind, item.question))
+
+    def test_the_hook_refuses_a_hand_written_link_to_an_untagged_page(self):
+        write(self.entities / "acme.md", untagged("Acme"))
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Buyer.", "[[wiki/entities/acme]]"))
+        found = self.findings("walls")
+        self.assertEqual(["Wikis/Meetings/wiki/people/kit-avery.md"], [f.path for f in found])
+        self.assertTrue(found[0].message.startswith(check.ORGANISATION_ONE), found[0].message)
+
+
+class NamedAfterTest(Workspace):
+    """A page saying `party: none` is walled from nobody, unless it is named
+    after a party: a short form, a suffix, a leading `The`, the party's tag,
+    a qualifier in its Parties cell. A name with letters the folding drops is
+    linked by no tool."""
+
+    def test_short_forms_and_suffixes_read_as_the_partys(self):
+        for title in ("Acme", "Acme Corporation", "Acme Corp Ltd", "The Acme Corp", "Acme Corp, Inc.", "ACME"):
+            write(self.entities / "probe.md", entity(title))
+            self.assertEqual(("", []), self.propose("Theo Marsh", "birch", "Now at %s." % title), title)
+            self.assertEqual(("", []), self.propose("Theo Marsh", "none", "Now at %s." % title), title)
+
+    def test_a_qualifier_in_the_parties_cell_is_a_name_too(self):
+        write(self.root / "System" / "context.md",
+              CONTEXT.replace("| Acme Corp | Client.", "| **Acme Corp** (formerly Anvil Works) | Client."))
+        self.context = garrick_lib.load_context(self.root)
+        write(self.entities / "anvil.md", entity("Anvil Works"))
+        self.assertEqual(("", []), self.propose("Theo Marsh", "birch", "Now at Anvil Works."))
+        write(self.entities / "acme-two.md", entity("Acme Corp"))
+        self.assertEqual(("", []), self.propose("Kit Avery", "birch", "Now at Acme Corp."))
+
+    def test_a_suspect_name_is_linked_by_no_tool(self):
+        for title in ("Асме Corp", "Αcme Corp", "Ac​me Corp", "Ac­me Corp"):
+            write(self.entities / "probe.md", entity(title))
+            self.assertEqual(("", []), self.propose("Kit Avery", "none", "Now at %s." % title), title)
+            why = []
+            path, _ = ingest.ensure_person(self.root, "Ana %d" % len(title), "none", "2026-03-10", "probe", why)
+            self.assertNotIn("organisation", path.read_text(), title)
+            path.unlink()
+
+    def test_a_customer_saying_none_is_still_linked(self):
+        self.assertEqual(("[[wiki/entities/larch-partners]]", []),
+                         self.propose("Theo Marsh", "birch", "Buyer at Larch Partners."))
+
+
+class SubsumedMatchTest(Workspace):
+    def test_a_walled_name_inside_a_longer_one_still_stops_the_proposal(self):
+        write(self.entities / "acme-corp.md", entity("Acme Corp", "acme", aliases="[Quill]"))
+        write(self.entities / "quill-labs.md", entity("Quill Labs"))
+        self.assertEqual(("", []), self.propose("Theo Marsh", "birch", "Now at Quill Labs."))
+        self.assertEqual(("[[wiki/entities/quill-labs]]", []), self.propose("Kit Avery", "none", "Now at Quill Labs."))
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class HookFormsTest(Workspace):
+    """The hook reads the page a link opens, whatever case or form it is
+    written in, and refuses a value that opens no one entity page."""
+
+    def setUp(self):
+        super().setUp()
+        self.wikis = self.root / "Wikis"
+        git(self.wikis, "init", "-q")
+
+    def staged_paths(self):
+        git(self.wikis, "add", "-A")
+        return sorted(f.path for f in check.run_checks(self.root, walls_only=True, staged=self.wikis))
+
+    def write_org(self, slug: str, name: str, party: str, line: str):
+        write(self.people / (slug + ".md"),
+              "---\ntitle: %s\ntype: person\nparty: %s\n%s\n---\n\n# %s\n\nPartner.\n" % (name, party, line, name))
+
+    def test_the_real_page_is_found_whatever_the_case(self):
+        write(self.entities / "acme.md", entity("Acme"))
+        found = garrick_lib.entity_page(self.root, "ACME")
+        self.assertTrue(found is None or found.name == "acme.md", found)
+
+    def test_case_variant_links_meet_the_namesake_and_named_after_rules(self):
+        write(self.entities / "acme.md", entity("Acme"))                         # named after Acme Corp
+        write(self.entities / "ledger.md", entity("Ledger Co"))
+        write(self.entities / "ledger-acme.md", entity("Ledger Co", "acme"))      # a walled namesake
+        self.write_org("theo-1", "Theo Marsh", "birch", 'organisation: "[[wiki/entities/ACME]]"')
+        self.write_org("theo-2", "Theo Marsh", "birch", 'organisation: "[[wiki/entities/Ledger]]"')
+        self.assertEqual(["Wikis/Meetings/wiki/people/theo-1.md", "Wikis/Meetings/wiki/people/theo-2.md"],
+                         self.staged_paths())
+
+    def test_a_case_variant_link_is_read_when_its_entity_page_is_committed(self):
+        write(self.entities / "ledger.md", entity("Ledger Co"))
+        self.write_org("theo-marsh", "Theo Marsh", "birch", 'organisation: "[[wiki/entities/Ledger]]"')
+        self.assertEqual([], self.staged_paths())
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        write(self.entities / "ledger.md", entity("Ledger Co", "acme"))
+        self.assertEqual(["Wikis/Meetings/wiki/people/theo-marsh.md"], self.staged_paths())
+
+    def test_every_form_of_a_cross_wall_link_is_refused(self):
+        forms = ('organisation: "[[wiki/entities/birch-co|Birch]]"', 'organisation: "[[wiki/entities/birch-co#About]]"',
+                 'organisation: "[[wiki/entities/birch-co^abc]]"', 'organisation: "[Birch](wiki/entities/birch-co.md)"',
+                 'organisation: "[[wiki/entities/birch-co.md]]"', 'organisation: "[[wiki/entities/./birch-co]]"',
+                 'organisation: "[[Wikis/Meetings/wiki/entities/birch-co]]"', 'organisation: "[[wiki/entities/birch-co ]]"',
+                 'organisation: "[[wiki/entities/Birch-Co]]"', 'Organisation: "[[wiki/entities/birch-co]]"',
+                 'organization: "[[wiki/entities/birch-co]]"', 'organisation:\n  - "[[wiki/entities/birch-co]]"')
+        for i, line in enumerate(forms):
+            self.write_org("pat-%d" % i, "Pat Newcomer", "acme", line)
+        self.assertEqual(sorted("Wikis/Meetings/wiki/people/pat-%d.md" % i for i in range(len(forms))),
+                         self.staged_paths())
+
+    def test_a_value_that_opens_no_one_entity_page_is_refused_in_plain_words(self):
+        forms = ('organisation: "[[birch-co]]"', 'organisation: "[[wiki/entities/fernway]]"',
+                 'organisation: "Birch & Co"',
+                 'organisation: ["[[wiki/entities/larch-partners]]", "[[wiki/entities/cedar-ltd]]"]',
+                 'organisation: "[[wiki/entities/larch-partners]] [[wiki/entities/cedar-ltd]]"',
+                 'organisation: "[[wiki/entities/larch-partners]]"\norganization: "[[wiki/entities/cedar-ltd]]"',
+                 'organisation: "[[wiki/entities/elsewhere]]"')
+        outside = write(Path(self._tmp.name) / "elsewhere.md", entity("Elsewhere"))
+        os.symlink(str(outside), str(self.entities / "elsewhere.md"))
+        for i, line in enumerate(forms):
+            self.write_org("kit-%d" % i, "Kit Avery", "none", line)
+        git(self.wikis, "add", "-A")
+        found = check.run_checks(self.root, walls_only=True, staged=self.wikis)
+        self.assertEqual(sorted("Wikis/Meetings/wiki/people/kit-%d.md" % i for i in range(len(forms))),
+                         sorted(f.path for f in found))
+        for f in found:
+            self.assertEqual("error", f.severity)
+            self.assertTrue(f.message.startswith(check.ORGANISATION_ONE), f.message)
+
+    def test_an_unwalled_link_in_another_form_passes_the_hook(self):
+        self.write_org("kit-avery", "Kit Avery", "none", 'organisation: "[[wiki/entities/larch-partners|Larch]]"')
+        self.write_org("theo-marsh", "Theo Marsh", "birch", 'organisation: "[[wiki/entities/Birch-Co]]"')
+        self.assertEqual([], self.staged_paths())
+
+    def test_a_person_page_naming_its_party_under_parties_is_read_too(self):
+        write(self.people / "pat-newcomer.md", '---\ntitle: Pat Newcomer\ntype: person\nparties: [acme]\n'
+              'organisation: "[[wiki/entities/birch-co]]"\n---\n\n# Pat Newcomer\n\nConsultant.\n')
+        self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.md"], self.staged_paths())
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class NurtureUntaggedTest(Workspace):
+    """End to end: an untagged page that is Acme's own short page is never
+    written into a Birch person page, by a list, a yes or a night."""
+
+    def test_never_proposed_never_written(self):
+        env = {k: v for k, v in GIT_ENV.items() if k.startswith("GIT_")}
+        env.pop("GIT_DIR", None)
+        patch = mock.patch.dict(os.environ, env)
+        patch.start()
+        self.addCleanup(patch.stop)
+        os.environ.pop("GARRICK_HEADLESS", None)
+        wikis = self.root / "Wikis"
+        git(wikis, "init", "-q")
+        write(self.entities / "acme.md", untagged("Acme"))
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Managing partner; formerly at Acme."))
+        git(wikis, "add", "-A")
+        git(wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+        before = (self.people / "theo-marsh.md").read_text()
+        for args in (("list", "--scope", "Wikis/Meetings"), ("nightly",), ("fix", "--scope", "Wikis/Meetings", "--yes")):
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+                nurture.main(list(args) + ["--root", str(self.root), "--json", "--today", "2026-10-17"])
+            data = json.loads(out.getvalue())
+            self.assertEqual([], [i for i in data["items"] if i["path"].endswith("theo-marsh.md")
+                                  and (i.get("fix") or {}).get("op") == "organisation"], args)
+        self.assertEqual(before, (self.people / "theo-marsh.md").read_text())
 
 
 if __name__ == "__main__":

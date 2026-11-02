@@ -67,6 +67,7 @@ import stat
 import subprocess
 import sys
 import unicodedata
+import urllib.parse
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -129,6 +130,9 @@ __all__ = [
     "entity_names",
     "name_group",
     "entity_parties",
+    "suspect_name",
+    "entity_rel",
+    "links_in",
     "named_in",
     "first_line",
     "organisation_named",
@@ -1063,16 +1067,38 @@ def tag_list(value) -> List[str]:
 ENTITY_LINK_RE = re.compile(r"^\[\[wiki/entities/((?:[^\[\]|#^/\\\n]+/)*[^\[\]|#^/\\\n]+)\]\]$")
 
 
+def _listed(folder: Path, name: str) -> Optional[str]:
+    """`name` as the folder lists it: the entry spelled exactly so, else the
+    one entry that differs from it in case or Unicode form alone, else None.
+    On a disk that ignores case (macOS) `ACME.md` opens `acme.md`; this gives
+    back `acme.md`, so every comparison sees one page under one path (#330)."""
+    try:
+        entries = os.listdir(str(folder))
+    except OSError:
+        return None
+    if name in entries:
+        return name
+    fold = unicodedata.normalize("NFC", name).casefold()
+    hits = [e for e in entries if unicodedata.normalize("NFC", e).casefold() == fold]
+    return hits[0] if len(hits) == 1 else None
+
+
 def entity_page(root: PathLike, rel: str) -> Optional[Path]:
-    """The entity page `wiki/entities/<rel>.md` of the Meetings wiki, or None
+    """The entity page `wiki/entities/<rel>.md` of the Meetings wiki, as the
+    folder spells it, whatever case `rel` is written in (_listed), or None
     when it is not there, is reached through a symbolic link at any step from
     `entities/` down, or `rel` steps out of the folder (`.`, `..`)."""
     parts = rel.split("/")
     if not rel or any(p in ("", ".", "..") for p in parts):
         return None
     path = Path(root).joinpath(*MEETINGS_ENTITIES)
-    for part in [""] + parts[:-1] + [parts[-1] + ".md"]:
-        path = path / part if part else path
+    if path.is_symlink() or not path.is_dir():
+        return None
+    for part in parts[:-1] + [parts[-1] + ".md"]:
+        name = _listed(path, part)
+        if name is None:
+            return None
+        path = path / name
         if path.is_symlink():
             return None
     return path if path.is_file() else None
@@ -1241,7 +1267,8 @@ def organisation_link(root: PathLike, context: dict, names, party,
       name shares between two hats links neither hat's entity page;
     - exactly one entity page stands for that party alone;
     - no entity page that goes by the same name (name_group) names a party
-      walled from it, or two parties walled from each other.
+      walled from it, or two parties walled from each other, names no party
+      at all, or goes by a name with letters name_words() cannot read.
     """
     tags = sorted(set(tag_list(party)))
     if len(tags) != 1 or tags[0] == "none" or tags[0] not in context.get("parties", {}):
@@ -1253,7 +1280,7 @@ def organisation_link(root: PathLike, context: dict, names, party,
     if len(pages) != 1:
         return ""
     group = name_group(entity_names(root) if index is None else index, [pages[0]])
-    if _any_wall(context, {tag} | rows | entity_parties(context, group)):
+    if _unlinkable(context, group) or _any_wall(context, {tag} | rows | entity_parties(context, group)):
         return ""
     return "[[wiki/entities/%s]]" % pages[0]
 
@@ -1270,8 +1297,9 @@ def organisation_link(root: PathLike, context: dict, names, party,
 # loosely (org_words), and every page that goes by the same name is read
 # with it: a link to one is a link to the name, so a second page under a
 # variant spelling, with no `party:`, cannot carry a link past a wall that
-# the first page's party would stop. An entity page with no `party:` is
-# walled from nobody, unless it is named after a party (entity_parties).
+# the first page's party would stop. A page saying `party: none` is walled
+# from nobody, unless it is named after a party (entity_parties); a page
+# with no `party:` at all is never linked by a tool (_unlinkable).
 
 def org_words(name) -> List[str]:
     """An organisation's name as words spelled so that its variants meet:
@@ -1304,27 +1332,42 @@ def _as_values(value) -> List[str]:
     return [str(v).strip() for v in values if str(v).strip()]
 
 
+def suspect_name(name) -> bool:
+    """Does a name hold a letter, or an invisible mark, that name_words()
+    drops rather than reads: a Cyrillic or Greek letter that looks Latin, a
+    zero-width space, a soft hyphen? Such a name is matched by what is left
+    of it, so it may stand for another; no tool links by it (#330)."""
+    text = unicodedata.normalize("NFKD", str(name or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch)).lower().translate(_NAME_FOLD)
+    return any(not ("a" <= ch <= "z" or "0" <= ch <= "9")
+               and (unicodedata.category(ch)[0] == "L" or unicodedata.category(ch) == "Cf") for ch in text)
+
+
 def entity_names(root: PathLike, texts: Optional[Dict[Path, str]] = None) -> List[dict]:
     """Every entity page under the Meetings wiki's `wiki/entities/`, as
-    {rel, path, title, names, keys, parties}: the names it goes by (its
-    title, its file name, each of its `aliases:`), their org_key()s, and
-    every tag its `party:` or `parties:` names but `none`. `texts` is what
-    git holds for a page, where it differs from the disk: both are read, and
-    what either says counts."""
+    {rel, path, title, names, keys, parties, tagged, suspect}: the names it
+    goes by (its title, its file name, each of its `aliases:`), their
+    org_key()s, every tag its `party:` or `parties:` names but `none`,
+    whether it says `party:` at all (`party: none` counts), and whether one
+    of its names is a suspect_name(). `texts` is what git holds for a page,
+    where it differs from the disk: both are read, what either says counts,
+    and it is tagged only when both say `party:`."""
     out = []
     for rel, page in entity_pages(root):
         views = [parse_frontmatter(page)]
         if texts and page in texts:
             views.append(parse_frontmatter_text(texts[page]))
-        names, parties, title = [Path(rel).name], set(), ""
+        names, parties, title, tagged = [Path(rel).name], set(), "", True
         for fm in views:
             said = str(fm.get("title") or "").strip()
             title = title or said
             names += ([said] if said else []) + _as_values(fm.get("aliases")) + _as_values(fm.get("alias"))
             parties |= set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties")))
+            tagged = tagged and bool(tag_list(fm.get("party")))
         keys = {org_key(n) for n in names} - {""}
         out.append({"rel": rel, "path": page, "title": title or Path(rel).name, "names": names, "keys": keys,
-                    "parties": parties - {"none"}})
+                    "parties": parties - {"none"}, "tagged": tagged,
+                    "suspect": any(suspect_name(n) for n in names)})
     return out
 
 
@@ -1336,38 +1379,89 @@ def name_group(index: List[dict], rels) -> List[dict]:
     return [e for e in index if e["rel"] in rels or e["keys"] & keys]
 
 
+_QUALIFIER = re.compile(r"\(([^()]*)\)")
+_QUALIFIER_WORDS = re.compile(r"^\s*(?:formerly|previously|now|aka|also|ex|once|trading as|t/a)\b[\s:.-]*", re.I)
+_LEADING = ("the",)
+
+
+def _party_names(context: dict, tag: str, row) -> List[List[str]]:
+    """The names a party goes by, each as org_words(): its cell in the
+    Parties table, without its markup and with a qualifier in brackets read
+    as a name of its own (`**Acme Corp** (formerly Anvil)` is `Acme Corp`
+    and `Anvil`), each heard form the Aliases table gives for one of those,
+    and its tag."""
+    cell = str(row.get("party") if isinstance(row, dict) else row or "")
+    cell = cell.replace("*", " ").replace("`", " ")
+    said = [_QUALIFIER.sub(" ", cell)] + [_QUALIFIER_WORDS.sub("", q) for q in _QUALIFIER.findall(cell)]
+    keys = {org_key(n) for n in said} - {""}
+    said += [heard for heard, means in context.get("aliases", {}).items() if org_key(means) in keys]
+    said.append(tag.replace("-", " "))
+    out = []
+    for n in said:
+        words = org_words(n)
+        while words and words[0] in _LEADING:
+            words = words[1:]
+        if words:
+            out.append(words)
+    return out
+
+
+def _named_after(name_words_: List[str], party: List[str]) -> bool:
+    """Is a page's name, as org_words(), named after a party's: the same run
+    together, holding all of the party name's words, or opening with its
+    first word (`Acme` and `Acme Corporation` for `Acme Corp`)."""
+    words = list(name_words_)
+    while words and words[0] in _LEADING:
+        words = words[1:]
+    if not words:
+        return False
+    return ("".join(words) == "".join(party) or set(party) <= set(words) or words[0] == party[0])
+
+
 def entity_parties(context: dict, group: List[dict]) -> set:
     """The parties a wall reads for a group of entity pages: each page's own
-    `party:` and `parties:`, and, for a page naming none, every party whose
-    name in the Parties table, or a heard form the Aliases table gives for
-    that name, is one the page goes by (org_key). A page called `Birch & Co`
-    is Birch's whether or not it says so; a customer's page is nobody's."""
+    `party:` and `parties:` tags, and, for a page naming none (`party: none`
+    or no `party:` at all), every party it is named after (_named_after) by
+    any name it goes by: a page called `Acme`, `The Acme Corp` or `Acme Corp
+    Ltd` is Acme's whether or not it says so. A customer's page, named after
+    no party, is nobody's."""
     out = set()
-    named: Optional[Dict[str, set]] = None
+    named: Optional[Dict[str, List[List[str]]]] = None
     for e in group:
         if e["parties"]:
             out |= e["parties"]
             continue
         if named is None:
-            named = {}
-            for tag, row in context.get("parties", {}).items():
-                said = org_key(row.get("party") if isinstance(row, dict) else row)
-                keys = {said} | {org_key(heard) for heard, means in context.get("aliases", {}).items()
-                                 if org_key(means) == said}
-                named[tag] = keys - {""}
-        out |= {tag for tag, keys in named.items() if keys & e["keys"]}
+            named = {tag: _party_names(context, tag, row) for tag, row in context.get("parties", {}).items()}
+        words = [org_words(n) for n in e["names"]]
+        out |= {tag for tag, forms in named.items() if any(_named_after(w, f) for w in words for f in forms)}
     return out
+
+
+def _unlinkable(context: dict, group: List[dict]) -> str:
+    """Why no tool links a person page to a group of entity pages, or "": one
+    of its pages says no `party:` at all, names a tag the Parties table does
+    not carry, which no wall can see, or goes by a suspect_name()."""
+    for e in group:
+        if not e.get("tagged", True):
+            return "wiki/entities/%s needs a `party:`, `none` or a party's tag, before it is linked" % e["rel"]
+        if any(t not in context.get("parties", {}) for t in e["parties"]):
+            return "wiki/entities/%s names a party the Parties table does not carry" % e["rel"]
+        if e.get("suspect"):
+            return "wiki/entities/%s goes by a name with letters no tool reads; write the link by hand" % e["rel"]
+    return ""
 
 
 def _any_wall(context: dict, tags: set) -> bool:
     return any(walled(context, a, b) for a in tags for b in tags if a < b)
 
 
-def named_in(line: str, index: List[dict]) -> List[str]:
+def named_in(line: str, index: List[dict], every: bool = False) -> List[str]:
     """The rel of each entity page a line names, by any name it goes by, as
     org_words() spell them, word for word or run together (`Birch-Co`). A
     name inside a longer one named there gives way to it: `Acme Labs` is
-    not `Acme` as well."""
+    not `Acme` as well. With `every`, those that gave way too, which the
+    walls read all the same."""
     words = org_words(line)
     spans = []
     for e in index:
@@ -1380,6 +1474,8 @@ def named_in(line: str, index: List[dict]) -> List[str]:
                         spans.append((i, j + 1, e["rel"]))
                     if not key.startswith(run):
                         break
+    if every:
+        return sorted({r for _, _, r in spans})
     keep = {r for a, b, r in spans
             if not any(x <= a and b <= y and y - x > b - a for x, y, _ in spans)}
     return sorted(keep)
@@ -1412,6 +1508,53 @@ def _person_tags(context: dict, names, party) -> Optional[set]:
     return None if _any_wall(context, every) else every
 
 
+_MD_LINK = re.compile(r"^\[[^\[\]]*\]\(\s*<?([^()<>]+?)>?\s*\)$")
+_WIKI_LINK = re.compile(r"^\[\[([^\[\]]+)\]\]$")
+_LINKS = re.compile(r"\[\[[^\[\]]*\]\]|\[[^\[\]]*\]\([^()]*\)")
+
+
+def links_in(value) -> List[str]:
+    """Every link a frontmatter value holds, a wikilink or a Markdown link,
+    in each string of a list too."""
+    return [l for v in _as_values(value) for l in _LINKS.findall(v)]
+
+
+def entity_rel(value) -> str:
+    """The entity page an `organisation:` link names, as a path under
+    `wiki/entities/` without `.md`, or "" when it names none there. Read
+    loosely, so that a wall is checked against the page the link opens: a
+    wikilink or a Markdown link, an alias, a heading or a block after it,
+    `.md`, `./`, the wiki's own folders or the workspace's in front, and
+    spaces round any part. A bare name is not an entity page's path."""
+    text = str(value or "").strip().strip("\"'").strip()
+    m = _WIKI_LINK.match(text) or _MD_LINK.match(text)
+    if m:
+        text = m.group(1)
+    text = re.split(r"[|#^]", text, 1)[0].strip().replace("\\", "/")
+    try:
+        text = urllib.parse.unquote(text)
+    except Exception:
+        pass
+    parts = [p.strip() for p in text.split("/") if p.strip() not in ("", ".")]
+    lower = [p.lower() for p in parts]
+    for i in range(len(lower) - 1):
+        if lower[i] == "wiki" and lower[i + 1] == "entities":
+            parts = parts[i + 2:]
+            break
+    else:
+        return ""
+    if parts and parts[-1].lower().endswith(".md"):
+        parts[-1] = parts[-1][:-3].strip()
+    return "/".join(parts) if parts and all(parts) else ""
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    try:
+        return os.path.samefile(str(a), str(b))
+    except OSError:
+        return False
+
+
 def organisation_named(root: PathLike, context: dict, names, party, entity: str,
                        index: Optional[List[dict]] = None) -> Tuple[str, str]:
     """The `organisation:` for an entity the user named, as `ingest.py person
@@ -1421,12 +1564,9 @@ def organisation_named(root: PathLike, context: dict, names, party, entity: str,
     said so. Fail closed, as organisation_proposal() is, on the person's
     party, on two hats, and on the entity's name group."""
     index = entity_names(root) if index is None else index
-    value = entity.strip()
-    m = ENTITY_LINK_RE.match(value)
-    value = m.group(1) if m else value
-    value = value[len("wiki/entities/"):] if value.startswith("wiki/entities/") else value
-    value = value[:-3] if value.endswith(".md") else value
-    page = next((e for e in index if e["rel"] == value), None) if entity_page(root, value) else None
+    value = entity_rel(entity) or entity.strip()
+    found = entity_page(root, value)
+    page = next((e for e in index if found is not None and _same_file(e["path"], found)), None)
     if page is None:
         hits = [e for e in index if org_key(value) and org_key(value) in e["keys"]]
         if not hits:
@@ -1435,10 +1575,14 @@ def organisation_named(root: PathLike, context: dict, names, party, entity: str,
             return "", "%s could be %s; name one by its file name" % (
                 entity, " or ".join("wiki/entities/%s" % e["rel"] for e in hits))
         page = hits[0]
+    group = name_group(index, [page["rel"]])
+    why = _unlinkable(context, [page] + [e for e in group if e is not page])
+    if why:
+        return "", why
     every = _person_tags(context, names, party)
     if every is None:
         return "", "the page names no one known party, or the People table has the name on both sides of a wall"
-    if _any_wall(context, every | entity_parties(context, name_group(index, [page["rel"]]))):
+    if _any_wall(context, every | entity_parties(context, group)):
         return "", "a wall stands between this person and that entity page"
     return "[[wiki/entities/%s]]" % page["rel"], ""
 
@@ -1457,19 +1601,26 @@ def organisation_proposal(root: PathLike, context: dict, names, party, text: str
     - the page names no party, several, or one not in the Parties table;
     - the People table has the name under two walled parties, or under one
       walled from the page's;
-    - any entity page the line names, or one going by the same name, names a
-      party walled from the person's, or two walled from each other.
+    - any entity page the line names, a shorter name inside a longer one
+      included, or one going by the same name, names a party walled from the
+      person's, or two walled from each other, is named after one
+      (entity_parties), says no `party:` at all, or goes by a suspect_name();
+    - the line itself holds a suspect_name().
     """
     every = _person_tags(context, names, party)
     if every is None:
         return "", []
     index = entity_names(root) if index is None else index
-    named = named_in(first_line(text), index)
+    line = first_line(text)
+    if suspect_name(line):
+        return "", []
+    named = named_in(line, index)
     if not named:
         return organisation_link(root, context, names, party, entities, index), []
-    group = name_group(index, named)
-    if _any_wall(context, every | entity_parties(context, group)):
+    seen = name_group(index, named_in(line, index, every=True))   # those that gave way are read too
+    if _unlinkable(context, seen) or _any_wall(context, every | entity_parties(context, seen)):
         return "", []
+    group = name_group(index, named)
     if len(group) == 1:
         return "[[wiki/entities/%s]]" % group[0]["rel"], []
     return "", [e["rel"] for e in group]

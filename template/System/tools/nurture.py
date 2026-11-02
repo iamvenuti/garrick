@@ -536,6 +536,7 @@ NO_PARENT = "no `parent:`, a link to its thread note or hub"
 NO_ORGANISATION = "no `organisation:` link to the entity page of its party"
 NO_EMPLOYER = "no `organisation:` link to the entity page of where they work"
 ORGANISATION_ASK = "no `organisation:` link, and its first line could mean more than one entity page"
+NO_ENTITY_PARTY = "no `party:`"     # an entity page that does not say whose it is (#330)
 # Ops that write into a page a person wrote by hand: offered on a yes, and
 # never applied in a run with nobody watching, whatever their kind allows.
 ATTENDED_OPS = ("organisation",)
@@ -998,6 +999,14 @@ def claim_attribution(ctx: Ctx, item: Item) -> bool:
             item.proposal = meeting_zone(ctx, item)
         elif "is not a zone" in msg:
             q = "Which zone is %s?" % name
+        elif c == "meetings" and msg.startswith(NO_ENTITY_PARTY) and "/wiki/entities/" in "/" + item.path:
+            try:
+                title = str(parse_frontmatter_text((ctx.root / item.path).read_text(encoding="utf-8")).get("title")
+                            or name)
+            except (OSError, UnicodeDecodeError):
+                title = name
+            q = "Whose is %s: none, or a party?" % title
+            item.proposal = ""
         elif "is not a tag in the Parties table" in msg:
             q = "Which party is %s on %s?" % (msg.split("`")[1], name)
         elif msg.startswith("`type` is"):

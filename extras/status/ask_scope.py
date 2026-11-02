@@ -825,7 +825,9 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
 # ---------------------------------------------------------------- the actions (#316)
 
 
-MOST_ACTIONS = 5            # items one actions reply lists
+MOST_ACTIONS = 10           # items the Ask window lists of an actions reply (#329)
+MOST_SAID = 5               # items a reply read aloud says, as the rules for the ear keep it
+MOST_LATE = 3               # overdue lines listed before a period's own items (#329)
 NOBODY = {"", "nobody", "no one", "noone", "none", "nothing", "-", "—", "n/a", "no"}
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
           "November", "December")
@@ -1082,6 +1084,34 @@ def actions(ws: Path, sc: Scope, names: Dict[str, Dict[str, dict]], ctx: dict, l
                     item((5, ""), zone, project, thread, step, None, "next", parties)
     first.sort(key=lambda t: (t[0], t[1]["zone"], t[1]["note"], t[1]["text"]))
     return [i for _, i in first]
+
+
+def listing(found: List[dict], period: bool, most: int = MOST_ACTIONS) -> Tuple[List[dict], List[dict]]:
+    """An actions list as the window shows it (#329): (listed, rest), both
+    from the one reading, `most` listed in every case. With a period
+    (`until`: tomorrow, this week), at most MOST_LATE overdue lines, the
+    longest overdue first, then the period's own items, in the reading's
+    order, up to `most` in all: the period asked about comes before the
+    overdue lines past MOST_LATE. The rest is what is left, the period's
+    items first, then the overdue lines. With no period, the first `most`.
+    A reply read aloud says the first MOST_SAID of the listed, in the same
+    order, and counts the rest of both."""
+    if not period:
+        return found[:most], found[most:]
+    late = [i for i in found if i["kind"] == "overdue"]
+    due = [i for i in found if i["kind"] != "overdue"]
+    first = late[:min(MOST_LATE, most)]
+    room = most - len(first)
+    return first + due[:room], due[room:] + late[len(first):]
+
+
+def more_said(rest: List[dict]) -> str:
+    """The count of what a list leaves out: "And 3 more overdue." when every
+    item left is an overdue line, else "And 3 more."; "" for none."""
+    if not rest:
+        return ""
+    late = all(i["kind"] == "overdue" for i in rest)
+    return "And %d more%s." % (len(rest), " overdue" if late else "")
 
 
 def action_said(it: dict, names: Dict[str, Dict[str, dict]], today) -> str:

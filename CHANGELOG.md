@@ -4,6 +4,10 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+### Changed
+
+- **Ask's list of what you owe shows the period asked about, ten items in the window, and opens the rest** ([#329](https://github.com/iamvenuti/garrick/issues/329)). "What's due tomorrow?" listed five items, longest overdue first, so with five overdue lines every line due tomorrow fell under "And 3 more", and nothing showed the rest. Now the window lists up to ten (`MOST_ACTIONS`). With `until`, it lists at most three overdue lines (`MOST_LATE`), then the items due in the period, up to ten in all, and says how many it left out: "And 3 more overdue." when every one is overdue, else "And 3 more." `say`, for the ear, keeps the first five of the same list (`MOST_SAID`) and names the count of the rest. The rest comes back in the reply as `more`, from the same reading, and in the Ask window *And N more* is a link that lists it under the answer, with no request to `ask.py`; no session is told any of it, so neither session's `seen` or `heard` changes, and the rest holds nothing outside the list's own zone and place.
+
 ## [0.51.0] - 2026-11-01
 
 Ask answers every question inside one zone, taken from the question's names or from a zone selector in the Ask window, which changes how Ask scopes a question; it lists what you owe and what you wait on from the Todo lists and the threads itself, answers "the last meeting with X" from the newest pages, and, with Codex, stops a call on *Stop*. Nothing in Garrick opens Obsidian unless you chose it: the page's links open files through the app, Todo source links are relative file links, and `--obsidian` and `--no-obsidian` are gone (given anyway, they are ignored, and a rebuild drops them). A Meetings person page links its party's entity page; Explore joins people and entities met in one meeting; the Checks card's debt chart reads without hovering; the Wikis card reads every form of the Knowledge log; a drifted file's row leads to its project and shows both copies; and CI runs in shards, so a pull request's checks take about ten minutes.

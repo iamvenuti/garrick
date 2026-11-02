@@ -1734,11 +1734,29 @@ class TestTheWindowCites(unittest.TestCase):
     def test_a_link_names_a_turn_and_a_source_never_a_path(self):
         cited = self.body("askCited")
         self.assertIn('a[.link] = URL(string: askSourceLink + "\\(i)-\\(n)")', cited)
-        self.assertEqual(1, self.swift.count("[.link] ="))
+        self.assertEqual(2, self.swift.count("[.link] ="))               # a source's, and "And N more" (#329)
+        self.assertIn("a[.link] = URL(string: askMoreLink + \"\\(i)\")", cited)
         clicked = self.body("textView")
         self.assertIn("guard view === askLog else { return false }", clicked)
         self.assertIn("askOpenSource(askTurns[n[0]].sources[n[1]])", clicked)
         self.assertIn("askLog.delegate = self", self.body("showAsk"))
+
+    def test_and_n_more_lists_the_rest_with_no_request(self):
+        """#329: "And N more" under an actions list is a link to the turn; a
+        click lists the rest its reply holds, with no request to ask.py."""
+        self.assertIn('turn.more = out["more"] as? [String: Any] ?? [:]', self.body("askSend"))
+        cited = self.body("askCited")
+        self.assertIn('let opens = turn.rest.isEmpty ? turn.more["said"] as? String : nil', cited)   # until opened
+        self.assertIn("claimed(turn.rest)", cited)
+        clicked = self.body("textView")
+        self.assertIn("askOpenMore(n)", clicked)
+        self.assertLess(clicked.index("askMoreLink"), clicked.index("guard said.hasPrefix(askSourceLink)"))
+        opened = self.body("askOpenMore")
+        self.assertIn('turn.more["claims"]', opened)
+        self.assertIn('turn.sources += turn.more["sources"]', opened)
+        self.assertIn("askRender()", opened)
+        for asks in ("askGarrick", "askStream", "askCall", "askSend", "Process", "run("):
+            self.assertNotIn(asks, opened)                              # no request, and no session told anything
 
     def test_a_source_opens_as_the_app_opens_anything_else(self):
         opened = self.body("askOpenSource")
@@ -2010,13 +2028,145 @@ class TestActions(AnswerCase):
         out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
         self.assertEqual(([], ask.NOTHING_OPEN), (out["claims"], out["say"]))
 
-    def test_more_than_five_says_how_many_more(self):
-        todo = self.work / "Todo.md"
-        write(todo, todo.read_text().replace("## Waiting on", "".join(
-            "- [ ] Task %d 📅 2026-10-0%d\n" % (n, n) for n in range(1, 4)) + "\n## Waiting on"))
+    def only(self, work_lines, personal_lines=""):
+        """The Todo lists holding these lines alone, and no thread row."""
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n%s\n## Done\n" % work_lines)
+        write(self.root / "Zones" / "Personal" / "Todo.md", "# Personal\n\n## Inbox\n\n%s\n## Done\n" % personal_lines)
+        sizing = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        write(sizing, sizing.read_text().replace(SIZING_TABLE, ""))
+
+    LATE = "".join("- [ ] [[Pricing]]: Late task %d 📅 2026-10-0%d\n" % (n, n) for n in range(1, 7))
+
+    def test_the_period_asked_about_is_always_shown(self):
+        """#329: six overdue lines and two due tomorrow: "what's due
+        tomorrow?" lists both of tomorrow's after the three longest overdue,
+        and says how many more are overdue, in the window and aloud."""
+        self.only(self.LATE + "- [ ] [[Pricing]]: Send the pallet quote 📅 2026-10-13\n"
+                  "- [ ] [[Market Sizing]]: Send the sizing deck 📅 2026-10-13\n")
         out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
-        self.assertEqual(5, len(out["claims"]))
-        self.assertEqual(["And 3 more."], out["after"])
+        listed = ["11 days late: Late task 1 (Pricing, in Work).",
+                  "10 days late: Late task 2 (Pricing, in Work).",
+                  "9 days late: Late task 3 (Pricing, in Work).",
+                  "Due tomorrow: Send the pallet quote (Pricing, in Work).",
+                  "Due tomorrow: Send the sizing deck (Market Sizing, in Work)."]
+        self.assertEqual(listed, self.texts(out))
+        self.assertEqual(["And 3 more overdue."], out["after"])
+        self.assertEqual(" ".join(listed + ["And 3 more overdue."]), out["say"])
+        more = out["more"]
+        self.assertEqual("And 3 more overdue.", more["said"])
+        self.assertEqual(["8 days late: Late task 4 (Pricing, in Work).",
+                          "7 days late: Late task 5 (Pricing, in Work).",
+                          "6 days late: Late task 6 (Pricing, in Work)."], [c["text"] for c in more["claims"]])
+        # Ids follow the list's own, so the window numbers the rest's sources after the others.
+        self.assertEqual(["a1", "a2", "a3", "a4", "a5"], [s["id"] for s in out["sources"]])
+        self.assertEqual([["a6"], ["a7"], ["a8"]], [c["ids"] for c in more["claims"]])
+        self.assertEqual(["a6", "a7", "a8"], [s["id"] for s in more["sources"]])
+        self.assertEqual("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", more["sources"][0]["path"])
+        self.assertIn("place", more["sources"][0])                      # opens as a thread's row, as the others do
+
+    def test_a_period_lists_ten_at_most(self):
+        """Sixty lines due tomorrow: the window lists ten, the rest opens
+        under "And 50 more.", and the ear says the window's first five and
+        counts the other fifty-five."""
+        self.only("".join("- [ ] [[Pricing]]: Due task %02d 📅 2026-10-13\n" % n for n in range(1, 61)))
+        out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
+        said = self.texts(out)
+        self.assertEqual(["Due tomorrow: Due task %02d (Pricing, in Work)." % n for n in range(1, 11)], said)
+        self.assertEqual(["And 50 more."], out["after"])
+        self.assertEqual(50, len(out["more"]["claims"]))
+        self.assertEqual("Due tomorrow: Due task 11 (Pricing, in Work).", out["more"]["claims"][0]["text"])
+        self.assertEqual(" ".join(said[:5] + ["And 55 more."]), out["say"])
+
+    def test_a_period_fills_ten_after_the_overdue(self):
+        """Two overdue lines and nine due tomorrow: both overdue, eight of
+        tomorrow's, and "And 1 more.", since what is left is not overdue."""
+        self.only("- [ ] [[Pricing]]: Late task 1 📅 2026-10-01\n- [ ] [[Pricing]]: Late task 2 📅 2026-10-02\n"
+                  + "".join("- [ ] [[Pricing]]: Due task %d 📅 2026-10-13\n" % n for n in range(1, 10)))
+        out = self.asker().ask("What's most urgent tomorrow?", today=self.TODAY)
+        said = self.texts(out)
+        self.assertEqual(["11 days late: Late task 1 (Pricing, in Work).", "10 days late: Late task 2 (Pricing, in Work)."]
+                         + ["Due tomorrow: Due task %d (Pricing, in Work)." % n for n in range(1, 9)], said)
+        self.assertEqual(["And 1 more."], out["after"])
+        self.assertEqual(["Due tomorrow: Due task 9 (Pricing, in Work)."], [c["text"] for c in out["more"]["claims"]])
+        self.assertEqual(" ".join(said[:5] + ["And 6 more."]), out["say"])
+
+    def test_no_period_lists_ten_and_says_five_aloud(self):
+        """#329: with no `until`, the list is as before, ten in the window;
+        a reply read aloud keeps five and names the count of the rest."""
+        self.only("".join("- [ ] [[Pricing]]: Late task %02d 📅 2026-09-%02d\n" % (n, n) for n in range(1, 12))
+                  + "- [ ] [[Pricing]]: Book the venue\n")
+        out = self.asker().ask("What do I owe Dana?", today=self.TODAY)
+        said = self.texts(out)
+        self.assertEqual(10, len(said))
+        self.assertTrue(said[0].startswith("41 days late: Late task 01"), said[0])
+        self.assertEqual(["And 2 more."], out["after"])                 # an overdue line and one with no date
+        self.assertEqual(["31 days late: Late task 11 (Pricing, in Work).", "Open: Book the venue (Pricing, in Work)."],
+                         [c["text"] for c in out["more"]["claims"]])
+        self.assertEqual(" ".join(said[:5] + ["And 7 more."]), out["say"])
+
+    def test_the_rest_is_of_the_same_reading_and_its_zone(self):
+        """The rest comes back with the list, read once: a list kept to one
+        zone keeps its rest there too, and nothing past the list's place."""
+        self.answers.write_text(json.dumps({"haiku": [
+            ["late in Work", json.dumps({"say": "", "find": {"route": "actions", "zone": "Work"}})]] + HAIKU}))
+        self.only(self.LATE + "".join("- [ ] [[Pricing]]: Late task %d 📅 2026-09-0%d\n" % (n + 6, n)
+                                      for n in range(1, 6)),
+                  "- [ ] Renew the passport 📅 2026-09-01\n")
+        with mock.patch.object(ask.scope_lib(), "actions", wraps=ask.scope_lib().actions) as read:
+            out = self.asker().ask("What is late in Work?", today=self.TODAY)
+        self.assertEqual(1, read.call_count)                              # one reading, the rest included
+        self.assertEqual(10, len(out["claims"]))
+        rest = out["more"]["claims"]
+        self.assertEqual(1, len(rest))
+        self.assertNotIn("passport", json.dumps(out))
+        for c in out["claims"] + rest:
+            self.assertTrue(c["text"].endswith("in Work)."), c["text"])
+        for s in out["sources"] + out["more"]["sources"]:
+            self.assertTrue(s["path"].startswith("Zones/Work/"), s["path"])
+
+    def test_the_rest_tells_no_session_and_changes_nothing_held(self):
+        """An actions reply with a rest to open changes no session's `seen`
+        or `heard`, and no session is told an item of the list or the rest.
+        Opening it is the window's alone (TestTheWindowCites)."""
+        self.only(self.LATE + "- [ ] [[Market Sizing]]: Send the sizing deck 📅 2026-10-13\n")
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?", today=self.TODAY)
+        seen, heard, passages = set(a.seen), set(a.heard), list(a.passages)
+        pids = {p["pid"]: p["model"] for p in self.procs()}
+        out = a.ask("What's most urgent tomorrow?", today=self.TODAY)
+        self.assertIn("more", out)
+        self.assertNotIn("reset", out)
+        self.assertEqual((seen, heard, passages), (a.seen, a.heard, a.passages))
+        self.assertEqual(pids, {p["pid"]: p["model"] for p in self.procs()})
+        self.assertEqual("", a.results)
+        for m in self.msgs():
+            for item in ("Late task", "sizing deck"):
+                self.assertNotIn(item, m)
+
+    def test_the_listing_and_the_ear_agree(self):
+        sc = ask.scope_lib()
+        late = [{"kind": "overdue", "n": n} for n in range(6)]
+        due = [{"kind": "due", "n": n} for n in range(12)]
+        listed, rest = sc.listing(late + due, True)
+        self.assertEqual(late[:3] + due[:7], listed)                     # ten in all
+        self.assertEqual(due[7:] + late[3:], rest)                       # the period's first, then the overdue
+        listed, rest = sc.listing(late + due[:2], True)
+        self.assertEqual((late[:3] + due[:2], late[3:]), (listed, rest))
+        self.assertEqual(((late + due)[:10], (late + due)[10:]), sc.listing(late + due, False))
+        self.assertEqual("And 3 more overdue.", sc.more_said(late[3:]))
+        self.assertEqual("And 4 more.", sc.more_said(late[3:] + due[:1]))
+        self.assertEqual("", sc.more_said([]))
+        self.assertEqual((10, 5, 3), (sc.MOST_ACTIONS, sc.MOST_SAID, sc.MOST_LATE))
+
+    def test_the_window_and_the_ear_say_the_same_order(self):
+        self.only("".join("- [ ] [[Pricing]]: Late task %d 📅 2026-10-0%d\n" % (n, n) for n in range(1, 5))
+                  + "".join("- [ ] [[Pricing]]: Due task %d 📅 2026-10-13\n" % n for n in range(1, 4)))
+        for request in ("What's most urgent tomorrow?", "What do I owe Dana?"):
+            out = self.asker().ask(request, today=self.TODAY)
+            said = self.texts(out)
+            left = len(said) + len(out.get("more", {}).get("claims", [])) - 5
+            self.assertEqual(" ".join(said[:5] + (["And %d more." % left] if left > 0 else [])), out["say"], request)
+            self.assertTrue(out["say"].startswith(" ".join(said[:5])), request)
 
     def test_a_source_folded_onto_a_line_leaves_nothing_behind(self):
         """#318's relative link inside an `(also in …)`: the reply says the

@@ -220,6 +220,8 @@ func askZoneNames() -> [String] {
 }
 // The link a cited record carries in the exchange: the turn and the source, never a path (#261, slice D).
 let askSourceLink = "garrick-ask-source:"
+// The link "And N more" carries under an actions list: the turn alone, whose reply holds the rest (#329).
+let askMoreLink = "garrick-ask-more:"
 // What the red dot on the mark means, said where the dot cannot be seen: its tooltip and its label.
 let troubleSaid = "Something on the Status tab failed"
 // Seconds the app waits for ask.py: longer than ask.py waits for its server
@@ -335,6 +337,8 @@ struct AskTurn {
 	var claims: [[String: Any]] = []    // an answer's claims, each with the ids of the records it rests on
 	var after: [String] = []            // the sentences Garrick says after them: the records incomplete, a wall
 	var sources: [[String: Any]] = []   // each record cited this turn, as ask.py checked it: path, title, dates
+	var more: [String: Any] = [:]       // an actions list's rest, from the same reading: its sentence, claims and sources (#329)
+	var rest: [[String: Any]] = []      // that rest's claims once "And N more" is clicked, listed under the answer
 	var zones: [[String: Any]] = []     // "Which zone?": each zone offered, with its colour, a button each (#317)
 	var retry = ""                      // the question to send again in the zone a button picks
 }
@@ -2216,6 +2220,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				turn.claims = out["claims"] as? [[String: Any]] ?? []
 				turn.after = out["after"] as? [String] ?? []
 				turn.sources = out["sources"] as? [[String: Any]] ?? []
+				turn.more = out["more"] as? [String: Any] ?? [:]
 			}
 			self.askTurns[at] = turn
 			if turn.kind != "command" || turn.afresh || startNew { self.askExpanded = true }
@@ -2451,8 +2456,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// An answer with its claims: each claim, then the number of each record it rests on as a
-	// link; the sentences Garrick adds; then the records cited, each with when it happened and
-	// when it was filed. The links name the turn and the source, and only askOpenSource opens one.
+	// link; the sentences Garrick adds; the rest of an actions list, once its "And N more" is
+	// clicked (#329); then the records cited, each with when it happened and when it was filed.
+	// The links name the turn and the source, and only askOpenSource opens one; "And N more"
+	// names the turn, and only askOpenMore opens it.
 	func askCited(_ turn: AskTurn, at i: Int, said: [NSAttributedString.Key: Any], aside: [NSAttributedString.Key: Any]) -> NSAttributedString {
 		let out = NSMutableAttributedString()
 		let ids = turn.sources.map { $0["id"] as? String ?? "" }
@@ -2462,21 +2469,34 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return NSAttributedString(string: text, attributes: a)
 		}
 		var first = true
-		for claim in turn.claims {
-			guard let text = claim["text"] as? String, !text.isEmpty else { continue }
-			out.append(NSAttributedString(string: (first ? "" : " ") + text, attributes: said))
-			first = false
-			for id in claim["ids"] as? [String] ?? [] {
-				guard let n = ids.firstIndex(of: id) else { continue }
-				out.append(NSAttributedString(string: " ", attributes: said))
-				out.append(link("[\(n + 1)]", n))
+		func claimed(_ claims: [[String: Any]]) {
+			for claim in claims {
+				guard let text = claim["text"] as? String, !text.isEmpty else { continue }
+				out.append(NSAttributedString(string: (first ? "" : " ") + text, attributes: said))
+				first = false
+				for id in claim["ids"] as? [String] ?? [] {
+					guard let n = ids.firstIndex(of: id) else { continue }
+					out.append(NSAttributedString(string: " ", attributes: said))
+					out.append(link("[\(n + 1)]", n))
+				}
 			}
 		}
+		claimed(turn.claims)
+		// "And N more" is a link while the rest it counts is still to be listed.
+		let opens = turn.rest.isEmpty ? turn.more["said"] as? String : nil
 		for sentence in turn.after {
-			out.append(NSAttributedString(string: (first ? "" : " ") + sentence, attributes: said))
+			out.append(NSAttributedString(string: first ? "" : " ", attributes: said))
+			var a = said
+			if sentence == opens { a[.link] = URL(string: askMoreLink + "\(i)") }
+			out.append(NSAttributedString(string: sentence, attributes: a))
 			first = false
 		}
 		out.append(NSAttributedString(string: "\n", attributes: said))
+		if !turn.rest.isEmpty {
+			first = true
+			claimed(turn.rest)
+			out.append(NSAttributedString(string: "\n", attributes: said))
+		}
 		for (n, s) in turn.sources.enumerated() {
 			let path = s["path"] as? String ?? ""
 			let title = s["title"] as? String ?? ""
@@ -2504,11 +2524,29 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	func textView(_ view: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
 		guard view === askLog else { return false }
 		let said = (link as? URL)?.absoluteString ?? link as? String ?? ""
+		if said.hasPrefix(askMoreLink) {
+			if let n = Int(said.dropFirst(askMoreLink.count)) { askOpenMore(n) }
+			return true
+		}
 		guard said.hasPrefix(askSourceLink) else { return false }
 		let n = said.dropFirst(askSourceLink.count).split(separator: "-").compactMap { Int($0) }
 		guard n.count == 2, n[0] < askTurns.count, n[1] < askTurns[n[0]].sources.count else { return true }
 		askOpenSource(askTurns[n[0]].sources[n[1]])
 		return true
+	}
+
+	// "And N more" under an actions list, clicked (#329): the rest ask.py read with the list, from
+	// what its reply already holds, listed under the answer with its sources numbered after the
+	// others. No request goes to ask.py, and no session is told anything.
+	func askOpenMore(_ i: Int) {
+		guard askTurns.indices.contains(i), askTurns[i].rest.isEmpty else { return }
+		var turn = askTurns[i]
+		let rest = turn.more["claims"] as? [[String: Any]] ?? []
+		guard !rest.isEmpty else { return }
+		turn.rest = rest
+		turn.sources += turn.more["sources"] as? [[String: Any]] ?? []
+		askTurns[i] = turn
+		askRender()
 	}
 
 	// A file or folder of this workspace that is still there, as a cited record or a link on

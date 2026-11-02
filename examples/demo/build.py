@@ -1,27 +1,36 @@
 #!/usr/bin/env python3
-"""Build the Garrick demo workspace: Sam Rivera's September 2026.
+"""Build the Garrick demo workspace: a month of Sam Rivera's work, ending about now.
 
-    python3 examples/demo/build.py --target DIR
+    python3 examples/demo/build.py --target DIR [--today YYYY-MM-DD]
 
 Installs a fresh workspace from config.json, then replays four weeks of work on
-top of it, one commit at a time, each dated in September 2026: projects and
-threads created with the workspace's own scaffold script, meetings and sources
-ingested, threads wrapped. The finished files come from content/, which mirrors
-the workspace tree. One transcript is left, uncommitted, in the Meetings inbox,
-and four mails in the Work zone's Inbox, so "process the inbox" can be shown live.
+top of it, one dated commit at a time: projects and threads created with the
+workspace's own scaffold script, meetings and sources ingested, threads
+wrapped. The finished files come from content/, which mirrors the workspace
+tree. One transcript is left, uncommitted, in the Meetings inbox, and four
+mails in the Work zone's Inbox, so "process the inbox" can be shown live.
 
-Standard library only. Deterministic: the same files in the repository give
-the same files and the same commit hashes, whatever its commit, whether it has
-edits not committed, and whenever it runs. Refuses a folder that is not empty.
+content/ and the plan below are written as September 2026, ending on Monday
+28 September. The build moves the whole month forward by whole weeks, so its
+last day falls on the day it is built or in the six days before, the way
+examples/example-work/build.py dates its story from the day it is built.
+Whole weeks keep every "Friday" on a Friday. `--today` builds as if on another
+day.
+
+Standard library only. Deterministic: the same files in the repository and the
+same build day give the same files and the same commit hashes, whatever its
+commit and whether it has edits not committed. Refuses a folder that is not
+empty.
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
+import importlib.util
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -33,10 +42,13 @@ REPO = HERE.parents[1]
 CONTENT = HERE / "content"
 CONFIG = HERE / "config.json"
 INSTALL = REPO / "install.py"
+EXAMPLE_BUILD = REPO / "examples" / "example-work" / "build.py"
 
 OWNER = "Sam Rivera"
 EMAIL = "garrick@localhost"  # what install.py sets when git has no identity
 TZ = "+01:00"
+# Every date below and in content/ is as written, in September 2026; build() moves
+# them all by the same whole number of weeks (see *Dates*).
 INSTALLED = "2026-09-01 09:00"
 # Which Garrick the demo says it was installed from. The installer records the
 # source's own commit, its date and whether it has edits not committed; the
@@ -296,6 +308,229 @@ class BuildError(Exception):
     pass
 
 
+# --------------------------------------------------------------------------- dates
+
+
+def _example_work():
+    """examples/example-work/build.py, whose month names, weekday names and
+    ordinals the demo writes its dates with."""
+    spec = importlib.util.spec_from_file_location("garrick_example_build_for_demo", EXAMPLE_BUILD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_EW = _example_work()
+MONTHS, WEEKDAYS, nth = _EW.MONTHS, _EW.WEEKDAYS, _EW.nth
+DAY = _EW.DAY
+
+# The demo's last day as written: Theo's call and the four mails, Monday 28 September.
+LAST_DAY = datetime.date(2026, 9, 28)
+# The story's months, September to December 2026. A date in them moves; one
+# before them (a stoppage last year, a report published in August) is
+# background and stays where it is, and so do month names outside them
+# ("launch in March", the forecast's March to August, "from January 2027").
+STORY = (datetime.date(2026, 9, 1), datetime.date(2026, 12, 31))
+
+ORDINALS = ("first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth "
+            "fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth").split()
+ORDINALS += ["twenty-" + w for w in ORDINALS[:9]] + ["thirtieth", "thirty-first"]
+ABBREVIATIONS = {"Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "Jun": 6, "Jul": 7, "Aug": 8, "Sep": 9, "Sept": 9,
+                 "Oct": 10, "Nov": 11, "Dec": 12}
+
+
+def weeks_for(today):
+    """The whole weeks to move the month by, so its last day is `today` or one
+    of the six days before it."""
+    return (today - LAST_DAY).days // 7
+
+
+_MONTH = "|".join(MONTHS)
+_ABBR = "|".join(sorted(ABBREVIATIONS, key=len, reverse=True))
+_ORD = "|".join(sorted(ORDINALS, key=len, reverse=True))
+_WEEKDAY = "|".join(WEEKDAYS)
+_ORD_CI = "(?:%s)" % "|".join("[%s%s]%s" % (w[0], w[0].upper(), re.escape(w[1:])) for w in
+                              sorted(ORDINALS, key=len, reverse=True))
+NOT_OF_MONTH = r"(?! of (?:%s)\b)" % _MONTH
+DATE_RE = re.compile("|".join([
+    # 2026-09-28, in frontmatter, to-do lines, file names and commit dates.
+    r"(?P<iso>\b(?P<iso_y>\d{4})-(?P<iso_m>\d{2})-(?P<iso_d>\d{2})\b)",
+    # 20260928070000, a mail's Message-ID.
+    r"(?P<stamp>\b(?P<st_y>\d{4})(?P<st_m>\d{2})(?P<st_d>\d{2})(?=\d{6}\.))",
+    # 260928, the date a meeting id or a deliverable's name starts with.
+    r"(?P<yymmdd>\b(?P<ym_y>2\d)(?P<ym_m>[01]\d)(?P<ym_d>[0-3]\d)\b)",
+    # 28 September 2026, 28 September, 28 Sep 2026.
+    r"(?P<dm>\b(?P<dm_d>\d{1,2}) (?P<dm_m>%s|%s)\b(?: (?P<dm_y>\d{4})\b)?)" % (_MONTH, _ABBR),
+    # the fifth of October, First of October.
+    r"(?P<of>\b(?P<of_o>%s) of (?P<of_m>%s)\b)" % (_ORD_CI, _MONTH),
+    # Friday the ninth, Monday, the fifth, Friday. The fourth, Friday the 2nd.
+    r"(?P<wd>\b(?P<wd_w>%s)(?P<wd_sep>[.,]? [Tt]he )(?P<wd_o>%s|\d{1,2}(?:st|nd|rd|th))\b%s)"
+    % (_WEEKDAY, _ORD, NOT_OF_MONTH),
+    # on the 11th, by the 30th.
+    r"(?P<num>\bthe (?P<num_n>\d{1,2})(?:st|nd|rd|th)\b%s)" % NOT_OF_MONTH,
+    # by the eleventh. on the tenth, before the fifteenth? (never "before the first frosts").
+    r"(?P<by>\b(?P<by_p>(?:[Bb]y|[Oo]n|[Bb]efore) the )(?P<by_o>%s)(?=[.,?!\"']|$))" % _ORD,
+    # The eleventh works. The thirtieth, yes. The ninth is fine. (never "The second thing").
+    r"(?P<the>\bThe (?P<the_o>%s)(?=[.,]| (?:is|works)\b))" % _ORD,
+    # mid-September, the first week of October, August's, Published August 2026.
+    r"(?P<month>\b(?P<mo_m>%s)\b(?: (?P<mo_y>\d{4})\b)?)" % _MONTH,
+]), re.M)
+# A past tense earlier in the sentence: "sent on the eleventh" looks back, "meets on the twenty-eighth" ahead.
+PAST_RE = re.compile(r"\b(?:went|sent|received|priced|was|were)\b[^.!?:]*$")
+FRONTMATTER_DATE_RE = re.compile(r"(?m)^date: (\d{4}-\d{2}-\d{2})$")
+
+
+def _date(y, m, d):
+    try:
+        return datetime.date(int(y), int(m), int(d))
+    except ValueError:
+        return None
+
+
+def _in_story(day):
+    return day is not None and STORY[0] <= day <= STORY[1]
+
+
+def _ordinal_day(word):
+    word = word.lower()
+    return int(word[:-2]) if word[:1].isdigit() else ORDINALS.index(word) + 1
+
+
+def _ordinal_like(word, day):
+    """`day` as an ordinal written the way `word` was: 2nd, second or Second."""
+    if word[:1].isdigit():
+        return nth(day)
+    out = ORDINALS[day - 1]
+    return out[:1].upper() + out[1:] if word[:1].isupper() else out
+
+
+def _resolve(day_of_month, ref, weekday=None, past=False):
+    """The date a day of the month without its month means, seen from `ref`:
+    on that weekday when one is given, the nearest; otherwise the next one, or
+    the last one when the sentence looks back."""
+    span = [ref + k * DAY for k in range(-45, 46)]
+    hits = [d for d in span if d.day == day_of_month and (weekday is None or d.weekday() == weekday)]
+    if weekday is not None:
+        return min(hits, key=lambda d: (abs((d - ref).days), d < ref)) if hits else None
+    if past:
+        hits = [d for d in hits if d <= ref]
+        return hits[-1] if hits else None
+    hits = [d for d in hits if d >= ref]
+    return hits[0] if hits else None
+
+
+def shift_text(text, days, ref=LAST_DAY):
+    """`text` with every date of the story moved `days` days, each written as it
+    was. A day of the month without its month ("by the eleventh") is read
+    against the latest full date before it, such as a note's dated entry or a
+    transcript's first line, or `ref` before there is one."""
+    if not days:
+        return text
+    delta = days * DAY
+    m = FRONTMATTER_DATE_RE.search(text)
+    state = {"ref": _date(*m.group(1).split("-")) if m else ref}
+
+    def one(m):
+        g = m.groupdict()
+        whole = m.group(0)
+        if g["iso"]:
+            day = _date(g["iso_y"], g["iso_m"], g["iso_d"])
+            return (day + delta).isoformat() if _in_story(day) else whole
+        if g["stamp"]:
+            day = _date(g["st_y"], g["st_m"], g["st_d"])
+            return (day + delta).strftime("%Y%m%d") if _in_story(day) else whole
+        if g["yymmdd"]:
+            day = _date("20" + g["ym_y"], g["ym_m"], g["ym_d"])
+            return (day + delta).strftime("%y%m%d") if _in_story(day) else whole
+        if g["dm"]:
+            name = g["dm_m"]
+            month = ABBREVIATIONS.get(name) or MONTHS.index(name) + 1
+            day = _date(g["dm_y"] or 2026, month, g["dm_d"])
+            if not _in_story(day):
+                return whole
+            if g["dm_y"]:
+                state["ref"] = day
+            new = day + delta
+            if name in ABBREVIATIONS:
+                written = "Sept" if name == "Sept" and new.month == 9 else MONTHS[new.month - 1][:3]
+            else:
+                written = MONTHS[new.month - 1]
+            out = "%d %s" % (new.day, written)
+            return out + (" %d" % new.year if g["dm_y"] else "")
+        if g["of"]:
+            day = _date(2026, MONTHS.index(g["of_m"]) + 1, _ordinal_day(g["of_o"]))
+            if not _in_story(day):
+                return whole
+            new = day + delta
+            return "%s of %s" % (_ordinal_like(g["of_o"], new.day), MONTHS[new.month - 1])
+        if g["month"]:
+            day = _date(g["mo_y"] or 2026, MONTHS.index(g["mo_m"]) + 1, 15)   # a month stands for its middle
+            if not _in_story(day):
+                return whole
+            new = day + delta
+            return MONTHS[new.month - 1] + (" %d" % new.year if g["mo_y"] else "")
+        # A day of the month alone.
+        if g["wd"]:
+            word, weekday = g["wd_o"], WEEKDAYS.index(g["wd_w"])
+            day = _resolve(_ordinal_day(word), state["ref"], weekday=weekday)
+            render = lambda new: g["wd_w"] + g["wd_sep"] + _ordinal_like(word, new.day)
+        else:
+            word = g["num_n"] + "th" if g["num"] else g["by_o"] or g["the_o"]
+            past = bool(PAST_RE.search(text[text.rfind("\n", 0, m.start()) + 1:m.start()]))
+            day = _resolve(_ordinal_day(word), state["ref"], past=past)
+            prefix = "the " if g["num"] else g["by_p"] or "The "
+            render = lambda new: prefix + _ordinal_like(word, new.day)
+        if not _in_story(day):
+            return whole
+        return render(day + delta)
+
+    return DATE_RE.sub(one, text)
+
+
+def path_day(rel):
+    """The date a content path carries, the day its text is read against."""
+    m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", rel) or re.search(r"\b(2\d)([01]\d)([0-3]\d)\b", rel)
+    if not m:
+        return LAST_DAY
+    y = m.group(1) if len(m.group(1)) == 4 else "20" + m.group(1)
+    return _date(y, m.group(2), m.group(3)) or LAST_DAY
+
+
+class Dated:
+    """content/ and the plan, moved by `days` days: the files under the paths
+    they get, their text, and every date and name the plan writes."""
+
+    def __init__(self, days):
+        self.days = days
+        self.sources = {}
+        for src in sorted(p for p in CONTENT.rglob("*") if p.is_file() and p.name != ".DS_Store"):
+            rel = src.relative_to(CONTENT).as_posix()
+            self.sources[self.text(rel)] = src
+
+    def text(self, s, ref=LAST_DAY):
+        return shift_text(s, self.days, ref)
+
+    def source(self, rel):
+        return self.sources.get(rel)
+
+    def read(self, rel):
+        """The bytes of content/'s file that lands at `rel`, its dates moved.
+        Read and written as bytes, so a mail's CRLF line ends stay as they are."""
+        src = self.sources[rel]
+        data = src.read_bytes()
+        if not self.days:
+            return data
+        orig = src.relative_to(CONTENT).as_posix()
+        return self.text(data.decode("utf-8"), path_day(orig)).encode("utf-8")
+
+    def plan(self):
+        out = []
+        for when, repo, message, actions in PLAN:
+            moved = [self.text(a) if isinstance(a, str) else a for a in actions]
+            out.append((self.text(when), repo, self.text(message), moved))
+        return out
+
+
 # --------------------------------------------------------------------------- helpers
 
 
@@ -391,10 +626,10 @@ def knowledge_index(root):
     return "\n".join(head + [r[3] for r in rows]) + "\n"
 
 
-def plan_paths():
+def plan_paths(plan):
     """How many times the plan names each file, by its path in the workspace."""
     count = {}
-    for _, repo, _, actions in PLAN:
+    for _, repo, _, actions in plan:
         for action in actions:
             if isinstance(action, str):
                 rel = (Path(repo) / action).as_posix() if repo else action
@@ -460,16 +695,18 @@ def scaffold(root, when, args):
         root, when, "scaffold")
 
 
-def pin_version(root):
+def pin_version(root, dated):
     """Record DEMO_VERSION in place of the source's commit, date and edits, in
     the installer's own first commit, which is the root's only one so far."""
     path = root / VERSION_STAMP
     stamp = json.loads(path.read_text(encoding="utf-8"))
     for key in ("commit", "date", "from", "modified"):
         stamp.pop(key, None)
-    path.write_text(json.dumps(dict(DEMO_VERSION, **stamp), indent=2) + "\n", encoding="utf-8")
-    run(["git", "add", "--", VERSION_STAMP], root, INSTALLED, "staging the version stamp")
-    run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--amend", "--no-edit"], root, INSTALLED,
+    version = dict(DEMO_VERSION, date=dated.text(DEMO_VERSION["date"]))
+    path.write_text(json.dumps(dict(version, **stamp), indent=2) + "\n", encoding="utf-8")
+    installed = dated.text(INSTALLED)
+    run(["git", "add", "--", VERSION_STAMP], root, installed, "staging the version stamp")
+    run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "--amend", "--no-edit"], root, installed,
         "recording the demo's version")
 
 
@@ -485,38 +722,42 @@ def add_alias(root, heard, means):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def build(target):
+def build(target, today=None):
+    """Build the demo at `target`, its month moved to end on `today` (the
+    clock's day when not given) or in the six days before it."""
     # Absolute before anything runs: install.py runs from the source folder, so a
     # relative target would otherwise land, or be refused, there instead of here.
     target = Path(os.path.abspath(Path(target).expanduser()))
     check_target(target)
     if not CONTENT.is_dir():
         raise BuildError(f"{CONTENT} is missing.")
-    run([sys.executable, str(INSTALL), "--config", str(CONFIG), "--target", str(target)], REPO, INSTALLED, "install.py")
+    dated = Dated(7 * weeks_for(today or datetime.date.today()))
+    installed, inbox = dated.text(INSTALLED), dated.text(INBOX)
+    run([sys.executable, str(INSTALL), "--config", str(CONFIG), "--target", str(target)], REPO, installed, "install.py")
     root = target.resolve()
-    pin_version(root)
+    pin_version(root, dated)
 
-    todos = {z: TodoList((CONTENT / "Zones" / z / "Todo.md").read_text(encoding="utf-8")) for z in ("Work", "Personal")}
-    named = plan_paths()
+    todos = {z: TodoList(dated.read(f"Zones/{z}/Todo.md").decode("utf-8")) for z in ("Work", "Personal")}
+    plan = dated.plan()
+    named = plan_paths(plan)
     copied = set()
-    for when, repo, message, actions in PLAN:
+    for when, repo, message, actions in plan:
         repo_dir = root / repo if repo else root
         date = when.split(" ")[0]
         touched = set()
         for action in actions:
             if isinstance(action, str):
                 rel = (Path(repo) / action).as_posix() if repo else action
-                src = CONTENT / rel
-                if not src.is_file():
+                if dated.source(rel) is None:
                     raise BuildError(f"the plan names {rel}, which is not in content/")
                 dst = root / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 if named[rel] > 1:  # finished at its last naming; until then, as far as the month has got
                     before = dst.read_text(encoding="utf-8") if dst.is_file() else None
-                    dst.write_text(as_far_as(src.read_text(encoding="utf-8"), rel, present(root), before, date),
+                    dst.write_text(as_far_as(dated.read(rel).decode("utf-8"), rel, present(root), before, date),
                                    encoding="utf-8")
                 else:
-                    shutil.copyfile(src, dst)
+                    dst.write_bytes(dated.read(rel))
                 copied.add(rel)
                 touched.add(rel)
             elif action[0] == "project":
@@ -541,12 +782,12 @@ def build(target):
         for wiki in ("Wikis/Meetings/", "Wikis/Knowledge/"):
             if not any(t.startswith(wiki) for t in touched):
                 continue
-            for src in sorted(CONTENT.rglob("*.md")):
-                rel = src.relative_to(CONTENT).as_posix()
+            for rel in sorted(r for r in dated.sources if r.endswith(".md")):
                 if rel.startswith(wiki) and is_ledger(rel) and (rel in LEDGER_FILES or (root / rel).exists()):
                     path = root / rel
                     before = path.read_text(encoding="utf-8") if path.is_file() else None
-                    path.write_text(as_far_as(src.read_text(encoding="utf-8"), rel, files, before, date), encoding="utf-8")
+                    path.write_text(as_far_as(dated.read(rel).decode("utf-8"), rel, files, before, date),
+                                    encoding="utf-8")
                     copied.add(rel)
             if wiki == "Wikis/Knowledge/":
                 (root / KNOWLEDGE_INDEX).write_text(knowledge_index(root), encoding="utf-8")
@@ -556,38 +797,47 @@ def build(target):
         run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message], repo_dir, when, f"commit {message!r}")
 
     # The one transcript still waiting in the inbox: dropped by the recorder, not committed.
-    shutil.copyfile(CONTENT / INBOX, root / INBOX)
-    copied.add(INBOX)
-    for rel in MAIL:
-        shutil.copyfile(CONTENT / rel, root / rel)
+    for rel in (inbox,) + tuple(dated.text(m) for m in MAIL):
+        (root / rel).write_bytes(dated.read(rel))
         copied.add(rel)
 
     # Every file in content/ must now be in place, exactly, and every repository clean.
-    for src in sorted(p for p in CONTENT.rglob("*") if p.is_file() and p.name != ".DS_Store"):
-        rel = src.relative_to(CONTENT).as_posix()
+    for rel in sorted(dated.sources):
         dst = root / rel
-        if not dst.is_file() or dst.read_bytes() != src.read_bytes():
+        if not dst.is_file() or dst.read_bytes() != dated.read(rel):
             raise BuildError(f"{rel} did not end up as it is in content/; check the plan in build.py")
     for repo in ("", "Wikis", "Zones/Work", "Zones/Personal"):
-        status = run(["git", "status", "--porcelain", "--untracked-files=all"], root / repo if repo else root, INSTALLED, "git status")
-        stray = [l for l in status.splitlines() if Path(INBOX).name not in l]
+        status = run(["git", "status", "--porcelain", "--untracked-files=all"], root / repo if repo else root,
+                     installed, "git status")
+        stray = [l for l in status.splitlines() if Path(inbox).name not in l]
         if stray:
             raise BuildError(f"{repo or 'the root'} has changes the plan did not commit: {stray}")
     return root
 
 
+def said_day(day):
+    return "%s %d %s %d" % (WEEKDAYS[day.weekday()], day.day, MONTHS[day.month - 1], day.year)
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Build the Garrick demo workspace (Sam Rivera, September 2026).")
+    ap = argparse.ArgumentParser(description="Build the Garrick demo workspace: a month of Sam Rivera's work, "
+                                             "ending on the day it is built or in the six days before.")
     ap.add_argument("--target", required=True, help="an empty or new folder")
+    ap.add_argument("--today", help="YYYY-MM-DD to build as if on, instead of today")
     args = ap.parse_args(argv)
     try:
-        root = build(args.target)
-    except BuildError as exc:
+        today = datetime.date.fromisoformat(args.today) if args.today else datetime.date.today()
+        root = build(args.target, today)
+    except (BuildError, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 1
+    moved = 7 * weeks_for(today) * DAY
+    first = datetime.date.fromisoformat(INSTALLED.split(" ")[0]) + moved
     print(f"Demo workspace built at {root}")
-    print(f"  {len(PLAN)} commits after the install, 1 to 26 September 2026.")
-    print(f"  One transcript waiting in the inbox: {Path(INBOX).name}")
+    print(f"  Installed {said_day(first)}; {len(PLAN)} commits after it, the last on "
+          f"{said_day(datetime.date.fromisoformat(PLAN[-1][0].split(' ')[0]) + moved)}.")
+    print(f"  One transcript waiting in the inbox, from {said_day(LAST_DAY + moved)}: "
+          f"{Path(shift_text(INBOX, moved.days)).name}")
     print(f"  {len(MAIL)} mails waiting in the Work zone's Inbox.")
     return 0
 

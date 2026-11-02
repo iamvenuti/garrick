@@ -8,11 +8,14 @@ four mails waiting in the Work zone's Inbox (one to read, one conversation,
 one with a file for Acme Review, one that sits on both sides of the wall), and
 the wall between Acme and Birch holding around the two Cobalt Freight calls.
 Also that the month around them keeps the workspace's own rules: person pages
-say who someone is and nothing more, and every to-do line names its thread.
+say who someone is and nothing more, and every to-do line names its thread;
+and that the month is moved to end on the day it is built, by whole weeks.
 """
 
 from __future__ import annotations
 
+import datetime
+import importlib.util
 import json
 import os
 import re
@@ -34,17 +37,40 @@ if str(TOOLS) not in sys.path:
 from garrick_lib import load_context, parse_frontmatter, walled  # noqa: E402
 
 ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-ACME_SIDE = "260915-cobalt-renewal-for-acme"
-BIRCH_SIDE = "260922-cobalt-northern-lane-for-birch"
 REPOS = (".", "Wikis", "Zones/Work", "Zones/Personal")
+
+
+def builder():
+    spec = importlib.util.spec_from_file_location("garrick_demo_build_test", BUILD)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+B = builder()
+# A Wednesday five weeks and two days after the month as written ends: every
+# date moves 35 days, so nothing of the story is left in September.
+TODAY = datetime.date(2026, 11, 4)
+DAYS = 7 * B.weeks_for(TODAY)
+
+
+def moved(text):
+    """`text` as the build writes it for TODAY."""
+    return B.shift_text(text, DAYS)
+
+
+ACME_SIDE = moved("260915-cobalt-renewal-for-acme")
+BIRCH_SIDE = moved("260922-cobalt-northern-lane-for-birch")
+# What a date of the story left unmoved looks like in the demo's own record.
+SEPTEMBER = re.compile(r"September|\bSept?\b|2026-09|\b2609[0-3]\d\b|\b202609[0-3]\d")
 
 
 def run(args, cwd=None):
     return subprocess.run([str(a) for a in args], cwd=cwd, env=ENV, capture_output=True, text=True)
 
 
-def build(target):
-    return run([sys.executable, BUILD, "--target", target])
+def build(target, today=TODAY):
+    return run([sys.executable, BUILD, "--target", target, "--today", today.isoformat()])
 
 
 def check(root, *flags):
@@ -130,7 +156,7 @@ class DemoTest(unittest.TestCase):
             ("file-reading", "--file", inbox + "Freight Ledger Weekly.eml"),
             ("file-conversation", "--file", inbox + "Pallet forecast by quarter.eml", "--parties", "acme"),
             ("file-conversation", "--file", inbox + "Second seal-kit quote.eml", "--parties", "acme"),
-            ("extract-attachment", "--mail", "260928-second-seal-kit-quote", "--project", "Zones/Work/Acme Review",
+            ("extract-attachment", "--mail", moved("260928-second-seal-kit-quote"), "--project", "Zones/Work/Acme Review",
              "--name", "Seal kit quotes.csv"),
             ("file-conversation", "--file", inbox + "Northern lane winter booking window.eml",
              "--parties", "acme,birch,cobalt"),
@@ -144,7 +170,7 @@ class DemoTest(unittest.TestCase):
         self.assertNotIn("parties", parse_frontmatter(page))
         self.assertTrue((copy / "Zones/Work/Acme Review/Sources/Seal kit quotes.csv").is_file())
         # The quote is Acme's: Birch Entry is walled from it, and the notice sits on both sides.
-        for mail in ("260928-second-seal-kit-quote", "260928-northern-lane-winter-booking-window"):
+        for mail in (moved("260928-second-seal-kit-quote"), moved("260928-northern-lane-winter-booking-window")):
             refused = self.intake(copy, "extract-attachment", "--mail", mail, "--project", "Zones/Work/Birch Entry",
                                   "--index", "1")
             self.assertEqual(refused.returncode, 1, refused.stdout)
@@ -158,12 +184,59 @@ class DemoTest(unittest.TestCase):
         done = run(["git", "-C", work, "commit", "-q", "-m", "Acme Review: seal-kit quotes received from Owen"])
         self.assertEqual(done.returncode, 0, done.stderr)
 
-    def test_history_is_september(self):
+    def test_history_is_the_month_before_the_build_day(self):
+        start = datetime.date(2026, 9, 1) + DAYS * B.DAY
         for repo in REPOS:
-            dates = git(self.root, repo, "log", "--format=%ad", "--date=short").splitlines()
-            self.assertTrue(all(d.startswith("2026-09-") for d in dates), (repo, dates))
+            dates = [datetime.date.fromisoformat(d) for d in
+                     git(self.root, repo, "log", "--format=%ad", "--date=short").splitlines()]
+            self.assertTrue(all(start <= d <= TODAY for d in dates), (repo, dates))
         for repo in ("Wikis", "Zones/Work", "Zones/Personal"):
             self.assertGreaterEqual(len(git(self.root, repo, "log", "--format=%h").splitlines()), 5, repo)
+
+    def test_dates_move_by_whole_weeks(self):
+        """Every commit lands on the weekday it was written for, the last day of the
+        month is the build day or one of the six before it, and nothing of the
+        story is left in September 2026."""
+        self.assertEqual(DAYS % 7, 0)
+        written = [when for when, _, _, _ in B.PLAN]
+        got = []
+        for repo in ("Wikis", "Zones/Work", "Zones/Personal", "."):
+            got += git(self.root, repo, "log", "--reverse", "--format=%ad", "--date=format:%Y-%m-%d %H:%M").splitlines()[1:]
+        self.assertEqual(sorted(moved(w) for w in written), sorted(got))
+        for w in written:
+            then = datetime.date.fromisoformat(w.split(" ")[0])
+            now = datetime.date.fromisoformat(moved(w).split(" ")[0])
+            self.assertEqual((then.weekday(), (now - then).days), (now.weekday(), DAYS), w)
+        inbox = self.root / "Wikis" / "Meetings" / "raw" / "inbox"
+        (waiting,) = [p.name for p in inbox.iterdir() if not p.name.startswith(".")]
+        last = datetime.date.fromisoformat(re.search(r"\d{4}-\d{2}-\d{2}", waiting).group(0))
+        self.assertTrue(TODAY - 7 * B.DAY < last <= TODAY, last)
+        self.assertEqual("Monday", B.WEEKDAYS[last.weekday()])
+        stray = []
+        record = [self.root / "System" / "context.md", self.root / "System" / "garrick-version.json"]
+        record += [p for top in ("Zones", "Wikis") for p in (self.root / top).rglob("*")
+                   if p.is_file() and ".git" not in p.parts]
+        for path in record:
+            rel = path.relative_to(self.root).as_posix()
+            for n, line in enumerate([rel] + path.read_text(encoding="utf-8", errors="replace").splitlines()):
+                if SEPTEMBER.search(line):
+                    stray.append("%s:%d: %s" % (rel, n, line[:120]))
+        for repo in REPOS:
+            stray += [m for m in git(self.root, repo, "log", "--format=%s").splitlines() if SEPTEMBER.search(m)]
+        self.assertEqual([], stray)
+        # A date written in words moves with the rest, and a weekday keeps its day.
+        kitchen = (self.root / "Zones/Personal/House/Threads/Kitchen/Kitchen.md").read_text(encoding="utf-8")
+        self.assertIn("Monday 9 November", kitchen)          # 5 October
+        self.assertIn("by the fifth of November", kitchen)   # by the first of October
+        call = (inbox / waiting).read_text(encoding="utf-8")
+        self.assertIn("by Friday the thirteenth", call)      # Friday the ninth
+        self.assertIn("The thirteenth is fine", call)
+        # Background stays put: last year's stoppages, and the months of next year's forecast.
+        stoppages = (self.root / "Zones/Work/Acme Review/Sources/Pump line stoppages.csv").read_text(encoding="utf-8")
+        self.assertIn("2025-03-10", stoppages)
+        forecast = (self.root / "Zones/Work/Birch Entry/Threads/Carrier Choice/Volume forecast.md").read_text(
+            encoding="utf-8")
+        self.assertIn("| August |", forecast)
 
     def test_prep_for_cobalt_holds_back_the_acme_call(self):
         """Prep for Cobalt, on Birch's behalf: the Birch-side call passes, the Acme-side one is held back."""
@@ -251,16 +324,22 @@ class DemoTest(unittest.TestCase):
         self.assertEqual(forced.returncode, 0, forced.stderr)
 
     def test_relative_target_is_relative_to_where_you_are(self):
+        """And without --today, the month ends on the day it is built or in the six days before."""
         with tempfile.TemporaryDirectory() as here:
             r = run([sys.executable, BUILD, "--target", "demo-here"], cwd=here)
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertTrue((Path(here) / "demo-here" / "AGENTS.md").is_file())
             self.assertFalse((REPO / "demo-here").exists())
+            inbox = Path(here) / "demo-here" / "Wikis" / "Meetings" / "raw" / "inbox"
+            (waiting,) = [p.name for p in inbox.iterdir() if not p.name.startswith(".")]
+            last = datetime.date.fromisoformat(re.search(r"\d{4}-\d{2}-\d{2}", waiting).group(0))
+            self.assertLessEqual(0, (datetime.date.today() - last).days)
+            self.assertLessEqual((datetime.date.today() - last).days, 7)
 
     def test_deterministic_and_refuses_a_full_folder(self):
-        """Built again, minutes later, from a copy of this repository that has a
-        commit of its own and an edit not committed to a file the install never
-        reads: the same hashes. The installer records the source's commit and
+        """Built again for the same day, minutes later, from a copy of this
+        repository that has a commit of its own and an edit not committed to a
+        file the install never reads: the same hashes. The installer records the source's commit and
         its edits, so a commit or an edit made while a long run went on gave the
         root a different first commit (#209)."""
         source = self.base / "source"
@@ -272,16 +351,53 @@ class DemoTest(unittest.TestCase):
         with (source / "AGENTS.md").open("a", encoding="utf-8") as f:
             f.write("\nAn edit not committed.\n")
         again = self.base / "again"
-        res = run([sys.executable, source / "examples" / "demo" / "build.py", "--target", again])
+        res = run([sys.executable, source / "examples" / "demo" / "build.py", "--target", again,
+                   "--today", TODAY.isoformat()])
         self.assertEqual(res.returncode, 0, res.stderr)
         for repo in REPOS:
             self.assertEqual(git(self.root, repo, "rev-parse", "HEAD"), git(again, repo, "rev-parse", "HEAD"), repo)
         stamp = json.loads((again / "System" / "garrick-version.json").read_text(encoding="utf-8"))
-        self.assertEqual({"commit": "demo", "date": "2026-09-01"}, {k: stamp.get(k) for k in ("commit", "date")})
+        self.assertEqual({"commit": "demo", "date": moved("2026-09-01")}, {k: stamp.get(k) for k in ("commit", "date")})
         self.assertNotIn("modified", stamp)
         res = build(again)
         self.assertEqual(res.returncode, 1)
         self.assertIn("not empty", res.stderr)
+
+
+class ShiftTest(unittest.TestCase):
+    """The date arithmetic alone, without a build."""
+
+    def test_weeks_end_on_or_before_the_build_day(self):
+        last = B.LAST_DAY
+        for k in range(-10, 60):
+            today = last + k * B.DAY
+            end = last + 7 * B.weeks_for(today) * B.DAY
+            self.assertTrue(today - 7 * B.DAY < end <= today, today)
+            self.assertEqual(end.weekday(), last.weekday())
+
+    def test_every_form_moves_and_keeps_its_form(self):
+        days = 15 * 7   # into the next year
+        cases = {
+            "2026-09-28": "2027-01-11", "260915-cobalt": "261229-cobalt", "Theo Marsh call 2026-09-28.vtt":
+            "Theo Marsh call 2027-01-11.vtt", "28 September 2026": "11 January 2027", "2 October": "15 January",
+            "Mon, 28 Sep 2026 07:00": "Mon, 11 Jan 2027 07:00", "<20260928070000.118@x>": "<20270111070000.118@x>",
+            "the fifth of October": "the eighteenth of January", "First of October": "Fourteenth of January",
+            "mid-September": "mid-December", "follow in November": "follow in February",
+            # Background and seasons stay as written.
+            "2025-03-10": "2025-03-10", "Published June 2026": "Published June 2026", "launch in March":
+            "launch in March", "Autumn 2026": "Autumn 2026", "before the first frosts": "before the first frosts",
+            "The second thing": "The second thing", "in the fourth quarter": "in the fourth quarter",
+        }
+        for written, want in cases.items():
+            self.assertEqual(want, B.shift_text(written, days), written)
+        self.assertEqual("x 2026-09-28", B.shift_text("x 2026-09-28", 0))
+
+    def test_a_day_alone_is_read_against_the_dated_line_before_it(self):
+        text = ("**24 September 2026.** The map went to Dana on the 11th; samples by the ninth of October.\n"
+                "Wednesday 2 September 2026. Owen: Friday. The fourth. Dana: by the eighteenth. Iris: The thirtieth, yes.\n")
+        want = ("**22 October 2026.** The map went to Dana on the 9th; samples by the sixth of November.\n"
+                "Wednesday 30 September 2026. Owen: Friday. The second. Dana: by the sixteenth. Iris: The twenty-eighth, yes.\n")
+        self.assertEqual(want, B.shift_text(text, 28))
 
 
 if __name__ == "__main__":

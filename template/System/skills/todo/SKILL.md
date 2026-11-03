@@ -100,6 +100,28 @@ Spoken: "Work's list: three new actions from this week's calls, two repeats
 folded, four old ones set aside. Nothing is due today." Written: each added
 line, each fold, and the counts.
 
+## Tick, reopen, date or add one line: "tick X", "that's done"
+
+A single line is not a sweep. Where `System/status/page_action.py` exists
+(the status page is installed), change it through that and edit nothing by
+hand: the same code the page's buttons and the Ask box run, so the edit, the
+commit with the wall check and the page's rebuild happen the same way
+wherever the request started.
+
+```sh
+python3 System/status/page_action.py todo-done --zone <Zone> --line "<the line's text, or enough of it to be the only one>"
+python3 System/status/page_action.py todo-undo --zone <Zone> --line "<text>"
+python3 System/status/page_action.py todo-date --zone <Zone> --line "<text>" --date <YYYY-MM-DD, or ->
+python3 System/status/page_action.py todo-add  --zone <Zone> --text "<action>" [--target "<Project>/<Thread>"] [--date <YYYY-MM-DD>]
+```
+
+It prints one sentence. A line that is not there, or that two lines say, is
+refused in one line and nothing is written: give more of the line. `todo-undo`
+reopens a line ticked today. Without the status page, edit the line by hand as
+the header says and commit `Todo.md` with the wall check, as a sweep does in
+step 8. A sweep itself (steps 1 to 8) is unchanged, and keeps writing by hand:
+it is many lines and one commit, and the page picks it up at the next rebuild.
+
 ## "What do I owe people", "what am I waiting on"
 
 Read the zone's `Todo.md` and answer from it: the open `## Inbox` and

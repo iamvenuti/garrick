@@ -1190,8 +1190,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let reply = output.fileHandleForReading.readDataToEndOfFile()
 			let said = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
 			DispatchQueue.main.async {
-				self.acted(request, said ?? ["ok": false, "say": "That did not work."])
-				if self.rebuilds(request) { self.freshen(force: true) }
+				let reply = said ?? ["ok": false, "say": "That did not work."]
+				self.acted(request, reply)
+				// A reply that says `built` has settled the page itself: page_action.py asked for the one build
+				// (true), or nothing changed (false) (#344). One without it is a verb it does not build for.
+				if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }
 			}
 		}
 		do {
@@ -1218,8 +1221,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// The reply: the toast, then the page, which shows a park or a wake at once
 	// (the rebuild confirms it) and ends what it showed running.
-	func acted(_ request: [String: Any], _ said: [String: Any]) {
-		if !reading(request) { toast(said["say"] as? String ?? "That did not work.") }
+	// An action the Ask box ran (#344) is handed to the page the same way, without the toast: the box
+	// has its own reply, and the row moves as fast as after a button.
+	func acted(_ request: [String: Any], _ said: [String: Any], toasting: Bool = true) {
+		if toasting && !reading(request) { toast(said["say"] as? String ?? "That did not work.") }
 		if let both = try? JSONSerialization.data(withJSONObject: [request, said]),
 		   let text = String(data: both, encoding: .utf8) {
 			web.evaluateJavaScript("(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(\(text))")
@@ -1947,7 +1952,16 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				}
 				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil, agent: agent) { opened = true }
 			}
-			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
+			// Each action the box ran moves its row on the page at once, as a button's does (#344).
+			let ran = out["acted"] as? [[String: Any]] ?? []
+			for one in ran {
+				if let request = one["request"] as? [String: Any], let reply = one["reply"] as? [String: Any] {
+					self.acted(request, reply, toasting: false)
+				}
+			}
+			// page_action.py asked for the build itself when every reply says `built`; otherwise the app does.
+			let settled = !ran.isEmpty && ran.allSatisfy { ($0["reply"] as? [String: Any])?["built"] != nil }
+			if !settled && lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
 			// A line of what was done that says what the sentence says, case and a final full stop
 			// aside, is not shown a second time under it (#283).
 			let same = { (s: String) -> String in

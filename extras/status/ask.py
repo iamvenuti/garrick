@@ -123,7 +123,11 @@ that way, and only the ones the request names. It answers with JSON
                starts the session, as the page's buttons do
     park, wake run through page_action.perform(), as the page's buttons do:
     todo-add   the status field or the line, committed in the zone's
-               repository, with the durable record the page's clicks keep
+               repository, with the durable record the page's clicks keep,
+               and, as any caller's action ends, the one request for the
+               page (#344). The reply's `acted` lists each request run with
+               its reply, so the app hands them to the page as a click's
+               are, and a park from the box moves its row at once
 
 Nothing else: no ticking, no jobs, no settings, nothing sent. What happened
 is carried into the next request as `<last-results>`.
@@ -1682,6 +1686,7 @@ class Asker:
             return off()
         pa = page_action()
         done, launch, ok = [], [], True
+        acted = []                  # each request run, with its reply, for the page to move the row at once (#344)
         desk = None
         asked, questions = {}, []
         for a in do:
@@ -1708,8 +1713,10 @@ class Asker:
             same = canon(item)
             if a.get("again") is True and same in self.asked:
                 item["confirm"] = self.asked[same]  # the user said yes to the question about it
-            out, logged, why = pa.perform(self.ws, item, pa.ops_lib(self.ws))
+            out, logged, why = pa.perform(self.ws, item, pa.ops_lib(self.ws), via="ask")
             good = bool(out.get("ok"))
+            if good and not out.get("again") and out.get("state") != "running":
+                acted.append({"request": {k: v for k, v in item.items() if k != "confirm"}, "reply": out})
             said = why or out.get("say") or ""       # a refusal in its own words, as before the record
             pa.audit(item, good, logged or said, via="ask")
             if out.get("again"):                    # done already: asked, not done again
@@ -1725,7 +1732,7 @@ class Asker:
         self.results = "\n".join(done)
         if questions and len(questions) == len(do):
             say = questions[0]                      # what the session said it did did not happen: the question did
-        return {"kind": "command", "say": say, "done": done, "launch": launch, "ok": ok,
+        return {"kind": "command", "say": say, "done": done, "launch": launch, "ok": ok, "acted": acted,
                 "usage": {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}}
 
 

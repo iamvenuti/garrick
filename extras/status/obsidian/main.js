@@ -605,7 +605,9 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 				said = { ok: false, say: err && err.killed ? "page_action.py had no answer after fifteen minutes and was stopped." : "That did not work." };
 			}
 			this.acted(view, request, said);
-			if (this.rebuilds(request)) this.rebuild(true);
+			// A reply that says `built` has settled the page: page_action.py asked for the one build (true), or
+			// nothing changed (false) (#344). One without it is a verb it does not build for.
+			if (this.rebuilds(request) && said.built === undefined) this.rebuild(true);
 		});
 		child.stdin.end(JSON.stringify(request));
 	}

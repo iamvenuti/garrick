@@ -49,7 +49,7 @@ def git(cwd, *args):
 
 def plain(reply):
     """A reply as 0.26.0 made it: what the record adds (operations.py) taken off."""
-    return {k: v for k, v in reply.items() if k not in ("op", "state", "outcome")}
+    return {k: v for k, v in reply.items() if k not in ("op", "state", "outcome", "built")}
 
 
 class ActionCase(unittest.TestCase):
@@ -933,11 +933,11 @@ class TestAudit(ActionCase):
                                     "password": "hunter2", "session": "abc"}))
         lines = self.lines()
         self.assertEqual(4, len(lines))
-        self.assertRegex(lines[0], r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  todo-done zone=\"Work\" file=\"Todo.md\" key=\"[0-9a-f]{16}\"  ->  ok: Done: Acme Corp: Invoice for September$")
+        self.assertRegex(lines[0], r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  todo-done zone=\"Work\" file=\"Todo.md\" key=\"[0-9a-f]{16}\"  ->  ok: Done: Acme Corp: Invoice for September  \(page\)$")
         self.assertIn('todo-add zone="Work" text="Book the room xxx', lines[1])
         self.assertIn("…\"  ->  ok: Added to Inbox", lines[1])
         self.assertLess(len(lines[1]), 320)
-        self.assertTrue(lines[2].endswith("?  ->  refused: not a request"))
+        self.assertTrue(lines[2].endswith("?  ->  refused: not a request  (page)"))
         self.assertIn("refused: Not done. Todo-add takes no password field and no session field.", lines[3])
         self.assertNotIn("hunter2", "\n".join(lines))
 
@@ -1152,7 +1152,7 @@ class TestJournal(ActionCase):
 
     def test_a_bad_op_is_refused_before_anything_runs(self):
         reply = self.run_script(dict(self.requests()["todo-add"], op="../../etc/passwd"))
-        self.assertEqual({"ok": False, "say": "not an operation id"}, reply)
+        self.assertEqual({"ok": False, "say": "not an operation id", "built": False}, reply)
         self.assertNotIn("Book the room", (self.work / "Todo.md").read_text())
 
     def test_the_only_field_a_page_adds_is_the_op(self):
@@ -1176,7 +1176,7 @@ class TestJournal(ActionCase):
         first = self.start(dict(request, op="a19f3c80"))
         self.wait_for(mark)                                                       # the first is in the wall check
         second = self.finish(self.start(dict(request, op="b29f3c80")))
-        self.assertEqual({"ok": True, "say": "Already adding to Work…", "op": "a19f3c80", "state": "running"}, second)
+        self.assertEqual({"ok": True, "say": "Already adding to Work…", "op": "a19f3c80", "state": "running", "built": False}, second)
         self.assertNotIn("outcome", second)                                       # joined: ok, and not saved
         done = self.finish(first)
         self.assertEqual(("a19f3c80", "saved"), (done["op"], done["outcome"]))
@@ -1192,7 +1192,7 @@ class TestJournal(ActionCase):
         head = git(self.work, "rev-parse", "HEAD")
         second = self.run_script(dict(request, op="b29f3c80"))
         self.assertEqual({"ok": True, "say": "Done: Acme Corp: Invoice for September", "op": "a19f3c80", "state": "completed",
-                          "outcome": "saved"}, second)
+                          "outcome": "saved", "built": False}, second)
         self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))              # executed, the old key would have been refused
         self.assertEqual({"a19f3c80"}, {r["op"] for r in self.records()})         # the second left no record of its own
 
@@ -1353,7 +1353,8 @@ class TestJournal(ActionCase):
         ok = run(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": self.key("Invoice"), "op": "a19f3c80"}))
         self.assertEqual('{"ok": true, "say": "Done: Acme Corp: Invoice for September"}\n', ok)
         stale = run(json.dumps({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "0" * 16, "op": "a19f3c80"}))
-        self.assertEqual('{"ok": false, "say": "that line has changed since the page was built; it rebuilds now, try again"}\n', stale)
+        self.assertEqual('{"ok": false, "say": "that line has changed since the page was built; it rebuilds now, try again", '
+                         '"built": false}\n', stale)
         self.assertEqual('{"ok": false, "say": "unknown action"}\n', run('{"verb": "operations"}'))
         self.assertEqual('{"ok": false, "say": "not a request"}\n', run("nope"))
         self.assertEqual([], list(self.jobs.glob("operations.*")) + list(self.jobs.glob("op-*")))
@@ -1374,7 +1375,8 @@ class TestJournal(ActionCase):
                               env=dict(os.environ, GARRICK_JOBS_DIR=str(self.jobs)))
         self.assertEqual('{"ok": true, "say": "Done: Acme Corp: Invoice for September"}\n', done.stdout)    # as it was, byte for byte
         refused = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "0" * 16})
-        self.assertEqual({"ok": False, "say": "that line has changed since the page was built; it rebuilds now, try again"}, refused)
+        self.assertEqual({"ok": False, "say": "that line has changed since the page was built; it rebuilds now, try again",
+                          "built": False}, refused)         # a refusal changed nothing: no build to ask for
         reply = self.run_script({"verb": "operations"})
         self.assertEqual((True, False, []), (reply["ok"], reply["durable"], reply["ops"]))
         self.assertIn("not recoverable", reply["say"])
@@ -1867,7 +1869,7 @@ class TestScript(ActionCase):
         self.assertEqual(("failed", "crashed", False), (reply["state"], reply["outcome"], reply["ok"]))
         self.assertEqual("That did not work: OSError: the disk went away. Check git status in Work before trying again.", reply["say"])
         self.assertTrue((self.jobs / "page-actions.log").read_text().rstrip().endswith(
-            'todo-done zone="Work"  ->  refused: ' + reply["say"]))
+            'todo-done zone="Work"  ->  refused: ' + reply["say"] + "  (page)"))
         last = [json.loads(line) for line in (self.jobs / "operations.jsonl").read_text().splitlines()][-1]
         self.assertEqual(("failed", "crashed"), (last["state"], last["outcome"]))
 
@@ -1886,9 +1888,9 @@ class TestScript(ActionCase):
         finally:
             pa.act, sys.stdin = real, stdin
         self.assertEqual(1, code)
-        self.assertEqual('{"ok": false, "say": "that did not work: OSError: the disk went away"}\n', buf.getvalue())
+        self.assertEqual('{"ok": false, "say": "that did not work: OSError: the disk went away", "built": false}\n', buf.getvalue())
         self.assertTrue((self.jobs / "page-actions.log").read_text().rstrip().endswith(
-            'todo-done zone="Work"  ->  refused: that did not work: OSError: the disk went away'))
+            'todo-done zone="Work"  ->  refused: that did not work: OSError: the disk went away  (page)'))
         self.assertFalse((self.jobs / "operations.jsonl").exists())
 
 

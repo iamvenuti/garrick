@@ -139,6 +139,9 @@ LOGGED_TEXT = 60                # a new line's text, cut as the audit log cuts i
 OP_RE = re.compile(r"[0-9a-f]{8,32}")
 
 STATES = ("queued", "running", "completed", "failed")
+# Who sent a request, named in its record and in the audit log (#344): a click
+# on the page, the ask box, or an assistant's session at the command line.
+CALLERS = ("page", "ask", "session")
 OUTCOMES = ("saved", "refused", "crashed", "unknown", "lost")
 SUCCESS_VERBS = ("saved", "parked", "ticked", "added", "renamed", "made", "committed")
 
@@ -772,8 +775,9 @@ class Run:
                 pass
 
 
-def start(folder, req: dict, now: Optional[float] = None) -> Tuple[Optional[Run], Optional[dict]]:
-    """Begin the journal entry for a request of a declared verb.
+def start(folder, req: dict, now: Optional[float] = None, via: str = "") -> Tuple[Optional[Run], Optional[dict]]:
+    """Begin the journal entry for a request of a declared verb. `via` names
+    the caller that sent it, one of CALLERS, and goes into the record.
 
     Returns (run, None) to carry on, (None, reply) when the request joins an
     identical one that is under way, replays one that saved, or is asked
@@ -818,6 +822,8 @@ def start(folder, req: dict, now: Optional[float] = None) -> Tuple[Optional[Run]
             rec = {"op": op, "key": key, "verb": verb, "zone": zone, "state": "queued", "phase": "", "at": now,
                    "request": _request(verb, req), "done": None, "outcome": None, "say": None,
                    "label": label(verb, req)}
+            if via in CALLERS:
+                rec["via"] = via
             journal.append(rec)
             journal.compact(now)
     except BaseException:

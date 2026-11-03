@@ -74,6 +74,35 @@ Where the `desk` skill is installed (the cmux extra), "open X", "close X" and
 "close for the day" go to it first: it opens, wraps or closes each thread in
 its own tab, and the session in that tab runs this skill.
 
+## Running an action: one executor, where the status page is installed
+
+Park, wake, a new project or thread, a rename, a deletion and ticking a
+`Todo.md` line each have one executor, `System/status/page_action.py`, which
+the status page extra installs. A page button, the Ask box and a session run
+the same code through it: the edit, the stale check, the commit with the wall
+check, the interruption stack, the record in the log, and one request for the
+page to rebuild, so the page shows the change within seconds. From a session,
+give it the verb and its options, from the workspace root:
+
+```sh
+python3 System/status/page_action.py park --zone Work --project Acme --thread Pricing
+python3 System/status/page_action.py todo-done --zone Work --line "Send the revised terms"
+```
+
+It prints one sentence and exits 0, or prints why it refused and exits 1; a
+refusal writes nothing. The verbs are `park`, `wake`, `new-project`,
+`new-thread`, `rename`, `delete`, `undo`, `unstack`, `todo-add`, `todo-done`,
+`todo-undo` and `todo-date`; `--help` lists their options. Its other verbs
+take JSON on standard input, as *Interrupted* and *Back* show, with
+`--via session` after `--workspace .`.
+
+**Check for it first**: `test -f System/status/page_action.py`. Where it is
+there, use it for these verbs and do not also run `scaffold.py`, commit or
+`unstack` by hand for them: it has done all three. Where it is not there (no
+status page), each section's steps below are the way, exactly as before: the
+scaffolding script, a commit by hand, and no stack. Everything else a wrap
+writes is by hand either way.
+
 ## Resolving a name
 
 Every command that names a thread resolves the name first. Names arrive by
@@ -490,6 +519,13 @@ per wrap: the one named, and nothing else.
    other, so anything that counts open actions counts it.
    Tick the lines this session finished, whether they name this thread or
    only a party or person. Touch no line that names another thread.
+   **Where `System/status/page_action.py` exists, tick through it, before
+   appending anything** (*Running an action*): `python3 System/status/page_action.py
+   todo-done --zone <Zone> --line "<the line's text, or enough of it to be the
+   only one>"`. It ticks the line as written, commits `Todo.md`, and asks for
+   the page to be rebuilt; it refuses a line that is not there or that two
+   lines say, and writes nothing. Without the status page, edit the line by
+   hand and let step 12 commit it.
    **Tick a line as it was written; the outcome goes in the dated entry, not
    on the line.** `[ ]` becomes `[x]` and `✅ <YYYY-MM-DD>`, today, goes last,
    as Obsidian Tasks writes it, and nothing else on the line changes: "file
@@ -571,6 +607,11 @@ per wrap: the one named, and nothing else.
     the machine and needs the user's yes.
 13. **Take it off the interruption stack** with `unstack`: a wrapped thread
     is not waiting for "back". Not on it, nothing changes.
+    ```sh
+    python3 System/status/page_action.py unstack --zone <Zone> --project "<Project>" --thread "<Thread>"
+    ```
+    It also asks for the page to be rebuilt, once the commit above is made.
+    Without the status page there is no stack, and this step falls away.
 
 Spoken: "Acme pricing wrapped. Next is the second draft once Dana sends
 volumes, due Friday." Add a third sentence only for something the user must
@@ -597,7 +638,7 @@ wrap does.
    *by*.
 3. **Save it**, through the status page's `page_action.py`:
    ```sh
-   python3 System/status/page_action.py --workspace . <<'EOF'
+   python3 System/status/page_action.py --workspace . --via session <<'EOF'
    {"verb": "interrupt", "zone": "Work", "project": "Acme", "thread": "Pricing", "where": "<answer>", "next": "<answer>", "keep": "<answer, or leave the key out>", "by": "<what cut in, or leave the key out>"}
    EOF
    ```
@@ -626,7 +667,7 @@ wrap does.
    it is Open, not Back.
 2. **Take it off the stack:**
    ```sh
-   python3 System/status/page_action.py --workspace . <<'EOF'
+   python3 System/status/page_action.py --workspace . --via session <<'EOF'
    {"verb": "back"}
    EOF
    ```
@@ -752,7 +793,7 @@ Closes a thread for good.
 7. **Open actions:** if `Todo.md` still has unticked lines that name this
    thread (`Acme, Pricing`), name them and ask whether to tick, keep or drop
    them. Do not decide for the user. Tick a line as it was written, as Wrap
-   step 8 does; the outcome goes in step 3's outcome and step 4's entry, not
+   step 8 does, through the executor where it is there; the outcome goes in step 3's outcome and step 4's entry, not
    on the line. Never add a line for work that is already done.
 8. **Last thread in the project?** Ask whether the project is finished too. If
    yes, set `status: done` in the hub.
@@ -760,7 +801,8 @@ Closes a thread for good.
    thread keeps announcing work that no longer exists.
 10. **Commit** in the zone's repository: "Acme, Pricing: finished; outcome
    recorded".
-11. **Take it off the interruption stack** with `unstack`.
+11. **Take it off the interruption stack** with `unstack`, as Wrap step 13
+    does. Without the status page, nothing.
 
 Spoken: "Acme pricing is closed. Two actions still point at it: tick them, keep
 them, or drop them?"
@@ -774,32 +816,43 @@ moves nothing: the folder, the Resume here block, the links and the history
 stay exactly where they are.
 
 1. **Resolve X.** Parked threads resolve like any other.
-2. **Run the scaffolding script**, from the workspace root. It sets
-   `status: parked`, or `status: active` for `wake`, and `updated:` today,
-   adds the dated entry, "Parked." or "Woken.", and leaves the Resume here
-   block as it is: it still says where the work stood.
+2. **Run the executor** (*Running an action*), from the workspace root. It
+   sets `status: parked`, or `status: active` for `wake`, and `updated:`
+   today, adds the dated entry, "Parked." or "Woken.", and leaves the Resume
+   here block as it is: it still says where the work stood. It commits the
+   note ("Acme, Pricing: parked"), takes a parked thread off the interruption
+   stack and asks for the page to be rebuilt.
+   ```sh
+   python3 System/status/page_action.py park --zone Work --project Acme --thread Pricing
+   ```
+   A thread already set aside, or an active one asked to wake, is refused in
+   one line and nothing is written, so read what it says rather than running
+   it twice. Then step 3 if there is a reason, and steps 5 and 6; step 4 and
+   the stack are done.
+   **Without the status page** (no `System/status/page_action.py`), run the
+   scaffolding script instead. It writes that one note and commits nothing:
    ```sh
    python3 System/tools/scaffold.py park --zone Work --project Acme --thread Pricing
    ```
-   It writes that one note and commits nothing. A thread already set aside,
-   or an active one asked to wake, is refused in one line and nothing is
-   written, so read what it says rather than running it twice.
-3. **If the user gave a reason**, add it to that dated entry.
-4. **Commit** in the zone's repository: "Acme, Pricing: parked".
+3. **If the user gave a reason**, add it to that dated entry. Where the
+   executor ran, the note is already committed: commit this one line by hand,
+   "Acme, Pricing: reason for parking".
+4. **Commit** in the zone's repository: "Acme, Pricing: parked". Only without
+   the status page; the executor has committed.
 5. **Keep the memory pointer**, if there is one. A parked thread is not
    finished. **A checkpoint is kept too**, exactly as it is: parking sets work
    aside, and what the last session recorded is part of where it stood. The
    check says nothing about it while the thread is parked, and waking the
    thread brings it back to be read and wrapped.
-6. **Parking takes it off the interruption stack**: run `unstack`. Waking
-   puts nothing back.
+6. **Parking takes it off the interruption stack**: the executor has done it;
+   without the status page there is no stack. Waking puts nothing back.
 
 **When X is a whole project** ("park Acme", where Acme has threads), leave
-`--thread` out: the script parks the hub note, with the dated entry under its
+`--thread` out: the executor (or the script) parks the hub note, with the dated entry under its
 `## State of play` if it has one, and the commit is "Acme: parked". Its thread
 notes are left alone: every thread in it counts as parked while the hub says
-so, and waking the project brings back exactly what was live before. `unstack`
-with the project alone takes all its threads off the stack. If X could be
+so, and waking the project brings back exactly what was live before. Parking
+the project takes all its threads off the stack. If X could be
 the project or one of its threads, ask which.
 
 Spoken: "Acme pricing is parked. Say wake Acme pricing to bring it back."
@@ -808,8 +861,17 @@ Written: the same, then the note's path and the commit hash.
 
 ## New: "new project X for P in Z", "new thread X in P"
 
-Creation goes through the scaffolding script, which checks names. Run it from
-the workspace root.
+Creation goes through the executor (*Running an action*), which runs the
+scaffolding script, whose checks are the same, and commits. Run it from the
+workspace root.
+
+```sh
+python3 System/status/page_action.py new-project --zone <Zone> --name "<Project>" --party <tag> --thread "<Thread>"
+python3 System/status/page_action.py new-thread --zone <Zone> --project "<Project>" --name "<Thread>"
+```
+
+**Without the status page** (no `System/status/page_action.py`), run the
+scaffolding script directly, as step 4 and step 6 then say:
 
 ```sh
 python3 System/tools/scaffold.py project --zone <Zone> --name "<Project>" --party <tag> --thread "<Thread>"
@@ -839,7 +901,7 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    the user did not ask for a project at all but for help with a piece of work,
    the short route sets up the party, the project and the thread on one
    question instead: the `meetings` skill's *Nothing there yet*.
-4. **Run the script.** When it refuses, it prints a one-line reason. Relay it
+4. **Run the executor or the script.** When it refuses, it prints a one-line reason. Relay it
    in plain words and suggest a fix:
    - a name that will not work (an underscore, a comma, a slash, a full stop
      outside an acronym): say what is in the way and offer the name without it;
@@ -855,7 +917,8 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    is said (Q4 Planning, ISO 27001) is a good name, and the script asks for the
    form to hear for it: ask the user in one line and write their answer into the
    note's frontmatter as `spoken:`, or pass it as `--spoken` next time.
-6. **Commit**, if the script has not: check
+6. **Commit**, if nothing has: the executor has committed the new folder and
+   its hub line; the script has not. Without the status page, check
    `git -C "Zones/<Zone>" status --porcelain`, stage the new folder by name, and
    commit "New project Birch (birch), first thread Launch plan". Adding Parties
    or Walls rows is a change outside the zone: commit it separately in the
@@ -871,8 +934,17 @@ Written: the paths created and the commit hash.
 
 ## Rename: "rename X to Y"
 
-The scaffolding script renames, so the folder, the note and every link to it
-in the zone move together, in one commit:
+The executor renames (*Running an action*), through the scaffolding script, so
+the folder, the note and every link to it in the zone move together, in one
+commit:
+
+```sh
+python3 System/status/page_action.py rename --zone <Zone> --project "<Project>" [--thread "<Thread>"] --to "<New name>"
+```
+
+It also commits the old name as a heard alias in `System/context.md`, moves the
+thread's place on the interruption stack, and asks for the page to be rebuilt.
+**Without the status page**, run the script itself, and do those by hand:
 
 ```sh
 python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--thread "<Thread>"] --to "<New name>"
@@ -892,15 +964,10 @@ python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--t
    it in the zone (the hub's list, `Todo.md`, `project:` frontmatter, the
    notes between) and every link to a file inside its folder, and adds the
    dated entry "Renamed from <old>.", all in one commit in the zone. It adds
-   the old name as a heard alias in `System/context.md`: commit that in the
-   workspace root's repository.
+   the old name as a heard alias in `System/context.md`: the executor commits
+   that; run by hand, commit it in the workspace root's repository.
 4. **The memory pointer**, if you keep one: point it at the new note.
 5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
-
-When the thread, or a thread of the project, is on the interruption stack,
-run the rename through `page_action.py` instead, `{"verb": "rename", "zone",
-"project", "thread", "to"}`: it runs this same script and moves the entry on
-the stack to the new name, where it keeps its place.
 
 Moving a thread to another project or zone is not a rename: it crosses
 parties and walls. Say so, and stop.
@@ -917,6 +984,13 @@ the wrong project. Real work is finished or parked, never deleted: offer those
 first.
 
 ```sh
+python3 System/status/page_action.py delete --zone <Zone> --project "<Project>" [--thread "<Thread>"]
+python3 System/status/page_action.py delete --zone <Zone> --project "<Project>" [--thread "<Thread>"] --confirm "<Name>"
+```
+
+**Without the status page**, the script's two forms, and step 5 by hand:
+
+```sh
 python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--thread "<Thread>"]
 python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--thread "<Thread>"] --confirm "<Name>"
 ```
@@ -930,13 +1004,15 @@ python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--t
 3. **Run the second form.** One commit in the zone; the reply gives the
    commit to revert. Meetings pages stay.
 4. **The memory pointer**, if you keep one: delete it.
-5. **Take it off the interruption stack** with `unstack`, every thread of
-   the project when it was a project.
+5. **Take it off the interruption stack**: the executor's confirmed form has
+   done it, for every thread of the project when it was a project. Without the
+   status page there is no stack.
 
 Spoken: "Deleted the test thread and its one open action. Say undo to bring
-it back." On undo, `python3 System/tools/scaffold.py undo --zone <Zone>
---commit <commit>`, which refuses once anything else has been committed in
-the zone. A rename is undone the same way.
+it back." On undo, `python3 System/status/page_action.py undo --zone <Zone>
+--commit <commit>` (without the status page, `python3 System/tools/scaffold.py
+undo` with the same options), which refuses once anything else has been
+committed in the zone. A rename is undone the same way.
 
 Written: the script's report, and the commit hash.
 

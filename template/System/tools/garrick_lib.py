@@ -2387,17 +2387,25 @@ exec python3 "$check" --root "$dir" --staged --walls-only
 WALL_HOOK_WIKI = """#!/bin/sh
 # %s: refuse a commit that would carry walled material into this wiki's history.
 # Installed by Garrick. The deliberate override, only when you mean it: git commit --no-verify
-dir=%s
-if [ -z "$dir" ] || [ ! -f "$dir/System/tools/check.py" ]; then
-  dir="$(git rev-parse --show-toplevel)"
-  while [ "$dir" != "/" ] && [ ! -f "$dir/System/tools/check.py" ]; do dir="$(dirname "$dir")"; done
+top="$(git rev-parse --show-toplevel)"
+real="$(cd "$top" && pwd -P)"
+# A workspace is the right one only when this repository is its Wikis, or inside it.
+ours() {
+  [ -f "$1/System/tools/check.py" ] || return 1
+  wikis="$(cd "$1/Wikis" 2>/dev/null && pwd -P)" || return 1
+  case "$real" in "$wikis"|"$wikis"/*) return 0 ;; esac
+  return 1
+}
+dir="$top"
+while [ "$dir" != "/" ] && ! ours "$dir"; do dir="$(dirname "$dir")"; done
+if ! ours "$dir"; then
+  dir=%s
+  if [ -z "$dir" ] || ! ours "$dir"; then
+    echo "Commit refused: no workspace found whose Wikis is this repository, so the wall check cannot run. Run python3 System/tools/check.py --install-hooks in the workspace, or commit with --no-verify if you mean to skip it." >&2
+    exit 1
+  fi
 fi
-check="$dir/System/tools/check.py"
-if [ ! -f "$check" ]; then
-  echo "Commit refused: the wall check is missing; no System/tools/check.py in the workspace this wiki belongs to. Run python3 System/tools/check.py --install-hooks in the workspace, or commit with --no-verify if you mean to skip it." >&2
-  exit 1
-fi
-exec python3 "$check" --root "$dir" --staged --walls-only
+exec python3 "$dir/System/tools/check.py" --root "$dir" --staged --walls-only
 """
 
 

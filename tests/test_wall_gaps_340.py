@@ -25,6 +25,16 @@ from fixtures import GIT_ENV, HAVE_GIT, checkpoint, git, write  # noqa: E402
 
 import check  # noqa: E402
 import garrick_lib  # noqa: E402
+import importlib.util  # noqa: E402
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
 from test_person_employer import CONTEXT, Workspace as EmployerWorkspace, entity, person  # noqa: E402
 
 TOOLS = Path(__file__).resolve().parent.parent / "template" / "System" / "tools"
@@ -76,6 +86,27 @@ class ZonePathTest(unittest.TestCase):
                      "```\n../../Personal/Notes/home.md\n```"):
             self.resume("Waiting on %s." % path)
             self.assertEqual(1, len(self.crossings()), path)
+
+    def test_a_zone_named_with_a_space_or_an_apostrophe_is_found_in_any_spelling(self):
+        for zone in ("Side Work", "Jo's Stuff"):
+            write(self.root / "Zones" / zone / "Notes" / "home.md", "# Home\n")
+            (self.root / "Zones" / zone / ".git").mkdir()
+            low = zone.lower()
+            for path in ("`../../%s/Notes/home.md`", "`Zones/%s/Notes/home.md`", "Zones/%s/Notes/home.md",
+                         "`../../%s`", "[[%s/Notes/home]]", "[h](<../../%s/Notes/home.md>)",
+                         "[h](../../%s/Notes/home.md)".replace("%s", zone.replace(" ", "%20").replace("'", "%27") + "%s"[:0]),
+                         "`../../%s/Notes/home.md`".replace("%s", "%s"), "`Zones/" + low + "/Notes/home.md`",
+                         "`../../" + zone.replace(" ", "  ") + "/Notes/home.md`"):
+                text = path % zone if "%s" in path else path
+                self.resume("Waiting on %s." % text)
+                self.assertEqual(1, len(self.crossings()), text)
+
+    def test_a_folder_of_that_name_in_the_project_is_that_folder(self):
+        write(self.root / "Zones" / "Side Work" / "Notes" / "home.md", "# Home\n")
+        (self.root / "Zones" / "Side Work" / ".git").mkdir()
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Side Work" / "Notes" / "plan.md", "# Plan\n")
+        self.resume("See `Side Work/Notes/plan.md` and Side Work/Notes/plan.md.")
+        self.assertEqual([], self.crossings())
 
     def test_a_path_that_is_there_in_the_project_is_that_path(self):
         write(self.root / "Zones" / "Work" / "Acme Review" / "Personal" / "Notes" / "plan.md", "# Plan\n")
@@ -155,12 +186,55 @@ class WikiHookTest(EmployerWorkspace):
                                  capture_output=True, text=True)
         self.assertNotEqual(0, refused.returncode)
         self.assertIn("Commit refused: ", refused.stderr)
-        self.assertNotIn("the wall check is missing", refused.stderr)
+        self.assertNotIn("no workspace found", refused.stderr)
         write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/acme-corp]]"))
         git(elsewhere, "add", "-A")
         passed = subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(elsewhere), env=dict(GIT_ENV),
                                 capture_output=True, text=True)
         self.assertEqual(0, passed.returncode, passed.stderr)
+
+    def commit_in(self, repo):
+        return subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(repo), env=dict(GIT_ENV),
+                              capture_output=True, text=True)
+
+    def test_a_copied_workspace_is_checked_as_itself(self):
+        garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root)
+        copy = self.root.parent / "Copy"
+        shutil.copytree(str(self.root), str(copy), symlinks=True)
+        # The original no longer draws the wall, so a hook that read it would pass.
+        context = self.root / "System" / "context.md"
+        context.write_text(context.read_text(encoding="utf-8").replace("| `acme` | `birch` |", "| `acme` | `cedar` |"))
+        mine = copy / "Wikis" / "Meetings" / "wiki" / "people"
+        write(mine / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[wiki/entities/birch-co]].",
+                                               "[[wiki/entities/acme-corp]]"))
+        git(copy / "Wikis", "add", "-A")
+        res = self.commit_in(copy / "Wikis")
+        self.assertNotEqual(0, res.returncode, res.stderr)
+        self.assertIn("Commit refused", res.stderr)
+
+    def test_a_walled_link_in_the_text_is_refused_in_a_wiki_reached_through_a_link(self):
+        elsewhere = Path(self._tmp.name).resolve() / "cloud" / "Wikis"
+        elsewhere.parent.mkdir()
+        shutil.move(str(self.wikis), str(elsewhere))
+        os.symlink(str(elsewhere), str(self.wikis))
+        garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root)
+        for body in ("Buyer at [[wiki/entities/birch-co]].", "Buyer at [[birch-co]]."):
+            write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", body))
+            git(elsewhere, "add", "-A")
+            res = self.commit_in(elsewhere)
+            self.assertNotEqual(0, res.returncode, body)
+            self.assertIn("Wikis/Meetings/wiki/people/pat-newcomer.md", res.stderr)
+
+    def test_a_repository_that_is_not_part_of_the_workspace_is_refused(self):
+        outside = Path(self._tmp.name).resolve() / "elsewhere"
+        outside.mkdir()
+        git(outside, "init", "-q")
+        write(outside / "note.md", "x\n")
+        git(outside, "add", "-A")
+        res = subprocess.run([sys.executable, str(TOOLS / "check.py"), "--root", str(self.root), "--staged",
+                              "--walls-only"], cwd=str(outside), env=dict(GIT_ENV), capture_output=True, text=True)
+        self.assertEqual(1, res.returncode, res.stdout + res.stderr)
+        self.assertIn("not part of the workspace", res.stderr)
 
     def test_a_hook_that_finds_no_workspace_refuses_the_commit(self):
         hook = garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root / "nowhere")
@@ -170,7 +244,7 @@ class WikiHookTest(EmployerWorkspace):
         res = subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(self.wikis), env=dict(GIT_ENV),
                              capture_output=True, text=True)
         self.assertNotEqual(0, res.returncode)
-        self.assertIn("the wall check is missing", res.stderr)
+        self.assertIn("no workspace found", res.stderr)
         self.assertTrue(hook.is_file())
 
     def hooks_path_findings(self):
@@ -400,6 +474,62 @@ class HookTest(EmployerWorkspace):
         write(self.people / "pat-newcomer.md",
               person("Pat Newcomer", "acme", "Buyer at [[acme-corp]] and [[wiki/entities/acme-corp|Acme]].",
                      "[[wiki/entities/acme-corp]]"))
+        self.assertEqual([], self.staged())
+
+    def test_ordinary_prose_that_looks_like_a_link_is_refused_saying_what_and_how(self):
+        for prose in ("[LinkedIn](https://www.example.com/in/pat)", "<pat@acme.example>", "x<y and y>z",
+                      "Buyer [EMEA]: Italy", "Buyer <not sure>"):
+            write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", prose, "[[wiki/entities/acme-corp]]"))
+            git(self.wikis, "add", "-A")
+            found = [f for f in check.run_checks(self.root, walls_only=True, staged=self.wikis)]
+            self.assertEqual(1, len(found), prose)
+            self.assertIn("holds `", found[0].message)
+            start = min(i for i in (prose.find("["), prose.find("<")) if i >= 0)
+            self.assertIn(prose[start:start + 5], found[0].message)
+            self.assertIn("web address bare", found[0].message)
+
+    def test_an_alias_or_heading_that_could_start_another_link_is_not_plain(self):
+        for link in ('[[wiki/entities/acme-corp|<a href="wiki/entities/birch-co.md">x</a>]]',
+                     "[[wiki/entities/acme-corp|obsidian://open?file=birch-co]]",
+                     "[[wiki/entities/acme-corp|<wiki/entities/birch-co.md>]]",
+                     '[[wiki/entities/acme-corp#<a href="x">h</a>]]', "[[wiki/entities/acme-corp|x](wiki/entities/birch-co.md)",
+                     "[[wiki/entities/acme-corp|see (this)]]", "[[wiki/entities/acme-corp|https://example.com]]"):
+            write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer, %s." % link))
+            self.assertEqual(self.refused("pat-newcomer"), self.staged(), link)
+
+    def test_a_bare_name_is_read_against_every_page_of_that_name_dormant_and_archived_too(self):
+        (self.entities / "birch-co.md").unlink()
+        write(self.meetings / "wiki" / "topics" / "birch-co.md", "---\ntitle: x\ntype: topic\n---\nhi\n")
+        for grade in ("dormant", "archive"):
+            page = self.meetings / grade / "wiki" / "entities" / "birch-co.md"
+            write(page, entity("Birch & Co", "birch"))
+            write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[birch-co]]."))
+            self.assertEqual(self.refused("pat-newcomer"), self.staged(), grade)
+            page.unlink()
+
+    def test_what_fade_writes_into_a_person_page_is_plain_and_wall_checked(self):
+        fade = _load("garrick_fade_340", TOOLS / "fade.py")
+        text = person("Pat Newcomer", "acme", "Buyer at [[acme-corp]] and, once, [[wiki/entities/birch-co]] and "
+                      "[[260310-acme-kickoff]].")
+        links = fade.Links(self.root)
+        for slug in ("acme-corp", "birch-co"):
+            old = self.entities / (slug + ".md")
+            new = self.meetings / "dormant" / "wiki" / "entities" / (slug + ".md")
+            new.parent.mkdir(parents=True, exist_ok=True)
+            os.rename(str(old), str(new))
+        moved = {"Wikis/Meetings/wiki/entities/%s.md" % s_: "Wikis/Meetings/dormant/wiki/entities/%s.md" % s_
+                 for s_ in ("acme-corp", "birch-co")}
+        out = fade.relink(text, moved, links, "Wikis/Meetings/wiki/people/pat-newcomer.md")
+        self.assertIn("[[dormant/wiki/entities/acme-corp|", out)
+        pages, problem = check.text_entity_pages(check.discover(self.root), out)
+        self.assertEqual("", problem)
+        self.assertEqual(2, len(pages))
+        write(self.people / "pat-newcomer.md", out)
+        self.assertEqual(self.refused("pat-newcomer"), self.staged())      # the Birch link is across the wall
+        clean = fade.relink(text.replace("once, [[wiki/entities/birch-co]] and ", ""), moved, links,
+                            "Wikis/Meetings/wiki/people/pat-newcomer.md")
+        self.assertNotIn("birch", clean)
+        write(self.people / "pat-newcomer.md", clean)
         self.assertEqual([], self.staged())
 
     def test_a_link_in_the_text_to_a_page_that_is_not_there_is_refused(self):

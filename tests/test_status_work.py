@@ -627,16 +627,16 @@ class TestWorkHosts(unittest.TestCase):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn('func rebuilds(_ request: [String: Any]) -> Bool { !reading(request) && request["verb"] as? String != "note-open" }', swift)
         act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	func acted(")]
-        self.assertIn("if self.rebuilds(request) { self.freshen(force: true) }", act)
-        self.assertIn("if !reading(request) { toast(", swift)                 # note-open still toasts
+        self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', act)     # #344
+        self.assertIn("if toasting && !reading(request) { toast(", swift)     # note-open still toasts
         plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn('return !this.reading(request) && !(request && request.verb === "note-open");', plugin)
-        self.assertIn("if (this.rebuilds(request)) this.rebuild(true);", plugin)
+        self.assertIn("if (this.rebuilds(request) && said.built === undefined) this.rebuild(true);", plugin)
 
     def test_the_app_hands_every_reply_to_the_page(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	func acted(")]
-        self.assertIn('self.acted(request, said ?? ["ok": false, "say": "That did not work."])', act)
+        self.assertIn('let reply = said ?? ["ok": false, "say": "That did not work."]\n\t\t\t\tself.acted(request, reply)', act)
         self.assertIn('acted(request, ["ok": false, "say": "Cannot run \\(python)"])', act)
         self.assertNotIn("asyncAfter", act)                                  # no limit of its own on page_action.py
 

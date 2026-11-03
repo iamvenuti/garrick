@@ -10,7 +10,7 @@ Above the prompt, two lines beside the mark:
 
 ```
 █ ▀▀  Garrick · Work › Acme › Pricing active · 42%
-█ ██  Wrap  Clear  Finder  Obsidian
+█ ██  Wrap  Clear  Close  Finder  Obsidian
 ```
 
 - The Garrick mark, a 4×2 tile of terminal cells drawn with half blocks, as tall as the two lines, so the terminal needs no image support.
@@ -18,6 +18,7 @@ Above the prompt, two lines beside the mark:
 - A row of buttons, all at one weight. Click one, or press ctrl+x tab to reach the band and then its letter:
   - *Wrap* (`w`) asks the assistant to rewrite the Resume here block and add today's dated entry, the rules' "wrap X". A finished thread has no Wrap.
   - *Clear* (`c`) runs `/clear`, which starts a new conversation in the same folder. The band stays. `/resume` brings back the conversation you cleared.
+  - *Close* (`q`) ends your work on the thread: it wraps the thread if it needs it, then closes the session where it runs. See [Close](#close).
   - *Finder* (`f`) shows the thread note in Finder, on a Mac.
   - *Obsidian* (`o`) opens the thread note in Obsidian. It is offered only when Obsidian is installed and the note sits in a vault, so a folder like `System/`, which is not a vault, gets no Obsidian.
 
@@ -25,13 +26,13 @@ Above the prompt, two lines beside the mark:
 
   At a project whose hub has no Resume here block because each thread keeps its own, *Wrap* asks the assistant to wrap the thread this session worked on, and the hub too if its status changed. When the session touched no thread, it says so and stops. `/garrick resume` asks where each live thread stands, and `/garrick note` shows every live thread's block. Parked and done threads are left out.
 
-  Where there is no thread note above the folder, such as `System/`, the workspace root or a wiki, there is nothing to resume, wrap or show, so the band offers *Clear* and *Finder*, which shows the folder. In a wiki, *Obsidian* opens its `wiki/index.md`.
+  Where there is no thread note above the folder, such as `System/`, the workspace root or a wiki, there is nothing to resume, wrap or show, so the band offers *Clear*, *Close* and *Finder*, which shows the folder. In a wiki, *Obsidian* opens its `wiki/index.md`.
 
 The band does not repeat what the session already shows: no Resume here paragraph, and no echo of your last prompt or the step the assistant is on.
 
 Outside any project it shows the mark and where you are, such as `System` or `Wikis › Meetings`. It reads the note again after every turn, so a wrap shows up straight away.
 
-The `[-]` at the band's right end is Claude Code's own: it folds the band, and `[+]` or ctrl+x ctrl+a opens it again. `/garrick hide` takes the band away altogether, and `/garrick` brings it back. `/garrick` always shows the band and never toggles it, because a mod cannot tell whether Claude Code has the band folded. It also works while a turn runs. `/garrick wrap`, `/garrick finder` and `/garrick obsidian` do what the buttons do, and bring back a hidden band. With the launcher switched off in Settings, `/garrick obsidian` answers "Obsidian is switched off in Settings › Opening a thread." and opens nothing, and `/garrick finder` the same for Finder. Two more have no button:
+The `[-]` at the band's right end is Claude Code's own: it folds the band, and `[+]` or ctrl+x ctrl+a opens it again. `/garrick hide` takes the band away altogether, and `/garrick` brings it back. `/garrick` always shows the band and never toggles it, because a mod cannot tell whether Claude Code has the band folded. It also works while a turn runs. `/garrick wrap`, `/garrick close`, `/garrick finder` and `/garrick obsidian` do what the buttons do, and bring back a hidden band. With the launcher switched off in Settings, `/garrick obsidian` answers "Obsidian is switched off in Settings › Opening a thread." and opens nothing, and `/garrick finder` the same for Finder. Two more have no button:
 
 - `/garrick resume` asks the assistant to read the Resume here block and say where the thread stands and what comes next, the rules' "Open X", as saying "open X" does. You get the answer in the conversation, where you can carry on from it.
 - `/garrick note` shows the whole Resume here block of the thread note in a pane. It reads the file and sends nothing to the model. The pane draws it as a reply is drawn, with tables and emphasis, and wikilinks and file paths become links that a click opens. Its *Open in Obsidian* and *Reveal in Finder* show the whole note.
@@ -44,7 +45,23 @@ In the assistant's replies, a path in backticks becomes a link, so Cmd-click ope
 - The index is one `find` over the workspace when the session starts and after every turn. It skips `.git`, `.obsidian`, `node_modules`, `__pycache__` and `.trash`, and `find` doesn't follow symlinks, so a cloud folder linked into the workspace is never walked.
 - Only the drawing changes. The stored reply keeps its plain text.
 
-How it finds the note: from the folder the session started in (a `cd` the assistant runs in a command does not move it) it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and the usage figure, and never calls a model. *Wrap* and `/garrick resume` send a prompt in your name, only when you ask. It runs these processes: that `find`; `open` when you press *Finder* or *Obsidian*; and, with While you wait switched on, `python3` on `System/tools/next_up.py`, which only reads, and on `System/status/page_action.py` when you open or tick a suggestion.
+How it finds the note: from the folder the session started in (a `cd` the assistant runs in a command does not move it) it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and the usage figure, and never calls a model. *Wrap*, *Close* (when it needs a wrap) and `/garrick resume` send a prompt in your name, only when you ask. It runs these processes: that `find`; `open` when you press *Finder* or *Obsidian*; `desk close --session <id> --yes` when you press *Close* in cmux; and, with While you wait switched on, `python3` on `System/tools/next_up.py`, which only reads, and on `System/status/page_action.py` when you open or tick a suggestion.
+
+## Close
+
+*Close* (`q`), or `/garrick close`, is for the end of a day's work on a thread: one press instead of Wrap, waiting, and closing the session by hand.
+
+1. **It wraps first, unless there is nothing to wrap.** A session counts as wrapped when its last turn rewrote the Resume here block (from *Wrap*, `/garrick wrap`, or a turn of your own that did) and no turn has run since. A session with no turn yet, a finished thread, and a folder with no thread note, such as `System/`, have nothing to wrap. Otherwise Close sends the same prompt as *Wrap*, and goes on only when that turn ends with the block rewritten. At a project kept in threads, it is the live threads' blocks that must change.
+2. **It fails closed.** If the wrap ends with a question, an error or an interruption, or leaves the block as it was, the session stays open and a toast says why, as "Not closed: the wrap is waiting on you." Press Close again once it is answered. Close never cuts off a turn that is running: pressed during one, it says it will wait, and wraps when the turn ends. Pressing it again meanwhile does nothing. It acts a moment after the wrap turn has ended, never inside it.
+3. **It closes the session where it runs.**
+
+   | Where | What Close does |
+   |---|---|
+   | cmux | runs `desk close --session <this session> --yes`, so the [desk](../../docs/extras/cmux.md) closes the tab once it sees the session idle (it tries three times, two seconds apart, while the transcript catches up). The tab leaves tomorrow's restore, as with "close the Pricing tab". Needs the `desk` command on your PATH. If the desk refuses, the session stays open and the toast gives its reason. The band takes it to be in cmux when `CMUX_SURFACE_ID` is set, as cmux sets it in each tab |
+   | Claude desktop app | wraps, then says "Wrapped. Archive this session from the sidebar." The mods API has no call that ends a session or archives it, so the band does neither |
+   | a plain terminal | runs `/exit`; if Claude Code will not run it from a mod, "Wrapped. Type /exit to close this session." |
+
+The conversation is never deleted: `/resume` brings it back, and in the desktop app so does the archive.
 
 ## While you wait, a preview feature
 

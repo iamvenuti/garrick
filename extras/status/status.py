@@ -2159,7 +2159,7 @@ keep();run();return true};
    A batch of ticks that saved is one small notice however long it took; one refused stays, naming its lines, with their boxes back.
    A refused rename, deletion, new project, new thread or undo stays too, however quick (KEEP, #177) */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='operations'){heard(out);return}
-var e=zoned(q)&&(W.filter(function(x){return!x.out&&q.op&&x.op===q.op})[0]||running(q.zone));
+var e=zoned(q)&&(W.filter(function(x){return!x.out&&q.op&&x.op===q.op})[0]||(/^ask-/.test(q.op||'')?null:running(q.zone)));
 if(e&&e.q.verb===q.verb){var now=Date.now();
 if(out&&out.state==='running'&&!out.outcome){   /* an identical request is already under way: this entry becomes that one, and nothing was saved */
 W.splice(W.indexOf(e),1);if(out.op&&!W.some(function(x){return x.op===out.op})&&SEEN.indexOf(out.op)<0){var j={q:{verb:q.verb,zone:q.zone,op:out.op},op:out.op,say:out.say||'Working…',t0:now};

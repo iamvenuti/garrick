@@ -262,6 +262,45 @@ class TestYourWork(HomeCase):
         self.assertEqual("Waiting on Theo Marsh", got["Birch Entry, Market Sizing"][3])
         self.assertEqual("Continue", got["Birch Entry, Interviews"][3])
 
+    def test_a_long_waiting_on_shows_its_first_clause_and_keeps_the_whole_in_the_title(self):
+        # #342: the badge was nowrap and took the row; the next action shrank to a letter a line.
+        long = "Theo Marsh: the volumes; a look at the draft (in Todo.md); still from before: " + "the pilot users, " * 15
+        note = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        note.write_text(re.sub(r"(?m)^\| Waiting on \|.*$", lambda m: "| Waiting on | %s |" % long, note.read_text()))
+        html = self.page()
+        got = {r[0]: r for r in rows(html)}
+        self.assertEqual("Waiting on Theo Marsh", got["Birch Entry, Market Sizing"][3])
+        self.assertIn('title="Waiting on %s"' % htmllib.escape(long.strip().rstrip("."), quote=True).replace("&#x27;", "&#x27;"),
+                      html.replace("&#39;", "&#x27;"))
+        css = re.search(r"\.sh-wait\{([^}]*)\}", html).group(1)
+        self.assertNotIn("nowrap", css)
+        self.assertIn("max-width:40%", css)
+        self.assertIn("fit-content(40%)", re.search(r"\.sh-row\{([^}]*)\}", html).group(1))
+
+    def test_a_waiting_on_with_no_colon_or_semicolon_shows_whole(self):
+        self.assertEqual("Theo Marsh, for the volumes", status.waiting_badge("Theo Marsh, for the volumes"))
+        self.assertEqual("The user", status.waiting_badge("The user: the job rename; a look"))
+        self.assertEqual("Theo", status.waiting_badge("Theo; the dates"))
+
+    def waiting_row(self, said):
+        note = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        note.write_text(re.sub(r"(?m)^\| Waiting on \|.*$", lambda m: "| Waiting on | %s |" % said, note.read_text()))
+        return {r[0]: r for r in rows(self.page())}["Birch Entry, Market Sizing"]
+
+    def test_a_row_waiting_on_the_user_has_continue_and_no_badge(self):
+        # #343, with ## Me reading "Jo Example. Independent advisor."
+        for said in ("Jo: the go on the draft", "Jo Example, for the picks; Theo, on the dates", "me", "You: the call", "The user"):
+            self.assertEqual("Continue", self.waiting_row(said)[3], said)
+
+    def test_a_row_waiting_on_someone_else_keeps_its_badge(self):
+        self.assertEqual("Waiting on Theo Marsh", self.waiting_row("Theo Marsh")[3])
+        self.assertEqual("Waiting on Joanna", self.waiting_row("Joanna")[3])        # a name that only starts like the user's
+
+    def test_with_no_name_in_me_every_row_with_a_waiting_on_is_a_waiting_one(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(re.sub(r"(?m)^Jo Example\..*$", "Independent advisor.", ctx.read_text()))
+        self.assertEqual("Waiting on Jo", self.waiting_row("Jo: the go on the draft")[3])
+
     def test_nobody_and_a_placeholder_are_not_waiting(self):
         for said in ("nobody", "Nobody.", "<who, or nobody>", "none", ""):
             self.assertIsNone(status.waiting_on(said), said)

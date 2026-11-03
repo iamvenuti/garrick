@@ -272,6 +272,8 @@ async function refresh($: any) {
   last = found
   await update($, note, () => found)
   await measure($)
+
+  return found
 }
 
 // The note the band last found, kept by the module. A /clear starts a new
@@ -608,6 +610,131 @@ async function waitLater($: any): Promise<string> {
   return 'Put away for this turn.'
 }
 
+// --- Close ------------------------------------------------------------------
+// Close wraps the thread if it needs it, then closes the session where it runs.
+// It fails closed: only a wrap that ended cleanly, with the Resume here block
+// rewritten, lets the session go, and a turn that is running is never cut off.
+//
+// The session counts as wrapped when its last main-loop turn rewrote the block
+// and no turn has run since. The module keeps that, so a reload forgets it and
+// Close then wraps once more, which is safe.
+
+// The text a wrap is judged by: the Resume here block, or at a project kept in
+// threads, the blocks of its live threads.
+export function signature(n: Note | null): string {
+  if (n === null) return ''
+
+  return n.resume ?? n.threads.map(t => t.resume).join('\n\n')
+}
+
+// A reply that ends by asking: its last character, past closing marks, is a ?.
+export function endsWithQuestion(text: string): boolean {
+  return text.replace(/[\s*_`"'”’)\]>]+$/, '').endsWith('?')
+}
+
+type Host = 'cmux' | 'desktop' | 'terminal' | 'other'
+
+// cmux sets CMUX_SURFACE_ID in every tab it opens; the desktop app draws on
+// the `desktop` surface; a plain terminal on `terminal`.
+async function hostOf($: any): Promise<Host> {
+  if (await $.env.get('CMUX_SURFACE_ID').catch(() => undefined)) return 'cmux'
+  const surfaces: string[] = [...((await $.session.surfaces().catch(() => [])) as string[])]
+  if (surfaces.includes('terminal')) return 'terminal'
+  if (surfaces.includes('desktop')) return 'desktop'
+
+  return 'other'
+}
+
+let closing: 'queued' | 'starting' | 'wrapping' | 'closing' | null = null
+let wrapTurn: string | null = null          // the turn the wrap runs in, once it starts
+let wrapped = false                         // the last turn rewrote the block, and none has run since
+let before: string | null = null            // the block as the running turn found it
+let asked = false                           // the running turn put a question to the person
+
+const pause = ($: any, ms: number) => new Promise<void>(done => void $.clock.after(ms, () => done()))
+const lastLine = (text: string) => String(text).trim().split('\n').pop() ?? ''
+
+async function needsWrap($: any, n: Note | null): Promise<boolean> {
+  if (n === null || !resumable(n) || n.status === 'done' || wrapped) return false
+
+  return (await $.session.turns().catch(() => 0)) > 0
+}
+
+// Ends the session where it runs. Called a moment after a turn has ended, so
+// the desk sees the tab idle.
+async function closeSession($: any) {
+  const say = (text: string) => $.ui.toast(text)
+  try {
+    const host = await hostOf($)
+    const done = wrapped ? 'Wrapped, but not closed' : 'Not closed'
+    if (host === 'cmux') {
+      const id: string = await $.session.id()
+      let why = ''
+      for (let i = 0; i < 3; i++) {
+        const r = await $.process.run(['desk', 'close', '--session', id, '--yes'], { timeoutMs: 60_000 })
+          .catch((err: unknown) => ({ exitCode: 127, stdout: '', stderr: String(err) }))
+        if (r.exitCode === 0) return
+        why = lastLine(r.stderr) || lastLine(r.stdout) || 'desk did not answer'
+        // The desk reads the transcript, which can lag the turn's end by a moment.
+        if (!/mid-turn/.test(why)) break
+        await pause($, 2000)
+      }
+      say(`${done}: ${why}`)
+    } else if (host === 'terminal') {
+      await $.command.run({ command: 'exit' }).catch(() => say('Wrapped. Type /exit to close this session.'))
+    } else if (host === 'desktop') {
+      // The mods API has no call that ends a desktop session or archives it.
+      say('Wrapped. Archive this session from the sidebar.')
+    } else {
+      say('Wrapped. Close this session where you opened it.')
+    }
+  } finally {
+    closing = null
+  }
+}
+
+function closeSoon($: any) {
+  closing = 'closing'
+  $.clock.after(1000, () => void closeSession($).catch(() => { closing = null }))
+}
+
+async function startClose($: any): Promise<string> {
+  const n = await noteOf($)
+  if (n !== null && (await needsWrap($, n))) {
+    closing = 'wrapping'
+    wrapTurn = null
+    void wrap($, n)
+
+    return `Wrapping ${n.title}, then closing.`
+  }
+  closeSoon($)
+
+  return n === null ? 'Closing.' : `Closing ${n.title}: nothing to wrap.`
+}
+
+async function close($: any): Promise<string> {
+  if (closing !== null) return 'Close is already under way.'
+  const n = await noteOf($)
+  if (running !== null) {
+    closing = 'queued'
+
+    return `Close waits for the turn to end, then wraps ${n?.title ?? 'the session'} if it needs it.`
+  }
+
+  return startClose($)
+}
+
+// Why a wrap does not let the session go, or null when it does.
+export function wrapFault(reason: string, answer: string, rewrote: boolean, question: boolean): string | null {
+  if (reason === 'aborted') return 'Not closed: the wrap was interrupted.'
+  if (reason === 'error') return 'Not closed: the wrap ended with an error.'
+  if (reason !== 'answer') return 'Not closed: the wrap was refused.'
+  if (question || endsWithQuestion(answer)) return 'Not closed: the wrap is waiting on you.'
+  if (!rewrote) return 'Not closed: the wrap did not rewrite the Resume here block.'
+
+  return null
+}
+
 const STATUS_COLOR: Record<string, string> = { active: 'green', parked: 'yellow', done: 'gray' }
 
 export const register: Register = on => {
@@ -616,8 +743,8 @@ export const register: Register = on => {
     // waiting for the turn to end.
     await $.command.register({
       name: 'garrick',
-      description: 'Show the Garrick band; "hide" it, "resume" or "wrap" the thread, "note" shows its Resume here block, "finder" or "obsidian" opens the note; with the While you wait preview on, "next", "open", "tick" or "later" for what it suggests',
-      argumentHint: '[hide|resume|wrap|note|finder|obsidian|next|open|tick|later]',
+      description: 'Show the Garrick band; "hide" it, "resume" or "wrap" the thread, "close" wraps it if needed and closes the session, "note" shows its Resume here block, "finder" or "obsidian" opens the note; with the While you wait preview on, "next", "open", "tick" or "later" for what it suggests',
+      argumentHint: '[hide|resume|wrap|close|note|finder|obsidian|next|open|tick|later]',
       immediate: true,
     })
     await update($, wait, () => null)
@@ -632,6 +759,11 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     if (e.agentId === undefined) {
       running = e.turnId
+      asked = false
+      wrapped = false
+      if (closing === 'wrapping' && wrapTurn === null) wrapTurn = e.turnId
+      const start = await noteOf($).catch(() => null)
+      before = start === null ? null : signature(start)
       timer?.cancel()
       timer = null
       await update($, wait, () => null).catch(() => undefined)
@@ -661,8 +793,33 @@ export const register: Register = on => {
       for (const t of due) said.push(await tick($, t.pick, t.root).catch(() => 'A tick did not go through.'))
       if (was !== null || said.length) $.ui.toast(['The turn has finished.', ...said].join(' '))
     }
-    await refresh($)
+    const found = await refresh($)
     await reindex($).catch(() => undefined)
+    if (e.agentId === undefined) {
+      const rewrote = before !== null && signature(found) !== before
+      wrapped = e.reason === 'answer' && rewrote
+      if (closing === 'wrapping' && e.turnId === wrapTurn) {
+        const fault = wrapFault(e.reason, e.answer, rewrote, asked)
+        wrapTurn = null
+        if (fault === null) {
+          closeSoon($)
+        } else {
+          closing = null
+          $.ui.toast(fault)
+        }
+      } else if (closing === 'queued') {
+        // Submitted once this hook has answered, as a command's prompt is.
+        closing = 'starting'
+        $.clock.after(50, () => void startClose($).then(t => $.ui.toast(t)).catch(() => { closing = null }))
+      }
+    }
+
+    return next(e)
+  })
+
+  // The turn put a question to the person in a dialog: it is waiting on them.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($, e, next) => {
+    asked = true
 
     return next(e)
   })
@@ -706,6 +863,7 @@ export const register: Register = on => {
     await update($, isHidden, () => false)
     const shown = 'Garrick band shown. If it is folded under [+], ctrl+x ctrl+a opens it.'
     if (arg === '' || arg === 'show') return { text: shown }
+    if (arg === 'close') return { text: await close($) }
     const current = await noteOf($)
     if (['next', 'open', 'tick', 'later'].includes(arg)) {
       if (current === null || !(await waitPreview($, rootOf(current)))) return { text: waitOff }
@@ -738,7 +896,7 @@ export const register: Register = on => {
       return { text: `${arg === 'resume' ? 'Resuming' : 'Wrapping'} ${current.title}.` }
     }
 
-    return { text: `Unknown argument "${arg}": use hide, resume, wrap, note, finder, obsidian, next, open, tick or later.` }
+    return { text: `Unknown argument "${arg}": use hide, resume, wrap, close, note, finder, obsidian, next, open, tick or later.` }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -796,6 +954,7 @@ export const register: Register = on => {
               <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void wrap($, current)} />
             )}
             <Button key="clear" label="Clear" hotkey="c" plain onPress={() => void clear($)} />
+            <Button key="close" label="Close" hotkey="q" plain onPress={() => void close($).then(t => $.ui.toast(t))} />
             {current.finder && <Button key="finder" label="Finder" hotkey="f" plain onPress={() => void finder($, current)} />}
             {current.obsidian && <Button key="obsidian" label="Obsidian" hotkey="o" plain onPress={() => void obsidian($, current)} />}
           </Box>

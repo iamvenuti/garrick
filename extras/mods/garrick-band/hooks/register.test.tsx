@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { buildIndex, fileHref, FULL, label, launcherSettings, linkify, lookup, MARK, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, switchedOff, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
+import { buildIndex, endsWithQuestion, fileHref, FULL, label, launcherSettings, linkify, lookup, MARK, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -158,7 +158,7 @@ describe('band', () => {
   test('two lines: the place, then the buttons at one weight, with no Resume line', async ($, on) => {
     await inThread($, on, NOTE, ['/usr/bin/open', '/Applications/Obsidian.app', `${ROOT}/Zones/Work/.obsidian`])
     const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
-    expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['wrap', 'clear', 'finder', 'obsidian'])
+    expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['wrap', 'clear', 'close', 'finder', 'obsidian'])
     for (const b of await band.findAll({ type: 'Button' })) expect(b.props.dimColor).toBeFalsy()
     expect(await band.find({ text: /Where it stands/ })).toBeUndefined()
   })
@@ -279,7 +279,7 @@ describe('context used', () => {
       }
       const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
       expect(await band.find({ text: /Work › Acme/ })).toBeDefined()
-      expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['wrap', 'clear'])
+      expect((await band.findAll({ type: 'Button' })).map(b => b.key)).toEqual(['wrap', 'clear', 'close'])
       expect(await band.find({ text: /%/ })).toBeUndefined()
       expect((await $.command.run({ command: 'garrick', args: 'wrap' } as any)).text).toBe('Wrapping Acme.')
 
@@ -888,5 +888,312 @@ describe('while you wait, a preview', () => {
     const w = await waiting($, on)
     expect(await w.garrick('next')).toMatch(/^Nothing is on offer/)
     expect(await w.garrick('tick')).toBe('Nothing is on offer to tick.')
+  })
+})
+
+// --- Close ------------------------------------------------------------------
+// Close wraps the thread if it needs it, then closes the session where it
+// runs. The fail-closed cases come first: a session is closed only by a wrap
+// that finished cleanly, and never under a running turn.
+describe('Close', () => {
+  const NOTE2 = NOTE.replace('6 October', '7 October')
+  const DONE = '---\nstatus: done\n---\n## State of play\n\n### Outcome\n\nSigned on 2 October.\n'
+  const DESK = ['desk', 'close', '--session', 'sess-1', '--yes']
+
+  type Options = {
+    note?: string
+    cmux?: boolean
+    surfaces?: string[]
+    turns?: number
+    cwd?: string
+    desk?: { exitCode: number; stdout?: string; stderr?: string }[]
+    exit?: 'ok' | 'rejects'
+  }
+
+  // A session in a thread (or at `cwd`). Turns are run by hand: `turn` starts
+  // one, lets `rewrite` change the note while it runs, and completes it.
+  async function closer($: any, on: any, o: Options = {}) {
+    const clock = mock.clock(on)
+    const state = { text: o.note ?? NOTE }
+    const submitted: string[] = []
+    const ran: string[][] = []
+    const exits: string[] = []
+    const toasts: string[] = []
+    const desk = [...(o.desk ?? [{ exitCode: 0 }])]
+    const cwd = o.cwd ?? `${ROOT}/Zones/Work/Acme`
+    on('ui.render', ENGINE)
+    on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } as any })
+    on('prompt.submit', async (_$: any, e: any) => {
+      submitted.push(e.text)
+      return { text: e.text }
+    })
+    on('command.run', async (_$: any, e: any, next: any) => {
+      if (e.command !== 'exit') return next(e)
+      exits.push(e.command)
+      if (o.exit === 'rejects') throw new Error('unknown command')
+      return {}
+    })
+    on('process.run', async (_$: any, e: any) => {
+      ran.push([...e.argv])
+      const reply = e.argv[0] === 'desk' ? (desk.length > 1 ? desk.shift()! : desk[0]!) : { exitCode: 0 }
+      return { value: { stdout: '', stderr: '', ...reply } } as any
+    })
+    on('session.root', async () => ({ value: cwd }))
+    on('session.cwd', async () => ({ value: cwd }))
+    on('session.id', async () => ({ value: 'sess-1' }))
+    on('session.turns', async () => ({ value: o.turns ?? 3 }))
+    on('session.surfaces', async () => ({ value: (o.surfaces ?? ['terminal']) as any }))
+    on('env.get', async (_$: any, e: any) => ({ value: e.name === 'CMUX_SURFACE_ID' ? (o.cmux ? 'surface-1' : undefined) : '/Users/someone' }))
+    on('fs.exists', async (_$: any, e: any) => ({
+      value: [`${ROOT}/System/rules.md`, ...(cwd.endsWith('/System') ? [] : [`${cwd}/${cwd.slice(cwd.lastIndexOf('/') + 1)}.md`]), '/usr/bin/open'].includes(e.path),
+    }))
+    on('fs.read', async () => ({ value: state.text }))
+    on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
+    on('turn.complete', async () => ({ text: '' }))
+    let n = 0
+    // One turn of the main loop; `rewrite` is the note as the turn leaves it.
+    const turn = async (answer: string, rewrite?: string, reason: 'answer' | 'error' | 'aborted' = 'answer') => {
+      const turnId = `t${++n}`
+      await $.turn.start({ text: 'x', turnId } as any)
+      if (rewrite !== undefined) state.text = rewrite
+      await $.turn.complete({ answer, durationMs: 1, isAborted: reason === 'aborted', turnId, reason } as any)
+    }
+    await turn('')
+    submitted.length = 0
+    const band = await $.ui.mount({ ...BAND, surface: o.surfaces?.[0] ?? 'terminal' })
+    const close = () => band.press({ key: 'close' })
+
+    return { clock, state, submitted, ran, exits, toasts, turn, band, close, desks: () => ran.filter(r => r[0] === 'desk') }
+  }
+
+  test('a question is a final line that ends in one', () => {
+    for (const yes of ['Which thread?', 'Done. Want me to push?', 'Done (anything else?)', 'Done.\n\n**Should I proceed?**\n', 'Use `a.md`, or `b.md`?"']) {
+      expect(endsWithQuestion(yes)).toBe(true)
+    }
+    for (const no of ['', 'Done.', 'Is it done? Yes, it is.', 'Wrapped. See `x.md`.']) expect(endsWithQuestion(no)).toBe(false)
+  })
+
+  test('the signature is the Resume here block, or the live threads blocks at a project', () => {
+    const base = { path: '', rel: '', where: '', title: 'A', status: null, heading: null, finder: false, obsidian: false }
+    expect(signature({ ...base, resume: 'x', threads: [] })).toBe('x')
+    expect(signature({ ...base, resume: null, threads: [{ title: 'p', rel: 'p', heading: null, resume: 'one' }, { title: 'q', rel: 'q', heading: null, resume: 'two' }] })).toBe('one\n\ntwo')
+    expect(signature(null)).toBe('')
+  })
+
+  // Fail closed: nothing but a clean wrap closes the session.
+  test('a wrap that ends with a question leaves the session open, and says so', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.close()
+    await c.clock.advance(100)
+    expect(c.submitted).toHaveLength(1)
+    await c.turn('I rewrote the block. Is the 7 October date right?', NOTE2)
+    await c.clock.advance(10_000)
+    expect(c.toasts.at(-1)).toBe('Not closed: the wrap is waiting on you.')
+    expect(c.desks()).toEqual([])
+    expect(c.exits).toEqual([])
+  })
+
+  test('a wrap that ends with an error leaves the session open, and says why', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.close()
+    await c.clock.advance(100)
+    await c.turn('', NOTE2, 'error')
+    await c.clock.advance(10_000)
+    expect(c.toasts.at(-1)).toBe('Not closed: the wrap ended with an error.')
+    expect(c.desks()).toEqual([])
+  })
+
+  test('a wrap that is interrupted leaves the session open', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.close()
+    await c.clock.advance(100)
+    await c.turn('', undefined, 'aborted')
+    await c.clock.advance(10_000)
+    expect(c.toasts.at(-1)).toBe('Not closed: the wrap was interrupted.')
+    expect(c.desks()).toEqual([])
+  })
+
+  test('a wrap that leaves the Resume here block unchanged leaves the session open', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.close()
+    await c.clock.advance(100)
+    await c.turn('Wrapped.')
+    await c.clock.advance(10_000)
+    expect(c.toasts.at(-1)).toBe('Not closed: the wrap did not rewrite the Resume here block.')
+    expect(c.desks()).toEqual([])
+    expect(c.exits).toEqual([])
+  })
+
+  test('after a failed close, the next Close wraps again', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.close()
+    await c.clock.advance(100)
+    await c.turn('Which date?')
+    await c.close()
+    await c.clock.advance(100)
+    expect(c.submitted).toHaveLength(2)
+    await c.turn('Wrapped.', NOTE2)
+    await c.clock.advance(10_000)
+    expect(c.desks()).toEqual([DESK])
+  })
+
+  test('Close during a turn waits for the turn to end, then wraps; it never cuts the turn off', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await $.turn.start({ text: 'build the deck', turnId: 'long' } as any)
+    await c.close()
+    await c.clock.advance(60_000)
+    expect(c.submitted).toEqual([])
+    expect(c.desks()).toEqual([])
+    expect(c.exits).toEqual([])
+    expect(c.toasts.at(-1)).toMatch(/waits for the turn to end/)
+    await $.turn.complete({ answer: 'Built.', durationMs: 1, isAborted: false, turnId: 'long', reason: 'answer' } as any)
+    await c.clock.advance(100)
+    expect(c.submitted).toHaveLength(1)
+    expect(c.submitted[0]).toMatch(/^Wrap Acme: rewrite the Resume here block/)
+    expect(c.desks()).toEqual([])
+  })
+
+  test('pressed again while it waits, Close does not wrap twice', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await $.turn.start({ text: 'build the deck', turnId: 'long' } as any)
+    await c.close()
+    await c.close()
+    await $.turn.complete({ answer: 'Built.', durationMs: 1, isAborted: false, turnId: 'long', reason: 'answer' } as any)
+    await c.clock.advance(100)
+    expect(c.submitted).toHaveLength(1)
+  })
+
+  test('the tab is closed only after the wrap turn ends, never while it runs', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.close()
+    await c.clock.advance(100)
+    await $.turn.start({ text: 'wrap', turnId: 'w' } as any)
+    c.state.text = NOTE2
+    await c.clock.advance(60_000)
+    expect(c.desks()).toEqual([])
+    await $.turn.complete({ answer: 'Wrapped.', durationMs: 1, isAborted: false, turnId: 'w', reason: 'answer' } as any)
+    await c.clock.advance(10_000)
+    expect(c.desks()).toEqual([DESK])
+  })
+
+  // Wrapped, or nothing to wrap: no second wrap.
+  test('right after a wrap, Close closes with no second wrap', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.turn('Wrapped.', NOTE2)
+    await c.close()
+    await c.clock.advance(10_000)
+    expect(c.submitted).toEqual([])
+    expect(c.desks()).toEqual([DESK])
+  })
+
+  test('a turn since the wrap makes the session unwrapped again', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Here is the table.')
+    await c.close()
+    await c.clock.advance(100)
+    expect(c.submitted).toHaveLength(1)
+    expect(c.desks()).toEqual([])
+  })
+
+  test('a finished thread closes with no wrap', async ($, on) => {
+    const c = await closer($, on, { cmux: true, note: DONE })
+    await c.close()
+    await c.clock.advance(10_000)
+    expect(c.submitted).toEqual([])
+    expect(c.desks()).toEqual([DESK])
+  })
+
+  test('System closes with no wrap', async ($, on) => {
+    const c = await closer($, on, { cmux: true, cwd: `${ROOT}/System` })
+    await c.close()
+    await c.clock.advance(10_000)
+    expect(c.submitted).toEqual([])
+    expect(c.desks()).toEqual([DESK])
+  })
+
+  test('a session with no turn yet closes with no wrap', async ($, on) => {
+    const c = await closer($, on, { cmux: true, turns: 0 })
+    await c.close()
+    await c.clock.advance(10_000)
+    expect(c.submitted).toEqual([])
+    expect(c.desks()).toEqual([DESK])
+  })
+
+  // The command each host gets.
+  test('cmux: desk closes this session\'s tab, with --yes', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.turn('Wrapped.', NOTE2)
+    await c.close()
+    await c.clock.advance(10_000)
+    expect(c.desks()).toEqual([['desk', 'close', '--session', 'sess-1', '--yes']])
+    expect(c.exits).toEqual([])
+  })
+
+  test('cmux: a desk that refuses leaves the session open and says why', async ($, on) => {
+    const c = await closer($, on, { cmux: true, desk: [{ exitCode: 1, stderr: 'desk: no open tab runs session sess-1\n' }] })
+    await c.turn('Wrapped.', NOTE2)
+    await c.close()
+    await c.clock.advance(10_000)
+    expect(c.toasts.at(-1)).toBe('Wrapped, but not closed: desk: no open tab runs session sess-1')
+  })
+
+  test('cmux: desk still sees the turn as running, so the band tries again', async ($, on) => {
+    const busy = { exitCode: 1, stderr: 'desk: Acme is mid-turn or waiting on a question; let it finish first' }
+    const c = await closer($, on, { cmux: true, desk: [busy, busy, { exitCode: 0 }] })
+    await c.turn('Wrapped.', NOTE2)
+    await c.close()
+    await c.clock.advance(30_000)
+    expect(c.desks()).toHaveLength(3)
+    expect(c.toasts.at(-1)).not.toMatch(/not closed/i)
+  })
+
+  test('desktop app: wraps, then says what is left; it ends and archives nothing', async ($, on) => {
+    const c = await closer($, on, { surfaces: ['desktop'] })
+    await c.close()
+    await c.clock.advance(100)
+    await c.turn('Wrapped.', NOTE2)
+    await c.clock.advance(10_000)
+    expect(c.toasts.at(-1)).toBe('Wrapped. Archive this session from the sidebar.')
+    expect(c.desks()).toEqual([])
+    expect(c.exits).toEqual([])
+  })
+
+  test('a plain terminal: /exit', async ($, on) => {
+    const c = await closer($, on)
+    await c.turn('Wrapped.', NOTE2)
+    await c.close()
+    await c.clock.advance(10_000)
+    expect(c.exits).toEqual(['exit'])
+    expect(c.desks()).toEqual([])
+  })
+
+  test('a terminal that will not run /exit says to type it', async ($, on) => {
+    const c = await closer($, on, { exit: 'rejects' })
+    await c.turn('Wrapped.', NOTE2)
+    await c.close()
+    await c.clock.advance(10_000)
+    expect(c.toasts.at(-1)).toBe('Wrapped. Type /exit to close this session.')
+  })
+
+  // The button and the command.
+  test('the button follows Clear', async ($, on) => {
+    const c = await closer($, on)
+    expect((await c.band.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['wrap', 'clear', 'close', 'finder'])
+  })
+
+  test('the button is there in System too, where there is nothing to wrap', async ($, on) => {
+    const c = await closer($, on, { cwd: `${ROOT}/System` })
+    expect((await c.band.findAll({ type: 'Button' })).map((b: any) => b.key)).toEqual(['clear', 'close', 'finder'])
+  })
+
+  test('/garrick close does what the button does, and runs mid-turn', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await $.turn.start({ text: 'build', turnId: 'long' } as any)
+    const said = (await $.command.run({ command: 'garrick', args: 'close' } as any)).text
+    expect(said).toMatch(/Acme/)
+    await $.turn.complete({ answer: 'Built.', durationMs: 1, isAborted: false, turnId: 'long', reason: 'answer' } as any)
+    await c.clock.advance(100)
+    expect(c.submitted).toHaveLength(1)
   })
 })

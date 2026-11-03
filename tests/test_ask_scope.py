@@ -1758,6 +1758,19 @@ class TestTheWindowCites(unittest.TestCase):
         for asks in ("askGarrick", "askStream", "askCall", "askSend", "Process", "run("):
             self.assertNotIn(asks, opened)                              # no request, and no session told anything
 
+    def test_an_actions_list_reads_one_item_to_a_line(self):
+        """#339: items, the count of the rest and the rest once opened each start
+        on a line of their own, the [n] at the end of it; an answer's claims run on."""
+        self.assertIn('turn.listed = out["listed"] as? Bool == true', self.body("askSend"))
+        self.assertIn("var listed = false", self.swift)
+        cited = self.body("askCited")
+        self.assertIn('let between = turn.listed ? "\\n" : " "', cited)
+        self.assertIn('(first ? "" : between) + text', cited)                            # each claim, the rest's too
+        self.assertIn('string: first ? "" : between', cited)                             # "And N more." on its own line
+        self.assertLess(cited.index("claimed(turn.claims)"), cited.index("for sentence in turn.after"))
+        self.assertLess(cited.index("for sentence in turn.after"), cited.index("claimed(turn.rest)"))
+        self.assertLess(cited.index("for id in claim"), cited.index("for sentence in turn.after"))   # [n] ends the line
+
     def test_a_source_opens_as_the_app_opens_anything_else(self):
         opened = self.body("askOpenSource")
         self.assertIn("workspaceFile(workspace.appendingPathComponent(rel)", opened)   # the one check, the page's links' too (#318)
@@ -2172,6 +2185,19 @@ class TestActions(AnswerCase):
         self.assertEqual("And 2 more overdue.", sc.more_said([late[1], past[1]], today))
         self.assertEqual("And 1 more.", sc.more_said(ahead, today))
         self.assertFalse(sc.is_late({"kind": "next", "date": ""}, today))
+
+    def test_a_next_action_past_its_deadline_says_how_late(self):
+        """#339: lateness reads first, as on a Todo line; "Next" still says the kind."""
+        import datetime as _dt
+        sc = ask.scope_lib()
+        today = _dt.date(2026, 10, 12)
+        names = {}
+        item = lambda date: {"kind": "next", "date": date, "thread": "Pricing", "project": "Acme Review",
+                             "zone": "Work", "text": "Call Theo."}
+        self.assertEqual("5 days late, Next: Call Theo (Pricing, in Work).", sc.action_said(item("2026-10-07"), names, today))
+        self.assertEqual("1 day late, Next: Call Theo (Pricing, in Work).", sc.action_said(item("2026-10-11"), names, today))
+        self.assertEqual("Next, deadline today: Call Theo (Pricing, in Work).", sc.action_said(item("2026-10-12"), names, today))
+        self.assertEqual("Next, deadline tomorrow: Call Theo (Pricing, in Work).", sc.action_said(item("2026-10-13"), names, today))
 
     def test_the_window_and_the_ear_say_the_same_order(self):
         self.only("".join("- [ ] [[Pricing]]: Late task %d 📅 2026-10-0%d\n" % (n, n) for n in range(1, 5))

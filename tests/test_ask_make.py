@@ -10,6 +10,7 @@ called: FakeSession answers.
 
 from __future__ import annotations
 
+import collections
 import json
 import shutil
 import sys
@@ -26,6 +27,14 @@ from test_ask import AskCase as _AskCase  # noqa: E402
 from test_page_action import git  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
+Named = collections.namedtuple("Named", "parties entries")
+Entry = collections.namedtuple("Entry", "kind label parties zone project thread")
+
+
+def project_named(*projects, zone="Work", parties=()):
+    """What ask_scope reads from a request that names these projects, outside the new work's own name."""
+    entries = [Entry("project", p, frozenset(), zone, p, None) for p in projects]
+    return Named(set(parties), entries)
 
 
 class MakeCase(_AskCase):
@@ -51,7 +60,8 @@ class MakeCase(_AskCase):
 class TestProposals(MakeCase):
     def test_a_thread_in_a_project_the_list_has(self):
         self.assertEqual(("act", {"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": "Renewal"}),
-                         self.propose({"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": " Renewal "}))
+                         self.propose({"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": " Renewal "},
+                                      project_named("Acme Review")))
 
     def test_a_thread_needs_a_zone_and_a_project_the_list_has(self):
         for a in ({"zone": "Work", "project": "Nope", "name": "Renewal"}, {"zone": "Work", "name": "Renewal"},
@@ -59,12 +69,13 @@ class TestProposals(MakeCase):
                   {"zone": "Personal", "project": "Acme Review", "name": "Renewal"},      # a project of another zone
                   {"project": "Acme Review", "name": "Renewal"}):
             with self.assertRaises(ask.Bad, msg=a):
-                self.propose(dict(a, verb="new-thread"))
+                self.propose(dict(a, verb="new-thread"), project_named("Acme Review", "Nope"))
 
     def test_a_name_is_text_on_one_line(self):
         for name in (None, "", "   ", "-rf", "two\nlines", 7, "x" * 81):
             with self.assertRaises(ask.Bad, msg=name):
-                self.propose({"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": name})
+                self.propose({"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": name},
+                             project_named("Acme Review"))
             with self.assertRaises(ask.Bad, msg=name):
                 self.propose({"verb": "new-project", "zone": "Work", "name": name, "party": "birch"}, {"birch"})
 
@@ -136,6 +147,90 @@ class TestProposals(MakeCase):
             self.propose({"verb": "new-project", "zone": "Work", "name": "Harbour"}, set())
         self.assertEqual([], e.exception.choices)
         self.assertEqual("Which party is Harbour for in Work? Say its name.", e.exception.question)
+
+
+class TestWhatTheRequestNamed(MakeCase):
+    """#345 review: the session proposes, the request decides. A project, and so its zone and its party, is one the
+    request named outside the new work's own name; nothing else is made, and nothing is written when it asks."""
+
+    def thread_a(self, project="Acme Review", name="Budget"):
+        return {"verb": "new-thread", "zone": "Work", "project": project, "name": name}
+
+    def test_a_thread_for_a_project_the_request_never_named_is_asked_about(self):
+        for named in (None, set(), project_named(), project_named("Birch Entry"), project_named("Acme Review", zone="Personal")):
+            with self.assertRaises(ask.Needs, msg=named) as e:
+                self.propose(self.thread_a(), named)
+            self.assertIn("Which project is the thread Budget for?", e.exception.question)
+
+    def test_the_window_zone_does_not_let_the_session_choose_the_project(self):
+        asker = ask.Asker(self.root, FakeSession(json.dumps({"say": "ok", "do": [self.thread_a()]})))
+        out = asker.ask("new thread Budget", zone="Personal")
+        self.assertEqual("clarify", out["kind"])
+        self.assertEqual([], out["done"])
+        self.assertFalse((self.work / "Acme Review" / "Threads" / "Budget").exists())
+        self.assertEqual("start", self.head())
+        self.assertEqual("Personal", asker.zone)
+
+    def test_a_project_across_a_wall_from_what_the_session_holds_is_never_made_for(self):
+        asker = ask.Asker(self.root, FakeSession(json.dumps({"say": "ok", "do": []}),
+                                                 json.dumps({"say": "ok", "do": [self.thread_a()]})))
+        asker.ask("what is going on with Birch Entry?")
+        self.assertIn("birch", asker.holding())
+        out = asker.ask("new thread Budget")
+        self.assertEqual(("clarify", []), (out["kind"], out["done"]))
+        self.assertFalse((self.work / "Acme Review" / "Threads" / "Budget").exists())
+        self.assertNotIn("acme", asker.holding())               # and the session was not told it either
+
+    def test_a_named_project_across_a_wall_is_refused_before_it_is_written_when_no_reset_came(self):
+        asker = ask.Asker(self.root, FakeSession())
+        asker.heard = {"birch"}
+        asker.heard_for = asker.session.started
+        asker.named_parties = set()
+        asker.heard_text = "new thread Budget in Acme Review"
+        asker.ctx = ask.scope_lib().lib(self.root).load_context(self.root)
+        out = asker.carry_out("Making it.", [self.thread_a()], self.names)
+        self.assertFalse(out["ok"])
+        self.assertEqual([ask.page_action().ops_lib(self.root).WALL_REFUSAL], out["done"])
+        self.assertEqual("start", self.head())
+
+    def test_a_word_of_the_new_name_never_names_the_party(self):
+        asker = ask.Asker(self.root, FakeSession(json.dumps({"say": "ok", "do": [
+            {"verb": "new-project", "zone": "Work", "name": "Acme Expansion", "party": "acme"}]})))
+        out = asker.ask("new project Acme Expansion in Work")
+        self.assertEqual("clarify", out["kind"])
+        self.assertIn("Which party is Acme Expansion for", out["say"])
+        self.assertFalse((self.work / "Acme Expansion").exists())
+        # said outside the name, it is named
+        asker = ask.Asker(self.root, FakeSession(json.dumps({"say": "ok", "do": [
+            {"verb": "new-project", "zone": "Work", "name": "Acme Expansion", "party": "acme"}]})))
+        out = asker.ask("new project Acme Expansion for Acme Corp in Work")
+        self.assertTrue(out["ok"], out)
+        self.assertTrue((self.work / "Acme Expansion" / "Acme Expansion.md").is_file())
+
+    def test_a_party_of_another_zone_is_refused_in_one_line_not_listed_around(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Marco | own | Personal | `personal` |  |\n\n## Walls", 1))
+        with self.assertRaisesRegex(ask.Bad, "^Marco is a party of Personal, not of Work$"):
+            self.propose({"verb": "new-project", "zone": "Work", "name": "Taxes"}, Named({"personal"}, []))
+
+    def test_the_question_stays_out_of_what_the_session_is_told_next(self):
+        proposal = {"verb": "new-project", "zone": "Work", "name": "Harbour"}
+        asker, out = self.run_ask("new project Harbour in Work", {"say": "ok", "do": [proposal]})
+        self.assertEqual("clarify", out["kind"])
+        self.assertEqual("", asker.results)
+        self.assertNotIn("Birch", asker.results)
+
+    def test_a_reply_handed_to_the_page_has_an_op_of_its_own(self):
+        _, out = self.run_ask("new thread Budget in Acme Review", {"say": "ok", "do": [self.thread_a()]})
+        op = out["acted"][0]["request"]["op"]
+        self.assertRegex(op, r"^[0-9a-f]{16}$")
+
+    def test_undo_is_not_offered_when_it_would_be_refused(self):
+        hub = self.work / "Acme Review" / "Acme Review.md"
+        hub.write_text(hub.read_text() + "\nMy own edit, not committed.\n")
+        _, out = self.run_ask("new thread Budget in Acme Review", {"say": "ok", "do": [self.thread_a()]})
+        self.assertTrue(out["ok"], out["done"])
+        self.assertEqual([], out["choices"])                  # the hub's link waits for a wrap, so Undo would be refused
 
 
 class TestMakingThem(MakeCase):

@@ -222,9 +222,8 @@ and the reply to the page (window.GarrickActed), which moves a parked or woken
 row at once; the app does the same for each action the ask box ran. The line
 ends with who asked, `page`, `ask` or `session`, and so does the record. The
 reply is one line of JSON: {"ok": true|false, "say": "…"}, and for back and
-stack what they read; a verb that asks for the page also says "built": true
-once it has, or false when it changed nothing, and then the host does not
-rebuild a second time. Standard library only.
+stack what they read; an action that asked for the page also says "built":
+true, and then the host does not rebuild a second time. Standard library only.
 """
 
 from __future__ import annotations
@@ -1936,8 +1935,12 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     if verb == "new-project":
         name, thread = field(req, "name"), field(req, "thread")
         made = [p for p in (zone / name,) if not p.exists()]
-        said = scaffold(ws, "project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread,
-                        *flag)
+        spoken = [*(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
+                  *(["--thread-spoken", field(req, "thread_spoken")] if req.get("thread_spoken") is not None else [])]
+        args = ["project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread, *spoken]
+        if not check:
+            asks_how(ws, args)
+        said = scaffold(ws, *args, *flag)
         if not check:
             commit_new(zone, [name], "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
                        made, {}, wall=wall_refusal(ws))
@@ -1952,8 +1955,11 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # else uncommitted: another session's edit is never filed under this
         # commit's message (#183). Otherwise its new line waits for a wrap.
         held = bool(before) and not check and uncommitted(zone, hub)
-        said = scaffold(ws, "thread", "--zone", z, "--project", project, "--name", name, *flag,
-                        *([] if check else ["--touched"]))
+        args = ["thread", "--zone", z, "--project", project, "--name", name,
+                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else [])]
+        if not check:
+            asks_how(ws, args)
+        said = scaffold(ws, *args, *flag, *([] if check else ["--touched"]))
         if check:
             return said
         said, touched = touched_paths(said)
@@ -1988,6 +1994,15 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
         return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
     return said
+
+
+def asks_how(ws: Path, args: list) -> None:
+    """Before anything is written (#344): scaffold.py's own --check, and where it asks how a name is said, Refused
+    with that question and nothing made. The answer is the request's `spoken` (a project's first thread's
+    `thread_spoken`), so a name such as Q4 Planning is never made without the form it is heard as."""
+    asked = scaffold(ws, *args, "--check").strip().splitlines()[1:]
+    if asked:
+        raise Refused(" ".join(l.strip() for l in asked) + " Give it as the spoken form and ask again.")
 
 
 def first_line(said: str) -> str:
@@ -3827,10 +3842,10 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
 
     An action that changed something the page shows ends with the page
     request (ask_for_page), once, after the commit and the stack change, and
-    the reply says `"built": true`. For one of those verbs that changed
-    nothing (a refusal, a repeat joined or answered) it says `"built":
-    false`: the caller then asks for no rebuild either. A reply without the
-    key is a verb this does not build for, and the caller rebuilds as it did.
+    the reply says `"built": true`. Only that: a refusal, a repeat joined or
+    answered, a read, a verb this does not build for, and a page that could
+    not be asked for all leave the key out, and the caller rebuilds as it
+    always did. A refusal such as "it rebuilds now, try again" depends on it.
 
     Returns (the reply, what the audit log says in place of its sentence or
     None, and the refusal or the fault in its own words, "" when there was
@@ -3868,9 +3883,7 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
         if run is not None and outcome is not None:
             out = run.finish(outcome, req, why=why, said=out["say"] if outcome == "saved" else "")
         if builds_page(req):
-            if outcome != "saved":
-                out["built"] = False        # nothing changed: no build to ask for, here or in the app
-            elif ask_for_page(ws):
+            if outcome == "saved" and ask_for_page(ws):
                 out["built"] = True         # asked for, once: the app does not rebuild as well
     finally:
         CURRENT = None
@@ -3896,7 +3909,8 @@ def start_record(ops, req: dict, via: str):
 # (`--line`), and resolved here to the key the page would send.
 CLI_FIELDS = {
     "park": ("zone", "project", "thread"), "wake": ("zone", "project", "thread"),
-    "new-project": ("zone", "name", "party", "thread"), "new-thread": ("zone", "project", "name"),
+    "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken"),
+    "new-thread": ("zone", "project", "name", "spoken"),
     "rename": ("zone", "project", "thread", "to"), "delete": ("zone", "project", "thread", "confirm"),
     "undo": ("zone", "commit"), "unstack": ("zone", "project", "thread"),
     "todo-add": ("zone", "text", "target", "date"),
@@ -3951,7 +3965,7 @@ def command_parser() -> argparse.ArgumentParser:
                                                   "with a verb, page with JSON)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
-                 "confirm", "commit"):
+                 "confirm", "commit", "spoken", "thread-spoken"):
         ap.add_argument("--" + name)
     return ap
 

@@ -249,6 +249,7 @@ import json
 import math
 import os
 import re
+import secrets
 import select
 import shutil
 import signal
@@ -680,6 +681,16 @@ def party_labels(rows: Dict[str, dict], tags: List[str]) -> List[str]:
     return [said[t] if sum(v == said[t] for v in said.values()) == 1 else "%s (%s)" % (said[t], t) for t in tags]
 
 
+def named_parts(named) -> Tuple[set, Optional[list]]:
+    """What a request named, outside the new work's own name: the party tags, and the entries (places) when
+    ask_scope's Mentions came, else None. A plain set of tags is a request that named no place."""
+    if named is None:
+        return set(), None
+    if hasattr(named, "parties") and hasattr(named, "entries"):
+        return set(named.parties), list(named.entries)
+    return set(named), None
+
+
 def project_party(a: dict, zone: str, ws: Path, named) -> str:
     """The party tag of a new project (#345), or Needs, or Bad. It is only ever a tag System/context.md holds, of this
     zone, that the request itself named (a party, its tag or alias, a person, a project): never the session's own
@@ -691,7 +702,12 @@ def project_party(a: dict, zone: str, ws: Path, named) -> str:
     if not here:
         raise Bad("No party is set up in %s yet. Add one in a session first: a party decides which side of a wall "
                   "material lands on." % zone)
-    heard = sorted((t for t in (named or ()) if t in here), key=str.casefold)
+    said, _ = named_parts(named)
+    heard = sorted((t for t in said if t in here), key=str.casefold)
+    elsewhere = sorted((t for t in said if t in rows and t not in here), key=str.casefold)
+    if elsewhere and not heard:             # it named a party, and that one is of another zone: said so, not a list of this zone's
+        raise Bad("%s is a party of %s, not of %s" % (rows[elsewhere[0]].get("party") or elsewhere[0],
+                                                      rows[elsewhere[0]].get("zone") or "no zone", zone))
     given = a.get("party")
     tag = None
     if isinstance(given, str) and given.strip():
@@ -726,6 +742,12 @@ def new_work(a: dict, zone: str, names: Dict[str, Dict[str, dict]], ws: Path, na
         project = a.get("project")
         if not isinstance(project, str) or project not in names[zone]:
             raise Bad("no project %r in %s" % (project, zone) if project is not None else "new-thread names a project")
+        _, places = named_parts(named)
+        if not any(e.kind == "project" and e.project == project and e.zone == zone for e in places or ()):
+            # The session's pick is not the request's: the project (and so its zone and its party) must be one the
+            # request itself named, outside the new thread's own name; else it asks, and nothing is written.
+            raise Needs("Which project is the thread %s for? Name it, as in \"new thread %s in %s\"."
+                        % (work_name(a.get("name"), "name"), a["name"].strip(), project), [])
         return "act", {"verb": "new-thread", "zone": zone, "project": project, "name": work_name(a.get("name"), "name")}
     name = work_name(a.get("name"), "name")
     first = work_name(a["thread"], "thread") if a.get("thread") is not None else FIRST_THREAD
@@ -736,8 +758,10 @@ def new_work(a: dict, zone: str, names: Dict[str, Dict[str, dict]], ws: Path, na
 def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path, named=None) -> Tuple[str, dict]:
     """One proposed action, checked against the workspace list: ("act", a
     page_action request) or ("launch", what the app opens). Raises Bad, or
-    Needs where the request must be answered first. `named` is the set of
-    party tags the request named, which a new project's party must be one of."""
+    Needs where the request must be answered first. `named` is what the
+    request named outside the new work's own name (ask_scope's Mentions, or a
+    set of party tags): a new project's party, and a new thread's project, must
+    be among it."""
     if not isinstance(a, dict):
         raise Bad("an action that is not an object")
     verb = a.get("verb")
@@ -1752,6 +1776,21 @@ class Asker:
             self.answers.start()
         self.refreshed = {"command", "answer"} if answering else {"command"}
 
+    def named_outside(self, a: dict, names):
+        """What the request named, with the new project's or thread's own name taken out of it: a word of the
+        name (Acme in "Acme Expansion") never names a party or a place (#345). ask_scope's Mentions, or None when
+        the request cannot be read plainly, which asks."""
+        name = a.get("name") if isinstance(a, dict) and a.get("verb") in ("new-project", "new-thread") else None
+        if not isinstance(name, str) or not name.strip() or not self.heard_text:
+            return None
+        text = re.sub(re.escape(name.strip()), " ", self.heard_text, flags=re.I)
+        try:
+            sc = scope_lib()
+            found = sc.mentions(self.ws, text, names, self.ctx, sc.lib(self.ws), answer=None)
+        except Exception:
+            return None
+        return None if found.question else found
+
     def name_refused(self, pa, item: dict) -> str:
         """scaffold.py's own refusal of the name a new project or thread would have, in its words, or "" when it
         will do (#345): page_action.py's check-name, which writes nothing. The same check the page's dialog runs."""
@@ -1774,6 +1813,8 @@ class Asker:
             return None
         if code != 0 or subject.strip() != made:
             return None
+        if pa.git(zone, "status", "--porcelain", "--untracked-files=no")[1].strip():
+            return None                     # a hub left uncommitted: scaffold.py's undo would refuse
         return {"label": "Undo", "act": {"verb": "undo", "zone": item["zone"], "commit": head.strip()}}
 
     def wall(self) -> str:
@@ -1804,7 +1845,7 @@ class Asker:
         needs, choices = None, []
         for a in do:
             try:
-                kind, item = proposal(a, names, self.ws, self.named_parties)
+                kind, item = proposal(a, names, self.ws, self.named_outside(a, names))
             except Needs as e:                      # one more answer, then it is made; until then nothing is written (#345)
                 needs = needs or e
                 continue
@@ -1812,6 +1853,19 @@ class Asker:
                 done.append("Refused: %s" % e)
                 ok = False
                 continue
+            if item.get("verb") in ("new-project", "new-thread"):
+                # Before anything is written: a party walled from one either process holds is refused here, never
+                # made and then noticed (#345). The request's own names reset at a wall before it was sent, so
+                # this only holds when that did not: fail closed.
+                held = {item["party"]} if item["verb"] == "new-project" else set(scope_lib().place_parties(
+                    self.ws, item["zone"], item["project"], None, scope_lib().lib(self.ws)))
+                if self.crosses(held):
+                    try:
+                        done.append(self.wall())             # the rule's sentence alone
+                    except Bad as e:
+                        done.append("Refused: %s" % e)
+                    ok = False
+                    continue
             if item.get("verb") == "new-project":    # a place not there yet: the party it is for is what the session heard
                 self.hear({item["party"]})
             elif a.get("project") is not None:      # its place goes back to the session in <last-results>
@@ -1844,7 +1898,9 @@ class Asker:
                 undo = self.undo_choice(pa, item)
                 choices += [undo] if undo else []
             if good and not out.get("again") and out.get("state") != "running":
-                acted.append({"request": {k: v for k, v in item.items() if k != "confirm"}, "reply": out})
+                # Its own op, so the page never takes this reply for the answer to a click of its own in the zone (#344)
+                acted.append({"request": dict({k: v for k, v in item.items() if k not in ("confirm", "op")},
+                                              op=secrets.token_hex(8)), "reply": out})
             said = why or out.get("say") or ""       # a refusal in its own words, as before the record
             pa.audit(item, good, logged or said, via="ask")
             if out.get("again"):                    # done already: asked, not done again
@@ -1857,7 +1913,7 @@ class Asker:
                 done.append("Refused: " + said)
             ok = ok and good
         self.asked = asked
-        self.results = "\n".join(done + ([needs.question] if needs else []))
+        self.results = "\n".join(done)             # not the question: it may name parties a wall keeps apart
         if questions and len(questions) == len(do):
             say = questions[0]                      # what the session said it did did not happen: the question did
         if needs:                                   # asked, with the request kept to be answered, as a name that fits two is

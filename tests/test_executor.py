@@ -146,6 +146,54 @@ class TestTheCommandLine(ExecutorCase):
         self.assertTrue(json.loads(out.getvalue())["ok"])
 
 
+class TestWhatTheExecutorRefuses(ExecutorCase):
+    """Review of #344: it fails closed where scaffold.py would ask or where a party is not the zone's."""
+
+    def test_a_name_that_does_not_say_how_it_is_said_is_asked_about_and_nothing_is_written(self):
+        code, out, err, spawned = self.session("new-project", "--zone", "Work", "--name", "Q4 Planning", "--party",
+                                               "acme", "--thread", "Kickoff")
+        self.assertEqual((1, "", []), (code, out, spawned))
+        self.assertIn("Q4 Planning does not say how it is said", err)
+        self.assertFalse((self.work / "Q4 Planning").exists())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        code, out, err, spawned = self.session("new-thread", "--zone", "Work", "--project", "Acme", "--name", "Q4 Review")
+        self.assertEqual((1, []), (code, spawned))
+        self.assertFalse((self.work / "Acme" / "Threads" / "Q4 Review").exists())
+
+    def test_with_the_spoken_form_it_is_made_and_committed_with_it(self):
+        code, out, err, spawned = self.session("new-project", "--zone", "Work", "--name", "Q4 Planning", "--party", "acme",
+                                               "--thread", "Kickoff", "--spoken", "fourth quarter planning")
+        self.assertEqual((0, ""), (code, err))
+        self.assertIn("spoken: fourth quarter planning", (self.work / "Q4 Planning" / "Q4 Planning.md").read_text())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        code, out, err, spawned = self.session("new-thread", "--zone", "Work", "--project", "Acme", "--name", "Q4 Review",
+                                               "--spoken", "fourth quarter review")
+        self.assertEqual((0, ""), (code, err))
+        self.assertIn("spoken: fourth quarter review", (self.work / "Acme" / "Threads" / "Q4 Review" / "Q4 Review.md").read_text())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+    def test_a_party_of_another_zone_is_refused(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Marco | own | Personal | `personal` |  |\n\n## Walls", 1))
+        for args in (("--zone", "Work", "--name", "Taxes", "--party", "personal", "--thread", "Return"),):
+            code, out, err, spawned = self.session("new-project", *args)
+            self.assertEqual((1, []), (code, spawned))
+            self.assertIn("Marco is a party of Personal, not of Work", err)
+        self.assertFalse((self.work / "Taxes").exists())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+    def test_the_page_reply_to_a_click_has_no_built_after_a_refusal(self):
+        """"It rebuilds now, try again" is only true if the host rebuilds: a refusal leaves `built` out."""
+        with mock.patch.object(self.lib, "detach", return_value=True) as spawn:
+            out, _, _ = pa.perform(self.root, {"verb": "wake", "zone": "Work", "project": "Acme", "thread": "Pricing"},
+                                   pa.ops_lib(self.root))
+        self.assertEqual((False, False, 0), (out["ok"], "built" in out, spawn.call_count))
+
+    def test_the_page_does_not_close_a_click_with_the_ask_reply(self):
+        text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        self.assertIn("||(q.op?null:running(q.zone)));", text)
+
+
 class TestOnePageRequest(ExecutorCase):
     def perform(self, req, via="page"):
         with mock.patch.object(self.lib, "detach", return_value=True) as spawn:
@@ -172,14 +220,14 @@ class TestOnePageRequest(ExecutorCase):
         self.assertEqual(1, len(self.perform(self.park())[1]))
         wake = {"verb": "wake", "zone": "Work", "project": "Acme", "thread": "Pricing"}
         out, spawned = self.perform(wake)                                      # active already
-        self.assertEqual((False, False, []), (out["ok"], out["built"], spawned))
+        self.assertEqual((False, False, []), (out["ok"], "built" in out, spawned))     # the host rebuilds, as the refusal says
         out, spawned = self.perform({"verb": "stack"})
         self.assertEqual(([], False), (spawned, "built" in out))               # a read has no say in it
         out, spawned = self.perform({"verb": "delete", "zone": "Work", "project": "Acme", "thread": "Pricing"})
         self.assertEqual(([], False), (spawned, out.get("built") is True))      # the first form of a delete
         out, spawned = self.perform({"verb": "park", "zone": "Work", "project": "Acme", "thread": "Freight",
                                      "op": "a19f3c80"})
-        self.assertEqual((False, []), (out["built"], spawned))
+        self.assertEqual((False, []), ("built" in out, spawned))
 
     def test_a_burst_asks_the_same_settled_build_each_time_so_the_builder_makes_one_page(self):
         for thread in ("Pricing", "Freight"):

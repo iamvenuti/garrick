@@ -279,12 +279,18 @@ def say_how(name, kind, spoken):
             f'"open {name}" finds the {kind}? It goes in the note as `spoken:`.']
 
 
-def check_party(root, party):
+def check_party(root, party, zone=None):
+    """The tag, if System/context.md holds it. For a new project, `zone` is the project's: a party that the table
+    places in another zone is refused, since its material would land in a zone it was never kept in."""
     parties = load_context(root).get("parties", {})
     tag = party.strip().strip("`")
     if tag not in parties:
         known = ", ".join(sorted(parties)) or "none yet"
         raise Refusal(f"{party} is not a party tag in System/context.md. The tags are {known}.")
+    there = parties[tag].get("zone") or ""
+    if zone and there and there != zone:
+        raise Refusal(f"{parties[tag].get('party') or tag} is a party of {there}, not of {zone}, so a project in {zone} "
+                      "cannot be for it.")
     return tag
 
 
@@ -611,7 +617,7 @@ def cmd_project(root, args, today):
     thread_spoken = (args.thread_spoken or "").strip()
     check_name(name, children(zone_dir), "project", zone_dir.name, spoken=spoken, parent=zone_dir)
     check_name(thread, [], "thread", name, spoken=thread_spoken)
-    party = check_party(root, args.party)
+    party = check_party(root, args.party, zone_dir.name)
     target = zone_dir / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")

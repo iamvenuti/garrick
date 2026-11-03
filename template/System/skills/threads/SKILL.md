@@ -96,6 +96,14 @@ refusal writes nothing. The verbs are `park`, `wake`, `new-project`,
 take JSON on standard input, as *Interrupted* and *Back* show, with
 `--via session` after `--workspace .`.
 
+**Pending hand edits go first.** The executor commits the whole file it
+edits: the thread note for park and wake, `Todo.md` for a Todo verb. An edit of
+your own still waiting in that file would be swept into its commit under the
+wrong message. Before the call, look: `git -C "Zones/<Zone>" status --porcelain
+-- <that file>`. If it lists the file, commit your edit first, staging by name;
+or, as Wrap step 8 does for ticks, make the executor call first and the hand
+edit after.
+
 **Check for it first**: `test -f System/status/page_action.py`. Where it is
 there, use it for these verbs and do not also run `scaffold.py`, commit or
 `unstack` by hand for them: it has done all three. Where it is not there (no
@@ -793,7 +801,9 @@ Closes a thread for good.
 7. **Open actions:** if `Todo.md` still has unticked lines that name this
    thread (`Acme, Pricing`), name them and ask whether to tick, keep or drop
    them. Do not decide for the user. Tick a line as it was written, as Wrap
-   step 8 does, through the executor where it is there; the outcome goes in step 3's outcome and step 4's entry, not
+   step 8 does, through the executor where it is there, after committing or
+   leaving out any hand edit of your own pending in `Todo.md` (*Running an
+   action*); the outcome goes in step 3's outcome and step 4's entry, not
    on the line. Never add a line for work that is already done.
 8. **Last thread in the project?** Ask whether the project is finished too. If
    yes, set `status: done` in the hub.
@@ -866,9 +876,16 @@ scaffolding script, whose checks are the same, and commits. Run it from the
 workspace root.
 
 ```sh
-python3 System/status/page_action.py new-project --zone <Zone> --name "<Project>" --party <tag> --thread "<Thread>"
-python3 System/status/page_action.py new-thread --zone <Zone> --project "<Project>" --name "<Thread>"
+python3 System/status/page_action.py new-project --zone <Zone> --name "<Project>" --party <tag> --thread "<Thread>" [--spoken "<how it is said>"] [--thread-spoken "<how the thread is said>"]
+python3 System/status/page_action.py new-thread --zone <Zone> --project "<Project>" --name "<Thread>" [--spoken "<how it is said>"]
 ```
+
+**Ask how a name is said first.** Run the same line with
+`python3 System/tools/scaffold.py project ... --check` (or `thread ... --check`),
+which writes nothing: when it asks for a spoken form, put that question to the
+user, and pass the answer as `--spoken`. The executor makes nothing for a name
+that says nothing of how it is said, and returns the question instead. A party
+must be one of the zone's own in `System/context.md`; it is refused otherwise.
 
 **Without the status page** (no `System/status/page_action.py`), run the
 scaffolding script directly, as step 4 and step 6 then say:
@@ -917,8 +934,11 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    is said (Q4 Planning, ISO 27001) is a good name, and the script asks for the
    form to hear for it: ask the user in one line and write their answer into the
    note's frontmatter as `spoken:`, or pass it as `--spoken` next time.
-6. **Commit**, if nothing has: the executor has committed the new folder and
-   its hub line; the script has not. Without the status page, check
+6. **Commit**, what nothing has: the executor has committed the new folder
+   and its hub line; the script has not. Any edit made after the executor
+   (step 5's purpose line, a `spoken:` added by hand) is not in that commit:
+   stage it by name and commit it, "Birch: purpose of Launch plan". Without the
+   status page, check
    `git -C "Zones/<Zone>" status --porcelain`, stage the new folder by name, and
    commit "New project Birch (birch), first thread Launch plan". Adding Parties
    or Walls rows is a change outside the zone: commit it separately in the

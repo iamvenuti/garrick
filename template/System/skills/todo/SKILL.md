@@ -115,6 +115,12 @@ python3 System/status/page_action.py todo-date --zone <Zone> --line "<text>" --d
 python3 System/status/page_action.py todo-add  --zone <Zone> --text "<action>" [--target "<Project>/<Thread>"] [--date <YYYY-MM-DD>]
 ```
 
+The executor commits the whole `Todo.md`. A hand edit of your own still
+waiting in it would go into that commit under the tick's message, so before
+the call run `git -C "Zones/<Zone>" status --porcelain -- Todo.md`: if it lists
+the file, commit your edit first (stage by name), or make the call first and
+the edit after.
+
 It prints one sentence. A line that is not there, or that two lines say, is
 refused in one line and nothing is written: give more of the line. `todo-undo`
 reopens a line ticked today. Without the status page, edit the line by hand as

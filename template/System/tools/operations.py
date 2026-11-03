@@ -193,9 +193,10 @@ DECLARED: Dict[str, Op] = {
     # Declared, and nothing else: each of these keeps the validation it has.
     # They are here so that one table answers what a verb accepts, and so the
     # test that enumerates what the page sends has something to check against.
-    "new-project": _op(("zone", "name", "party", "thread"), ("name",), "zone", True, "safe"),
-    "new-thread": _op(("zone", "project", "name"), ("project", "name"), "zone", True, "safe"),
-    "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to"), ("kind", "name", "to"), "none"),
+    "new-project": _op(("zone", "name", "party", "thread", "spoken", "thread_spoken"), ("name",), "zone", True, "safe"),
+    "new-thread": _op(("zone", "project", "name", "spoken"), ("project", "name"), "zone", True, "safe"),
+    "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken"),
+                      ("kind", "name", "to"), "none"),
     "rename": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),

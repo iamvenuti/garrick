@@ -223,7 +223,7 @@ class TestWhatTheRequestNamed(MakeCase):
     def test_a_reply_handed_to_the_page_has_an_op_of_its_own(self):
         _, out = self.run_ask("new thread Budget in Acme Review", {"say": "ok", "do": [self.thread_a()]})
         op = out["acted"][0]["request"]["op"]
-        self.assertRegex(op, r"^[0-9a-f]{16}$")
+        self.assertRegex(op, r"^ask-[0-9a-f]{16}$")
 
     def test_undo_is_not_offered_when_it_would_be_refused(self):
         hub = self.work / "Acme Review" / "Acme Review.md"

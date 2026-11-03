@@ -1974,7 +1974,7 @@ class Asker:
             if good and not out.get("again") and out.get("state") != "running":
                 # Its own op, so the page never takes this reply for the answer to a click of its own in the zone (#344)
                 acted.append({"request": dict({k: v for k, v in item.items() if k not in ("confirm", "op")},
-                                              op=secrets.token_hex(8)), "reply": out})
+                                              op="ask-" + secrets.token_hex(8)), "reply": out})
             said = why or out.get("say") or ""       # a refusal in its own words, as before the record
             pa.audit(item, good, logged or said, via="ask")
             if out.get("again"):                    # done already: asked, not done again

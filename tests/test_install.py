@@ -1049,6 +1049,12 @@ class ZoneTest(unittest.TestCase):
         check = run([self.root / "System" / "tools" / "check.py", "--root", self.root], self.box.env)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
         self.assertIn("No problems found.", check.stdout)
+        # A project is for a party of its own zone (scaffold.py refuses another's), so acme is placed in the new zone
+        # for this test: the wall between acme and birch is by tag, whatever the zone.
+        context = self.root / "System" / "context.md"
+        kept = context.read_text()
+        context.write_text(re.sub(r"(?m)^(\| Acme Corp \|.*?\| )Work( \| `acme`)", r"\g<1>%s\2" % self.name, kept))
+        self.addCleanup(context.write_text, kept)
         made = self.scaffold("project", "--zone", self.name, "--name", "Shed", "--party", "acme", "--thread", "Roof")
         self.assertEqual(made.returncode, 0, made.stderr)
         note = self.zone / "Shed" / "Threads" / "Roof" / "Notes.md"

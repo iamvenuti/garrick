@@ -191,7 +191,7 @@ class TestWhatTheExecutorRefuses(ExecutorCase):
 
     def test_the_page_does_not_close_a_click_with_the_ask_reply(self):
         text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
-        self.assertIn("||(q.op?null:running(q.zone)));", text)
+        self.assertIn("||(/^ask-/.test(q.op||'')?null:running(q.zone)));", text)
 
 
 class TestOnePageRequest(ExecutorCase):

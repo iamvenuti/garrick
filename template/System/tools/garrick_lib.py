@@ -212,6 +212,8 @@ __all__ = [
     "LOCAL_ENV_VARS",
     "git_local_env_vars",
     "foreign_git_env",
+    "own_repo_env",
+    "has_own_git_dir",
     "staged_walls_refusal",
     "skill_links",
     "init_repo",
@@ -3124,8 +3126,37 @@ class GitError(RuntimeError):
     """A git command that failed, with git's own reason."""
 
 
+def own_repo_env(env: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """The environment for a git process that must act on the repository in its
+    own folder, never on one the caller's environment names: `env` (this
+    process's own by default) without git's repository-local variables
+    (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and the rest) and without git
+    settings passed through the environment (GIT_CONFIG_COUNT, every
+    GIT_CONFIG_KEY_n and GIT_CONFIG_VALUE_n, GIT_CONFIG_PARAMETERS, GIT_CONFIG),
+    so the repository's own hooks always run. The user's global config
+    (GIT_CONFIG_GLOBAL) stays."""
+    source = dict(os.environ) if env is None else dict(env)
+    drop = set(git_local_env_vars()) | {"GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"}
+    for name in list(source):
+        if name in drop or re.match(r"GIT_CONFIG_(KEY|VALUE)_\d+$", name):
+            del source[name]
+    return source
+
+
+def has_own_git_dir(folder: PathLike) -> bool:
+    """True when git, with own_repo_env, resolves `folder`'s repository to
+    `folder/.git` itself: not a parent's, not one a link or a file points away."""
+    try:
+        r = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=str(folder), env=own_repo_env(),
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and (Path(folder) / ".git").is_dir() and \
+        os.path.realpath(r.stdout.strip()) == os.path.realpath(str(Path(folder) / ".git"))
+
+
 def git(args: List[str], cwd: PathLike) -> str:
-    r = subprocess.run(["git"] + list(args), cwd=str(cwd), capture_output=True, text=True)
+    r = subprocess.run(["git"] + list(args), cwd=str(cwd), env=own_repo_env(), capture_output=True, text=True)
     if r.returncode != 0:
         raise GitError("git %s failed in %s: %s" % (" ".join(args), cwd, r.stderr.strip() or r.stdout.strip()))
     return r.stdout.strip()
@@ -3148,6 +3179,8 @@ def init_repo(path: PathLike, message: str, identity: Optional[Dict[str, str]] =
     for key, value in (identity or {}).items():
         git(["config", key, value], path)
     git(["add", "--"] + list(paths) if paths else ["add", "-A"], path)
+    if not has_own_git_dir(path):
+        raise GitError("%s has no repository of its own, so nothing was committed" % path)
     git(["commit", "-q", "-m", message], path)
 
 

@@ -236,6 +236,72 @@ class WikiHookTest(EmployerWorkspace):
         self.assertEqual(1, res.returncode, res.stdout + res.stderr)
         self.assertIn("not part of the workspace", res.stderr)
 
+    def first_commit(self):
+        garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root)
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
+
+    def bad_page(self, folder):
+        write(folder / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[wiki/entities/birch-co]].",
+                                                 "[[wiki/entities/acme-corp]]"))
+
+    def test_a_linked_worktree_of_the_wikis_is_refused_wherever_it_stands(self):
+        self.first_commit()
+        for i, where in enumerate((self.wikis / "wt", self.wikis / "Meetings" / "wt", self.root / "wt")):
+            git(self.wikis, "worktree", "add", "-q", "-b", "br%d" % i, str(where))
+            self.bad_page(where / "Meetings" / "wiki" / "people")
+            git(where, "add", "-A")
+            res = self.commit_in(where)
+            self.assertNotEqual(0, res.returncode, where)
+            self.assertIn("worktree", res.stderr)
+            via_check = subprocess.run([sys.executable, str(TOOLS / "check.py"), "--root", str(self.root), "--staged",
+                                        "--walls-only"], cwd=str(where), env=dict(GIT_ENV), capture_output=True, text=True)
+            self.assertEqual(1, via_check.returncode, where)
+            self.assertIn("this repository", via_check.stderr)
+
+    def test_a_work_tree_moved_by_the_environment_or_the_configuration_is_refused(self):
+        self.first_commit()
+        self.bad_page(self.people)
+        git(self.wikis, "add", "-A")
+        sub = self.wikis / "Meetings"
+        env = dict(GIT_ENV, GIT_DIR=str(self.wikis / ".git"), GIT_WORK_TREE=str(sub))
+        res = subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(sub), env=env, capture_output=True, text=True)
+        self.assertNotEqual(0, res.returncode)
+        self.assertIn("work tree", res.stderr)
+        git(self.wikis, "config", "core.worktree", str(sub))
+        res = self.commit_in(sub)
+        self.assertNotEqual(0, res.returncode)
+        self.assertIn("work tree", res.stderr)
+
+    def test_a_check_inside_the_repository_is_not_the_one_that_runs(self):
+        self.first_commit()
+        write(self.wikis / "System" / "tools" / "check.py", "import sys\nsys.exit(0)\n")
+        os.symlink(".", str(self.wikis / "Wikis"))
+        self.bad_page(self.people)
+        git(self.wikis, "add", "-A")
+        res = self.commit_in(self.wikis)
+        self.assertNotEqual(0, res.returncode, res.stderr)
+        self.assertIn("Commit refused", res.stderr)
+
+    def test_a_meetings_wiki_alone_reached_through_a_link_is_checked_and_commits(self):
+        cloud = Path(self._tmp.name).resolve() / "cloud"
+        cloud.mkdir()
+        shutil.rmtree(str(self.wikis / ".git"))
+        shutil.move(str(self.wikis / "Meetings"), str(cloud / "Meetings"))
+        os.symlink(str(cloud / "Meetings"), str(self.wikis / "Meetings"))
+        meetings = self.wikis / "Meetings"
+        git(meetings, "init", "-q")
+        git(meetings, "config", "user.email", "test@example.invalid")
+        garrick_lib.install_wall_hook(meetings, wiki=True, root=self.root)
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/acme-corp]]"))
+        git(meetings, "add", "-A")
+        self.assertEqual(0, self.commit_in(meetings).returncode)
+        self.bad_page(self.people)
+        git(meetings, "add", "-A")
+        res = self.commit_in(meetings)
+        self.assertNotEqual(0, res.returncode)
+        self.assertIn("pat-newcomer.md", res.stderr)
+
     def test_a_hook_that_finds_no_workspace_refuses_the_commit(self):
         hook = garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root / "nowhere")
         shutil.rmtree(str(self.root / "System" / "tools"))
@@ -531,6 +597,45 @@ class HookTest(EmployerWorkspace):
         self.assertNotIn("birch", clean)
         write(self.people / "pat-newcomer.md", clean)
         self.assertEqual([], self.staged())
+
+    def test_a_change_under_a_dormant_or_archived_entity_folder_reads_the_people(self):
+        for grade in ("dormant", "archive"):
+            page = self.meetings / grade / "wiki" / "entities" / "old-acme.md"
+            write(page, entity("Old Acme", "acme"))
+            write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[%s/wiki/entities/old-acme]]." % grade,
+                                                          "[[wiki/entities/acme-corp]]"))
+            self.commit()
+            write(page, entity("Old Acme", "birch"))                       # edited in place, the person page untouched
+            self.assertEqual(self.refused("pat-newcomer"), self.staged(), grade)
+            git(self.wikis, "reset", "-q", "--hard")
+            write(self.meetings / grade / "wiki" / "entities" / "acme-corp.md", entity("Acme Corp", "birch"))
+            write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[acme-corp]].",
+                                                          "[[wiki/entities/acme-corp]]"))
+            self.assertEqual(self.refused("pat-newcomer"), self.staged(), grade + " same name")
+            git(self.wikis, "reset", "-q", "--hard")
+            git(self.wikis, "clean", "-fdq")
+
+    def test_person_pages_under_dormant_and_archive_are_wall_checked(self):
+        for grade in ("dormant", "archive"):
+            write(self.meetings / grade / "wiki" / "people" / "pat-two.md",
+                  person("Pat Two", "acme", "Buyer at [[wiki/entities/birch-co]].", "[[wiki/entities/acme-corp]]"))
+            write(self.meetings / grade / "wiki" / "people" / "pat-three.md",
+                  person("Pat Three", "acme", "Buyer.", "[[wiki/entities/birch-co]]"))
+        names = sorted("Wikis/Meetings/%s/wiki/people/%s.md" % (g, n) for g in ("dormant", "archive")
+                       for n in ("pat-two", "pat-three"))
+        self.assertEqual(names, sorted(f.path for f in check.run_checks(self.root) if f.check == "walls"))
+        self.assertEqual(names, sorted(x[2] for x in self.staged()))
+
+    def test_fade_never_moves_an_entity_or_person_page(self):
+        import datetime
+        fade = _load("garrick_fade_340b", TOOLS / "fade.py")
+        write(self.entities / "old-acme.md", entity("Old Acme", "acme").replace("---\n\n", "updated: 2019-01-01\n---\n\n", 1))
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer.").replace("2026-03-10", "2019-01-01"))
+        plans = fade.plan(self.root, today=datetime.date(2035, 1, 1), wikis=["Meetings"])
+        subs = [m.page.sub for m in plans["Meetings"].moves]
+        self.assertFalse([x for x in subs if "/entities/" in x or "/people/" in x], subs)
+        fixed = {p.sub: p.fixed for p in plans["Meetings"].pages}
+        self.assertTrue(fixed.get("wiki/entities/old-acme.md") and fixed.get("wiki/people/pat-newcomer.md"), fixed)
 
     def test_a_link_in_the_text_to_a_page_that_is_not_there_is_refused(self):
         write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[wiki/entities/nowhere]]."))

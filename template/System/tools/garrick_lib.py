@@ -2389,14 +2389,25 @@ WALL_HOOK_WIKI = """#!/bin/sh
 # Installed by Garrick. The deliberate override, only when you mean it: git commit --no-verify
 top="$(git rev-parse --show-toplevel)"
 real="$(cd "$top" && pwd -P)"
-# A workspace is the right one only when this repository is its Wikis, or inside it.
+gitdir="$(cd "$(git rev-parse --git-dir)" && pwd -P)"
+# A workspace is the right one when this repository is exactly its Wikis, or a
+# wiki under it, with its own .git, and its check is not inside this repository.
 ours() {
   [ -f "$1/System/tools/check.py" ] || return 1
+  tools="$(cd "$1/System/tools" && pwd -P)" || return 1
+  case "$tools" in "$real"|"$real"/*) return 1 ;; esac
   wikis="$(cd "$1/Wikis" 2>/dev/null && pwd -P)" || return 1
-  case "$real" in "$wikis"|"$wikis"/*) return 0 ;; esac
+  [ "$real" = "$wikis" ] && return 0
+  for wiki in "$1"/Wikis/*/; do
+    [ -d "$wiki" ] && [ "$(cd "$wiki" && pwd -P)" = "$real" ] && return 0
+  done
   return 1
 }
-dir="$top"
+if [ "$gitdir" != "$real/.git" ]; then
+  echo "Commit refused: this is a linked worktree, or git is told to use another work tree (GIT_WORK_TREE, core.worktree), so the wall check cannot place the files. Commit from the wiki's own folder." >&2
+  exit 1
+fi
+dir="$(dirname "$top")"
 while [ "$dir" != "/" ] && ! ours "$dir"; do dir="$(dirname "$dir")"; done
 if ! ours "$dir"; then
   dir=%s

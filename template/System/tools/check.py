@@ -3230,17 +3230,23 @@ def cited_across_walls(ws: Workspace) -> List[Finding]:
 
 
 PEOPLE = ("Wikis", "Meetings", "wiki", "people")
+# fade.py writes person pages into dormant/ and archive/ too, and the walls
+# read them there as they do in wiki/ (#340).
+PEOPLE_FOLDERS = (PEOPLE, ("Wikis", "Meetings", "dormant", "wiki", "people"),
+                  ("Wikis", "Meetings", "archive", "wiki", "people"))
+ENTITY_FOLDERS = (MEETINGS_ENTITIES, ("Wikis", "Meetings", "dormant", "wiki", "entities"),
+                  ("Wikis", "Meetings", "archive", "wiki", "entities"))
 
 
 def check_people(ws: Workspace) -> List[Finding]:
     """A person page is read on both sides of every wall. It says who someone
     is and which party they belong to, and holds nothing learned in a meeting."""
     out = []
-    folder = ws.root.joinpath(*PEOPLE)
-    if not folder.is_dir():
+    folders = [ws.root.joinpath(*f) for f in PEOPLE_FOLDERS]
+    if not any(f.is_dir() for f in folders):
         return out
     common = entities = None
-    for page in sorted(folder.rglob("*.md")):
+    for page in sorted(p for f in folders if f.is_dir() for p in f.rglob("*.md")):
         r = rel(ws, page)
         text = read_text(page) or ""
         fm = parse_frontmatter_text(text) if text else parse_frontmatter(page)
@@ -3707,7 +3713,7 @@ def entity_page_problem(ws: Workspace, page: Path, what: str) -> str:
                     "Parties table, before a person page links it")
     if not listed:
         # A dormant or archived entity page is in no index: read as one is (#340).
-        body = read_text(page) or ""
+        body = ws.git_view.get(page, read_text(page) or "")
         tags = tag_list(parse_frontmatter_text(body).get("party"))
         if frontmatter_form_problem(body):
             return what + " whose frontmatter is plain key: value lines"
@@ -3725,16 +3731,17 @@ def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
     hook's staged_people() finds one. Symbolic links to a
     page or a folder are passed over, as they may lead out of the wiki; the
     walls refuse them instead (person_links)."""
-    folder = ws.root.joinpath(*PEOPLE)
-    if not folder.is_dir() or folder.is_symlink():
-        return []
     out = []
-    for here, dirs, files in os.walk(str(folder)):
-        dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(here, d)))
-        for f in sorted(files):
-            path = Path(here) / f
-            if f.lower().endswith(".md") and not path.is_symlink():
-                out.append((path, read_text(path) or ""))
+    for parts in PEOPLE_FOLDERS:
+        folder = ws.root.joinpath(*parts)
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        for here, dirs, files in os.walk(str(folder)):
+            dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(here, d)))
+            for f in sorted(files):
+                path = Path(here) / f
+                if f.lower().endswith(".md") and not path.is_symlink():
+                    out.append((path, read_text(path) or ""))
     return sorted(out)
 
 
@@ -3749,16 +3756,18 @@ def person_links(ws: Workspace) -> List[Path]:
     """Every symbolic link where a person page could be read: `wiki/people`
     itself, a folder under it, or a page in it (`.md` in any case). Fail
     closed: person_pages() passes them over, so each is a walls error."""
-    folder = ws.root.joinpath(*PEOPLE)
-    if folder.is_symlink():
-        return [folder]
-    if not folder.is_dir():
-        return []
     out = []
-    for here, dirs, files in os.walk(str(folder)):
-        out += [Path(here) / d for d in dirs if os.path.islink(os.path.join(here, d))]
-        dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(here, d)))
-        out += [Path(here) / f for f in files if f.lower().endswith(".md") and os.path.islink(os.path.join(here, f))]
+    for parts in PEOPLE_FOLDERS:
+        folder = ws.root.joinpath(*parts)
+        if folder.is_symlink():
+            out.append(folder)
+            continue
+        if not folder.is_dir():
+            continue
+        for here, dirs, files in os.walk(str(folder)):
+            out += [Path(here) / d for d in dirs if os.path.islink(os.path.join(here, d))]
+            dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(here, d)))
+            out += [Path(here) / f for f in files if f.lower().endswith(".md") and os.path.islink(os.path.join(here, f))]
     return sorted(out)
 
 
@@ -3786,9 +3795,11 @@ def staged_people(ws: Workspace, staged: List[Tuple[Path, str]],
         # By the path git stages it at, not where it leads: a symbolic link
         # under people/ is a person page here, and refused (staged_person_links).
         return path.suffix.lower() == ".md" and lexical_folder(ws, parts) in path.parents
-    out = [(path, text) for path, text in staged if under(path, PEOPLE) and path not in links]
-    entities = [path for path, _ in staged if under(path, MEETINGS_ENTITIES)]
-    entities += [path for path in sorted(removed) if under(path, MEETINGS_ENTITIES)]
+    out = [(path, text) for path, text in staged if any(under(path, f) for f in PEOPLE_FOLDERS) and path not in links]
+    # An entity page at any grade, staged, edited, deleted or renamed away, can
+    # change what a link in any person page opens or whose it is (#340).
+    entities = [path for path, _ in staged if any(under(path, f) for f in ENTITY_FOLDERS)]
+    entities += [path for path in sorted(removed) if any(under(path, f) for f in ENTITY_FOLDERS)]
     if not entities and not every:
         return out
     # A page staged, deleted or renamed away can change what any link in any
@@ -5185,7 +5196,7 @@ def form_scope(ws: Workspace, path: Path) -> Optional[Tuple[str, ...]]:
     if path.suffix.lower() != ".md":
         return None
     here = path.parent.resolve() / path.name
-    if lexical_folder(ws, PEOPLE) in here.parents:
+    if any(lexical_folder(ws, f) in here.parents for f in PEOPLE_FOLDERS):
         return None
     meetings = lexical_folder(ws, ("Wikis", "Meetings"))
     for wiki in (meetings, lexical_folder(ws, ("Wikis", "Knowledge"))):
@@ -5195,7 +5206,7 @@ def form_scope(ws: Workspace, path: Path) -> Optional[Tuple[str, ...]]:
         if "raw" in inner[:-1]:
             return None
         if wiki == meetings and (inner[0] == WIKI_QUESTIONS or inner[:2] in (("wiki", "entities"), ("wiki", "sources"))
-                                 or (inner[0] in FADED and inner[1:3] == ("wiki", "sources"))):
+                                 or (inner[0] in FADED and inner[1:3] in (("wiki", "sources"), ("wiki", "entities")))):
             return ()
         return WALLS_KEYS
     owner = project_of(ws, here) or project_of(ws, path)
@@ -5307,8 +5318,9 @@ def staged_person_links(ws: Workspace, repo: Path) -> Tuple[List[Finding], froze
     if links is None:
         return [], frozenset()
     top_path, names = links
-    people = lexical_folder(ws, PEOPLE)
-    hits = sorted(top_path / n for n in names if top_path / n == people or people in (top_path / n).parents)
+    homes = [lexical_folder(ws, f) for f in PEOPLE_FOLDERS]
+    hits = sorted(top_path / n for n in names
+                  if any(top_path / n == people or people in (top_path / n).parents for people in homes))
     return [person_link_finding(ws, h) for h in hits], frozenset(hits)
 
 
@@ -5431,15 +5443,34 @@ def in_inbox(name: str, inbox: Tuple[str, ...]) -> bool:
     return len(parts) > n and parts[:n] == inbox and parts[n:] != (".gitkeep",)
 
 
-def in_workspace(ws: Workspace, top: Path) -> bool:
-    """Is the repository at `top` the workspace's root, a zone, the wikis or one
-    of them, or a repository inside one of those, once every link is resolved?"""
+def repository_problem(ws: Workspace, top: Path) -> str:
+    """Why the repository at `top` cannot be checked as part of the workspace,
+    or "". The root, a zone and a repository inside a zone are as they were.
+    One in or at the wikis is accepted only when its top resolves to exactly
+    `Wikis/` or `Wikis/<wiki>` and its git directory is `<top>/.git`: a linked
+    worktree put under Wikis/, or a GIT_WORK_TREE or `core.worktree` that moves
+    the tree under another top, would leave the staged paths matching none of
+    the places the walls read, and pass unread (#340)."""
     try:
-        top = top.resolve()
-        homes = [ws.root.resolve(), (ws.root / "Wikis").resolve()] + [z.resolve() for z in ws.zones]
+        rtop = top.resolve()
+        root = ws.root.resolve()
+        wikis = (ws.root / "Wikis").resolve()
+        zones = [z.resolve() for z in ws.zones]
+        wiki_tops = {wikis} | {(ws.root / "Wikis" / d.name).resolve() for d in visible_dirs(ws.root / "Wikis")}
     except (OSError, RuntimeError):
-        return False
-    return top == homes[0] or any(top == h or h in top.parents for h in homes[1:])
+        return "cannot be placed"
+    if rtop == root or any(rtop == z or z in rtop.parents for z in zones):
+        return ""
+    if rtop not in wiki_tops:
+        if rtop == wikis or wikis in rtop.parents:
+            return ("is a repository inside the wikis that is not one of them, a linked worktree for one; its files "
+                    "match none of the places the walls read")
+        return "is not part of the workspace at %s" % ws.root
+    gitdir = _git(["rev-parse", "--git-dir"], top)
+    if gitdir is None or (top / gitdir.strip()).resolve() != (top / ".git").resolve():
+        return ("has a git directory that is not its own .git, as with a linked worktree, GIT_WORK_TREE or "
+                "core.worktree, so the paths it stages do not match the wiki the walls read")
+    return ""
 
 
 def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
@@ -5452,12 +5483,13 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
     minbox = ws.root.joinpath(*MEETINGS_INBOX).resolve()
     if staged is not None:
         top_path, names = staged
-        if not in_workspace(ws, top_path):
-            # Never no findings: a hook that checked another workspace's files
+        problem = repository_problem(ws, top_path)
+        if problem:
+            # Never no findings: a hook that checked another place's files
             # would pass what it never read (#340).
             return [Finding(ERROR, "walls", str(top_path),
-                            "this repository is not part of the workspace at %s, so its staged files were not "
-                            "checked; install the hook from the workspace it belongs to" % ws.root,
+                            "this repository %s, so its staged files were not checked; commit from the wiki's own "
+                            "folder, or install the hook from the workspace it belongs to" % problem,
                             "A commit was made in a repository the walls cannot place")]
         out.extend(apply_git_view(ws, top_path))
         try:

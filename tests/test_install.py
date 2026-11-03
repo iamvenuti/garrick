@@ -136,7 +136,7 @@ class InstallTest(unittest.TestCase):
         hook = self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
         self.assertIn("Garrick wall check", hook.read_text())
         self.assertTrue(os.access(hook, os.X_OK))
-        self.assertIn("Each zone and the wikis check the walls before every commit.", self.result.stdout)
+        self.assertIn("Each zone checks the walls before every commit. So do the wikis.", self.result.stdout)
 
     def test_structure(self):
         r = self.root

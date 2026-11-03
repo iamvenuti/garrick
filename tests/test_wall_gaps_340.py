@@ -66,6 +66,22 @@ class ZonePathTest(unittest.TestCase):
         self.resume("Waiting on `away/Notes/home.md`.")
         self.assertEqual(1, len(self.crossings()))
 
+    def test_a_path_is_read_in_any_case_with_a_suffix_and_with_or_without_backticks(self):
+        for path in ("`../../personal/Notes/home.md`", "`../../PERSONAL/Notes/home.md`", "`Zones/personal/Notes/home.md`",
+                     "`Zones/Personal/Notes`", "`../../Personal/Notes`", "`Zones/Personal/Notes/home.md:3`",
+                     "`Zones/Personal/Notes/home.md#h`", "[h](../../Personal/Notes/home.md)",
+                     "[h](<../../Personal/Notes/home.md>)", "[[Personal/Notes/home]]", "<../../Personal/Notes/home.md>",
+                     "../../Personal/Notes/home.md", "see Zones/Personal/Notes/home.md in text",
+                     "`..\\..\\Personal\\Notes\\home.md`", "[h](%2E%2E/%2E%2E/Personal/Notes/home.md)",
+                     "```\n../../Personal/Notes/home.md\n```"):
+            self.resume("Waiting on %s." % path)
+            self.assertEqual(1, len(self.crossings()), path)
+
+    def test_a_path_that_is_there_in_the_project_is_that_path(self):
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Personal" / "Notes" / "plan.md", "# Plan\n")
+        self.resume("See `Personal/Notes/plan.md`, [p](Personal/Notes/plan.md) and Personal/Notes/plan.md.")
+        self.assertEqual([], self.crossings())
+
     def test_a_path_in_the_notes_own_zone_is_not(self):
         self.resume("Waiting on `../../Work/Notes/plan.md` and `Deliverables/260301 - Pricing memo.md`.")
         self.assertEqual([], self.crossings())
@@ -121,6 +137,80 @@ class WikiHookTest(EmployerWorkspace):
         passed = subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(self.wikis), env=env,
                                 capture_output=True, text=True)
         self.assertEqual(0, passed.returncode, passed.stderr)
+
+
+    def test_a_wiki_reached_through_a_symbolic_link_still_finds_the_workspace(self):
+        elsewhere = Path(self._tmp.name).resolve() / "cloud" / "Wikis"
+        elsewhere.parent.mkdir()
+        shutil.rmtree(str(self.wikis / ".git"))
+        shutil.move(str(self.wikis), str(elsewhere))
+        os.symlink(str(elsewhere), str(self.wikis))
+        git(elsewhere, "init", "-q")
+        git(elsewhere, "config", "user.email", "test@example.invalid")
+        garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root)
+        self.assertIn(shlex_quote(self.root), (elsewhere / ".git" / "hooks" / "pre-commit").read_text())
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/birch-co]]"))
+        git(elsewhere, "add", "-A")
+        refused = subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(elsewhere), env=dict(GIT_ENV),
+                                 capture_output=True, text=True)
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("Commit refused: ", refused.stderr)
+        self.assertNotIn("the wall check is missing", refused.stderr)
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Consultant.", "[[wiki/entities/acme-corp]]"))
+        git(elsewhere, "add", "-A")
+        passed = subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(elsewhere), env=dict(GIT_ENV),
+                                capture_output=True, text=True)
+        self.assertEqual(0, passed.returncode, passed.stderr)
+
+    def test_a_hook_that_finds_no_workspace_refuses_the_commit(self):
+        hook = garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root / "nowhere")
+        shutil.rmtree(str(self.root / "System" / "tools"))
+        write(self.wikis / "note.md", "x\n")
+        git(self.wikis, "add", "-A")
+        res = subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=str(self.wikis), env=dict(GIT_ENV),
+                             capture_output=True, text=True)
+        self.assertNotEqual(0, res.returncode)
+        self.assertIn("the wall check is missing", res.stderr)
+        self.assertTrue(hook.is_file())
+
+    def hooks_path_findings(self):
+        return [f for f in check.run_checks(self.root) if f.check == "hooks" and f.path == "Wikis"]
+
+    def test_a_shared_hooks_folder_with_the_zones_hook_is_warned_for_a_wiki_and_with_its_own_is_not(self):
+        shared = Path(self._tmp.name).resolve() / "hooks"
+        shared.mkdir()
+        git(self.wikis, "config", "core.hooksPath", str(shared))
+        (shared / "pre-commit").write_text(garrick_lib.WALL_HOOK)
+        (shared / "pre-commit").chmod(0o755)
+        found = self.hooks_path_findings()
+        self.assertEqual(1, len(found))
+        self.assertIn("zone's", found[0].message)
+        (shared / "pre-commit").write_text(garrick_lib.wiki_hook_text(self.root))
+        self.assertEqual([], self.hooks_path_findings())
+
+
+class InstallerWikiHookTest(unittest.TestCase):
+    def test_a_pre_commit_hook_that_is_not_garricks_is_left_and_said_and_the_install_goes_on(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_install_340", str(Path(__file__).resolve().parent.parent / "install.py"))
+        installer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(installer)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "Wikis" / ".git" / "hooks").mkdir(parents=True)
+            hook = root / "Wikis" / ".git" / "hooks" / "pre-commit"
+            hook.write_text("#!/bin/sh\necho mine\n")
+            said = installer.wiki_hook(root)
+            self.assertIn("not Garrick's", said)
+            self.assertEqual("#!/bin/sh\necho mine\n", hook.read_text())
+            hook.unlink()
+            self.assertEqual("", installer.wiki_hook(root))
+            self.assertIn("Garrick wall check", hook.read_text())
+
+
+def shlex_quote(path) -> str:
+    import shlex
+    return shlex.quote(str(path))
 
 
 # ---------------------------------------------------------------------------
@@ -214,32 +304,42 @@ class HookTest(EmployerWorkspace):
 
     # 5. A short form of a two-hat name
 
-    def test_a_surname_alone_or_a_cut_short_first_name_meets_a_two_hat_person(self):
-        for name in ("Blake", "Ro Blake", "Row Blake", "Blake, Ro", "R. Blake"):
+    SHORT = ("Blake", "Ro Blake", "Row Blake", "Blake, Ro", "R. Blake", "Blake Rowan", "Mr Blake", "Dr Blake",
+             "Rowan Blake (Birch)", "Rowan Blake / Acme", "Blake (Acme)", "Blake Rowan Jr", "Kjaer Soren", "Kjær S.",
+             "BLAKE", "rowan_blake", "Theo Blake", "Ronald Blake", "Rowan Blake-Smith")
+
+    def test_a_page_sharing_a_surname_word_with_a_two_hat_person_meets_them(self):
+        for name in self.SHORT:
             self.assertEqual({"acme", "birch"}, garrick_lib.people_parties(self.context, (name, name.lower())), name)
-        for name in ("Theo Blake", "Ronald Blake", "Rowan Blakely", "Dana Whitlock"):
+        for name in ("Dana Whitlock", "Dana Smith", "Rowan Blaek", "Blakely"):
             self.assertNotEqual({"acme", "birch"}, garrick_lib.people_parties(self.context, (name,)), name)
 
+    def test_another_row_of_the_table_exactly_is_not_asked_about(self):
+        context = dict(self.context)
+        context["people"] = self.context["people"] + [{"name": "Theo Blake", "party": "`birch`", "role": "Buyer"}]
+        self.assertEqual({"birch"}, garrick_lib.people_parties(context, ("Theo Blake",)))
+
     def test_no_link_is_proposed_to_such_a_page(self):
-        for name in ("Blake", "Ro Blake"):
+        for name in self.SHORT:
             self.assertEqual("", garrick_lib.organisation_link(self.root, self.context, name, "acme"), name)
             text = person(name, "acme", "Buyer.")
             self.assertEqual(("", []), garrick_lib.organisation_proposal(self.root, self.context, (name,), "acme", text))
-        self.assertEqual("[[wiki/entities/acme-corp]]",
-                         garrick_lib.organisation_link(self.root, self.context, "Ronald Blake", "acme"))
 
     def test_such_a_page_is_asked_about(self):
         write(self.people / "ro-blake.md", person("Ro Blake", "acme", "Buyer."))
-        write(self.people / "ronald-blake.md", person("Ronald Blake", "acme", "Buyer."))
-        found = {f.path: f for f in check.run_checks(self.root) if f.check == "people" and "blake" in f.path}
-        self.assertIn("short form", found["Wikis/Meetings/wiki/people/ro-blake.md"].message)
-        self.assertIn("link", found["Wikis/Meetings/wiki/people/ronald-blake.md"].message)
-        self.assertNotIn("short form", found["Wikis/Meetings/wiki/people/ronald-blake.md"].message)
+        write(self.people / "mr-blake.md", person("Mr Blake", "acme", "Buyer."))
+        write(self.people / "dana-smith.md", person("Dana Smith", "acme", "Buyer."))
+        found = {f.path: f for f in check.run_checks(self.root) if f.check == "people"}
+        for slug in ("ro-blake", "mr-blake"):
+            self.assertIn("short form", found["Wikis/Meetings/wiki/people/%s.md" % slug].message)
+        self.assertNotIn("short form", found["Wikis/Meetings/wiki/people/dana-smith.md"].message)
 
     def test_the_hook_refuses_a_link_on_such_a_page(self):
         write(self.people / "blake.md", person("Blake", "none", "Buyer.", "[[wiki/entities/larch-partners]]"))
         write(self.people / "ro-blake.md", person("Ro Blake", "acme", "Buyer.", "[[wiki/entities/acme-corp]]"))
-        self.assertEqual(self.refused("blake", "ro-blake"), self.staged())
+        write(self.people / "mr-blake.md", person("Blake Rowan Jr", "acme", "Buyer.", "[[wiki/entities/acme-corp]]"))
+        write(self.people / "kjaer.md", person("Kjær S.", "none", "Engineer.", "[[wiki/entities/larch-partners]]"))
+        self.assertEqual(self.refused("blake", "kjaer", "mr-blake", "ro-blake"), self.staged())
 
     # 6. Other keys, and links in the text
 
@@ -260,15 +360,47 @@ class HookTest(EmployerWorkspace):
         write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer.", "[[wiki/entities/acme-corp]]"))
         self.assertEqual([], self.staged())
 
+    IN_THE_TEXT = (
+        "[[wiki/entities/birch-co]]", "[[wiki/entities/birch-co|Birch]]", "[[wiki/entities/birch-co#h]]", "[[birch-co]]",
+        "[[Birch-Co]]", "[[birch-co|x]]", "[[birch-co#h]]",
+    )
+    NOT_PLAIN = (
+        "[[../entities/birch-co]]", "[[./birch-co]]", "[[entities/birch-co]]", "[[wiki/birch-co]]", "[[birch-co.md]]",
+        "[[birch-co.md|x]]", "[B](../entities/birch-co.md)", "[a [b]](wiki/entities/birch-co.md)",
+        '[a](wiki/entities/birch-co.md "t (x)")', "[a](wiki/entities/birch-co.md#(x))",
+        '[a](<wiki/entities/birch-co.md> "t")', "[B][1]\n\n[1]: wiki/entities/birch-co.md",
+        '<a href="wiki/entities/birch-co.md">B</a>', "<wiki/entities/birch-co.md>", "![B](wiki/entities/birch-co.md)",
+        "![[wiki/entities/birch-co.md]]", "[[wiki/entities/\nbirch-co]]", "[[a|[[wiki/entities/birch-co]]]]",
+        "[a](obsidian://open?vault=Wikis&file=Meetings%2Fwiki%2Fentities%2Fbirch-co)", "[[Birch and Co]]",
+        "[[wiki/entities/birch-co]]]]", "[[ wiki/entities/birch-co ]]", "<img src=x>",
+    )
+
     def test_a_link_to_a_walled_entity_page_in_the_text_is_refused(self):
-        for i, link in enumerate(("[[wiki/entities/birch-co]]", "[[wiki/entities/birch-co|Birch]]", "[[birch-co]]",
-                                  "[Birch](wiki/entities/birch-co.md)", "[[Birch and Co]]")):
+        for i, link in enumerate(self.IN_THE_TEXT):
             write(self.people / ("pat-%d.md" % i), person("Pat Newcomer", "acme", "Buyer, met at %s." % link,
                                                           "[[wiki/entities/acme-corp]]"))
-        found = self.staged()
-        self.assertEqual(self.refused(*("pat-%d" % i for i in range(5))), found)
-        self.assertEqual(["Wikis/Meetings/wiki/people/pat-%d.md" % i for i in range(5)],
+        names = ["pat-%d" % i for i in range(len(self.IN_THE_TEXT))]
+        self.assertEqual(self.refused(*sorted(names)), self.staged())
+        self.assertEqual(sorted("Wikis/Meetings/wiki/people/%s.md" % n for n in names),
                          sorted(f.path for f in check.run_checks(self.root) if f.check == "walls"))
+
+    def test_a_link_in_any_form_but_the_plain_one_is_refused_in_the_hook_and_the_full_check(self):
+        for i, link in enumerate(self.NOT_PLAIN):
+            write(self.people / ("pat-%d.md" % i), person("Pat Newcomer", "acme", "Buyer, met at %s." % link,
+                                                          "[[wiki/entities/acme-corp]]"))
+        names = ["pat-%d" % i for i in range(len(self.NOT_PLAIN))]
+        self.assertEqual(self.refused(*sorted(names)), self.staged())
+        full = [f for f in check.run_checks(self.root) if f.check == "walls"]
+        self.assertEqual(sorted("Wikis/Meetings/wiki/people/%s.md" % n for n in names), sorted(f.path for f in full))
+        self.assertIn("[[wiki/<folder>/<name>]]", full[0].message)
+
+    def test_plain_links_to_pages_that_are_there_pass(self):
+        write(self.people / "kit-avery.md", person("Kit Avery", "none", "Colleague of [[theo-marsh|Theo]].", ""))
+        write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Partner at [[wiki/entities/birch-co#h]]."))
+        write(self.people / "pat-newcomer.md",
+              person("Pat Newcomer", "acme", "Buyer at [[acme-corp]] and [[wiki/entities/acme-corp|Acme]].",
+                     "[[wiki/entities/acme-corp]]"))
+        self.assertEqual([], self.staged())
 
     def test_a_link_in_the_text_to_a_page_that_is_not_there_is_refused(self):
         write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[wiki/entities/nowhere]]."))

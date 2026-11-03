@@ -62,6 +62,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -1420,35 +1421,33 @@ def _listed_parties(context: dict, names) -> set:
 
 def _short_of_two_hats(context: dict, names) -> set:
     """The tags of every person the People table has under parties a wall
-    keeps apart, when a page's name could be a short form of theirs that
-    names_meet() does not read: a surname alone (`Blake` for `Rowan Blake`),
-    or a surname with a first name cut short (`Ro Blake`, `Row Blake`). Fail
-    closed (#340): such a page is read as that person, so it links neither
-    hat's entity page and is asked about. Only a person known under two
-    walled parties counts; the rest is names_meet()'s."""
-    pages = [w for n in ([names] if isinstance(names, str) else names) for w in _name_readings(n)]
+    keeps apart, when a page's name shares a word with their surname. Fail
+    closed (#340): names are folded (case, accents, `æ`, `ø`, `ß`, punctuation)
+    and split into words, and any page that holds a surname word of such a
+    person, in any order, with any title, initial or note beside it (`Blake`,
+    `Mr Blake`, `Blake Rowan`, `Rowan Blake (Birch)`), is read as that person:
+    it links neither hat's entity page and is asked about. The one exception
+    is a page whose whole folded name is another row of the People table. A
+    surname is the last word of each name a row goes by (person_forms)."""
+    pages = [name_words(n) for n in ([names] if isinstance(names, str) else names)]
+    pages = [w for w in pages if w]
     if not pages:
         return set()
     persons: Dict[str, List[dict]] = {}
     for p in context.get("people", []):
-        persons.setdefault("".join(name_words(p.get("name"))), []).append(p)
+        persons.setdefault(" ".join(name_words(p.get("name"))), []).append(p)
     out = set()
-    for rows in persons.values():
+    for whole, rows in persons.items():
         tags = {strip_tag(p.get("party") or "") for p in rows} - {""}
         if not any(walled(context, a, b) for a in tags for b in tags):
             continue
-        forms = [w for p in rows for f in person_forms(context, p) for w in _name_readings(f)]
-        if any(_short_form(page, form) for page in pages for form in forms):
-            out |= tags
+        surnames = {w[-1] for p in rows for f in person_forms(context, p) for w in [name_words(f)] if w}
+        for page in pages:
+            if " ".join(page) in persons and " ".join(page) != whole:
+                continue                     # another row of the table, exactly
+            if surnames & set(page):
+                out |= tags
     return out
-
-
-def _short_form(page: List[str], form: List[str]) -> bool:
-    """Is `page`, a name's words, the surname of `form` alone, or with each
-    given name before it cut short (a prefix of the one in that place)?"""
-    if len(form) < 2 or page[-1] != form[-1] or len(page) > len(form):
-        return False
-    return all(form[i].startswith(word) for i, word in enumerate(page[:-1]))
 
 
 def organisation_link(root: PathLike, context: dict, names, party,
@@ -2380,20 +2379,31 @@ exec python3 "$check" --root "$dir" --staged --walls-only
 """ % WALL_HOOK_MARK
 
 
-# The wikis are one repository under Wikis/ (or one each), one or two
-# folders below the workspace, so its hook looks upward for it (#340).
+# A wiki's repository is `Wikis/`, or each wiki under it, and `Wikis/` may be a
+# link to a folder elsewhere, so the hook cannot find the workspace by looking
+# upward from where git says it is. The installer writes the workspace in: the
+# hook uses it when it holds the check, looks upward when it does not, and
+# refuses the commit when it finds neither (#340).
 WALL_HOOK_WIKI = """#!/bin/sh
 # %s: refuse a commit that would carry walled material into this wiki's history.
 # Installed by Garrick. The deliberate override, only when you mean it: git commit --no-verify
-dir="$(git rev-parse --show-toplevel)"
-while [ "$dir" != "/" ] && [ ! -f "$dir/System/tools/check.py" ]; do dir="$(dirname "$dir")"; done
+dir=%s
+if [ -z "$dir" ] || [ ! -f "$dir/System/tools/check.py" ]; then
+  dir="$(git rev-parse --show-toplevel)"
+  while [ "$dir" != "/" ] && [ ! -f "$dir/System/tools/check.py" ]; do dir="$(dirname "$dir")"; done
+fi
 check="$dir/System/tools/check.py"
 if [ ! -f "$check" ]; then
-  echo "Commit refused: the wall check is missing; no System/tools/check.py above this repository. Put it back, or commit with --no-verify if you mean to skip it." >&2
+  echo "Commit refused: the wall check is missing; no System/tools/check.py in the workspace this wiki belongs to. Run python3 System/tools/check.py --install-hooks in the workspace, or commit with --no-verify if you mean to skip it." >&2
   exit 1
 fi
 exec python3 "$check" --root "$dir" --staged --walls-only
-""" % WALL_HOOK_MARK
+"""
+
+
+def wiki_hook_text(root: Optional[PathLike] = None) -> str:
+    """The wiki's pre-commit hook, with the workspace root written into it."""
+    return WALL_HOOK_WIKI % (WALL_HOOK_MARK, shlex.quote(str(root)) if root else "''")
 
 
 def _hooks_dir(zone: PathLike) -> Optional[Path]:
@@ -2413,10 +2423,11 @@ def has_wall_hook(zone: PathLike) -> bool:
         return False
 
 
-def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False) -> Path:
+def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False,
+                      root: Optional[PathLike] = None) -> Path:
     """Write the pre-commit wall check into a zone's repository, or with
     `nested` into a repository inside a project, or with `wiki` into a wiki's,
-    and return its path.
+    which is told the workspace `root`, and return its path.
 
     Refuses (FileExistsError) to replace a pre-commit hook Garrick did not write,
     and (FileNotFoundError) a zone whose `.git` is not a folder."""
@@ -2430,7 +2441,7 @@ def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False) 
             raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
                                   "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
     hooks.mkdir(parents=True, exist_ok=True)
-    hook.write_text(WALL_HOOK_WIKI if wiki else WALL_HOOK_NESTED if nested else WALL_HOOK, encoding="utf-8")
+    hook.write_text(wiki_hook_text(root) if wiki else WALL_HOOK_NESTED if nested else WALL_HOOK, encoding="utf-8")
     hook.chmod(0o755)
     return hook
 

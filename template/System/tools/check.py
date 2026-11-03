@@ -119,6 +119,7 @@ from garrick_lib import (  # noqa: E402
     MEETINGS_ENTITIES, ENTITY_LINK_RE, entity_page, entity_pages, party_entities, people_parties, short_form_parties, tag_list,
     TODO_ALSO_RE,
 )
+from garrick_lib import _listed  # noqa: E402  (#340)
 from garrick_lib import (  # noqa: E402  (#330)
     FRONTMATTER_PLAIN, PERSON_KEYS, PERSON_PLAIN, PERSON_SHAPE, WALLS_KEYS, frontmatter_form_problem,
     entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, org_key, organisation_link,
@@ -1449,8 +1450,19 @@ def check_hooks(ws: Workspace) -> List[Finding]:
         value, where = found
         hook = where / "pre-commit"
         try:
-            if WALL_HOOK_MARK in hook.read_text(encoding="utf-8", errors="replace") and os.access(hook, os.X_OK):
+            text = hook.read_text(encoding="utf-8", errors="replace")
+            runs = WALL_HOOK_MARK in text and os.access(hook, os.X_OK)
+            if runs and (is_zone or '--root "$dir"' in text):
                 continue  # the folder it names runs the wall check too
+            if runs:
+                # A zone's hook looks for the check two folders up, which a wiki is not under (#340).
+                out.append(Finding(WARNING, "hooks", rel(ws, repo),
+                                   "git takes its hooks from %s (core.hooksPath), and the wall check there is the "
+                                   "zone's, which looks for the check two folders up and refuses every commit in a "
+                                   "wiki; use `git config core.hooksPath .git/hooks` in %s, and "
+                                   "`python3 System/tools/check.py --install-hooks`" % (value, rel(ws, repo)),
+                                   "Git runs a zone's wall check on the %s repository" % repo.name))
+                continue
         except OSError:
             pass
         what = "the wall check in its .git/hooks" if is_zone or has_wall_hook(repo) else "any hook in its own .git/hooks"
@@ -1924,6 +1936,16 @@ def path_bases(ws: Workspace, project: Path, note: Path) -> List[Path]:
     return bases
 
 
+def local_base_count(project: Path, note: Path) -> int:
+    """How many of path_bases() are the note's own: its folder and those above
+    it in the project, and the project's own folders."""
+    bases, d = [], note.parent
+    while d == project or project in d.parents:
+        bases.append(d)
+        d = d.parent
+    return len(bases) + len([x for x in visible_dirs(project) if x not in bases])
+
+
 Siblings = Tuple[set, List[Tuple[Path, Path]], Dict[Path, set]]
 
 
@@ -2004,42 +2026,83 @@ def ticked_paths(line: str) -> List[str]:
     return out
 
 
-def other_zone_paths(ws: Workspace, note: Path, bases: List[Path], lines: List[str]) -> List[str]:
-    """The `backticked` paths in `lines` that land in a zone other than the
-    note's, found or not: written from any place a path may start (path_bases),
-    cleaned of `..` or with every link resolved, or an absolute path. Zones
-    never reference each other unless asked, and a note that names a path in
-    another zone has crossed one however it spells it (#340)."""
+# What ends a path written in prose or in a link: a space, a bracket, a quote,
+# a comma, a pipe. A path inside a file name that holds one is read in pieces,
+# which can only add paths to look at (#340).
+_PATH_SPLIT_RE = re.compile(r"[\s`()\[\]<>\"'“”‘’,;|*{}]+")
+_PATH_TAIL_RE = re.compile(r"(?::\d+)+$|#.*$")
+
+
+def path_tokens(line: str) -> List[str]:
+    """Every path-like token on a line, backticked or not: one with a `/` in
+    it, read as it is and with any `%xx` undone, a `:12` or `#heading` taken
+    off, a backslash read as a slash, a `file://` address as its path, and
+    invisible marks dropped. Web addresses and other schemes are not paths."""
+    out = []
+    for raw in _PATH_SPLIT_RE.split(line):
+        for token in {raw, unquote(raw)}:
+            token = "".join(ch for ch in token if unicodedata.category(ch) != "Cf")
+            if token.startswith("file://"):
+                token = token[len("file://"):]
+            elif "://" in token:
+                continue
+            token = _PATH_TAIL_RE.sub("", token.replace("\\", "/")).rstrip(".,:!?")
+            if "/" in token.rstrip("/") and token not in out:
+                out.append(token)
+    return out
+
+
+def _folded(parts) -> Tuple[str, ...]:
+    return tuple(unicodedata.normalize("NFC", str(x)).casefold() for x in parts)
+
+
+def other_zone_paths(ws: Workspace, note: Path, bases: List[Path], lines: List[str],
+                     local: int = 0) -> List[str]:
+    """The paths in `lines`, backticked or not, that land in a zone other than
+    the note's. Zone names are compared folded (case, Unicode form), so a
+    case-insensitive disk opens `personal/` as `Personal/`. A path is first
+    read from the note's own folder and project (the first `local` of `bases`):
+    where it is there, it is that file, and it is across a zone only if it
+    leads there by a link. Else, from any place a path may start, cleaned of
+    `..` or with every link resolved, it lands in another zone or not. Zones
+    never reference each other unless asked (#340)."""
     try:
         mine = next((z.resolve() for z in ws.zones if z.resolve() in note.resolve().parents), None)
-        others = [z.resolve() for z in ws.zones if z.resolve() != mine]
+        others = [_folded(z.resolve().parts) for z in ws.zones if z.resolve() != mine]
     except (OSError, RuntimeError):
         return []
     if mine is None:
         return []
+
+    def lands(start: Path) -> bool:
+        try:
+            forms = [Path(os.path.normpath(str(start))), start.resolve()]
+        except (OSError, RuntimeError):
+            forms = [Path(os.path.normpath(str(start)))]
+        return any(f[:len(z)] == z for z in others for f in (_folded(x.parts) for x in forms))
+
     out = []
     for line in lines:
-        for path in ticked_paths(line):
+        for path in path_tokens(line):
             if path in out:
                 continue
-            starts = [Path(path).expanduser()] if path.startswith(("~", "/")) else [b / path for b in bases]
-            for start in starts:
-                try:
-                    forms = [Path(os.path.normpath(str(start))), start.resolve()]
-                except (OSError, RuntimeError):
-                    forms = [Path(os.path.normpath(str(start)))]
-                if any(z == f or z in f.parents for z in others for f in forms):
-                    out.append(path)
-                    break
+            if path.startswith(("~", "/")):
+                starts = [Path(path).expanduser()]
+            else:
+                here = [b / path for b in bases[:local]]
+                present = [c for c in here if c.exists()]
+                starts = present or [b / path for b in bases]
+            if any(lands(start) for start in starts):
+                out.append(path)
     return out
 
 
 def zone_crossings(ws: Workspace, note: Path, bases: List[Path], lines: List[str], spoken: str,
-                   where: str) -> List[Finding]:
+                   where: str, local: int = 0) -> List[Finding]:
     return [Finding(ERROR, "links", rel(ws, note),
                     "%s names `%s`, a path in another zone; zones never reference each other unless asked"
                     % (where, path), "Thread %s names a path in another zone" % spoken)
-            for path in other_zone_paths(ws, note, bases, lines)]
+            for path in other_zone_paths(ws, note, bases, lines, local)]
 
 
 def unfound_paths(ws: Workspace, project: Path, note: Path, line: str, bases: List[Path],
@@ -2096,7 +2159,7 @@ def resume_findings(ws: Workspace, project: Path, note: Path, block: List[str], 
                            % (", ".join(unfilled).lower() or "its date", spoken.rsplit(", ", 1)[-1]),
                            "Thread %s has no real resume point yet" % spoken))
     bases = path_bases(ws, project, note)
-    out += zone_crossings(ws, note, bases, block, spoken, "Resume here")
+    out += zone_crossings(ws, note, bases, block, spoken, "Resume here", local_base_count(project, note))
     inside: List[Optional[List[str]]] = [None]  # the project's files, listed on the first path not found
     siblings: List[Optional[Siblings]] = [None]  # the zone's other projects, likewise
     for line in block:
@@ -2220,7 +2283,8 @@ def checkpoint_findings(ws: Workspace, project: Path, note: Path, text: str, spo
                  "rests on a meeting waits for the wrap, where the wall check runs" % hit,
                  "Thread %s has a checkpoint naming meeting material" % spoken)
     # Like meeting material, whether the block can be read or not (#340).
-    out += zone_crossings(ws, note, path_bases(ws, project, note), block["content"], spoken, "its checkpoint")
+    out += zone_crossings(ws, note, path_bases(ws, project, note), block["content"], spoken, "its checkpoint",
+                          local_base_count(project, note))
     if not block["valid"]:
         warn("the checkpoint %s; read it, do not resume from it, and say \"wrap %s\" to settle it"
              % (block["why"], name), "Thread %s has a checkpoint that cannot be read" % spoken)
@@ -3320,8 +3384,11 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
         # A link in the page's text draws a graph edge in Obsidian as
         # `organisation:` does, so it is read the same way (#340).
         linked, problem = text_entity_pages(ws, text)
+        if problem:
+            out.append(Finding(ERROR, "walls", rel(ws, page), problem, "A person page links in a form the walls do not read"))
+            continue
         for entity in linked:
-            problem = problem or entity_page_problem(ws, entity, TEXT_LINK)
+            problem = entity_page_problem(ws, entity, TEXT_LINK)
             hit = None if problem else organisation_wall(ws, fm, (str(fm.get("title") or page.stem), page.stem), entity)
             if hit:
                 out.append(Finding(ERROR, "walls", rel(ws, page),
@@ -3329,36 +3396,108 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
                                    "page carries identity alone; take the link out: a wall stands between %s and %s"
                                    % hit, "A person page links an entity page across a wall"))
                 break
-        if problem:
-            out.append(Finding(ERROR, "walls", rel(ws, page), problem, "A person page links an entity page wrongly"))
+            if problem:
+                out.append(Finding(ERROR, "walls", rel(ws, page), problem,
+                                   "A person page links an entity page wrongly"))
+                break
     return out
 
 
 TEXT_LINK = "a link in the page's text opens an entity page"
+TEXT_PLAIN = ("a link in a person page's text is written `[[wiki/<folder>/<name>]]` or `[[<name>]]`, each with an "
+              "optional `|alias` or `#heading`, and opens a page that is there; the walls read no other form of link")
+# One plain link: a wikilink to a page by its path under wiki/, or by its bare
+# name, with an alias and a heading allowed. No `.md`, `..`, `./` or other path.
+_PLAIN_NAME = r"[^\[\]|#/\\\n<>]+"
+PLAIN_LINK_RE = re.compile(r"\[\[(?:(?P<folder>wiki)/(?P<dir>%s)/)?(?P<name>%s)(?:#[^\[\]|\n]*)?(?:\|[^\[\]\n]*)?\]\]"
+                           % (_PLAIN_NAME, _PLAIN_NAME))
+# Anything that could be a link in any reader's hands: a wikilink or an embed, a
+# Markdown link (inline or by reference), a definition, an HTML tag or an
+# autolink, an Obsidian address. Whatever is left of a person page's text once
+# the plain links are taken out must hold none (#340).
+LINKLIKE_RE = re.compile(r"\[\[|\]\]|\]\(|\]\[|\]:|!\[|<[^\s<>][^<>]*>|obsidian:", re.I)
+
+
+# The sentence ingest.py leaves a new person page to fill in, in the angle
+# brackets that would otherwise read as a tag; exactly this, and nothing like it.
+PERSON_PLACEHOLDER = "<Who they are, and which party, in a sentence.>"
+
+
+def person_text(text: str) -> str:
+    """A person page's text after its frontmatter; the whole of it where it
+    has none. The shape check has already refused a frontmatter not closed."""
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines and lines[0].rstrip() == "---":
+        end = next((i for i, l in enumerate(lines[1:], 1) if l == "---"), None)
+        if end is not None:
+            return "\n".join(lines[end + 1:])
+    return "\n".join(lines)
+
+
+def wiki_name_index(ws: Workspace) -> Dict[str, List[Path]]:
+    """The pages under each wiki's `wiki/` folder by file name, folded as a
+    reader opens a bare link: no `.md`, case and Unicode form ignored."""
+    index: Dict[str, List[Path]] = {}
+    for page in ws.wiki_files:
+        if page.suffix.lower() != ".md" or page.is_symlink() or not page.is_file():
+            continue
+        parts = rel(ws, page).split("/")
+        if len(parts) > 3 and parts[0] == "Wikis" and parts[2] == "wiki":
+            index.setdefault(unicodedata.normalize("NFC", page.stem).casefold(), []).append(page)
+    return index
+
+
+def wiki_folder_page(ws: Workspace, folder: str, name: str) -> Optional[Path]:
+    """`wiki/<folder>/<name>.md` of the Meetings wiki, else the Knowledge
+    wiki, as the folder spells it, reached through no symbolic link."""
+    for wiki in ("Meetings", "Knowledge"):
+        path = ws.root / "Wikis" / wiki / "wiki"
+        for part in (folder, name + ".md"):
+            hit = _listed(path, part) if path.is_dir() and not path.is_symlink() else None
+            if hit is None:
+                path = None
+                break
+            path = path / hit
+            if path.is_symlink():
+                path = None
+                break
+        if path is not None and path.is_file():
+            return path
+    return None
 
 
 def text_entity_pages(ws: Workspace, text: str) -> Tuple[List[Path], str]:
-    """The entity pages a person page links anywhere in its text, as
-    (pages, problem): a link by the page's path, as entity_rel() reads it, or
-    by its bare name, which Obsidian opens by file name (`[[acme-corp]]`) and
-    which an entity page's other names are read for too. A link by path that
-    opens no entity page in wiki/entities/ is the problem, since a page made
-    there later would be linked unread. Fail closed (#340)."""
-    pages, index = [], entity_index(ws)
-    for link in links_in(text):
-        r = entity_rel(link)
-        if r:
-            page = entity_page(ws.root, r)
-            if page is None:
-                return pages, TEXT_LINK + " that is not there, or is reached through a symbolic link"
-            pages.append(page)
-            continue
-        m = re.match(r"^\[\[([^\[\]]+)\]\]$", link)
-        target = re.split(r"[|#^]", m.group(1), 1)[0].strip() if m else ""
-        if not target or "/" in target.replace("\\", "/"):
-            continue
-        pages += [e["path"] for e in index
-                  if Path(e["rel"]).name.casefold() == target.casefold() or org_key(target) in e["keys"]]
+    """The entity pages a person page links in its text, as (pages, problem).
+    Fail closed (#340): every link-like thing in the text is one plain wikilink
+    (PLAIN_LINK_RE) to a page that is there, or the problem is the page's, and
+    names the plain form. Rather than guess which other forms a reader opens,
+    none is read: a path with `..` or `.md`, a Markdown link, a reference, an
+    HTML tag, an autolink, an address all fail. A plain link opens the page
+    by its path under wiki/, or by its bare file name, as Obsidian does."""
+    body = person_text(text).replace(PERSON_PLACEHOLDER, "")
+    plains = list(PLAIN_LINK_RE.finditer(body))
+    left = PLAIN_LINK_RE.sub("\0", body)
+    if LINKLIKE_RE.search(left):
+        return [], "its text holds a link the walls cannot read: " + TEXT_PLAIN
+    pages: List[Path] = []
+    index = None
+    for m in plains:
+        name = unicodedata.normalize("NFC", m.group("name")).strip()
+        if not name or name in (".", "..") or name.lower().endswith(".md"):
+            return pages, "its text holds a link the walls cannot read: " + TEXT_PLAIN
+        if m.group("folder"):
+            if m.group("dir").strip() in (".", ".."):
+                return pages, "its text holds a link the walls cannot read: " + TEXT_PLAIN
+            found = [wiki_folder_page(ws, m.group("dir").strip(), name)]
+        else:
+            if index is None:
+                index = wiki_name_index(ws)
+            found = index.get(name.casefold(), [None])
+        if None in found:
+            return pages, "its text links `%s`, which is not a page that is there; %s" % (m.group(0), TEXT_PLAIN)
+        pages += [f for f in found if lexical_folder(ws, MEETINGS_ENTITIES) in f.parents]
     return pages, ""
 
 
@@ -3568,7 +3707,8 @@ def staged_people(ws: Workspace, staged: List[Tuple[Path, str]],
     as git holds it, since a party changed on the entity page can put the link
     across a wall without the person page changing, and a link left to a page
     that is gone leads nowhere (#340). With `every`, all of them: the
-    People or Parties table changed, which can put any page across a wall."""
+    People or Parties table changed, which can put any page across a wall. An
+    entity page staged or removed reads all of them for the same reason."""
     def under(path: Path, parts) -> bool:
         # By the path git stages it at, not where it leads: a symbolic link
         # under people/ is a person page here, and refused (staged_person_links).
@@ -3578,35 +3718,13 @@ def staged_people(ws: Workspace, staged: List[Tuple[Path, str]],
     entities += [path for path in sorted(removed) if under(path, MEETINGS_ENTITIES)]
     if not entities and not every:
         return out
-    # A link to any page that goes by a staged page's name is read with it (#330).
-    for page in list(entities):
-        entities += [e["path"] for e in same_name(ws, page)]
-    names = set()
-    for e in entity_index(ws):
-        if any(same_page(e["path"], x) for x in entities):
-            names |= e["keys"] | {Path(e["rel"]).name.casefold()}
-    names |= {x.stem.casefold() for x in entities} | {org_key(x.stem) for x in entities}
+    # A page staged, deleted or renamed away can change what any link in any
+    # person page opens, by its path or by a bare name, in a form this would
+    # have to guess at. So every person page is read again (#340).
     have = {path.resolve() for path, _ in out}
     for page, text in person_pages(ws):
-        if page.resolve() in have:
-            continue
-        text = ws.git_view.get(page, text)
-        if every:
-            out.append((page, text))
-            continue
-        folder = ws.root.joinpath(*MEETINGS_ENTITIES)
-        for link in links_in(text):
-            r = entity_rel(link)
-            if r:
-                target = entity_page(ws.root, r)
-                hit = any(same_page(target, e) if target is not None
-                          else (folder / (r + ".md")).as_posix().casefold() == e.as_posix().casefold() for e in entities)
-            else:
-                m = re.match(r"^\[\[([^\[\]|#^/]+)", link)
-                hit = bool(m) and (m.group(1).strip().casefold() in names or org_key(m.group(1)) in names)
-            if hit:
-                out.append((page, text))
-                break
+        if page.resolve() not in have:
+            out.append((page, ws.git_view.get(page, text)))
     return out
 
 
@@ -6039,7 +6157,7 @@ def install_hooks(root: Path) -> int:
             code = 1
     for wiki in wiki_repos(ws):
         try:
-            hook = install_wall_hook(wiki, wiki=True)
+            hook = install_wall_hook(wiki, wiki=True, root=ws.root)
             print("%s: wall check installed at %s" % (rel(ws, wiki), rel(ws, hook)))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (rel(ws, wiki), exc), file=sys.stderr)

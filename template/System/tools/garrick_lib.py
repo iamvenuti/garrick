@@ -214,6 +214,7 @@ __all__ = [
     "foreign_git_env",
     "own_repo_env",
     "has_own_git_dir",
+    "wall_hook_problem",
     "staged_walls_refusal",
     "skill_links",
     "init_repo",
@@ -3155,6 +3156,34 @@ def has_own_git_dir(folder: PathLike) -> bool:
         os.path.realpath(r.stdout.strip()) == os.path.realpath(str(Path(folder) / ".git"))
 
 
+def wall_hook_problem(folder: PathLike) -> Optional[str]:
+    """Why a commit in the zone `folder` would not run Garrick's wall check, or
+    None when it would. Asks git, in the environment own_repo_env gives, which
+    hooks folder it will use (`git rev-parse --git-path hooks`, which honours
+    core.hooksPath from every layer of config), and wants a pre-commit there
+    that is executable and holds WALL_HOOK_MARK. Fail-closed: a git that cannot
+    be asked is a problem."""
+    folder = Path(folder)
+    if not has_own_git_dir(folder):
+        return "%s has no git repository of its own here" % folder.name
+    try:
+        r = subprocess.run(["git", "rev-parse", "--git-path", "hooks"], cwd=str(folder), env=own_repo_env(),
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        r = None
+    if r is None or r.returncode != 0 or not r.stdout.strip():
+        return "git did not say which hooks %s would run" % folder.name
+    hooks = Path(r.stdout.strip())
+    hooks = hooks if hooks.is_absolute() else folder / hooks
+    try:
+        if WALL_HOOK_MARK in (hooks / "pre-commit").read_text(encoding="utf-8", errors="replace") \
+                and os.access(hooks / "pre-commit", os.X_OK):
+            return None
+    except OSError:
+        pass
+    return "commits in %s would not run the wall check: git would take its hooks from %s" % (folder.name, hooks)
+
+
 def git(args: List[str], cwd: PathLike) -> str:
     r = subprocess.run(["git"] + list(args), cwd=str(cwd), env=own_repo_env(), capture_output=True, text=True)
     if r.returncode != 0:
@@ -3179,6 +3208,8 @@ def init_repo(path: PathLike, message: str, identity: Optional[Dict[str, str]] =
     for key, value in (identity or {}).items():
         git(["config", key, value], path)
     git(["add", "--"] + list(paths) if paths else ["add", "-A"], path)
+    # A new zone's repository is not a zone until its hook is in: its first commit is the one place
+    # that needs only the repository to be its own.
     if not has_own_git_dir(path):
         raise GitError("%s has no repository of its own, so nothing was committed" % path)
     git(["commit", "-q", "-m", message], path)

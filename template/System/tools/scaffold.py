@@ -112,7 +112,7 @@ from garrick_lib import (  # noqa: E402
     checkpoint_item_line,
     detach,
     git,
-    has_own_git_dir,
+    wall_hook_problem,
     hooks_path,
     init_repo,
     install_wall_hook,
@@ -996,8 +996,9 @@ def cmd_rename(root, args, today):
                 touched.add(path)
                 path.write_text(changed, encoding="utf-8")
         git_ok(["add", "-A", "--", rel_new] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)
-        if not has_own_git_dir(zone_dir):
-            raise Refusal(f"{zone_dir.name} has no repository of its own here, so nothing was committed.")
+        problem = wall_hook_problem(zone_dir)
+        if problem:
+            raise Refusal(f"{problem}, so nothing was committed.")
         git(["commit", "-q", "-m", f"{what}: renamed {new}"], zone_dir)
     except (GitError, Refusal, OSError) as exc:
         # Everything here was tracked and clean, and nothing was staged before: put back what HEAD holds.
@@ -1100,8 +1101,9 @@ def cmd_delete(root, args, today):
     body = "\n".join(["Removed:"] + [f"- {rel}/ ({len(files)} files)"] + (["- the hub's line"] if hub_line else [])
                      + [f"- {l.strip()}" for l in lines])
     try:
-        if not has_own_git_dir(zone_dir):
-            raise Refusal(f"{zone_dir.name} has no repository of its own here, so nothing was committed.")
+        problem = wall_hook_problem(zone_dir)
+        if problem:
+            raise Refusal(f"{problem}, so nothing was committed.")
         git(["commit", "-q", "-m", f"{what}: deleted\n\n{body}"], zone_dir)
     except GitError as exc:
         git_value(["reset", "-q"], zone_dir)

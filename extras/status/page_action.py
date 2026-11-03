@@ -553,7 +553,8 @@ def live_note(base: Path, rel) -> Path:
 
 # Git's repository-local variables, for when garrick_lib cannot be loaded.
 _REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-              "GIT_COMMON_DIR", "GIT_PREFIX", "GIT_NAMESPACE", "GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
+              "GIT_COMMON_DIR", "GIT_PREFIX", "GIT_NAMESPACE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+              "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_CONFIG", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS")
 
 
 def own_repo_env(zone: Path) -> dict:
@@ -576,15 +577,41 @@ def own_repo_env(zone: Path) -> dict:
     return env
 
 
-def has_own_git_dir(zone: Path) -> bool:
-    """True when git, in the cleaned environment, finds the zone's repository at <zone>/.git."""
+WALL_HOOK_MARK = "Garrick wall check"       # garrick_lib's, which this file may not be able to load
+
+
+def commit_refusal(zone: Path) -> Optional[str]:
+    """Why a commit in the zone would not run Garrick's wall check, or None.
+    Fail-closed: git, in the cleaned environment, must find the repository at
+    <zone>/.git, and the hooks folder it will use (core.hooksPath from any
+    layer of config included) must hold an executable pre-commit with the
+    wall check's mark."""
+    env = own_repo_env(zone)
+
+    def ask(*a):
+        try:
+            return subprocess.run(["git", "-C", str(zone)] + list(a), env=env, stdin=subprocess.DEVNULL,
+                                  capture_output=True, text=True, timeout=30)
+        except (OSError, subprocess.SubprocessError):
+            return None
+    r = ask("rev-parse", "--absolute-git-dir")
+    if r is None or r.returncode != 0 or not (zone / ".git").is_dir() or \
+            os.path.realpath(r.stdout.strip()) != os.path.realpath(str(zone / ".git")):
+        return "%s has no git repository of its own here" % zone.name
+    if zone.parent.name != "Zones":
+        return None             # the workspace's own repository (a heard name in context.md) has no wall hook by design
+    r = ask("rev-parse", "--git-path", "hooks")
+    if r is None or r.returncode != 0 or not r.stdout.strip():
+        return "git did not say which hooks %s would run" % zone.name
+    hooks = Path(r.stdout.strip())
+    hooks = hooks if hooks.is_absolute() else zone / hooks
     try:
-        r = subprocess.run(["git", "-C", str(zone), "rev-parse", "--absolute-git-dir"], env=own_repo_env(zone),
-                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return r.returncode == 0 and (zone / ".git").is_dir() and \
-        os.path.realpath(r.stdout.strip()) == os.path.realpath(str(zone / ".git"))
+        if WALL_HOOK_MARK in (hooks / "pre-commit").read_text(encoding="utf-8", errors="replace") \
+                and os.access(hooks / "pre-commit", os.X_OK):
+            return None
+    except OSError:
+        pass
+    return "commits in %s would not run the wall check: git would take its hooks from %s" % (zone.name, hooks)
 
 
 def git(zone: Path, *args, timeout: float = None):
@@ -626,8 +653,9 @@ def committing(zone: Path, rel, message: str) -> tuple:
     found nothing wrong yet. A path that is gone is committed as gone."""
     rels = [rel] if isinstance(rel, str) else list(rel)
     deadline = time.time() + COMMIT_TIMEOUT
-    if not has_own_git_dir(zone):
-        return 1, "%s has no git repository of its own here, so nothing was committed" % zone.name
+    problem = commit_refusal(zone)
+    if problem:
+        return 1, "%s, so nothing was committed" % problem
     code, said = git(zone, "add", "-A", "--", *rels)
     if code == 0:
         note_event("phase", "checking")         # the wall check runs inside git commit
@@ -2389,8 +2417,8 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
     rels = [str(n.relative_to(zone)) for n, _ in notes]
     mine = [n.read_bytes() for n, _ in notes]
     deadline = time.time() + COMMIT_TIMEOUT
-    code, why = (1, "%s has no git repository of its own here, so nothing was committed" % zone.name) \
-        if not has_own_git_dir(zone) else git(zone, "add", "--", *rels)
+    problem = commit_refusal(zone)
+    code, why = (1, "%s, so nothing was committed" % problem) if problem else git(zone, "add", "--", *rels)
     if code == 0:
         note_event("phase", "checking")
         code, why = git(zone, "commit", "-q", "-m", message, "--", *rels, timeout=deadline - time.time())
@@ -2484,8 +2512,8 @@ def commit_record(zone: Path, note: Path, parts: tuple, folder: Path, name: str,
     if not changed:
         return ""
     deadline = time.time() + COMMIT_TIMEOUT
-    code, why = (1, "%s has no git repository of its own here, so nothing was committed" % zone.name) \
-        if not has_own_git_dir(zone) else git(zone, "add", "-A", "--", *changed)
+    problem = commit_refusal(zone)
+    code, why = (1, "%s, so nothing was committed" % problem) if problem else git(zone, "add", "-A", "--", *changed)
     if code == 0:
         code, why = git(zone, "commit", "-q", "-m", ("%s: saved before opening in Claude" % name)[:200], "--", *changed,
                         timeout=deadline - time.time())

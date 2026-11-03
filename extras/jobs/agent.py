@@ -165,6 +165,65 @@ CORE_DENY = (
 )
 
 
+# --------------------------------------------------------------------------- git
+
+# Git's repository-local variables, and git settings given in the environment,
+# for when this git cannot list them. A job commits in the repository of the
+# folder it names, never in one its caller's environment names, and with that
+# repository's own hooks; garrick_lib.own_repo_env() is the same rule.
+REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+             "GIT_COMMON_DIR", "GIT_PREFIX", "GIT_NAMESPACE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+             "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_CONFIG", "GIT_CONFIG_COUNT",
+             "GIT_CONFIG_PARAMETERS")
+WALL_HOOK_MARK = "Garrick wall check"
+
+
+def own_repo_env() -> Dict[str, str]:
+    """This process's environment without the variables that point git at
+    another repository or hand it other settings (hooks included). The user's
+    own global config stays."""
+    drop = set(REPO_VARS)
+    try:
+        r = subprocess.run(["git", "rev-parse", "--local-env-vars"], capture_output=True, text=True, timeout=30,
+                           stdin=subprocess.DEVNULL)
+        if r.returncode == 0:
+            drop |= {n for n in r.stdout.split() if n.startswith("GIT_")}
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return {k: v for k, v in os.environ.items() if k not in drop and not re.match(r"GIT_CONFIG_(KEY|VALUE)_\d+$", k)}
+
+
+def wall_hook_problem(zone: Path) -> Optional[str]:
+    """Why a commit in the zone would not run Garrick's wall check, or None:
+    git, in own_repo_env, must find the repository at <zone>/.git, and the
+    hooks folder it will use (core.hooksPath from any config included) must
+    hold an executable pre-commit with the wall check's mark."""
+    zone = Path(zone)
+
+    def ask(*a: str):
+        try:
+            return subprocess.run(["git", *a], cwd=str(zone), env=own_repo_env(), capture_output=True, text=True,
+                                  timeout=30, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            return None
+    r = ask("rev-parse", "--absolute-git-dir")
+    if r is None or r.returncode != 0 or not (zone / ".git").is_dir() or \
+            os.path.realpath(r.stdout.strip()) != os.path.realpath(str(zone / ".git")):
+        return "%s has no git repository of its own here" % zone.name
+    r = ask("rev-parse", "--git-path", "hooks")
+    if r is None or r.returncode != 0 or not r.stdout.strip():
+        return "git did not say which hooks %s would run" % zone.name
+    hooks = Path(r.stdout.strip())
+    hooks = hooks if hooks.is_absolute() else zone / hooks
+    try:
+        if WALL_HOOK_MARK in (hooks / "pre-commit").read_text(encoding="utf-8", errors="replace") \
+                and os.access(hooks / "pre-commit", os.X_OK):
+            return None
+    except OSError:
+        pass
+    return "commits in %s would not run the wall check: git would take its hooks from %s" % (zone.name, hooks)
+
+
 # --------------------------------------------------------------------------- settings
 
 

@@ -4,7 +4,7 @@ Some of Garrick's protections are code: a script that refuses, whatever the assi
 
 ## The table
 
-Garrick's own commits (the status page's actions and the scaffold tool) run git with the repository-local variables removed (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and git settings passed in the environment), and refuse to commit in a zone whose repository is not the `.git` folder in it, so the zone's own hook always runs.
+Garrick's own commits (the status page's actions, the scaffold tool and the scheduled jobs) run git without the caller's repository variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and git settings passed in the environment), and refuse to commit in a zone when the hook git would run is not Garrick's wall check, wherever that hook is configured or the repository is.
 
 | Protection | How it holds | Where |
 |---|---|---|

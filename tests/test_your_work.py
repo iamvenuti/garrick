@@ -30,6 +30,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
+import fixtures  # noqa: E402
 from fixtures import CONTEXT, build_workspace, write  # noqa: E402
 from test_extract import docx, manifest, pptx, xlsx  # noqa: E402
 from test_simple_home import _load  # noqa: E402
@@ -139,9 +140,10 @@ class Case(unittest.TestCase):
         for repo in repos:
             shutil.rmtree(repo / ".git", ignore_errors=True)
             for args in (("init", "-q"), ("config", "user.name", "Sam Rivera"), ("config", "user.email", "sam@example.com"),
-                         ("config", "commit.gpgsign", "false"), ("config", "core.hooksPath", os.devnull),
+                         ("config", "commit.gpgsign", "false"),
                          ("config", "maintenance.auto", "false"), ("config", "gc.auto", "0")):
                 subprocess.run(["git", "-C", str(repo)] + list(args), check=True, capture_output=True)
+            fixtures.stand_in_hook(repo)
         write(self.root / ".gitignore", "Zones/\nWikis/\nSystem/generated/\n")
         (self.root / "System" / "garrick-settings.json").write_text(json.dumps({"home": "simple"}), encoding="utf-8")
         for repo in repos:
@@ -379,7 +381,7 @@ class TestStartWithThisOne(Case):
         hook = self.base / "hooks" / "pre-commit"
         line = check.report_staged([check.Finding(check.ERROR, "walls", "Catalogue 2027/Catalogue 2027.md",
                                                   "names Birch & Co (`birch`); a wall stands between acme and birch")])
-        write(hook, "#!/bin/sh\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line).chmod(0o755)
+        write(hook, "#!/bin/sh\n# Garrick wall check (a stand-in)\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line).chmod(0o755)
         self.git("config", "core.hooksPath", str(hook.parent))
         with self.assertRaises(pa.Refused) as said:
             self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")

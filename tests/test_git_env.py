@@ -30,7 +30,7 @@ pa = tpa.pa
 
 
 def hook_text(marker: Path) -> str:
-    return "#!/bin/sh\necho ran > '%s'\necho 'refused by the zone hook' >&2\nexit 1\n" % marker
+    return "#!/bin/sh\n# Garrick wall check (a stand-in)\necho ran > '%s'\necho 'refused by the zone hook' >&2\nexit 1\n" % marker
 
 
 def elsewhere(base: Path) -> Path:
@@ -94,6 +94,135 @@ class TestExecutor(tpa.ActionCase):
         self.assertEqual(self.todo, (self.work / "Todo.md").read_bytes())
 
 
+class TestHooksFromConfig(TestExecutor):
+    """The hook git will run, from any layer of config, must be Garrick's wall check:
+    the commit is refused, and nothing is written, when it is not."""
+
+    def cfg(self, name, body):
+        p = Path(self._tmp.name) / name
+        p.write_text(body)
+        return p
+
+    def hooks_path_cfg(self):
+        empty = Path(self._tmp.name) / "no-hooks"
+        empty.mkdir(exist_ok=True)
+        return empty, "[core]\n\thooksPath = %s\n" % empty
+
+    def refused_not_hooked(self, extra, before=None):
+        if before:
+            before()
+        head = tpa.git(self.work, "rev-parse", "HEAD")
+        with mock.patch.dict(os.environ, extra):
+            with self.assertRaisesRegex(pa.Refused, "wall check"):
+                self.tick()
+        self.assertEqual(head, tpa.git(self.work, "rev-parse", "HEAD"))
+        self.assertEqual(self.todo, (self.work / "Todo.md").read_bytes())
+
+    def test_a_global_config_that_moves_the_hooks_is_refused(self):
+        _, body = self.hooks_path_cfg()
+        self.refused_not_hooked({"GIT_CONFIG_GLOBAL": str(self.cfg("global", body))})
+
+    def test_a_system_config_that_moves_the_hooks_is_refused(self):
+        _, body = self.hooks_path_cfg()
+        self.refused_not_hooked({"GIT_CONFIG_SYSTEM": str(self.cfg("system", body))})
+
+    def test_a_home_gitconfig_that_moves_the_hooks_is_refused(self):
+        _, body = self.hooks_path_cfg()
+        home = Path(self._tmp.name) / "home"
+        home.mkdir()
+        (home / ".gitconfig").write_text(body)
+        self.refused_not_hooked({"HOME": str(home)})
+
+    def test_an_xdg_config_that_moves_the_hooks_is_refused(self):
+        _, body = self.hooks_path_cfg()
+        xdg = Path(self._tmp.name) / "xdg"
+        (xdg / "git").mkdir(parents=True)
+        (xdg / "git" / "config").write_text(body)
+        self.refused_not_hooked({"XDG_CONFIG_HOME": str(xdg), "HOME": str(Path(self._tmp.name) / "nohome")})
+
+    def test_the_zones_own_hooks_path_is_refused(self):
+        empty, _ = self.hooks_path_cfg()
+        self.refused_not_hooked({}, lambda: tpa.git(self.work, "config", "core.hooksPath", str(empty)))
+
+    def test_a_zone_with_no_wall_hook_is_refused(self):
+        self.refused_not_hooked({}, lambda: (self.work / ".git" / "hooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n"))
+
+    def test_a_shared_hooks_folder_that_holds_the_wall_check_is_accepted(self):
+        shared = Path(self._tmp.name) / "shared-hooks"
+        shared.mkdir()
+        (self.work / ".git" / "hooks" / "pre-commit").rename(shared / "pre-commit")
+        tpa.git(self.work, "config", "core.hooksPath", str(shared))
+        with self.assertRaises(pa.Refused):               # the stand-in hook refuses, so it ran
+            self.tick()
+        self.assertTrue(self.marker.exists())
+
+
+class TestJobs(unittest.TestCase):
+    """The scheduled jobs and the wiki tools clean their environment too."""
+
+    def setUp(self):
+        import importlib.util
+        jobs = tpa.REPO / "extras" / "jobs"
+        sys.path.insert(0, str(jobs))
+        try:
+            import agent
+        finally:
+            sys.path.pop(0)
+        self.agent = agent
+        spec = importlib.util.spec_from_file_location("work_files_for_env", tpa.REPO / "extras" / "status" / "work_files.py")
+        self.work_files = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.work_files)
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name).resolve()
+        self.zone = self.base / "Zones" / "Work"
+        self.zone.mkdir(parents=True)
+        fixtures.git_init(self.zone)
+        write(self.zone / "Todo.md", "# Work\n")
+        fixtures.commit_all(self.zone)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_the_job_environment_has_no_repository_variables_or_git_settings(self):
+        stray = {"GIT_DIR": "/x", "GIT_WORK_TREE": "/y", "GIT_INDEX_FILE": "/z", "GIT_CONFIG_COUNT": "1",
+                 "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/e", "GIT_CONFIG_PARAMETERS": "'a=b'"}
+        with mock.patch.dict(os.environ, dict(stray, GIT_CONFIG_GLOBAL="/keep")):
+            env = self.agent.own_repo_env()
+        self.assertEqual([], [k for k in stray if k in env])
+        self.assertEqual("/keep", env["GIT_CONFIG_GLOBAL"])
+        listed = self.work_files._REPO_VARS
+        self.assertTrue({"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS"} <= set(listed))
+
+    def test_a_job_refuses_a_zone_whose_hooks_are_not_the_wall_check(self):
+        self.assertIn("wall check", self.agent.wall_hook_problem(self.zone))          # no hook at all
+        hook = self.zone / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\nexit 0\n")
+        hook.chmod(0o755)
+        self.assertIsNone(self.agent.wall_hook_problem(self.zone))
+        empty = self.base / "no-hooks"
+        empty.mkdir()
+        cfg = self.base / "cfg"
+        cfg.write_text("[core]\n\thooksPath = %s\n" % empty)
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": str(cfg)}):
+            self.assertIn(str(empty), self.agent.wall_hook_problem(self.zone))
+
+    def test_the_todo_sweep_refuses_to_commit_past_the_zones_hook(self):
+        sys.path.insert(0, str(tpa.REPO / "extras" / "jobs"))
+        try:
+            import todo_sweep
+        finally:
+            sys.path.pop(0)
+        other = elsewhere(self.base)
+        write(self.zone / "Todo.md", "# Work\n\n- [ ] Call Jo\n")
+        head = tpa.git(other, "rev-parse", "HEAD")
+        with mock.patch.dict(os.environ, {"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other)}):
+            r = todo_sweep.git(self.zone, "status", "--porcelain")
+        self.assertIn("Todo.md", r.stdout)                         # git looked at the zone, not at the other repository
+        self.assertEqual(head, tpa.git(other, "rev-parse", "HEAD"))
+
+
 class TestScaffold(tsm.ManageCase):
     def setUp(self):
         super().setUp()
@@ -123,6 +252,17 @@ class TestScaffold(tsm.ManageCase):
         empty = self.base / "no-hooks"
         empty.mkdir()
         self.check({"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": str(empty)})
+
+    def test_a_global_config_that_moves_the_hooks_refuses_a_scaffold_commit(self):
+        empty = self.base / "no-hooks"
+        empty.mkdir()
+        cfg = self.base / "moved"
+        cfg.write_text("[user]\n\tname = T\n\temail = t@example.invalid\n[core]\n\thooksPath = %s\n" % empty)
+        head = tpa.git(self.work, "rev-parse", "HEAD")
+        r = self.rename({"GIT_CONFIG_GLOBAL": str(cfg)})
+        self.assertEqual(1, r.returncode, r.stdout + r.stderr)
+        self.assertIn("wall check", r.stderr)
+        self.assertEqual(head, tpa.git(self.work, "rev-parse", "HEAD"))
 
     def test_a_zone_whose_git_is_not_its_own_folder_is_refused(self):
         import shutil

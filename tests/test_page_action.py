@@ -77,6 +77,11 @@ class ActionCase(unittest.TestCase):
         # test did not wait for would still be writing while tearDown deletes.
         git(self.work, "config", "maintenance.auto", "false")
         git(self.work, "config", "gc.auto", "0")
+        # The executor commits only where git will run Garrick's wall check: a stand-in that passes.
+        stand_in = self.work / ".git" / "hooks" / "pre-commit"
+        stand_in.parent.mkdir(parents=True, exist_ok=True)
+        stand_in.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\n")
+        stand_in.chmod(0o755)
         write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n"
               "- [ ] [[Pricing]]: Send the revised terms 📅 2026-10-09\n- [ ] Acme Corp: Invoice for September\n\n## Done\n")
         self.thread = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
@@ -961,7 +966,7 @@ class TestJournal(ActionCase):
     def hook(self, body):
         hook = self.work / ".git" / "hooks" / "pre-commit"
         hook.parent.mkdir(parents=True, exist_ok=True)
-        hook.write_text("#!/bin/sh\n" + body)
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\n" + body)
         hook.chmod(0o755)
 
     def start(self, request=None):
@@ -1275,7 +1280,7 @@ class TestJournal(ActionCase):
         self.hook("exit 1\n")
         request = self.requests()["todo-add"]
         self.assertEqual("refused", self.run_script(dict(request, op="a19f3c80"))["outcome"])
-        (self.work / ".git" / "hooks" / "pre-commit").unlink()
+        self.hook("exit 0\n")
         again = self.run_script(dict(request, op="b29f3c80"))
         self.assertEqual(("b29f3c80", "saved"), (again["op"], again["outcome"]))
 
@@ -1425,7 +1430,7 @@ class TestTogether(ActionCase):
     def hook(self, body):
         hook = self.work / ".git" / "hooks" / "pre-commit"
         hook.parent.mkdir(parents=True, exist_ok=True)
-        hook.write_text("#!/bin/sh\n" + body)
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\n" + body)
         hook.chmod(0o755)
 
     def start(self):

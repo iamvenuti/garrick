@@ -92,7 +92,7 @@ def counts(text: str) -> Optional[Tuple[int, int]]:
 
 def git(zone: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(zone), capture_output=True, text=True, timeout=300,
-                          stdin=subprocess.DEVNULL)
+                          stdin=subprocess.DEVNULL, env=agent.own_repo_env())
 
 
 def find_zone(workspace: Path, name: str) -> Optional[Path]:
@@ -158,6 +158,9 @@ def sweep_zone(workspace: Path, zone: Path, tier: str, today: str) -> Tuple[int,
     paths = ["Todo.md"] + (["archive"] if (zone / "archive").is_dir() else [])
     if not git(zone, "status", "--porcelain", "--", *paths).stdout.strip():
         return 0, changed, said + "; nothing to commit"
+    problem = agent.wall_hook_problem(zone)
+    if problem:
+        return 1, changed, said + "; not committed: %s" % problem
     git(zone, "add", "-A", "--", *paths)
     c = git(zone, "commit", "-q", "-m", "%s: actions swept; %d added, %d folded, %d expired, %d archived" % (
         zone.name, added, folded, done.get("expired", 0), done.get("archived", 0)), "--", *paths)   # these alone

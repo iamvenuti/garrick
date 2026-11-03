@@ -22,6 +22,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
+import fixtures  # noqa: E402
 from fixtures import HAVE_GIT, build_workspace, git, meeting_page, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -61,6 +62,7 @@ class BackupTest(unittest.TestCase):
         self.work = self.ws / "Zones" / "Work"
         shutil.rmtree(self.work / ".git")
         git(self.work, "init", "-q", "-b", "main")
+        fixtures.stand_in_hook(self.work)
         shutil.rmtree(self.ws / "Zones" / "Personal" / ".git")      # one zone is enough here
         self.remote = base / "work-remote.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(self.remote)], check=True)

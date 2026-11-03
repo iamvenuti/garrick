@@ -341,6 +341,8 @@ struct AskTurn {
 	var rest: [[String: Any]] = []      // that rest's claims once "And N more" is clicked, listed under the answer
 	var zones: [[String: Any]] = []     // "Which zone?": each zone offered, with its colour, a button each (#317)
 	var retry = ""                      // the question to send again in the zone a button picks
+	var choices: [[String: Any]] = []   // a question back, or an action just made: a button each, with `label` and
+	                                    // either `request` to send as a new request or `act` to run as a button would (#345)
 }
 
 // The Ask window (preview ask): it takes the keys without bringing the app forward, as
@@ -2224,6 +2226,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.refreshed = out["refreshed"] as? Bool == true
 			turn.zones = out["zones"] as? [[String: Any]] ?? []
 			turn.retry = out["retry"] as? String ?? ""
+			turn.choices = out["choices"] as? [[String: Any]] ?? []
 			// The zone the answer was read in: the selector follows it, with no new conversation, since
 			// ask.py started one itself when the zone changed (#317).
 			// Never over a zone you picked after sending: that one stands, and starts its own conversation.
@@ -2371,11 +2374,27 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
+	// A button under a reply that asks which party, or offers Undo for what it made (#345): the button's index in
+	// the last turn's `choices`. A `request` goes again as a new request; an `act` is run as the page's button would
+	// run it, with its toast, and the choices go, so it is clicked once.
+	@objc func askChoose(_ sender: NSButton) {
+		guard let turn = askTurns.last, askRunning == nil, !askResetting, sender.tag >= 0, sender.tag < turn.choices.count else { return }
+		let choice = turn.choices[sender.tag]
+		askTurns[askTurns.count - 1].choices = []
+		if let request = choice["act"] as? [String: Any] {
+			act(request)
+			askRender()
+		} else if let request = choice["request"] as? String, !request.isEmpty {
+			askSend(request)
+		}
+	}
+
 	// The buttons of the last turn's "Which zone?", each in its zone's colour; none once a request is on its way.
 	func askChoicesShow() {
 		guard let row = askChoices else { return }
 		row.arrangedSubviews.forEach { $0.removeFromSuperview() }
 		let offered = askRunning == nil ? askTurns.last?.zones ?? [] : []
+		let chosen = askRunning == nil ? askTurns.last?.choices ?? [] : []
 		for z in offered {
 			guard let name = z["zone"] as? String else { continue }
 			let b = NSButton(title: name, target: self, action: #selector(askChooseZone(_:)))
@@ -2386,8 +2405,16 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				.font: NSFont.boldSystemFont(ofSize: askText())])
 			row.addArrangedSubview(b)
 		}
+		for (i, c) in chosen.enumerated() {
+			guard let label = c["label"] as? String, !label.isEmpty else { continue }
+			let b = NSButton(title: label, target: self, action: #selector(askChoose(_:)))
+			b.tag = i
+			b.bezelStyle = .rounded
+			b.font = .boldSystemFont(ofSize: askText())
+			row.addArrangedSubview(b)
+		}
 		row.addArrangedSubview(NSView())
-		row.isHidden = offered.isEmpty
+		row.isHidden = offered.isEmpty && chosen.isEmpty
 	}
 
 	// Each state the window can be in, from the exchange and the request on its way: Ready,

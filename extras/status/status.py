@@ -1775,7 +1775,9 @@ d.className='tadd gmanage';d.innerHTML='<h3>'+esc(title)+'</h3>'+body+'<p class=
 document.body.appendChild(d);d.addEventListener('close',function(){d.remove()});d.addEventListener('click',function(e){if(e.target===d)d.close()});
 d.showModal();var c=d.querySelector('[data-cancel]');if(c){c.onclick=function(){d.close()};}return d}
 function field(id,label,value){return'<label class="tlab" for="'+id+'">'+esc(label)+'</label><input type="text" id="'+id+'" value="'+esc(value||'')+'" autocomplete="off">'}
-function select(id,label,opts,chosen){return'<label class="tlab" for="'+id+'">'+esc(label)+'</label><select id="'+id+'">'
+/* a chosen value the list does not hold is added and selected, never dropped for the first option (#353) */
+function select(id,label,opts,chosen){if(chosen&&!opts.some(function(x){return(Array.isArray(x)?x[0]:x)===chosen}))opts=[[chosen,chosen+' (not yet on the page)']].concat(opts);
+return'<label class="tlab" for="'+id+'">'+esc(label)+'</label><select id="'+id+'">'
 +opts.map(function(x){var v=Array.isArray(x)?x[0]:x,n=Array.isArray(x)?x[1]:x;return'<option value="'+esc(v)+'"'+(v===chosen?' selected':'')+'>'+esc(n)+'</option>'}).join('')+'</select>'}
 function val(d,id){var e=d.querySelector('#'+id);return e?e.value.trim():''}
 function bad(d,t){var m=d.querySelector('#mg-msg');m.textContent=t;m.classList.add('bad')}
@@ -1834,9 +1836,14 @@ if(act)send(q,'Deleting '+name+'…');else copy('delete '+name,'Copied “delete
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-manage]');if(!b)return;e.preventDefault();e.stopPropagation();
 var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}
 var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='delete'&&mg)del(mg)},true);
+/* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
+function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
+if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
+else if(q.verb==='new-project'&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}}
 /* Undo, for a minute after a deletion or a rename from the page: the app rebuilds the page after
    every request, so the commit to revert is kept in this browser until then */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&out&&out.ok)listed(q);
 if(q&&out&&out.ok&&(q.verb==='delete'&&q.confirm||q.verb==='rename')){var m=out.commit?[0,out.commit]:/commit ([0-9a-f]{7,40})/.exec(out.say||'');   /* the reply's commit (#184), or the one it names */
 try{localStorage.setItem('garrick-undo',JSON.stringify({zone:q.zone,commit:m?m[1]:'',what:q.verb==='delete'?'Deleted '+q.confirm:'Renamed '+(q.thread||q.project)+' to '+q.to,until:Date.now()+60000}))}catch(e){}}
 if(prev)return prev(q,out)};

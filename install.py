@@ -795,6 +795,13 @@ def install(cfg, target, force=False, quiet=False):
             pl.install_wall_hook(zdir)
         except (FileExistsError, FileNotFoundError) as exc:
             raise InstallError(f"Could not install the wall check: {exc}")
+    # The wikis are read on every side of a wall, so a hand edit committed there is checked too (#340).
+    wikis = root / "Wikis"
+    w._inside(wikis / ".git" / "hooks" / "pre-commit")
+    try:
+        pl.install_wall_hook(wikis, wiki=True)
+    except (FileExistsError, FileNotFoundError) as exc:
+        raise InstallError(f"Could not install the wall check in the wikis: {exc}")
     hooks_path = pl.hooks_path(root)
     # Built once, now everything is committed, so the page is there from the first
     # minute; the Mac app is the setup skill's to offer.
@@ -812,7 +819,7 @@ def install(cfg, target, force=False, quiet=False):
         say(f"  git is set to take its hooks from {hooks_path}, so the wall check will not run before commits.")
         say("  To turn it on, run in each zone: git config core.hooksPath .git/hooks")
     else:
-        say("  Each zone checks the walls before every commit.")
+        say("  Each zone and the wikis check the walls before every commit.")
     if allowed:
         for line in allowed_lines(allowed):
             say("  " + line)

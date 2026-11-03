@@ -2607,6 +2607,42 @@ class TestSettingsFromTheMenu(unittest.TestCase):
         self.assertIn("window.StatusSettings && window.StatusSettings.open()", s)              # the same as ⌘,
 
 
+class TestThePanelSearchesEveryZone(StatusCase):
+    """#338: with words in the panel's field it looks through every zone, the
+    zone in view first; with the field empty it lists the zone in view alone."""
+
+    swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    def test_the_page_hands_the_app_every_zone(self):
+        """The data the search reads holds a Personal thread whatever zone is in view."""
+        home = self.root / "Zones" / "Personal"
+        write(home / "House" / "House.md", project_hub("Personal", "House", "", ["Roof Repair"]))
+        write(home / "House" / "Threads" / "Roof Repair" / "Roof Repair.md", thread_note("House", "Roof Repair"))
+        html = self.page()
+        menu = json.loads(re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1))
+        zones = {z["z"]: z for z in menu["zones"]}
+        self.assertIn("Work", zones)
+        threads = [t["n"] for p in zones["Personal"]["p"] for t in p["t"]]
+        self.assertIn("Roof Repair", threads)
+
+    def test_a_search_lists_every_zone_with_a_match_and_an_empty_field_one(self):
+        s = self.swift
+        fill = s[s.index("func fillPanel("):s.index("m.inbox = inbox()")]
+        self.assertIn("m.zones = shownZones().map(panelZone)", fill)                  # the zone in view, as before
+        self.assertIn("m.everywhere = m.zones + every.filter", fill)                  # every other zone after it
+        self.assertIn("@Published var everywhere: [PanelZone] = []", s)
+        listed = s[s.index("func listed() -> [PanelZone]"):s.index("// Return opens the first thread")]
+        self.assertIn("guard !query.isEmpty else { return model.zones }", listed)
+        self.assertIn("model.everywhere.filter { !shown($0.rows).isEmpty }", listed)    # only zones with a match
+        self.assertIn("ForEach(listed()) { zone in", s)
+        self.assertNotIn("ForEach(model.zones)", s)
+        self.assertIn('if !query.isEmpty && listed().isEmpty {', s)
+        self.assertIn('Text("Nothing matches")', s)                                    # only when no zone matches
+        first = s[s.index("func first() -> (() -> Void)?"):s.index("func awake(")]
+        self.assertIn("let rows = listed().flatMap { shown($0.rows) }", first)         # Return opens a match in any zone
+        self.assertIn("m.zones.reduce(0)", s)                                         # the height is the zone in view's
+
+
 class TestWhereTheChoicesLive(StatusCase):
     """Each zone's colour and icon, and Opening a thread, are committed with
     the workspace in System/garrick-settings.json, and every reader reads them

@@ -5038,6 +5038,38 @@ def waiting_on(text: str) -> Optional[str]:
     return said
 
 
+_AS = None
+
+
+def ask_scope_mod():
+    """ask_scope.py, beside this file: its reading of the user's own name."""
+    global _AS
+    if _AS is None:
+        spec = importlib.util.spec_from_file_location("garrick_status_ask_scope", str(Path(__file__).with_name("ask_scope.py")))
+        _AS = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_AS)
+    return _AS
+
+
+def waits_on_user(waiting: Optional[str], name: str) -> bool:
+    """Whether a Waiting on row opens with the user (#343): their full name,
+    their first name alone, "me", "you" or "the user", then the end of the
+    text, a comma, a colon or a semicolon. `name` is what `## Me` opens with
+    (ask_scope.user_name); with no name, nothing is the user's and every
+    non-empty row stays a waiting one."""
+    if not waiting or not name:
+        return False
+    forms = [name, name.split()[0], "me", "you", "the user"]
+    return any(re.match(r"(?i)%s\s*(?:$|[,:;])" % re.escape(f), waiting) for f in forms)
+
+
+def waiting_badge(waiting: str) -> str:
+    """The first clause of a Waiting on row, for the badge (#342): the text
+    before the first colon or semicolon. The whole row is the badge's title
+    and the work's own page."""
+    return re.split(r"[:;]", waiting, maxsplit=1)[0].strip() or waiting
+
+
 def ago(day: Optional[dt.date], today: dt.date) -> str:
     """When something last moved, as said aloud: Today, Yesterday, 3 days ago, Last week."""
     if day is None:
@@ -5186,6 +5218,10 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
     example = example_zone(ws)
     Y = your_work_mod()
     looks = Y.first_looks(ws)
+    try:
+        me = ask_scope_mod().user_name(ws)
+    except Exception:
+        me = ""
     out = []
     for zone, data in T.items():
         zdir = data["folder"]
@@ -5225,6 +5261,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                 "name": work_name_for(r), "zone": zone, "project": r["project"], "thread": r["thread"],
                 "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": "%s/%s" % (zone, r["rel"]),
                 "example": zone == example, "next": without_owner(nxt), "waiting": waiting_on(rows.get("Waiting on", "")),
+                "mine": waits_on_user(waiting_on(rows.get("Waiting on", "")), me),
                 "deadline": filled(rows.get("Deadline")), "moved": r.get("touched") or r.get("updated"),
                 "owed": owed, "about": about, "where": read.get("where") or "", "entry": read.get("entry"),
                 "who": party_names(ctx, r["party"]), "files": files, "folder_said": folder_said,
@@ -5296,7 +5333,8 @@ def work_row(w: dict, today: dt.date) -> str:
         nxt += ' <span class="muted">· waits on your answer above</span>'
     owed = owed_said(w["owed"], today)
     meta = E(ago(w["moved"], today)) + (' · <span class="sh-owed">%s</span>' % E(owed) if owed else "")
-    side = ('<span class="sh-wait go">Waiting on %s</span>' % E(w["waiting"]) if w["waiting"] else continue_button(w))
+    side = ('<span class="sh-wait go" title="Waiting on %s">Waiting on %s</span>' % (E(w["waiting"]), E(waiting_badge(w["waiting"])))
+            if w["waiting"] and not w.get("mine") else continue_button(w))
     return ('<div class="sh-row" data-w="%s"><div class="sh-name"><button type="button" class="sh-link" data-w-open="%s">%s</button>%s</div>'
             '<div class="sh-next">%s</div><div class="sh-meta">%s</div>%s</div>'
             % (E(w["id"]), E(w["id"]), E(w["name"]), '<span class="sh-tag">Example</span>' if w["example"] else "",
@@ -5659,7 +5697,7 @@ def work_page(w: dict, today: dt.date, kept: Optional[dict]) -> str:
         dl = [("Not read yet", "Garrick has not opened these files. Start with this one reads them and tells you where "
                "the work stands; nothing in the folder is changed.")]
     else:
-        acts = continue_button(w, "Continue in Claude", primary=not w["waiting"] and not asking)
+        acts = continue_button(w, "Continue in Claude", primary=(not w["waiting"] or w.get("mine")) and not asking)
         if mode == F.COPY:
             acts += ('<div class="sh-what">Garrick refreshes its copy from your folder first, then opens Claude\'s desktop app '
                      'on %s. Claude reads your folder, as before.</div>' % E(w["name"]))
@@ -6059,14 +6097,14 @@ h2.sh-h small{font-family:system-ui,-apple-system,sans-serif;font-size:12px;colo
 .sh-opts .act{font-size:13px;padding:6px 12px;border-radius:8px}
 .sh-empty{padding:14px 16px;color:var(--muted)}
 .sh-warn{padding:14px 16px;border-left:3px solid var(--warning);margin-top:12px}.sh-warn p{margin:4px 0 0;color:var(--ink2)}
-.sh-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 14px;padding:12px 16px;border-top:1px solid var(--line);align-items:center}
+.sh-row{display:grid;grid-template-columns:minmax(0,1fr) fit-content(40%);gap:4px 14px;padding:12px 16px;border-top:1px solid var(--line);align-items:center}
 .sh-list>.sh-row:first-child{border-top:0}.sh-row>.go{grid-row:1/span 3;grid-column:2}
 .sh-name{font-weight:600;min-width:0}.sh-next{color:var(--ink2);grid-column:1;min-width:0;overflow-wrap:anywhere}.sh-meta{grid-column:1;font-size:12px;color:var(--muted)}
 .sh-link{color:var(--accent);cursor:pointer;background:none;border:0;font:inherit;padding:0;text-align:left}.sh-link:hover{text-decoration:underline;text-underline-offset:2px}
 .sh-name .sh-link{color:var(--ink);font-weight:600}.sh-name .sh-link:hover{color:var(--accent)}
 .sh-tag{display:inline-block;font-size:11px;font-weight:600;color:var(--accent);background:var(--wash);border-radius:4px;padding:0 6px;margin-left:6px;vertical-align:1px}
 .sh-owed{color:color-mix(in srgb,var(--warning) 62%,var(--ink));font-weight:600}
-.sh-wait{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;padding:5px 10px;white-space:nowrap}
+.sh-wait{font-size:12px;color:var(--muted);border:1px dashed var(--line);border-radius:8px;padding:5px 10px;white-space:normal;max-width:40%;overflow-wrap:anywhere}
 details.sh-more>summary{padding:10px 16px;border-top:1px solid var(--line);font-size:13px;color:var(--accent)}details.sh-more[open]>summary{color:var(--muted)}
 .sh-foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:22px;font-size:13px;color:var(--muted)}
 .sh-start{padding:26px 20px;text-align:center}.sh-start p{color:var(--ink2);max-width:440px;margin:6px auto 0}.sh-big{font-family:var(--display);font-size:20px}
@@ -6090,7 +6128,7 @@ details.sh-more>summary{padding:10px 16px;border-top:1px solid var(--line);font-
 .sh-req{padding:14px 16px}.sh-req blockquote{margin:6px 0 12px;padding:10px 12px;border-left:3px solid var(--accent);background:var(--wash);border-radius:0 8px 8px 0;color:var(--ink)}
 .sh-what{font-size:12px;color:var(--muted);margin-top:8px}
 .sh-ownbox{margin-top:10px}.sh-ownbox textarea{width:100%;font:inherit;color:var(--ink);background:var(--raise);border:1px solid var(--accent);border-radius:8px;padding:8px 10px;min-height:60px;resize:vertical}
-@media (max-width:560px){.sh-row{grid-template-columns:minmax(0,1fr)}.sh-row>.go{grid-row:auto;grid-column:1;justify-self:start;margin-top:4px}.sh-ans{justify-content:flex-start}
+@media (max-width:560px){.sh-row{grid-template-columns:minmax(0,1fr)}.sh-wait{max-width:none}.sh-row>.go{grid-row:auto;grid-column:1;justify-self:start;margin-top:4px}.sh-ans{justify-content:flex-start}
 #tab-home,#tab-work{max-width:none}main{padding:16px 16px 80px}body.simple .sh-dot .sh-dw{display:none}}
 """
 

@@ -233,6 +233,88 @@ class TestWhatTheRequestNamed(MakeCase):
         self.assertEqual([], out["choices"])                  # the hub's link waits for a wrap, so Undo would be refused
 
 
+class TestTheNameIsTheRequests(MakeCase):
+    """Second review: the proposed name must be in the request, the zone is the request's, one project at a time,
+    and a spoken form is the user's words."""
+
+    def go(self, request, action, zone=None, *more):
+        asker = ask.Asker(self.root, FakeSession(*[json.dumps({"say": "ok", "do": [x]}) for x in (action,) + more]))
+        return asker, asker.ask(request, zone=zone)
+
+    def made_nothing(self, out, kind="clarify"):
+        self.assertEqual(kind, out["kind"], out)
+        self.assertEqual("start", self.head())
+        self.assertTrue(self.clean())
+
+    def test_a_name_the_request_does_not_hold_names_nothing(self):
+        for request, action in (
+                ("new project Acme Expansion in Work", {"verb": "new-project", "zone": "Work", "name": "Acme Expansion Plan"}),
+                ("new project Birch Harbour in Work", {"verb": "new-project", "zone": "Work", "name": "Birch-Harbour"}),
+                ("new thread Acme Review Budget", {"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": "Budget"}),
+                ("new thread Notes on Birch Entry", {"verb": "new-thread", "zone": "Work", "project": "Birch Entry",
+                                                     "name": "Birch Entry Notes"})):
+            _, out = self.go(request, action)
+            self.made_nothing(out)
+            self.assertEqual([], out["done"], request)
+
+    def test_a_name_inside_a_longer_word_is_not_the_name(self):
+        _, out = self.go("new thread Budgeting in Acme Review",
+                         {"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": "Budget"})
+        self.made_nothing(out)
+
+    def test_the_zone_of_a_project_is_the_requests(self):
+        proposal = {"verb": "new-project", "zone": "Work", "name": "Harbour Two", "party": "acme"}
+        _, out = self.go("new project Harbour Two for Acme Corp in Personal", proposal)
+        self.assertFalse(out["ok"])
+        self.assertTrue(out["done"][0].startswith("Refused: The request is for Personal, not Work"), out["done"])
+        self.assertEqual("start", self.head())
+        _, out = self.go("new project Harbour for Acme Corp", dict(proposal, name="Harbour"), zone="Personal")
+        self.assertFalse(out["ok"])
+        self.assertFalse((self.work / "Harbour").exists())
+        self.assertEqual("start", self.head())
+        _, out = self.go("new project Harbour for Acme Corp in Work", dict(proposal, name="Harbour"), zone="Personal")
+        self.assertTrue(out["ok"], out)                                    # said in the request, it wins over the window
+
+    def test_a_project_for_a_party_with_no_zone_said_takes_the_zone_the_party_is_in(self):
+        _, out = self.go("new project Harbour for Acme Corp", {"verb": "new-project", "zone": "Work", "name": "Harbour",
+                                                               "party": "acme"})
+        self.assertTrue(out["ok"], out)
+
+    def test_two_projects_named_is_asked_with_a_choice_for_each(self):
+        _, out = self.go("new thread Budget in Acme Review and Birch Entry",
+                         {"verb": "new-thread", "zone": "Work", "project": "Birch Entry", "name": "Budget"})
+        self.made_nothing(out)
+        self.assertEqual("Which project is the thread Budget for: Acme Review or Birch Entry?", out["say"])
+        self.assertEqual(["new thread Budget in Acme Review", "new thread Budget in Birch Entry"],
+                         [c["request"] for c in out["choices"]])
+
+    def test_a_choice_of_project_carries_the_whole_request_and_does_not_loop(self):
+        asker, out = self.go("new thread Budget in Acme Review and Birch Entry",
+                             {"verb": "new-thread", "zone": "Work", "project": "Birch Entry", "name": "Budget"},
+                             None, {"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": "Budget"})
+        self.assertIsNone(asker.unclear)
+        out = asker.ask(out["choices"][0]["request"])
+        self.assertTrue(out["ok"], out)
+        self.assertTrue((self.work / "Acme Review" / "Threads" / "Budget").is_dir())
+
+    def test_a_name_that_does_not_say_how_it_is_said_is_asked_and_the_answer_is_its_spoken_form(self):
+        action = {"verb": "new-project", "zone": "Work", "name": "Q4 Planning", "party": "acme"}
+        asker, out = self.go("new project Q4 Planning for Acme Corp in Work", action)
+        self.made_nothing(out)
+        self.assertTrue(out["say"].startswith("How is Q4 Planning said?"))
+        asker.session.answers.append(json.dumps({"say": "ok", "do": [dict(action, spoken="fourth quarter planning")]}))
+        out = asker.ask("fourth quarter planning")
+        self.assertTrue(out["ok"], out)
+        self.assertIn("spoken: fourth quarter planning", (self.work / "Q4 Planning" / "Q4 Planning.md").read_text())
+
+    def test_a_spoken_form_the_request_never_held_is_dropped_and_asked_for(self):
+        action = {"verb": "new-thread", "zone": "Work", "project": "Acme Review", "name": "Q4 Review",
+                  "spoken": "quarterly review"}
+        _, out = self.go("new thread Q4 Review in Acme Review", action)
+        self.made_nothing(out)
+        self.assertTrue(out["say"].startswith("How is Q4 Review said?"))
+
+
 class TestMakingThem(MakeCase):
     def test_a_new_thread_is_made_committed_and_offers_undo(self):
         asker, out = self.run_ask("new thread Renewal in Acme Review",

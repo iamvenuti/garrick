@@ -78,7 +78,10 @@ The actions, each an object:
   "party" out when the request names none, and Garrick asks which, with
   nothing made until the user answers; never pick one, and never make a
   party: a party that is not in `<names>` is not one you can use. Leave
-  "thread" out when the request names no first thread
+  "thread" out when the request names no first thread. Add "spoken": "..."
+  to either only when the user has said how the name is heard, in the
+  request or in answer to Garrick's question; copy their words exactly,
+  never make one up
 
 Rules:
 

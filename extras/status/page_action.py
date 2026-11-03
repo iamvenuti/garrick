@@ -2002,7 +2002,7 @@ def asks_how(ws: Path, args: list) -> None:
     `thread_spoken`), so a name such as Q4 Planning is never made without the form it is heard as."""
     asked = scaffold(ws, *args, "--check").strip().splitlines()[1:]
     if asked:
-        raise Refused(" ".join(l.strip() for l in asked) + " Give it as the spoken form and ask again.")
+        raise Refused(" ".join(l.strip() for l in asked) + " Make it in a session, with its spoken form (--spoken).")
 
 
 def first_line(said: str) -> str:

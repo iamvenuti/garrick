@@ -331,9 +331,20 @@ class Needs(Bad):
     """A request that needs one more answer before anything is written (#345): the question, and one choice
     per candidate. It is never a refusal; the box asks and nothing is made until it is answered."""
 
-    def __init__(self, question: str, choices: List[dict]):
+    def __init__(self, question: str, choices: List[dict], keep: bool = True):
         super().__init__(question)
-        self.question, self.choices = question, choices
+        # `keep`: the request waits for the answer, which is read together with it. A choice that carries the whole
+        # request again (which of two projects) keeps nothing, or the first request would name both once more.
+        self.question, self.choices, self.keep = question, choices, keep
+
+
+class Outside:
+    """What a request named outside the new work's own name (#345): the party tags, the entries (places), the zone
+    it settles (None when it does not), and the request's text, for a spoken form to be found in."""
+
+    def __init__(self, entries, zone, text):
+        self.entries, self.zone, self.text = list(entries), zone, text
+        self.parties = set().union(*(e.parties for e in self.entries)) if self.entries else set()
 
 
 class Stopped(Bad):
@@ -734,25 +745,46 @@ def project_party(a: dict, zone: str, ws: Path, named) -> str:
     raise Needs(question, [{"label": label, "request": label} for label in labels])
 
 
+def spoken_in(a: dict, named) -> Optional[str]:
+    """A spoken form the session proposes, kept only when the request holds those words (word for word, any case):
+    the form is the user's to choose, so one the session made up is dropped, and the box asks (#345)."""
+    given, text = a.get("spoken"), getattr(named, "text", "")
+    if isinstance(given, str) and given.strip() and text and \
+            re.search(r"(?<!\w)%s(?!\w)" % re.escape(given.strip()), text, re.I):
+        return given.strip()
+    return None
+
+
 def new_work(a: dict, zone: str, names: Dict[str, Dict[str, dict]], ws: Path, named) -> Tuple[str, dict]:
-    """new-project and new-thread (#345), as page_action.py takes them. The zone is one the list has; a thread's
-    project is one it lists in that zone; a project's party is project_party()'s. Names are work_name()'s, and
-    scaffold.py's check-name runs before the request does."""
+    """new-project and new-thread (#345), as page_action.py takes them. The zone is the request's; a thread's
+    project is one it named in that zone, and only one; a project's party is project_party()'s. Names are
+    work_name()'s, and scaffold.py's check-name runs before the request does."""
+    name = work_name(a.get("name"), "name")
+    spoken = spoken_in(a, named)
+    extra = {"spoken": spoken} if spoken else {}
     if a["verb"] == "new-thread":
         project = a.get("project")
         if not isinstance(project, str) or project not in names[zone]:
             raise Bad("no project %r in %s" % (project, zone) if project is not None else "new-thread names a project")
         _, places = named_parts(named)
-        if not any(e.kind == "project" and e.project == project and e.zone == zone for e in places or ()):
+        asked = list(dict.fromkeys((e.zone, e.project) for e in places or () if e.kind == "project"))
+        if len(asked) > 1:                          # two projects named: whichever the session picked is not the request's
+            labels = [p for _, p in asked]
+            raise Needs("Which project is the thread %s for: %s?" % (name, ", ".join(labels[:-1]) + " or " + labels[-1]),
+                        [{"label": p, "request": "new thread %s in %s" % (name, p)} for p in labels], keep=False)
+        if (zone, project) not in asked:
             # The session's pick is not the request's: the project (and so its zone and its party) must be one the
             # request itself named, outside the new thread's own name; else it asks, and nothing is written.
-            raise Needs("Which project is the thread %s for? Name it, as in \"new thread %s in %s\"."
-                        % (work_name(a.get("name"), "name"), a["name"].strip(), project), [])
-        return "act", {"verb": "new-thread", "zone": zone, "project": project, "name": work_name(a.get("name"), "name")}
-    name = work_name(a.get("name"), "name")
+            raise Needs("Which project is the thread %s for? Name it, as in \"new thread %s in %s\"." % (name, name, project), [])
+        return "act", dict({"verb": "new-thread", "zone": zone, "project": project, "name": name}, **extra)
+    settled = getattr(named, "zone", zone) if hasattr(named, "text") else zone
+    if settled is None:
+        raise Needs("Which zone is the project %s for? Say it, as in \"new project %s in %s\"." % (name, name, zone), [])
+    if settled != zone:
+        raise Bad("The request is for %s, not %s: say which zone the project %s is for" % (settled, zone, name))
     first = work_name(a["thread"], "thread") if a.get("thread") is not None else FIRST_THREAD
-    return "act", {"verb": "new-project", "zone": zone, "name": name, "party": project_party(a, zone, ws, named),
-                   "thread": first}
+    return "act", dict({"verb": "new-project", "zone": zone, "name": name, "party": project_party(a, zone, ws, named),
+                        "thread": first}, **extra)
 
 
 def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path, named=None) -> Tuple[str, dict]:
@@ -1236,6 +1268,7 @@ class Asker:
         self.last_zone = None       # the zone last answered in, kept across resets: a zone name, never material
         self.zone_question = None   # a question asked about its zone, waiting for one
         self.named_parties = set()  # the party tags the request under way named: a new project's party is one of them (#345)
+        self.window_zone = None     # the zone the window answers in, for a new project's zone
         self.heard_text = ""        # that request as the names were read from it, with any earlier one it answers
         self.asking = False         # whether the last reply was a session's own question for the user
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
@@ -1351,7 +1384,7 @@ class Asker:
                                                         "open\".</correction>", cap=False)
                         say, do = parse(text)
                     self.asking = asks_back(text, say, do)
-                    self.named_parties, self.heard_text = set(named.parties), heard
+                    self.named_parties, self.heard_text, self.window_zone = set(named.parties), heard, window
                     out = self.carry_out(say, do, names, usage)
             finally:
                 bill(turns)
@@ -1777,19 +1810,50 @@ class Asker:
         self.refreshed = {"command", "answer"} if answering else {"command"}
 
     def named_outside(self, a: dict, names):
-        """What the request named, with the new project's or thread's own name taken out of it: a word of the
-        name (Acme in "Acme Expansion") never names a party or a place (#345). ask_scope's Mentions, or None when
-        the request cannot be read plainly, which asks."""
+        """What the request named, apart from the new project's or thread's own name (#345). The proposed name must be
+        in the request word for word (any case, on word boundaries); it is taken out, and only what is left names a
+        party, a project or a zone. A party or a project spoken right up against the name, or over it, is not read as
+        named, since the session may have split one name in two. An Outside, or None when the request cannot be read
+        plainly, which asks and writes nothing."""
         name = a.get("name") if isinstance(a, dict) and a.get("verb") in ("new-project", "new-thread") else None
         if not isinstance(name, str) or not name.strip() or not self.heard_text:
             return None
-        text = re.sub(re.escape(name.strip()), " ", self.heard_text, flags=re.I)
+        text = self.heard_text
+        pattern = re.compile(r"(?<!\w)%s(?!\w)" % re.escape(name.strip()), re.I)
+        span = pattern.search(text)
+        if span is None:
+            return None
         try:
             sc = scope_lib()
-            found = sc.mentions(self.ws, text, names, self.ctx, sc.lib(self.ws), answer=None)
+            lib = sc.lib(self.ws)
+            rest = sc.mentions(self.ws, pattern.sub(" ", text), names, self.ctx, lib, answer=None)
+            full = sc.mentions(self.ws, text, names, self.ctx, lib, answer=None)
         except Exception:
             return None
-        return None if found.question else found
+        if rest.question or full.question:
+            return None
+        apart = set()                               # what the full request names away from the name, with a word between
+        for start, end, _, means in full.heard:
+            gap = text[end:span.start()] if end <= span.start() else text[span.end():start] if start >= span.end() else None
+            if gap is not None and re.search(r"\w", gap):
+                apart.update(means)
+        entries = [e for e in rest.entries if e in apart]
+        zones = [z for z in names if sc.zone_named(pattern.sub(" ", text), z)]
+        if len(zones) > 1:
+            return None
+        zone = zones[0] if zones else self.window_zone
+        if zone is None:
+            held = {e.zone for e in entries if e.zone}
+            zone = held.pop() if len(held) == 1 else None
+        return Outside(entries, zone, text)
+
+    def how_said(self, pa, item: dict) -> List[str]:
+        """The lines in which scaffold.py asks how a name is said, from page_action.py's check-name; none when the name
+        says it (or a form was given). Nothing is written (#345)."""
+        req = {"verb": "check-name", "kind": "project" if item["verb"] == "new-project" else "thread"}
+        req.update({k: v for k, v in item.items() if k != "verb"})
+        out, _, _ = pa.perform(self.ws, req, pa.ops_lib(self.ws), via="ask")
+        return [l.strip() for l in str(out.get("say") or "").splitlines()[1:] if l.strip()] if out.get("ok") else []
 
     def name_refused(self, pa, item: dict) -> str:
         """scaffold.py's own refusal of the name a new project or thread would have, in its words, or "" when it
@@ -1885,6 +1949,16 @@ class Asker:
             same = canon(item)
             if a.get("again") is True and same in self.asked:
                 item["confirm"] = self.asked[same]  # the user said yes to the question about it
+            if item["verb"] in ("new-project", "new-thread") and not item.get("spoken"):
+                how = self.how_said(pa, item)        # a name that does not say how it is said: asked, not made without it
+                if how:
+                    if how[0].startswith(item["name"]):
+                        needs = needs or Needs("How is %s said? Say the words it is heard as, such as \"fourth quarter "
+                                               "planning\" for Q4 Planning." % item["name"], [])
+                    else:
+                        done.append("Refused: " + " ".join(how) + " Make it in a session, with its spoken form.")
+                        ok = False
+                    continue
             if item["verb"] in ("new-project", "new-thread"):
                 no = self.name_refused(pa, item)     # scaffold.py's own words for a name that will not do, before anything is made
                 if no:
@@ -1917,8 +1991,9 @@ class Asker:
         if questions and len(questions) == len(do):
             say = questions[0]                      # what the session said it did did not happen: the question did
         if needs:                                   # asked, with the request kept to be answered, as a name that fits two is
-            self.unclear = self.heard_text[-MAX_REQUEST:]
-            self.question = self.question or self.unclear
+            if needs.keep:
+                self.unclear = self.heard_text[-MAX_REQUEST:]
+                self.question = self.question or self.unclear
             self.asking = False
             return {"kind": "clarify", "say": needs.question, "done": done, "launch": launch, "ok": ok, "acted": acted,
                     "choices": needs.choices,

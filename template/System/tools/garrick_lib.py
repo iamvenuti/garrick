@@ -184,6 +184,7 @@ __all__ = [
     "WALL_HOOK",
     "WALL_HOOK_NESTED",
     "WALL_HOOK_WIKI",
+    "WIKI_GIT_REASON",
     "WALL_HOOK_MARK",
     "ZONE_TEMPLATE",
     "ZONE_TODO",
@@ -2389,7 +2390,7 @@ WALL_HOOK_WIKI = """#!/bin/sh
 # Installed by Garrick. The deliberate override, only when you mean it: git commit --no-verify
 top="$(git rev-parse --show-toplevel)"
 real="$(cd "$top" && pwd -P)"
-gitdir="$(cd "$(git rev-parse --git-dir)" && pwd -P)"
+gitdir="$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)"
 # A workspace is the right one when this repository is exactly its Wikis, or a
 # wiki under it, with its own .git, and its check is not inside this repository.
 ours() {
@@ -2399,12 +2400,17 @@ ours() {
   wikis="$(cd "$1/Wikis" 2>/dev/null && pwd -P)" || return 1
   [ "$real" = "$wikis" ] && return 0
   for wiki in "$1"/Wikis/*/; do
+    case "$(basename "$wiki")" in _*|.*) continue ;; esac
     [ -d "$wiki" ] && [ "$(cd "$wiki" && pwd -P)" = "$real" ] && return 0
   done
   return 1
 }
+if [ -L "$real/.git" ] || [ -f "$real/.git" ]; then
+  echo "Commit refused: this wiki's .git is a file or a link pointing elsewhere (a linked worktree, --separate-git-dir), not a folder inside it. Garrick checks a wiki only when its .git is a folder inside it." >&2
+  exit 1
+fi
 if [ "$gitdir" != "$real/.git" ]; then
-  echo "Commit refused: this is a linked worktree, or git is told to use another work tree (GIT_WORK_TREE, core.worktree), so the wall check cannot place the files. Commit from the wiki's own folder." >&2
+  echo "Commit refused: git is told to use another work tree (GIT_WORK_TREE, core.worktree), so the wall check cannot place the files. Commit from the wiki's own folder." >&2
   exit 1
 fi
 dir="$(dirname "$top")"
@@ -2412,12 +2418,16 @@ while [ "$dir" != "/" ] && ! ours "$dir"; do dir="$(dirname "$dir")"; done
 if ! ours "$dir"; then
   dir=%s
   if [ -z "$dir" ] || ! ours "$dir"; then
-    echo "Commit refused: no workspace found whose Wikis is this repository, so the wall check cannot run. Run python3 System/tools/check.py --install-hooks in the workspace, or commit with --no-verify if you mean to skip it." >&2
+    echo "Commit refused: no workspace found whose Wikis, or whose wiki (a folder not starting with _ or a dot), is this repository, so the wall check cannot run. Run python3 System/tools/check.py --install-hooks in the workspace, or commit with --no-verify if you mean to skip it." >&2
     exit 1
   fi
 fi
 exec python3 "$dir/System/tools/check.py" --root "$dir" --staged --walls-only
 """
+
+
+WIKI_GIT_REASON = ("its .git is a file or a link pointing elsewhere (a linked worktree, --separate-git-dir); "
+                   "Garrick checks a wiki only when its .git is a folder inside it")
 
 
 def wiki_hook_text(root: Optional[PathLike] = None) -> str:
@@ -2451,6 +2461,9 @@ def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False,
     Refuses (FileExistsError) to replace a pre-commit hook Garrick did not write,
     and (FileNotFoundError) a zone whose `.git` is not a folder."""
     hooks = _hooks_dir(zone)
+    if wiki and (Path(zone) / ".git").exists() and (Path(zone) / ".git").is_symlink() or (
+            wiki and (Path(zone) / ".git").is_file()):
+        raise FileNotFoundError("%s: %s" % (zone, WIKI_GIT_REASON))
     if hooks is None:
         raise FileNotFoundError("%s is not a git repository with its own .git folder" % zone)
     hook = hooks / "pre-commit"

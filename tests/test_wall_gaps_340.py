@@ -302,6 +302,57 @@ class WikiHookTest(EmployerWorkspace):
         self.assertNotEqual(0, res.returncode)
         self.assertIn("pat-newcomer.md", res.stderr)
 
+    def test_a_wiki_whose_git_is_a_file_or_a_link_is_refused_with_the_true_reason(self):
+        separate = Path(self._tmp.name).resolve() / "separate-git"
+        shutil.rmtree(str(self.wikis / ".git"))
+        git(self.wikis, "init", "-q", "--separate-git-dir", str(separate))
+        self.assertTrue((self.wikis / ".git").is_file())
+        with self.assertRaises(FileNotFoundError) as caught:
+            garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root)
+        self.assertIn("pointing elsewhere", str(caught.exception))
+        found = [f for f in check.run_checks(self.root) if f.check == "zones" and f.path == "Wikis"]
+        self.assertEqual(1, len(found))
+        self.assertIn("pointing elsewhere", found[0].message)
+        self.assertNotIn("--install-hooks", found[0].message)
+        (separate / "hooks").mkdir(exist_ok=True)
+        (separate / "hooks" / "pre-commit").write_text(garrick_lib.wiki_hook_text(self.root))
+        (separate / "hooks" / "pre-commit").chmod(0o755)
+        write(self.wikis / "note.md", "x\n")
+        git(self.wikis, "add", "-A")
+        res = self.commit_in(self.wikis)
+        self.assertNotEqual(0, res.returncode)
+        self.assertIn("pointing elsewhere", res.stderr)
+        via = subprocess.run([sys.executable, str(TOOLS / "check.py"), "--root", str(self.root), "--staged",
+                              "--walls-only"], cwd=str(self.wikis), env=dict(GIT_ENV), capture_output=True, text=True)
+        self.assertIn("pointing elsewhere", via.stderr)
+
+    def test_python_and_the_hook_agree_on_a_git_that_is_a_link(self):
+        ext = Path(self._tmp.name).resolve() / "gitext"
+        shutil.move(str(self.wikis / ".git"), str(ext))
+        os.symlink(str(ext), str(self.wikis / ".git"))
+        write(self.wikis / "note.md", "x\n")
+        git(self.wikis, "add", "-A")
+        via = subprocess.run([sys.executable, str(TOOLS / "check.py"), "--root", str(self.root), "--staged",
+                              "--walls-only"], cwd=str(self.wikis), env=dict(GIT_ENV), capture_output=True, text=True)
+        self.assertEqual(1, via.returncode, via.stderr)
+        self.assertIn("pointing elsewhere", via.stderr)
+        (ext / "hooks" / "pre-commit").write_text(garrick_lib.wiki_hook_text(self.root))
+        (ext / "hooks" / "pre-commit").chmod(0o755)
+        res = self.commit_in(self.wikis)
+        self.assertNotEqual(0, res.returncode)
+        self.assertIn("pointing elsewhere", res.stderr)
+
+    def test_a_wiki_folder_starting_with_an_underscore_is_not_a_wiki_and_the_hook_says_so(self):
+        scratch = self.wikis / "_Scratch"
+        write(scratch / "a.md", "hi\n")
+        git(scratch, "init", "-q")
+        git(scratch, "config", "user.email", "test@example.invalid")
+        garrick_lib.install_wall_hook(scratch, wiki=True, root=self.root)
+        git(scratch, "add", "-A")
+        res = self.commit_in(scratch)
+        self.assertNotEqual(0, res.returncode)
+        self.assertIn("not starting with _", res.stderr)
+
     def test_a_hook_that_finds_no_workspace_refuses_the_commit(self):
         hook = garrick_lib.install_wall_hook(self.wikis, wiki=True, root=self.root / "nowhere")
         shutil.rmtree(str(self.root / "System" / "tools"))
@@ -636,6 +687,49 @@ class HookTest(EmployerWorkspace):
         self.assertFalse([x for x in subs if "/entities/" in x or "/people/" in x], subs)
         fixed = {p.sub: p.fixed for p in plans["Meetings"].pages}
         self.assertTrue(fixed.get("wiki/entities/old-acme.md") and fixed.get("wiki/people/pat-newcomer.md"), fixed)
+
+    def stage_as(self, source, name):
+        """Stage the file `source` under `name` as typed, whatever the disk's case rules."""
+        blob = git(self.wikis, "hash-object", "-w", str(source)).strip()
+        git(self.wikis, "update-index", "--add", "--cacheinfo", "100644,%s,%s" % (blob, name))
+
+    def test_a_folder_typed_in_another_case_is_read_as_the_folder(self):
+        bad = self.people / "pat-newcomer.md"
+        write(bad, person("Pat Newcomer", "acme", "Buyer at [[wiki/entities/birch-co]].", "[[wiki/entities/acme-corp]]"))
+        for name in ("Meetings/Wiki/People/pat-newcomer.md", "Meetings/Dormant/wiki/people/pat-newcomer.md",
+                     "Meetings/dormant/Wiki/People/pat-newcomer.md", "meetings/WIKI/PEOPLE/pat-newcomer.md",
+                     "Meetings/ARCHIVE/wiki/people/pat-newcomer.md"):
+            git(self.wikis, "reset", "-q")
+            self.stage_as(bad, name)
+            found = sorted((f.severity, f.check) for f in check.run_checks(self.root, walls_only=True, staged=self.wikis))
+            self.assertEqual([("error", "walls")], found, name)
+
+    def test_an_entity_page_typed_in_another_case_still_re_reads_the_people(self):
+        write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[acme-corp]].",
+                                                      "[[wiki/entities/acme-corp]]"))
+        self.commit()
+        page = self.meetings / "dormant" / "wiki" / "entities" / "acme-corp.md"
+        write(page, entity("Acme Corp", "birch"))
+        self.stage_as(page, "Meetings/Dormant/wiki/entities/acme-corp.md")
+        self.assertEqual(self.refused("pat-newcomer"), self.staged(add=False))
+
+    def test_the_full_check_finds_person_pages_in_a_folder_of_another_case(self):
+        write(self.meetings / "Dormant" / "Wiki" / "People" / "pat-two.md",
+              person("Pat Two", "acme", "Buyer at [[wiki/entities/birch-co]].", "[[wiki/entities/acme-corp]]"))
+        found = [f.path for f in check.run_checks(self.root) if f.check == "walls"]
+        self.assertEqual(1, len(found), found)
+        self.assertTrue(found[0].lower().endswith("/people/pat-two.md"), found)
+
+    def test_a_submodule_in_a_wiki_is_refused_and_a_nested_git_is_warned_about(self):
+        git(self.wikis, "update-index", "--add", "--cacheinfo", "160000,%s,Meetings/wiki/people" % ("a" * 40))
+        found = [(f.severity, f.check, f.path) for f in check.run_checks(self.root, walls_only=True, staged=self.wikis)]
+        self.assertEqual([("error", "walls", "Meetings/wiki/people")], found)
+        git(self.wikis, "reset", "-q")
+        write(self.meetings / "wiki" / "people" / "sub" / ".git", "gitdir: elsewhere\n")
+        full = [f for f in check.run_checks(self.root) if f.check == "walls"]
+        self.assertEqual(1, len(full))
+        self.assertEqual("warning", full[0].severity)
+        self.assertIn("not a wiki's own", full[0].message)
 
     def test_a_link_in_the_text_to_a_page_that_is_not_there_is_refused(self):
         write(self.people / "pat-newcomer.md", person("Pat Newcomer", "acme", "Buyer at [[wiki/entities/nowhere]]."))

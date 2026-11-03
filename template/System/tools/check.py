@@ -121,7 +121,7 @@ from garrick_lib import (  # noqa: E402
 )
 from garrick_lib import _listed  # noqa: E402  (#340)
 from garrick_lib import (  # noqa: E402  (#330)
-    FRONTMATTER_PLAIN, PERSON_KEYS, PERSON_PLAIN, PERSON_SHAPE, WALLS_KEYS, frontmatter_form_problem,
+    FRONTMATTER_PLAIN, PERSON_KEYS, PERSON_PLAIN, PERSON_SHAPE, WALLS_KEYS, WIKI_GIT_REASON, frontmatter_form_problem,
     entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, org_key, organisation_link,
     organisation_proposal,
 )
@@ -1362,8 +1362,15 @@ def check_zones(ws: Workspace) -> List[Finding]:
         if not (zone / INBOX).is_dir():
             out.append(Finding(WARNING, "zones", r, "has no %s/ folder; mail and files for this zone have nowhere to land" % INBOX,
                                "The %s zone has no inbox" % zone.name))
-    for wiki in wiki_repos(ws):
-        if not has_wall_hook(wiki):
+    wikis = ws.root / "Wikis"
+    for wiki in [wikis] + visible_dirs(wikis):
+        git_dir = wiki / ".git"
+        if os.path.lexists(str(git_dir)) and (git_dir.is_symlink() or not git_dir.is_dir()):
+            out.append(Finding(WARNING, "zones", rel(ws, wiki),
+                               "its .git is a file or a link pointing elsewhere; Garrick checks a wiki only when "
+                               "its .git is a folder inside it, so commits here are refused",
+                               "The %s wiki's .git is not a folder inside it" % wiki.name))
+        elif git_dir.is_dir() and not has_wall_hook(wiki):
             out.append(Finding(WARNING, "zones", rel(ws, wiki),
                                "no pre-commit wall check; a hand edit committed here is read by the next full check "
                                "alone. Run `python3 System/tools/check.py --install-hooks`",
@@ -3238,11 +3245,31 @@ ENTITY_FOLDERS = (MEETINGS_ENTITIES, ("Wikis", "Meetings", "dormant", "wiki", "e
                   ("Wikis", "Meetings", "archive", "wiki", "entities"))
 
 
+def folded_dirs(ws: Workspace, parts) -> List[Path]:
+    """Every folder at `parts` under the workspace, a part matching in any case
+    or Unicode form, so a person page in `Wiki/People/` is found as one in
+    `wiki/people/` is (#340). The folder as spelt comes first."""
+    here = [ws.root]
+    for part in parts:
+        want = unicodedata.normalize("NFC", part).casefold()
+        nxt = []
+        for base in here:
+            try:
+                names = sorted(os.listdir(str(base)))
+            except OSError:
+                continue
+            nxt += [base / n for n in names if unicodedata.normalize("NFC", n).casefold() == want]
+        here = nxt
+    out = [d for d in here if d.is_dir() or d.is_symlink()]
+    exact = ws.root.joinpath(*parts)
+    return sorted(out, key=lambda d: (d != exact, str(d)))
+
+
 def check_people(ws: Workspace) -> List[Finding]:
     """A person page is read on both sides of every wall. It says who someone
     is and which party they belong to, and holds nothing learned in a meeting."""
     out = []
-    folders = [ws.root.joinpath(*f) for f in PEOPLE_FOLDERS]
+    folders = [d for f in PEOPLE_FOLDERS for d in folded_dirs(ws, f)]
     if not any(f.is_dir() for f in folders):
         return out
     common = entities = None
@@ -3512,8 +3539,8 @@ def wiki_folder_page(ws: Workspace, grade: str, folder: str, name: str) -> Optio
 def is_entity_path(ws: Workspace, page: Path) -> bool:
     """Is `page` an entity page of the Meetings wiki, at any grade? By its
     path from the workspace, however a link in the way is spelt."""
-    parts = rel(ws, page).split("/")
-    if parts[:2] != ["Wikis", "Meetings"]:
+    parts = [unicodedata.normalize("NFC", x).casefold() for x in rel(ws, page).split("/")]
+    if parts[:2] != ["wikis", "meetings"]:
         return False
     rest = parts[2:]
     if rest[:1] and rest[0] in GRADE_DIRS:
@@ -3732,8 +3759,7 @@ def person_pages(ws: Workspace) -> List[Tuple[Path, str]]:
     page or a folder are passed over, as they may lead out of the wiki; the
     walls refuse them instead (person_links)."""
     out = []
-    for parts in PEOPLE_FOLDERS:
-        folder = ws.root.joinpath(*parts)
+    for folder in [d for parts in PEOPLE_FOLDERS for d in folded_dirs(ws, parts)]:
         if not folder.is_dir() or folder.is_symlink():
             continue
         for here, dirs, files in os.walk(str(folder)):
@@ -3757,8 +3783,7 @@ def person_links(ws: Workspace) -> List[Path]:
     itself, a folder under it, or a page in it (`.md` in any case). Fail
     closed: person_pages() passes them over, so each is a walls error."""
     out = []
-    for parts in PEOPLE_FOLDERS:
-        folder = ws.root.joinpath(*parts)
+    for folder in [d for parts in PEOPLE_FOLDERS for d in folded_dirs(ws, parts)]:
         if folder.is_symlink():
             out.append(folder)
             continue
@@ -3769,6 +3794,22 @@ def person_links(ws: Workspace) -> List[Path]:
             dirs[:] = sorted(d for d in dirs if not os.path.islink(os.path.join(here, d)))
             out += [Path(here) / f for f in files if f.lower().endswith(".md") and os.path.islink(os.path.join(here, f))]
     return sorted(out)
+
+
+def under_folder(ws: Workspace, path: Path, parts) -> bool:
+    """Is `path` at or below the wiki folder `parts`, as git names it, with
+    every part compared in any case and Unicode form (#340)?"""
+    home = _fold_parts(lexical_folder(ws, parts).parts)
+    here = _fold_parts(path.parts)
+    return len(here) >= len(home) and here[:len(home)] == home
+
+
+def _same_folder(ws: Workspace, path: Path, parts) -> bool:
+    return _fold_parts(path.parts) == _fold_parts(lexical_folder(ws, parts).parts)
+
+
+def _fold_parts(parts) -> Tuple[str, ...]:
+    return tuple(unicodedata.normalize("NFC", str(x)).casefold() for x in parts)
 
 
 def lexical_folder(ws: Workspace, parts) -> Path:
@@ -3794,7 +3835,7 @@ def staged_people(ws: Workspace, staged: List[Tuple[Path, str]],
     def under(path: Path, parts) -> bool:
         # By the path git stages it at, not where it leads: a symbolic link
         # under people/ is a person page here, and refused (staged_person_links).
-        return path.suffix.lower() == ".md" and lexical_folder(ws, parts) in path.parents
+        return path.suffix.lower() == ".md" and under_folder(ws, path, parts) and not _same_folder(ws, path, parts)
     out = [(path, text) for path, text in staged if any(under(path, f) for f in PEOPLE_FOLDERS) and path not in links]
     # An entity page at any grade, staged, edited, deleted or renamed away, can
     # change what a link in any person page opens or whose it is (#340).
@@ -5181,6 +5222,25 @@ def check_walls(ws: Workspace) -> List[Finding]:
     out.extend(person_link_finding(ws, p) for p in person_links(ws))
     out.extend(organisation_walls(ws, person_pages(ws)))
     out.extend(form_findings(ws, [(p, None) for p in form_candidates(ws)]))
+    out.extend(nested_repositories(ws))
+    return out
+
+
+def nested_repositories(ws: Workspace) -> List[Finding]:
+    """A `.git` anywhere under Wikis/ that is not a wiki's own: a submodule or a
+    clone whose pages the hook of the wiki does not read (#340)."""
+    wikis = ws.root / "Wikis"
+    if not wikis.is_dir():
+        return []
+    own = {wikis / ".git"} | {wikis / d.name / ".git" for d in visible_dirs(wikis)}
+    out = []
+    for here, dirs, files in os.walk(str(wikis)):
+        for name in sorted(set(dirs) | set(files)):
+            if name == ".git" and Path(here, name) not in own:
+                out.append(Finding(WARNING, "walls", rel(ws, Path(here)),
+                                   "holds a .git that is not a wiki's own, a submodule or a clone, so its pages are "
+                                   "in no history the wall check reads", "A repository sits inside a wiki"))
+        dirs[:] = sorted(d for d in dirs if d != ".git")
     return out
 
 
@@ -5196,13 +5256,13 @@ def form_scope(ws: Workspace, path: Path) -> Optional[Tuple[str, ...]]:
     if path.suffix.lower() != ".md":
         return None
     here = path.parent.resolve() / path.name
-    if any(lexical_folder(ws, f) in here.parents for f in PEOPLE_FOLDERS):
+    if any(under_folder(ws, here, f) for f in PEOPLE_FOLDERS):
         return None
     meetings = lexical_folder(ws, ("Wikis", "Meetings"))
     for wiki in (meetings, lexical_folder(ws, ("Wikis", "Knowledge"))):
-        if wiki not in here.parents:
+        if not under_folder(ws, here, ("Wikis", wiki.name)):
             continue
-        inner = here.relative_to(wiki).parts
+        inner = _fold_parts(here.parts)[len(wiki.parts):]
         if "raw" in inner[:-1]:
             return None
         if wiki == meetings and (inner[0] == WIKI_QUESTIONS or inner[:2] in (("wiki", "entities"), ("wiki", "sources"))
@@ -5261,9 +5321,30 @@ def form_findings(ws: Workspace, pages: List[Tuple[Path, Optional[str]]]) -> Lis
     return out
 
 
-def staged_names(repo: Path) -> Optional[Tuple[Path, List[str]]]:
-    """(top of the repository holding `repo`, every path added, copied, modified
-    or renamed in its index). None when it is not a repository."""
+# The folder names the walls match a wiki's paths by. On a case-insensitive disk
+# git keeps the case typed for a folder it does not yet track, so
+# `Meetings/Wiki/People/pat.md` is the page `wiki/people/pat.md` to every reader
+# but a comparison by exact case. In a wiki repository each folder of a staged
+# path that is one of these names in any case is read as the name itself (#340).
+WIKI_FOLDER_NAMES = {n.casefold(): n for n in (
+    "Wikis", "Meetings", "Knowledge", "wiki", "raw", "inbox", "dormant", "archive", "people", "entities",
+    "sources", "questions", "concepts", "lint")}
+_WIKI_REPO = False
+
+
+def wiki_case(name: str) -> str:
+    """`name`, a path inside a wiki repository, with each folder that is one of
+    WIKI_FOLDER_NAMES in any case or Unicode form spelt as the name; the file
+    itself is left as it is. Only where the repository being checked is a
+    wiki."""
+    if not _WIKI_REPO:
+        return name
+    parts = name.split("/")
+    return "/".join([WIKI_FOLDER_NAMES.get(unicodedata.normalize("NFC", x).casefold(), x) for x in parts[:-1]]
+                    + parts[-1:])
+
+
+def _staged_raw(repo: Path) -> Optional[Tuple[Path, List[str]]]:
     top = _git(["rev-parse", "--show-toplevel"], repo)
     if top is None:
         return None
@@ -5274,6 +5355,25 @@ def staged_names(repo: Path) -> Optional[Tuple[Path, List[str]]]:
     return top_path, [n for n in names.split("\0") if n]
 
 
+def staged_names(repo: Path) -> Optional[Tuple[Path, List[str]]]:
+    """(top of the repository holding `repo`, every path added, copied, modified
+    or renamed in its index, as the walls read it: wiki_case). None when it is
+    not a repository."""
+    raw = _staged_raw(repo)
+    return None if raw is None else (raw[0], [wiki_case(n) for n in raw[1]])
+
+
+def staged_gitlinks(repo: Path) -> List[str]:
+    """Every path the index of the repository holding `repo` holds as a
+    gitlink (mode 160000), a submodule: its pages are another repository's,
+    which no hook of this one reads (#340)."""
+    top = _git(["rev-parse", "--show-toplevel"], repo)
+    if top is None:
+        return []
+    listing = _git(["ls-files", "--stage", "-z"], Path(top.strip()).resolve()) or ""
+    return [e.split("\t", 1)[1] for e in listing.split("\0") if e.startswith("160000 ") and "\t" in e]
+
+
 def staged_removed(repo: Path) -> frozenset:
     """The paths the index deletes in the repository holding `repo`, a
     rename's old path among them: pages the commit no longer holds (#340)."""
@@ -5282,7 +5382,7 @@ def staged_removed(repo: Path) -> frozenset:
         return frozenset()
     top_path = Path(top.strip()).resolve()
     names = _git(["diff", "--cached", "--name-only", "-z", "--no-renames", "--diff-filter=D"], top_path)
-    return frozenset(top_path / n for n in (names or "").split("\0") if n)
+    return frozenset(top_path / wiki_case(n) for n in (names or "").split("\0") if n)
 
 
 def staged_links(repo: Path) -> Optional[Tuple[Path, set]]:
@@ -5306,7 +5406,7 @@ def staged_links(repo: Path) -> Optional[Tuple[Path, set]]:
         paths = 2 if parts[-1][:1] in ("R", "C") else 1
         name = fields[i + paths] if i + paths < len(fields) else ""
         if len(parts) >= 2 and parts[1] == "120000" and name:
-            out.add(name)
+            out.add(wiki_case(name))
         i += 1 + paths
     return top_path, out
 
@@ -5318,22 +5418,20 @@ def staged_person_links(ws: Workspace, repo: Path) -> Tuple[List[Finding], froze
     if links is None:
         return [], frozenset()
     top_path, names = links
-    homes = [lexical_folder(ws, f) for f in PEOPLE_FOLDERS]
-    hits = sorted(top_path / n for n in names
-                  if any(top_path / n == people or people in (top_path / n).parents for people in homes))
+    hits = sorted(top_path / n for n in names if any(under_folder(ws, top_path / n, f) for f in PEOPLE_FOLDERS))
     return [person_link_finding(ws, h) for h in hits], frozenset(hits)
 
 
 def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
     """(path, staged text) for every text file added, copied, modified or renamed
     in the index of the repository holding `repo`. None when it is not one."""
-    staged = staged_names(repo)
+    staged = _staged_raw(repo)
     if staged is None:
         return None
     top_path, names = staged
     out = []
     for name in names:
-        path = top_path / name
+        path = top_path / wiki_case(name)
         if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
         try:
@@ -5466,6 +5564,9 @@ def repository_problem(ws: Workspace, top: Path) -> str:
             return ("is a repository inside the wikis that is not one of them, a linked worktree for one; its files "
                     "match none of the places the walls read")
         return "is not part of the workspace at %s" % ws.root
+    if (top / ".git").is_symlink() or (top / ".git").is_file():
+        return "has a .git that is %s" % WIKI_GIT_REASON.split("; ", 1)[0].replace("its .git is ", "", 1) \
+            + "; " + WIKI_GIT_REASON.split("; ", 1)[1]
     gitdir = _git(["rev-parse", "--git-dir"], top)
     if gitdir is None or (top / gitdir.strip()).resolve() != (top / ".git").resolve():
         return ("has a git directory that is not its own .git, as with a linked worktree, GIT_WORK_TREE or "
@@ -5473,17 +5574,38 @@ def repository_problem(ws: Workspace, top: Path) -> str:
     return ""
 
 
+def _set_wiki_repo(ws: Workspace, top: Path, ok: bool) -> None:
+    """Whether the repository being checked is a wiki, for wiki_case()."""
+    global _WIKI_REPO
+    try:
+        rtop, wikis = top.resolve(), (ws.root / "Wikis").resolve()
+        _WIKI_REPO = ok and (rtop == wikis or wikis in rtop.parents or rtop in {
+            (ws.root / "Wikis" / d.name).resolve() for d in visible_dirs(ws.root / "Wikis")})
+    except (OSError, RuntimeError):
+        _WIKI_REPO = False
+
+
 def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
     """The walls check on what is about to be committed, and nothing else.
     Anything waiting in a zone's Inbox, or in the Meetings inbox, at any depth,
     is refused too: it has not been filed, so no wall has seen its parties yet."""
     out = []
+    global _WIKI_REPO
+    _WIKI_REPO = False
+    raw = _staged_raw(repo)
+    problem = repository_problem(ws, raw[0]) if raw is not None else ""
+    if raw is not None:
+        _set_wiki_repo(ws, raw[0], not problem)
     staged = staged_names(repo)
     zones = {z.resolve() for z in ws.zones}
     minbox = ws.root.joinpath(*MEETINGS_INBOX).resolve()
     if staged is not None:
         top_path, names = staged
-        problem = repository_problem(ws, top_path)
+        if not problem and _WIKI_REPO:
+            for link in staged_gitlinks(repo):
+                out.append(Finding(ERROR, "walls", wiki_case(link),
+                                   "is a submodule, a repository of its own whose pages no hook of this one reads; "
+                                   "a wiki holds its pages itself", "A wiki holds a submodule"))
         if problem:
             # Never no findings: a hook that checked another place's files
             # would pass what it never read (#340).

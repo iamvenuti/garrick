@@ -2435,6 +2435,9 @@ var dict=document.getElementById('menu-dictation'),dkey=document.getElementById(
 /* what the box does once it opens, said under the choice */
 var DICT={off:'Once the Ask box opens, start dictation in it too',macos:'Starts macOS Dictation in the box, with no permission needed',
 key:'Pressed for your dictation tool once the box has the cursor. Needs the Accessibility permission. A tool that listens only while its key is held cannot be started this way'};
+var FIND={on:'On. Right-click a project or thread folder in Finder, and choose Garrick.',
+off:'Off. Switch on Garrick under Extensions, Finder, in System Settings. After the app is rebuilt, macOS may need it switched on again',
+missing:'This build of the app has no Finder extension. Build the app again with make-app.sh'};
 function note(which,s){var n=document.getElementById(FIELD[which]+'-note');if(n)n.textContent=s||NOTE[which]}
 function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.checked=!!a.login;login.disabled=a.login==null;
 /* an app built before the panel says no style, and its row stays hidden; one built before the Ask hotkey, that row */
@@ -2445,6 +2448,10 @@ var said=a.said||{};note('hotkey',said.hotkey);note('askhotkey',said.askhotkey||
 if(dict){var m=a.dictation||'off',dn=document.getElementById('menu-dictation-note');dict.closest('.launcher-row').style.display='dictation' in a?'':'none';
 dict.value=m;if(dn)dn.textContent=said.dictation||DICT[m]||DICT.key;
 if(dkey){dkey.closest('.launcher-row').style.display='dictation' in a&&m==='key'?'':'none';dkey.value=a.dictationkey||'';note('dictationkey',said.dictationkey)}}
+/* the Finder extension (#346): an app built before it says nothing, and its row stays hidden */
+var fin=document.getElementById('menu-finder');
+if(fin){var fs=a.finder,fn=document.getElementById('menu-finder-note');fin.closest('.launcher-row').style.display='finder' in a?'':'none';fin.hidden=fs==='missing';
+if(fn)fn.textContent=FIND[fs]||FIND.off}
 if(a.login==null)document.getElementById('menu-login-note').textContent='Needs macOS 13 or later';key.value=a.hotkey||''}
 window.GarrickAppSet=function(a){window.GarrickApp=a;fill()};fill();
 /* the app's settings: kept by the app, so a change here does not rebuild the page */
@@ -2452,6 +2459,7 @@ function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
 show.addEventListener('change',function(e){tell(e,{menubar:show.checked})});
 if(style)style.addEventListener('change',function(e){tell(e,{style:style.value})});
 if(dict)dict.addEventListener('change',function(e){tell(e,{dictation:dict.value})});
+var finb=document.getElementById('menu-finder');if(finb)finb.addEventListener('click',function(e){tell(e,{finder:'settings'})});
 login.addEventListener('change',function(e){tell(e,{login:login.checked})});
 var MOD=[['ctrlKey','⌃','ctrl'],['altKey','⌥','alt'],['shiftKey','⇧','shift'],['metaKey','⌘','cmd']];
 function name(e){var c=e.code;if(/^Key[A-Z]$/.test(c))return c.slice(3);if(/^Digit\d$/.test(c))return c.slice(5);if(/^F\d{1,2}$/.test(c))return c;
@@ -4099,7 +4107,10 @@ def menu_settings() -> str:
             '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-dictkey"><span>Dictation shortcut'
             '<small id="menu-dictkey-note">Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-dictkey" readonly placeholder="Click, then press keys" aria-label="Dictation shortcut">'
-            '<button class="act" type="button" id="menu-dictkey-clear">Clear</button></span></div></section>')
+            '<button class="act" type="button" id="menu-dictkey-clear">Clear</button></span></div>'
+            '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-finder"><span>Finder menu'
+            '<small id="menu-finder-note">Right-click a project or thread folder in Finder to open it from there</small></span></label>'
+            '<button class="act" type="button" id="menu-finder">Open Login Items &amp; Extensions</button></div></section>')
 
 
 def copy(label: str, text: str, say: str) -> str:

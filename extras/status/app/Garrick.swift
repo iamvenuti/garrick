@@ -63,6 +63,10 @@ let page = generated.appendingPathComponent("status.html")
 let builder = URL(fileURLWithPath: info["GarrickStatusScript"] as? String ?? workspace.path + "/System/status/status.py")
 let python = info["GarrickPython"] as? String ?? "/usr/bin/python3"
 let flags = info["GarrickStatusArgs"] as? [String] ?? []
+// The token a garrick://open link must carry: random per build, put in Info.plist by
+// make-app.sh. Without one, every link is refused, so a bare build opens nothing.
+let linkToken = info["GarrickLinkToken"] as? String ?? ""
+let finderId = info["GarrickFinderId"] as? String ?? ""   // the Finder extension's bundle identifier
 let cmuxBundle = "com.cmuxterm.app"
 let claudeBundle = "com.anthropic.claudefordesktop"
 let codexBundle = "com.openai.codex"
@@ -247,6 +251,33 @@ func launcherOn(_ k: String) -> Bool {
 	if let on = saved["launchers"] as? [String: Any] { return on[k] == nil || on[k] as? Bool == true }
 	if let on = saved["launchers"] as? [String] { return on.contains(k) }
 	return true
+}
+
+// Whether an opener's app is here: the page offers none that is not, and neither does the Finder menu.
+func openerInstalled(_ k: String) -> Bool {
+	guard let id = ["cmux": cmuxBundle, "claude": claudeBundle, "codex": codexBundle][k] else { return false }
+	return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil
+}
+
+// What the Finder extension may know (#346): a sandboxed process cannot read this app's defaults or the
+// workspace's settings, so the app leaves one empty file for each opener that is switched on in Settings
+// and installed, in the folder make-app.sh named in Info.plist. The extension reads whether a file exists
+// and nothing else. Written at launch and each time the page tells the app its menu.
+let finderState = (info["GarrickFinderState"] as? String).map { URL(fileURLWithPath: $0, isDirectory: true) }
+func syncFinderOpeners() {
+	guard let dir = finderState, !checking else { return }
+	// The list the page sent with its menu is the newer one while a change in Settings is still being saved.
+	let sent = (delegate.menuState?["launchers"] as? [String])
+	let fm = FileManager.default
+	try? fm.createDirectory(atPath: dir.path, withIntermediateDirectories: true)
+	for k in ["cmux", "claude", "codex"] {
+		let file = dir.appendingPathComponent(k).path
+		if (sent.map { $0.contains(k) } ?? launcherOn(k)) && openerInstalled(k) {
+			if !fm.fileExists(atPath: file) { fm.createFile(atPath: file, contents: Data()) }
+		} else if fm.fileExists(atPath: file) {
+			try? fm.removeItem(atPath: file)
+		}
+	}
 }
 
 // One request to ask.py, running: Stop interrupts it (SIGINT), and ask.py then says
@@ -687,7 +718,48 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askZonePicker: NSPopUpButton! // the zone the window answers in, beside the field (#317)
 	var askChoices: NSStackView!      // "Which zone?": a button for each zone, in its colour
 	var askAfterReset: (() -> Void)?  // what waits for a new conversation to have started: a zone's question sent again
+	var finderOn = false              // the Finder extension is switched on in System Settings (pluginkit says so)
+	var linkReady = false             // the window is up: a garrick:// link can be answered
+	var pendingLinks: [URL] = []      // links that arrived while the app was starting
 	var askZoneAfterStop = false      // a zone picked during a request: it is stopped, then a new conversation starts under a divider
+
+	// The Finder extension's links (garrick://open, #346) arrive as Apple events, a cold launch's
+	// first one before the window exists, so the handler is set here and a link that comes
+	// too early waits for the end of applicationDidFinishLaunching.
+	func applicationWillFinishLaunching(_ note: Notification) {
+		NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(getURL(_:reply:)),
+		                                             forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+	}
+
+	@objc func getURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+		guard let text = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+		      let url = URL(string: text) else { return }
+		if linkReady { handleLink(url) } else { pendingLinks.append(url) }
+	}
+
+	// A link opens a project or a thread in an opener and nothing else. A link without this build's
+	// token is dropped without a word, so a web page that fires garrick:// links cannot make the app
+	// say or do anything. With the token, the folder must be one the Finder menu would offer
+	// (GarrickShared.swift), the opener switched on in Settings and installed, checked again here.
+	func handleLink(_ url: URL) {
+		guard !checking, let link = GarrickLink.parse(url, token: linkToken) else { return }
+		guard let folder = GarrickLink.openable(link.folder, workspace: workspace.path) else {
+			return toast("Garrick opens only a project or a thread from Finder. Nothing was opened.")
+		}
+		let name = link.app == "cmux" ? "cmux" : link.app.capitalized
+		guard launcherOn(link.app) else {
+			return toast("\(name) is switched off in Settings, under Opening a thread. Nothing was opened.")
+		}
+		guard openerInstalled(link.app) else {
+			return toast("\(name) is not installed here. Nothing was opened.")
+		}
+		// launch() checks the folder lexically only. The folder is checked once more, symlinks resolved, right
+		// before the opener gets it, and the opener gets the resolved path: nothing swapped in the meantime is opened.
+		guard let now = GarrickLink.openable(link.folder, workspace: workspace.path) else {
+			return toast("Garrick opens only a project or a thread from Finder. Nothing was opened.")
+		}
+		launch(link.app, now.path, phrase: GarrickLink.phrase(for: now))
+	}
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		// The app starts as a regular one, in the Dock (the end of this file), so a launch you make goes
@@ -743,6 +815,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			self.askKeep()
 			self.askKeeper = Timer.scheduledTimer(withTimeInterval: askKeepEvery, repeats: true) { [weak self] _ in self?.askKeep() }
 		}
+		syncFinderOpeners()
+		refreshFinder()
+		linkReady = true
+		let early = pendingLinks
+		pendingLinks = []
+		for url in early { handleLink(url) }
 	}
 
 	// Ask's background session (#261): kept while the preview is on, started again by ask.py if it
@@ -808,7 +886,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// Left in the Dock for days, it still checks the page's age when it comes forward.
-	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen() } }
+	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen(); syncFinderOpeners(); refreshFinder() } }
 
 	func load() {
 		shown = modified(page)
@@ -1269,7 +1347,44 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? "",
 		        "askhotkey": askSpec()?["label"] as? String ?? "",
 		        "askdefault": defaults.object(forKey: kAskHotkey) == nil && askSpec() != nil, "said": keySaid,
-		        "dictation": savedDictation().rawValue, "dictationkey": defaults.dictionary(forKey: kDictationKey)?["label"] as? String ?? ""]
+		        "finder": finderStatus, "dictation": savedDictation().rawValue, "dictationkey": defaults.dictionary(forKey: kDictationKey)?["label"] as? String ?? ""]
+	}
+
+	// MARK: the Finder menu (#346)
+	// Whether the extension is switched on in System Settings, as pluginkit reports it: asked at launch
+	// and each time the app comes forward, so a switch made in System Settings shows when you come back.
+	// "missing": this build has none (it did not build, or the app is older). "off" is also what a
+	// extension macOS has not been told of looks like; Settings says how to switch it on.
+	var finderStatus: String {
+		guard !finderId.isEmpty, let plugins = Bundle.main.builtInPlugInsURL,
+		      FileManager.default.fileExists(atPath: plugins.appendingPathComponent("GarrickFinder.appex").path) else { return "missing" }
+		return finderOn ? "on" : "off"
+	}
+
+	func refreshFinder() {
+		guard !checking, !finderId.isEmpty else { return }
+		DispatchQueue.global(qos: .utility).async { [weak self] in
+			let p = Process()
+			p.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+			p.arguments = ["-m", "-i", finderId]
+			let out = Pipe()
+			p.standardOutput = out
+			p.standardError = FileHandle.nullDevice
+			guard (try? p.run()) != nil else { return }
+			let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+			p.waitUntilExit()
+			let on = text.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("+") }
+			DispatchQueue.main.async {
+				guard let self, self.finderOn != on else { return }
+				self.finderOn = on
+				self.pushAppState()
+			}
+		}
+	}
+
+	// System Settings › General › Login Items & Extensions, where the extension is switched on.
+	func openExtensionSettings() {
+		if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") { NSWorkspace.shared.open(url) }
 	}
 
 	func appJSON() -> String {
@@ -1359,6 +1474,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if let key = request["askhotkey"] { setKey(kAskHotkey, "askhotkey", key as? [String: Any]) }
 		if let mode = request["dictation"] as? String { setDictation(Dictation(rawValue: mode) ?? .off) }
 		if let key = request["dictationkey"] { setDictationKey(key as? [String: Any]) }
+		if request["finder"] as? String == "settings" { openExtensionSettings() }
 		pushAppState()
 	}
 
@@ -1366,6 +1482,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// off, which takes the icon or the panel away and brings the window back if it was hidden.
 	func setMenu(_ m: [String: Any]?) {
 		menuState = m
+		syncFinderOpeners()
 		if let m, let data = try? JSONSerialization.data(withJSONObject: m) {
 			defaults.set(data, forKey: kMenu)
 		} else {
@@ -2151,7 +2268,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard mode != .off else { return }
 		if checking { return heard.append("dictation:" + mode.rawValue) }
 		if mode != .macos && !AXIsProcessTrusted() {
-			return toast("Garrick cannot press your dictation key: allow it in System Settings › Privacy & Security › Accessibility.")
+			return toast("Garrick cannot press your dictation key. The permission may belong to an earlier build of Garrick. In System Settings › Privacy & Security › Accessibility, remove Garrick with the minus button, then allow it again.")
 		}
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
 			guard self?.askPanel?.isKeyWindow == true else { return }   // closed meanwhile: the words would go elsewhere

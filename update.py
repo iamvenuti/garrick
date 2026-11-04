@@ -1151,8 +1151,16 @@ def make_app(cmd):
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=900)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 1, str(exc)
-    lines = (r.stdout + r.stderr).strip().splitlines()
-    return r.returncode, lines[-1] if lines else ""
+    if r.returncode:
+        lines = (r.stdout + r.stderr).strip().splitlines()
+        return r.returncode, lines[-1] if lines else ""
+    # The app's place is the last line on stdout. What make-app.sh has to say (an Accessibility reset, a
+    # Finder extension that did not build) is on stderr, and follows the place as sentences of its own.
+    out = r.stdout.strip().splitlines()
+    notes = [n.strip()[len("make-app: "):] if n.strip().startswith("make-app: ") else n.strip()
+             for n in r.stderr.strip().splitlines() if n.strip()]
+    notes = [n.rstrip(".:") for n in notes]
+    return 0, ". ".join([out[-1] if out else ""] + notes)
 
 
 def plugin_copies(root):

@@ -47,7 +47,9 @@ final class GarrickFinder: FIFinderSync {
 		for k in on {
 			let item = NSMenuItem(title: "Open in " + (k == "cmux" ? "cmux" : k.capitalized), action: #selector(open(_:)), keyEquivalent: "")
 			item.target = self
-			item.representedObject = k
+			// Finder copies this menu into its own process and keeps an item's title, action and tag, not its
+			// representedObject: the opener travels as its place in GarrickLink.openers, plus one, since 0 is no tag.
+			item.tag = (GarrickLink.openers.firstIndex(of: k) ?? -1) + 1
 			sub.addItem(item)
 		}
 		let top = NSMenuItem(title: "Garrick", action: nil, keyEquivalent: "")
@@ -64,8 +66,9 @@ final class GarrickFinder: FIFinderSync {
 	@objc func open(_ sender: NSMenuItem) {
 		// Garrick.app is three folders up: <app>/Contents/PlugIns/<this>.appex. Only that app is sent the link.
 		let app = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-		guard let opener = sender.representedObject as? String, GarrickLink.openers.contains(opener),
-		      app.pathExtension == "app" else { return }
+		let i = sender.tag - 1
+		guard GarrickLink.openers.indices.contains(i), app.pathExtension == "app" else { return }
+		let opener = GarrickLink.openers[i]
 		for folder in folders() {
 			guard let link = GarrickLink.url(app: opener, folder: folder.path, token: token) else { continue }
 			NSWorkspace.shared.open([link], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())

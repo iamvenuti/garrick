@@ -117,6 +117,22 @@ class ZonePathTest(unittest.TestCase):
         self.resume("Waiting on `../../Work/Notes/plan.md` and `Deliverables/260301 - Pricing memo.md`.")
         self.assertEqual([], self.crossings())
 
+    def test_a_bare_word_in_prose_is_a_path_only_when_it_is_there(self):
+        self.resume("Aim for a personal/life balance and Personal/Notes/not-made-yet.")
+        self.assertEqual([], self.crossings())
+        self.resume("Aim for the personal/life balance.")
+        self.assertEqual([], self.crossings())
+        self.resume("See Personal/Notes for it.")
+        found = self.crossings()
+        self.assertEqual(1, len(found))
+        self.assertIn("a path in another zone", found[0].message)
+
+    def test_a_marked_path_is_one_whether_it_is_there_or_not(self):
+        for path in ("`Personal/Nothing/x.md`", "`personal/life`", "[h](personal/life)", "[[personal/life]]",
+                     "Personal/Nothing/x.md"):
+            self.resume("See %s." % path)
+            self.assertEqual(1, len(self.crossings()), path)
+
     def test_a_checkpoint_path_into_another_zone_is_an_error(self):
         text = fixtures.thread_note("Acme Review", "Pricing", "acme")
         items = fixtures.CHECKPOINT_ITEMS + (("made", "`../../Personal/Notes/home.md`, saved 14:20", "m2"),)

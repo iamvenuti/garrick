@@ -342,6 +342,8 @@ struct AskTurn {
 	var listed = false                  // an actions list: each item on a line of its own (#339)
 	var zones: [[String: Any]] = []     // "Which zone?": each zone offered, with its colour, a button each (#317)
 	var retry = ""                      // the question to send again in the zone a button picks
+	var choices: [[String: Any]] = []   // a question back, or an action just made: a button each, with `label` and
+	                                    // either `request` to send as a new request or `act` to run as a button would (#345)
 }
 
 // The Ask window (preview ask): it takes the keys without bringing the app forward, as
@@ -1191,8 +1193,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			let reply = output.fileHandleForReading.readDataToEndOfFile()
 			let said = (try? JSONSerialization.jsonObject(with: reply)) as? [String: Any]
 			DispatchQueue.main.async {
-				self.acted(request, said ?? ["ok": false, "say": "That did not work."])
-				if self.rebuilds(request) { self.freshen(force: true) }
+				let reply = said ?? ["ok": false, "say": "That did not work."]
+				self.acted(request, reply)
+				// A reply that says `built` has settled the page itself: page_action.py asked for the one build
+				// (true), or nothing changed (false) (#344). One without it is a verb it does not build for.
+				if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }
 			}
 		}
 		do {
@@ -1219,8 +1224,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// The reply: the toast, then the page, which shows a park or a wake at once
 	// (the rebuild confirms it) and ends what it showed running.
-	func acted(_ request: [String: Any], _ said: [String: Any]) {
-		if !reading(request) { toast(said["say"] as? String ?? "That did not work.") }
+	// An action the Ask box ran (#344) is handed to the page the same way, without the toast: the box
+	// has its own reply, and the row moves as fast as after a button.
+	func acted(_ request: [String: Any], _ said: [String: Any], toasting: Bool = true) {
+		if toasting && !reading(request) { toast(said["say"] as? String ?? "That did not work.") }
 		if let both = try? JSONSerialization.data(withJSONObject: [request, said]),
 		   let text = String(data: both, encoding: .utf8) {
 			web.evaluateJavaScript("(function(a){window.GarrickActed&&window.GarrickActed(a[0],a[1])})(\(text))")
@@ -1953,7 +1960,16 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				}
 				if self.launch(app, folder, phrase: item["phrase"] as? String ?? "", desk: item["dk"] != nil, agent: agent) { opened = true }
 			}
-			if lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
+			// Each action the box ran moves its row on the page at once, as a button's does (#344).
+			let ran = out["acted"] as? [[String: Any]] ?? []
+			for one in ran {
+				if let request = one["request"] as? [String: Any], let reply = one["reply"] as? [String: Any] {
+					self.acted(request, reply, toasting: false)
+				}
+			}
+			// page_action.py asked for the build itself when every reply says `built`; otherwise the app does.
+			let settled = !ran.isEmpty && ran.allSatisfy { ($0["reply"] as? [String: Any])?["built"] != nil }
+			if !settled && lines.count > lines.filter({ $0.hasPrefix("Opening ") }).count { self.freshen(force: true) }
 			// A line of what was done that says what the sentence says, case and a final full stop
 			// aside, is not shown a second time under it (#283).
 			let same = { (s: String) -> String in
@@ -2216,6 +2232,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			turn.refreshed = out["refreshed"] as? Bool == true
 			turn.zones = out["zones"] as? [[String: Any]] ?? []
 			turn.retry = out["retry"] as? String ?? ""
+			turn.choices = out["choices"] as? [[String: Any]] ?? []
 			// The zone the answer was read in: the selector follows it, with no new conversation, since
 			// ask.py started one itself when the zone changed (#317).
 			// Never over a zone you picked after sending: that one stands, and starts its own conversation.
@@ -2364,11 +2381,27 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 	}
 
+	// A button under a reply that asks which party, or offers Undo for what it made (#345): the button's index in
+	// the last turn's `choices`. A `request` goes again as a new request; an `act` is run as the page's button would
+	// run it, with its toast, and the choices go, so it is clicked once.
+	@objc func askChoose(_ sender: NSButton) {
+		guard let turn = askTurns.last, askRunning == nil, !askResetting, sender.tag >= 0, sender.tag < turn.choices.count else { return }
+		let choice = turn.choices[sender.tag]
+		askTurns[askTurns.count - 1].choices = []
+		if let request = choice["act"] as? [String: Any] {
+			act(request)
+			askRender()
+		} else if let request = choice["request"] as? String, !request.isEmpty {
+			askSend(request)
+		}
+	}
+
 	// The buttons of the last turn's "Which zone?", each in its zone's colour; none once a request is on its way.
 	func askChoicesShow() {
 		guard let row = askChoices else { return }
 		row.arrangedSubviews.forEach { $0.removeFromSuperview() }
 		let offered = askRunning == nil ? askTurns.last?.zones ?? [] : []
+		let chosen = askRunning == nil ? askTurns.last?.choices ?? [] : []
 		for z in offered {
 			guard let name = z["zone"] as? String else { continue }
 			let b = NSButton(title: name, target: self, action: #selector(askChooseZone(_:)))
@@ -2379,8 +2412,16 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				.font: NSFont.boldSystemFont(ofSize: askText())])
 			row.addArrangedSubview(b)
 		}
+		for (i, c) in chosen.enumerated() {
+			guard let label = c["label"] as? String, !label.isEmpty else { continue }
+			let b = NSButton(title: label, target: self, action: #selector(askChoose(_:)))
+			b.tag = i
+			b.bezelStyle = .rounded
+			b.font = .boldSystemFont(ofSize: askText())
+			row.addArrangedSubview(b)
+		}
 		row.addArrangedSubview(NSView())
-		row.isHidden = offered.isEmpty
+		row.isHidden = offered.isEmpty && chosen.isEmpty
 	}
 
 	// Each state the window can be in, from the exchange and the request on its way: Ready,

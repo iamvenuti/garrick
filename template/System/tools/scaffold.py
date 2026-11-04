@@ -280,12 +280,18 @@ def say_how(name, kind, spoken):
             f'"open {name}" finds the {kind}? It goes in the note as `spoken:`.']
 
 
-def check_party(root, party):
+def check_party(root, party, zone=None):
+    """The tag, if System/context.md holds it. For a new project, `zone` is the project's: a party that the table
+    places in another zone is refused, since its material would land in a zone it was never kept in."""
     parties = load_context(root).get("parties", {})
     tag = party.strip().strip("`")
     if tag not in parties:
         known = ", ".join(sorted(parties)) or "none yet"
         raise Refusal(f"{party} is not a party tag in System/context.md. The tags are {known}.")
+    there = parties[tag].get("zone") or ""
+    if zone and there and there != zone:
+        raise Refusal(f"{parties[tag].get('party') or tag} is a party of {there}, not of {zone}, so a project in {zone} "
+                      "cannot be for it.")
     return tag
 
 
@@ -612,7 +618,7 @@ def cmd_project(root, args, today):
     thread_spoken = (args.thread_spoken or "").strip()
     check_name(name, children(zone_dir), "project", zone_dir.name, spoken=spoken, parent=zone_dir)
     check_name(thread, [], "thread", name, spoken=thread_spoken)
-    party = check_party(root, args.party)
+    party = check_party(root, args.party, zone_dir.name)
     target = zone_dir / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")
@@ -1118,8 +1124,8 @@ def cmd_delete(root, args, today):
 
 
 def cmd_undo(root, args, today):
-    """Revert a rename or a deletion this script committed, while it is still
-    the zone's last commit: anything committed since might depend on it."""
+    """Revert a rename, a deletion or a creation this script committed, while it
+    is still the zone's last commit: anything committed since might depend on it."""
     zone_dir = find_zone(root, args.zone)
     head = git_value(["rev-parse", "HEAD"], zone_dir).strip()
     wanted = git_value(["rev-parse", "--verify", "-q", args.commit + "^{commit}"], zone_dir).strip()
@@ -1129,8 +1135,8 @@ def cmd_undo(root, args, today):
         raise Refusal(f"{args.commit} is no longer the last commit in {zone_dir.name}, so it is not undone here. "
                       "Ask for it to be reverted by hand.")
     subject = git_value(["log", "-1", "--format=%s"], zone_dir).strip()
-    if not re.search(r": (deleted|renamed .+)$", subject):
-        raise Refusal(f"{args.commit} is not a rename or a deletion: {subject}")
+    if not re.search(r": (deleted|renamed .+|new thread .+)$|^New project .+, first thread .+$", subject):
+        raise Refusal(f"{args.commit} is not a rename, a deletion or a new project or thread: {subject}")
     if git_value(["status", "--porcelain", "--untracked-files=no"], zone_dir).strip():
         raise Refusal(f"{zone_dir.name} has changes not committed. Commit or undo them first.")
     git_ok(["revert", "--no-edit", head], zone_dir)
@@ -1610,7 +1616,7 @@ def main(argv=None):
         k.add_argument("--thread", help="the thread; without it, the project, and every thread in it with it")
     c = sub.add_parser("checkpoint", help="write or read a thread note's checkpoint; the request is JSON on stdin")
     c.add_argument("--now", help="the time to stamp instead of now, as 2026-10-15T14:32:10+02:00")
-    u = sub.add_parser("undo", help="revert a rename or a deletion, while it is the zone's last commit")
+    u = sub.add_parser("undo", help="revert a rename, a deletion or a new project or thread, while it is the zone's last commit")
     u.add_argument("--zone", required=True)
     u.add_argument("--commit", required=True, help="the commit the rename or deletion reported")
     for each in (y, p, t, r):

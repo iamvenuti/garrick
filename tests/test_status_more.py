@@ -1716,10 +1716,12 @@ class TestParkLandsAtOnce(StatusCase):
         acted = swift[swift.index("	func acted("):swift.index("	// Only a folder inside this workspace")]
         self.assertIn("JSONSerialization.data(withJSONObject: [request, said])", acted)
         self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", acted)
-        self.assertLess(act.index("self.acted(request, said ?? "), act.index("self.freshen(force: true)"))   # at once, then the rebuild
+        self.assertLess(act.index("self.acted(request, reply)"), act.index("self.freshen(force: true)"))   # at once, then the rebuild
+        self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', act)   # unless the reply built it (#344)
         plugin = (Path(status.__file__).parent / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", plugin)
         self.assertIn("this.rebuild(true);", plugin)
+        self.assertIn("said.built === undefined", plugin)
         page = self.page()
         self.assertLess(page.index("window.ThreadRows="), page.index("window.GarrickActed="))   # PARK_JS after the rows it moves
 

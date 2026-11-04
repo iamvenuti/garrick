@@ -636,8 +636,12 @@ class TestSafety(Case):
         self.assertEqual("add", p["wiki_hook"])
         self.assertIn("the wikis get their pre-commit check", update.report(p))
         self.assertFalse(self.wiki_hook().exists())              # the dry run wrote nothing
-        result = self.apply()
+        p0 = self.plan()
+        result = update.apply(self.root, p0)
         self.assertIn("Wikis", result["hooks"])
+        said = update.say_applied(p0, result)
+        self.assertIn("Added the wall check in: Wikis.", said)
+        self.assertNotIn("Refreshed the wall check in: Wikis", said)
         lib = update.install.lib()
         self.assertEqual(lib.wiki_hook_text(self.root), self.wiki_hook().read_text())
         self.assertTrue(os.access(self.wiki_hook(), os.X_OK))
@@ -646,8 +650,12 @@ class TestSafety(Case):
     def test_a_stale_garrick_wiki_hook_is_refreshed(self):
         self.wiki_hook().write_text(self.wiki_hook().read_text().replace("refuse", "refuse, in older words,", 1))
         self.assertEqual("refresh", self.plan()["wiki_hook"])
-        self.apply()
+        p0 = self.plan()
+        result = update.apply(self.root, p0)
         self.assertEqual(update.install.lib().wiki_hook_text(self.root), self.wiki_hook().read_text())
+        said = update.say_applied(p0, result)
+        self.assertIn("Refreshed the wall check in: Wikis.", said)
+        self.assertNotIn("Added the wall check", said)
 
     def test_a_foreign_wiki_hook_is_left_and_reported(self):
         self.wiki_hook().write_text("#!/bin/sh\necho mine\n")

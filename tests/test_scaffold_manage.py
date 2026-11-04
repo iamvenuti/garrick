@@ -498,7 +498,8 @@ class TestMove(ManageCase):
         self.assertEqual(0, self.scaffold("party", "--name", "Home Team", "--zone", "Personal", "--what", "Family").returncode)
         r = self.scaffold("project", "--zone", "Personal", "--name", "Garden", "--party", "home", "--thread", "Beds")
         self.assertEqual(0, r.returncode, r.stderr)
-        self.refused("Zones never mix", to="Garden")
+        err = self.refused("There is no project called Garden in Work", to="Garden")
+        self.assertNotIn("Personal", err)
 
     def test_a_name_taken_the_same_project_and_a_missing_project_are_refused(self):
         self.assertEqual(0, self.scaffold("thread", "--zone", "Work", "--project", "Apex", "--name", "Freight").returncode)
@@ -732,6 +733,29 @@ class TestDelete(ManageCase):
         r = self.scaffold("undo", "--zone", "Work", "--commit", commit)             # no longer the last commit
         self.assertEqual(1, r.returncode)
         self.assertIn("no longer the last commit", r.stderr)
+
+    def delete_refused(self):
+        before = self.git("ls-files", "-s").stdout
+        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
+        self.assertEqual(1, r.returncode)
+        self.assertTrue(self.freight.is_file())
+        self.assertIn("send the lanes", (self.work / "Todo.md").read_text())
+        self.assertEqual(before, self.git("ls-files", "-s").stdout)
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        return r.stderr.strip()
+
+    def test_git_sent_past_the_zones_wall_check_deletes_nothing(self):
+        empty = self.root / "no-hooks"
+        empty.mkdir()
+        self.git("config", "core.hooksPath", str(empty))
+        self.assertIn("wall check", self.delete_refused())
+
+    def test_a_deletion_the_wall_check_refuses_is_put_back(self):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\n"
+                        "echo 'Commit refused: Todo.md names Birch & Co. Take it out and commit again.' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        self.assertIn("Commit refused: ", self.delete_refused())             # the terminal keeps the check's line (#172)
 
     def test_a_whole_project(self):
         r = self.scaffold("delete", "--zone", "Work", "--project", "Acme")

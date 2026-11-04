@@ -341,7 +341,9 @@ PERSON_SHAPE = "a person page's frontmatter must be plain `key: value` lines"
 PERSON_PLAIN = "a person page must be a plain file in wiki/people"
 # The only keys a person page has (#340), as ingest.py writes it. `organisation`
 # is the one that may hold a link; the walls read no other key for one.
-PERSON_KEYS = ("title", "type", "party", "organisation", "created", "updated")
+# `pinned` is fade.py keep's pin. `aliases:` and `tags:` stay out: an alias changes which page a link opens, and a
+# tag joins pages in Obsidian's graph, so either could join a person to a walled party with no link written.
+PERSON_KEYS = ("title", "type", "party", "organisation", "created", "updated", "pinned")
 FORM_PROBLEMS = (FRONTMATTER_PLAIN, PERSON_SHAPE, PERSON_PLAIN)
 # What opens a YAML node other than a plain key at the left margin: a quoted
 # key, an explicit `?` key, a tag, an anchor, an alias, a merge key, a flow
@@ -3287,8 +3289,14 @@ def has_own_git_dir(folder: PathLike) -> bool:
                            capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return False
-    return r.returncode == 0 and (Path(folder) / ".git").is_dir() and \
-        os.path.realpath(r.stdout.strip()) == os.path.realpath(str(Path(folder) / ".git"))
+    if r.returncode != 0 or not (Path(folder) / ".git").is_dir():
+        return False
+    # The same directory, not the same spelling: a case-insensitive disk opens
+    # `work` as `Work`. Any error reading either is a refusal.
+    try:
+        return os.path.samefile(r.stdout.strip(), str(Path(folder) / ".git"))
+    except OSError:
+        return False
 
 
 def wall_hook_problem(folder: PathLike) -> Optional[str]:

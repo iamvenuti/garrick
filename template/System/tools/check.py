@@ -2063,6 +2063,26 @@ def _folded(parts) -> Tuple[str, ...]:
     return tuple(unicodedata.normalize("NFC", str(x)).casefold() for x in parts)
 
 
+_LINK_SPAN_RE = re.compile(r"\]\([^)\n]*\)|\[\[[^\]\n]*\]\]|<[^>\n]*>|file://\S*")
+
+
+def _marked_spans(line: str) -> List[Tuple[int, int]]:
+    """Where a path on `line` is marked as one: between backticks, as a link
+    target, or as a `file://` address."""
+    return [m.span() for rx in (TICK_RE, _LINK_SPAN_RE) for m in rx.finditer(line)]
+
+
+def _bare_path(token: str, line: str, spans: List[Tuple[int, int]]) -> bool:
+    """A path-like word in prose: not marked as a path, with no file
+    extension, so `work/life balance` is words and not a place."""
+    if token.startswith(("~", "/")) or re.search(r"\.[A-Za-z0-9]{1,5}$", token.rstrip("/")):
+        return False
+    folded, text = token.casefold(), line.casefold()
+    if len(text) != len(line) or folded not in text:    # folding moved the spans (ß), or read after rewriting: never bare
+        return False
+    return not any(folded in text[a:b] for a, b in spans)
+
+
 def other_zone_paths(ws: Workspace, note: Path, bases: List[Path], lines: List[str],
                      local: int = 0) -> List[str]:
     """The paths in `lines`, backticked or not, that land in a zone other than
@@ -2072,7 +2092,9 @@ def other_zone_paths(ws: Workspace, note: Path, bases: List[Path], lines: List[s
     where it is there, it is that file, and it is across a zone only if it
     leads there by a link. Else, from any place a path may start, cleaned of
     `..` or with every link resolved, it lands in another zone or not. Zones
-    never reference each other unless asked (#340)."""
+    never reference each other unless asked (#340). A bare word in prose, not
+    marked as a path and with no extension, counts only when the path it names
+    is there in the other zone ("work/life balance" is not a path)."""
     try:
         mine = next((z.resolve() for z in ws.zones if z.resolve() in note.resolve().parents), None)
         others = [_folded(z.resolve().parts) for z in ws.zones if z.resolve() != mine]
@@ -2088,18 +2110,23 @@ def other_zone_paths(ws: Workspace, note: Path, bases: List[Path], lines: List[s
             forms = [Path(os.path.normpath(str(start)))]
         return any(f[:len(z)] == z for z in others for f in (_folded(x.parts) for x in forms))
 
-    def crosses(variants: List[str]) -> bool:
+    def crosses(variants: List[str], bare: bool = False) -> bool:
         first = variants[0]
         if first.startswith(("~", "/")):
             return any(lands(Path(v).expanduser()) for v in variants)
         present = [b / v for v in variants for b in bases[:local] if (b / v).exists()]
+        if bare:
+            # Prose: only a path that is there, from any place one may start.
+            return any(lands(b / v) for v in variants for b in bases if (b / v).exists())
         return any(lands(start) for start in (present or [b / v for v in variants for b in bases]))
 
     names = [z.name for z in ws.zones if z.resolve() != mine]
     out = []
     for line in lines:
+        spans = _marked_spans(line)
         for path in path_tokens(line):
-            if path not in out and crosses([path]) and not any(same_path_text(path, o) for o in out):
+            if path not in out and crosses([path], _bare_path(path, line, spans)) \
+                    and not any(same_path_text(path, o) for o in out):
                 out.append(path)
         # A zone's name may hold a space or an apostrophe (rules.md allows both),
         # which splits a path in pieces. So the line is also searched for each
@@ -2119,7 +2146,11 @@ def other_zone_paths(ws: Workspace, note: Path, bases: List[Path], lines: List[s
                 variants = [full] + [full[:i].rstrip() for i in range(len(full) - 1, 0, -1) if full[i] == " "]
                 variants = [v for v in variants if "/" in v]
                 shown = full[:60]
-                if variants and not any(same_path_text(shown, o) for o in out) and crosses(variants):
+                # Fail closed: a line that was rewritten to be read (escapes,
+                # invisible marks) keeps its offsets unknown, so it is not bare.
+                bare = (plain == line and not any(a <= m.start() < b for a, b in _marked_spans(line))
+                        and all(_bare_path(v, line, []) for v in variants))
+                if variants and not any(same_path_text(shown, o) for o in out) and crosses(variants, bare):
                     out.append(shown)
     return out
 
@@ -3424,7 +3455,7 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
         if person_shape_problem(text):
             out.append(Finding(ERROR, "walls", rel(ws, page),
                                PERSON_SHAPE + ", and `- item` lines under a key with no value, with no key but %s "
-                               "and no link but in `organisation`; a YAML reader can find a link in any other form, "
+                               "and no link but in `organisation`, and `pinned` only true or false; a YAML reader can find a link in any other form, "
                                "and Obsidian draws one from any property" % ", ".join(PERSON_KEYS),
                                "A person page's frontmatter is not plain lines"))
             continue
@@ -3692,6 +3723,8 @@ def person_shape_problem(text: str) -> bool:
             value = re.sub(r"(?<=[\]\"'])[ ]+#.*$", "", value)     # a comment after a quoted value, as the schema shows
         if value and not (_plain_scalar(value) or _flow_list(value)):
             return True
+        if key == "pinned" and value.strip().strip("\"'") not in ("true", "false"):
+            return True         # fade.py keep writes `pinned: true`; nothing else is a pin
         open_key = key if not value else None
     return False
 

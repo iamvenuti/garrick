@@ -703,7 +703,14 @@ async function startClose($: any): Promise<string> {
   if (n !== null && (await needsWrap($, n))) {
     closing = 'wrapping'
     wrapTurn = null
-    void wrap($, n)
+    // A wrap that cannot be sent must not leave Close answering "already under way" until a reload.
+    void Promise.resolve()
+      .then(() => wrap($, n))
+      .catch(() => {
+        closing = null
+        wrapTurn = null
+        $.ui.toast('Not closed: the wrap did not finish.')
+      })
 
     return `Wrapping ${n.title}, then closing.`
   }

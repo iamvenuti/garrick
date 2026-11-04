@@ -368,6 +368,15 @@ class TestPark(ActionCase):
         with self.assertRaisesRegex(pa.Refused, "^Pricing is active already, so nothing was changed$"):
             self.act(verb="wake", zone="Work", file=rel)
 
+    def test_a_zone_spelled_in_lower_case_is_the_same_folder_and_is_not_refused(self):
+        """A case-insensitive disk opens `work` as `Work`; git's answer and the
+        folder are compared as files, not as spellings."""
+        if (self.work.parent / self.work.name.lower()).exists() is False:
+            self.skipTest("this temporary disk tells Work from work")
+        rel = "Acme Review/Threads/Pricing/Pricing.md"
+        self.assertEqual("Acme Review, Pricing is parked", self.act(verb="park", zone="work", file=rel))
+        self.assertIn("\nstatus: parked\n", self.thread.read_text())
+
     def test_a_second_park_says_so_instead_of_writing_another_entry(self):
         """The precheck operations.py declares for park and wake: the note's
         status as it stands now, read under the zone's lock."""

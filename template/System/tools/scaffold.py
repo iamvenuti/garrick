@@ -1362,11 +1362,8 @@ def cmd_move(root, args, today):
     zone_dir, project_dir, thread_dir, note = target_of(root, args)
     name = thread_dir.name
     to_name = args.to.strip()
-    others = [z for z in children(root / "Zones") if z != zone_dir.name and (root / "Zones" / z / to_name).is_dir()
-              and (root / "Zones" / z / to_name / f"{to_name}.md").is_file()]
-    if not any(c.lower() == to_name.lower() for c in children(zone_dir)) and others:
-        raise Refusal(f"{to_name} is a project of {others[0]}, not of {zone_dir.name}. Zones never mix, so a thread "
-                      "does not move between them. Nothing was moved.")
+    # A project of another zone is refused as a missing one, naming no other zone: that it exists
+    # elsewhere is not for this zone's session to say.
     target = find_child(zone_dir, to_name, "project")
     if target.name == INBOX or target == project_dir:
         raise Refusal(f"{name} is in {project_dir.name} already.")
@@ -1591,7 +1588,7 @@ def cmd_delete(root, args, today):
         if problem:
             raise Refusal(f"{problem}, so nothing was committed.")
         git(["commit", "-q", "-m", f"{what}: deleted\n\n{body}"], zone_dir)
-    except GitError as exc:
+    except (GitError, Refusal) as exc:
         git_value(["reset", "-q"], zone_dir)
         git_value(["checkout", "HEAD", "--", rel] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)
         raise Refusal(f"The deletion was not committed, so nothing changed: {' '.join(str(exc).split())}")

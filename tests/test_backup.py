@@ -151,6 +151,17 @@ class BackupTest(unittest.TestCase):
         self.assertEqual(before, git(self.work, "rev-parse", "HEAD"))
         self.assertTrue(any("middle of a merge" in line for line in self.said))
 
+    def test_a_hooks_path_that_skips_the_wall_check_fails_and_says_why(self):
+        elsewhere = self.ws / "elsewhere-hooks"
+        elsewhere.mkdir()
+        git(self.work, "config", "core.hooksPath", str(elsewhere))
+        write(self.work / "Notes.md", "A note.\n")
+        self.assertEqual(backup.FAILED, self.run_backup())
+        line = " ".join(self.said)
+        self.assertIn("nothing committed", line)
+        self.assertIn("core.hooksPath", line)
+        self.assertEqual([], self.pushed())
+
     def test_a_refusal_no_unstaging_clears_stops_at_once_and_says_so(self):
         calls = []
 

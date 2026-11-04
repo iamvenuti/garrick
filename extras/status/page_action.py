@@ -610,8 +610,12 @@ def commit_refusal(zone: Path) -> Optional[str]:
         except (OSError, subprocess.SubprocessError):
             return None
     r = ask("rev-parse", "--absolute-git-dir")
-    if r is None or r.returncode != 0 or not (zone / ".git").is_dir() or \
-            os.path.realpath(r.stdout.strip()) != os.path.realpath(str(zone / ".git")):
+    try:        # the same directory, not the same spelling: a case-insensitive disk opens `work` as `Work`
+        same = r is not None and r.returncode == 0 and (zone / ".git").is_dir() \
+            and os.path.samefile(r.stdout.strip(), str(zone / ".git"))
+    except OSError:
+        same = False
+    if not same:
         return "%s has no git repository of its own here" % zone.name
     if zone.parent.name != "Zones":
         return None             # the workspace's own repository (a heard name in context.md) has no wall hook by design

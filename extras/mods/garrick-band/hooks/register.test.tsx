@@ -908,6 +908,7 @@ describe('Close', () => {
     cwd?: string
     desk?: { exitCode: number; stdout?: string; stderr?: string }[]
     exit?: 'ok' | 'rejects'
+    submit?: 'rejects' | 'rejects-once'
   }
 
   // A session in a thread (or at `cwd`). Turns are run by hand: `turn` starts
@@ -923,7 +924,9 @@ describe('Close', () => {
     const cwd = o.cwd ?? `${ROOT}/Zones/Work/Acme`
     on('ui.render', ENGINE)
     on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } as any })
+    let refused = 0
     on('prompt.submit', async (_$: any, e: any) => {
+      if (o.submit === 'rejects' || (o.submit === 'rejects-once' && refused++ === 0)) throw new Error('cannot send')
       submitted.push(e.text)
       return { text: e.text }
     })
@@ -1022,6 +1025,18 @@ describe('Close', () => {
     expect(c.toasts.at(-1)).toBe('Not closed: the wrap did not rewrite the Resume here block.')
     expect(c.desks()).toEqual([])
     expect(c.exits).toEqual([])
+  })
+
+  test('a wrap that cannot be sent leaves the session open, and the next Close tries again', async ($, on) => {
+    const c = await closer($, on, { cmux: true, submit: 'rejects-once' })
+    await c.close()
+    await c.clock.advance(100)
+    expect(c.toasts.at(-1)).toBe('Not closed: the wrap did not finish.')
+    expect(c.desks()).toEqual([])
+    await c.close()
+    await c.clock.advance(100)
+    expect(c.toasts).not.toContain('Close is already under way.')
+    expect(c.submitted).toHaveLength(1)
   })
 
   test('after a failed close, the next Close wraps again', async ($, on) => {

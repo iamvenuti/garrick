@@ -83,6 +83,32 @@ def person(name: str, party: str, line: str, organisation: str = "") -> str:
             % (name, party_line, org, name, line))
 
 
+class PersonKeysTest(unittest.TestCase):
+    """fade.py keep's `pinned: true` passes on a person page; a pin that is no
+    boolean is refused, and so are `aliases:` and `tags:`, which join pages in
+    Obsidian with no link written."""
+
+    BASE = "---\ntitle: Jo Example\ntype: person\nparty: acme\n%s\ncreated: 2026-03-10\nupdated: 2026-03-10\n---\n\n# Jo\n"
+
+    def shape(self, lines):
+        import check
+        return check.person_shape_problem(self.BASE % lines)
+
+    def test_a_pin_passes(self):
+        for lines in ("pinned: true", "pinned: false"):
+            self.assertFalse(self.shape(lines), lines)
+
+    def test_aliases_and_tags_are_refused(self):
+        for lines in ("aliases: [Jo, Jo E.]", "aliases: Jo", "tags: [client, friend]", "tags:\n- client"):
+            self.assertTrue(self.shape(lines), lines)
+
+    def test_a_link_in_them_and_a_pin_that_is_not_a_boolean_are_refused(self):
+        for lines in ("aliases: [[[Acme]]]", "aliases: [[Acme]]", "tags: [x](y)", "aliases:\n  - [[Acme]]",
+                      "tags:\n  - [a](b)", "pinned: yes", "pinned: [[Acme]]", "pinned:", "pinned: true\npinned: false",
+                      "company: Acme"):
+            self.assertTrue(self.shape(lines), lines)
+
+
 class Workspace(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

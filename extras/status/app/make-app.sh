@@ -44,6 +44,11 @@ WS="$(cd "$WS" 2>/dev/null && pwd)" || { echo "make-app: no such folder." >&2; e
 [ -f "$STATUS" ] || { echo "make-app: status.py is not beside app/." >&2; exit 1; }
 xcrun --find swiftc >/dev/null 2>&1 || { echo "make-app: no Swift compiler; run xcode-select --install, then try again." >&2; exit 1; }
 PY="$(command -v python3)"
+# GARRICK_SWIFT_OPT=-Onone builds faster, for a test; nothing else sets it.
+OPT=(${GARRICK_SWIFT_OPT:--O})
+# What a garrick:// link must carry to be answered: new with every build, in the
+# app's Info.plist and the Finder extension's.
+TOKEN="$("$PY" -c 'import secrets; print(secrets.token_hex(16))')"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -53,16 +58,19 @@ OLDNAME="Garrick's Status.app"   # its name before 0.10.0
 BUNDLE="$WORK/$NAME/Contents"
 mkdir -p "$BUNDLE/MacOS" "$BUNDLE/Resources"
 
-xcrun swiftc -O -o "$BUNDLE/MacOS/Garrick" "$HERE/Garrick.swift"
+# The app is main.swift beside GarrickShared.swift, which the Finder extension is built from too.
+mkdir "$WORK/src"
+cp "$HERE/Garrick.swift" "$WORK/src/main.swift"
+xcrun swiftc "${OPT[@]}" -o "$BUNDLE/MacOS/Garrick" "$WORK/src/main.swift" "$HERE/GarrickShared.swift"
 
 # The icon is Garrick's mark from status.py, the one the page carries, on a
 # navy tile on the macOS icon grid; the app draws the menu bar's icon itself.
 # The bundle identifier is the one the app had as Garrick's Status, so its
 # settings carry over. The plist is written by plistlib, so no path or flag
 # can break it.
-"$PY" - "$STATUS" "$WORK" "$WS" "$PY" "${ARGS[@]+"${ARGS[@]}"}" <<'PY'
+"$PY" - "$STATUS" "$WORK" "$WS" "$PY" "$TOKEN" "${ARGS[@]+"${ARGS[@]}"}" <<'PY'
 import importlib.util, plistlib, sys
-status, work, ws, py, given = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
+status, work, ws, py, token, given = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:]
 args, i = [], 0
 while i < len(given):                  # the flags gone in 0.51.0 (#318), and --obsidian's vault with it
     if given[i] == "--obsidian":
@@ -82,6 +90,7 @@ with open(work + "/Garrick.app/Contents/Info.plist", "wb") as f:
         "CFBundleIconFile": "AppIcon", "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1", "LSMinimumSystemVersion": "12.0",
         "LSApplicationCategoryType": "public.app-category.productivity", "NSHighResolutionCapable": True,
+        "CFBundleURLTypes": [{"CFBundleURLName": "Garrick link", "CFBundleURLSchemes": ["garrick"]}], "GarrickLinkToken": token,
         "GarrickWorkspace": ws, "GarrickStatusScript": status, "GarrickPython": py, "GarrickStatusArgs": args,
     }, f)
 PY

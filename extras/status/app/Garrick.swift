@@ -63,6 +63,9 @@ let page = generated.appendingPathComponent("status.html")
 let builder = URL(fileURLWithPath: info["GarrickStatusScript"] as? String ?? workspace.path + "/System/status/status.py")
 let python = info["GarrickPython"] as? String ?? "/usr/bin/python3"
 let flags = info["GarrickStatusArgs"] as? [String] ?? []
+// The token a garrick://open link must carry: random per build, put in Info.plist by
+// make-app.sh. Without one, every link is refused, so a bare build opens nothing.
+let linkToken = info["GarrickLinkToken"] as? String ?? ""
 let cmuxBundle = "com.cmuxterm.app"
 let claudeBundle = "com.anthropic.claudefordesktop"
 let codexBundle = "com.openai.codex"
@@ -687,7 +690,43 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askZonePicker: NSPopUpButton! // the zone the window answers in, beside the field (#317)
 	var askChoices: NSStackView!      // "Which zone?": a button for each zone, in its colour
 	var askAfterReset: (() -> Void)?  // what waits for a new conversation to have started: a zone's question sent again
+	var linkReady = false             // the window is up: a garrick:// link can be answered
+	var pendingLinks: [URL] = []      // links that arrived while the app was starting
 	var askZoneAfterStop = false      // a zone picked during a request: it is stopped, then a new conversation starts under a divider
+
+	// The Finder extension's links (garrick://open, #346) arrive as Apple events, a cold launch's
+	// first one before the window exists, so the handler is set here and a link that comes
+	// too early waits for the end of applicationDidFinishLaunching.
+	func applicationWillFinishLaunching(_ note: Notification) {
+		NSAppleEventManager.shared().setEventHandler(self, andSelector: #selector(getURL(_:reply:)),
+		                                             forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL))
+	}
+
+	@objc func getURL(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+		guard let text = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+		      let url = URL(string: text) else { return }
+		if linkReady { handleLink(url) } else { pendingLinks.append(url) }
+	}
+
+	// A link opens a project or a thread in an opener and nothing else. A link without this build's
+	// token is dropped without a word, so a web page that fires garrick:// links cannot make the app
+	// say or do anything. With the token, the folder must be one the Finder menu would offer
+	// (GarrickShared.swift), the opener switched on in Settings and installed, checked again here.
+	func handleLink(_ url: URL) {
+		guard !checking, let link = GarrickLink.parse(url, token: linkToken) else { return }
+		guard let folder = GarrickLink.openable(link.folder, workspace: workspace.path) else {
+			return toast("Garrick opens only a project or a thread from Finder. Nothing was opened.")
+		}
+		let name = link.app == "cmux" ? "cmux" : link.app.capitalized
+		guard launcherOn(link.app) else {
+			return toast("\(name) is switched off in Settings, under Opening a thread. Nothing was opened.")
+		}
+		let bundle = ["cmux": cmuxBundle, "claude": claudeBundle, "codex": codexBundle][link.app] ?? ""
+		guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) != nil else {
+			return toast("\(name) is not installed here. Nothing was opened.")
+		}
+		launch(link.app, folder.path, phrase: "open " + folder.lastPathComponent)
+	}
 
 	func applicationDidFinishLaunching(_ note: Notification) {
 		// The app starts as a regular one, in the Dock (the end of this file), so a launch you make goes
@@ -743,6 +782,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			self.askKeep()
 			self.askKeeper = Timer.scheduledTimer(withTimeInterval: askKeepEvery, repeats: true) { [weak self] _ in self?.askKeep() }
 		}
+		linkReady = true
+		let early = pendingLinks
+		pendingLinks = []
+		for url in early { handleLink(url) }
 	}
 
 	// Ask's background session (#261): kept while the preview is on, started again by ask.py if it

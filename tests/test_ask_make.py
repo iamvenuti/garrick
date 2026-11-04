@@ -495,7 +495,9 @@ class TestTheBriefSpeaksAsGarrick(unittest.TestCase):
         self.assertIn("I answer from your meetings, the library, your threads and your Todo lists, with links to the records",
                       self.brief)
         self.assertIn("I open, park and wake projects and threads, make new ones and add Todo lines", self.brief)
-        self.assertIn("I don't edit notes, send or delete anything", self.brief)
+        self.assertIn("I don't edit notes, tick Todo lines, send, share or delete anything, run jobs or change settings", self.brief)
+        for verb in ("tick", "done", "delete", "send", "settings", "job"):       # none of these is a verb the box runs
+            self.assertFalse(any(verb in v for v in ask.VERBS), verb)
 
     def test_what_it_says_it_does_is_what_the_box_runs(self):
         self.assertEqual(("open", "park", "wake", "todo-add", "new-project", "new-thread"), ask.VERBS)

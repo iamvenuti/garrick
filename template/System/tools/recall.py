@@ -42,7 +42,7 @@ import sys
 import time
 import unicodedata
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 sys.dont_write_bytecode = True
 HERE = Path(__file__).resolve().parent
@@ -816,11 +816,33 @@ def permitted(s: Searcher, ctx: dict, kind: str, zone: str, project: str, partie
     return not any(walled(ctx, a, b) for a in s.parties for b in parties)
 
 
-def allowed_pids(idx: Index, s: Searcher, ctx: dict) -> List[int]:
+@dataclasses.dataclass(frozen=True)
+class RowPolicy:
+    """What a row says about whose it is, handed to a caller's `admit`.
+    `kind` is "meetings", "knowledge", "zone" (a note), "session" or "system"; `zones`
+    and `parties` are lower-case tuples, empty when the row names none."""
+    kind: str
+    zones: Tuple[str, ...]
+    project: str
+    parties: Tuple[str, ...]
+
+
+def allowed_pids(idx: Index, s: Searcher, ctx: dict,
+                 admit: Optional[Callable[[RowPolicy], bool]] = None) -> List[int]:
     out = []
     for pid, kind, zone, project, parties in idx.con.execute("SELECT pid, kind, zone, project, parties FROM policies"):
-        if permitted(s, ctx, kind, zone, project, [p for p in parties.split("|") if p]):
-            out.append(pid)
+        plist = [p for p in parties.split("|") if p]
+        if not permitted(s, ctx, kind, zone, project, plist):
+            continue
+        if admit is not None:
+            try:
+                ok = bool(admit(RowPolicy(kind, tuple(z for z in zone.lower().split("|") if z), project,
+                                          tuple(plist))))
+            except Exception:
+                ok = False                       # fail closed
+            if not ok:
+                continue
+        out.append(pid)
     return out
 
 
@@ -1015,7 +1037,8 @@ def reach_of(root: Path) -> str:
 
 def search(words: str, *, project: Optional[PathLike], after: Optional[str] = None,
            zone: Optional[str] = None, wiki: Optional[str] = None, sessions: bool = False,
-           limit: int = 10, root: Optional[PathLike] = None, archived: bool = False) -> List[Result]:
+           limit: int = 10, root: Optional[PathLike] = None, archived: bool = False,
+           admit: Optional[Callable[[RowPolicy], bool]] = None) -> List[Result]:
     """Ranked hits for `words`, best first, at most `limit`.
 
     `project` is the folder of the project the session works in (absolute, or
@@ -1046,6 +1069,15 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
     row (or a project hub's files) in the no-party case. Counts and headers built from the returned list therefore
     include only what the caller may see; a caller must never count rows
     any other way.
+
+    `admit` is an extra wall for a caller that is not a project (the Ask
+    server calls with `project=None`). It gets each row's `RowPolicy` and
+    returns True to keep it. It is applied together with the project's own
+    wall, before ranking and before the oversample window, so BM25's counts
+    and the candidates are computed over admitted rows alone and a refused row
+    changes neither what is found nor in what order. It can only narrow: a row
+    the walls refuse is never admitted by it, and an error in it refuses the
+    row.
 
     Working pages are searched first. Dormant pages join only when the
     working ones return fewer than `limit` and the `reach` setting allows it;
@@ -1097,7 +1129,7 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
                 continue
             lists: List[Tuple[float, List[Hit]]] = []
             for idx in indexes:
-                pids = allowed_pids(idx, who, ctx)
+                pids = allowed_pids(idx, who, ctx, admit)
                 for kind, weight in (("note", 1.0), ("chunk", RAW_WEIGHT)):
                     if kind == "note" and idx.scope.kind == "system":
                         continue
@@ -1176,14 +1208,45 @@ NOWHERE = Path("/nowhere/outside/the/workspace")
 
 
 def cwd_project(root: Path) -> Optional[Path]:
-    """The place a session opened in the current folder works in: the folder
-    itself, which `locate` places. None (the root) only at the workspace root
-    or in System/. A folder no zone owns (a wiki, Zones/ itself, anywhere
-    outside) is NOWHERE, which reads nothing."""
-    place = locate(root, Path.cwd())
+    """The place a search made from the command line works in. It comes from
+    the process's real folder alone, never from an argument, and only when
+    that folder is really inside `root` (an explicit `--root` never changes
+    the scope). The result is a folder `locate` places in a zone, None (the
+    root) only for the workspace root or a folder inside `System/`, and
+    NOWHERE, which reads nothing, for everything else.
+
+    When the environment names the folder the session was opened in
+    (`CLAUDE_PROJECT_DIR`; Codex sets nothing of the kind), the scope is the
+    narrower of that folder and this one. A session that changed folder to
+    somewhere outside the one it was opened in reads nothing, so `cd` to the
+    workspace root does not widen a project session. A marker that is not a
+    folder inside the workspace reads nothing."""
+    try:
+        here = Path.cwd().resolve()
+    except OSError:
+        return NOWHERE
+    root = root.resolve()
+    try:
+        if workspace_root(here).resolve() != root:
+            return NOWHERE
+    except FileNotFoundError:
+        return NOWHERE
+    place = locate(root, here)
     if place is None:
         return NOWHERE
-    return Path.cwd() if place.zone else None
+    marker = os.environ.get("CLAUDE_PROJECT_DIR")
+    if marker:
+        try:
+            home = Path(marker).resolve()
+            if locate(root, home) is None or not (home == here or home in here.parents):
+                return NOWHERE
+        except OSError:
+            return NOWHERE
+    if place.zone:
+        return here
+    # The root or System/. Only a folder really at the root or inside System/.
+    rel = here.relative_to(root).parts
+    return None if (not rel or rel[0] == "System") else NOWHERE
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -1194,7 +1257,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     b.add_argument("--rebuild", action="store_true", help="make every index again from the files")
     s = sub.add_parser("search", help="ranked search")
     s.add_argument("words")
-    s.add_argument("--project", help="the project folder (default: the current folder)")
     s.add_argument("--after", metavar="YYYY-MM-DD")
     s.add_argument("--zone")
     s.add_argument("--wiki")
@@ -1203,7 +1265,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--limit", type=int, default=10)
     s.add_argument("--json", action="store_true")
     t = sub.add_parser("stats", help="the indexes, and how many files you may read in each")
-    t.add_argument("--project")
     e = sub.add_parser("extract", help="write new sessions to .sessions/ folders")
     e.add_argument("--claude", help="Claude Code's projects folder")
     e.add_argument("--codex", help="Codex's sessions folder")
@@ -1229,12 +1290,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(recall_sessions.extract_all(root, args.claude, args.codex))
         return 0
     if args.cmd == "stats":
-        project = Path(args.project) if args.project else cwd_project(root)
+        project = cwd_project(root)
         for row in stats(project, root):
             print("%s: %d files%s (%s)" % (row["index"], row["files"], ", in memory" if row["memory"] else "",
                                           "fts5" if row["fts"] else "plain text"))
         return 0
-    project = Path(args.project) if args.project else cwd_project(root)
+    project = cwd_project(root)
     if project == NOWHERE:
         print("This folder is not a place Recall reads from, so nothing was searched. Open the session in a "
               "project, or at the workspace root.", file=sys.stderr)

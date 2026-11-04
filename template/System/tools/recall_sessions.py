@@ -58,7 +58,7 @@ _NAME = r"(?:(?<![\w.-])[\w.-]*?" + _LONG_WORDS + r"[\w.-]{0,128}|(?<![A-Za-z0-9
         _SHORT_WORDS + r"(?:[_.-][A-Za-z0-9]{1,48}){0,6}(?![A-Za-z0-9]))"
 _PLAIN_WORDS = r"(?:api[\s_-]?key|apikey|secret|token|password|passwd|passphrase|pass|pwd|pw|key|otp)"
 _QUOTED = r"(\"\"\"[\s\S]*?\"\"\"|'''[\s\S]*?'''|\"[^\"\n]*\"|'[^'\n]*')"
-_COMMANDS = r"(?:mysql\w*|mariadb\w*|sshpass|psql|pg_dump\w*|redis-cli|mongo\w*)"
+_COMMANDS = r"(?:mysql\w*|mariadb\w*|sshpass|psql|pg_dump\w*|redis-cli|mongo\w*|docker\s+login|podman\s+login)"
 MASKERS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S), MASK),
     (re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@"), lambda m: m.group(0).split("://")[0] + "://" + MASK + "@"),
@@ -72,6 +72,19 @@ MASKERS = [
      lambda m: m.group(1) + "  " + MASK + "\n"),
     # Authorization: Token x / Basic x / Bearer x / anything: the whole value.
     (re.compile(r"(?i)(\bauthorization\b[\"\']?\s*[:=]\s*[\"\']?)([^\r\n\"\']+)"), lambda m: m.group(1) + MASK),
+    # Cookie: and Set-Cookie: carry a session; --cookie too.
+    (re.compile(r"(?i)(\b(?:set-)?cookie\b[\"\']?\s*[:=]\s*[\"\']?)([^\r\n\"\']+)"), lambda m: m.group(1) + MASK),
+    (re.compile(r"(?i)(--cookie(?:-jar)?[=\s]+)(\"[^\"]*\"|'[^']*'|\S+)"), lambda m: m.group(1) + MASK),
+    # A secret piped into a command that reads it from standard input.
+    (re.compile(r"(?i)(\b(?:echo|printf)\s+(?:-[a-z]+\s+)*)(\"[^\"\n]*\"|'[^'\n]*'|[^\s|]+)(\s*\|[^\n]{0,300}?--password-stdin)"),
+     lambda m: m.group(1) + MASK + m.group(3)),
+    (re.compile(r"(?i)(--password-stdin[^\n]{0,300}?<<<\s*)(\"[^\"\n]*\"|'[^'\n]*'|\S+)"), lambda m: m.group(1) + MASK),
+    # openssl enc -k hunter2, -pass pass:hunter2, -passin pass:hunter2.
+    (re.compile(r"(?i)(?<![\w-])(openssl\b[^\n|;&]{0,300}?\s-k\s+)(\"[^\"]*\"|'[^']*'|\S+)"), lambda m: m.group(1) + MASK),
+    (re.compile(r"(?i)(-pass(?:in|out)?[=\s]+pass:)(\"[^\"]*\"|'[^']*'|\S+)"), lambda m: m.group(1) + MASK),
+    # aws configure set aws_secret_access_key VALUE: a name that ends in one of these, then its value.
+    (re.compile(r"(?i)\b(\w*(?:secret_access_key|access_key_id|session_token|_token|_secret)[ \t]+)(?!\[masked\])"
+                r"(\"[^\"\n]*\"|'[^'\n]*'|[^\s,;\"')\]}]+)"), lambda m: m.group(1) + MASK),
     (re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}"), lambda m: m.group(1) + " " + MASK),
     (re.compile(r"(?i)\b(Token)\s+(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{8,}"), lambda m: m.group(1) + " " + MASK),
     (re.compile(r"(?i)(--?[a-z-]{0,64}(?:password|passwd|pass|token|secret|api-?key|apikey)[a-z-]{0,64})([=\s]+)(\"[^\"]*\"|'[^']*'|\S+)"),
@@ -103,6 +116,11 @@ MASKERS = [
 # some tokens are 40 hex characters.
 LONG_TOKEN = re.compile(r"(?<![A-Za-z0-9_+=-])[A-Za-z0-9_+=-]{32,}(?![A-Za-z0-9_+=-])")
 
+# A base64-looking key with slashes (an AWS secret key is 40 of these): it may
+# not start at or follow a slash, so a path is not one, and it needs digits and
+# both cases of letters.
+SLASH_TOKEN = re.compile(r"(?<![A-Za-z0-9_+/=.-])[A-Za-z0-9+][A-Za-z0-9+/]{39,}={0,2}(?![A-Za-z0-9_+/=-])")
+
 
 def mask(text: str) -> str:
     """`text` with anything shaped like a key, a token or a password replaced
@@ -117,7 +135,12 @@ def mask(text: str) -> str:
         if re.fullmatch(r"[A-Za-z]+(?:[_-][A-Za-z]+)+", run):    # a long-kebab-case-name
             return run
         return MASK
-    return LONG_TOKEN.sub(long_run, text)
+    def slash_run(m: "re.Match") -> str:
+        run = m.group(0)
+        if "/" in run and re.search(r"[0-9]", run) and re.search(r"[a-z]", run) and re.search(r"[A-Z]", run):
+            return MASK
+        return run
+    return SLASH_TOKEN.sub(slash_run, LONG_TOKEN.sub(long_run, text))
 
 
 CUT_MARGIN = 4096

@@ -31,12 +31,14 @@ import argparse
 import collections
 import dataclasses
 import datetime
+import hashlib
 import json
 import math
 import os
 import re
 import sqlite3
 import sys
+import time
 import unicodedata
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple, Union
@@ -53,7 +55,6 @@ from garrick_lib import (  # noqa: E402
     load_context,
     parse_frontmatter_text,
     strip_tag,
-    tag_list,
     walled,
     workspace_root,
 )
@@ -137,7 +138,9 @@ def locate(root: Path, path: PathLike) -> Optional[Place]:
     except ValueError:
         return None
     if len(parts) >= 2 and parts[0] == "Zones" and not parts[1].startswith("."):
-        project = parts[2] if len(parts) >= 3 and not parts[2].startswith(".") else ""
+        # A project is a folder. A file at the zone's top (Todo.md) belongs to the zone.
+        project = parts[2] if len(parts) >= 3 and not parts[2].startswith(".") \
+            and (len(parts) > 3 or (base / parts[0] / parts[1] / parts[2]).is_dir()) else ""
         thread = parts[4] if project and len(parts) >= 5 and parts[3] == "Threads" else ""
         return Place(parts[1], project, thread)
     if not parts or parts[0] == "System":
@@ -145,8 +148,59 @@ def locate(root: Path, path: PathLike) -> Optional[Place]:
     return None
 
 
-def note_parties(fm: dict) -> List[str]:
-    return sorted(set(tag_list(fm.get("party")) + tag_list(fm.get("parties"))))
+def known_tags(ctx: dict) -> Set[str]:
+    return {strip_tag(t) for t in ctx.get("parties", {})}
+
+
+def listed_tags(value, known: Set[str]) -> Optional[List[str]]:
+    """The party tags a frontmatter value names, each of them a tag the Parties
+    table lists. None when any of them is not (`birch, acme` is one word to
+    the YAML reader, and no wall names it): a value that cannot be read
+    plainly is a value that cannot be placed. Nothing given is an empty list."""
+    values = value if isinstance(value, list) else [value] if value else []
+    out: List[str] = []
+    for v in values:
+        tag = strip_tag(str(v))
+        if not tag:
+            continue
+        if tag not in known:
+            return None
+        out.append(tag)
+    return out
+
+
+def note_parties(fm: dict, known: Set[str]) -> Optional[List[str]]:
+    """Party tags of a note's `party:` and `parties:` together, or None when
+    either holds something that is not a listed tag."""
+    one, many = listed_tags(fm.get("party"), known), listed_tags(fm.get("parties"), known)
+    if one is None or many is None:
+        return None
+    return sorted(set(one + many))
+
+
+def fingerprint(path: Path) -> str:
+    """What an edit that keeps the size and the modified time still moves, so
+    a note's parties are read again after one. The change time cannot be set
+    back, and costs no read; where it means something else (Windows) the
+    frontmatter, where a policy comes from, is hashed instead."""
+    if os.name != "nt":
+        try:
+            return str(path.stat().st_ctime_ns)
+        except OSError:
+            return ""
+    return fm_hash(path)
+
+
+def fm_hash(path: Path) -> str:
+    """A hash of a file's frontmatter block."""
+    try:
+        with open(str(path), "rb") as fh:
+            head = fh.read(65536)
+    except OSError:
+        return ""
+    end = head.find(b"\n---", 3) if head.startswith(b"---") else -1
+    block = head[:end + 4] if end != -1 else head
+    return hashlib.sha1(block).hexdigest()[:16]
 
 
 class Hubs:
@@ -154,6 +208,7 @@ class Hubs:
 
     def __init__(self, root: Path):
         self.root = root
+        self.known = known_tags(load_context(root))
         self.cache: Dict[Tuple[str, str, str], List[str]] = {}
 
     def parties(self, place: Place) -> List[str]:
@@ -162,16 +217,21 @@ class Hubs:
         key = (place.zone, place.project, place.thread)
         if key not in self.cache:
             top = self.root / "Zones" / place.zone / place.project
-            tags = set(self._read(top / (place.project + ".md")))
-            if place.thread:
-                tags |= set(self._read(top / "Threads" / place.thread / (place.thread + ".md")))
+            tags: Set[str] = set()
+            for path in [top / (place.project + ".md")] + (
+                    [top / "Threads" / place.thread / (place.thread + ".md")] if place.thread else []):
+                found = self._read(path)
+                if found is None:           # a party that is not a listed tag: the place has no party
+                    tags = set()
+                    break
+                tags |= set(found)
             self.cache[key] = sorted(tags)
         return self.cache[key]
 
-    @staticmethod
-    def _read(path: Path) -> List[str]:
+    def _read(self, path: Path) -> Optional[List[str]]:
         try:
-            return note_parties(parse_frontmatter_text(path.read_text(encoding="utf-8", errors="replace")))
+            return note_parties(parse_frontmatter_text(path.read_text(encoding="utf-8", errors="replace")),
+                                self.known)
         except OSError:
             return []
 
@@ -220,6 +280,8 @@ class Index:
         self.path = scope.folder(root) / INDEX_NAME
         self.con = self._open()
 
+    YOUNG_SECONDS = 15.0
+
     def _open(self) -> sqlite3.Connection:
         folder = self.path.parent
         if not folder.is_dir():
@@ -227,32 +289,66 @@ class Index:
         if synced(folder):
             return self._memory()
         try:
-            con = sqlite3.connect(str(self.path))
-            if not self._ready(con):
-                con.close()
-                for suffix in ("", "-wal", "-shm", "-journal"):
-                    try:
-                        os.remove(str(self.path) + suffix)
-                    except OSError:
-                        pass
+            if self.path.exists():
                 con = sqlite3.connect(str(self.path))
-                self._create(con)
-            return con
-        except sqlite3.Error:
+                state = self._state(con)
+                if state == "ready":
+                    self._private(self.path)
+                    return con
+                con.close()
+                try:
+                    young = time.time() - self.path.stat().st_mtime < self.YOUNG_SECONDS
+                except OSError:
+                    young = False
+                if state == "empty" and young:      # another process may be making it right now
+                    return self._memory()
+            return self._replace()
+        except (sqlite3.Error, OSError):
             return self._memory()
+
+    def _replace(self) -> sqlite3.Connection:
+        """Make the index in a file of its own and move it into place in one
+        step, so a process that is opening the old one never finds it half made."""
+        tmp = self.path.with_name("%s.new-%d" % (INDEX_NAME, os.getpid()))
+        for suffix in ("", "-journal"):
+            try:
+                os.remove(str(tmp) + suffix)
+            except OSError:
+                pass
+        con = sqlite3.connect(str(tmp))
+        self._create(con)
+        con.close()
+        self._private(tmp)
+        for suffix in ("-wal", "-shm", "-journal"):
+            try:
+                os.remove(str(self.path) + suffix)
+            except OSError:
+                pass
+        os.replace(str(tmp), str(self.path))
+        return sqlite3.connect(str(self.path))
+
+    @staticmethod
+    def _private(path: Path) -> None:
+        try:
+            os.chmod(str(path), 0o600)
+        except OSError:
+            pass
 
     def _memory(self) -> sqlite3.Connection:
         con = sqlite3.connect(":memory:")
         self._create(con)
         return con
 
-    def _ready(self, con: sqlite3.Connection) -> bool:
+    def _state(self, con: sqlite3.Connection) -> str:
+        """ready, stale (made by another version or setting), or empty (no
+        meta table: unreadable, or still being made)."""
         try:
             rows = dict(con.execute("SELECT key, value FROM meta").fetchall())
         except sqlite3.Error:
-            return False
-        return rows.get("version") == SCHEMA_VERSION and rows.get("fts") == ("1" if self.fts else "0") \
+            return "empty"
+        ok = rows.get("version") == SCHEMA_VERSION and rows.get("fts") == ("1" if self.fts else "0") \
             and rows.get("tokenizer") == TOKENIZER
+        return "ready" if ok else "stale"
 
     def _create(self, con: sqlite3.Connection) -> None:
         con.executescript(SCHEMA)
@@ -463,8 +559,16 @@ class Refresher:
     def note_derived(self, rel: str, path: Path) -> str:
         if SESSIONS_DIR in rel.split("/"):
             return self.session_derived(rel, path)
-        place = locate(self.root, path) or Place("", "", "")
-        return json.dumps([self.hubs.parties(place), place.project])
+        place = self.place(rel)
+        return json.dumps([self.hubs.parties(place), place.project, fingerprint(path)])
+
+    def place(self, rel: str) -> Place:
+        """Place of a zone note from its path below the root, which the walk
+        made: no link was followed, so nothing needs resolving."""
+        parts = rel.split("/")
+        project = parts[2] if len(parts) > 3 and not parts[2].startswith(".") else ""
+        thread = parts[4] if project and len(parts) >= 5 and parts[3] == "Threads" else ""
+        return Place(parts[1], project, thread)
 
     def note(self, rel: str, path: Path) -> None:
         if SESSIONS_DIR in rel.split("/"):
@@ -472,10 +576,13 @@ class Refresher:
         text = read_text(path)
         if text is None:
             return
-        place = locate(self.root, path) or Place("", "", "")
+        place = self.place(rel)
         fm = parse_frontmatter_text(text)
         body = body_of(text)
-        parties = sorted(set(self.hubs.parties(place)) | set(note_parties(fm)))
+        own = note_parties(fm, self.hubs.known)
+        if own is None:
+            return                                  # a party no wall names: the note is used nowhere
+        parties = sorted(set(self.hubs.parties(place)) | set(own))
         stat_date = datetime.date.fromtimestamp(path.stat().st_mtime)
         date = next((d for d in (fade.read_date(fm.get(f)) for f in ("date", "updated", "created")) if d), None) \
             or fade.name_date(path.name) or stat_date
@@ -504,7 +611,7 @@ class Refresher:
 
     def session_derived(self, rel: str, path: Path) -> str:
         where, _ = self.session_where(path)
-        return json.dumps(self.session_parties(where))
+        return json.dumps([self.session_parties(where), fingerprint(path)])
 
     def session(self, rel: str, path: Path) -> None:
         text = read_text(path)
@@ -522,7 +629,7 @@ class Refresher:
 
     @staticmethod
     def page_derived(rel: str, path: Path) -> str:
-        return ""
+        return fingerprint(path)
 
     def page(self, rel: str, path: Path) -> None:
         wiki = rel.split("/")[1]
@@ -531,16 +638,19 @@ class Refresher:
         if text is None:
             return
         fm = parse_frontmatter_text(text)
-        parties = sorted(set(tag_list(fm.get("parties")) + tag_list(fm.get("party"))))
+        parties = note_parties(fm, self.hubs.known)
         given = fm.get("zone") if isinstance(fm.get("zone"), list) else [fm.get("zone")]
         zones = sorted({str(z).strip().lower() for z in given if z and str(z).strip()})
-        if wiki == "Meetings" and (not zones or not parties):
-            return                                  # an unfinished page is used nowhere
+        # A Knowledge page that names a zone or a party is a conversation filed in the wrong
+        # wiki: it follows the Meetings policy, and an unfinished one is used nowhere.
+        conversation = wiki == "Meetings" or bool(zones) or bool(fm.get("party")) or bool(fm.get("parties"))
+        if parties is None or (conversation and (not zones or not parties)):
+            return                                  # an unfinished page, or a party no wall names
         body = body_of(text)
         date = next((d for d in (fade.read_date(fm.get(f)) for f in fade.DATE_FIELDS[wiki]) if d), None) \
             or fade.name_date(path.name)
         title = str(fm.get("title") or "") or first_heading(body) or path.stem
-        pid = self.idx.policy("meetings" if wiki == "Meetings" else "knowledge", "|".join(zones), "", parties)
+        pid = self.idx.policy("meetings" if conversation else "knowledge", "|".join(zones), "", parties)
         self.idx.add(rel, "note", wiki.lower(), title, iso(date), grade,
                      bool(str(fm.get("superseded") or "").strip()), pid, "", [body.strip()])
         if fm.get("raw"):
@@ -589,6 +699,10 @@ def searcher(root: Path, project: Optional[PathLike], zone: Optional[str], zone_
     if project is None:
         place = Place("", "", "")
     else:
+        # Only a literal None is the root. An empty string, ".", or a place no
+        # zone owns (a wiki, Zones/ itself, a folder outside) is nobody's.
+        if str(project).strip() in ("", ".") or Path(project) == Path("."):
+            return None
         found = locate(root, project)
         if found is None:
             return None
@@ -678,10 +792,22 @@ class Hit:
     rank: int = 0
 
 
+BM25_K1 = 1.2
+BM25_B = 0.75
+MAX_MATCHED = 20000
+
+
+def tokens(text: str) -> List[str]:
+    return re.findall(r"\w+", plain(text), re.UNICODE)
+
+
 def candidates(idx: Index, words: List[str], kind: str, grades: List[str], pids: List[int],
-               after: Optional[str], sessions: bool, wiki: Optional[str]) -> List[Hit]:
+               after: Optional[str], sessions: bool, wiki: Optional[str],
+               only_sessions: bool = False) -> List[Hit]:
     """Best rows of one list in one index, best first. Only rows the walls
-    allow are in the query, so a walled row takes no place in the ranking."""
+    allow are in the query, and the ranking (BM25) takes its document count,
+    document frequencies and average length from those rows alone: a walled
+    row changes neither what is found nor in what order."""
     if not pids:
         return []
     where = ["d.kind = ?", "d.grade IN (%s)" % ",".join("?" * len(grades)), "d.pid IN (%s)" % ",".join(
@@ -689,23 +815,54 @@ def candidates(idx: Index, words: List[str], kind: str, grades: List[str], pids:
     args: list = [kind] + list(grades)
     if not sessions:
         where.append("d.src != 'session'")
+    if only_sessions:
+        where.append("d.src = 'session'")
     if after:
         where.append("d.date != '' AND d.date >= ?")
         args.append(after)
+    cond = " AND ".join(where)
     cols = "d.id, d.path, d.kind, d.src, d.title, d.date, d.grade, d.superseded, d.owner"
+    terms = [plain(w) for w in words]
+    texts: Dict[int, Tuple[tuple, List[str], List[str], int]] = {}
     if idx.fts:
-        sql = ("SELECT %s FROM fts JOIN docs d ON d.id = fts.rowid WHERE fts MATCH ? AND %s "
-               "ORDER BY bm25(fts, 2.0, 1.0) LIMIT %d" % (cols, " AND ".join(where), CANDIDATES))
-        rows = idx.con.execute(sql, [fts_query(words)] + args).fetchall()
-        return one_per_file([Hit(*r, scope=idx.scope) for r in rows])
+        total, chars = idx.con.execute("SELECT COUNT(*), COALESCE(SUM(length(d.title) + length(d.body)), 0) "
+                                       "FROM docs d WHERE " + cond, args).fetchone()
+        df = {}
+        for w in words:
+            df[plain(w)] = idx.con.execute(
+                "SELECT COUNT(*) FROM fts JOIN docs d ON d.id = fts.rowid WHERE fts MATCH ? AND " + cond,
+                ['"%s"' % w] + args).fetchone()[0]
+        rows = idx.con.execute("SELECT %s, d.body FROM fts JOIN docs d ON d.id = fts.rowid WHERE fts MATCH ? "
+                               "AND %s ORDER BY d.id LIMIT %d" % (cols, cond, MAX_MATCHED),
+                               [fts_query(words)] + args).fetchall()
+        for r in rows:
+            texts[r[0]] = (r[:-1], tokens(r[4]), tokens(r[-1]), len(r[4]) + len(r[-1]))
+    else:
+        total = chars = 0
+        df = {t: 0 for t in terms}
+        for r in idx.con.execute("SELECT %s, d.body FROM docs d WHERE %s" % (cols, cond), args):
+            total += 1
+            chars += len(r[4]) + len(r[-1])
+            title, body = tokens(r[4]), tokens(r[-1])
+            present = set(title) | set(body)
+            for t in terms:
+                if t in present:
+                    df[t] += 1
+            if any(t in present for t in terms):
+                texts[r[0]] = (r[:-1], title, body, len(r[4]) + len(r[-1]))
+    avg = (chars / total) if total else 1.0
     scored = []
-    sql = "SELECT %s, d.body FROM docs d WHERE %s" % (cols, " AND ".join(where))
-    for r in idx.con.execute(sql, args):
-        count = collections.Counter(re.findall(r"\w+", plain(r[4] + " " + r[-1]), re.UNICODE))
-        score = sum(1.0 + math.log(count[plain(w)]) for w in words if count.get(plain(w)))
-        if score > 0:
-            scored.append((score, Hit(*r[:-1], scope=idx.scope)))
-    scored.sort(key=lambda t: (-t[0], t[1].path))
+    for rowid, (head, title, body, length) in texts.items():
+        counts_t, counts_b = collections.Counter(title), collections.Counter(body)
+        score = 0.0
+        for t in terms:
+            tf = 2.0 * counts_t.get(t, 0) + counts_b.get(t, 0)
+            if not tf:
+                continue
+            idf = math.log(1.0 + (total - df[t] + 0.5) / (df[t] + 0.5))
+            score += idf * tf * (BM25_K1 + 1.0) / (tf + BM25_K1 * (1.0 - BM25_B + BM25_B * length / avg))
+        scored.append((score, Hit(*head, scope=idx.scope)))
+    scored.sort(key=lambda t: (-t[0], t[1].path, t[1].rowid))
     return one_per_file([h for _, h in scored])[:CANDIDATES]
 
 
@@ -798,12 +955,15 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
     relative to the workspace root), for example `Zones/Work/Acme`. Its zone
     and its hub's `party:` decide which rows may be returned. `None` means a
     session opened at the workspace root or in `System/`, which has no party
-    and may read every zone and `System/.sessions/`. A project folder that is
-    not below the workspace, or a zone that does not exist, returns [].
+    and may read every zone and `System/.sessions/`. Only a literal `None` is
+    that: an empty string, ".", a folder that is not below the workspace, a
+    place that belongs to no zone (a wiki, `Zones/` itself) or a zone that
+    does not exist returns [].
 
     `after` keeps only hits dated on or after YYYY-MM-DD. `zone` adds another
     zone's index (the project's own zone is always searched; a root session
-    searches every zone); `wiki` limits the search to one wiki. `sessions=True`
+    searches every zone); `wiki` limits the search to one wiki (with `sessions=True` the sessions
+    are added to it, and no zone notes). `sessions=True`
     adds extracted sessions: the project's own zone's, or from a root session
     all of them. `archived=True` adds archived pages after the rest. `root` is
     the workspace root; it defaults to the one above `project`, or above the
@@ -813,8 +973,10 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
     A row whose parties are walled from the project's party is dropped before
     ranking, so it is not returned, not counted and not in a snippet. A
     Meetings page with no zone or no parties is dropped too, and so is a
-    Meetings page of a zone the search was not asked to reach. Knowledge is
-    not filtered. Counts and headers built from the returned list therefore
+    Meetings page of a zone the search was not asked to reach. A Knowledge page
+    that names a zone or a party follows the Meetings rule. Other Knowledge
+    is not filtered. A `party:` that holds anything but listed tags puts the
+    row (or a project hub's files) in the no-party case. Counts and headers built from the returned list therefore
     include only what the caller may see; a caller must never count rows
     any other way.
 
@@ -872,7 +1034,8 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
                 for kind, weight in (("note", 1.0), ("chunk", RAW_WEIGHT)):
                     if kind == "note" and idx.scope.kind == "system":
                         continue
-                    hits = candidates(idx, terms, kind, grades, pids, after, sessions, wiki)
+                    hits = candidates(idx, terms, kind, grades, pids, after, sessions, wiki,
+                                      only_sessions=bool(wiki) and idx.scope.kind != "wiki")
                     if hits:
                         lists.append((weight, hits))
             tier = [(v, h) for v, h in fuse(lists, today)]
@@ -931,6 +1094,8 @@ def build(root: Optional[PathLike] = None, rebuild: bool = False) -> List[str]:
         try:
             Refresher(idx, hubs).run(rebuild=rebuild)
             done.append(sc.label())
+        except sqlite3.Error:
+            done.append("%s (failed)" % sc.label())
         finally:
             idx.close()
     return done
@@ -940,11 +1105,18 @@ def build(root: Optional[PathLike] = None, rebuild: bool = False) -> List[str]:
 # Command line
 # ---------------------------------------------------------------------------
 
+NOWHERE = Path("/nowhere/outside/the/workspace")
+
+
 def cwd_project(root: Path) -> Optional[Path]:
-    """The project a session opened in the current folder works in: the folder
-    itself, which `locate` places. None at the root or in System/."""
+    """The place a session opened in the current folder works in: the folder
+    itself, which `locate` places. None (the root) only at the workspace root
+    or in System/. A folder no zone owns (a wiki, Zones/ itself, anywhere
+    outside) is NOWHERE, which reads nothing."""
     place = locate(root, Path.cwd())
-    return None if place is None or not place.zone else Path.cwd()
+    if place is None:
+        return NOWHERE
+    return Path.cwd() if place.zone else None
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -996,6 +1168,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                                           "fts5" if row["fts"] else "plain text"))
         return 0
     project = Path(args.project) if args.project else cwd_project(root)
+    if project == NOWHERE:
+        print("This folder is not a place Recall reads from, so nothing was searched. Open the session in a "
+              "project, or at the workspace root.", file=sys.stderr)
     hits = search(args.words, project=project, after=args.after, zone=args.zone, wiki=args.wiki,
                   sessions=args.sessions, limit=args.limit, root=root, archived=args.archived)
     if args.json:

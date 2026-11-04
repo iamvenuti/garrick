@@ -40,7 +40,7 @@ python3 ../../../System/tools/recall.py search "retry flag" --sessions
 
 - `--sessions` adds the sessions extracted for this zone. A session opened at
   the workspace root or in `System/` can read every zone's.
-- `--wiki Meetings` or `--wiki Knowledge` searches that wiki alone.
+- `--wiki Meetings` or `--wiki Knowledge` searches that wiki alone (with `--sessions`, the sessions too, and no notes).
 - `--zone Z` adds another zone. Do it only when the user asks for work across
   zones, and only for that request.
 - `--archived` adds archived pages after the rest. Use it only when the user
@@ -48,6 +48,20 @@ python3 ../../../System/tools/recall.py search "retry flag" --sessions
   the working ones fall short, and the answer says "from older notes".
 - `--project DIR` names the project when the session was not opened in it.
 - `stats` lists the indexes and how many files you may read in each.
+
+## Where the session was opened
+
+Only the workspace root and `System/` read as a root session. A session opened
+in a zone folder or below it reads that zone as a zone-level or project session.
+A session opened anywhere else (inside `Wikis/`, in `Zones/` itself, outside
+the workspace) has no place the walls can be checked against, so the tool
+searches nothing and says so. Open the session in a project, or pass
+`--project DIR`.
+
+A `party:` or `parties:` that holds anything but tags from the Parties table
+(`birch, acme`, `acme and birch`) cannot be placed: a Meetings page like that is
+left out, and a project whose hub is like that is treated as having no party. A
+Knowledge page that names a zone or a party follows the Meetings rule.
 
 ## A result is a pointer
 

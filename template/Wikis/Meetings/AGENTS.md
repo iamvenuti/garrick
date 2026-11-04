@@ -82,7 +82,7 @@ updated: YYYY-MM-DD
 ---
 ```
 
-Then one sentence: who they are, and which party. Nothing learned in a meeting, and no status: a person page is read on both sides of every wall.
+Then one sentence: who they are, and which party. Nothing learned in a meeting, no status and no other key: a person page is read on both sides of every wall.
 
 `organisation:` links the entity page of where they work, whatever their party, and carries nothing else; the `meetings` skill's *Ingest a transcript*, step 4, says how it is found and when there is none.
 

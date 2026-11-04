@@ -62,6 +62,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -124,6 +125,7 @@ __all__ = [
     "names_meet",
     "person_forms",
     "people_parties",
+    "short_form_parties",
     "organisation_link",
     "org_words",
     "org_key",
@@ -181,6 +183,8 @@ __all__ = [
     "hooks_path",
     "WALL_HOOK",
     "WALL_HOOK_NESTED",
+    "WALL_HOOK_WIKI",
+    "WIKI_GIT_REASON",
     "WALL_HOOK_MARK",
     "ZONE_TEMPLATE",
     "ZONE_TODO",
@@ -201,6 +205,7 @@ __all__ = [
     "FRONTMATTER_PLAIN",
     "FORM_PROBLEMS",
     "PERSON_PLAIN",
+    "PERSON_KEYS",
     "PERSON_SHAPE",
     "WALLS_KEYS",
     "frontmatter_form_problem",
@@ -331,6 +336,9 @@ FRONTMATTER_PLAIN = "frontmatter must be plain key: value lines"
 # with FRONTMATTER_PLAIN, what a refusal calls a page's form, not a wall.
 PERSON_SHAPE = "a person page's frontmatter must be plain `key: value` lines"
 PERSON_PLAIN = "a person page must be a plain file in wiki/people"
+# The only keys a person page has (#340), as ingest.py writes it. `organisation`
+# is the one that may hold a link; the walls read no other key for one.
+PERSON_KEYS = ("title", "type", "party", "organisation", "created", "updated")
 FORM_PROBLEMS = (FRONTMATTER_PLAIN, PERSON_SHAPE, PERSON_PLAIN)
 # What opens a YAML node other than a plain key at the left margin: a quoted
 # key, an explicit `?` key, a tag, an anchor, an alias, a merge key, a flow
@@ -1239,10 +1247,13 @@ def entity_page(root: PathLike, rel: str) -> Optional[Path]:
     return path if path.is_file() else None
 
 
-def entity_pages(root: PathLike) -> List[Tuple[str, Path]]:
+def entity_pages(root: PathLike, held: Optional[Iterable[Path]] = None) -> List[Tuple[str, Path]]:
     """(rel, path) for every entity page under the Meetings wiki's
     `wiki/entities/`, subfolders included, `rel` without `.md`. A symbolic
-    link, to a page or a folder, is passed over: it may lead out of the wiki."""
+    link, to a page or a folder, is passed over: it may lead out of the wiki.
+    `held` is the paths git holds that the disk may not (the commit hook's
+    index, #340): one under `wiki/entities/` that is no longer on disk is a
+    page of the commit all the same, so it is listed too."""
     folder = Path(root).joinpath(*MEETINGS_ENTITIES)
     out: List[Tuple[str, Path]] = []
     if not folder.is_dir() or folder.is_symlink():
@@ -1253,6 +1264,14 @@ def entity_pages(root: PathLike) -> List[Tuple[str, Path]]:
             path = Path(here) / f
             if f.endswith(".md") and not f.startswith(".") and not path.is_symlink() and path.is_file():
                 out.append((path.relative_to(folder).with_suffix("").as_posix(), path))
+    seen = {rel for rel, _ in out}
+    for path in sorted(held or ()):
+        if folder not in path.parents or path.suffix != ".md" or path.name.startswith(".") or os.path.lexists(str(path)):
+            continue
+        rel = path.relative_to(folder).with_suffix("").as_posix()
+        if rel not in seen and not any(part.startswith(".") for part in path.relative_to(folder).parts):
+            seen.add(rel)
+            out.append((rel, path))
     return out
 
 
@@ -1376,7 +1395,20 @@ def people_parties(context: dict, names) -> set:
     file name say, by every name each row goes by (person_forms), as
     names_meet() matches them. A row found brings every row of the same name
     with it, so a nickname or a `signs as` written on one hat's row alone
-    still finds the other hat."""
+    still finds the other hat. A name that is a short form of a person under
+    parties a wall keeps apart, which names_meet() does not read, brings both
+    hats (_short_of_two_hats)."""
+    return (_listed_parties(context, names) | _short_of_two_hats(context, names)) - {""}
+
+
+def short_form_parties(context: dict, names) -> set:
+    """The tags of a person under parties a wall keeps apart that `names` is
+    only a short form of (_short_of_two_hats) and people_parties() would not
+    have found otherwise: a page to ask about, not to link (#340)."""
+    return _short_of_two_hats(context, names) - _listed_parties(context, names) - {""}
+
+
+def _listed_parties(context: dict, names) -> set:
     keys = set().union(set(), *(name_keys(n) for n in ([names] if isinstance(names, str) else names)))
     if not keys:
         return set()
@@ -1386,6 +1418,37 @@ def people_parties(context: dict, names) -> set:
     found = {strip_tag(p.get("party") or "") for i, (p, _) in enumerate(rows)
              if i in hit or names_meet(named, name_keys(p.get("name")))}
     return found - {""}
+
+
+def _short_of_two_hats(context: dict, names) -> set:
+    """The tags of every person the People table has under parties a wall
+    keeps apart, when a page's name shares a word with their surname. Fail
+    closed (#340): names are folded (case, accents, `æ`, `ø`, `ß`, punctuation)
+    and split into words, and any page that holds a surname word of such a
+    person, in any order, with any title, initial or note beside it (`Blake`,
+    `Mr Blake`, `Blake Rowan`, `Rowan Blake (Birch)`), is read as that person:
+    it links neither hat's entity page and is asked about. The one exception
+    is a page whose whole folded name is another row of the People table. A
+    surname is the last word of each name a row goes by (person_forms)."""
+    pages = [name_words(n) for n in ([names] if isinstance(names, str) else names)]
+    pages = [w for w in pages if w]
+    if not pages:
+        return set()
+    persons: Dict[str, List[dict]] = {}
+    for p in context.get("people", []):
+        persons.setdefault(" ".join(name_words(p.get("name"))), []).append(p)
+    out = set()
+    for whole, rows in persons.items():
+        tags = {strip_tag(p.get("party") or "") for p in rows} - {""}
+        if not any(walled(context, a, b) for a in tags for b in tags):
+            continue
+        surnames = {w[-1] for p in rows for f in person_forms(context, p) for w in [name_words(f)] if w}
+        for page in pages:
+            if " ".join(page) in persons and " ".join(page) != whole:
+                continue                     # another row of the table, exactly
+            if surnames & set(page):
+                out |= tags
+    return out
 
 
 def organisation_link(root: PathLike, context: dict, names, party,
@@ -1493,7 +1556,7 @@ def entity_names(root: PathLike, texts: Optional[Dict[Path, str]] = None) -> Lis
     and it is tagged only when both say `party:` in frontmatter that cannot
     be read two ways (frontmatter_form_problem)."""
     out = []
-    for rel, page in entity_pages(root):
+    for rel, page in entity_pages(root, texts):
         seen = [_page_text(page)] + ([texts[page]] if texts and page in texts else [])
         views = [parse_frontmatter_text(t) for t in seen]
         names, parties, title, tagged = [Path(rel).name], set(), "", True
@@ -2317,6 +2380,61 @@ exec python3 "$check" --root "$dir" --staged --walls-only
 """ % WALL_HOOK_MARK
 
 
+# A wiki's repository is `Wikis/`, or each wiki under it, and `Wikis/` may be a
+# link to a folder elsewhere, so the hook cannot find the workspace by looking
+# upward from where git says it is. The installer writes the workspace in: the
+# hook uses it when it holds the check, looks upward when it does not, and
+# refuses the commit when it finds neither (#340).
+WALL_HOOK_WIKI = """#!/bin/sh
+# %s: refuse a commit that would carry walled material into this wiki's history.
+# Installed by Garrick. The deliberate override, only when you mean it: git commit --no-verify
+top="$(git rev-parse --show-toplevel)"
+real="$(cd "$top" && pwd -P)"
+gitdir="$(cd "$(git rev-parse --git-dir)" 2>/dev/null && pwd -P)"
+# A workspace is the right one when this repository is exactly its Wikis, or a
+# wiki under it, with its own .git, and its check is not inside this repository.
+ours() {
+  [ -f "$1/System/tools/check.py" ] || return 1
+  tools="$(cd "$1/System/tools" && pwd -P)" || return 1
+  case "$tools" in "$real"|"$real"/*) return 1 ;; esac
+  wikis="$(cd "$1/Wikis" 2>/dev/null && pwd -P)" || return 1
+  [ "$real" = "$wikis" ] && return 0
+  for wiki in "$1"/Wikis/*/; do
+    case "$(basename "$wiki")" in _*|.*) continue ;; esac
+    [ -d "$wiki" ] && [ "$(cd "$wiki" && pwd -P)" = "$real" ] && return 0
+  done
+  return 1
+}
+if [ -L "$real/.git" ] || [ -f "$real/.git" ]; then
+  echo "Commit refused: this wiki's .git is a file or a link pointing elsewhere (a linked worktree, --separate-git-dir), not a folder inside it. Garrick checks a wiki only when its .git is a folder inside it." >&2
+  exit 1
+fi
+if [ "$gitdir" != "$real/.git" ]; then
+  echo "Commit refused: git is told to use another work tree (GIT_WORK_TREE, core.worktree), so the wall check cannot place the files. Commit from the wiki's own folder." >&2
+  exit 1
+fi
+dir="$(dirname "$top")"
+while [ "$dir" != "/" ] && ! ours "$dir"; do dir="$(dirname "$dir")"; done
+if ! ours "$dir"; then
+  dir=%s
+  if [ -z "$dir" ] || ! ours "$dir"; then
+    echo "Commit refused: no workspace found whose Wikis, or whose wiki (a folder not starting with _ or a dot), is this repository, so the wall check cannot run. Run python3 System/tools/check.py --install-hooks in the workspace, or commit with --no-verify if you mean to skip it." >&2
+    exit 1
+  fi
+fi
+exec python3 "$dir/System/tools/check.py" --root "$dir" --staged --walls-only
+"""
+
+
+WIKI_GIT_REASON = ("its .git is a file or a link pointing elsewhere (a linked worktree, --separate-git-dir); "
+                   "Garrick checks a wiki only when its .git is a folder inside it")
+
+
+def wiki_hook_text(root: Optional[PathLike] = None) -> str:
+    """The wiki's pre-commit hook, with the workspace root written into it."""
+    return WALL_HOOK_WIKI % (WALL_HOOK_MARK, shlex.quote(str(root)) if root else "''")
+
+
 def _hooks_dir(zone: PathLike) -> Optional[Path]:
     git_dir = Path(zone) / ".git"
     return git_dir / "hooks" if git_dir.is_dir() else None
@@ -2334,13 +2452,18 @@ def has_wall_hook(zone: PathLike) -> bool:
         return False
 
 
-def install_wall_hook(zone: PathLike, nested: bool = False) -> Path:
+def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False,
+                      root: Optional[PathLike] = None) -> Path:
     """Write the pre-commit wall check into a zone's repository, or with
-    `nested` into a repository inside a project, and return its path.
+    `nested` into a repository inside a project, or with `wiki` into a wiki's,
+    which is told the workspace `root`, and return its path.
 
     Refuses (FileExistsError) to replace a pre-commit hook Garrick did not write,
     and (FileNotFoundError) a zone whose `.git` is not a folder."""
     hooks = _hooks_dir(zone)
+    if wiki and (Path(zone) / ".git").exists() and (Path(zone) / ".git").is_symlink() or (
+            wiki and (Path(zone) / ".git").is_file()):
+        raise FileNotFoundError("%s: %s" % (zone, WIKI_GIT_REASON))
     if hooks is None:
         raise FileNotFoundError("%s is not a git repository with its own .git folder" % zone)
     hook = hooks / "pre-commit"
@@ -2350,7 +2473,7 @@ def install_wall_hook(zone: PathLike, nested: bool = False) -> Path:
             raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
                                   "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
     hooks.mkdir(parents=True, exist_ok=True)
-    hook.write_text(WALL_HOOK_NESTED if nested else WALL_HOOK, encoding="utf-8")
+    hook.write_text(wiki_hook_text(root) if wiki else WALL_HOOK_NESTED if nested else WALL_HOOK, encoding="utf-8")
     hook.chmod(0o755)
     return hook
 

@@ -262,6 +262,63 @@ class TestWalls(WikiAnswerCase):
             self.do("question-close", wiki="Knowledge", file=name)
 
 
+class TestOwnRecord(WikiAnswerCase):
+    """F1: the record an answered question cites is its own, or nothing is printed."""
+
+    def planted(self, record_parties="[birch]", name="260312 - volume-floor"):
+        write(self.meetings / "raw" / "answers" / "261005 - birch-secret-lease.md",
+              "---\ntype: answer\nanswered: 2026-10-05\nzone: Work\nparties: %s\nquestion: \"[[questions/%s]]\"\n---\n\n"
+              "Question: x\n\n```\nthe lease ends in spring\n```\n" % (record_parties, "260312 - birch-lease"))
+        self.ask(question(status="answered", extra='answer: "[[raw/answers/261005 - birch-secret-lease]]"\n'))
+
+    def test_another_partys_record_is_never_cited_or_named(self):
+        self.planted()
+        before = snapshot(self.root)
+        for verb in ("question-work", "question-done"):
+            with self.assertRaises(pa.Refused) as caught:
+                self.do(verb)
+            self.assertEqual(SENTENCE, str(caught.exception))
+            self.assertNotIn("birch", str(caught.exception).lower())
+        self.assertEqual([], self.changed(before))
+
+    def test_a_record_of_another_question_with_the_same_parties_is_refused_too(self):
+        self.planted("[acme]")           # its question: link lands on another file
+        with self.assertRaises(pa.Refused) as caught:
+            self.do("question-work")
+        self.assertEqual(SENTENCE, str(caught.exception))
+
+    def test_a_knowledge_record_of_another_question_is_refused_plainly(self):
+        name = "questions/260312 - source-date.md"
+        write(self.knowledge / "raw" / "answers" / "261005 - other.md",
+              "---\ntype: answer\nanswered: 2026-10-05\nquestion: \"[[questions/260312 - elsewhere]]\"\n---\n\nx\n")
+        self.ask("---\ntype: question\nasked: 2026-03-12\nstatus: answered\nanswer: \"[[raw/answers/261005 - other]]\"\n"
+                 "pages: []\n---\n\n**Which year?**\n", wiki="Knowledge", name=name)
+        with self.assertRaisesRegex(pa.Refused, "not a record of this question"):
+            self.do("question-work", wiki="Knowledge", file=name)
+
+    def test_its_own_record_still_works_straight_after_the_answer(self):
+        self.ask()
+        self.do("question-answer", words="500")
+        self.assertIn("Cite [[raw/answers/261005 - volume-floor]].", self.do("question-work"))
+        self.assertEqual("Done. The question is worked in", self.do("question-done"))
+
+
+class TestPagesToChange(WikiAnswerCase):
+    """F2: only a page of wiki/ is ever offered for change."""
+
+    def test_raw_records_questions_and_the_answer_are_not_pages(self):
+        self.ask()
+        write(self.meetings / "questions" / "260313 - other.md", question())
+        pages = ['[[raw/260310-acme-kickoff]]', '[[questions/260313 - other]]', '[[questions/260312 - volume-floor]]',
+                 '[[raw/answers/261005 - volume-floor]]', ACME]
+        self.ask(question(pages='", "'.join(pages)))
+        self.do("question-answer", words="500")
+        say = self.do("question-work")
+        self.assertIn("Change wiki/sources/260310-acme-kickoff.md", say)
+        self.assertEqual(1, say.count("Change "))
+        self.assertIn("4 pages are not there.", say)
+
+
 class TestWorkIn(WikiAnswerCase):
     def test_work_and_done_need_an_answered_question_with_a_record(self):
         self.ask()

@@ -933,11 +933,11 @@ def wiki_question(fields="zone: Work\nparties: [acme]\n", status="open", bold=Tr
             % (status, fields, pages, "**%s**" % ask if bold else ask, body))
 
 
-def answer_record(parties="[acme]", words="It is 500 pallets."):
+def answer_record(parties="[acme]", words="It is 500 pallets.", question="260312 - volume-floor"):
     """A raw answer (#224): the user's words, filed beside the question's zone and parties."""
     return ("---\ntype: answer\nanswered: 2026-03-13\nzone: Work\nparties: %s\n"
-            "question: \"[[questions/260312 - volume-floor]]\"\n---\n\nQuestion: Acme: which floor holds?\n\n"
-            "Answered on 2026-03-13, in the user's own words:\n\n```\n%s\n```\n" % (parties, words))
+            "question: \"[[questions/%s]]\"\n---\n\nQuestion: Acme: which floor holds?\n\n"
+            "Answered on 2026-03-13, in the user's own words:\n\n```\n%s\n```\n" % (parties, question, words))
 
 
 class TestWikiQuestions(CheckCase):
@@ -1021,9 +1021,10 @@ class TestWikiQuestions(CheckCase):
 
     def test_every_status_a_wiki_question_has_is_accepted(self):
         record = '"[[raw/answers/260313 - volume-floor]]"'
-        write(self.meetings / "raw" / "answers" / "260313 - volume-floor.md", answer_record())
         for status, extra in (("open", ""), ("answered", "answer: %s\n" % record), ("later", "later: 2026-11-01\n"),
                               ("closed", ""), ("done", "answer: %s\n" % record)):
+            if "answer:" in extra:
+                write(self.meetings / "raw" / "answers" / "260313 - volume-floor.md", answer_record(question="260312 - %s" % status))
             write(self.asked / ("260312 - %s.md" % status), wiki_question("zone: Work\nparties: [acme]\n" + extra, status=status))
             self.assertEqual([], self.messages("Wikis/Meetings/questions/260312 - %s.md" % status), status)
         write(self.kasked / "260312 - closed.md", wiki_question("", status="closed", pages="[]"))
@@ -1049,6 +1050,25 @@ class TestWikiQuestions(CheckCase):
         for name in "bcd":
             self.assertEqual(["answered, but " + point], self.messages("Wikis/Meetings/questions/%s.md" % name))
         self.assertEqual(["done, but " + point], self.messages("Wikis/Meetings/questions/e.md"))
+
+    def test_an_answer_that_is_another_questions_or_another_partys_warns_without_naming_it(self):
+        point = "answered, but its `answer:` is not a record of this question, with its zone and parties, so the page it changes may not cite it"
+        record = 'answer: "[[raw/answers/260313 - lease]]"\n'
+        cases = {"a": answer_record("[birch]", question="260312 - a"),       # another party's
+                 "b": answer_record("[acme]", question="260312 - other"),   # another question's
+                 "c": answer_record("[acme]", question="260312 - c").replace("zone: Work", "zone: Personal"),
+                 "d": answer_record("[acme]", question="260312 - d").replace("type: answer", "type: note")}
+        for name, text in cases.items():
+            write(self.meetings / "raw" / "answers" / "260313 - lease.md", text)
+            write(self.asked / ("260312 - %s.md" % name), wiki_question("zone: Work\nparties: [acme]\n" + record, status="answered"))
+            found = self.messages("Wikis/Meetings/questions/260312 - %s.md" % name)
+            self.assertIn(point, found, name)
+            self.assertNotIn("birch", point)      # the wording names nothing; the cites-across-a-wall finding is the existing one
+            if name != "a":
+                self.assertEqual([point], found, name)
+        write(self.meetings / "raw" / "answers" / "260313 - lease.md", answer_record("[acme]", question="260312 - e"))
+        write(self.asked / "260312 - e.md", wiki_question("zone: Work\nparties: [acme]\n" + record, status="answered"))
+        self.assertEqual([], self.messages("Wikis/Meetings/questions/260312 - e.md"))
 
     def test_a_project_may_not_link_a_raw_answer_across_a_wall(self):
         write(self.meetings / "raw" / "answers" / "260313 - birch-lease.md", answer_record("[birch]"))

@@ -2851,9 +2851,14 @@ def question_findings(ws: Workspace, f: Path, reader: str, say: str,
         out.append(Finding(WARNING, "questions", r, "put off with no `later:` date, so it never comes back", say))
     if status == "answered" and not str(fm.get("answer") or "").strip():
         out.append(Finding(WARNING, "questions", r, "answered, with no `answer:`", say))
-    if wiki is not None and status in ("answered", "done") and str(fm.get("answer") or "").strip() and not raw_answer_there(wiki, fm.get("answer")):
-        out.append(Finding(WARNING, "questions", r, "%s, but its `answer:` points at no raw answer in raw/answers/, "
-                           "so the page it changes has nothing to cite" % status, say))
+    if wiki is not None and status in ("answered", "done") and str(fm.get("answer") or "").strip():
+        record = raw_answer_there(wiki, fm.get("answer"))
+        if record is None:
+            out.append(Finding(WARNING, "questions", r, "%s, but its `answer:` points at no raw answer in raw/answers/, "
+                               "so the page it changes has nothing to cite" % status, say))
+        elif not own_answer(record, f, fm):
+            out.append(Finding(WARNING, "questions", r, "%s, but its `answer:` is not a record of this question, "
+                               "with its zone and parties, so the page it changes may not cite it" % status, say))
     try:
         body = f.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -2863,19 +2868,39 @@ def question_findings(ws: Workspace, f: Path, reader: str, say: str,
     return out
 
 
-def raw_answer_there(wiki: Path, value) -> bool:
-    """Whether a wiki question's `answer:` is a link to a file in the wiki's
-    raw/answers/ (#224), written with or without its extension."""
+def raw_answer_there(wiki: Path, value) -> Optional[Path]:
+    """The file a wiki question's `answer:` links in the wiki's raw/answers/
+    (#224), written with or without its extension; None when there is none."""
     m = re.fullmatch(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]", str(value).strip())
     if not m:
-        return False
+        return None
     target = m.group(1).strip()
     folder = wiki.joinpath(*WIKI_ANSWERS).resolve()
     for name in (target, target + ".md"):
         p = (wiki / name).resolve()
         if p.is_file() and folder in p.parents:
-            return True
-    return False
+            return p
+    return None
+
+
+def own_answer(record: Path, question: Path, qfm: dict) -> bool:
+    """Whether a raw answer is this question's own: it carries the question's
+    zone and parties, and its `question:` link lands on the question's file."""
+    rfm = parse_frontmatter(record)
+    if frontmatter_form_problem(read_text(record) or "") or rfm.get("type") != "answer":
+        return False
+    if str(rfm.get("zone") or "").strip() != str(qfm.get("zone") or "").strip():
+        return False
+    if sorted(strip_tag(t) for t in as_list(rfm.get("parties"))) != sorted(strip_tag(t) for t in as_list(qfm.get("parties"))):
+        return False
+    wiki = question.parent
+    while wiki.name != WIKI_QUESTIONS and wiki != wiki.parent:
+        wiki = wiki.parent
+    wiki = wiki.parent
+    m = re.fullmatch(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]", str(rfm.get("question") or "").strip())
+    if not m:
+        return False
+    return any((wiki / n).resolve() == question.resolve() for n in (m.group(1).strip(), m.group(1).strip() + ".md"))
 
 
 def check_questions(ws: Workspace) -> List[Finding]:

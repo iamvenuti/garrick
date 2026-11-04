@@ -2602,7 +2602,9 @@ def page_target(q: WikiQuestion, link: str) -> Optional[Path]:
         return None
     for name in (target, target + ".md"):
         p = (q.dir / name).resolve()
-        if p.is_file() and q.dir in p.parents and p.suffix.lower() == ".md":
+        # Only a page of the wiki's own wiki/ folder: never a raw record, a
+        # question or the question's own answer.
+        if p.is_file() and (q.dir / "wiki").resolve() in p.parents and p.suffix.lower() == ".md":
             return p
     return None
 
@@ -2778,21 +2780,54 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
         return "Noted. Your words are filed as %s. The pages change when you say work them in" % stem
 
 
+def own_record(q: WikiQuestion, wall: str) -> str:
+    """The raw answer an answered question points at, as a link target, only
+    when it is this question's own: a record of type answer, in raw/answers/,
+    with the question's zone and parties and a `question:` link that lands on
+    this very file. Anything else is refused before a name is printed: a
+    Meetings question with the wall sentence, a Knowledge one plainly."""
+    refuse = Refused(wall if q.name == "Meetings" else "that question's answer is not a record of this question")
+    answered = tags_of(q.fm.get("answer"))
+    m = re.fullmatch(r"\[\[(raw/answers/[^\]|#]+)\]\]", answered[0]) if len(answered) == 1 else None
+    if not m:
+        raise Refused("that question points at no raw answer, so there is nothing to cite")
+    folder = q.dir.joinpath(*WIKI_ANSWER_DIR).resolve()
+    candidate = (q.dir / (m.group(1) + ".md")).resolve()
+    if not candidate.is_file() or folder not in candidate.parents:
+        raise Refused("that question points at no raw answer, so there is nothing to cite")
+    try:
+        text = candidate.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise refuse
+    if q.lib.frontmatter_form_problem(text):
+        raise refuse
+    fm = q.lib.parse_frontmatter_text(text)
+    if fm.get("type") != "answer":
+        raise refuse
+    mine = sorted(q.parties())
+    theirs = sorted(bare_tag(q.lib, t) for t in tags_of(fm.get("parties")))
+    if q.name == "Meetings":
+        zone = fm.get("zone")
+        if not isinstance(zone, str) or zone.strip() != str(q.fm.get("zone")).strip() or theirs != mine:
+            raise refuse
+    elif fm.get("zone") not in (None, "") or theirs:
+        raise refuse
+    link = tags_of(fm.get("question"))
+    target = re.fullmatch(r"\[\[([^\]|#]+)\]\]", link[0]) if len(link) == 1 else None
+    if not target:
+        raise refuse
+    for name in (target.group(1).strip(), target.group(1).strip() + ".md"):
+        if (q.dir / name).resolve() == q.path:
+            return m.group(1)
+    raise refuse
+
+
 def wiki_work(ws: Path, q: WikiQuestion, req: dict, today: dt.date, wall: str) -> str:
     """Read only (question-work): what an answered question may change, and the
     record to cite. question-done: it is marked done."""
     if q.status != "answered":
         raise Refused("that question is %s, not answered" % (q.status or "unreadable"))
-    answered = tags_of(q.fm.get("answer"))
-    record = None
-    m = re.fullmatch(r"\[\[(raw/answers/[^\]|#]+)\]\]", answered[0]) if answered else None
-    if m:
-        candidate = (q.dir / (m.group(1) + ".md")).resolve()
-        folder = q.dir.joinpath(*WIKI_ANSWER_DIR).resolve()
-        if candidate.is_file() and folder in candidate.parents:
-            record = m.group(1)
-    if record is None:
-        raise Refused("that question points at no raw answer, so there is nothing to cite")
+    record = own_record(q, wall)
     pages, held_back, missing = question_pages(q, wall)
     if req["verb"] == "question-done":
         with held("question-%s.lock" % q.name, busy="another question in %s is still being written" % q.name):

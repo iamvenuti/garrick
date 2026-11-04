@@ -198,7 +198,7 @@ class TestKeepACopy(Stored):
         hook = self.base / "hooks" / "pre-commit"
         line = check.report_staged([check.Finding(check.ERROR, "walls", "Catalogue 2027/Catalogue 2027.md",
                                                   "names Birch & Co (`birch`); a wall stands between acme and birch")])
-        write(hook, "#!/bin/sh\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line).chmod(0o755)
+        write(hook, "#!/bin/sh\n# Garrick wall check (a stand-in)\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line).chmod(0o755)
         self.git("config", "core.hooksPath", str(hook.parent))
         with self.assertRaises(pa.Refused) as said:
             self.files_act("copy")

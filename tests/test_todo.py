@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
+import fixtures  # noqa: E402
 from fixtures import build_workspace, checkpoint, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
@@ -340,6 +341,7 @@ class SweepJobTest(unittest.TestCase):
         self.addCleanup(env.stop)
         self.git = lambda *a: git(self.zone, *a)
         self.git("init", "-q")
+        fixtures.stand_in_hook(self.zone)
         write(self.zone / "Todo.md", LIST)
         write(self.zone / ".gitignore", ".todo-seen.json\n")                    # as Garrick's zone ignore lines say
         self.git("add", "-A")

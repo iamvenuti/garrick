@@ -63,7 +63,7 @@ TIMEOUT = 300
 
 def git(repo: Path, *args: str, timeout: int = TIMEOUT) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=timeout,
-                          stdin=subprocess.DEVNULL)
+                          stdin=subprocess.DEVNULL, env=agent.own_repo_env())
 
 
 def repositories(ws: Path) -> List[Path]:
@@ -131,6 +131,13 @@ def commit(ws: Path, repo: Path, when: str, say) -> Tuple[int, List[str]]:
     held files relative to the workspace)."""
     if not git(repo, "status", "--porcelain").stdout.strip():
         return OK, []
+    if repo.parent.name == "Zones" and repo.parent.parent == Path(ws):
+        # A zone's commits must run its wall check. The root and the wikis have no wall hook by design (the
+        # wikis are checked by the nurture tools, the root holds no project files): only their environment is cleaned.
+        problem = agent.wall_hook_problem(repo)
+        if problem:
+            say("%s: %s; nothing committed" % (rel(ws, repo), problem))
+            return FAILED, []
     if midway(repo):
         say("%s: in the middle of a merge, rebase or cherry-pick, or with conflicts unresolved; nothing committed. "
             "Finish it by hand." % rel(ws, repo))

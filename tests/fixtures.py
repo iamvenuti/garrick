@@ -106,6 +106,16 @@ def git_init(folder: Path) -> None:
         (folder / ".git").mkdir(parents=True, exist_ok=True)
 
 
+def stand_in_hook(repo: Path, body: str = "") -> Path:
+    """A pre-commit hook in the repository that carries Garrick's mark and runs `body`: what
+    Garrick's own commits ask git for before they commit (garrick_lib.wall_hook_problem)."""
+    hook = Path(repo) / ".git" / "hooks" / "pre-commit"
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\n" + body)
+    hook.chmod(0o755)
+    return hook
+
+
 def commit_all(folder: Path, message: str = "snapshot") -> None:
     git(folder, "add", "-A")
     git(folder, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.devnull,

@@ -90,6 +90,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
+    own_repo_env,
     INBOX,
     memory_folders,
     parse_frontmatter_text,
@@ -320,7 +321,9 @@ def _rel(root: Path, path: Path) -> str:
 
 
 def _git(args: List[str], cwd: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True)
+    # The walls check above runs on what is staged whatever hooks the repository has (wikis have none by
+    # design), so only the environment is cleaned: the commit is in the repository of `cwd`, with its own config.
+    return subprocess.run(["git"] + args, cwd=str(cwd), capture_output=True, text=True, env=own_repo_env())
 
 
 def walls_refusal(root: Path, repo: Path, paths: Optional[List[str]] = None) -> str:

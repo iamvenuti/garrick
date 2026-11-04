@@ -1195,8 +1195,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			DispatchQueue.main.async {
 				let reply = said ?? ["ok": false, "say": "That did not work."]
 				self.acted(request, reply)
-				// A reply that says `built` has settled the page itself: page_action.py asked for the one build
-				// (true), or nothing changed (false) (#344). One without it is a verb it does not build for.
+				// A reply that says `"built": true` has settled the page itself: page_action.py asked for the one
+				// build (#344). One without the key (a refusal, a read, a verb it does not build for) rebuilds here.
 				if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }
 			}
 		}

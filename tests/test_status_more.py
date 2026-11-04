@@ -3134,3 +3134,10 @@ class TestWhatALaunchSays(StatusCase):
         self.assertIn(("*Open in Codex*", "Installed without its own launcher"), states)
         self.assertIn("boot: done", page)                      # the mark the wait watches for
         self.assertIn("forty seconds", page)                   # and the ceiling, in words
+
+
+class TestWaitsOnUser(unittest.TestCase):
+    def test_a_name_of_spaces_is_no_name_and_nothing_is_the_users(self):
+        for name in ("", " ", "   \t", None):
+            self.assertFalse(status.waits_on_user("Jo: the figures", name), repr(name))
+        self.assertTrue(status.waits_on_user("Jo: the figures", "Jo Example"))

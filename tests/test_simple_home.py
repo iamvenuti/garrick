@@ -480,6 +480,7 @@ class GitCase(HomeCase):
                      ("config", "maintenance.auto", "false"), ("config", "gc.auto", "0"), ("add", "-A"),
                      ("commit", "-q", "-m", "start")):
             subprocess.run(["git", "-C", str(self.work)] + list(args), check=True, capture_output=True)
+        fixtures.stand_in_hook(self.work)          # Garrick's commits run only past its wall check
 
     def git(self, *args):
         return subprocess.run(["git", "-C", str(self.work)] + list(args), check=True, capture_output=True, text=True).stdout
@@ -732,7 +733,7 @@ class TestContinue(HandOffCase):
         line = check.report_staged([check.Finding(check.ERROR, "walls", "Acme Review/Threads/Pricing/Pricing.md",
                                                   "names Birch & Co (`birch`), or one of its people; "
                                                   "a wall stands between acme and birch")])
-        write(hook, "#!/bin/sh\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
+        write(hook, "#!/bin/sh\n# Garrick wall check (a stand-in)\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
         hook.chmod(0o755)
         said = self.go()
         self.assertEqual("Opened Acme Review in Claude. It already knows where it stands. Garrick's record of it is "
@@ -740,7 +741,7 @@ class TestContinue(HandOffCase):
         for leak in ("Birch", "birch", "Commit refused", "Pricing.md"):
             self.assertNotIn(leak, said)
         self.assertIn("M ", self.git("status", "--porcelain"))                  # nothing put back: the files are the user's
-        write(hook, "#!/bin/sh\necho 'fatal: the disk is full' >&2\nexit 1\n")
+        write(hook, "#!/bin/sh\n# Garrick wall check (a stand-in)\necho 'fatal: the disk is full' >&2\nexit 1\n")
         said = self.go(now=dt.datetime.now() + dt.timedelta(hours=handoff.FRESH_HOURS + 1))
         self.assertTrue(said.endswith("; Garrick's record of it is not committed: fatal: the disk is full"), said)
 

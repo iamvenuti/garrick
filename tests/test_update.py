@@ -627,6 +627,37 @@ class TestSafety(Case):
         hook.write_text("#!/bin/sh\necho mine\n")
         self.assertEqual([], self.plan()["hooks"])
 
+    def wiki_hook(self):
+        return self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
+
+    def test_a_workspace_with_no_wiki_hook_gets_one(self):
+        self.wiki_hook().unlink(missing_ok=True)                 # as 0.52.0 left it
+        p = self.plan()
+        self.assertEqual("add", p["wiki_hook"])
+        self.assertIn("the wikis get their pre-commit check", update.report(p))
+        self.assertFalse(self.wiki_hook().exists())              # the dry run wrote nothing
+        result = self.apply()
+        self.assertIn("Wikis", result["hooks"])
+        lib = update.install.lib()
+        self.assertEqual(lib.wiki_hook_text(self.root), self.wiki_hook().read_text())
+        self.assertTrue(os.access(self.wiki_hook(), os.X_OK))
+        self.assertEqual("", self.plan()["wiki_hook"])
+
+    def test_a_stale_garrick_wiki_hook_is_refreshed(self):
+        self.wiki_hook().write_text(self.wiki_hook().read_text().replace("refuse", "refuse, in older words,", 1))
+        self.assertEqual("refresh", self.plan()["wiki_hook"])
+        self.apply()
+        self.assertEqual(update.install.lib().wiki_hook_text(self.root), self.wiki_hook().read_text())
+
+    def test_a_foreign_wiki_hook_is_left_and_reported(self):
+        self.wiki_hook().write_text("#!/bin/sh\necho mine\n")
+        p = self.plan()
+        self.assertEqual("foreign", p["wiki_hook"])
+        self.assertIn("not Garrick's", update.report(p))
+        result = self.apply()
+        self.assertNotIn("Wikis", result["hooks"])
+        self.assertEqual("#!/bin/sh\necho mine\n", self.wiki_hook().read_text())
+
     def test_running_twice_changes_nothing_the_second_time(self):
         self.as_if_older("System/tools/scaffold.py", "# older\n")
         self.as_if_older("System/rules.md", "# Rules, older\n")

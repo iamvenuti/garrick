@@ -112,8 +112,9 @@ def counts(text: str) -> Optional[Tuple[int, int]]:
 
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
+    # The Knowledge wiki has no wall hook by design (it crosses every wall): only the environment is cleaned.
     return subprocess.run(["git", *args], cwd=str(repo), capture_output=True, text=True, timeout=300,
-                          stdin=subprocess.DEVNULL)
+                          stdin=subprocess.DEVNULL, env=agent.own_repo_env())
 
 
 def changes(repo: Path, rel: str) -> Set[str]:

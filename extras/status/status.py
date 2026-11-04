@@ -5057,7 +5057,8 @@ def waits_on_user(waiting: Optional[str], name: str) -> bool:
     text, a comma, a colon or a semicolon. `name` is what `## Me` opens with
     (ask_scope.user_name); with no name, nothing is the user's and every
     non-empty row stays a waiting one."""
-    if not waiting or not name:
+    name = (name or "").strip()
+    if not waiting or not name:          # a name of spaces only is no name
         return False
     forms = [name, name.split()[0], "me", "you", "the user"]
     return any(re.match(r"(?i)%s\s*(?:$|[,:;])" % re.escape(f), waiting) for f in forms)

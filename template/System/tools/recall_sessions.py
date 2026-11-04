@@ -54,27 +54,27 @@ _SHORT_WORDS = r"(?:pass|pw|pwd|key|otp)"
 # A name that carries a secret word: it may run on either side of a long word
 # (MY_TOKEN_2), but a short one (pass, pw, key) stands as a word of its own, or
 # between `_`, `.` and `-`, so `keyboard` and `compass` are left alone.
-_NAME = r"(?:\b[\w.-]*" + _LONG_WORDS + r"[\w.-]*|(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_.-])*" + _SHORT_WORDS + \
-        r"(?:[_.-][A-Za-z0-9]+)*(?![A-Za-z0-9]))"
+_NAME = r"(?:(?<![\w.-])[\w.-]*?" + _LONG_WORDS + r"[\w.-]{0,128}|(?<![A-Za-z0-9])(?:[A-Za-z0-9]{1,48}[_.-]){0,6}" + \
+        _SHORT_WORDS + r"(?:[_.-][A-Za-z0-9]{1,48}){0,6}(?![A-Za-z0-9]))"
 _PLAIN_WORDS = r"(?:api[\s_-]?key|apikey|secret|token|password|passwd|passphrase|pass|pwd|pw|key|otp)"
 _QUOTED = r"(\"\"\"[\s\S]*?\"\"\"|'''[\s\S]*?'''|\"[^\"\n]*\"|'[^'\n]*')"
 _COMMANDS = r"(?:mysql\w*|mariadb\w*|sshpass|psql|pg_dump\w*|redis-cli|mongo\w*)"
 MASKERS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S), MASK),
-    (re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@"), lambda m: m.group(0).split("://")[0] + "://" + MASK + "@"),
+    (re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@"), lambda m: m.group(0).split("://")[0] + "://" + MASK + "@"),
     # Webhook and bot URLs carry the secret in the path.
     (re.compile(r"(?i)hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+"), "hooks.slack.com/" + MASK),
     (re.compile(r"(?i)(discord(?:app)?\.com/api/webhooks/)[A-Za-z0-9/_-]+"), lambda m: m.group(1) + MASK),
     (re.compile(r"(?i)(api\.telegram\.org/(?:file/)?bot)[0-9]+:[A-Za-z0-9_-]+"), lambda m: m.group(1) + MASK),
     (re.compile(r"\b[0-9]{6,}:[A-Za-z0-9_-]{30,}"), MASK),
     # A block scalar: SECRET: | and the indented lines under it.
-    (re.compile(r"(?im)^([ \t]*[\w.-]*" + _LONG_WORDS + r"[\w.-]*[ \t]*:[ \t]*[|>][+-]?[ \t]*\n)((?:[ \t]+[^\n]*(?:\n|$))+)"),
+    (re.compile(r"(?im)^([ \t]*[\w.-]*?" + _LONG_WORDS + r"[\w.-]{0,128}[ \t]*:[ \t]*[|>][+-]?[ \t]*\n)((?:[ \t]+[^\n]*(?:\n|$))+)"),
      lambda m: m.group(1) + "  " + MASK + "\n"),
     # Authorization: Token x / Basic x / Bearer x / anything: the whole value.
     (re.compile(r"(?i)(\bauthorization\b[\"\']?\s*[:=]\s*[\"\']?)([^\r\n\"\']+)"), lambda m: m.group(1) + MASK),
     (re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}"), lambda m: m.group(1) + " " + MASK),
     (re.compile(r"(?i)\b(Token)\s+(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{8,}"), lambda m: m.group(1) + " " + MASK),
-    (re.compile(r"(?i)(--?[a-z-]*(?:password|passwd|pass|token|secret|api-?key|apikey)[a-z-]*)([=\s]+)(\"[^\"]*\"|'[^']*'|\S+)"),
+    (re.compile(r"(?i)(--?[a-z-]{0,64}(?:password|passwd|pass|token|secret|api-?key|apikey)[a-z-]{0,64})([=\s]+)(\"[^\"]*\"|'[^']*'|\S+)"),
      lambda m: m.group(1) + m.group(2) + MASK),
     # Command lines that take a password: mysql -phunter2, mysql -p hunter2, sshpass -p hunter2, curl -u user:pass.
     (re.compile(r"(?<![\w-])(" + _COMMANDS + r")(\s(?:[^\n|;&]*?\s)?)-p\s*(?=\S)\S+"),
@@ -118,6 +118,20 @@ def mask(text: str) -> str:
             return run
         return MASK
     return LONG_TOKEN.sub(long_run, text)
+
+
+CUT_MARGIN = 4096
+
+
+def mask_to(text: str, limit: int) -> str:
+    """`mask(text)` cut to `limit` characters, without masking what would be
+    thrown away. The text is cut a little past the limit, masked, and cut
+    again; when the first cut fell inside the text, the word it may have split
+    is dropped too, so that half a secret never stays."""
+    if len(text) <= limit + CUT_MARGIN:
+        return mask(text)[:limit]
+    out = mask(text[:limit + CUT_MARGIN])
+    return re.sub(r"[\w+=./~:@-]*\Z", "", out[:limit + 1])[:limit]
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +352,7 @@ def header_value(value) -> str:
 
 def render(s: Session, projects: List[str], size: int, mtime: int) -> str:
     first = next((t for k, t, _ in s.turns if k == "user"), "")
-    title = header_value(mask(first))[:TITLE_CHARS]
+    title = header_value(mask_to(first, TITLE_CHARS * 8))[:TITLE_CHARS]
     date = (s.started or datetime.datetime.now()).date().isoformat()
     head = ["---", 'title: "%s"' % title, "type: session", "harness: %s" % header_value(s.harness),
             "session: %s" % safe_id(s.id),
@@ -350,7 +364,7 @@ def render(s: Session, projects: List[str], size: int, mtime: int) -> str:
     head += ["source_size: %d" % size, "source_mtime: %d" % mtime, "---", ""]
     out = []
     for kind, text, status in s.turns:
-        text = mask(text)
+        text = mask_to(text, MAX_COMMAND + 1 if kind == "command" else MAX_TEXT)
         if kind == "command":
             text = text if len(text) <= MAX_COMMAND else text[:MAX_COMMAND] + " ..."
             out += ["### Command", "", "```sh", text.replace("```", "'''"), "```"]
@@ -358,7 +372,7 @@ def render(s: Session, projects: List[str], size: int, mtime: int) -> str:
                 out.append(status)
             out.append("")
         else:
-            out += ["## " + ("User" if kind == "user" else "Assistant"), "", text[:MAX_TEXT], ""]
+            out += ["## " + ("User" if kind == "user" else "Assistant"), "", text, ""]
     return "\n".join(head + out)
 
 
@@ -385,6 +399,8 @@ def write_session(root: Path, source: Path, s: Session) -> Optional[Path]:
     folder = top / recall.SESSIONS_DIR
     if folder.is_symlink() or recall.synced(top):
         return None                                 # sync corrupts nothing here, and copies sessions elsewhere
+    if not recall.safe_to_write(folder / "session.md"):
+        return None                                 # git would see it: nothing is written
     st = source.stat()
     sid = safe_id(s.id)
     old = existing(folder, sid) if folder.is_dir() else None

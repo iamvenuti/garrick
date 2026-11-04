@@ -28,9 +28,11 @@ Use Recall for what those routes do not answer: *when did we fix that error*,
 
 Run it from the folder the session was opened in. The tool takes that folder
 as the project, and finds the workspace above it. From a project folder the
-tool is three levels up (`../../../System/tools/recall.py`); from a zone
-folder, two. Never change folder first: from the workspace root or `System/`
-the tool reads as a root session, which may read every zone.
+tool is three levels up (`../../../System/tools/recall.py`); from a thread
+folder, five; from a zone folder, two. The installer allows `search` and
+`stats` at those depths, so they run without a question. Never change folder
+first (no `cd` to the root, then the tool): from the workspace root or
+`System/` the tool reads as a root session, which may read every zone.
 
 ```sh
 python3 ../../../System/tools/recall.py search "invoice export retry"

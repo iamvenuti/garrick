@@ -933,6 +933,13 @@ def wiki_question(fields="zone: Work\nparties: [acme]\n", status="open", bold=Tr
             % (status, fields, pages, "**%s**" % ask if bold else ask, body))
 
 
+def answer_record(parties="[acme]", words="It is 500 pallets."):
+    """A raw answer (#224): the user's words, filed beside the question's zone and parties."""
+    return ("---\ntype: answer\nanswered: 2026-03-13\nzone: Work\nparties: %s\n"
+            "question: \"[[questions/260312 - volume-floor]]\"\n---\n\nQuestion: Acme: which floor holds?\n\n"
+            "Answered on 2026-03-13, in the user's own words:\n\n```\n%s\n```\n" % (parties, words))
+
+
 class TestWikiQuestions(CheckCase):
     """A question an ingest or a lint finds only the user can answer is a file
     in the wiki's questions/ (#224), held to the Needs you rules; a Meetings
@@ -945,6 +952,10 @@ class TestWikiQuestions(CheckCase):
 
     def messages(self, path):
         return sorted(f.message for f in self.findings("questions") if f.path == path)
+
+    def wiki_messages(self, path):
+        """A wiki question's findings, with the two statuses only a wiki adds left out of the list."""
+        return [m.replace(", closed, done", "") for m in self.messages(path)]
 
     def test_a_meetings_question_as_written_passes(self):
         write(self.asked / "260312 - volume-floor.md", wiki_question())
@@ -1001,12 +1012,66 @@ class TestWikiQuestions(CheckCase):
             home = [m.replace("the home", "Garrick") for m in
                     self.messages("Zones/Work/Acme Review/Threads/Pricing/Needs you/%s.md" % name)]
             self.assertTrue(home)
-            self.assertEqual(home, self.messages("Wikis/Meetings/questions/%s.md" % name))
+            self.assertEqual(home, self.wiki_messages("Wikis/Meetings/questions/%s.md" % name))
             if name != "d":
-                self.assertEqual(home, self.messages("Wikis/Knowledge/questions/%s.md" % name))
-        self.assertIn("`status` is 'pending'; Garrick reads open, answered, later",
+                self.assertEqual(home, self.wiki_messages("Wikis/Knowledge/questions/%s.md" % name))
+        self.assertIn("`status` is 'pending'; Garrick reads open, answered, later, closed, done",
                       self.messages("Wikis/Meetings/questions/a.md"))
         self.assertIn("no bold line to ask, so Garrick leaves it out", self.messages("Wikis/Meetings/questions/c.md"))
+
+    def test_every_status_a_wiki_question_has_is_accepted(self):
+        record = '"[[raw/answers/260313 - volume-floor]]"'
+        write(self.meetings / "raw" / "answers" / "260313 - volume-floor.md", answer_record())
+        for status, extra in (("open", ""), ("answered", "answer: %s\n" % record), ("later", "later: 2026-11-01\n"),
+                              ("closed", ""), ("done", "answer: %s\n" % record)):
+            write(self.asked / ("260312 - %s.md" % status), wiki_question("zone: Work\nparties: [acme]\n" + extra, status=status))
+            self.assertEqual([], self.messages("Wikis/Meetings/questions/260312 - %s.md" % status), status)
+        write(self.kasked / "260312 - closed.md", wiki_question("", status="closed", pages="[]"))
+        self.assertEqual([], self.messages("Wikis/Knowledge/questions/260312 - closed.md"))
+        write(self.asked / "260312 - pending.md", wiki_question(status="pending"))
+        self.assertEqual(["`status` is 'pending'; Garrick reads open, answered, later, closed, done"],
+                         self.messages("Wikis/Meetings/questions/260312 - pending.md"))
+
+    def test_closed_and_done_are_not_statuses_the_home_reads(self):
+        box = self.acme / "Threads" / "Pricing" / "Needs you"
+        write(box / "a.md", wiki_question(status="closed"))
+        self.assertEqual(["`status` is 'closed'; the home reads open, answered, later"],
+                         self.messages("Zones/Work/Acme Review/Threads/Pricing/Needs you/a.md"))
+
+    def test_an_answered_question_with_no_raw_answer_warns(self):
+        for name, answer in (("a", ""), ("b", 'answer: "[[raw/answers/260313 - missing]]"\n'),
+                             ("c", 'answer: "[[raw/260310-acme-kickoff]]"\n'), ("d", "answer: 500\n")):
+            write(self.asked / ("%s.md" % name), wiki_question("zone: Work\nparties: [acme]\n" + answer, status="answered"))
+        write(self.asked / "e.md", wiki_question("zone: Work\nparties: [acme]\nanswer: \"[[raw/answers/260313 - missing]]\"\n",
+                                                 status="done"))
+        self.assertEqual(["answered, with no `answer:`"], self.messages("Wikis/Meetings/questions/a.md"))
+        point = "its `answer:` points at no raw answer in raw/answers/, so the page it changes has nothing to cite"
+        for name in "bcd":
+            self.assertEqual(["answered, but " + point], self.messages("Wikis/Meetings/questions/%s.md" % name))
+        self.assertEqual(["done, but " + point], self.messages("Wikis/Meetings/questions/e.md"))
+
+    def test_a_project_may_not_link_a_raw_answer_across_a_wall(self):
+        write(self.meetings / "raw" / "answers" / "260313 - birch-lease.md", answer_record("[birch]"))
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260313 - birch-lease]].\n")
+        self.assertFinds("walls", "error", "links [[260313 - birch-lease]], a reply with birch; a wall stands "
+                         "between acme and birch", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
+
+    def test_wording_from_a_raw_answer_across_a_wall_is_refused(self):
+        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
+        write(self.meetings / "raw" / "answers" / "260313 - birch-lease.md", answer_record("[birch]", quote))
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
+        self.assertFinds("walls", "error", "repeats wording from reply 260313 - birch-lease, a reply with birch")
+
+    def test_an_unfinished_raw_answer_is_unusable_and_warned_about(self):
+        write(self.meetings / "raw" / "answers" / "260313 - floor.md", answer_record("[acme]").replace("zone: Work\n", ""))
+        self.assertFinds("questions", "warning", None, "Wikis/Meetings/raw/answers/260313 - floor.md")
+        write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260313 - floor]].\n")
+        self.assertFinds("walls", "error", "uses 260313 - floor, an unfinished reply (no zone or parties)")
+
+    def test_a_raw_answer_with_a_frontmatter_read_two_ways_is_unfinished(self):
+        text = answer_record("[acme]").replace("parties: [acme]\n", "parties: [acme]\nparties: [birch]\n")
+        write(self.meetings / "raw" / "answers" / "260313 - floor.md", text)
+        self.assertFinds("walls", "error", "frontmatter must be plain key: value lines")
 
     def test_a_project_may_not_link_a_question_across_a_wall(self):
         write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Work\nparties: [birch]\n",

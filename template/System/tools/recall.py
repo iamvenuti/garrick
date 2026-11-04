@@ -8,6 +8,7 @@ ranked, with the walls applied before anything is returned (#341).
                                          [--limit N] [--json]
     python3 System/tools/recall.py stats [--project DIR]
     python3 System/tools/recall.py extract [--claude DIR] [--codex DIR]
+    python3 System/tools/recall.py nightly
 
 Python standard library only (Python 3.9 floor). An index is a cache, never a
 record: one gitignored SQLite file inside each zone (`Zones/<Zone>/.recall.sqlite`)
@@ -484,22 +485,26 @@ class Refresher:
         self.idx.add(rel, "note", "zone", title, iso(date), grade, bool(str(fm.get("superseded") or "").strip()),
                      pid, "", [body.strip()])
 
-    def session_where(self, path: Path) -> Tuple[Optional[Place], dict]:
+    def session_where(self, path: Path) -> Tuple[List[Place], dict]:
+        """The projects a session worked in (of its own zone only) and its header."""
         try:
             with open(str(path), encoding="utf-8", errors="replace") as fh:
                 head = fh.read(4000)
         except OSError:
-            return None, {}
+            return [], {}
         fm = parse_frontmatter_text(head)
         zone = (locate(self.root, path) or Place("", "", "")).zone
-        where = locate(self.root, str(fm["project"])) if fm.get("project") else None
-        if where is not None and where.zone != zone:
-            where = None                      # a session names a project of its own zone only
-        return where, fm
+        given = fm.get("project") if isinstance(fm.get("project"), list) else [fm.get("project")]
+        found = [locate(self.root, str(g)) for g in given if g]
+        return [p for p in found if p is not None and p.zone == zone and p.project], fm
+
+    def session_parties(self, where: List[Place]) -> Tuple[List[str], str]:
+        tags = sorted({t for p in where for t in self.hubs.parties(p)})
+        return tags, where[0].project if where else ""
 
     def session_derived(self, rel: str, path: Path) -> str:
         where, _ = self.session_where(path)
-        return json.dumps([self.hubs.parties(where) if where else [], where.project if where else ""])
+        return json.dumps(self.session_parties(where))
 
     def session(self, rel: str, path: Path) -> None:
         text = read_text(path)
@@ -507,8 +512,7 @@ class Refresher:
             return
         where, fm = self.session_where(path)
         zone = (locate(self.root, path) or Place("", "", "")).zone
-        parties = self.hubs.parties(where) if where else []
-        project = where.project if where else ""
+        parties, project = self.session_parties(where)
         pid = self.idx.policy("session", zone, project, parties)
         title = str(fm.get("title") or "") or path.stem
         self.idx.add(rel, "chunk", "session", title, iso(fade.name_date(path.name)), "working", False, pid, "",
@@ -622,10 +626,10 @@ def permitted(s: Searcher, ctx: dict, kind: str, zone: str, project: str, partie
         return False
     if s.everything:
         return True
-    if not s.parties:
-        return zones[0] == s.zone and (project == s.project or not parties)
-    if not parties:
-        return zones[0] == s.zone
+    if not parties or not s.parties:
+        # Nothing says whose it is, or nothing says whose the search is: only the
+        # same project (or the zone's own top level) may read it.
+        return zones[0] == s.zone and project == s.project
     return not any(walled(ctx, a, b) for a in s.parties for b in parties)
 
 
@@ -962,6 +966,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     e = sub.add_parser("extract", help="write new sessions to .sessions/ folders")
     e.add_argument("--claude", help="Claude Code's projects folder")
     e.add_argument("--codex", help="Codex's sessions folder")
+    sub.add_parser("nightly", help="extract new sessions, then bring every index up to date")
     args = ap.parse_args(argv)
     try:
         root = Path(args.root).resolve() if args.root else workspace_root()
@@ -972,6 +977,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(FTS_MISSING_SAID)
     if args.cmd == "build":
         print("built: " + ", ".join(build(root, args.rebuild)))
+        return 0
+    if args.cmd == "nightly":
+        import recall_sessions
+        print(recall_sessions.extract_all(root))
+        print("built: " + ", ".join(build(root)))
         return 0
     if args.cmd == "extract":
         import recall_sessions

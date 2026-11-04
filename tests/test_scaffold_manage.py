@@ -542,6 +542,143 @@ class TestMove(ManageCase):
         self.assertFalse((self.apex / "Threads" / "Freight").exists())
         self.assertEqual("", self.git("status", "--porcelain").stdout)
 
+    def test_a_refused_commit_with_ledger_rows_leaves_the_tree_as_it_was(self):
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.parent.mkdir(exist_ok=True)
+        ledger.write_text("# Published\n\n## What left\n\n| Date | File | Destination | Recipients | Authoritative |\n|---|---|---|---|---|\n"
+                          "| 2026-12-01 | `Threads/Freight/Deliverables/Lanes.xlsx` | `x/Lanes.xlsx` | Dana | here |\n")
+        self.commit("ledger")
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\n# Garrick wall check\necho 'Commit refused: x. Take it out and commit again.' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("nothing changed", r.stderr)
+        self.assertEqual("", self.git("status", "--porcelain", "--untracked-files=all").stdout)
+        self.assertTrue(self.freight.is_file())
+        self.assertFalse((self.apex / "Deliverables" / "published.md").exists())
+
+    def hub_lines(self, hub, old, new):
+        text = hub.read_text()
+        self.assertIn(old, text)
+        hub.write_text(text.replace(old, new, 1))
+        self.commit("hub shaped")
+
+    def test_a_bare_hub_line_keeps_its_description_and_its_continuation(self):
+        hub = self.acme / "Acme.md"
+        line = next(l for l in hub.read_text().splitlines() if "Threads/Freight/Freight|" in l)
+        self.hub_lines(hub, line, "### Active\n\n- [[Freight]]: the lanes and what they cost\n  and a second line of it")
+        self.assertEqual(0, self.move().returncode)
+        old = hub.read_text()
+        self.assertNotIn("Freight", old.split("## Threads")[1].split("## Finished")[0])
+        self.assertNotIn("second line", old)
+        self.assertNotIn("### Active", old)                                  # not left standing empty
+        new = (self.apex / "Apex.md").read_text().split("## Threads")[1].split("## Finished")[0]
+        self.assertIn("- [[Freight]]: the lanes and what they cost\n  and a second line of it", new)
+
+    def test_a_hub_line_that_is_not_found_plainly_refuses_the_move(self):
+        hub = self.acme / "Acme.md"
+        line = next(l for l in hub.read_text().splitlines() if "Threads/Freight/Freight|" in l)
+        self.hub_lines(hub, line, line + "\n" + line)
+        head = self.git("rev-parse", "HEAD").stdout
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("cannot be told apart", r.stderr)
+        self.assertEqual(head, self.git("rev-parse", "HEAD").stdout)
+        self.assertEqual("", self.git("status", "--porcelain", "--untracked-files=all").stdout)
+        self.assertTrue(self.freight.is_file())
+
+    def test_markdown_links_follow_and_what_is_unclear_is_listed(self):
+        old = self.acme / "Threads" / "Freight"
+        (old / "Deliverables").mkdir()
+        (old / "Deliverables" / "Lanes.md").write_text("# Lanes\n")
+        (self.acme / "Notes.md").write_text(
+            "A [g](Acme/Threads/Freight/Freight.md), a [f](Threads/Freight/Deliverables/Lanes.md#top), a [z](Work/Acme/Threads/Freight/Freight.md),\n"
+            "a [w](https://example.com/Freight/Freight.md), a [gone](Threads/Freight/Missing.md).\n")
+        pricing = self.acme / "Threads" / "Pricing" / "Pricing.md"
+        pricing.write_text(pricing.read_text() + "\nSee [f](../Freight/Freight.md) and [l](../Freight/Deliverables/Lanes.md).\n")
+        self.freight.write_text(self.freight.read_text() + "\nBack to [p](../Pricing/Pricing.md) and [h](../../Acme.md).\n")
+        self.commit("md links")
+        r = self.move()
+        self.assertEqual(0, r.returncode, r.stderr)
+        notes = (self.acme / "Notes.md").read_text()
+        self.assertIn("[g](Apex/Threads/Freight/Freight.md)", notes)
+        self.assertIn("[z](Work/Apex/Threads/Freight/Freight.md)", notes)
+        self.assertIn("[w](https://example.com/Freight/Freight.md)", notes)
+        self.assertIn("[gone](Threads/Freight/Missing.md)", notes)
+        self.assertIn("Threads/Freight/Missing.md", r.stdout)                       # listed, not guessed at
+        self.assertIn("[f](../../../Apex/Threads/Freight/Freight.md)", pricing.read_text())
+        self.assertIn("[l](../../../Apex/Threads/Freight/Deliverables/Lanes.md)", pricing.read_text())
+        moved = (self.apex / "Threads" / "Freight" / "Freight.md").read_text()
+        self.assertIn("[p](../../../Acme/Threads/Pricing/Pricing.md)", moved)
+        self.assertIn("[h](../../../Acme/Acme.md)", moved)
+
+    def stack_files(self):
+        stack = self.root / "System" / "generated" / "interrupted.json"
+        stack.parent.mkdir(parents=True, exist_ok=True)
+        stack.write_text(json.dumps({"stack": [{"zone": "Work", "project": "Acme", "thread": "Freight",
+                                                "file": "Acme/Threads/Freight/Freight.md", "at": "2027-01-01T10:00:00"}]}))
+        return stack, self.root / "System" / "generated" / "moved.json"
+
+    def test_scaffold_alone_moves_the_stack_and_the_effort_record_and_undo_puts_them_back(self):
+        stack, moved = self.stack_files()
+        self.assertEqual(0, self.move().returncode)
+        e = json.loads(stack.read_text())["stack"][0]
+        self.assertEqual(("Apex", "Apex/Threads/Freight/Freight.md"), (e["project"], e["file"]))
+        self.assertEqual({"Zones/Work/Acme/Threads/Freight": "Zones/Work/Apex/Threads/Freight"}, json.loads(moved.read_text()))
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        self.assertEqual(0, self.scaffold("undo", "--zone", "Work", "--commit", commit).returncode)
+        e = json.loads(stack.read_text())["stack"][0]
+        self.assertEqual(("Acme", "Acme/Threads/Freight/Freight.md"), (e["project"], e["file"]))
+        self.assertNotIn("Zones/Work/Acme/Threads/Freight", json.loads(moved.read_text()))
+
+    def test_undo_knows_a_move_by_its_trailer_not_its_subject(self):
+        (self.work / "Lunch.md").write_text("# Lunch\n")
+        self.git("add", "-A")
+        self.assertEqual(0, self.git("commit", "-q", "-m", "Notes: moved to lunch").returncode)
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        r = self.scaffold("undo", "--zone", "Work", "--commit", commit)
+        self.assertEqual(1, r.returncode)
+        self.assertIn("is not a rename", r.stderr)
+        self.assertTrue((self.work / "Lunch.md").is_file())
+
+    def test_a_walled_source_hub_moves_nothing(self):
+        hub = self.acme / "Acme.md"
+        hub.write_text(hub.read_text().replace("party: acme", "party: birch"))     # uncommitted: the zone hook would refuse it
+        r = self.move()
+        self.assertEqual(self.WALL, r.stderr.strip())
+        self.assertTrue(self.freight.is_file())
+
+    def meeting(self, parties):
+        page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "261001-lanes-call.md"
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("---\ntitle: Lanes call\ntype: source\nzone: Work\n%s---\n# Lanes call\n" % parties)
+        self.freight.write_text(self.freight.read_text() + "\nHeard in [[261001-lanes-call]].\n")     # uncommitted: the zone hook would refuse it
+
+    def test_a_linked_meeting_page_of_a_walled_party_moves_nothing_and_unreadable_ones_refuse(self):
+        self.meeting("parties: [birch]\n")
+        self.assertEqual(self.WALL, self.move().stderr.strip())
+        self.meeting("")
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("has no parties", r.stderr)
+        self.assertNotEqual(self.WALL, r.stderr.strip())
+        self.assertTrue(self.freight.is_file())
+
+    def test_a_linked_meeting_page_of_a_kept_party_moves(self):
+        self.meeting("parties: [acme]\n")
+        self.commit("heard in a call")
+        r = self.move()
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_the_files_left_behind_test_matches_whole_words(self):
+        self.assertEqual(0, self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Plan").returncode)
+        (self.acme / "Deliverables").mkdir(exist_ok=True)
+        (self.acme / "Deliverables" / "261001 - Planning deck.md").write_text("# deck\n")
+        self.commit("Plan thread and a planning deck")
+        r = self.move(thread="Plan")
+        self.assertEqual(0, r.returncode, r.stderr)
+
     def test_check_says_and_writes_nothing(self):
         r = self.move("--check")
         self.assertEqual(0, r.returncode, r.stderr)

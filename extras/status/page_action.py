@@ -2062,37 +2062,23 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
 
 def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: list) -> dict:
     """A move from the page, a button or a session, finished here as a rename
-    is: scaffold.py moves the thread and commits in the zone; then its place
-    on the interruption stack and the effort history follow it. One line, and
+    is: scaffold.py moves the thread and commits in the zone, and its place on
+    the interruption stack and the effort history follow it there. One line, and
     the zone's commit for Undo. The assistant's memory pointer and a desk tab
     are not Garrick's to write, so the reply says that they still name the old
     path."""
     said = scaffold(ws, "move", *which, "--to", to)
     code, head = git(zone, "rev-parse", "--short", "HEAD")
     made = head.strip() if code == 0 else ""
-    target = zone / to
     name = thread
-    if target.is_dir():                                       # to, as the folder is spelled
+    if (zone / to).is_dir():                                  # to, as the folder is spelled
         to = next((c.name for c in zone.iterdir() if c.name.lower() == to.lower()), to)
-    move_in_stack(ws, zone.name, project, thread, to)
-    rel_old = "Zones/%s/%s/Threads/%s" % (zone.name, project, thread)
-    rel_new = "Zones/%s/%s/Threads/%s" % (zone.name, to, thread)
-    note = ""
-    try:
-        keep_move(ws, rel_old, rel_new)
-    except OSError:
-        note += " The page's time and cost for it start afresh under the new place."
-    note += " A memory pointer or an open desk tab for it still names %s." % project
+    # The interruption stack and the effort history follow the thread inside scaffold.py, which also puts them
+    # back when the move is undone; the memory pointer and a desk tab are not Garrick's to write.
+    note = " A memory pointer or an open desk tab for it still names %s." % project
+    left = next((l for l in said.splitlines() if l.startswith("Markdown links left as they are")), "")
+    note += (" " + left) if left else ""
     return {"say": "Moved %s from %s to %s.%s" % (name, project, to, note), "commit": made}
-
-
-def move_in_stack(ws: Path, zone: str, project: str, thread: str, to: str) -> None:
-    """A moved thread keeps its place on the stack, in its new project."""
-    def moved(e):
-        if e["zone"] != zone or e.get("project") != project or e.get("thread") != thread:
-            return e
-        return dict(e, project=to, file="%s/Threads/%s/%s.md" % (to, thread, thread))
-    restack(ws, lambda entries: [moved(e) for e in entries], prune=False)
 
 
 def keep_move(ws: Path, old: str, new: str) -> None:

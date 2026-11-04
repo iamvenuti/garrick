@@ -1007,8 +1007,10 @@ zone follow together, in one commit:
 python3 System/status/page_action.py move --zone <Zone> --project "<From project>" --thread "<Thread>" --to "<To project>"
 ```
 
-It also moves the thread's place on the interruption stack, and asks for the
-page to be rebuilt. **Without the status page**, run the script itself:
+The script moves the thread's place on the interruption stack and the effort
+record with it, and `undo` of the move puts both back; the executor also asks
+for the page to be rebuilt. **Without the status page**, run the script itself,
+which does the same for the stack and the effort record:
 
 ```sh
 python3 System/tools/scaffold.py move --zone <Zone> --project "<From project>" --thread "<Thread>" --to "<To project>"
@@ -1019,17 +1021,21 @@ python3 System/tools/scaffold.py move --zone <Zone> --project "<From project>" -
    which. A project is never moved, and Y in another zone is not a move.
 2. **One match goes ahead**: the instruction named it, so do not ask it back.
 3. **Run the script.** It checks the thread's `party:` and the new project's
-   `party:` against the Walls table in `System/context.md` first. If a wall
-   stands between them, or either party cannot be read plainly, nothing moves:
+   `party:` against the Walls table in `System/context.md` first, and the
+   old project's party, and the parties of the Meetings pages and other
+   projects' files its notes link. If a wall stands between them, or any party
+   cannot be read plainly, nothing moves:
    for a wall, say the sentence from *Zones and walls* and nothing more. It
    also refuses another zone, a thread of that name already in the new project,
    a new project that is parked or finished (and a parked one as the source),
    files of the thread that sit outside its folder, changes not committed, and
    a session mid-turn there; relay the reason as under *New*. Then it moves the
    folder with git, takes the thread's line out of the old hub and puts it
-   under the same heading in the new one, sets `project:` and `parent:`,
+   with its description under the same heading in the new one (it refuses if
+   that line cannot be found plainly), sets `project:` and `parent:`,
    rewrites every link to it and to the files inside its folder (the hubs,
-   `Todo.md`, the notes between), moves its rows in
+   `Todo.md`, the notes between; wiki links and Markdown links alike, and it
+   lists any it could not resolve plainly), moves its rows in
    `Deliverables/published.md` to the new project's, and adds the dated entry
    "Moved from <old> to <new>.", all in one commit in the zone. The commit
    goes through the zone's wall check, never around it; `undo` reverts it

@@ -132,6 +132,12 @@ class InstallTest(unittest.TestCase):
                          f"and say \"set up Garrick\".")
         self.assertNotIn("garrick@localhost", self.result.stdout)  # git had an identity: no hint
 
+    def test_the_wikis_check_the_walls_before_a_commit_as_the_zones_do(self):
+        hook = self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
+        self.assertIn("Garrick wall check", hook.read_text())
+        self.assertTrue(os.access(hook, os.X_OK))
+        self.assertIn("Each zone checks the walls before every commit. So do the wikis.", self.result.stdout)
+
     def test_structure(self):
         r = self.root
         for path in ["AGENTS.md", "System/rules.md", "System/context.md", "System/tools/scaffold.py",

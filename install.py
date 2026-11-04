@@ -536,6 +536,21 @@ def joined(words, last="and"):
     return "%s %s %s" % (", ".join(words[:-1]), last, words[-1]) if len(words) > 1 else "".join(words)
 
 
+def wiki_hook(root):
+    """Put the wall check in the wikis' repository, the workspace written into
+    it. A pre-commit hook that is not Garrick's is left as it is, and said so,
+    since a wiki's hook is not worth an install that stops (#340). "" when done."""
+    try:
+        lib().install_wall_hook(Path(root) / "Wikis", wiki=True, root=root)
+    except FileExistsError:
+        return ("Wikis already has a pre-commit hook that is not Garrick's, so it was left as it is and the "
+                "wikis do not check the walls before a commit. Add this line to it: "
+                f"python3 {Path(root) / 'System' / 'tools' / 'check.py'} --staged --walls-only")
+    except FileNotFoundError as exc:
+        return f"The wikis' wall check could not be installed: {exc}"
+    return ""
+
+
 def claude_allow_rules(zones):
     """The commands Garrick asks to have allowed in a workspace with these
     zones: one prefix rule per tool, and five per repository the installer
@@ -795,6 +810,10 @@ def install(cfg, target, force=False, quiet=False):
             pl.install_wall_hook(zdir)
         except (FileExistsError, FileNotFoundError) as exc:
             raise InstallError(f"Could not install the wall check: {exc}")
+    # The wikis are read on every side of a wall, so a hand edit committed there is checked too (#340).
+    wikis = root / "Wikis"
+    w._inside(wikis / ".git" / "hooks" / "pre-commit")
+    wiki_hook_warning = wiki_hook(root)
     hooks_path = pl.hooks_path(root)
     # Built once, now everything is committed, so the page is there from the first
     # minute; the Mac app is the setup skill's to offer.
@@ -808,11 +827,13 @@ def install(cfg, target, force=False, quiet=False):
     say("  Each zone has an Inbox folder: drop mail or any file there, and say \"process the inbox\".")
     say(f"  {count(cfg['parties'], 'party', 'parties')}, {count(cfg['walls'], 'wall', 'walls')} "
         f"and {count(cfg['people'], 'person', 'people')} in System/context.md.")
+    if wiki_hook_warning:
+        say(f"  {wiki_hook_warning}")
     if hooks_path:
         say(f"  git is set to take its hooks from {hooks_path}, so the wall check will not run before commits.")
         say("  To turn it on, run in each zone: git config core.hooksPath .git/hooks")
     else:
-        say("  Each zone checks the walls before every commit.")
+        say("  Each zone checks the walls before every commit." + ("" if wiki_hook_warning else " So do the wikis."))
     if allowed:
         for line in allowed_lines(allowed):
             say("  " + line)

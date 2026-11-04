@@ -157,8 +157,8 @@ class LinkRuleTest(Workspace):
                      "Soren Kjaer", "Søren Kjær", "Kit Avery", "Kestrel", 'Kit "Kestrel" Avery',
                      "Ro Blake", "rowie", "S. K. Lund"):
             self.assertEqual("", self.link(name, "acme"), name)
-        # Out of scope, and said so: a letter from another script that looks Latin, and a possessive.
-        self.assertEqual("[[wiki/entities/acme-corp]]", self.link("Row\u0430n Blake", "acme"))
+        # A letter from another script that looks Latin leaves the surname's other letters: read as theirs (#340).
+        self.assertEqual("", self.link("Row\u0430n Blake", "acme"))
 
     def test_a_short_form_of_a_two_hat_name_finds_both_hats(self):
         """Fail closed on a name written short: a People row of one word
@@ -176,10 +176,12 @@ class LinkRuleTest(Workspace):
                       ("ELI COHEN",), ("Whitlock, Dana",), ("D. Whitlock",), ("Dana W.",), ("Rowan B.",), ("R. Blake",),
                       ("Blake, Rowan",)):
             self.assertEqual("", self.link(names, "acme"), names)
-        for names in (("Elias Moor",), ("David Whitlock",), ("Dana Whitmore",), ("Theo Cohen",)):
+        for names in (("Elias Moor",), ("Dana Whitmore",), ("Theo Cohen",)):
             self.assertEqual("[[wiki/entities/acme-corp]]", self.link(names, "acme"), names)
         self.assertEqual({"acme", "birch"}, garrick_lib.people_parties(self.context, "Eli Cohen"))
-        self.assertEqual(set(), garrick_lib.people_parties(self.context, "David Whitlock"))
+        # Sharing a surname word with a two-hat person is enough (#340): asked about, not linked.
+        self.assertEqual("", self.link(("David Whitlock",), "acme"))
+        self.assertEqual({"acme", "birch"}, garrick_lib.people_parties(self.context, "David Whitlock"))
 
     def test_a_name_with_two_parties_no_wall_divides_links_its_own(self):
         write(self.entities / "acme-corp.md", entity("acme"))

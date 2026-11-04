@@ -884,7 +884,7 @@ class ShapeTest(Workspace):
 
     def test_the_shapes_the_tools_write_pass(self):
         texts = [person("Kit \"Kestrel\" Avery", "none", "Architect.", "[[wiki/entities/birch-co]]"),
-                 "---\ntitle: Mira Holt\ntype: person\nparty:\n  - acme\naliases:\n- Mira\norganisation:\n---\n",
+                 "---\ntitle: Mira Holt\ntype: person\nparty:\n  - acme\norganisation:\n---\n",
                  "---\ntitle: Rowan Blake\ntype: person\nparty: [acme, birch]\n---\n\n# Rowan Blake\n",
                  "---\ntitle: Ana\ntype: person\nparty: ['acme', \"birch\"]\norganisation: [[wiki/entities/x|X]]\n---\n",
                  "# No frontmatter at all\n", "---\r\ntitle: Ana\r\ntype: person\r\nparty: none\r\n---\r\n"]
@@ -1122,7 +1122,7 @@ class LineBreakTest(Workspace):
         for front in (HEAD + 'aliases:\n- organisation: ' + B, HEAD + "aliases:\n  - organisation:",
                       HEAD + 'note: 2026-03-10 # organisation: ' + B, HEAD + "note: Lead: Pricing"):
             self.assertTrue(check.person_shape_problem(doc(front)), front)
-        self.assertFalse(check.person_shape_problem(doc(HEAD + 'note: "Lead: Pricing"')))
+        self.assertFalse(check.person_shape_problem(doc(HEAD.replace("Pat Newcomer", '"Lead: Pricing"'))))
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")

@@ -1127,7 +1127,8 @@ def more_said(rest: List[dict], today=None) -> str:
 
 def action_said(it: dict, names: Dict[str, Dict[str, dict]], today) -> str:
     """One item of an actions list, for the ear: when, what, and where, with
-    its zone: "3 days late: Send the revised terms (Pricing, in Work)."."""
+    its zone: "3 days late: Send the revised terms (Pricing, in Work)."; a Next
+    action past its Deadline says how late, "5 days late, Next: ..." (#339)."""
     import datetime as _dt
     d = _dt.date.fromisoformat(it["date"]) if it["date"] else None
     kind = it["kind"]
@@ -1143,6 +1144,9 @@ def action_said(it: dict, names: Dict[str, Dict[str, dict]], today) -> str:
         when = "Waiting" + ("" if d is None else ", chase on " + said_day(d, today))
     elif kind == "waits":
         when = "Waiting on"
+    elif kind == "next" and d is not None and d < today:
+        n = (today - d).days
+        when = "%d day%s late, Next" % (n, "" if n == 1 else "s")
     elif kind == "next":
         when = "Next" + ("" if d is None else ", deadline " + ("" if (d - today).days in (-1, 0, 1) else "on ")
                          + said_day(d, today))

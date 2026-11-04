@@ -339,6 +339,7 @@ struct AskTurn {
 	var sources: [[String: Any]] = []   // each record cited this turn, as ask.py checked it: path, title, dates
 	var more: [String: Any] = [:]       // an actions list's rest, from the same reading: its sentence, claims and sources (#329)
 	var rest: [[String: Any]] = []      // that rest's claims once "And N more" is clicked, listed under the answer
+	var listed = false                  // an actions list: each item on a line of its own (#339)
 	var zones: [[String: Any]] = []     // "Which zone?": each zone offered, with its colour, a button each (#317)
 	var retry = ""                      // the question to send again in the zone a button picks
 	var choices: [[String: Any]] = []   // a question back, or an action just made: a button each, with `label` and
@@ -1891,7 +1892,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let trouble = (menuState?["data"] as? [String: Any])?["trouble"] as? Bool == true
 		m.trouble = trouble
 		m.mark = icon(trouble: trouble, awake: !held.isEmpty)
-		m.zones = shownZones().map { z in PanelZone(name: z["z"] as? String ?? "", rows: (z["p"] as? [[String: Any]] ?? []).map(panelRow)) }
+		func panelZone(_ z: [String: Any]) -> PanelZone { PanelZone(name: z["z"] as? String ?? "", rows: (z["p"] as? [[String: Any]] ?? []).map(panelRow)) }
+		m.zones = shownZones().map(panelZone)
+		// What a search looks through (#338): every zone the page lists, the zone in view first.
+		let every = (menuState?["data"] as? [String: Any])?["zones"] as? [[String: Any]] ?? []
+		let inView = Set(m.zones.map { $0.name })
+		m.everywhere = m.zones + every.filter { !inView.contains($0["z"] as? String ?? "") }.map(panelZone)
 		reportMenu("panel", query: m.filter, rows: m.zones.reduce(0) { $0 + $1.rows.count })
 		m.inbox = inbox().map { row in
 			PanelInbox(title: row.title, places: row.places, why: row.why, run: row.act.map { act in
@@ -2238,6 +2244,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				turn.after = out["after"] as? [String] ?? []
 				turn.sources = out["sources"] as? [[String: Any]] ?? []
 				turn.more = out["more"] as? [String: Any] ?? [:]
+				turn.listed = out["listed"] as? Bool == true
 			}
 			self.askTurns[at] = turn
 			if turn.kind != "command" || turn.afresh || startNew { self.askExpanded = true }
@@ -2510,10 +2517,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			return NSAttributedString(string: text, attributes: a)
 		}
 		var first = true
+		// An actions list reads one item to a line, its [n] at the end of it, and the count of the rest
+		// on a line of its own after the last (#339); an answer's claims run on as sentences.
+		let between = turn.listed ? "\n" : " "
 		func claimed(_ claims: [[String: Any]]) {
 			for claim in claims {
 				guard let text = claim["text"] as? String, !text.isEmpty else { continue }
-				out.append(NSAttributedString(string: (first ? "" : " ") + text, attributes: said))
+				out.append(NSAttributedString(string: (first ? "" : between) + text, attributes: said))
 				first = false
 				for id in claim["ids"] as? [String] ?? [] {
 					guard let n = ids.firstIndex(of: id) else { continue }
@@ -2526,7 +2536,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		// "And N more" is a link while the rest it counts is still to be listed.
 		let opens = turn.rest.isEmpty ? turn.more["said"] as? String : nil
 		for sentence in turn.after {
-			out.append(NSAttributedString(string: first ? "" : " ", attributes: said))
+			out.append(NSAttributedString(string: first ? "" : between, attributes: said))
 			var a = said
 			if sentence == opens { a[.link] = URL(string: askMoreLink + "\(i)") }
 			out.append(NSAttributedString(string: sentence, attributes: a))
@@ -3364,6 +3374,7 @@ struct PanelInboxLine: View {
 
 final class PanelModel: ObservableObject {
 	@Published var zones: [PanelZone] = []
+	@Published var everywhere: [PanelZone] = []    // every zone, the one in view first: what a search looks through (#338)
 	@Published var inbox: PanelInbox?
 	@Published var trouble = false
 	@Published var mark = NSImage()
@@ -3467,11 +3478,18 @@ struct PanelView: View {
 		}
 	}
 
-	// Return opens the first thread that matches, or the first project; with
+	// The zones the panel lists: with the field empty, the zone in view; with words in it, every
+	// zone that has a match, the zone in view first (#338).
+	func listed() -> [PanelZone] {
+		guard !query.isEmpty else { return model.zones }
+		return model.everywhere.filter { !shown($0.rows).isEmpty }
+	}
+
+	// Return opens the first thread that matches, or the first project, in any zone; with
 	// nothing typed, or nothing matching, nothing happens: the field only finds (#310).
 	func first() -> (() -> Void)? {
 		guard !query.isEmpty else { return nil }
-		let rows = model.zones.flatMap { shown($0.rows) }
+		let rows = listed().flatMap { shown($0.rows) }
 		if !query.isEmpty, let t = rows.flatMap({ $0.threads }).first(where: { $0.name.lowercased().contains(query) }) { return t.open }
 		if let open = rows.first?.open { return open }
 		return nil
@@ -3510,7 +3528,11 @@ struct PanelView: View {
 						PanelInboxLine(inbox: inbox, perform: model.perform)
 						Divider().padding(.vertical, 4)
 					}
-					ForEach(model.zones) { zone in
+					if !query.isEmpty && listed().isEmpty {
+						Text("Nothing matches")
+							.font(.system(size: 12)).foregroundColor(.secondary).padding(.horizontal, 8).padding(.top, 6)
+					}
+					ForEach(listed()) { zone in
 						Text(zone.name.uppercased())
 							.font(.system(size: 10, weight: .semibold))
 							.foregroundColor(.secondary)

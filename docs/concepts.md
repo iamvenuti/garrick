@@ -282,7 +282,7 @@ The skill that comes with the cmux extra: one cmux tab per thread, opened, wrapp
 
 ### The Garrick band
 
-A Claude Code mod, optional: two lines above the prompt, with the current thread, its status and how full the context is, and the buttons *Wrap*, *Clear* and *Finder*, with *Obsidian* where it is offered; and file paths in replies you can Cmd-click. It shows what the notes already say and enforces nothing. See [the Garrick band](../extras/mods/README.md).
+A Claude Code mod, optional: two lines above the prompt, with the current thread, its status and how full the context is, and the buttons *Wrap*, *Clear*, *Close* (wraps the thread if it needs it, then closes the session where it runs) and *Finder*, with *Obsidian* where it is offered; and file paths in replies you can Cmd-click. It shows what the notes already say and enforces nothing. See [the Garrick band](../extras/mods/README.md).
 
 ## Updates
 

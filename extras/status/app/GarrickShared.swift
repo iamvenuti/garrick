@@ -65,6 +65,15 @@ enum GarrickLink {
 		return URL(fileURLWithPath: folder, isDirectory: true)
 	}
 
+	// What a session is told to open: "open Project, Thread" for a thread and "open Project" for a project,
+	// as page_action.cmux_folder says it, so two projects with a thread of one name are told apart.
+	// Takes a folder openable() accepted.
+	static func phrase(for folder: URL) -> String {
+		let up = folder.deletingLastPathComponent()
+		guard up.lastPathComponent == "Threads" else { return "open " + folder.lastPathComponent }
+		return "open " + up.deletingLastPathComponent().lastPathComponent + ", " + folder.lastPathComponent
+	}
+
 	private static let safe = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
 	static func url(app: String, folder: String, token: String) -> URL? {

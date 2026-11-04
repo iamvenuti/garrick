@@ -758,7 +758,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard let now = GarrickLink.openable(link.folder, workspace: workspace.path) else {
 			return toast("Garrick opens only a project or a thread from Finder. Nothing was opened.")
 		}
-		launch(link.app, now.path, phrase: "open " + now.lastPathComponent)
+		launch(link.app, now.path, phrase: GarrickLink.phrase(for: now))
 	}
 
 	func applicationDidFinishLaunching(_ note: Notification) {

@@ -38,6 +38,7 @@ case "openable": print(GarrickLink.openable(a[3], workspace: a[2])?.path ?? "nil
 case "parse":
     if let r = GarrickLink.parse(URL(string: a[3])!, token: a[2]) { print(r.app + "|" + r.folder) } else { print("nil") }
 case "url": print(GarrickLink.url(app: a[2], folder: a[3], token: a[4])?.absoluteString ?? "nil")
+case "phrase": print(GarrickLink.phrase(for: URL(fileURLWithPath: a[2], isDirectory: true)))
 case "same": print(GarrickLink.sameToken(a[2], a[3]))
 default: print("?")
 }
@@ -162,6 +163,11 @@ class TestLinkRules(unittest.TestCase):
         self.assertNotIn(" ", link)
         self.assertEqual(1, link.count("&t="))
         self.assertEqual("claude|" + folder, self.run_h("parse", "tok", link))
+
+    def test_the_phrase_names_the_project_of_a_thread(self):
+        self.assertEqual("open Acme Corp, Pricing", self.run_h("phrase", str(self.ws / "Zones/Work/Acme Corp/Threads/Pricing")))
+        self.assertEqual("open Acme Corp", self.run_h("phrase", str(self.ws / "Zones/Work/Acme Corp")))
+        self.assertEqual("open Birch & Co", self.run_h("phrase", str(self.ws / "Zones/Work/Birch & Co")))
 
     def test_tokens_compare_whole(self):
         self.assertEqual("true", self.run_h("same", "abc", "abc"))
@@ -380,6 +386,10 @@ class TestHandlerSource(unittest.TestCase):
                                       "openerInstalled(link.app)", "guard let now = GarrickLink.openable(link.folder, workspace: workspace.path)",
                                       "launch(link.app, now.path")]
         self.assertEqual(sorted(order), order)
+
+    def test_the_link_opens_by_the_phrase_with_the_project(self):
+        self.assertIn("phrase: GarrickLink.phrase(for: now))", self.handler)
+        self.assertNotIn("lastPathComponent", self.handler)
 
     def test_the_handler_is_the_apple_event_for_a_url(self):
         self.assertIn("forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL)", self.swift)

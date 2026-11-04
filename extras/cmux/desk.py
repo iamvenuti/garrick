@@ -396,6 +396,23 @@ def cmux(*args, **kw):
         raise DeskError(str(e))
 
 
+def close_surface(s: dict) -> None:
+    """Close a tab's surface. cmux 0.65 refuses a surface that still runs a
+    process (the assistant is one) with `confirmation_required`, unless forced.
+    Desk has checked the tab is idle, so that confirmation repeats its check:
+    force only when cmux asks, so an older cmux, which has no --force, still
+    closes on the first call."""
+    args = ["close-surface", "--surface", s["surface"]]
+    if s.get("workspace"):
+        args += ["--workspace", s["workspace"]]
+    try:
+        cmux(*args)
+    except DeskError as e:
+        if "confirmation_required" not in str(e):
+            raise
+        cmux(*args, "--force")
+
+
 def live_sessions() -> List[dict]:
     try:
         return [s for s in cx.roster(running_only=True) if s["alive"]]
@@ -806,10 +823,7 @@ def cmd_close(desk: Desk, a) -> None:
         if not ready:
             left.append(tab_label(s))
             continue
-        args = ["close-surface", "--surface", s["surface"]]
-        if s.get("workspace"):
-            args += ["--workspace", s["workspace"]]
-        cmux(*args)
+        close_surface(s)
         closed.append(tab_label(s))
     if closed:
         print("closed %s" % ", ".join(closed))

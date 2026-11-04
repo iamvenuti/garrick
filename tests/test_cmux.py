@@ -60,6 +60,12 @@ elif a[:2] == ["workspace", "list"]:
     print(json.dumps({"workspaces": state.get("workspaces", [])}))
 elif a[:1] == ["list-pane-surfaces"]:
     print(json.dumps({"surfaces": state.get("surfaces", {}).get(a[a.index("--workspace") + 1], [])}))
+elif a[:1] == ["close-surface"] and state.get("close_needs_force") and "--force" not in a:
+    sys.stderr.write("Error: confirmation_required: Surface has a running process\\n")
+    sys.exit(1)
+elif a[:1] == ["close-surface"] and state.get("close_rejects_force") and "--force" in a:
+    sys.stderr.write("Error: unknown flag --force\\n")
+    sys.exit(1)
 elif a[:1] == ["top"]:
     print(json.dumps(state.get("top", {})))
 elif a[:1] == ["new-workspace"]:
@@ -560,6 +566,30 @@ class DeskVerbTest(CmuxCase):
             code, _, err = self.run_desk("close", "--folder", str(project), "--yes")
             self.assertEqual(code, 2)
             self.assertNotIn("close-surface", self.verbs())
+
+    def close_calls(self):
+        return [c["argv"] for c in self.calls() if c["argv"][0] == "close-surface"]
+
+    def test_close_forces_only_when_cmux_asks_for_confirmation(self):
+        self.state({"close_needs_force": True, "sessions": [self.session("a", self.pricing, claude_rows())]})
+        code, out, err = self.run_desk("close", "--folder", str(self.pricing), "--yes")
+        self.assertEqual((code, err), (0, ""))
+        first, second = self.close_calls()
+        self.assertNotIn("--force", first)
+        self.assertEqual(second, first + ["--force"])
+
+    def test_close_on_older_cmux_closes_on_the_first_call_without_force(self):
+        self.state({"close_rejects_force": True, "sessions": [self.session("a", self.pricing, claude_rows())]})
+        code, out, err = self.run_desk("close", "--folder", str(self.pricing), "--yes")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(len(self.close_calls()), 1)
+        self.assertNotIn("--force", self.close_calls()[0])
+
+    def test_close_never_forces_a_busy_tab(self):
+        self.state({"close_needs_force": True, "sessions": [self.session("a", self.pricing, claude_rows(done=False))]})
+        code, _, _ = self.run_desk("close", "--folder", str(self.pricing), "--yes")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.close_calls(), [])
 
     def test_close_asks_first_then_closes_every_tab_below_the_folder(self):
         project = self.work / "Acme Review"

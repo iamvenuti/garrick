@@ -107,6 +107,24 @@ A Claude session as a whole stops at GARRICK_MAX_CALL_USD, and the next
 request starts another. ask.py needs agent.py, from the scheduled jobs
 extra, in System/jobs/ beside System/status/.
 
+**One session with Garrick's read tools (#358).** With `"ask-agent": true` in
+System/garrick-flags.json beside `ask`, and Claude as the harness,
+session_for() returns an AgentSession: one `claude -p`, sealed as the others
+are, whose only MCP server is ask_tools.py (search, read, places,
+thread_state, owed, propose) and whose `--allowedTools` name those alone. Every
+turn goes to it (Asker.converse()), with no command session first; a plain
+"open X" or "park X" goes to a session of its own on the small tier
+(Asker.plain()). The server applies the wall test to every result
+(ask_scope.admits(), the test Asker.admit() uses too) and keeps the
+conversation's state in a folder inside the session's sealed home: what it
+admitted and handed out, and a latch a wall sets. After each turn Garrick reads
+that state: a latched wall stops both sessions, starts them again, and the
+reply is the rules' sentence alone (Asker.walled()). A proposal from a
+conversation that has read a record is offered as a button (Asker.offered()),
+never run; one from a conversation that has read none runs through carry_out(),
+as a command always has. With the flag off, or with Codex, everything below
+holds as it did.
+
 **The model proposes, this file disposes.** The session sees only names and
 states: each request carries the live projects and threads of every zone,
 from their frontmatter, sent again only when it has changed, and `<names>`,
@@ -266,8 +284,12 @@ from typing import Dict, List, Optional, Tuple
 sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
-BRIEF = HERE / "ask-brief.md"
+BRIEF = HERE / "ask-command-brief.md"      # the command session's: Codex, and Claude with the agent switched off
 ANSWER_BRIEF = HERE / "ask-answer-brief.md"
+AGENT_BRIEF = HERE / "ask-brief.md"        # the one session's (#358): it reads with Garrick's tools, and proposes
+AGENT_FLAG = "ask-agent"                    # System/garrick-flags.json: the one session with read tools, on top of `ask`
+TOOLS_SCRIPT = HERE / "ask_tools.py"
+TOOLS_SERVER = "garrick"                    # the MCP server's name, which makes a tool's name mcp__garrick__<tool>
 JOB = "ask"
 FLAG = "ask"
 DEFAULT_TIER = "haiku"
@@ -418,6 +440,17 @@ def scope_lib():
     return _SCOPE
 
 
+_TOOLS = None
+
+
+def tools_lib():
+    """ask_tools.py, beside this file: the read server the one session is given, and the state it keeps."""
+    global _TOOLS
+    if _TOOLS is None:
+        _TOOLS = _load("garrick_ask_tools", TOOLS_SCRIPT)
+    return _TOOLS
+
+
 # Seconds a turn may take, and a client waits for the server's answer: both
 # from operations.py's clock, through page_action.py, which derives the wait
 # from the slowest request the server can be given, two turns and an action
@@ -441,6 +474,11 @@ def prefs():
 
 def flag_on(ws: Path) -> bool:
     return page_action().flag_on(ws, FLAG)
+
+
+def agent_on(ws: Path) -> bool:
+    """Whether Ask is the one session with Garrick's read tools (#358), in System/garrick-flags.json."""
+    return page_action().flag_on(ws, AGENT_FLAG)
 
 
 def desk_ready(ws: Path) -> bool:
@@ -1117,6 +1155,102 @@ class ClaudeSession:
         return event.get("result") or "", event.get("usage") or {}
 
 
+class AgentSession(ClaudeSession):
+    """The one session of a conversation (#358): a `claude -p` sealed as the
+    others are, given Garrick's read server (ask_tools.py) as its only MCP
+    server and only those tools. Every turn goes to it. The server runs as
+    the session's child and keeps the conversation's state in a folder of
+    the session's own, inside its sealed home: what it has admitted and
+    handed out, and the latch a wall sets. This side writes the zone and the
+    parties the requests named (`in.json`) and reads the rest after each turn.
+    The folder goes with the process, so a reset, a renewal or a new
+    process starts a conversation that has nothing in it."""
+
+    def __init__(self, ws: Path, tier_: str, brief: Path = AGENT_BRIEF):
+        super().__init__(ws, tier_, brief)
+        self.zone = None            # the zone the window answers in, for the server's first call
+        self.told = set()           # the parties the requests named, and the places the proposals did: the server holds them too
+        self.state_dir = None
+        self.proposals = 0          # how many propose lines were read already
+        self.held_seen = 0          # how many wall holds the server had counted when the last answer was built
+
+    def command(self) -> List[str]:
+        cmd = super().command()
+        allowed = ",".join("mcp__%s__%s" % (TOOLS_SERVER, t) for t in tools_lib().TOOLS)
+        return cmd + ["--mcp-config", str(self.state_dir / "mcp.json"), "--allowedTools", allowed]
+
+    def start(self) -> None:
+        self.stop()
+        self.home = sealed_folder(self.ws)
+        self.state_dir = self.home / ".garrick-ask"
+        self.state_dir.mkdir(mode=0o700)
+        self.told, self.proposals = set(), 0
+        args = [str(TOOLS_SCRIPT), "serve", "--workspace", str(self.ws), "--state", str(self.state_dir)]
+        if self.zone:
+            args += ["--zone", self.zone]
+        (self.state_dir / "mcp.json").write_text(json.dumps(
+            {"mcpServers": {TOOLS_SERVER: {"command": sys.executable, "args": args}}}), encoding="utf-8")
+        try:
+            cmd = self.command()
+        except Bad:
+            self.stop()
+            raise
+        env = dict(os.environ, CLAUDE_CODE_DISABLE_AUTO_MEMORY="1")
+        try:
+            self.proc = subprocess.Popen(cmd, cwd=str(self.home), env=env, stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            self.stop()
+            raise Bad("claude is not installed, or not on PATH")
+        self.started = time.time()
+
+    def stop(self, at_once: bool = False) -> None:
+        super().stop(at_once)
+        self.state_dir, self.told, self.proposals, self.held_seen = None, set(), 0, 0
+
+    def tell(self, zone: Optional[str], parties=()) -> None:
+        """The zone and the parties the server holds besides what it admitted, written for its next call."""
+        if self.state_dir is None:
+            return
+        self.told |= set(parties)
+        tmp = self.state_dir / "in.json.tmp"
+        tmp.write_text(json.dumps({"zone": zone, "parties": sorted(self.told)}), encoding="utf-8")
+        os.replace(str(tmp), str(self.state_dir / "in.json"))
+
+    def state(self) -> dict:
+        """What the server saved: its latch, the parties it admitted and the records it handed out. {} when none."""
+        if self.state_dir is None:
+            return {}
+        try:
+            data = json.loads((self.state_dir / "out.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def held(self) -> set:
+        """The parties this conversation holds: what the server admitted and what the requests named."""
+        return set(self.state().get("seen") or []) | self.told
+
+    def proposed(self) -> List[dict]:
+        """The actions proposed since the last call, in order."""
+        if self.state_dir is None:
+            return []
+        out = []
+        try:
+            lines = (self.state_dir / "proposals.jsonl").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        for line in lines[self.proposals:]:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(row, dict) and isinstance(row.get("action"), dict):
+                out.append(row["action"])
+        self.proposals = len(lines)
+        return out
+
+
 class OnceSession:
     """A harness with no warm session: one agent.py call per request,
     read-only, with the last few exchanges given again. Each call runs in an
@@ -1213,6 +1347,8 @@ def session_for(ws: Path):
     h = agent().harness()
     if h not in agent().HARNESSES:
         raise Bad("GARRICK_HARNESS is %r; use claude or codex" % h)
+    if h == "claude" and agent_on(ws):
+        return AgentSession(ws, answer_tier())     # one session for the conversation, with Garrick's read tools (#358)
     return (ClaudeSession if h == "claude" else OnceSession)(ws, tier())
 
 
@@ -1273,6 +1409,7 @@ class Asker:
         self.asking = False         # whether the last reply was a session's own question for the user
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
         self.refreshed = set()      # the sessions renewed by size, "command" and "answer", not yet told so
+        self.quick = None           # the small tier's session for a plain "open X" or "park X" (#358)
         self.progress = lambda text: None
 
     def ask(self, request: str, today: Optional[dt.date] = None, zone: Optional[str] = None,
@@ -1331,6 +1468,11 @@ class Asker:
                 return out
         if window is not None:                      # every request, a command too, is sent in the window's zone
             self.zone = self.last_zone = window
+        if isinstance(self.session, AgentSession):  # one session for the conversation, with Garrick's read tools (#358)
+            out = self.converse(request, heard, earlier, named, names, today, window)
+            if reset and not out.get("reset"):
+                out["reset"] = reset
+            return out
         listing = render(names)
         sent = hashlib.sha1(listing.encode("utf-8")).hexdigest()
         # A process other than the one last told knows nothing: after a reset,
@@ -1560,6 +1702,189 @@ class Asker:
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
         return self.in_zone(out, zoned, why), reset
 
+    # ------------------------------------------------------------ the one session (#358)
+
+    PLAIN_VERB = re.compile(r"^\s*(?:please\s+)?(?:open|park|wake|unpark)\b", re.I)
+    PLAIN_FILLER = {"the", "a", "my", "project", "thread", "please", "in", "on", "with", "app", "claude", "codex", "cmux",
+                    "finder", "mux", "terminal", "again"}
+    CITED = re.compile(r"\[\s*(r\d+-[0-9a-f]{4}(?:\s*,\s*r\d+-[0-9a-f]{4})*)\s*\]")
+
+    def plain(self, request: str, named) -> bool:
+        """Whether a request is a plain "open X" or "park X" and nothing else: the verb, then names the list settles to a
+        project or a thread, and an app. Such a request goes to the small tier (#358); any other, a follow-up, a
+        question, a second clause, goes to the conversation's session."""
+        m = self.PLAIN_VERB.match(request)
+        if not m or len(request) > 160 or "\n" in request:
+            return False
+        if not any(e.kind in ("project", "thread") for e in named.entries):
+            return False
+        keep, at = [], m.end()
+        for start, end, _, _ in sorted(named.heard, key=lambda h: h[0]):
+            if start >= at:
+                keep.append(request[at:start])
+                at = max(at, end)
+        keep.append(request[at:])
+        words = re.findall(r"[\w']+", " ".join(keep).lower())
+        return all(w in self.PLAIN_FILLER for w in words)
+
+    def converse(self, request: str, heard: str, earlier: Optional[str], named, names, today: Optional[dt.date],
+                 window: Optional[str]) -> dict:
+        """Every turn of the conversation, to one session that reads with Garrick's tools (ask_tools.py). Garrick
+        checks each result before the session sees it; a result that crossed a wall latched the server, and the
+        session is stopped and the rules' sentence said, with nothing the turn said or proposed (walled()). A
+        plain "open X" or "park X" goes to the small tier's session instead, which holds no conversation."""
+        here = window or self.zone or self.last_zone
+        quick = earlier is None and self.plain(request, named)
+        if quick:
+            if self.quick is None:
+                self.quick = AgentSession(self.ws, tier())
+            sess = self.quick
+            lib = scope_lib().lib(self.ws)
+            if sess.alive() and scope_lib().any_wall(self.ctx, named.parties, sess.held(), lib):
+                sess.stop()                         # its own conversation, ended at a wall as the other is
+        else:
+            sess = self.session
+        sess.zone = here
+        if sess is self.session and sess.fresh():
+            self.results, self.asked = "", {}       # a new process was told none of what the last actions did
+        sess.ready()
+        sess.tell(here, named.parties)
+        parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat()]
+        if sess is self.session and "command" in self.refreshed:
+            parts.append("<refreshed/>")
+        if here:
+            parts.append("<zone>%s</zone>" % inert(here))
+        if sess is self.session and self.results:
+            parts.append("<last-results>\n%s\n</last-results>" % self.results)
+        if earlier is not None:
+            parts.append("<earlier-request>\n%s\n</earlier-request>" % inert(earlier[:MAX_REQUEST]))
+        known = heard_names(named, self.ctx)
+        if known:
+            parts.append(known)
+        parts.append("<request>\n%s\n</request>" % inert(request[:MAX_REQUEST]))
+        turns = []
+        try:
+            self.progress("Asking")
+            if sess is not self.session:
+                sess.watch = getattr(self.session, "watch", None)
+            try:
+                text, usage = sess.turn("\n".join(parts), record=False)
+            finally:
+                turns.append(sess.last)
+                if sess is not self.session:
+                    sess.watch = None
+            if sess is self.session:
+                self.refreshed.discard("command")
+            state = sess.state()
+            props = sess.proposed()
+            if state.get("wall"):
+                bill(turns)
+                turns = []
+                return self.walled()
+            out = self.reply_from(sess, text, usage, state, props, names, here)
+        except Stopped:
+            self.stop()
+            raise
+        finally:
+            bill(turns)
+        return out
+
+    def walled(self) -> dict:
+        """A wall stopped the conversation: both sessions are stopped and everything they held cleared, the session
+        started again, and the reply is the rules' sentence word for word and nothing else, with no text the turn
+        produced and no proposal (#358). The reply carries `"reset": "wall"`."""
+        self.progress("Starting a fresh session")
+        self.reset()
+        self.afresh = "wall"
+        said = self.wall()
+        out = reply(said, "answer")
+        out.update(claims=[], sources=[], after=[said], incomplete=False, reset="wall")
+        return out
+
+    def claims_of(self, text: str, handed: dict, names) -> Tuple[List[dict], List[dict]]:
+        """The session's text as the window shows it: one claim for each line, its record markers taken out and
+        turned into the ids of the records they name, and those records as sources (path, title and both dates). Only an id
+        the server handed out in this conversation counts; any other is dropped with its marker, so a citation
+        never names a record the conversation did not read."""
+        claims, order = [], []
+        for raw in str(text or "").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("```"):
+                continue
+            ids = []
+            for m in self.CITED.finditer(line):
+                for i in re.split(r"\s*,\s*", m.group(1)):
+                    if i in handed and i not in ids:
+                        ids.append(i)
+            clean = re.sub(r"\s*" + self.CITED.pattern, "", line).strip()
+            if clean:
+                claims.append({"text": clean, "ids": ids})
+                order += [i for i in ids if i not in order]
+        cited_ = [{"id": i, **{k: handed[i].get(k) or "" for k in ("path", "title", "date", "imported")}} for i in order]
+        return claims, self.sources(cited_, names)
+
+    def offered(self, props: List[dict], names) -> List[dict]:
+        """A button for each proposal that passes the same checks an action does (proposal()): what it would do, and
+        the request the app runs when it is clicked, as the page's button would run it. An open is a request sent
+        again, which the box does as a plain one. Nothing here runs anything (#358)."""
+        out = []
+        for a in props:
+            try:
+                kind, item = proposal(a, names, self.ws, None)
+            except (Bad, Needs):
+                continue
+            if kind == "launch":
+                phrase = item["phrase"] + (" in " + app_said(item["app"]) if item.get("app") else "")
+                out.append({"label": "Open " + item["name"] + (" in " + app_said(item["app"]) if item.get("app") else ""),
+                            "request": phrase})
+                continue
+            name = spoken(names, a["zone"], a.get("project"), a.get("thread")) if a.get("project") else a["zone"]
+            verb = item["verb"]
+            label = ("Add to the %s Todo list: %s" % (a["zone"], str(item.get("text"))[:40]) if verb == "todo-add"
+                     else "%s %s" % (verb.capitalize(), name))
+            out.append({"label": label, "act": {k: v for k, v in item.items() if k not in ("confirm", "op")}})
+        return out
+
+    def reply_from(self, sess, text: str, usage: dict, state: dict, props: List[dict], names, here: Optional[str]) -> dict:
+        """The final line for a turn that stayed inside the walls. The text is the answer, in the shape the
+        question needed, its cited lines the claims. A proposal from a turn, or a conversation, that has read no
+        record runs as an action from the box always has, through page_action's checks (carry_out()). One from a
+        conversation that has read a record is shown as a button the user clicks: what a record says never
+        becomes an action (#358)."""
+        handed = state.get("handed") or {}
+        claims, sources = self.claims_of(text, handed, names)
+        used = {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
+        said = " ".join(c["text"] for c in claims)
+        parties = set()
+        for a in props:
+            if isinstance(a, dict) and isinstance(a.get("zone"), str) and a.get("project") in names.get(a["zone"], {}):
+                parties |= set(scope_lib().place_parties(self.ws, a["zone"], a["project"], a.get("thread"),
+                                                         scope_lib().lib(self.ws)))
+        if props and not handed:
+            out = self.carry_out(said, props, names, usage)
+            self.asking = asks_back(text, said, [])
+        else:
+            after = []
+            if not claims and not props:
+                after.append(NOTHING_FOUND)
+            held = int(state.get("held_back") or 0)
+            if held > sess.held_seen:
+                after.append(self.wall())           # a wall held records back: the rules' sentence, and nothing of what
+            sess.held_seen = held
+            out = reply(" ".join([said] + after).strip(), "answer")
+            out.update(claims=claims, after=after, incomplete=False, sources=sources, usage=used,
+                       listed=len(claims) > 1)
+            buttons = self.offered(props, names)
+            if buttons:
+                out["choices"] = buttons
+                self.results = "Offered to the user as buttons, not done: " + "; ".join(b["label"] for b in buttons)
+            self.asking = asks_back(text, said, [])
+        if parties:
+            sess.tell(here, parties)
+        if here:
+            out["zone"] = here
+        return out
+
     @staticmethod
     def in_zone(out: dict, zone: Optional[str], why: Optional[str]) -> dict:
         """An answer read inside one zone (#317): the reply carries `zone`,
@@ -1725,6 +2050,11 @@ class Asker:
         place, and only that one: the other process still holds its own.
         What the last actions did, and the questions waiting for a yes, were
         said to the command process, so they go with it too."""
+        if isinstance(self.session, AgentSession):
+            if not self.session.alive():
+                self.results, self.asked = "", {}
+                return set()
+            return self.session.held()
         s = self.answers
         if s is None or not s.alive() or s.started != self.seen_for:
             self.seen, self.passages = set(), []
@@ -1770,7 +2100,7 @@ class Asker:
         either process held and the records admitted, a request asked about,
         and which process was given the list, so the next is given all of
         it. A Codex session's history is what it was told, and goes too."""
-        for s in (self.answers, self.session):
+        for s in (self.answers, self.session, self.quick):
             if s is not None:
                 s.stop()
         self.results, self.asked, self.unclear, self.asking = "", {}, None, False
@@ -1791,7 +2121,7 @@ class Asker:
                 or not flag_on(self.ws):
             return False                            # switched off: nothing is started, renewed or not
         return any(getattr(s, "remembers", False) and getattr(s, "full", lambda: False)()
-                   for s in (self.session, self.answers) if s is not None)
+                   for s in (self.session, self.answers, self.quick) if s is not None)
 
     def renew(self) -> None:
         """Renewal by size, after a completed exchange: both sessions

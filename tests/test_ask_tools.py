@@ -202,6 +202,18 @@ class TestTheWallInTheTools(ToolCase):
         self.assertTrue(self.out()["held_back"])
         self.assertFalse(self.out()["wall"])
 
+    def test_far_side_hits_among_admissible_ones_are_left_out_and_counted_nowhere(self):
+        c = self.conv(told={"acme"})
+        self.rows = [Hit(BIRCH_PAGE, "BIRCHSNIP"), Hit(ACME_PAGE)]
+        text, bad = c.call("search", {"words": "pallet", "kind": "meetings"})
+        self.assertFalse(bad)
+        self.assertIn("1 record returned", text)
+        self.assertIn("Acme kick-off", text)
+        for far in ("Birch", "BIRCHSNIP", "260312"):
+            self.assertNotIn(far, text)
+        self.assertEqual(1, self.out()["held_back"])               # for the rules' sentence after the answer
+        self.assertFalse(self.out()["wall"])
+
     def test_search_with_a_place_in_another_zone_goes_through_the_same_check(self):
         scoped.write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260316-birch-home.md",
                      scoped.meeting_page("Personal", "[birch]", "Birch at home") + "\nPallet.\n")

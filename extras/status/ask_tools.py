@@ -134,7 +134,7 @@ class Conversation:
         self.handed: Dict[str, dict] = {}
         self.count = 0
         self.wall = False           # a result crossed a wall: nothing more is returned
-        self.held_back = False      # a wall held records back from a first reading, which nothing crossed
+        self.held_back = 0          # how many times a wall held records back from a first reading, which nothing crossed
         self.told: set = set()      # the parties ask.py wrote to in.json: what the requests named
         self.proposed = 0
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +148,7 @@ class Conversation:
             self.handed = dict(data.get("handed") or {})
             self.count = int(data.get("count") or 0)
             self.wall = bool(data.get("wall"))
-            self.held_back = bool(data.get("held_back"))
+            self.held_back = int(data.get("held_back") or 0)
             self.proposed = int(data.get("proposed") or 0)
         self.save()
 
@@ -205,6 +205,25 @@ class Conversation:
         self.handed[rid] = {k: d.get(k) or "" for k in ("path", "title", "date", "imported")}
         self.handed[rid]["parties"] = sorted(d.get("parties") or [])
         return rid
+
+    def latch(self) -> None:
+        self.wall = True
+        self.save()
+
+    def fair(self, rows: List[dict], most: int, ctx: dict, lib, sc) -> Optional[List[dict]]:
+        """The rows of a result that the conversation may hold, best first, at most `most`: none whose parties are
+        walled from what it holds or from a row taken before it (ask_scope.choose()). Rows that a wall holds back are
+        left out and counted, never named, so the answer ends with the rules' sentence. When a wall held back every
+        row there was, the search reached across it: the conversation is stopped, and None is returned."""
+        chosen, back, _ = sc.choose(rows, self.held(), ctx, lib, most=most)
+        if back and not chosen:
+            self.latch()
+            return None
+        if back:
+            self.held_back += 1
+        if not self.admit({p for r in chosen for p in r["parties"]}):
+            return None
+        return chosen
 
     # ------------------------------------------------------------ records
 
@@ -451,19 +470,9 @@ class Conversation:
             recs.append(d)
         if order == "recent":
             recs.sort(key=lambda d: (d["date"], d["imported"]), reverse=True)
-        recs = recs[:limit]
-        held = self.held()
-        if held:
-            if not self.admit({p for d in recs for p in d["parties"]}):
-                return STOPPED
-        else:
-            # Nothing held yet: the records within one group of parties no wall divides, the group the best one starts.
-            chosen, back, _ = sc.choose(recs, set(), ctx, lib, most=limit)
-            if back:
-                self.held_back = True
-            recs = chosen
-            if not self.admit({p for d in recs for p in d["parties"]}):
-                return STOPPED
+        recs = self.fair(recs, limit, ctx, lib, sc)
+        if recs is None:
+            return STOPPED
         lines = []
         for d in recs:
             rid = self.hand(d)
@@ -587,16 +596,9 @@ class Conversation:
         found = sc.actions(self.ws, scope, names, ctx, lib, dt.date.today())[:MOST_OWED]
         known = set(ctx.get("parties", {}))
         found = [i for i in found if set(i["parties"]) <= known]
-        held = self.held()
-        if held:
-            if not self.admit({p for i in found for p in i["parties"]}):
-                return STOPPED
-        else:
-            found, back, _ = sc.choose(found, set(), ctx, lib, most=MOST_OWED)
-            if back:
-                self.held_back = True
-            if not self.admit({p for i in found for p in i["parties"]}):
-                return STOPPED
+        found = self.fair(found, MOST_OWED, ctx, lib, sc)
+        if found is None:
+            return STOPPED
         lines = []
         for it in found:
             where = " / ".join(x for x in (it["zone"], it["project"], it["thread"]) if x)
@@ -675,7 +677,7 @@ def schemas() -> List[dict]:
                                             "nothing happens until Garrick has checked it and, where needed, the user has clicked it.",
          "inputSchema": obj({"action": {"type": "object", "properties": {
              "verb": {"type": "string", "enum": list(PROPOSED)}, "zone": s, "project": s, "thread": s,
-             "text": s, "date": s, "app": s}, "required": ["verb", "zone"]}}, ["action"])},
+             "text": s, "date": s, "app": s, "again": {"type": "boolean"}}, "required": ["verb", "zone"]}}, ["action"])},
     ]
 
 

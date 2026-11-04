@@ -408,6 +408,23 @@ class TestUpdateSaysWhatHappened(unittest.TestCase):
             self.assertEqual((1, "make-app: no Swift compiler"), update.make_app([str(stub)]))
 
 
+class TestExtensionMenuSource(unittest.TestCase):
+    """Finder copies the extension's menu into its own process, keeping an item's
+    title, action and tag but not its representedObject, so the opener a click
+    names has to travel in the tag."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.swift = (APP / "GarrickFinder.swift").read_text(encoding="utf-8")
+
+    def test_the_opener_travels_in_the_tag_and_never_in_represented_object(self):
+        code = "\n".join(l.split("//")[0] for l in self.swift.splitlines())
+        self.assertNotIn("representedObject", code)
+        self.assertIn("item.tag = (GarrickLink.openers.firstIndex(of: k) ?? -1) + 1", code)
+        self.assertIn("let i = sender.tag - 1", code)
+        self.assertIn("GarrickLink.openers.indices.contains(i)", code)
+
+
 class TestHandlerSource(unittest.TestCase):
     """What Garrick.swift does with a link that parsed, read from its source."""
 

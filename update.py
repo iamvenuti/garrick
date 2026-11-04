@@ -345,7 +345,7 @@ def plan(root, zones=None):
         else:
             actions["merge"].append(path)
     hooks = [z for z in zones if stale_hook(root / "Zones" / z)]
-    return {"workspace": str(root), "from": {k: stamp.get(k, "") for k in ("commit", "date")},
+    return {"wiki_hook": wiki_hook_state(root), "workspace": str(root), "from": {k: stamp.get(k, "") for k in ("commit", "date")},
             "to": {k: v for k, v in install.source_version().items() if k in ("commit", "date", "from")},
             "actions": actions, "current": current, "kept": kept, "hooks": hooks, "files": new,
             "recorded": recorded, "listed": listed, "extras": extras,
@@ -366,6 +366,27 @@ def ever_committed(root, path, history):
         tracked = git(repo, "ls-files", "-z", check=False).stdout
         history[repo] = {x.strip("\n") for x in (deleted + "\0" + tracked).split("\0")} - {""}
     return path_in_repo(root, path) in history[repo]
+
+
+def wiki_hook_state(root):
+    """What the update does about the wikis' wall check (#340): "add" where
+    Wikis has its own .git folder and no pre-commit hook, "refresh" where the
+    hook is Garrick's and differs from what this Garrick writes, "foreign"
+    where it is somebody else's (left alone, and said), else ""."""
+    lib = install.lib()
+    wikis = Path(root) / "Wikis"
+    if not hasattr(lib, "wiki_hook_text") or not (wikis / ".git").is_dir() or (wikis / ".git").is_symlink():
+        return ""
+    hook = wikis / ".git" / "hooks" / "pre-commit"
+    if not hook.exists():
+        return "add"
+    try:
+        text = hook.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    if lib.WALL_HOOK_MARK not in text:
+        return "foreign"
+    return "refresh" if text != lib.wiki_hook_text(root) else ""
 
 
 def stale_hook(zone):
@@ -444,7 +465,15 @@ def report(p, applied=None):
         lines += ["", "Wall check: %d zone%s get%s the newer pre-commit check: %s." % (
             len(p["hooks"]), "" if len(p["hooks"]) == 1 else "s", "s" if len(p["hooks"]) == 1 else "",
             ", ".join(p["hooks"]))]
-    if not any(p["actions"][k] for k in ("replace", "add", "merge", "split", "restore")) and not p["hooks"]:
+    wiki = p.get("wiki_hook")
+    if wiki in ("add", "refresh"):
+        lines += ["", "Wall check: the wikis get %s pre-commit check." % ("their" if wiki == "add" else "the newer")]
+    elif wiki == "foreign":
+        lines += ["", "Wall check: Wikis has a pre-commit hook that is not Garrick's, so it is left as it is and the wikis "
+                  "do not check the walls before a commit. Add this line to it: "
+                  "python3 System/tools/check.py --staged --walls-only"]
+    if not any(p["actions"][k] for k in ("replace", "add", "merge", "split", "restore")) and not p["hooks"] \
+            and wiki not in ("add", "refresh"):
         lines += ["", "Up to date: all %d files Garrick ships are as this Garrick writes them, "
                   "or yours by design." % len(p["files"])]
     else:
@@ -618,6 +647,12 @@ def apply(root, p, only=None, today=None):
     for zone in p["hooks"]:
         lib.install_wall_hook(root / "Zones" / zone)
         hooks.append(zone)
+    if p.get("wiki_hook") in ("add", "refresh"):
+        try:
+            lib.install_wall_hook(root / "Wikis", wiki=True, root=root)
+            hooks.append("Wikis")
+        except (FileExistsError, FileNotFoundError) as exc:
+            skipped.append(("Wikis/.git/hooks/pre-commit", "the wikis' wall check was not installed: %s" % exc))
 
     written = [path for kind in ("replace", "add", "restore") for path in done[kind]]
     problems = check_errors(root, written)

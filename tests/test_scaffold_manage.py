@@ -368,7 +368,7 @@ class TestRename(ManageCase):
 
     def test_a_refused_commit_puts_everything_back(self):
         hook = self.work / ".git" / "hooks" / "pre-commit"
-        hook.write_text("#!/bin/sh\necho refused >&2\nexit 1\n")
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho refused >&2\nexit 1\n")
         hook.chmod(0o755)
         before = self.git("ls-files", "-s").stdout
         r = self.scaffold("rename", "--zone", "Work", "--project", "Acme", "--thread", "Pricing", "--to", "Renewal")
@@ -1012,7 +1012,7 @@ class TestFromThePage(ManageCase):
     def test_a_manage_verb_refused_for_any_other_reason_still_says_why(self):
         hook = Path(self.git("rev-parse", "--git-path", "hooks/pre-commit").stdout.strip())
         hook = hook if hook.is_absolute() else self.work / hook
-        hook.write_text("#!/bin/sh\necho 'fatal: the disk is full' >&2\nexit 1\n")
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho 'fatal: the disk is full' >&2\nexit 1\n")
         for req in ({"verb": "rename", "zone": "Work", "project": "Acme", "thread": "Freight", "to": "Lanes"},
                     {"verb": "delete", "zone": "Work", "project": "Acme", "thread": "Freight", "confirm": "Freight"},
                     {"verb": "new-thread", "zone": "Work", "project": "Acme", "name": "Renewal"}):

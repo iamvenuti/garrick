@@ -4,6 +4,8 @@ Some of Garrick's protections are code: a script that refuses, whatever the assi
 
 ## The table
 
+Garrick's own commits (the status page's actions, the scaffold tool and the scheduled jobs) run git without the caller's repository variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and git settings passed in the environment), and refuse to commit in a zone when the hook git would run is not Garrick's wall check, wherever that hook is configured or the repository is.
+
 | Protection | How it holds | Where |
 |---|---|---|
 | A commit of a project file that links to a meeting or to another project's file across a declared wall (a path written as code counts as a link, though one that also lands on a wiki page or an unwalled project's file is only a warning), names a party, person or alias from the far side, or repeats eight words in a row held only there. A meeting page that faded, dormant or archived, counts as a working one does, and so does a question in `Wikis/Meetings/questions/` | **Code refuses.** Not complete: see [the known gaps](#the-wall-checks-known-gaps) | The pre-commit hook in each zone, and in any git repository inside a project, runs `System/tools/check.py --staged --walls-only`. See [What the check covers](principles.md#what-the-check-covers) |

@@ -42,6 +42,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -197,13 +198,19 @@ def ignore_text(current: Optional[str]) -> Optional[str]:
 
 # --------------------------------------------------------------------------- the copy's own history
 
+_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+              "GIT_COMMON_DIR", "GIT_PREFIX", "GIT_NAMESPACE", "GIT_IMPLICIT_WORK_TREE", "GIT_GRAFT_FILE",
+              "GIT_NO_REPLACE_OBJECTS", "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_CONFIG", "GIT_CONFIG_COUNT",
+              "GIT_CONFIG_PARAMETERS")
+
+
 def git(folder: Path, *args, binary: bool = False, timeout: float = GIT_TIMEOUT) -> Tuple[int, object]:
     """git in the history's folder, with Garrick as the author, and the
     workspace's own hooks and settings out of it: it is not a zone."""
-    env = dict(os.environ, **WHO)
-    env.pop("GIT_DIR", None)
-    env.pop("GIT_WORK_TREE", None)
-    env.pop("GIT_INDEX_FILE", None)
+    # Not a zone, so no wall hook is wanted or asked for: only what points git at another repository or hands
+    # it other settings (hooks included) is taken out of the environment. The list is garrick_lib.own_repo_env's.
+    env = {k: v for k, v in os.environ.items() if k not in _REPO_VARS and not re.match(r"GIT_CONFIG_(KEY|VALUE)_\d+$", k)}
+    env.update(WHO)
     try:
         r = subprocess.run(["git", "-c", "core.quotepath=off", "-c", "commit.gpgsign=false", "-C", str(folder)] + list(args),
                            capture_output=True, timeout=timeout, env=env, stdin=subprocess.DEVNULL, text=not binary)

@@ -110,7 +110,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 from garrick_lib import (  # noqa: E402
-    foreign_git_env,
+    own_repo_env,
     knowledge_schema,
     parse_frontmatter_text,
     read_settings,
@@ -1146,7 +1146,7 @@ class Journal:
 
 def git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-c", "core.quotepath=off", *args], cwd=str(repo), capture_output=True, text=True,
-                          timeout=300, stdin=subprocess.DEVNULL, env=foreign_git_env())
+                          timeout=300, stdin=subprocess.DEVNULL, env=own_repo_env())
 
 
 def repo_of(root: Path, path: Path) -> Optional[Path]:

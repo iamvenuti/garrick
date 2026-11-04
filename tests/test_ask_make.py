@@ -209,9 +209,9 @@ class TestWhatTheRequestNamed(MakeCase):
 
     def test_a_party_of_another_zone_is_refused_in_one_line_not_listed_around(self):
         ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Marco | own | Personal | `personal` |  |\n\n## Walls", 1))
-        with self.assertRaisesRegex(ask.Bad, "^Marco is a party of Personal, not of Work$"):
-            self.propose({"verb": "new-project", "zone": "Work", "name": "Taxes"}, Named({"personal"}, []))
+        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Home | the household | Personal | `home` |  |\n\n## Walls", 1))
+        with self.assertRaisesRegex(ask.Bad, "^Home is a party of Personal, not of Work$"):
+            self.propose({"verb": "new-project", "zone": "Work", "name": "Taxes"}, Named({"home"}, []))
 
     def test_the_question_stays_out_of_what_the_session_is_told_next(self):
         proposal = {"verb": "new-project", "zone": "Work", "name": "Harbour"}
@@ -422,7 +422,7 @@ class TestMakingThem(MakeCase):
                                                   "names Acme Corp (`acme`), or one of its people; "
                                                   "a wall stands between acme and birch")])
         hook = self.work / ".git" / "hooks" / "pre-commit"
-        write(hook, "#!/bin/sh\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
+        write(hook, "#!/bin/sh\n# Garrick wall check (a stand-in)\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
         hook.chmod(0o755)
         _, out = self.run_ask("new project Harbour for Birch & Co in Work",
                               {"say": "Making it.", "do": [{"verb": "new-project", "zone": "Work", "name": "Harbour",

@@ -237,6 +237,11 @@ class TestScratchBuild(unittest.TestCase):
         self.assertEqual('identifier "local.garrick.status.scratch"', requirement(self.app))     # not the installed app's
         self.assertEqual('identifier "local.garrick.status.finder.scratch"', requirement(self.appex))
 
+    def test_the_extension_carries_the_app_icon_for_its_menu_item(self):
+        icon = self.appex / "Contents" / "Resources" / "AppIcon.icns"
+        self.assertEqual((self.app / "Contents" / "Resources" / "AppIcon.icns").read_bytes(), icon.read_bytes())
+        self.assertIn('Bundle.main.image(forResource: "AppIcon")', (APP / "GarrickFinder.swift").read_text())
+
     def test_the_extension_has_the_sandbox_and_nothing_else(self):
         out = subprocess.run(["codesign", "-d", "--entitlements", "-", "--xml", str(self.appex)], capture_output=True).stdout
         self.assertEqual({"com.apple.security.app-sandbox": True}, plistlib.loads(out[out.index(b"<?xml"):]))

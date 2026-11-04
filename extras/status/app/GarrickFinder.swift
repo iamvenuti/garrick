@@ -51,6 +51,10 @@ final class GarrickFinder: FIFinderSync {
 			sub.addItem(item)
 		}
 		let top = NSMenuItem(title: "Garrick", action: nil, keyEquivalent: "")
+		if let icon = Bundle.main.image(forResource: "AppIcon") {
+			icon.size = NSSize(width: 16, height: 16)
+			top.image = icon
+		}
 		top.submenu = sub
 		let menu = NSMenu(title: "")
 		menu.addItem(top)

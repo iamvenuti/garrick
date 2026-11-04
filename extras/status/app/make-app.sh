@@ -4,11 +4,15 @@
 # the Xcode command line tools, which a Mac with git and python3 already has,
 # and downloads nothing.
 #
-#   System/status/app/make-app.sh [--workspace FOLDER] [--dest FOLDER] [-- STATUS.PY FLAGS]
+#   System/status/app/make-app.sh [--workspace FOLDER] [--dest FOLDER] [--scratch] [-- STATUS.PY FLAGS]
 #
 # --workspace  the workspace (default: GARRICK_WORKSPACE, or the one this
 #              script sits in, three folders up)
 # --dest       where the app goes (default: ~/Applications)
+# --scratch    a build to look at or test: it touches nothing outside --dest.
+#              No lsregister, no tccutil, no pluginkit; the app is never made
+#              known to macOS. Use it with a --dest of your own, never with the
+#              folder the app is installed in.
 # After --, flags for status.py, such as --no-graph or --no-cmux; the app
 # rebuilds the page with them. --obsidian VAULT and --no-obsidian, which
 # Garrick before 0.51.0 took, are dropped, so a rebuild with an app's old
@@ -22,11 +26,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 STATUS="$(cd "$HERE/.." && pwd)/status.py"
 WS="${GARRICK_WORKSPACE:-$(cd "$HERE/../../.." && pwd)}"
 DEST="$HOME/Applications"
+SCRATCH=0
 ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --workspace) WS="$2"; shift 2 ;;
     --dest) DEST="$2"; shift 2 ;;
+    --scratch) SCRATCH=1; shift ;;
     --) shift; ARGS=("$@"); break ;;
     *) echo "make-app: unknown option $1" >&2; exit 64 ;;
   esac
@@ -42,6 +48,7 @@ PY="$(command -v python3)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 NAME="Garrick.app"
+APP_ID="local.garrick.status"
 OLDNAME="Garrick's Status.app"   # its name before 0.10.0
 BUNDLE="$WORK/$NAME/Contents"
 mkdir -p "$BUNDLE/MacOS" "$BUNDLE/Resources"
@@ -87,10 +94,30 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$ICONSET" -o "$BUNDLE/Resources/AppIcon.icns"
 
-# Signed ad hoc: macOS refuses to launch an unsigned app on Apple silicon.
-codesign --force --sign - "$WORK/$NAME" 2>/dev/null
+# Signed ad hoc, with a requirement that does not change between builds.
+# macOS refuses to launch an unsigned app on Apple silicon, and an ad hoc
+# signature carries no identity, so by default its designated requirement is
+# the build's own cdhash. macOS keeps a permission, such as Accessibility,
+# against that requirement, and every rebuild has a new cdhash: the grant
+# stopped matching at every update (#361). Naming the bundle identifier as the
+# requirement keeps the grant across builds, once it has been made under this
+# requirement. The trade-off: ANY ad hoc signed app with the identifier
+# local.garrick.status matches the requirement, and so inherits what was
+# granted to Garrick. That is acceptable on a Mac whose owner builds the app
+# from a workspace they run, and it is not a signature of a publisher.
+FIXED_REQ="identifier \"$APP_ID\""
+sign() {   # sign FILE IDENTIFIER [ENTITLEMENTS]
+  local ent=()
+  [ -z "${3:-}" ] || ent=(--entitlements "$3")
+  codesign --force --sign - -r="designated => identifier \"$2\"" ${ent[@]+"${ent[@]}"} "$1" 2>/dev/null
+}
+sign "$WORK/$NAME" "$APP_ID"
+
+# The requirement an installed app was signed with: empty when it cannot be read.
+requirement() { codesign -d -r- "$1" 2>&1 | sed -n 's/^# *//; s/^designated => //p' | head -n 1; }
 
 mkdir -p "$DEST"
+RESET=0
 # Replace only an earlier build of this app, under either name, never another
 # app of that name.
 for N in "$NAME" "$OLDNAME"; do
@@ -104,8 +131,21 @@ for N in "$NAME" "$OLDNAME"; do
     osascript -e 'tell application id "local.garrick.status" to quit' >/dev/null 2>&1 || true
     sleep 1
   fi
+  # An earlier build whose requirement is not the fixed one holds a grant that
+  # can never match this build, and macOS would not ask again, since an entry
+  # for the identifier exists. Reset it, once, in the folder this build
+  # replaces and nowhere else. Unreadable: no reset.
+  OLDREQ="$(requirement "$DEST/$N")"
+  if [ -n "$OLDREQ" ] && [ "$OLDREQ" != "$FIXED_REQ" ]; then RESET=1; fi
   rm -rf "${DEST:?}/$N"
 done
 mv "$WORK/$NAME" "$DEST/$NAME"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST/$NAME" 2>/dev/null || true
+if [ "$SCRATCH" = 0 ]; then
+  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST/$NAME" 2>/dev/null || true
+  if [ "$RESET" = 1 ]; then
+    # The last time macOS asks: the next permission is kept across builds.
+    tccutil reset Accessibility "$APP_ID" >/dev/null 2>&1 || true
+    echo "make-app: Accessibility was reset for Garrick once; allow it again when macOS asks." >&2
+  fi
+fi
 echo "$DEST/$NAME"

@@ -2151,7 +2151,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard mode != .off else { return }
 		if checking { return heard.append("dictation:" + mode.rawValue) }
 		if mode != .macos && !AXIsProcessTrusted() {
-			return toast("Garrick cannot press your dictation key: allow it in System Settings › Privacy & Security › Accessibility.")
+			return toast("Garrick cannot press your dictation key. The permission may belong to an earlier build of Garrick. In System Settings › Privacy & Security › Accessibility, remove Garrick with the minus button, then allow it again.")
 		}
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
 			guard self?.askPanel?.isKeyWindow == true else { return }   // closed meanwhile: the words would go elsewhere

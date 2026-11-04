@@ -341,7 +341,7 @@ PERSON_SHAPE = "a person page's frontmatter must be plain `key: value` lines"
 PERSON_PLAIN = "a person page must be a plain file in wiki/people"
 # The only keys a person page has (#340), as ingest.py writes it. `organisation`
 # is the one that may hold a link; the walls read no other key for one.
-PERSON_KEYS = ("title", "type", "party", "organisation", "created", "updated")
+PERSON_KEYS = ("title", "type", "party", "organisation", "created", "updated", "aliases", "tags", "pinned")
 FORM_PROBLEMS = (FRONTMATTER_PLAIN, PERSON_SHAPE, PERSON_PLAIN)
 # What opens a YAML node other than a plain key at the left margin: a quoted
 # key, an explicit `?` key, a tag, an anchor, an alias, a merge key, a flow

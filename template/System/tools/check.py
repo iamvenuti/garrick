@@ -3452,7 +3452,7 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
         if person_shape_problem(text):
             out.append(Finding(ERROR, "walls", rel(ws, page),
                                PERSON_SHAPE + ", and `- item` lines under a key with no value, with no key but %s "
-                               "and no link but in `organisation`; a YAML reader can find a link in any other form, "
+                               "and no link but in `organisation`, and `pinned` only true or false; a YAML reader can find a link in any other form, "
                                "and Obsidian draws one from any property" % ", ".join(PERSON_KEYS),
                                "A person page's frontmatter is not plain lines"))
             continue
@@ -3720,6 +3720,8 @@ def person_shape_problem(text: str) -> bool:
             value = re.sub(r"(?<=[\]\"'])[ ]+#.*$", "", value)     # a comment after a quoted value, as the schema shows
         if value and not (_plain_scalar(value) or _flow_list(value)):
             return True
+        if key == "pinned" and value.strip().strip("\"'") not in ("true", "false"):
+            return True         # fade.py keep writes `pinned: true`; nothing else is a pin
         open_key = key if not value else None
     return False
 

@@ -724,6 +724,17 @@ class WakeTest(Base):
         self.assertTrue(self.page("wiki/sources/250101-acme-old.md").exists())
         self.assertTrue(self.page("raw/250101-acme-old.txt").exists())
 
+    def test_keep_on_a_person_page_leaves_it_a_page_the_wall_check_reads(self):
+        import check
+        page = self.meetings / "wiki" / "people" / "jo-example.md"
+        write(page, "---\ntitle: Jo Example\ntype: person\nparty: acme\ncreated: 2026-03-10\nupdated: 2026-03-10\n---\n\n# Jo Example\n")
+        git(self.wikis, "add", "-A")
+        git(self.wikis, "commit", "-qm", "a person")
+        code, out, err = self.run_tool("keep", "--page", "jo-example", "--json")
+        self.assertEqual(0, code, err)
+        self.assertIn("\npinned: true\n", self.text(page))
+        self.assertFalse(check.person_shape_problem(self.text(page)))
+
     def test_an_archived_page_is_listed_with_its_date(self):
         self.faded()
         code, out, _ = self.run_tool("list", "--wiki", "Meetings", "--grade", "archived", "--json")

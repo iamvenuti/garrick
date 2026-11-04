@@ -158,7 +158,7 @@ import check as garrick_check  # noqa: E402  (the walls check, read on a change 
 import correct  # noqa: E402
 from operations import WALL_REFUSAL  # noqa: E402
 from garrick_lib import (  # noqa: E402
-    foreign_git_env,
+    own_repo_env,
     staged_walls_refusal,
     entity_names,
     live_files,
@@ -253,7 +253,7 @@ class Ctx:
 
     def git(self, repo: Path, *args: str) -> subprocess.CompletedProcess:
         return subprocess.run(["git", "-c", "core.quotepath=off", *args], cwd=str(repo), capture_output=True,
-                              text=True, timeout=300, stdin=subprocess.DEVNULL, env=foreign_git_env())
+                              text=True, timeout=300, stdin=subprocess.DEVNULL, env=own_repo_env())
 
     def tracked(self, repo: Path) -> set:
         if repo not in self._tracked:

@@ -1591,7 +1591,7 @@ def cmd_delete(root, args, today):
         if problem:
             raise Refusal(f"{problem}, so nothing was committed.")
         git(["commit", "-q", "-m", f"{what}: deleted\n\n{body}"], zone_dir)
-    except GitError as exc:
+    except (GitError, Refusal) as exc:
         git_value(["reset", "-q"], zone_dir)
         git_value(["checkout", "HEAD", "--", rel] + [str(t.relative_to(zone_dir)) for t in touched], zone_dir)
         raise Refusal(f"The deletion was not committed, so nothing changed: {' '.join(str(exc).split())}")

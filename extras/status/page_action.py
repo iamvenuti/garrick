@@ -105,6 +105,22 @@ zone's repository, as the skills would:
                 {"zone", "file", "label"}; the work's Next action becomes
                 what the option leads to, with a dated entry, the question
                 says answered, and both are committed in one commit
+    question-answer  a wiki question answered in the user's own words (#224):
+                {"wiki", "file", "words"}. The words are filed first, word for
+                word, as Wikis/<Wiki>/raw/answers/<YYMMDD> - <slug>.md, with
+                the question and the date; only then does the question say
+                answered and point at that record. Nothing else is written,
+                no page is changed (the meetings and knowledge skills do that,
+                see question-work), and nothing is committed
+    question-later   a wiki question put off to a day: {"wiki", "file", "until"}
+    question-close   a wiki question with nothing to work in: {"wiki", "file"}
+    question-decide  Record as a decision is not built yet (#224, point 5):
+                refused, and nothing is written
+    question-work    read only: the pages an answered question may change, and
+                the record to cite. A page walled from the question's parties
+                is left out and the wall sentence said; a question whose
+                pages sit on both sides of a wall is refused with it
+    question-done    an answered question marked done once its pages are worked in
     later       "Not now": {"zone", "file", "until"?}; the question put off
                 to tomorrow, or to the day `until` names, and committed
     continue    a piece of work opened in Claude's desktop app, already
@@ -256,7 +272,8 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-thread", "check-name", "rename", "move", "delete", "undo",
-         "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix",
+         "interrupt", "back", "stack", "unstack", "answer", "later", "question-answer", "question-later",
+         "question-close", "question-decide", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
@@ -281,7 +298,7 @@ ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart",
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones", "graph",
           "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
-          "do", "id", "answer", "suggested", "path", "version", "agent")       # never "token"
+          "do", "id", "answer", "suggested", "path", "version", "agent", "wiki")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
 # What a Todo verb says it did: the line's text, no longer than this, and
@@ -2471,6 +2488,372 @@ def put_off(ws: Path, req: dict, today: dt.date) -> str:
     return "Put off until %s. It will be back then" % when
 
 
+# ---------------------------------------------------------------------------
+# Wiki questions (#224): answered, put off, closed, worked in
+# ---------------------------------------------------------------------------
+#
+# A wiki question is a file, Wikis/<Wiki>/questions/<YYMMDD> - <slug>.md. The
+# user's answer is a raw record first, Wikis/<Wiki>/raw/answers/<YYMMDD> -
+# <slug>.md, never edited after; only then does the question change. These
+# verbs write those two files and nothing else, and commit nothing: a wiki's
+# commit is the skill's. They read the walls as check.py does and fail closed:
+# a question or a page they cannot read plainly is not used.
+WIKI_NAMES = ("Meetings", "Knowledge")
+WIKI_QUESTION_DIR = "questions"
+WIKI_ANSWER_DIR = ("raw", "answers")
+WORDS_MAX = 4000
+BOLD_LINE = re.compile(r"(?m)^\s*\*\*(.+)\*\*\s*$")
+NO_DECISION = "Record as a decision is not built yet, so nothing was written. Answer it, put it off or close it instead"
+
+
+def wall_sentence(ws: Path) -> str:
+    """The rule's sentence, from operations.py's one copy. Without it the wall
+    cannot be said, so nothing is done (fail closed)."""
+    said = wall_refusal(ws)
+    if not said:
+        raise Refused("this workspace's operations.py cannot say the wall sentence, so nothing was written")
+    return said
+
+
+def tags_of(value) -> list:
+    """A frontmatter value as a list of party tags, as written."""
+    items = value if isinstance(value, list) else [value]
+    return [str(v).strip() for v in items if v is not None and str(v).strip()]
+
+
+def bare_tag(lib, tag: str) -> str:
+    return lib.strip_tag(tag) if callable(getattr(lib, "strip_tag", None)) else tag
+
+
+class WikiQuestion:
+    """One wiki question as the walls read it: where it is, its text and frontmatter."""
+
+    def __init__(self, ws: Path, req: dict):
+        self.ws = ws
+        wiki = req.get("wiki")
+        if wiki not in WIKI_NAMES:
+            raise Refused("no wiki called %s; the wikis with questions are %s" % (wiki, " and ".join(WIKI_NAMES)))
+        self.name = wiki
+        self.dir = (ws / "Wikis" / wiki).resolve()
+        if self.dir.parent != (ws / "Wikis").resolve() or not self.dir.is_dir():
+            raise Refused("no wiki called %s" % wiki)
+        rel = req.get("file")
+        if not isinstance(rel, str) or not rel.endswith(".md") or rel.startswith(("/", "~")):
+            raise Refused("not a question")
+        asked = (self.dir / WIKI_QUESTION_DIR).resolve()
+        path = (self.dir / rel).resolve()
+        if asked not in path.parents or not path.is_file() or SKIP & set(path.relative_to(asked).parts):
+            raise Refused("that question is not in %s any more" % (WIKI_QUESTION_DIR + "/"))
+        self.path = path
+        self.lib = prefs().lib(ws)
+        if self.lib is None or not all(callable(getattr(self.lib, n, None)) for n in
+                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled")):
+            raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
+        self.reload()
+
+    def reload(self) -> None:
+        try:
+            self.text = self.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            raise Refused("that question cannot be read")
+        if self.lib.frontmatter_form_problem(self.text):
+            raise Refused("that question's frontmatter cannot be read plainly, so nothing was written")
+        self.fm = self.lib.parse_frontmatter_text(self.text)
+        if self.fm.get("type") != "question":
+            raise Refused("that file is not a question")
+        self.status = str(self.fm.get("status") or "").strip().lower()
+        found = BOLD_LINE.search(self.text)
+        self.bold = found.group(0).strip() if found else ""
+
+    @property
+    def context(self) -> dict:
+        return self.lib.load_context(self.ws)
+
+    def parties(self) -> list:
+        return [bare_tag(self.lib, t) for t in tags_of(self.fm.get("parties"))]
+
+    def stem(self) -> str:
+        return self.path.stem
+
+
+def question_parties(q: WikiQuestion, wall: str) -> list:
+    """The question's own parties, checked: a Meetings question names its zone
+    and parties, every one a tag the workspace knows, and no two walled from
+    each other. A Knowledge question names neither. Anything else is refused."""
+    ctx = q.context
+    zone = q.fm.get("zone")
+    tags = q.parties()
+    if q.name == "Knowledge":
+        if zone not in (None, "") or tags:
+            raise Refused("a Knowledge question carries no zone and no parties, so nothing was written")
+        return []
+    if not isinstance(zone, str) or zone.strip() not in {z.name for z in (q.ws / "Zones").iterdir() if z.is_dir()}:
+        raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
+    if not tags or any(t not in ctx.get("parties", {}) for t in tags):
+        raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
+    if any(q.lib.walled(ctx, a, b) for a in tags for b in tags):
+        raise Refused(wall)
+    return tags
+
+
+def page_target(q: WikiQuestion, link: str) -> Optional[Path]:
+    """The file a `pages:` link names, inside the question's own wiki, or None."""
+    m = re.fullmatch(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]", link.strip())
+    if not m:
+        return None
+    target = m.group(1).strip()
+    if target.startswith(("/", "~")) or ".." in Path(target).parts:
+        return None
+    for name in (target, target + ".md"):
+        p = (q.dir / name).resolve()
+        # Only a page of the wiki's own wiki/ folder: never a raw record, a
+        # question or the question's own answer.
+        if p.is_file() and (q.dir / "wiki").resolve() in p.parents and p.suffix.lower() == ".md":
+            return p
+    return None
+
+
+def page_tags(q: WikiQuestion, page: Path) -> Optional[list]:
+    """The parties a Meetings page is written for, or None when it cannot be
+    read plainly: no party, a form a reader could take two ways, or a tag the
+    workspace does not know. `party: none` is plainly nobody's."""
+    try:
+        text = page.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    if q.lib.frontmatter_form_problem(text):
+        return None
+    fm = q.lib.parse_frontmatter_text(text)
+    found = tags_of(fm.get("parties")) + tags_of(fm.get("party"))
+    if not found:
+        return None
+    known = q.context.get("parties", {})
+    out = [bare_tag(q.lib, t) for t in found]
+    if out == ["none"]:
+        return []
+    return out if all(t in known for t in out) else None
+
+
+def question_pages(q: WikiQuestion, wall: str) -> tuple:
+    """(the pages the answer may change, how many were held back, how many are
+    not there). A question whose pages sit on both sides of a wall is refused
+    with the rules' sentence and nothing named. A page walled from the
+    question's parties, or not readable plainly, is held back. A Knowledge
+    question has no parties: every page it names is one it may change."""
+    mine = question_parties(q, wall)
+    links = tags_of(q.fm.get("pages"))
+    pages, missing = [], 0
+    for link in links:
+        p = page_target(q, link)
+        if p is None:
+            missing += 1
+        elif p not in pages:
+            pages.append(p)
+    if q.name == "Knowledge":
+        return pages, 0, missing
+    ctx = q.context
+    seen, readable, held = [], [], 0
+    for p in pages:
+        tags = page_tags(q, p)
+        if tags is None:
+            held += 1
+            continue
+        seen.append(tags)
+        readable.append((p, tags))
+    flat = [t for tags in seen for t in tags]
+    if any(q.lib.walled(ctx, a, b) for i, a in enumerate(flat) for b in flat[i + 1:]):
+        raise Refused(wall)             # both sides of a wall: nothing named, nothing written
+    allowed = []
+    for p, tags in readable:
+        # Only a page that carries the question's own parties, and no others:
+        # a page written for nobody (`none`) is guarded by no wall, so the
+        # answer is never written into it.
+        if not tags or not set(tags) <= set(mine) or any(q.lib.walled(ctx, a, b) for a in tags for b in mine):
+            held += 1
+        else:
+            allowed.append(p)
+    # A page that is not there looks like a page held back, so that a `pages:`
+    # list cannot be used to ask whether a walled page exists.
+    return allowed, held + missing, 0
+
+
+def answer_slug(stem: str) -> str:
+    """The question's name without its date: the raw answer is dated by the
+    day it was given and named by what it answers."""
+    slug = re.sub(r"^\d{6} - ", "", stem)
+    slug = re.sub(r"[^\w\- ]", "", slug).strip()
+    return slug or "answer"
+
+
+def fence_for(words: str) -> str:
+    longest = max([len(r) for r in re.findall(r"`+", words)] or [0])
+    return "`" * max(3, longest + 1)
+
+
+def raw_answer_text(q: WikiQuestion, words: str, today: dt.date, tags: list) -> str:
+    where = ["type: answer", "answered: %s" % today.isoformat()]
+    if q.name == "Meetings":
+        where += ["zone: %s" % str(q.fm.get("zone")).strip(), "parties: [%s]" % ", ".join(tags)]
+    where.append("question: %s" % quoted("[[%s]]" % q.path.relative_to(q.dir).with_suffix("").as_posix()))
+    fence = fence_for(words)
+    return ("---\n%s\n---\n\nQuestion: %s\n\nAnswered on %s, in the user's own words:\n\n%s\n%s\n%s\n"
+            % ("\n".join(where), q.bold.strip("*").strip(), today.isoformat(), fence, words, fence))
+
+
+def write_new(path: Path, text: str) -> None:
+    """A file that did not exist, made whole or not at all: exclusive, so a
+    raw record already there is never touched."""
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+    except BaseException:
+        try:
+            path.unlink()               # half a record is no record
+        except OSError:
+            pass
+        raise
+
+
+def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list) -> Path:
+    folder = q.dir.joinpath(*WIKI_ANSWER_DIR)
+    folder.mkdir(parents=True, exist_ok=True)
+    if folder.resolve() != folder or q.dir not in folder.parents:
+        raise Refused("raw/answers is not a plain folder of this wiki, so nothing was written")
+    body = raw_answer_text(q, words, today, tags)
+    base = "%s - %s" % (today.strftime("%y%m%d"), answer_slug(q.stem()))
+    for n in range(1, 10):
+        path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
+        try:
+            write_new(path, body)
+            return path
+        except FileExistsError:
+            continue
+    raise Refused("nine answers to this question are already filed today, so nothing was written")
+
+
+def wiki_words(req: dict) -> str:
+    words = req.get("words")
+    if not isinstance(words, str) or not words.strip():
+        raise Refused("say the answer, in your own words")
+    words = words.strip()
+    if len(words) > WORDS_MAX or "\0" in words:
+        raise Refused("the answer is too long to file: at most %d characters, no control characters" % WORDS_MAX)
+    return words
+
+
+def write_question(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+
+
+def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
+    verb = req["verb"]
+    if verb == "question-decide":
+        raise Refused(NO_DECISION)
+    wall = wall_sentence(ws)
+    q = WikiQuestion(ws, req)
+    if verb in ("question-work", "question-done"):
+        return wiki_work(ws, q, req, today, wall)
+    with held("question-%s.lock" % q.name, busy="another question in %s is still being written" % q.name):
+        q.reload()
+        if q.status not in ("open", "later"):
+            raise Refused("that question is %s, not open" % (q.status or "unreadable"))
+        tags = question_parties(q, wall)
+        question_pages(q, wall)         # a question across a wall is refused before anything is written
+        if verb == "question-close":
+            write_question(q.path, set_front(q.text, {"status": "closed", "closed": today.isoformat()}, drop=("later",)))
+            return "Closed. Nothing was worked in"
+        if verb == "question-later":
+            until = req.get("until")
+            try:
+                day = dt.date.fromisoformat(until) if isinstance(until, str) else None
+            except ValueError:
+                day = None
+            if day is None or day <= today:
+                raise Refused("not a later day: %r" % (until,))
+            write_question(q.path, set_front(q.text, {"status": "later", "later": day.isoformat()}))
+            return "Put off until %s %d %s. It is hidden until then" % (day.strftime("%A"), day.day, MONTHS[day.month - 1])
+        words = wiki_words(req)
+        # A question that cannot be rewritten stops here, with nothing written.
+        set_front(q.text, {"status": "answered"})
+        path = file_raw_answer(q, today, words, tags)
+        stem = path.relative_to(q.dir).with_suffix("").as_posix()
+        try:
+            write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
+                                                      "answered": today.isoformat()}, drop=("later",)))
+        except Exception as e:
+            raise Refused("the answer is filed as %s, but the question could not be updated (%s: %s); "
+                          "the record stays" % (stem, type(e).__name__, e))
+        return "Noted. Your words are filed as %s. The pages change when you say work them in" % stem
+
+
+def own_record(q: WikiQuestion, wall: str) -> str:
+    """The raw answer an answered question points at, as a link target, only
+    when it is this question's own: a record of type answer, in raw/answers/,
+    with the question's zone and parties and a `question:` link that lands on
+    this very file. Anything else is refused before a name is printed: a
+    Meetings question with the wall sentence, a Knowledge one plainly."""
+    refuse = Refused(wall if q.name == "Meetings" else "that question's answer is not a record of this question")
+    answered = tags_of(q.fm.get("answer"))
+    m = re.fullmatch(r"\[\[(raw/answers/[^\]|#]+)\]\]", answered[0]) if len(answered) == 1 else None
+    if not m:
+        raise Refused("that question points at no raw answer, so there is nothing to cite")
+    folder = q.dir.joinpath(*WIKI_ANSWER_DIR).resolve()
+    candidate = (q.dir / (m.group(1) + ".md")).resolve()
+    if not candidate.is_file() or folder not in candidate.parents:
+        raise Refused("that question points at no raw answer, so there is nothing to cite")
+    try:
+        text = candidate.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise refuse
+    if q.lib.frontmatter_form_problem(text):
+        raise refuse
+    fm = q.lib.parse_frontmatter_text(text)
+    if fm.get("type") != "answer":
+        raise refuse
+    mine = sorted(q.parties())
+    theirs = sorted(bare_tag(q.lib, t) for t in tags_of(fm.get("parties")))
+    if q.name == "Meetings":
+        zone = fm.get("zone")
+        if not isinstance(zone, str) or zone.strip() != str(q.fm.get("zone")).strip() or theirs != mine:
+            raise refuse
+    elif fm.get("zone") not in (None, "") or theirs:
+        raise refuse
+    link = tags_of(fm.get("question"))
+    target = re.fullmatch(r"\[\[([^\]|#]+)\]\]", link[0]) if len(link) == 1 else None
+    if not target:
+        raise refuse
+    for name in (target.group(1).strip(), target.group(1).strip() + ".md"):
+        if (q.dir / name).resolve() == q.path:
+            return m.group(1)
+    raise refuse
+
+
+def wiki_work(ws: Path, q: WikiQuestion, req: dict, today: dt.date, wall: str) -> str:
+    """Read only (question-work): what an answered question may change, and the
+    record to cite. question-done: it is marked done."""
+    if q.status != "answered":
+        raise Refused("that question is %s, not answered" % (q.status or "unreadable"))
+    record = own_record(q, wall)
+    pages, held_back, missing = question_pages(q, wall)
+    if req["verb"] == "question-done":
+        with held("question-%s.lock" % q.name, busy="another question in %s is still being written" % q.name):
+            q.reload()
+            if q.status != "answered":
+                raise Refused("that question is %s, not answered" % (q.status or "unreadable"))
+            write_question(q.path, set_front(q.text, {"status": "done", "done": today.isoformat()}))
+        return "Done. The question is worked in"
+    lines = ["Cite [[%s]]." % record]
+    lines += ["Change %s" % p.relative_to(q.dir).as_posix() for p in pages] or ["No page may be changed."]
+    if missing:
+        lines.append("%d page%s not there." % (missing, " is" if missing == 1 else "s are"))
+    if held_back:
+        lines.append(wall)
+    return "\n".join(lines)
+
+
 def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) -> None:
     """commit() for several files in one commit, (file, the bytes it held
     before) each, None for a file the request made. When the commit is
@@ -3873,6 +4256,8 @@ def act(ws: Path, req, today=None, now=None):
         return answer_question(ws, req, today or dt.date.today())
     if req["verb"] == "later":
         return put_off(ws, req, today or dt.date.today())
+    if req["verb"].startswith("question-"):
+        return wiki_question_act(ws, req, today or dt.date.today())
     if req["verb"] == "continue":
         return continue_work(ws, req, now)
     if req["verb"] == "ask-desktop":
@@ -4017,6 +4402,9 @@ CLI_FIELDS = {
     "delete": ("zone", "project", "thread", "confirm"),
     "undo": ("zone", "commit"), "unstack": ("zone", "project", "thread"),
     "todo-add": ("zone", "text", "target", "date"),
+    "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
+    "question-close": ("wiki", "file"), "question-decide": ("wiki", "file"),
+    "question-work": ("wiki", "file"), "question-done": ("wiki", "file"),
     "todo-done": ("zone", "line", "file"), "todo-undo": ("zone", "line", "file"),
     "todo-date": ("zone", "line", "file", "date"),
 }
@@ -4051,7 +4439,10 @@ def session_request(ws: Path, args) -> dict:
     """The request a verb typed in a terminal means: only the options that verb
     takes, each given or left out. A zone is always named; nothing is guessed."""
     given = {k: getattr(args, k.replace("-", "_")) for k in CLI_FIELDS[args.verb]}
-    if not given.get("zone"):
+    if args.verb.startswith("question-"):
+        if not given.get("wiki"):
+            raise Refused("no wiki given: say which, with --wiki")
+    elif not given.get("zone"):
         raise Refused("no zone given: say which, with --zone")
     req = dict({"verb": args.verb}, **{k: v for k, v in given.items() if v is not None})
     if args.verb in ("todo-done", "todo-undo", "todo-date"):
@@ -4068,7 +4459,7 @@ def command_parser() -> argparse.ArgumentParser:
                                                   "with a verb, page with JSON)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
-                 "confirm", "commit", "spoken", "thread-spoken"):
+                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until"):
         ap.add_argument("--" + name)
     return ap
 

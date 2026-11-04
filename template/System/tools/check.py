@@ -240,7 +240,8 @@ class Workspace:
     zones: List[Path] = field(default_factory=list)
     projects: List[Tuple[Path, dict]] = field(default_factory=list)  # (folder, hub frontmatter)
     meetings: Dict[Path, dict] = field(default_factory=dict)  # meeting page or Meetings question -> frontmatter
-    meeting_questions: set = field(default_factory=set)  # the Meetings questions among them (#224)
+    meeting_questions: set = field(default_factory=set)  # the Meetings questions among them (#224), and the answers
+    meeting_answers: set = field(default_factory=set)  # the raw answers among those (#224): raw/answers/, read as the question's parties
     wiki_files: List[Path] = field(default_factory=list)  # every .md under Wikis/
     quote_index: Optional["QuoteIndex"] = None  # built on first use by the walls check
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
@@ -903,6 +904,12 @@ def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
     for question in wiki_questions(root / "Wikis" / "Meetings"):
         ws.meetings[question] = meeting_view(ws, question, note_frontmatter(ws, question))
         ws.meeting_questions.add(question)
+    # A raw answer (#224) is the question's parties' material too: whoever
+    # may not see the question may not see what was said in answer to it.
+    for answer in wiki_answers(root / "Wikis" / "Meetings"):
+        ws.meetings[answer] = meeting_view(ws, answer, note_frontmatter(ws, answer))
+        ws.meeting_questions.add(answer)
+        ws.meeting_answers.add(answer)
     return ws
 
 
@@ -935,9 +942,26 @@ def wiki_questions(wiki: Path) -> List[Path]:
     return sorted(f for f in folder.rglob("*.md") if f.is_file())
 
 
+# A question answered is a raw record first (#224): the user's words, filed
+# word for word in raw/answers/ beside the other raw records, never edited.
+WIKI_ANSWERS = ("raw", "answers")
+
+
+def wiki_answers(wiki: Path) -> List[Path]:
+    """The raw answers of one wiki, at any depth under raw/answers/, found as
+    the questions are: every `.md` there, whatever its name."""
+    folder = wiki.joinpath(*WIKI_ANSWERS)
+    if not folder.is_dir():
+        return []
+    return sorted(f for f in folder.rglob("*.md") if f.is_file())
+
+
 def meeting_noun(ws: Workspace, page: Path, kind: str = "meeting") -> str:
-    """How a finding names a file the walls read in the Meetings wiki: a
-    question for a question file (#224), `kind` for a meeting page."""
+    """How a finding names a file the walls read in the Meetings wiki: an
+    answer for a raw answer and a question for a question file (#224),
+    `kind` for a meeting page."""
+    if page in ws.meeting_answers:
+        return "reply"
     return "question" if page in ws.meeting_questions else kind
 
 
@@ -2801,12 +2825,17 @@ def zone_notes(ws: Workspace, zone: Optional[Path] = None) -> List[Tuple[Path, s
 
 
 QUESTION_STATUSES = ("open", "answered", "later")
+# A wiki question (#224) can also be closed, with nothing to work in, or done,
+# once the pages its answer changes are worked in. The home reads neither.
+WIKI_QUESTION_STATUSES = QUESTION_STATUSES + ("closed", "done")
 QUESTION_OPTION = re.compile(r"^\s*-\s+\[(?![ xX]\])([^\]]+)\]\s+\S")
 
 
-def question_findings(ws: Workspace, f: Path, reader: str, say: str) -> List[Finding]:
+def question_findings(ws: Workspace, f: Path, reader: str, say: str,
+                      statuses: Tuple[str, ...] = QUESTION_STATUSES, wiki: Optional[Path] = None) -> List[Finding]:
     """What a question file needs before `reader` can ask it: `type:
-    question`, a status it reads (open, answered or later), a `later:` date
+    question`, a status it reads (open, answered or later; in a wiki also
+    closed or done), a `later:` date
     when it is put off, an `answer:` once answered, and a bold line that is the
     question. A file without them is left out, so the question is never seen."""
     out = []
@@ -2815,13 +2844,21 @@ def question_findings(ws: Workspace, f: Path, reader: str, say: str) -> List[Fin
     if fm.get("type") != "question":
         out.append(Finding(WARNING, "questions", r, "frontmatter `type` is %r, should be question" % fm.get("type"), say))
     status = str(fm.get("status") or "").strip().lower()
-    if status not in QUESTION_STATUSES:
+    if status not in statuses:
         out.append(Finding(WARNING, "questions", r, "`status` is %r; %s reads %s" % (
-            fm.get("status"), reader, ", ".join(QUESTION_STATUSES)), say))
+            fm.get("status"), reader, ", ".join(statuses)), say))
     if status == "later" and not re.match(r"^\d{4}-\d\d-\d\d$", str(fm.get("later") or "")):
         out.append(Finding(WARNING, "questions", r, "put off with no `later:` date, so it never comes back", say))
     if status == "answered" and not str(fm.get("answer") or "").strip():
         out.append(Finding(WARNING, "questions", r, "answered, with no `answer:`", say))
+    if wiki is not None and status in ("answered", "done") and str(fm.get("answer") or "").strip():
+        record = raw_answer_there(wiki, fm.get("answer"))
+        if record is None:
+            out.append(Finding(WARNING, "questions", r, "%s, but its `answer:` points at no raw answer in raw/answers/, "
+                               "so the page it changes has nothing to cite" % status, say))
+        elif not own_answer(record, f, fm):
+            out.append(Finding(WARNING, "questions", r, "%s, but its `answer:` is not a record of this question, "
+                               "with its zone and parties, so the page it changes may not cite it" % status, say))
     try:
         body = f.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -2829,6 +2866,41 @@ def question_findings(ws: Workspace, f: Path, reader: str, say: str) -> List[Fin
     if not re.search(r"(?m)^\s*\*\*.+\*\*\s*$", body):
         out.append(Finding(WARNING, "questions", r, "no bold line to ask, so %s leaves it out" % reader, say))
     return out
+
+
+def raw_answer_there(wiki: Path, value) -> Optional[Path]:
+    """The file a wiki question's `answer:` links in the wiki's raw/answers/
+    (#224), written with or without its extension; None when there is none."""
+    m = re.fullmatch(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]", str(value).strip())
+    if not m:
+        return None
+    target = m.group(1).strip()
+    folder = wiki.joinpath(*WIKI_ANSWERS).resolve()
+    for name in (target, target + ".md"):
+        p = (wiki / name).resolve()
+        if p.is_file() and folder in p.parents:
+            return p
+    return None
+
+
+def own_answer(record: Path, question: Path, qfm: dict) -> bool:
+    """Whether a raw answer is this question's own: it carries the question's
+    zone and parties, and its `question:` link lands on the question's file."""
+    rfm = parse_frontmatter(record)
+    if frontmatter_form_problem(read_text(record) or "") or rfm.get("type") != "answer":
+        return False
+    if str(rfm.get("zone") or "").strip() != str(qfm.get("zone") or "").strip():
+        return False
+    if sorted(strip_tag(t) for t in as_list(rfm.get("parties"))) != sorted(strip_tag(t) for t in as_list(qfm.get("parties"))):
+        return False
+    wiki = question.parent
+    while wiki.name != WIKI_QUESTIONS and wiki != wiki.parent:
+        wiki = wiki.parent
+    wiki = wiki.parent
+    m = re.fullmatch(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]", str(rfm.get("question") or "").strip())
+    if not m:
+        return False
+    return any((wiki / n).resolve() == question.resolve() for n in (m.group(1).strip(), m.group(1).strip() + ".md"))
 
 
 def check_questions(ws: Workspace) -> List[Finding]:
@@ -2852,10 +2924,15 @@ def check_questions(ws: Workspace) -> List[Finding]:
                 out += question_findings(ws, f, "the home", "A Needs you question the home cannot read")
     for wiki in visible_dirs(ws.root / "Wikis"):
         for f in wiki_questions(wiki):
-            out += question_findings(ws, f, "Garrick", "A %s question Garrick cannot read" % wiki.name)
+            out += question_findings(ws, f, "Garrick", "A %s question Garrick cannot read" % wiki.name,
+                                     WIKI_QUESTION_STATUSES, wiki)
             if f in ws.meeting_questions:
                 out += party_findings(ws, "questions", rel(ws, f), ws.meeting_raw.get(f, ws.meetings[f]), "Meetings question",
                                       "ask it once for each side")
+        for f in wiki_answers(wiki):
+            if f in ws.meeting_answers:
+                out += party_findings(ws, "questions", rel(ws, f), ws.meeting_raw.get(f, ws.meetings[f]), "Meetings answer",
+                                      "file it once for each side")
     return out
 
 
@@ -5296,6 +5373,8 @@ def form_scope(ws: Workspace, path: Path) -> Optional[Tuple[str, ...]]:
         if not under_folder(ws, here, ("Wikis", wiki.name)):
             continue
         inner = _fold_parts(here.parts)[len(wiki.parts):]
+        if wiki == meetings and inner[:2] == WIKI_ANSWERS:
+            return ()                       # a raw answer is read by the walls as its question is (#224)
         if "raw" in inner[:-1]:
             return None
         if wiki == meetings and (inner[0] == WIKI_QUESTIONS or inner[:2] in (("wiki", "entities"), ("wiki", "sources"))
@@ -5532,8 +5611,10 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
     ws.git_view = git_view(ws, committing)
     folders = meeting_sources(ws.root)
     asked = ws.root / "Wikis" / "Meetings" / WIKI_QUESTIONS
+    answered = ws.root.joinpath("Wikis", "Meetings", *WIKI_ANSWERS)
     for path, text in sorted(ws.git_view.items()):
-        question = asked in path.parents
+        is_answer = answered in path.parents
+        question = asked in path.parents or is_answer
         if (question or any(f in path.parents for f in folders)) and path.suffix.lower() == ".md":
             then = meeting_view(ws, path, parse_frontmatter_text(text), text)
             if path not in ws.meetings:
@@ -5541,6 +5622,8 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
                     ws.meetings[path] = then
                     if question:
                         ws.meeting_questions.add(path)
+                    if is_answer:
+                        ws.meeting_answers.add(path)
                 continue
             now = ws.meetings[path]
             if path in ws.misread:

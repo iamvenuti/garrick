@@ -582,6 +582,29 @@ class TestMeetingsQuestions(QuoteCase):
                 self.assertIn("a question with birch", found[0].message)
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_refuses_a_link_to_a_walled_raw_answer_even_once_it_is_deleted(self):
+        answer = self.meetings / "raw" / "answers" / "260315 - plan-check.md"
+        write(answer, "---\ntype: answer\nanswered: 2026-03-15\nzone: Work\nparties: [birch]\n"
+                      "question: \"[[questions/260314 - plan-check]]\"\n---\n\nQuestion: Birch: does the plan hold?\n\n```\n"
+                      + BRIEF + ".\n```\n")
+        real_repo(self.work)
+        real_repo(self.root / "Wikis")
+        note = self.acme / "Threads" / "Pricing" / "Notes.md"
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            commit_all(self.root / "Wikis", "start")
+            write(note, "See [[260315 - plan-check]].\n")
+            git(self.work, "add", "-A")
+            for deleted in (False, True):
+                if deleted:
+                    answer.unlink()              # gone from disk, still in the Wikis history
+                found = check.run_checks(self.root, staged=self.work)
+                self.assertEqual([("error", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")],
+                                 [(f.severity, f.path) for f in found], deleted)
+                self.assertIn("a reply with birch", found[0].message)
+                self.assertNoLeak(found, *BRIEF_WORDS)
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_a_near_side_question_deleted_from_disk_still_never_vouches(self):
         # Acme's own question holds the wording a Birch meeting holds; deleted
         # from disk and read from git, it must still not clear the quotation.

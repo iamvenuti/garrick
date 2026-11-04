@@ -283,6 +283,25 @@ conversation. One question per file, and none that a file in `questions/`
 already asks. The page gets no *Open* line, and changes only once the user
 answers.
 
+### Answers, and working them in
+
+Answer, put off and close with `question-answer`, `question-later` and
+`question-close` of `python3 System/status/page_action.py`, with `--wiki
+Knowledge`, as the `meetings` skill's *Answers, and working them in* gives
+them: the user's words are filed first, word for word, as
+`raw/answers/<YYMMDD> - <slug>.md`, and only then does the question say
+`status: answered` and point at it with `answer:`. Never edit a raw answer.
+
+**Work in the answered questions** when the user says "work in the
+questions": for each file in `questions/` with `status: answered`, run
+`question-work --wiki Knowledge --file "questions/<file>"`, change the pages it
+lists to what the answer says, cite the raw answer as
+`[[raw/answers/<file>]]`, run `question-done`, and commit the pages, the raw
+answer and the question in the Wikis repository by name. A Knowledge question
+has no parties, so every page it names may change. Knowledge holds published
+material: the answer is cited as the user's word, and nothing from a
+conversation goes in.
+
 ## Lint: "lint the library", "lint knowledge"
 
 A wiki that grows by ingest drifts in ways no file check sees. On request,

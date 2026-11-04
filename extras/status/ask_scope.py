@@ -131,6 +131,15 @@ def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_) -> boo
 Entry = collections.namedtuple("Entry", "kind label parties zone project thread")
 
 
+def admits(ctx: dict, adding: Iterable[str], held: Iterable[str], lib_) -> bool:
+    """Whether records of these parties may join a conversation that holds
+    `held` (#358): no wall between any of them, or between one of them and a
+    party held. The one test every record passes before a session is given
+    it, in Asker.admit() and in each tool of ask_tools.py."""
+    adding = set(adding)
+    return not any_wall(ctx, adding, adding | set(held), lib_)
+
+
 def _norm(text: str) -> str:
     return " ".join(str(text).replace("’", "'").split()).lower()
 

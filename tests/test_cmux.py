@@ -60,6 +60,15 @@ elif a[:2] == ["workspace", "list"]:
     print(json.dumps({"workspaces": state.get("workspaces", [])}))
 elif a[:1] == ["list-pane-surfaces"]:
     print(json.dumps({"surfaces": state.get("surfaces", {}).get(a[a.index("--workspace") + 1], [])}))
+elif a[:1] == ["close-surface"] and state.get("close_error"):
+    sys.stderr.write(state["close_error"] + "\\n")
+    sys.exit(1)
+elif a[:1] == ["close-surface"] and state.get("close_needs_force") and "--force" not in a:
+    sys.stderr.write("Error: confirmation_required: Surface has a running process\\n")
+    sys.exit(1)
+elif a[:1] == ["close-surface"] and state.get("close_rejects_force") and "--force" in a:
+    sys.stderr.write("Error: unknown flag --force\\n")
+    sys.exit(1)
 elif a[:1] == ["top"]:
     print(json.dumps(state.get("top", {})))
 elif a[:1] == ["new-workspace"]:
@@ -98,6 +107,19 @@ def top(foreground):
                          "foreground_pgids": [p["pid"] for p in procs], "processes": procs})
     return {"windows": [{"kind": "window", "workspaces": [{"kind": "workspace", "panes": [
         {"kind": "pane", "surfaces": surfaces}]}]}]}
+
+
+def tab_top(surface, groups):
+    """cmux's process view of one surface: `groups` is a list of
+    (process group, program name); None shows no foreground groups. The
+    assistant's own name is its version number, as in a live tab."""
+    procs = [{"kind": "process", "name": name, "pid": g, "pgid": g, "children": []} for g, name in groups or []]
+    return {"windows": [{"kind": "window", "workspaces": [{"kind": "workspace", "panes": [{"kind": "pane", "surfaces": [
+        {"kind": "surface", "id": surface, "ref": "surface:1",
+         "foreground_pgids": [g for g, _ in groups or []], "processes": procs}]}]}]}]}
+
+
+ASSISTANT_PID = os.getpid()             # a live pid, as a running tab's is
 
 
 def dead_pid():
@@ -560,6 +582,62 @@ class DeskVerbTest(CmuxCase):
             code, _, err = self.run_desk("close", "--folder", str(project), "--yes")
             self.assertEqual(code, 2)
             self.assertNotIn("close-surface", self.verbs())
+
+    def close_calls(self):
+        return [c["argv"] for c in self.calls() if c["argv"][0] == "close-surface"]
+
+    def test_close_forces_only_when_cmux_asks_for_confirmation(self):
+        self.state({"close_needs_force": True, "top": tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]),
+                    "sessions": [self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)]})
+        code, out, err = self.run_desk("close", "--folder", str(self.pricing), "--yes")
+        self.assertEqual((code, err), (0, ""))
+        first, second = self.close_calls()
+        self.assertNotIn("--force", first)
+        self.assertEqual(second, first + ["--force"])
+
+    def test_close_on_older_cmux_closes_on_the_first_call_without_force(self):
+        self.state({"close_rejects_force": True, "sessions": [self.session("a", self.pricing, claude_rows())]})
+        code, out, err = self.run_desk("close", "--folder", str(self.pricing), "--yes")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(len(self.close_calls()), 1)
+        self.assertNotIn("--force", self.close_calls()[0])
+
+    def refused_close(self, pid=ASSISTANT_PID, **state):
+        self.log.unlink(missing_ok=True)
+        session = self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)
+        session["pid"] = pid
+        self.state(dict({"close_needs_force": True, "sessions": [session]}, **state))
+        code, _, err = self.run_desk("close", "--folder", str(self.pricing), "--yes")
+        self.assertEqual(code, 2)
+        self.assertEqual(len(self.close_calls()), 1)
+        self.assertNotIn("--force", self.close_calls()[0])
+        return err
+
+    def test_close_does_not_force_while_another_program_runs_in_the_tab(self):
+        err = self.refused_close(top=tab_top("a-surface", [(ASSISTANT_PID, "2.1.318"), (5151, "vite")]))
+        self.assertIn("2.1.318", err)
+        self.assertIn("vite", err)
+        self.assertIn("by hand", err)
+        self.refused_close(top=tab_top("a-surface", [(5151, "vite")]))
+
+    def test_close_does_not_force_when_the_foreground_is_unknown(self):
+        self.refused_close(top=tab_top("a-surface", None))
+        self.refused_close(top=tab_top("b-surface", [(ASSISTANT_PID, "2.1.318")]))
+        self.refused_close(top={})
+
+    def test_close_does_not_force_without_a_process_id_for_the_tab(self):
+        self.refused_close(pid=None, top=tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]))
+
+    def test_close_forces_only_on_the_exact_error_code(self):
+        top_ = tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")])
+        self.refused_close(close_error="Error: surface_busy: confirmation_required is not what failed", top=top_)
+        self.refused_close(close_error="Error: socket refused (confirmation_required)", top=top_)
+
+    def test_close_never_forces_a_busy_tab(self):
+        self.state({"close_needs_force": True, "sessions": [self.session("a", self.pricing, claude_rows(done=False))]})
+        code, _, _ = self.run_desk("close", "--folder", str(self.pricing), "--yes")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.close_calls(), [])
 
     def test_close_asks_first_then_closes_every_tab_below_the_folder(self):
         project = self.work / "Acme Review"

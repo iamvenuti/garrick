@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -50,7 +51,12 @@ PASSWORD_FILE: Optional[Path] = None  # set from desk's config; the environment 
 
 
 class CmuxError(Exception):
-    """A cmux call failed, with a readable message."""
+    """A cmux call failed, with a readable message. `code` is the error code
+    cmux printed (`Error: <code>: ...`), or None when it printed none."""
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 # --------------------------------------------------------------------------- where things are
@@ -151,7 +157,9 @@ def cmux(*args, parse: bool = False, check: bool = True, timeout: float = 30, pa
         raise CmuxError("cmux %s took longer than %ss" % (args[0], timeout))
     if check and p.returncode != 0:
         msg = (p.stderr or p.stdout).strip().splitlines()
-        raise CmuxError("cmux %s failed: %s" % (args[0], msg[-1] if msg else "no output"))
+        last = msg[-1] if msg else ""
+        codes = [m.group(1) for m in (re.match(r"^Error:\s*([a-z][a-z0-9_]*):\s", l.strip()) for l in msg) if m]
+        raise CmuxError("cmux %s failed: %s" % (args[0], last or "no output"), code=codes[0] if codes else None)
     return json_tail(p.stdout) if parse else p.stdout
 
 
@@ -413,17 +421,16 @@ def sessions_by_folder(workspace: Path) -> Dict[str, str]:
         return {}
 
 
-def foregrounds() -> Dict[str, Optional[List[str]]]:
-    """{surface id: the names of the programs in its terminal's foreground}.
-
-    Read from cmux's process view. A surface whose foreground cmux does not
-    show, or shows without its programs, maps to None: nobody can say what
-    would read a line typed there. Empty when cmux does not answer."""
+def _foreground_view() -> Dict[str, Tuple[Optional[List[str]], Optional[List[int]]]]:
+    """{surface id: (program names, process groups)} of each terminal's
+    foreground, from one read of cmux's process view. Names are None when
+    cmux shows a group without its programs; groups are None when it shows
+    none. Empty when cmux does not answer."""
     try:
         data = cmux("top", "--all", "--processes", "--json", "--id-format", "both", parse=True)
     except CmuxError:
         return {}
-    out: Dict[str, Optional[List[str]]] = {}
+    out: Dict[str, Tuple[Optional[List[str]], Optional[List[int]]]] = {}
 
     def processes(items, found):
         for p in items or []:
@@ -448,13 +455,30 @@ def foregrounds() -> Dict[str, Optional[List[str]]]:
                         names = None
                         break
                     names += [Path(str(p.get("name") or "")).name.lstrip("-") for p in leaders]
-                out[node["id"]] = names or None
+                out[node["id"]] = (names or None, list(groups) or None)
                 return
             for v in node.values():
                 visit(v)
 
     visit(data)
     return out
+
+
+def foregrounds() -> Dict[str, Optional[List[str]]]:
+    """{surface id: the names of the programs in its terminal's foreground}.
+
+    Read from cmux's process view. A surface whose foreground cmux does not
+    show, or shows without its programs, maps to None: nobody can say what
+    would read a line typed there. Empty when cmux does not answer."""
+    return {k: v[0] for k, v in _foreground_view().items()}
+
+
+def foreground_groups() -> Dict[str, Optional[List[int]]]:
+    """{surface id: the process groups in its terminal's foreground}, or None
+    where cmux shows none. An assistant's name in the process view is its
+    version number, so a tab's own assistant is told by its process id, which
+    leads its group. Empty when cmux does not answer."""
+    return {k: v[1] for k, v in _foreground_view().items()}
 
 
 def at_shell_prompt(names: Optional[List[str]]) -> bool:

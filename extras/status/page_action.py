@@ -245,6 +245,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -1880,11 +1881,27 @@ def by_folder(ws: Path, req: dict) -> Optional[str]:
     except ValueError:
         raise Refused("a tab opens only at the workspace root or in a project or thread")
     if len(parts) == 2:
-        req.update(zone=parts[0], project=parts[1])
+        zone, project, name, note = parts[0], parts[1], parts[1], folder / (parts[1] + ".md")
+        thread = None
     elif len(parts) == 4 and parts[2] == "Threads":
-        req.update(zone=parts[0], project=parts[1], thread=parts[3])
+        zone, project, name, thread = parts[0], parts[1], parts[3], parts[3]
+        note = folder / (parts[3] + ".md")
     else:
         raise Refused("a tab opens only at the workspace root or in a project or thread")
+    # A project is a folder with its own hub note, and a thread belongs to one: Sources/Threads/X is neither.
+    # Names that are never a project, names with a control character (they become prompt text), and a
+    # note that is not a regular file are refused, as the Finder menu's GarrickLink.openable refuses them.
+    for part in parts:
+        if part.startswith(".") or any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in part):
+            raise Refused("a tab opens only at the workspace root or in a project or thread")
+    if project in ("Inbox", "Sources", "Deliverables") or name in ("Inbox", "Sources", "Deliverables"):
+        raise Refused("a tab opens only at the workspace root or in a project or thread")
+    hub = (ws / "Zones").resolve() / zone / project / (project + ".md")
+    if not hub.is_file() or not note.is_file():
+        raise Refused("a tab opens only at the workspace root or in a project or thread")
+    req.update(zone=zone, project=project)
+    if thread:
+        req.update(thread=thread)
     return None
 
 

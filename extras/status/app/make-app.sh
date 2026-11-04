@@ -165,10 +165,20 @@ requirement() { codesign -d -r- "$1" 2>&1 | sed -n 's/^# *//; s/^designated => /
 
 mkdir -p "$DEST"
 RESET=0
+# Permissions and the extension list are macOS's, by identifier, not by folder: a build into any other
+# --dest would act on the installed app's. So the reset and the extension steps run only for the folders
+# the app is installed in, and a build anywhere else says it skipped them.
+SYSTEM_STEPS=0
+if [ "$SCRATCH" = 0 ]; then
+  for HOMEDIR in "$HOME/Applications" /Applications; do
+    [ -d "$HOMEDIR" ] && [ "$DEST" = "$(cd "$HOMEDIR" && pwd)" ] && SYSTEM_STEPS=1
+  done
+  [ "$SYSTEM_STEPS" = 1 ] || echo "make-app: $DEST is not an Applications folder, so the Accessibility reset and the Finder extension steps are skipped." >&2
+fi
 # Whether the user has the Finder extension switched on, read before this build replaces it: the
 # choice stays with the user. Never asked for a scratch build, which touches no election.
 WAS_ON=0
-if [ "$SCRATCH" = 0 ]; then
+if [ "$SYSTEM_STEPS" = 1 ]; then
   ELECTION="$(pluginkit -m -i "$EXT_ID" 2>/dev/null || true)"
   case "$ELECTION" in "+"*|" +"*) WAS_ON=1 ;; esac
 fi
@@ -182,7 +192,8 @@ for N in "$NAME" "$OLDNAME"; do
     echo "make-app: $DEST/$N is another app; move it, or pass --dest." >&2; exit 1
   fi
   # Quit it only if it is the copy being replaced that is running, not an installed one elsewhere.
-  if ps -axo command= | grep -qF "$DEST/$N/Contents/MacOS/"; then
+  # The match is anchored: the command line must begin with that path, not merely contain it.
+  if ps -axo command= | awk -v p="$DEST/$N/Contents/MacOS/" 'index($0, p) == 1 { found = 1 } END { exit !found }'; then
     osascript -e 'tell application id "'"$APP_ID"'" to quit' >/dev/null 2>&1 || true
     sleep 1
   fi
@@ -200,14 +211,14 @@ if [ "$SCRATCH" = 0 ]; then
   # The new extension is made known to macOS. Finder keeps running the copy it started until the
   # extension is switched off and on, so for a user who had it on it is switched off and on again
   # here; one who had it off, or never turned it on, is left as they were: nothing is enabled for them.
-  if [ -d "$DEST/$NAME/Contents/PlugIns/GarrickFinder.appex" ]; then
+  if [ "$SYSTEM_STEPS" = 1 ] && [ -d "$DEST/$NAME/Contents/PlugIns/GarrickFinder.appex" ]; then
     pluginkit -a "$DEST/$NAME/Contents/PlugIns/GarrickFinder.appex" >/dev/null 2>&1 || true
     if [ "$WAS_ON" = 1 ]; then
       pluginkit -e ignore -i "$EXT_ID" >/dev/null 2>&1 || true
       pluginkit -e use -i "$EXT_ID" >/dev/null 2>&1 || true
     fi
   fi
-  if [ "$RESET" = 1 ]; then
+  if [ "$SYSTEM_STEPS" = 1 ] && [ "$RESET" = 1 ]; then
     # The last time macOS asks: the next permission is kept across builds.
     tccutil reset Accessibility "$APP_ID" >/dev/null 2>&1 || true
     echo "make-app: Accessibility was reset for Garrick once; allow it again when macOS asks." >&2

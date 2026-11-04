@@ -12,6 +12,7 @@ or its extension election.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import plistlib
 import re
@@ -62,6 +63,17 @@ class TestLinkRules(unittest.TestCase):
         mk("Zones/Work/Acme Corp/Deliverables")
         mk("Zones/Work/Inbox", "Inbox")                       # a note by the folder's name does not make it a project
         mk("Zones/Work/Birch & Co", "Birch & Co")
+        mk("Zones/Work/Sources/Threads/X", "X")                # a thread under a folder that is not a project
+        mk("Zones/Work/Sources", "Sources")
+        mk("Zones/Work/Inbox/Threads/X", "X")
+        mk("Zones/Work/NoHub/Threads/X", "X")                  # a project folder without its hub note
+        mk("Zones/Work/DirHub/DirHub.md/Threads/X", "X")       # a hub that is a folder
+        mk("Zones/Work/DirHub/Threads/X", "X")
+        mk("Zones/Work/DirNote/DirNote.md")                    # a note that is a folder
+        mk("Zones/Work/Acme Corp/Threads/Dir/Dir.md")
+        mk("Zones/Work/Bad\nName", "Bad\nName")               # a name with a newline would become prompt text
+        mk("Zones/Work/Acme Corp/Threads/Tab\tX", "Tab\tX")
+        mk("Zones/Work/Sep\u2028Name", "Sep\u2028Name")
         mk("Zones/Work/Empty")                                # no hub note
         mk("Zones/Work/Acme Corp/Threads/NoNote")             # no thread note
         mk("Zones/Work/.shared/Acme Corp", "Acme Corp")
@@ -98,6 +110,15 @@ class TestLinkRules(unittest.TestCase):
                     "Zones/Work/Acme Corp/Acme Corp.md"):
             self.assertEqual("nil", self.openable(rel), rel)
         self.assertEqual("nil", self.run_h("openable", str(self.ws), ""))
+
+    def test_a_thread_needs_a_real_project_and_real_notes(self):
+        for rel in ("Zones/Work/Sources/Threads/X", "Zones/Work/Inbox/Threads/X", "Zones/Work/NoHub/Threads/X",
+                    "Zones/Work/DirHub/Threads/X", "Zones/Work/DirNote", "Zones/Work/Acme Corp/Threads/Dir"):
+            self.assertEqual("nil", self.openable(rel), rel)
+
+    def test_a_name_with_a_control_character_is_refused(self):
+        for rel in ("Zones/Work/Bad\nName", "Zones/Work/Acme Corp/Threads/Tab\tX", "Zones/Work/Sep\u2028Name"):
+            self.assertEqual("nil", self.openable(rel), repr(rel))
 
     def test_a_folder_outside_the_workspace_is_refused(self):
         self.assertEqual("nil", self.openable(str(self.tmp / "out" / "Theo")))
@@ -274,6 +295,72 @@ class TestInstallBuild(unittest.TestCase):
             self.assertIn("Accessibility was reset", done.stderr)
 
 
+class TestByFolder(unittest.TestCase):
+    """page_action.by_folder, which the desk's open goes through, holds the same rule as the Finder menu."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("page_action_finder", REPO / "extras" / "status" / "page_action.py")
+        self.pa = importlib.util.module_from_spec(spec)
+        sys.modules["page_action_finder"] = self.pa
+        spec.loader.exec_module(self.pa)
+        self.tmp = Path(tempfile.mkdtemp()).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        z = self.tmp / "Zones" / "Work"
+        def mk(rel, note=None):
+            (z / rel).mkdir(parents=True)
+            if note:
+                (z / rel / (note + ".md")).write_text("x")
+        mk("Acme Corp", "Acme Corp")
+        mk("Acme Corp/Threads/Pricing", "Pricing")
+        mk("Sources/Threads/X", "X")
+        mk("Inbox/Threads/X", "X")
+        mk("NoHub/Threads/X", "X")
+        mk("Bad\nName", "Bad\nName")
+        mk("Acme Corp/Threads/Tab\tX", "Tab\tX")
+        mk("Acme Corp/Threads/NoNote")
+        mk("Acme Corp/Threads/DirNote/DirNote.md")
+
+    def folder(self, rel):
+        req = {"verb": "open", "folder": str(self.tmp / "Zones" / "Work" / rel)}
+        return req, self.pa.by_folder(self.tmp, req)
+
+    def test_a_project_and_a_thread_are_accepted(self):
+        req, prompt = self.folder("Acme Corp")
+        self.assertEqual((None, "Acme Corp"), (prompt, req["project"]))
+        req, prompt = self.folder("Acme Corp/Threads/Pricing")
+        self.assertEqual((None, "Pricing"), (prompt, req["thread"]))
+
+    def test_a_thread_of_no_project_a_missing_note_or_a_control_character_is_refused(self):
+        for rel in ("Sources/Threads/X", "Inbox/Threads/X", "NoHub/Threads/X", "Bad\nName", "Acme Corp/Threads/Tab\tX",
+                    "Acme Corp/Threads/NoNote", "Acme Corp/Threads/DirNote", "Acme Corp/Sources", "Acme Corp/Threads"):
+            with self.subTest(rel=rel), self.assertRaises(self.pa.Refused):
+                self.folder(rel)
+
+
+@unittest.skipUnless(SWIFT, "needs macOS with the Swift compiler")
+class TestCustomDest(unittest.TestCase):
+    """A build into a folder that is not an Applications folder must not act on macOS's lists, which are by identifier."""
+
+    def test_no_reset_and_no_extension_steps(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t).resolve()
+            dest = tmp / "Elsewhere"
+            done, calls = build_app(dest, tmp, {"STUB_ENABLED": "1"})
+            self.assertEqual(0, done.returncode, done.stderr)
+            self.assertEqual(["lsregister -f %s" % (dest / "Garrick.app")], calls.splitlines())
+            self.assertIn("is not an Applications folder, so the Accessibility reset and the Finder extension steps are skipped", done.stderr)
+            subprocess.run(["codesign", "--force", "--sign", "-", str(dest / "Garrick.app")], check=True, capture_output=True)
+            (tmp / "calls.log").unlink()
+            done, calls = build_app(dest, tmp, {"STUB_ENABLED": "1"})      # an app signed the old way, replaced here
+            self.assertEqual(0, done.returncode, done.stderr)
+            self.assertEqual(["lsregister -f %s" % (dest / "Garrick.app")], calls.splitlines())
+
+    def test_the_quit_check_matches_the_start_of_a_command_line(self):
+        script = (APP / "make-app.sh").read_text(encoding="utf-8")
+        self.assertIn("index($0, p) == 1", script)
+        self.assertNotIn("grep -qF \"$DEST", script)
+
+
 class TestHandlerSource(unittest.TestCase):
     """What Garrick.swift does with a link that parsed, read from its source."""
 
@@ -290,7 +377,8 @@ class TestHandlerSource(unittest.TestCase):
     def test_the_folder_the_opener_and_the_install_are_checked_before_launch(self):
         h = self.handler
         order = [h.index(x) for x in ("GarrickLink.openable(link.folder, workspace: workspace.path)", "launcherOn(link.app)",
-                                      "openerInstalled(link.app)", "launch(link.app, folder.path")]
+                                      "openerInstalled(link.app)", "guard let now = GarrickLink.openable(link.folder, workspace: workspace.path)",
+                                      "launch(link.app, now.path")]
         self.assertEqual(sorted(order), order)
 
     def test_the_handler_is_the_apple_event_for_a_url(self):

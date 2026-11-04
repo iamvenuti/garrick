@@ -30,6 +30,17 @@ enum GarrickLink {
 		return String(cString: c)
 	}
 
+	// A regular file (not a folder), after symlinks.
+	static func isFile(_ path: String) -> Bool {
+		var isDir: ObjCBool = false
+		return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && !isDir.boolValue
+	}
+
+	// No control character (C0, C1), line or paragraph separator in a name.
+	static func clean(_ name: String) -> Bool {
+		!name.unicodeScalars.contains { [.control, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory) }
+	}
+
 	// The folder, resolved, when it is a project (<Zone>/<Project>/ holding <Project>.md)
 	// or a thread (<Zone>/<Project>/Threads/<Thread>/ holding <Thread>.md) of the
 	// workspace's Zones/; nil for anything else: Sources/, Deliverables/, Inbox/, a zone
@@ -39,17 +50,18 @@ enum GarrickLink {
 		guard !path.isEmpty, let zones = real(workspace + "/Zones"), let folder = real(path),
 		      folder.hasPrefix(zones + "/") else { return nil }
 		let parts = folder.dropFirst(zones.count + 1).split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-		guard !parts.contains(where: { $0.isEmpty || $0.hasPrefix(".") }) else { return nil }
+		// No empty or hidden part, and no control or line-separator character: a name becomes prompt text.
+		guard !parts.contains(where: { $0.isEmpty || $0.hasPrefix(".") || !clean($0) }) else { return nil }
 		let name: String
 		switch parts.count {
 		case 2: name = parts[1]                                         // a project
 		case 4 where parts[2] == "Threads": name = parts[3]             // a thread
 		default: return nil
 		}
-		guard !reserved.contains(name) else { return nil }
-		var isDir: ObjCBool = false
-		let note = folder + "/" + name + ".md"
-		guard FileManager.default.fileExists(atPath: note, isDirectory: &isDir), !isDir.boolValue else { return nil }
+		// A thread belongs to a project: Sources/Threads/X is no thread, whatever X holds.
+		guard !reserved.contains(parts[1]), !reserved.contains(name) else { return nil }
+		guard isFile(zones + "/" + parts[0] + "/" + parts[1] + "/" + parts[1] + ".md"),
+		      isFile(folder + "/" + name + ".md") else { return nil }
 		return URL(fileURLWithPath: folder, isDirectory: true)
 	}
 

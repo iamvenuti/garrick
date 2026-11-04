@@ -753,7 +753,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard openerInstalled(link.app) else {
 			return toast("\(name) is not installed here. Nothing was opened.")
 		}
-		launch(link.app, folder.path, phrase: "open " + folder.lastPathComponent)
+		// launch() checks the folder lexically only. The folder is checked once more, symlinks resolved, right
+		// before the opener gets it, and the opener gets the resolved path: nothing swapped in the meantime is opened.
+		guard let now = GarrickLink.openable(link.folder, workspace: workspace.path) else {
+			return toast("Garrick opens only a project or a thread from Finder. Nothing was opened.")
+		}
+		launch(link.app, now.path, phrase: "open " + now.lastPathComponent)
 	}
 
 	func applicationDidFinishLaunching(_ note: Notification) {

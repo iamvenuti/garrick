@@ -284,7 +284,7 @@ def shapes(text, line0=1):
 # The verbs each shape can carry, and the fields it adds where no scanner can
 # read them. Keyed by the text of the `verb` value, exactly as the file has it.
 ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
-         "rename", "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start",
+         "rename", "move", "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start",
          "stop-using", "bring-back", "files")
 SHAPES = {
     # --- 1. object literals in the page's own script ----------------------
@@ -292,6 +292,7 @@ SHAPES = {
     "onclick: 'new-thread'": {"new-thread": ()},
     "onclick: 'new-project'": {"new-project": ()},
     "onclick: 'rename'": {"rename": ()},
+    "onclick: 'move'": {"move": ()},
     "onclick: 'park'": {"park": ()},                     # del(): Park instead
     "onclick: 'delete'": {"delete": ()},
     "onclick: 'undo'": {"undo": ()},                     # offer(): the undo bar
@@ -349,7 +350,7 @@ PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("
              '"files"': ("files",), '"work-file"': ("work-file",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
-SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'",
+SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'", "onclick: 'move'",
                          "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'"},
            "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
                        "flush: one.verb"},

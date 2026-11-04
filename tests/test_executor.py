@@ -98,6 +98,37 @@ class TestTheCommandLine(ExecutorCase):
         self.assertEqual((0, [self.build]), (code, spawned), err)
         self.assertTrue((self.work / "Acme" / "Threads" / "Lanes" / "Lanes.md").is_file())
 
+    def test_a_move_is_the_same_action_as_the_button_and_follows_the_stack(self):
+        for name, party in (("Apex", "acme"), ("Birch Entry", "birch")):
+            self.assertEqual(0, self.scaffold("project", "--zone", "Work", "--name", name, "--party", party,
+                                              "--thread", "Kickoff").returncode)
+        self.commit("two more projects")
+        stack = self.root / "System" / "generated" / "interrupted.json"
+        stack.parent.mkdir(parents=True, exist_ok=True)
+        stack.write_text(json.dumps({"stack": [{"zone": "Work", "project": "Acme", "thread": "Freight",
+                                                "file": "Acme/Threads/Freight/Freight.md", "at": "2027-01-01T10:00:00"}]}))
+        code, out, err, spawned = self.session("move", "--zone", "Work", "--project", "Acme", "--thread", "Freight",
+                                               "--to", "Apex")
+        self.assertEqual((0, ""), (code, err), out)
+        self.assertEqual([self.build], spawned)                                # the page asked for, once
+        self.assertEqual("Freight: moved to Apex", self.head())
+        self.assertIn("To undo: python3 System/status/page_action.py undo --zone Work", out)
+        self.assertEqual("Apex/Threads/Freight/Freight.md", json.loads(stack.read_text())["stack"][0]["file"])
+        self.assertEqual("Apex", json.loads(stack.read_text())["stack"][0]["project"])
+        commit = out.split("--commit ")[1].split()[0]
+        code, out, err, spawned = self.session("undo", "--zone", "Work", "--commit", commit)
+        self.assertEqual((0, [self.build]), (code, spawned), err)
+        self.assertTrue(self.freight.is_file())
+        # a wall: the rule's sentence and nothing else, and nothing written
+        code, out, err, spawned = self.session("move", "--zone", "Work", "--project", "Acme", "--thread", "Freight",
+                                               "--to", "Birch Entry")
+        self.assertNotEqual(0, code)
+        self.assertIn("A wall holds some material back from this project, so I have not used it. Nothing was written.",
+                      out + err)
+        self.assertNotIn("birch", (out + err).lower())
+        self.assertEqual([], spawned)
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
     def test_a_todo_line_is_ticked_by_its_words(self):
         code, out, err, spawned = self.session("todo-done", "--zone", "Work", "--line", "send the lanes")
         self.assertEqual((0, "Done: send the lanes", [self.build]), (code, out.strip(), spawned), err)

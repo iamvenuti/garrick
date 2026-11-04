@@ -374,6 +374,8 @@ process.stdout.write(JSON.stringify([t,p,ctx.window.GarrickManage({mg:["Work","A
         thread, project, held, added = json.loads(done.stdout)
         self.assertIn("Rename…", thread)
         self.assertIn("Delete…", thread)
+        self.assertIn("Move…", thread)
+        self.assertNotIn("Move…", project)                                    # only a thread moves
         self.assertNotIn("New thread here", thread)
         self.assertIn("New thread here", project)
         self.assertEqual("", held)                                          # parked with its project: nothing to do here

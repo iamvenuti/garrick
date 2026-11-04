@@ -48,6 +48,8 @@ zone's repository, as the skills would:
                 fields of that verb}
     rename      a project or thread and every link to it in the zone:
                 {"zone", "project", "thread"?, "to"}
+    move        a thread to another project of its zone, every link to it
+                following, in one commit: {"zone", "project", "thread", "to"}
     delete      without "confirm", what would go; with "confirm" naming it,
                 gone in one commit: {"zone", "project", "thread"?, "confirm"?}
     undo        a rename or deletion, while it is the zone's last commit:
@@ -253,7 +255,7 @@ except ImportError:             # not on Windows, where the status app does not 
 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
-         "new-project", "new-thread", "check-name", "rename", "delete", "undo",
+         "new-project", "new-thread", "check-name", "rename", "move", "delete", "undo",
          "interrupt", "back", "stack", "unstack", "answer", "later", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open")
@@ -1921,7 +1923,7 @@ def manage(ws: Path, req: dict) -> str:
     zone = zone_dir(ws, req.get("zone"))
     if verb == "check-name":
         kind = req.get("kind")
-        if kind not in ("project", "thread", "rename"):
+        if kind not in ("project", "thread", "rename", "move"):
             raise Refused("not a kind of name: %r" % kind)
         req = dict(req, verb={"project": "new-project", "thread": "new-thread"}.get(kind, kind))
         return manage_args(ws, zone, req, check=True)
@@ -1980,6 +1982,13 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         return scaffold(ws, "undo", "--zone", z, "--commit", commit)
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
+    if verb == "move":
+        project, to = field(req, "project"), field(req, "to")
+        if not thread:
+            raise Refused("no thread given: only a thread moves")
+        if check:
+            return scaffold(ws, "move", *which, "--to", to, *flag)
+        return moved_here(ws, zone, project, thread, to, which)
     if verb == "rename":
         if check:
             return scaffold(ws, "rename", *which, "--to", field(req, "to"), *flag)
@@ -2049,6 +2058,41 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     if "Links written [[" in said:
         note += " Links that name only %s were left alone: another note in %s has that name too." % (old, zone.name)
     return {"say": "Renamed %s to %s.%s" % (old, to, note), "commit": made}
+
+
+def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: list) -> dict:
+    """A move from the page, a button or a session, finished here as a rename
+    is: scaffold.py moves the thread and commits in the zone; then its place
+    on the interruption stack and the effort history follow it. One line, and
+    the zone's commit for Undo. The assistant's memory pointer and a desk tab
+    are not Garrick's to write, so the reply says that they still name the old
+    path."""
+    said = scaffold(ws, "move", *which, "--to", to)
+    code, head = git(zone, "rev-parse", "--short", "HEAD")
+    made = head.strip() if code == 0 else ""
+    target = zone / to
+    name = thread
+    if target.is_dir():                                       # to, as the folder is spelled
+        to = next((c.name for c in zone.iterdir() if c.name.lower() == to.lower()), to)
+    move_in_stack(ws, zone.name, project, thread, to)
+    rel_old = "Zones/%s/%s/Threads/%s" % (zone.name, project, thread)
+    rel_new = "Zones/%s/%s/Threads/%s" % (zone.name, to, thread)
+    note = ""
+    try:
+        keep_move(ws, rel_old, rel_new)
+    except OSError:
+        note += " The page's time and cost for it start afresh under the new place."
+    note += " A memory pointer or an open desk tab for it still names %s." % project
+    return {"say": "Moved %s from %s to %s.%s" % (name, project, to, note), "commit": made}
+
+
+def move_in_stack(ws: Path, zone: str, project: str, thread: str, to: str) -> None:
+    """A moved thread keeps its place on the stack, in its new project."""
+    def moved(e):
+        if e["zone"] != zone or e.get("project") != project or e.get("thread") != thread:
+            return e
+        return dict(e, project=to, file="%s/Threads/%s/%s.md" % (to, thread, thread))
+    restack(ws, lambda entries: [moved(e) for e in entries], prune=False)
 
 
 def keep_move(ws: Path, old: str, new: str) -> None:
@@ -3797,7 +3841,7 @@ def act(ws: Path, req, today=None, now=None):
         return files_progress(ws, req)
     if req["verb"] == "work-file":
         return work_file(ws, req, today or dt.date.today())
-    if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "delete", "undo"):
+    if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "move", "delete", "undo"):
         return manage(ws, req)
     return todo(ws, req)
 
@@ -3806,7 +3850,7 @@ def act(ws: Path, req, today=None, now=None):
 # ask box or a session changes that the page shows. Every other verb leaves the
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
-               "rename", "delete", "undo", "interrupt", "back", "unstack")
+               "rename", "move", "delete", "undo", "interrupt", "back", "unstack")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
 
@@ -3911,7 +3955,8 @@ CLI_FIELDS = {
     "park": ("zone", "project", "thread"), "wake": ("zone", "project", "thread"),
     "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken"),
     "new-thread": ("zone", "project", "name", "spoken"),
-    "rename": ("zone", "project", "thread", "to"), "delete": ("zone", "project", "thread", "confirm"),
+    "rename": ("zone", "project", "thread", "to"), "move": ("zone", "project", "thread", "to"),
+    "delete": ("zone", "project", "thread", "confirm"),
     "undo": ("zone", "commit"), "unstack": ("zone", "project", "thread"),
     "todo-add": ("zone", "text", "target", "date"),
     "todo-done": ("zone", "line", "file"), "todo-undo": ("zone", "line", "file"),

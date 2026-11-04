@@ -379,6 +379,176 @@ class TestRename(ManageCase):
         self.assertFalse((self.work / "Acme" / "Threads" / "Renewal").exists())
 
 
+class TestMove(ManageCase):
+    """#354: a thread moves to another project of its zone, by rename's machinery, and fails closed."""
+
+    WALL = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+
+    def setUp(self):
+        super().setUp()
+        for name, party in (("Apex", "acme"), ("Birch Entry", "birch")):
+            r = self.scaffold("project", "--zone", "Work", "--name", name, "--party", party, "--thread", "Kickoff")
+            self.assertEqual(0, r.returncode, r.stderr)
+        self.commit("Apex and Birch Entry")
+        self.apex = self.work / "Apex"
+        self.acme = self.work / "Acme"
+
+    def move(self, *extra, to="Apex", thread="Freight", project="Acme"):
+        return self.scaffold("--today", "2027-01-01", "move", "--zone", "Work", "--project", project, "--thread", thread,
+                             "--to", to, *extra)
+
+    def test_the_folder_the_links_and_the_hub_lines_follow_in_one_commit(self):
+        old = self.acme / "Threads" / "Freight"
+        (old / "Deliverables").mkdir()
+        (old / "Deliverables" / "260914 - Lanes.md").write_text("# Lanes\n")
+        note = old / "Freight.md"
+        note.write_text(note.read_text() + "\nLanes: [[Acme/Threads/Freight/Deliverables/260914 - Lanes]].\n")
+        todo = self.work / "Todo.md"
+        todo.write_text(todo.read_text().replace("- [ ] [[Freight]]: send the lanes",
+                                                 "- [ ] [[Acme/Threads/Freight/Freight|Freight]]: send the lanes"))
+        hub = self.acme / "Acme.md"
+        hub.write_text(hub.read_text().replace("## Finished\n", "## Finished\n\nSee [[Work/Acme/Threads/Freight/Freight|the lanes]].\n", 1))
+        self.commit("Freight's links")
+        r = self.move()
+        self.assertEqual(0, r.returncode, r.stderr)
+        new = self.apex / "Threads" / "Freight"
+        self.assertTrue((new / "Freight.md").is_file())
+        self.assertFalse(old.exists())
+        text = (new / "Freight.md").read_text()
+        self.assertIn('project: "[[Apex]]"', text)
+        self.assertIn('parent: "[[Apex]]"', text)
+        self.assertIn("updated: 2027-01-01", text)
+        self.assertIn("Moved from Acme to Apex.", text)
+        self.assertIn("[[Apex/Threads/Freight/Deliverables/260914 - Lanes]]", text)
+        self.assertIn("[[Apex/Threads/Pricing/Pricing", text.replace("Acme/Threads/Pricing", "Apex/Threads/Pricing")) # untouched Pricing link stays Acme's
+        self.assertIn("[[Acme/Threads/Pricing/Pricing|Pricing]]", text)
+        self.assertNotIn("Freight", hub.read_text().split("## Threads")[1].split("##")[0])
+        self.assertIn("[[Apex/Threads/Freight/Freight|Freight]]", (self.apex / "Apex.md").read_text().split("## Threads")[1].split("##")[0])
+        self.assertIn("[[Work/Apex/Threads/Freight/Freight|the lanes]]", hub.read_text())
+        self.assertIn("- [ ] [[Apex/Threads/Freight/Freight|Freight]]: send the lanes", todo.read_text())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertEqual("Freight: moved to Apex", self.git("log", "-1", "--format=%s").stdout.strip())
+        found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
+        self.assertEqual([], [f for f in found if "Work" in f["path"] and (f["severity"] == "error" or "leads nowhere" in f["message"]
+                                                                        or "wrong project" in f.get("spoken", "") or "`project`" in f["message"])])
+
+    def test_a_finished_thread_stays_under_finished(self):
+        hub = self.acme / "Acme.md"
+        text = hub.read_text()
+        line = next(l for l in text.splitlines() if "Threads/Freight/Freight|" in l)
+        hub.write_text(text.replace(line + "\n", "").replace("## Finished\n", "## Finished\n\n" + line + "\n", 1))
+        self.commit("Freight done")
+        self.assertEqual(0, self.move().returncode)
+        apex = (self.apex / "Apex.md").read_text()
+        self.assertIn("Threads/Freight/Freight|Freight]]", apex.split("## Finished")[1].split("##")[0])
+        self.assertNotIn("Threads/Freight/Freight|", apex.split("## Finished")[0])
+
+    def test_undo_puts_everything_back_while_it_is_the_last_commit(self):
+        before = self.git("ls-files", "-s").stdout
+        self.assertEqual(0, self.move().returncode)
+        commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        r = self.scaffold("undo", "--zone", "Work", "--commit", commit)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(before, self.git("ls-files", "-s").stdout)
+        self.assertTrue(self.freight.is_file())
+
+    def test_a_ledger_row_for_the_threads_files_goes_with_it(self):
+        ledger = self.acme / "Deliverables" / "published.md"
+        ledger.parent.mkdir(exist_ok=True)
+        ledger.write_text("# Published\n\n## What left\n\n| Date | File | Destination | Recipients | Authoritative |\n|---|---|---|---|---|\n"
+                          "| 2026-12-01 | `Threads/Freight/Deliverables/Lanes.xlsx` | `x/Lanes.xlsx` | Dana | here |\n"
+                          "| 2026-12-02 | `Deliverables/Brief.docx` | `x/Brief.docx` | Dana | here |\n")
+        self.commit("ledger")
+        self.assertEqual(0, self.move().returncode)
+        self.assertNotIn("Threads/Freight", ledger.read_text())
+        self.assertIn("Deliverables/Brief.docx", ledger.read_text())
+        moved = (self.apex / "Deliverables" / "published.md").read_text()
+        self.assertIn("| Date | File |", moved)
+        self.assertIn("`Threads/Freight/Deliverables/Lanes.xlsx`", moved)
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+    def refused(self, why, **kw):
+        head = self.git("rev-parse", "HEAD").stdout
+        r = self.move(**kw)
+        self.assertEqual(1, r.returncode, r.stdout)
+        self.assertIn(why, r.stderr)
+        self.assertEqual(head, self.git("rev-parse", "HEAD").stdout)
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertTrue(self.freight.is_file())
+        return r.stderr
+
+    def test_a_wall_moves_nothing_and_says_only_the_sentence(self):
+        said = self.refused(self.WALL, to="Birch Entry")
+        self.assertEqual(self.WALL, said.strip())
+        self.assertNotIn("birch", said.lower())
+        self.assertNotIn("acme", said.lower())
+
+    def test_a_party_that_cannot_be_read_plainly_is_refused(self):
+        hub = self.apex / "Apex.md"
+        hub.write_text(hub.read_text().replace("party: acme", "party: [acme, acme]"))
+        self.commit("two parties")
+        self.refused("no single `party:`")
+        hub.write_text(hub.read_text().replace("party: [acme, acme]", "party: nobody"))      # the wall hook would not let it in
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("not a tag in the Parties table", r.stderr)
+        self.assertTrue(self.freight.is_file())
+
+    def test_another_zone_is_refused(self):
+        self.assertEqual(0, self.scaffold("party", "--name", "Home Team", "--zone", "Personal", "--what", "Family").returncode)
+        r = self.scaffold("project", "--zone", "Personal", "--name", "Garden", "--party", "home", "--thread", "Beds")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.refused("Zones never mix", to="Garden")
+
+    def test_a_name_taken_the_same_project_and_a_missing_project_are_refused(self):
+        self.assertEqual(0, self.scaffold("thread", "--zone", "Work", "--project", "Apex", "--name", "Freight").returncode)
+        self.commit("Freight in Apex too")
+        self.refused("already")
+        self.refused("already", to="Acme")
+        self.refused("There is no project called Nowhere", to="Nowhere")
+
+    def test_a_target_that_is_parked_or_done_is_refused_and_so_is_a_parked_source(self):
+        hub = self.apex / "Apex.md"
+        hub.write_text(hub.read_text().replace("status: active", "status: parked"))
+        self.commit("Apex parked")
+        self.refused("Apex is parked")
+        hub.write_text(hub.read_text().replace("status: parked", "status: active"))
+        src = self.acme / "Acme.md"
+        src.write_text(src.read_text().replace("status: active", "status: parked"))
+        self.commit("Acme parked")
+        self.refused("Wake it before moving")
+
+    def test_files_left_at_the_projects_top_are_refused(self):
+        (self.acme / "Deliverables").mkdir(exist_ok=True)
+        (self.acme / "Deliverables" / "261001 - Freight deck.md").write_text("# deck\n")
+        self.commit("a deck")
+        self.refused("outside the Freight folder")
+
+    def test_changes_not_committed_stop_it(self):
+        self.freight.write_text(self.freight.read_text() + "\nA new line.\n")
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("has changes not committed", r.stderr)
+        self.assertTrue(self.freight.is_file())
+
+    def test_the_zones_wall_check_refusing_the_commit_leaves_nothing_moved(self):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\n# Garrick wall check\necho 'Commit refused: x. Take it out and commit again.' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("nothing changed", r.stderr)
+        self.assertTrue(self.freight.is_file())
+        self.assertFalse((self.apex / "Threads" / "Freight").exists())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+    def test_check_says_and_writes_nothing(self):
+        r = self.move("--check")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("can move from Acme to Apex", r.stdout)
+        self.assertTrue(self.freight.is_file())
+
+
 class TestDelete(ManageCase):
     def test_without_confirm_it_only_says_what_would_go(self):
         r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight")

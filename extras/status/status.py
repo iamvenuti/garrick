@@ -1769,6 +1769,7 @@ function send(q,said){if(window.GarrickAct&&GarrickAct(q,said))return;host.postM
 window.GarrickManage=function(o){if(!o||!o.mg||o.held)return'';var m=esc(JSON.stringify(o.mg)),k=o.mg[2]?'thread':'project';
 return'<div class="mg-acts">'+(k==='project'?'<button class="act" type="button" data-manage="new-thread" data-mg="'+m+'">New thread here</button>':'')
 +'<button class="act" type="button" data-manage="rename" data-mg="'+m+'">Rename…</button>'
++(k==='thread'?'<button class="act" type="button" data-manage="move" data-mg="'+m+'">Move…</button>':'')
 +'<button class="act" type="button" data-manage="delete" data-mg="'+m+'">Delete…</button></div>'};
 function dialog(title,body,buttons){var d=document.getElementById('gmanage');if(d)d.remove();d=document.createElement('dialog');d.id='gmanage';
 d.className='tadd gmanage';d.innerHTML='<h3>'+esc(title)+'</h3>'+body+'<p class="mg-msg" id="mg-msg"></p><div class="mg-row">'+buttons+'</div>';
@@ -1817,6 +1818,14 @@ CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy 
 d.querySelector('[data-go]').onclick=function(){var to=val(d,'mg-name');if(!to||to===old)return bad(d,'Give it a new name.');
 var q={verb:'rename',zone:mg[0],project:mg[1],to:to};if(mg[2])q.thread=mg[2];if(busy(d,q.zone))return;d.close();
 if(act)send(q,'Renaming '+old+'…');else copy('rename '+old+' to '+to,'Copied “rename '+old+' to '+to+'”. Paste it to your assistant.')}}
+/* Move…: a thread to another project of its zone, from the zone's live list of projects (#354) */
+function move(mg){var name=mg[2],l=((D.zones[mg[0]]||{}).projects||[]).filter(function(p){return p!==mg[1]});
+if(!l.length){say('There is no other project in '+mg[0]+' to move it to.');return}
+var d=dialog('Move '+name,select('mg-project','To project',l,'')+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. It stays in '+esc(mg[0])+'; a project walled from it is refused.</p>',
+CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Move':'Copy the phrase')+'</button>');
+d.querySelector('[data-go]').onclick=function(){var to=val(d,'mg-project');if(!to)return bad(d,'Pick a project.');
+var q={verb:'move',zone:mg[0],project:mg[1],thread:name,to:to};if(busy(d,q.zone))return;d.close();
+if(act)send(q,'Moving '+name+'…');else copy('move '+name+' to '+to,'Copied “move '+name+' to '+to+'”. Paste it to your assistant.')}}
 function del(mg){var name=mg[2]||mg[1],kind=mg[2]?'thread':'project',subs=mg[5]||[];
 var gone=['its folder, '+mg[3]+' file'+(mg[3]===1?'':'s')];if(kind==='thread')gone.push('its line in the project’s note');
 if(mg[4])gone.push(mg[4]+' open line'+(mg[4]===1?'':'s')+' in Todo.md that name'+(mg[4]===1?'s':'')+' it');
@@ -1835,7 +1844,7 @@ d.querySelector('[data-go]').onclick=function(){var q={verb:'delete',zone:mg[0],
 if(act)send(q,'Deleting '+name+'…');else copy('delete '+name,'Copied “delete '+name+'”. Paste it to your assistant, who asks you again.')}}
 document.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button[data-manage]');if(!b)return;e.preventDefault();e.stopPropagation();
 var mg=null;try{mg=b.dataset.mg?JSON.parse(b.dataset.mg):null}catch(err){}
-var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='delete'&&mg)del(mg)},true);
+var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread')newThread(mg);else if(v==='rename'&&mg)rename(mg);else if(v==='move'&&mg&&mg[2])move(mg);else if(v==='delete'&&mg)del(mg)},true);
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
@@ -1844,8 +1853,8 @@ else if(q.verb==='new-project'&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.so
    every request, so the commit to revert is kept in this browser until then */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
 if(q&&out&&out.ok)listed(q);
-if(q&&out&&out.ok&&(q.verb==='delete'&&q.confirm||q.verb==='rename')){var m=out.commit?[0,out.commit]:/commit ([0-9a-f]{7,40})/.exec(out.say||'');   /* the reply's commit (#184), or the one it names */
-try{localStorage.setItem('garrick-undo',JSON.stringify({zone:q.zone,commit:m?m[1]:'',what:q.verb==='delete'?'Deleted '+q.confirm:'Renamed '+(q.thread||q.project)+' to '+q.to,until:Date.now()+60000}))}catch(e){}}
+if(q&&out&&out.ok&&(q.verb==='delete'&&q.confirm||q.verb==='rename'||q.verb==='move')){var m=out.commit?[0,out.commit]:/commit ([0-9a-f]{7,40})/.exec(out.say||'');   /* the reply's commit (#184), or the one it names */
+try{localStorage.setItem('garrick-undo',JSON.stringify({zone:q.zone,commit:m?m[1]:'',what:q.verb==='delete'?'Deleted '+q.confirm:q.verb==='move'?'Moved '+q.thread+' to '+q.to:'Renamed '+(q.thread||q.project)+' to '+q.to,until:Date.now()+60000}))}catch(e){}}
 if(prev)return prev(q,out)};
 function offer(){var u=null;try{u=JSON.parse(localStorage.getItem('garrick-undo')||'null')}catch(e){}if(!u||!act||!u.commit||u.until<Date.now())return;
 var bar=document.createElement('div');bar.id='mg-undo';bar.innerHTML='<span>'+esc(u.what)+'.</span><button class="act" type="button">Undo</button>';
@@ -2047,8 +2056,8 @@ ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
-ACTION_KEEP = ("rename", "delete", "new-project", "new-thread", "undo")
-ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename",
+ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-thread", "undo")
+ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename", "move",
               "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
               "bring-back", "files")
 

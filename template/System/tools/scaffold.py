@@ -10,6 +10,7 @@
     python3 System/tools/scaffold.py park    --zone Work --project Acme [--thread Pricing]
     python3 System/tools/scaffold.py wake    --zone Work --project Acme [--thread Pricing]
     python3 System/tools/scaffold.py rename  --zone Work --project Acme [--thread Pricing] --to "Renewal"
+    python3 System/tools/scaffold.py move    --zone Work --project Acme --thread Pricing --to Birch
     python3 System/tools/scaffold.py delete  --zone Work --project Acme [--thread Pricing] [--confirm Pricing]
     python3 System/tools/scaffold.py undo    --zone Work --commit <the commit it reported>
     echo '{"verb":"checkpoint","zone":"Work","project":"Acme","thread":"Pricing", ...}' \
@@ -56,7 +57,14 @@ heading, and points every link to it in the zone at the new name: the hub's
 list, the Todo.md lines that open with it, `project:` frontmatter, the notes
 between. One commit in the zone, with a dated entry "Renamed from <old>."; the
 old name becomes a heard alias in context.md, left for you to commit. The
-Meetings wiki is listed, never edited. `delete` without `--confirm` only says
+Meetings wiki is listed, never edited. `move` takes a thread to another
+project of its zone, by the same machinery: the folder, every link to it and to
+the files inside it, its line in the hub (under the same heading), `project:`
+and `parent:`, and its rows in the project's `Deliverables/published.md`, in one
+commit that `undo` reverts. It refuses, and writes nothing, for another zone, a
+project walled from the thread's party (or a party it cannot read plainly), a
+thread of that name already there, a project that is parked or done, and files
+of the thread that sit outside its folder. `delete` without `--confirm` only says
 what would go; with it, the folder, the hub's line and the open Todo.md lines
 naming it go in one commit, which `undo` reverts while it is still the zone's
 last commit. Both refuse while what they
@@ -137,6 +145,7 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     table_row,
     tag_for,
+    walled,
     workspace_root,
     write_if_unchanged,
     zone_todo,
@@ -147,10 +156,16 @@ class Refusal(Exception):
     pass
 
 
+# The rule's own words for a wall that held something back (rules.md, Zones
+# and walls); operations.py keeps the same sentence for the status page, and
+# this is the one used where that module is not beside this script.
+WALL_SENTENCE = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+
+
 # The verbs that change what the status page shows. After one, the page is
 # asked for a build in the background, which waits PAGE_SETTLE seconds for
 # another request first, so a run of commands makes one page (#243).
-PAGE_VERBS = ("zone", "project", "thread", "rename", "delete", "park", "wake", "undo")
+PAGE_VERBS = ("zone", "project", "thread", "rename", "move", "delete", "park", "wake", "undo")
 PAGE_SETTLE = 10
 
 
@@ -1028,6 +1043,197 @@ def cmd_rename(root, args, today):
     return "\n".join(said)
 
 
+def hub_status(hub):
+    """The `status:` of a hub or thread note: active where it says none."""
+    value = parse_frontmatter(hub).get("status")
+    return str(value).strip().lower() if isinstance(value, str) and value.strip() else "active"
+
+
+def one_party(root, note, what):
+    """The one party tag a note's `party:` names, held in System/context.md's
+    Parties table, or a Refusal. A list, an empty value or a tag nobody
+    declared is not read plainly, and a move never guesses at a wall."""
+    value = parse_frontmatter(note).get("party")
+    if not isinstance(value, str) or not strip_tag(value):
+        raise Refusal(f"The {what} has no single `party:` that can be read, so the move could not be checked "
+                      "against the walls. Nothing was moved.")
+    tag = strip_tag(value)
+    if tag not in load_context(root).get("parties", {}):
+        raise Refusal(f"The {what}'s `party:` is not a tag in the Parties table of System/context.md, so the move could "
+                      "not be checked against the walls. Nothing was moved.")
+    return tag
+
+
+def cut_hub_line(hub, zone, rel, name):
+    """The hub's line for a thread, and the heading it stands under, taken out
+    of the hub's text: (text without it, heading or None, line or None). Found
+    by the path it links, from the zone's top or with the zone before it."""
+    link = re.compile(r"\[\[(?:Zones/%s/|%s/)?%s/Threads/%s/%s(?:\.md)?(?:[|#\]])" % (
+        re.escape(zone), re.escape(zone), re.escape(rel), re.escape(name), re.escape(name)))
+    lines = hub.read_text(encoding="utf-8").split("\n")
+    heading = None
+    for i, line in enumerate(lines):
+        if line.startswith("#"):
+            heading = line.lstrip("#").strip()
+        elif line.lstrip().startswith("- ") and link.search(line):
+            return "\n".join(lines[:i] + lines[i + 1:]), heading, line
+    return hub.read_text(encoding="utf-8"), None, None
+
+
+def put_hub_line(hub, heading, line):
+    """`line` as the last item under `## heading` of the hub, the section made
+    at the end of the note where it has none."""
+    lines = hub.read_text(encoding="utf-8").rstrip("\n").split("\n")
+    start = next((i for i, l in enumerate(lines) if l.startswith("## ") and l[3:].strip().lower() == heading.lower()), None)
+    if start is None:
+        lines += ["", f"## {heading}", "", line]
+    else:
+        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("#")), len(lines))
+        items = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("- ")]
+        if items:
+            lines.insert(items[-1] + 1, line)
+        else:
+            lines[start + 1:start + 1] = ["", line]
+    return "\n".join(lines) + "\n"
+
+
+def cmd_move(root, args, today):
+    """Move a thread to another project of its zone: the folder with git, every
+    link to it and to the files inside it, the hub lines, `project:` and
+    `parent:`, and the ledger rows, in one commit. A move is a rename of the
+    path, not of the name, so it is rename's machinery. Everything it cannot
+    check is a refusal that writes nothing."""
+    if not args.thread:
+        raise Refusal("Say which thread to move: a project moves nowhere.")
+    zone_dir, project_dir, thread_dir, note = target_of(root, args)
+    name = thread_dir.name
+    to_name = args.to.strip()
+    others = [z for z in children(root / "Zones") if z != zone_dir.name and (root / "Zones" / z / to_name).is_dir()
+              and (root / "Zones" / z / to_name / f"{to_name}.md").is_file()]
+    if not any(c.lower() == to_name.lower() for c in children(zone_dir)) and others:
+        raise Refusal(f"{to_name} is a project of {others[0]}, not of {zone_dir.name}. Zones never mix, so a thread "
+                      "does not move between them. Nothing was moved.")
+    target = find_child(zone_dir, to_name, "project")
+    if target.name == INBOX or target == project_dir:
+        raise Refusal(f"{name} is in {project_dir.name} already.")
+    hub, target_hub = project_dir / f"{project_dir.name}.md", target / f"{target.name}.md"
+    if not target_hub.is_file():
+        raise Refusal(f"{target_hub.relative_to(root)} is missing, so {target.name} is not a project scaffold made.")
+    # The walls, before anything else is read or written: a wall is the one refusal that says nothing more.
+    mine, theirs = one_party(root, note, "thread"), one_party(root, target_hub, "target project")
+    if walled(load_context(root), mine, theirs):
+        ops = operations()
+        raise Refusal(getattr(ops, "WALL_REFUSAL", None) or WALL_SENTENCE)
+    if hub_status(target_hub) != "active":
+        raise Refusal(f"{target.name} is {hub_status(target_hub)}, and a thread moved into it would take that status. "
+                      "Wake it first, or pick another project.")
+    if hub.is_file() and hub_status(hub) != "active":
+        raise Refusal(f"{project_dir.name} is {hub_status(hub)}. Wake it before moving a thread out of it.")
+    threads = target / "Threads"
+    check_name(name, children(threads), "thread", target.name, spoken=spoken_of(thread_dir), parent=threads)
+    if (threads / name).exists():
+        raise Refusal(f"{(threads / name).relative_to(root)} already exists.")
+    # Files of the thread that sit at the project's top, outside its folder, would be left behind.
+    tracked = git_value(["ls-files", "-z", "--", project_dir.relative_to(zone_dir).as_posix()], zone_dir).split("\0")
+    inside = f"{project_dir.relative_to(zone_dir).as_posix()}/Threads/"
+    left = [t for t in tracked if t and not t.startswith(inside) and t != f"{project_dir.relative_to(zone_dir).as_posix()}/{project_dir.name}.md"
+            and name.lower() in Path(t).stem.lower() and Path(t).name != "published.md"]
+    if left:
+        raise Refusal(f"{left[0]}{' and %d more' % (len(left) - 1) if len(left) > 1 else ''} sits in {project_dir.name} "
+                      f"outside the {name} folder and would stay behind. Move it into the thread's folder first, then move the thread.")
+    if getattr(args, "check", False):
+        return f"{name} can move from {project_dir.name} to {target.name}."
+    notes = list(zone_notes(zone_dir))
+    ledger, target_ledger = project_dir / "Deliverables" / "published.md", target / "Deliverables" / "published.md"
+    made = preflight(zone_dir, thread_dir, "move")
+    dirty = uncommitted(zone_dir, [thread_dir, hub, target_hub, ledger, target_ledger] + notes)
+    if dirty:
+        raise Refusal(f"{', '.join(dirty[:3])}{' and more' if len(dirty) > 3 else ''} has changes not committed. "
+                      "Commit or undo them, then move.")
+    if mid_turn(root, thread_dir):
+        raise Refusal(f"A session is mid-turn in {name}. Let it finish, then move.")
+    rel_old = thread_dir.relative_to(zone_dir).as_posix()
+    rel_new = (threads / name).relative_to(zone_dir).as_posix()
+    swaps = [(f"{rel_old}/{name}", f"{rel_new}/{name}")]
+    prefixes = [(rel_old, rel_new)]
+    heads = ("", f"{zone_dir.name}/", f"Zones/{zone_dir.name}/")
+    moved = zone_dir / rel_new
+    new_note = moved / f"{name}.md"
+    touched = {new_note, hub, target_hub}
+    made_threads = not threads.exists()
+    clear_machine_made(zone_dir, thread_dir, made)
+    try:
+        threads.mkdir(exist_ok=True)
+        git_ok(["mv", rel_old, rel_new], zone_dir)
+        # The hub lines first, in memory: the old hub gives its line up, the new one takes it under the same heading.
+        kept = hub.read_text(encoding="utf-8") if hub.is_file() else ""
+        cut, heading, line = cut_hub_line(hub, zone_dir.name, project_dir.name, name) if hub.is_file() else (kept, None, None)
+        if line is None:
+            heading = "Finished" if hub_status(new_note) == "done" else "Threads"
+            line = f"- [[{project_dir.name}/Threads/{name}/{name}|{name}]]"
+        line = relink(line, swaps, prefixes, name, name, heads)
+        if hub.is_file():
+            hub.write_text(re.sub(r"(?m)^updated: .*$", f"updated: {today}", cut, count=1), encoding="utf-8")
+        target_hub.write_text(re.sub(r"(?m)^updated: .*$", f"updated: {today}",
+                                     put_hub_line(target_hub, heading, line), count=1), encoding="utf-8")
+        # The ledger rows for files inside the thread's folder go to the new project's ledger.
+        if ledger.is_file():
+            rows = ledger.read_text(encoding="utf-8").split("\n")
+            mine_rows = [r for r in rows if r.startswith("|") and f"Threads/{name}/" in r]
+            if mine_rows:
+                ledger.write_text("\n".join(r for r in rows if r not in mine_rows), encoding="utf-8")
+                touched.add(ledger)
+                if not target_ledger.is_file():
+                    target_ledger.parent.mkdir(exist_ok=True)
+                    base = ledger.read_text(encoding="utf-8").split("\n")
+                    first_row = next((i for i, r in enumerate(base) if r.startswith("|---")), len(base) - 1)
+                    target_ledger.write_text("\n".join(base[:first_row + 1] + mine_rows) + "\n", encoding="utf-8")
+                else:
+                    body = target_ledger.read_text(encoding="utf-8").rstrip("\n")
+                    target_ledger.write_text(body + "\n" + "\n".join(mine_rows) + "\n", encoding="utf-8")
+                touched.add(target_ledger)
+        for path in zone_notes(zone_dir):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            changed = relink(text, swaps, prefixes, name, name, heads)
+            if moved in path.parents or path.parent == moved:
+                own = path == new_note
+                changed = re.sub(r'(?m)^(%s): "?\[\[%s\]\]"?$' % ("project|parent" if own else "project", re.escape(project_dir.name)),
+                                 lambda m: f'{m.group(1)}: "[[{target.name}]]"', changed)
+            if path == new_note:
+                changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
+                changed = dated_entry(changed, f"Moved from {project_dir.name} to {target.name}.", today)
+            if changed != text:
+                touched.add(path)
+                path.write_text(changed, encoding="utf-8")
+        git_ok(["add", "-A", "--", rel_new] + [str(t.relative_to(zone_dir)) for t in touched if t.exists()], zone_dir)
+        git(["commit", "-q", "-m", f"{name}: moved to {target.name}"], zone_dir)
+    except (GitError, Refusal, OSError) as exc:
+        git_value(["reset", "-q"], zone_dir)
+        if moved.exists():
+            shutil.rmtree(moved, ignore_errors=True)
+        if made_threads and threads.is_dir() and not os.listdir(threads):
+            threads.rmdir()
+        git_value(["checkout", "HEAD", "--", rel_old] + [str(t.relative_to(zone_dir)) for t in touched
+                                                       if moved not in t.parents and t.exists()], zone_dir)
+        raise Refusal(f"The move was not committed, so nothing changed: {' '.join(str(exc).split())}")
+    said = [f"Moved the thread {name} from {project_dir.name} to {target.name} in {zone_dir.name}, and every link to it "
+            "in the zone, in one commit."]
+    meetings = root / "Wikis" / "Meetings" / "wiki"
+    mentions = sorted(p.relative_to(root).as_posix() for p in meetings.rglob("*.md")
+                      if re.search(r"\[\[[^\]]*\b%s\b" % re.escape(name), p.read_text(encoding="utf-8", errors="replace"))) \
+        if meetings.is_dir() else []
+    if mentions:
+        said.append(f"Left as they are, in the Meetings wiki: {', '.join(mentions[:5])}"
+                    f"{' and %d more' % (len(mentions) - 5) if len(mentions) > 5 else ''}.")
+    said.append("If your assistant keeps a memory pointer to it, or a cmux tab is open on it, point them at "
+                f"{rel_new}/{name}.md. For the status page's effort history, build it with --moved "
+                f'"Zones/{zone_dir.name}/{rel_old}=Zones/{zone_dir.name}/{rel_new}".')
+    return "\n".join(said)
+
+
 def open_lines(zone_dir, paths, bare):
     """The open lines of the zone's Todo.md that link to one of `paths` (from
     the zone's top, without .md), or to one of `bare`, names that no other
@@ -1117,7 +1323,7 @@ def cmd_delete(root, args, today):
 
 
 def cmd_undo(root, args, today):
-    """Revert a rename, a deletion or a creation this script committed, while it
+    """Revert a rename, a move, a deletion or a creation this script committed, while it
     is still the zone's last commit: anything committed since might depend on it."""
     zone_dir = find_zone(root, args.zone)
     head = git_value(["rev-parse", "HEAD"], zone_dir).strip()
@@ -1128,8 +1334,8 @@ def cmd_undo(root, args, today):
         raise Refusal(f"{args.commit} is no longer the last commit in {zone_dir.name}, so it is not undone here. "
                       "Ask for it to be reverted by hand.")
     subject = git_value(["log", "-1", "--format=%s"], zone_dir).strip()
-    if not re.search(r": (deleted|renamed .+|new thread .+)$|^New project .+, first thread .+$", subject):
-        raise Refusal(f"{args.commit} is not a rename, a deletion or a new project or thread: {subject}")
+    if not re.search(r": (deleted|renamed .+|moved to .+|new thread .+)$|^New project .+, first thread .+$", subject):
+        raise Refusal(f"{args.commit} is not a rename, a move, a deletion or a new project or thread: {subject}")
     if git_value(["status", "--porcelain", "--untracked-files=no"], zone_dir).strip():
         raise Refusal(f"{zone_dir.name} has changes not committed. Commit or undo them first.")
     git_ok(["revert", "--no-edit", head], zone_dir)
@@ -1596,6 +1802,11 @@ def main(argv=None):
     r.add_argument("--thread", help="the thread to rename; without it, the project")
     r.add_argument("--to", required=True, help="the new name")
     r.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
+    mv = sub.add_parser("move", help="move a thread to another project of its zone, and every link to it")
+    mv.add_argument("--zone", required=True)
+    mv.add_argument("--project", required=True, help="the project the thread is in now")
+    mv.add_argument("--thread", required=True, help="the thread to move")
+    mv.add_argument("--to", required=True, help="the project it goes to, in the same zone")
     d = sub.add_parser("delete", help="delete a project or a thread; without --confirm, only say what would go")
     d.add_argument("--zone", required=True)
     d.add_argument("--project", required=True)
@@ -1612,7 +1823,7 @@ def main(argv=None):
     u = sub.add_parser("undo", help="revert a rename, a deletion or a new project or thread, while it is the zone's last commit")
     u.add_argument("--zone", required=True)
     u.add_argument("--commit", required=True, help="the commit the rename or deletion reported")
-    for each in (y, p, t, r):
+    for each in (y, p, t, r, mv):
         each.add_argument("--check", action="store_true",
                           help="say what this would do, and make nothing")
     args = ap.parse_args(argv)
@@ -1632,7 +1843,7 @@ def main(argv=None):
             print(json.dumps(reply, ensure_ascii=False, sort_keys=True))
             return 0 if reply.get("ok") else 1
         run = {"zone": cmd_zone, "party": cmd_party, "project": cmd_project, "thread": cmd_thread,
-               "rename": cmd_rename, "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park,
+               "rename": cmd_rename, "move": cmd_move, "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park,
                "wake": cmd_park}[args.command]
         print(run(root, args, today))
         ask_for_page(root, args)

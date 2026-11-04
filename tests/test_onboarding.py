@@ -279,7 +279,7 @@ class CommandsTest(unittest.TestCase):
         source = SCAFFOLD.read_text(encoding="utf-8")
         for option in ('"--name"', '"--zone"', '"--what"', '"--also"', '"--walled-from"'):
             self.assertIn(option, source, option)
-        self.assertIn("for each in (y, p, t, r):", source)        # party takes --check too
+        self.assertIn("for each in (y, p, t, r, mv):", source)    # party takes --check too, as move does
 
     def test_the_order_of_the_two_commits_is_in_the_code_as_well(self):
         """The row first, on its own: `project` is refused without it, and the two

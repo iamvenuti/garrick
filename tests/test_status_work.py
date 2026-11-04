@@ -604,7 +604,7 @@ class TestWorkOnThePage(StatusCase):
         self.assertIn("else if(!held('todo-date',r))open(r,b)", status.TODO_JS)
         self.assertIn("var busy=window.GarrickBusy&&GarrickBusy(dz);if(busy)", status.TADD_JS)
         self.assertIn("function send(q,said){if(window.GarrickAct&&GarrickAct(q,said))return;", status.MANAGE_JS)
-        self.assertEqual(5, status.MANAGE_JS.count("if(busy(d,q.zone))return;"))   # new thread, new project, rename, park, delete
+        self.assertEqual(6, status.MANAGE_JS.count("if(busy(d,q.zone))return;"))   # new thread, new project, rename, move, park, delete
 
 
 class TestWorkHosts(unittest.TestCase):

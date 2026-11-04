@@ -470,9 +470,7 @@ describe('a project kept in threads', () => {
     const submitted: string[] = []
     clock = mock.clock(on)
     on('ui.render', ENGINE)
-    let refused = 0
     on('prompt.submit', async (_$: any, e: any) => {
-      if (o.submit === 'rejects' || (o.submit === 'rejects-once' && refused++ === 0)) throw new Error('cannot send')
       submitted.push(e.text)
       return { text: e.text }
     })
@@ -926,7 +924,9 @@ describe('Close', () => {
     const cwd = o.cwd ?? `${ROOT}/Zones/Work/Acme`
     on('ui.render', ENGINE)
     on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } as any })
+    let refused = 0
     on('prompt.submit', async (_$: any, e: any) => {
+      if (o.submit === 'rejects' || (o.submit === 'rejects-once' && refused++ === 0)) throw new Error('cannot send')
       submitted.push(e.text)
       return { text: e.text }
     })

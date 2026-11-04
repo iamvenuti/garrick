@@ -103,6 +103,20 @@ class TestInstructions(CheckCase):
         write(self.root / "AGENTS.md", "# Workspace\n\n" + "word " * 900)
         self.assertFinds("instructions", "warning", "over its 800", path="AGENTS.md")
 
+    def test_rules_over_its_character_budget_warns(self):
+        """System/rules.md is loaded into every session (#366): past 8,000
+        characters it says to move a procedure into the skill that runs it."""
+        self.assertEqual(8000, check.RULES_CHAR_BUDGET)
+        write(self.root / "System" / "rules.md", "# Rules\n\n" + "x" * (check.RULES_CHAR_BUDGET - 10) + "\n")
+        self.assertClean("instructions")                           # exactly at the budget: silent
+        write(self.root / "System" / "rules.md", "# Rules\n\n" + "x" * (check.RULES_CHAR_BUDGET - 9) + "\n")
+        hit = self.assertFinds("instructions", "warning", "above the 8000 it is allowed", path="System/rules.md")
+        self.assertIn("skill that runs it", hit[0].message)
+
+    def test_rules_under_its_character_budget_is_silent(self):
+        write(self.root / "System" / "rules.md", "# Rules\n\nShort.\n")
+        self.assertEqual([], [f for f in self.findings("instructions") if f.path == "System/rules.md"])
+
     def test_copied_sentence(self):
         sentence = "Every meeting page carries its zone and its parties, because those are what the walls read."
         write(self.root / "System" / "rules.md", "# Rules\n\n- %s\n" % sentence)

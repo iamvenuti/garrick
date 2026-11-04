@@ -15,9 +15,10 @@ description: >
 # Intake
 
 Getting content into the workspace is fetching, and decides nothing. This
-skill is where it gets decided, one item at a time, by the rules in the
-*Ways in* section of `System/rules.md`. Read that section before the first
-item: this skill is the procedure, the rules are there.
+skill is where it gets decided, one item at a time, by the rules under
+*The rules for where things go* below and the two in the *Ways in* section of
+`System/rules.md`: everything lands in an inbox first, and the wall is checked
+before anything goes into a project. Read both before the first item.
 
 It does no filing of its own. A conversation goes through the `meetings`
 skill's procedure, something to read through the `knowledge` skill's, and
@@ -33,7 +34,7 @@ All paths are relative to the workspace root.
 | Recordings, as transcripts | `Wikis/Meetings/raw/inbox/` |
 | Mail and any other file, one inbox per zone | `Zones/<Zone>/Inbox/` |
 | Mail sent to one address for every zone, before its zone is settled | `Inbox/` |
-| The rules for where things go | `System/rules.md`, *Ways in* |
+| The rules for where things go | *The rules for where things go*, below, and `System/rules.md`, *Ways in* |
 | Parties (with their mail domains), Walls, People | `System/context.md` |
 | A project's material | `Zones/<Zone>/<Project>/Sources/` |
 | The helper | `System/skills/intake/intake.py` |
@@ -46,6 +47,21 @@ symbolic link that leads out of the folder it checked, the project or the
 wiki, and never takes a linked file waiting in an inbox: either is refused
 before anything moves, because the file would land somewhere other than the
 folder that was checked. A link that stays inside that folder is fine.
+
+## The rules for where things go
+
+Recordings, mail and files you drop in. Getting them here is fetching, done by hand, by a script or by your assistant's own connector, and it decides nothing. Where each one goes is decided by these rules, one item at a time; this skill is the procedure.
+
+- **Everything lands in an inbox first.** A recording as its transcript in `Wikis/Meetings/raw/inbox/`; mail and any other file in the `Inbox/` of the zone it belongs to, or in the workspace's own `Inbox/` when one address serves every zone: there its zone is settled before anything else, from its parties, confirmed. An inbox is never a project, and nothing in one is committed.
+- **A recording is always a conversation**, filed in Meetings.
+- **Mail and files go where they belong:**
+  - a conversation (a mail exchange with people, notes of a call) is filed in Meetings, with its zone and parties;
+  - something to read (a newsletter, an article, a report) is filed in Knowledge, with no parties. If it comes from a party's domain, ask before treating it as published;
+  - material for a project (a client's document, a contract, a data file) goes into that project's `Sources/`. If it came by mail, the mail is filed in Meetings as a conversation too, and only the attachment goes to the project. A mail the Meetings wiki keeps out goes whole into a project's `Sources/` only when the user says it is material, not a conversation.
+- **Parties come from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and a plus tag (`you+acme@`) is a strong hint. Personal webmail never names anyone, and neither do your own addresses (listed under Me in `System/context.md`): they carry what you forward, and the people inside the forward are the ones who count. When the addresses do not settle it, or put both sides of a wall on one mail, ask.
+- **Check the wall before anything goes into a project.** The project's party must not be walled from the parties the material came from. If it is, stop, and say only the sentence under *Zones and walls* in `System/rules.md`, word for word.
+- **Unsure of the kind, the zone, a party or the project: ask**, in one short line. Never guess across a wall.
+- **Code moves, parses and lists; it never chooses where a thing goes.**
 
 ## "Process the inbox"
 

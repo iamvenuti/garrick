@@ -997,6 +997,9 @@ ROOT_INSTRUCTIONS = ("AGENTS.md", "System/rules.md", "System/context.md")
 ROOT_LOCALS = ("AGENTS.local.md", "System/rules.local.md")
 WORD_BUDGET_ROOT = 800
 WORD_BUDGET_OTHER = 1000
+# System/rules.md is loaded into every session, on every request. Procedure
+# that only one kind of request needs belongs in the skill that runs it.
+RULES_CHAR_BUDGET = 8000
 COPY_MIN_CHARS = 80
 # The heading under which the update's split leaves what it could not place.
 SPLIT_REVIEW_RE = re.compile(r"^## From your earlier .+, to review\s*$")
@@ -1077,6 +1080,13 @@ def check_instructions(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "instructions", rel(ws, f),
                                "%d words, over its %d: move what it restates back to the file it points to" % (words, budget),
                                "An instruction file has grown past its budget"))
+    rules_file = ws.root / "System" / "rules.md"
+    if rules_file in texts and len(texts[rules_file]) > RULES_CHAR_BUDGET:
+        out.append(Finding(WARNING, "instructions", rel(ws, rules_file),
+                           "%d characters, above the %d it is allowed: it is loaded into every session, so move a "
+                           "procedure only one kind of request needs into the skill that runs it" % (
+                               len(texts[rules_file]), RULES_CHAR_BUDGET),
+                           "The rules file has grown past its budget"))
     # The same sentence in two files, one of them at the root: one is a copy.
     # Zone and wiki files may share boilerplate, since each stands alone in its own repository,
     # and so may the local files over the line the split opens each one with.

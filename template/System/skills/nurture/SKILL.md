@@ -350,6 +350,8 @@ search starts by reading their index, so last week's call ends up read
 through a year of calls nobody will ask about again. Pages fade instead, by
 age, kind and use, and stay findable. Nothing is deleted.
 
+**The words.** **"Fade the meetings"**, **"fade the library"** or **"what would fade"**: write the list of wiki pages that would leave working memory, go to the archive or come back, and why, and move nothing. The first fade on a wiki stops there; after it, one yes applies exactly that list. **"Keep X"** keeps a wiki page in working memory for good, and proposes bringing it back if it has faded. A page that fades takes its raw record with it, into the wiki's `dormant/raw/` or `archive/raw/`, renamed and never changed.
+
 | Grade | Where | Who reads it |
 |---|---|---|
 | Working | `wiki/...`, listed in `wiki/index.md` | every routing, briefing and search |

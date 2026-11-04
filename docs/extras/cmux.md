@@ -19,7 +19,7 @@ cmux is a Mac terminal built for running several assistant sessions side by side
 
 desk works with Claude Code and Codex sessions alike. It tells idle from working by reading each session's own transcript, never the tab's title, and it refuses to close, wrap or quit under a session that is mid-turn or waiting on a question, or one whose transcript it cannot read. A Claude Code tab with no prompt since it started or was cleared with `/clear` has no transcript yet; desk reads it as `empty`, idle with nothing to wrap, and closes it without one. A wrap can take minutes, so each tab is checked again the moment its wrap is sent, and one that has started a turn since, or stopped on a question, gets nothing typed into it. Before it does anything that closes or quits, it says what it would do and waits for you to say yes.
 
-These phrases are in `System/rules.md`, under Voice. Without the extra, "close X" and "close for the day" are wraps done from the session you are in, and "open X" opens the thread there.
+These phrases are in the `desk` skill, and the `threads` skill carries out the wrap and the open behind each. Without the extra, "close X" and "close for the day" are wraps done from the session you are in, and "open X" opens the thread there.
 
 ## Set it up
 

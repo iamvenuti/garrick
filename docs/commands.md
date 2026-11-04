@@ -169,7 +169,7 @@ python3 System/tools/check.py
 Tests the workspace against every rule a machine can check:
 
 - a `CLAUDE.md` in or above the workspace, which stops Claude Code reading `AGENTS.md`;
-- a missing `AGENTS.md` at the root or in a wiki, and instruction files that drift: an `AGENTS.md` or `AGENTS.local.md` past its word budget, the same sentence copied into two instruction files, or a hand-written list of skills, or of a zone's projects, that no longer matches the folder, counting Garrick's file and the local one beside it together (warnings);
+- a missing `AGENTS.md` at the root or in a wiki, and instruction files that drift: an `AGENTS.md` or `AGENTS.local.md` past its word budget, `System/rules.md` past 8,000 characters, the same sentence copied into two instruction files, or a hand-written list of skills, or of a zone's projects, that no longer matches the folder, counting Garrick's file and the local one beside it together (warnings);
 - one of Garrick's instruction files, `System/rules.md` or an `AGENTS.md`, that differs from what Garrick shipped: your own text belongs in the local file beside it. Also a local file Garrick's does not point to yet, and passages an update's split left to settle (warnings);
 - installer placeholders left unfilled (an error: the install did not finish; files git ignores are skipped, and so is a Garrick checkout kept in a project, cloned or unpacked from a release, whose templates hold them by design);
 - a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties, two parties with the same name and no wall between them, or no Aliases table (warnings);

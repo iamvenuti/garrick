@@ -32,7 +32,7 @@ The word the [simple home](#the-simple-home) uses for a thread, and the only uni
 
 ### Spoken form
 
-The `spoken:` line in a hub or thread note's frontmatter: how a name that does not say how it is said is heard, such as `spoken: fourth quarter planning` for Q4 Planning. A request matches it as well as the name. `scaffold.py` asks for one when a project or thread name needs it, and refuses a zone name that cannot be said aloud, since a zone has no note to carry one. See [Voice](../template/System/rules.md#voice) in the rules.
+The `spoken:` line in a hub or thread note's frontmatter: how a name that does not say how it is said is heard, such as `spoken: fourth quarter planning` for Q4 Planning. A request matches it as well as the name. `scaffold.py` asks for one when a project or thread name needs it, and refuses a zone name that cannot be said aloud, since a zone has no note to carry one. See [Voice](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
 
 ### Hub note
 
@@ -68,7 +68,7 @@ The row for what is only in your head: a decision half made and why, a doubt, or
 
 ### Status
 
-Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/rules.md#threads) in the rules.
+Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
 
 ### The interruption stack
 
@@ -169,7 +169,7 @@ What a Nurture run leaves, weighed by kind: a wall finding 10, an attribution qu
 
 ### Ways in
 
-The routes material takes into the workspace: recordings, mail and files you drop in. Getting an item here is fetching, by hand, by a script or by your assistant's own connector, and it decides nothing. Where each item goes is decided by the [Ways in](../template/System/rules.md#ways-in) rules, one item at a time. See [Ways in](extras/ways-in.md).
+The routes material takes into the workspace: recordings, mail and files you drop in. Getting an item here is fetching, by hand, by a script or by your assistant's own connector, and it decides nothing. Where each item goes is decided by the [Ways in](../template/System/skills/intake/SKILL.md#the-rules-for-where-things-go) rules, one item at a time. See [Ways in](extras/ways-in.md).
 
 ### Inbox
 

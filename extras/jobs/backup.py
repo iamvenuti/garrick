@@ -132,10 +132,12 @@ def commit(ws: Path, repo: Path, when: str, say) -> Tuple[int, List[str]]:
     if not git(repo, "status", "--porcelain").stdout.strip():
         return OK, []
     if repo.parent.name == "Zones" and repo.parent.parent == Path(ws):
-        # A zone's commits must run its wall check. The root and the wikis have no wall hook by design (the
-        # wikis are checked by the nurture tools, the root holds no project files): only their environment is cleaned.
+        # A zone's commits must run its wall check. The root holds no project files and has no wall hook by
+        # design. The wikis have one, which the commit's own `git` runs; only their environment is cleaned here.
         problem = agent.wall_hook_problem(repo)
         if problem:
+            if "take its hooks from" in problem:
+                problem += " (a core.hooksPath setting sends git's hooks elsewhere; unset it for this repository)"
             say("%s: %s; nothing committed" % (rel(ws, repo), problem))
             return FAILED, []
     if midway(repo):

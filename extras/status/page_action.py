@@ -6,7 +6,16 @@
 
 Garrick.app, or the Obsidian plugin beside this file, runs it when a button
 on the page asks; nothing else can, because a browser has no way to reach it.
-The ask preview (ask.py) runs what it proposes through act(), the same check.
+The ask preview (ask.py) runs what it proposes through perform(), the same
+check and the same record. A session runs it too (#344), with the verb and its
+options in place of JSON, and reads the sentence it prints:
+
+    python3 System/status/page_action.py park --zone Work --project Acme --thread Pricing
+
+So one action has one executor, whoever asks: the stale check, the zone lock,
+the commit with the wall check, the interruption stack, the record, and, as
+the last step of an action that changed what the page shows, one request for
+the page (ask_for_page).
 Each verb changes one thing, and the ones that change a note commit it in the
 zone's repository, as the skills would:
 
@@ -210,9 +219,11 @@ on a Mac): the time, the verb, the fields it names and what came of it. Only
 the fields a verb reads are written, the text of a new line cut short, so
 nothing else a request carries reaches the log. The host hands the request
 and the reply to the page (window.GarrickActed), which moves a parked or woken
-row at once, and rebuilds the page after every request. The reply is one line
-of JSON: {"ok": true|false, "say": "…"}, and for back and stack what they
-read. Standard library only.
+row at once; the app does the same for each action the ask box ran. The line
+ends with who asked, `page`, `ask` or `session`, and so does the record. The
+reply is one line of JSON: {"ok": true|false, "say": "…"}, and for back and
+stack what they read; an action that asked for the page also says "built":
+true, and then the host does not rebuild a second time. Standard library only.
 """
 
 from __future__ import annotations
@@ -222,6 +233,7 @@ import contextlib
 import datetime as dt
 import html
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -461,9 +473,10 @@ def zone_lock(zone: Path):
         yield
 
 
-def audit(req, ok: bool, say: str, via: str = "") -> None:
+def audit(req, ok: bool, say: str, via: str = "page") -> None:
     """One line in page-actions.log for every request: what it asked and what
-    came of it. A log that cannot be written never stops the action."""
+    came of it, and who sent it, `page`, `ask` or `session` (#344), last. A log
+    that cannot be written never stops the action."""
     req = req if isinstance(req, dict) else {}
     parts = [str(req.get("verb", "?"))[:20]]
     for k in LOGGED:
@@ -1922,8 +1935,12 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     if verb == "new-project":
         name, thread = field(req, "name"), field(req, "thread")
         made = [p for p in (zone / name,) if not p.exists()]
-        said = scaffold(ws, "project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread,
-                        *flag)
+        spoken = [*(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
+                  *(["--thread-spoken", field(req, "thread_spoken")] if req.get("thread_spoken") is not None else [])]
+        args = ["project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread, *spoken]
+        if not check:
+            asks_how(ws, args)
+        said = scaffold(ws, *args, *flag)
         if not check:
             commit_new(zone, [name], "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
                        made, {}, wall=wall_refusal(ws))
@@ -1938,8 +1955,11 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # else uncommitted: another session's edit is never filed under this
         # commit's message (#183). Otherwise its new line waits for a wrap.
         held = bool(before) and not check and uncommitted(zone, hub)
-        said = scaffold(ws, "thread", "--zone", z, "--project", project, "--name", name, *flag,
-                        *([] if check else ["--touched"]))
+        args = ["thread", "--zone", z, "--project", project, "--name", name,
+                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else [])]
+        if not check:
+            asks_how(ws, args)
+        said = scaffold(ws, *args, *flag, *([] if check else ["--touched"]))
         if check:
             return said
         said, touched = touched_paths(said)
@@ -1974,6 +1994,15 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
         return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
     return said
+
+
+def asks_how(ws: Path, args: list) -> None:
+    """Before anything is written (#344): scaffold.py's own --check, and where it asks how a name is said, Refused
+    with that question and nothing made. The answer is the request's `spoken` (a project's first thread's
+    `thread_spoken`), so a name such as Q4 Planning is never made without the form it is heard as."""
+    asked = scaffold(ws, *args, "--check").strip().splitlines()[1:]
+    if asked:
+        raise Refused(" ".join(l.strip() for l in asked) + " Make it in a session, with its spoken form (--spoken).")
 
 
 def first_line(said: str) -> str:
@@ -3773,11 +3802,50 @@ def act(ws: Path, req, today=None, now=None):
     return todo(ws, req)
 
 
-def perform(ws: Path, req, ops=None):
+# The verbs whose reply asks for the page to be built (#344): what a page, the
+# ask box or a session changes that the page shows. Every other verb leaves the
+# rebuild to the app, as it did. A delete asks for it only once confirmed.
+PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
+               "rename", "delete", "undo", "interrupt", "back", "unstack")
+PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
+CALLERS = ("page", "ask", "session")
+
+
+def builds_page(req) -> bool:
+    if not isinstance(req, dict) or req.get("verb") not in PAGE_BUILDS:
+        return False
+    return not (req["verb"] == "delete" and not req.get("confirm"))       # the first form only says what would go
+
+
+def ask_for_page(ws: Path) -> bool:
+    """Ask for one build of the status page, in the background, and return at
+    once: with `--settle`, so a burst of actions makes one page, and with
+    `--same-flags`, so it keeps the flags the app or the plugin last built it
+    with. The one place any caller's action asks for it (#344). False where
+    the status extra is not installed, or garrick_lib is too old to say how."""
+    try:
+        found = prefs().lib(ws)
+        command = getattr(found, "status_command", None)
+        start = getattr(found, "detach", None)
+        cmd = command(ws, settle=PAGE_SETTLE) if callable(command) and callable(start) else None
+        return bool(cmd) and bool(start(cmd))
+    except Exception:
+        return False
+
+
+def perform(ws: Path, req, ops=None, via: str = "page"):
     """One request, as a click sends it and as the ask box does: through the
     durable record where operations.py keeps one for its verb, so that a
     request repeating one the record holds is joined, answered or asked
     about (operations.start()) rather than done again. Never raises.
+    `via` names the caller, one of CALLERS: it goes into the record.
+
+    An action that changed something the page shows ends with the page
+    request (ask_for_page), once, after the commit and the stack change, and
+    the reply says `"built": true`. Only that: a refusal, a repeat joined or
+    answered, a read, a verb this does not build for, and a page that could
+    not be asked for all leave the key out, and the caller rebuilds as it
+    always did. A refusal such as "it rebuilds now, try again" depends on it.
 
     Returns (the reply, what the audit log says in place of its sentence or
     None, and the refusal or the fault in its own words, "" when there was
@@ -3789,7 +3857,7 @@ def perform(ws: Path, req, ops=None):
             joined = None
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS:
                 try:
-                    run, joined = ops.start(jobs_dir(), req)
+                    run, joined = start_record(ops, req, via)
                 except ops.BadOp as e:
                     raise Refused(str(e))
                 except Exception:           # the record is best effort, as the audit log is
@@ -3814,6 +3882,9 @@ def perform(ws: Path, req, ops=None):
             outcome, why = "crashed", "%s: %s" % (type(e).__name__, e)
         if run is not None and outcome is not None:
             out = run.finish(outcome, req, why=why, said=out["say"] if outcome == "saved" else "")
+        if builds_page(req):
+            if outcome == "saved" and ask_for_page(ws):
+                out["built"] = True         # asked for, once: the app does not rebuild as well
     finally:
         CURRENT = None
         if run is not None:
@@ -3821,30 +3892,116 @@ def perform(ws: Path, req, ops=None):
     return out, logged, why
 
 
+def start_record(ops, req: dict, via: str):
+    """operations.start(), naming the caller where this operations.py takes
+    one; an older copy is called as it always was."""
+    try:
+        takes = "via" in inspect.signature(ops.start).parameters
+    except (TypeError, ValueError):
+        takes = False
+    return ops.start(jobs_dir(), req, via=via) if takes else ops.start(jobs_dir(), req)
+
+
+# The command-line form for a session (#344): a verb and the fields it takes as
+# options, no JSON. Each builds the request a button sends, so everything after
+# it is the same code: the stale check, the commit and its wall check, the stack,
+# the record, the page request. The line a Todo verb names is given in words
+# (`--line`), and resolved here to the key the page would send.
+CLI_FIELDS = {
+    "park": ("zone", "project", "thread"), "wake": ("zone", "project", "thread"),
+    "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken"),
+    "new-thread": ("zone", "project", "name", "spoken"),
+    "rename": ("zone", "project", "thread", "to"), "delete": ("zone", "project", "thread", "confirm"),
+    "undo": ("zone", "commit"), "unstack": ("zone", "project", "thread"),
+    "todo-add": ("zone", "text", "target", "date"),
+    "todo-done": ("zone", "line", "file"), "todo-undo": ("zone", "line", "file"),
+    "todo-date": ("zone", "line", "file", "date"),
+}
+
+
+def session_line(ws: Path, req: dict) -> dict:
+    """A Todo verb given its line in words: the request with the `key` of the one
+    line it says, and the note's `file`. Refused when no line, or more than one,
+    says it, so that nothing is ticked that was not meant."""
+    tl = todo_lines()
+    zone = zone_dir(ws, req.get("zone"))
+    said = req.pop("line", None)
+    if not isinstance(said, str) or not said.strip() or len(said) > 1000:
+        raise Refused("no line given: say the line, or enough of it to be the only one")
+    want = " ".join(said.split()).casefold().rstrip(".")
+    reopen = req["verb"] == "todo-undo"
+    pool = tl.done_on(str(zone), dt.date.today()) if reopen else tl.tasks(str(zone))
+    only = req.get("file")
+    pool = [t for t in pool if only in (None, t["file"])]
+
+    def plain(t):
+        return " ".join(t["text"].split()).casefold().rstrip(".")
+    found = [t for t in pool if plain(t) == want] or [t for t in pool if want in plain(t)]
+    if not found:
+        raise Refused("no %s line says that in %s" % ("ticked" if reopen else "open", zone.name))
+    if len(found) > 1:
+        raise Refused("%d lines say that in %s: say more of the line" % (len(found), zone.name))
+    return dict(req, key=found[0]["key"], file=found[0]["file"])
+
+
+def session_request(ws: Path, args) -> dict:
+    """The request a verb typed in a terminal means: only the options that verb
+    takes, each given or left out. A zone is always named; nothing is guessed."""
+    given = {k: getattr(args, k.replace("-", "_")) for k in CLI_FIELDS[args.verb]}
+    if not given.get("zone"):
+        raise Refused("no zone given: say which, with --zone")
+    req = dict({"verb": args.verb}, **{k: v for k, v in given.items() if v is not None})
+    if args.verb in ("todo-done", "todo-undo", "todo-date"):
+        req = session_line(ws, req)
+    return req
+
+
+def command_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        description="Do what a status page button asks. With a verb, from the options below; without one, "
+                    "reading one JSON request on stdin.")
+    ap.add_argument("--workspace", help="the workspace (default: the one this script is in)")
+    ap.add_argument("--via", choices=CALLERS, help="who is asking, for the log and the record (default: session "
+                                                  "with a verb, page with JSON)")
+    ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
+    for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
+                 "confirm", "commit", "spoken", "thread-spoken"):
+        ap.add_argument("--" + name)
+    return ap
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="Do what a status page button asks, reading one JSON request on stdin.")
-    ap.add_argument("--workspace", required=True)
-    args = ap.parse_args(argv)
-    ws = Path(args.workspace).expanduser().resolve()
+    args = command_parser().parse_args(argv)
+    ws = Path(args.workspace).expanduser().resolve() if args.workspace else HERE.parent.parent
+    cli = args.verb is not None
+    via = args.via or ("session" if cli else "page")
     req, logged = None, None
     try:
         if not (ws / "System" / "rules.md").is_file() or not (ws / "Zones").is_dir():
             raise Refused("not a Garrick workspace")
-        try:
-            req = json.loads(sys.stdin.read())
-        except ValueError:
-            raise Refused("not a request")
+        if cli:
+            req = session_request(ws, args)
+        else:
+            try:
+                req = json.loads(sys.stdin.read())
+            except ValueError:
+                raise Refused("not a request")
         ops = ops_lib(ws)
         if ops is not None and isinstance(req, dict) and req.get("verb") == JOURNAL_VERB:
             print(json.dumps(ops.read(jobs_dir()), ensure_ascii=False))     # a read: nothing to log
             return 0
-        out, logged, _ = perform(ws, req, ops)
+        out, logged, _ = perform(ws, req, ops, via)
     except Refused as e:
         out = {"ok": False, "say": str(e)}
     except Exception as e:              # a fault still answers in JSON, and is logged
         out = {"ok": False, "say": "that did not work: %s: %s" % (type(e).__name__, e)}
-    audit(req, out["ok"], logged or out["say"])
-    print(json.dumps(out, ensure_ascii=False))
+    audit(req if req is not None else {}, out["ok"], logged or out["say"], via=via)
+    if cli:                             # a session reads the sentence, not JSON
+        undo = ("\nTo undo: python3 System/status/page_action.py undo --zone %s --commit %s" % (args.zone, out["commit"])
+                if out.get("ok") and out.get("commit") else "")
+        print(out["say"] + undo, file=sys.stdout if out["ok"] else sys.stderr)
+    else:
+        print(json.dumps(out, ensure_ascii=False))
     return 0 if out["ok"] else 1
 
 

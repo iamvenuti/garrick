@@ -123,7 +123,11 @@ that way, and only the ones the request names. It answers with JSON
                starts the session, as the page's buttons do
     park, wake run through page_action.perform(), as the page's buttons do:
     todo-add   the status field or the line, committed in the zone's
-               repository, with the durable record the page's clicks keep
+               repository, with the durable record the page's clicks keep,
+               and, as any caller's action ends, the one request for the
+               page (#344). The reply's `acted` lists each request run with
+               its reply, so the app hands them to the page as a click's
+               are, and a park from the box moves its row at once
 
 Nothing else: no ticking, no jobs, no settings, nothing sent. What happened
 is carried into the next request as `<last-results>`.
@@ -245,6 +249,7 @@ import json
 import math
 import os
 import re
+import secrets
 import select
 import shutil
 import signal
@@ -294,7 +299,7 @@ REFILLED = "Started afresh at a wall. Your question is back in the box: check it
 REFILLED_ZONE = "Started afresh in another zone. Your question is back in the box: check it, then send it."
 APPS = ("claude", "codex", "cmux", "finder")
 AGENTS = ("claude", "codex")      # what a cmux tab can start: cmuxlib's AGENTS (#307)
-VERBS = ("open", "park", "wake", "todo-add")
+VERBS = ("open", "park", "wake", "todo-add", "new-project", "new-thread")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
 EXTRA_PATH = ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
 
@@ -304,7 +309,11 @@ GAVE_UP = ("The ask server did not answer in %s. The change may still be on its 
            "for the zone's wall check. Look at the Todo list, or the thread, before you ask again. If it went "
            "through, asking again says so, and asks before doing it a second time.")
 NEED_CLAUDE = ("Answers from your records need Claude. With Codex the box does commands: open, park, wake, "
-               "and add a line to a Todo list.")
+               "make a project or a thread, and add a line to a Todo list.")
+# The first thread of a project the request gave none for (#345): a name for the work to start in, and Undo
+# takes the whole project away again.
+FIRST_THREAD = "Getting started"
+MOST_PARTIES = 8                # buttons under "which party?"; past that the question lists none and the user says it
 NOTHING_FOUND = "Nothing in the records answers that."
 NOTHING_OPEN = "Nothing is open there."           # an actions list with nothing in it (#316)
 INCOMPLETE = "The records hold only part of the answer."     # said for the answer's `incomplete` field
@@ -316,6 +325,26 @@ MOST_CLAIMS = 3                 # claims an answer says, as ask-answer-brief.md 
 
 class Bad(Exception):
     pass
+
+
+class Needs(Bad):
+    """A request that needs one more answer before anything is written (#345): the question, and one choice
+    per candidate. It is never a refusal; the box asks and nothing is made until it is answered."""
+
+    def __init__(self, question: str, choices: List[dict], keep: bool = True):
+        super().__init__(question)
+        # `keep`: the request waits for the answer, which is read together with it. A choice that carries the whole
+        # request again (which of two projects) keeps nothing, or the first request would name both once more.
+        self.question, self.choices, self.keep = question, choices, keep
+
+
+class Outside:
+    """What a request named outside the new work's own name (#345): the party tags, the entries (places), the zone
+    it settles (None when it does not), and the request's text, for a spoken form to be found in."""
+
+    def __init__(self, entries, zone, text):
+        self.entries, self.zone, self.text = list(entries), zone, text
+        self.parties = set().union(*(e.parties for e in self.entries)) if self.entries else set()
 
 
 class Stopped(Bad):
@@ -648,9 +677,123 @@ def cited(text: str, allowed: Dict[str, dict], partial: bool = False) -> Tuple[L
     return claims, say, obj.get("incomplete") is True or dropped
 
 
-def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]:
+def work_name(value, what: str) -> str:
+    """A name the request gives a new project or thread, as page_action.field() reads one: text on one line, not
+    an option. Whether it is a name that will do is scaffold.py's to say, in check-name, before anything is written."""
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > 80 or "\n" in value \
+            or value.strip().startswith("-"):
+        raise Bad("no %s given" % what if value is None else "not a %s: %r" % (what, value))
+    return value.strip()
+
+
+def party_labels(rows: Dict[str, dict], tags: List[str]) -> List[str]:
+    """The parties as a question names them: by name, with the tag after it where two rows of the zone share one."""
+    said = {t: (rows[t].get("party") or t) for t in tags}
+    return [said[t] if sum(v == said[t] for v in said.values()) == 1 else "%s (%s)" % (said[t], t) for t in tags]
+
+
+def named_parts(named) -> Tuple[set, Optional[list]]:
+    """What a request named, outside the new work's own name: the party tags, and the entries (places) when
+    ask_scope's Mentions came, else None. A plain set of tags is a request that named no place."""
+    if named is None:
+        return set(), None
+    if hasattr(named, "parties") and hasattr(named, "entries"):
+        return set(named.parties), list(named.entries)
+    return set(named), None
+
+
+def project_party(a: dict, zone: str, ws: Path, named) -> str:
+    """The party tag of a new project (#345), or Needs, or Bad. It is only ever a tag System/context.md holds, of this
+    zone, that the request itself named (a party, its tag or alias, a person, a project): never the session's own
+    pick, and never one that was made up. None, or several, named: the box asks, one choice per candidate, and
+    nothing is written. A party that is not there yet is refused with one line: adding one decides which side of a
+    wall material lands on, so it is done in a session."""
+    rows = scope_lib().lib(ws).load_context(ws).get("parties", {})
+    here = sorted((t for t, r in rows.items() if r.get("zone") == zone), key=str.casefold)
+    if not here:
+        raise Bad("No party is set up in %s yet. Add one in a session first: a party decides which side of a wall "
+                  "material lands on." % zone)
+    said, _ = named_parts(named)
+    heard = sorted((t for t in said if t in here), key=str.casefold)
+    elsewhere = sorted((t for t in said if t in rows and t not in here), key=str.casefold)
+    if elsewhere and not heard:             # it named a party, and that one is of another zone: said so, not a list of this zone's
+        raise Bad("%s is a party of %s, not of %s" % (rows[elsewhere[0]].get("party") or elsewhere[0],
+                                                      rows[elsewhere[0]].get("zone") or "no zone", zone))
+    given = a.get("party")
+    tag = None
+    if isinstance(given, str) and given.strip():
+        wanted = given.strip().strip("`").casefold()
+        tag = wanted if wanted in rows else next(
+            (t for t in here if str(rows[t].get("party") or "").casefold() == wanted), None)
+        if tag is None:
+            raise Bad("%s is not a party in System/context.md. Add it in a session first: a party decides which side "
+                      "of a wall material lands on." % given.strip()[:60])
+        if rows[tag].get("zone") != zone:
+            raise Bad("%s is a party of %s, not of %s" % (rows[tag].get("party") or tag, rows[tag].get("zone") or "no zone",
+                                                          zone))
+    if tag is not None and heard == [tag]:
+        return tag
+    if tag is None and len(heard) == 1:
+        return heard[0]
+    candidates = heard or here              # the parties it named, however many; none named: every party of the zone
+    labels = party_labels(rows, candidates)
+    name = work_name(a.get("name"), "name")
+    question = "Which party is %s for: %s?" % (name, ", ".join(labels[:-1]) + " or " + labels[-1] if len(labels) > 1 else labels[0])
+    if len(candidates) > MOST_PARTIES:
+        question = "Which party is %s for in %s? Say its name." % (name, zone)
+        raise Needs(question, [])
+    raise Needs(question, [{"label": label, "request": label} for label in labels])
+
+
+def spoken_in(a: dict, named) -> Optional[str]:
+    """A spoken form the session proposes, kept only when the request holds those words (word for word, any case):
+    the form is the user's to choose, so one the session made up is dropped, and the box asks (#345)."""
+    given, text = a.get("spoken"), getattr(named, "text", "")
+    if isinstance(given, str) and given.strip() and text and \
+            re.search(r"(?<!\w)%s(?!\w)" % re.escape(given.strip()), text, re.I):
+        return given.strip()
+    return None
+
+
+def new_work(a: dict, zone: str, names: Dict[str, Dict[str, dict]], ws: Path, named) -> Tuple[str, dict]:
+    """new-project and new-thread (#345), as page_action.py takes them. The zone is the request's; a thread's
+    project is one it named in that zone, and only one; a project's party is project_party()'s. Names are
+    work_name()'s, and scaffold.py's check-name runs before the request does."""
+    name = work_name(a.get("name"), "name")
+    spoken = spoken_in(a, named)
+    extra = {"spoken": spoken} if spoken else {}
+    if a["verb"] == "new-thread":
+        project = a.get("project")
+        if not isinstance(project, str) or project not in names[zone]:
+            raise Bad("no project %r in %s" % (project, zone) if project is not None else "new-thread names a project")
+        _, places = named_parts(named)
+        asked = list(dict.fromkeys((e.zone, e.project) for e in places or () if e.kind == "project"))
+        if len(asked) > 1:                          # two projects named: whichever the session picked is not the request's
+            labels = [p for _, p in asked]
+            raise Needs("Which project is the thread %s for: %s?" % (name, ", ".join(labels[:-1]) + " or " + labels[-1]),
+                        [{"label": p, "request": "new thread %s in %s" % (name, p)} for p in labels], keep=False)
+        if (zone, project) not in asked:
+            # The session's pick is not the request's: the project (and so its zone and its party) must be one the
+            # request itself named, outside the new thread's own name; else it asks, and nothing is written.
+            raise Needs("Which project is the thread %s for? Name it, as in \"new thread %s in %s\"." % (name, name, project), [])
+        return "act", dict({"verb": "new-thread", "zone": zone, "project": project, "name": name}, **extra)
+    settled = getattr(named, "zone", zone) if hasattr(named, "text") else zone
+    if settled is None:
+        raise Needs("Which zone is the project %s for? Say it, as in \"new project %s in %s\"." % (name, name, zone), [])
+    if settled != zone:
+        raise Bad("The request is for %s, not %s: say which zone the project %s is for" % (settled, zone, name))
+    first = work_name(a["thread"], "thread") if a.get("thread") is not None else FIRST_THREAD
+    return "act", dict({"verb": "new-project", "zone": zone, "name": name, "party": project_party(a, zone, ws, named),
+                        "thread": first}, **extra)
+
+
+def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path, named=None) -> Tuple[str, dict]:
     """One proposed action, checked against the workspace list: ("act", a
-    page_action request) or ("launch", what the app opens). Raises Bad."""
+    page_action request) or ("launch", what the app opens). Raises Bad, or
+    Needs where the request must be answered first. `named` is what the
+    request named outside the new work's own name (ask_scope's Mentions, or a
+    set of party tags): a new project's party, and a new thread's project, must
+    be among it."""
     if not isinstance(a, dict):
         raise Bad("an action that is not an object")
     verb = a.get("verb")
@@ -659,6 +802,8 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path) -> Tuple[str, dict]
     zone, project, thread = a.get("zone"), a.get("project"), a.get("thread")
     if not isinstance(zone, str) or zone not in names:
         raise Bad(scope_lib().no_zone(zone, names))
+    if verb in ("new-project", "new-thread"):
+        return new_work(a, zone, names, ws, named)
     if project is not None and (not isinstance(project, str) or project not in names[zone]):
         raise Bad("no project %r in %s" % (project, zone))
     if thread is not None and (project is None or not isinstance(thread, str) or thread not in names[zone][project]["threads"]):
@@ -1122,6 +1267,9 @@ class Asker:
         self.zone = None            # the zone of the conversation: its last request's, its records' (#317)
         self.last_zone = None       # the zone last answered in, kept across resets: a zone name, never material
         self.zone_question = None   # a question asked about its zone, waiting for one
+        self.named_parties = set()  # the party tags the request under way named: a new project's party is one of them (#345)
+        self.window_zone = None     # the zone the window answers in, for a new project's zone
+        self.heard_text = ""        # that request as the names were read from it, with any earlier one it answers
         self.asking = False         # whether the last reply was a session's own question for the user
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
         self.refreshed = set()      # the sessions renewed by size, "command" and "answer", not yet told so
@@ -1236,6 +1384,7 @@ class Asker:
                                                         "open\".</correction>", cap=False)
                         say, do = parse(text)
                     self.asking = asks_back(text, say, do)
+                    self.named_parties, self.heard_text, self.window_zone = set(named.parties), heard, window
                     out = self.carry_out(say, do, names, usage)
             finally:
                 bill(turns)
@@ -1660,6 +1809,78 @@ class Asker:
             self.answers.start()
         self.refreshed = {"command", "answer"} if answering else {"command"}
 
+    def named_outside(self, a: dict, names):
+        """What the request named, apart from the new project's or thread's own name (#345). The proposed name must be
+        in the request word for word (any case, on word boundaries); it is taken out, and only what is left names a
+        party, a project or a zone. A party or a project spoken right up against the name, or over it, is not read as
+        named, since the session may have split one name in two. An Outside, or None when the request cannot be read
+        plainly, which asks and writes nothing."""
+        name = a.get("name") if isinstance(a, dict) and a.get("verb") in ("new-project", "new-thread") else None
+        if not isinstance(name, str) or not name.strip() or not self.heard_text:
+            return None
+        text = self.heard_text
+        pattern = re.compile(r"(?<!\w)%s(?!\w)" % re.escape(name.strip()), re.I)
+        span = pattern.search(text)
+        if span is None:
+            return None
+        try:
+            sc = scope_lib()
+            lib = sc.lib(self.ws)
+            rest = sc.mentions(self.ws, pattern.sub(" ", text), names, self.ctx, lib, answer=None)
+            full = sc.mentions(self.ws, text, names, self.ctx, lib, answer=None)
+        except Exception:
+            return None
+        if rest.question or full.question:
+            return None
+        apart = set()                               # what the full request names away from the name, with a word between
+        for start, end, _, means in full.heard:
+            gap = text[end:span.start()] if end <= span.start() else text[span.end():start] if start >= span.end() else None
+            if gap is not None and re.search(r"\w", gap):
+                apart.update(means)
+        entries = [e for e in rest.entries if e in apart]
+        zones = [z for z in names if sc.zone_named(pattern.sub(" ", text), z)]
+        if len(zones) > 1:
+            return None
+        zone = zones[0] if zones else self.window_zone
+        if zone is None:
+            held = {e.zone for e in entries if e.zone}
+            zone = held.pop() if len(held) == 1 else None
+        return Outside(entries, zone, text)
+
+    def how_said(self, pa, item: dict) -> List[str]:
+        """The lines in which scaffold.py asks how a name is said, from page_action.py's check-name; none when the name
+        says it (or a form was given). Nothing is written (#345)."""
+        req = {"verb": "check-name", "kind": "project" if item["verb"] == "new-project" else "thread"}
+        req.update({k: v for k, v in item.items() if k != "verb"})
+        out, _, _ = pa.perform(self.ws, req, pa.ops_lib(self.ws), via="ask")
+        return [l.strip() for l in str(out.get("say") or "").splitlines()[1:] if l.strip()] if out.get("ok") else []
+
+    def name_refused(self, pa, item: dict) -> str:
+        """scaffold.py's own refusal of the name a new project or thread would have, in its words, or "" when it
+        will do (#345): page_action.py's check-name, which writes nothing. The same check the page's dialog runs."""
+        req = {"verb": "check-name", "kind": "project" if item["verb"] == "new-project" else "thread"}
+        req.update({k: v for k, v in item.items() if k != "verb"})
+        out, _, why = pa.perform(self.ws, req, pa.ops_lib(self.ws), via="ask")
+        return "" if out.get("ok") else (why or out.get("say") or "that name will not do")
+
+    def undo_choice(self, pa, item: dict) -> Optional[dict]:
+        """An Undo for the project or thread just made (#345): a button that runs page_action.py's `undo`, as the
+        page's toast does. Only while the creation is the zone's last commit, which is what scaffold.py's undo
+        requires; None otherwise, and nothing is offered that would be refused."""
+        made = ("New project %s (%s), first thread %s" % (item["name"], item["party"], item["thread"])
+                if item["verb"] == "new-project" else "%s: new thread %s" % (item["project"], item["name"]))
+        try:
+            zone = pa.zone_dir(self.ws, item["zone"])
+            _, subject = pa.git(zone, "log", "-1", "--format=%s")
+            code, head = pa.git(zone, "rev-parse", "--short", "HEAD")
+        except Exception:
+            return None
+        if code != 0 or subject.strip() != made:
+            return None
+        if pa.git(zone, "status", "--porcelain", "--untracked-files=no")[1].strip():
+            return None                     # a hub left uncommitted: scaffold.py's undo would refuse
+        return {"label": "Undo", "act": {"verb": "undo", "zone": item["zone"], "commit": head.strip()}}
+
     def wall(self) -> str:
         """System/rules.md's sentence for a wall that held something back, as
         operations.py holds it (#172): this file keeps no copy of its own."""
@@ -1682,16 +1903,36 @@ class Asker:
             return off()
         pa = page_action()
         done, launch, ok = [], [], True
+        acted = []                  # each request run, with its reply, for the page to move the row at once (#344)
         desk = None
         asked, questions = {}, []
+        needs, choices = None, []
         for a in do:
             try:
-                kind, item = proposal(a, names, self.ws)
+                kind, item = proposal(a, names, self.ws, self.named_outside(a, names))
+            except Needs as e:                      # one more answer, then it is made; until then nothing is written (#345)
+                needs = needs or e
+                continue
             except Bad as e:
                 done.append("Refused: %s" % e)
                 ok = False
                 continue
-            if a.get("project") is not None:        # its place goes back to the session in <last-results>
+            if item.get("verb") in ("new-project", "new-thread"):
+                # Before anything is written: a party walled from one either process holds is refused here, never
+                # made and then noticed (#345). The request's own names reset at a wall before it was sent, so
+                # this only holds when that did not: fail closed.
+                held = {item["party"]} if item["verb"] == "new-project" else set(scope_lib().place_parties(
+                    self.ws, item["zone"], item["project"], None, scope_lib().lib(self.ws)))
+                if self.crosses(held):
+                    try:
+                        done.append(self.wall())             # the rule's sentence alone
+                    except Bad as e:
+                        done.append("Refused: %s" % e)
+                    ok = False
+                    continue
+            if item.get("verb") == "new-project":    # a place not there yet: the party it is for is what the session heard
+                self.hear({item["party"]})
+            elif a.get("project") is not None:      # its place goes back to the session in <last-results>
                 self.hear(scope_lib().place_parties(self.ws, a["zone"], a["project"], a.get("thread"),
                                                     scope_lib().lib(self.ws)))
             if kind == "launch":
@@ -1708,8 +1949,32 @@ class Asker:
             same = canon(item)
             if a.get("again") is True and same in self.asked:
                 item["confirm"] = self.asked[same]  # the user said yes to the question about it
-            out, logged, why = pa.perform(self.ws, item, pa.ops_lib(self.ws))
+            if item["verb"] in ("new-project", "new-thread") and not item.get("spoken"):
+                how = self.how_said(pa, item)        # a name that does not say how it is said: asked, not made without it
+                if how:
+                    if how[0].startswith(item["name"]):
+                        needs = needs or Needs("How is %s said? Say the words it is heard as, such as \"fourth quarter "
+                                               "planning\" for Q4 Planning." % item["name"], [])
+                    else:
+                        done.append("Refused: " + " ".join(how) + " Make it in a session, with its spoken form.")
+                        ok = False
+                    continue
+            if item["verb"] in ("new-project", "new-thread"):
+                no = self.name_refused(pa, item)     # scaffold.py's own words for a name that will not do, before anything is made
+                if no:
+                    pa.audit(item, False, no, via="ask")
+                    done.append("Refused: " + no)
+                    ok = False
+                    continue
+            out, logged, why = pa.perform(self.ws, item, pa.ops_lib(self.ws), via="ask")
             good = bool(out.get("ok"))
+            if good and item["verb"] in ("new-project", "new-thread"):
+                undo = self.undo_choice(pa, item)
+                choices += [undo] if undo else []
+            if good and not out.get("again") and out.get("state") != "running":
+                # Its own op, so the page never takes this reply for the answer to a click of its own in the zone (#344)
+                acted.append({"request": dict({k: v for k, v in item.items() if k not in ("confirm", "op")},
+                                              op="ask-" + secrets.token_hex(8)), "reply": out})
             said = why or out.get("say") or ""       # a refusal in its own words, as before the record
             pa.audit(item, good, logged or said, via="ask")
             if out.get("again"):                    # done already: asked, not done again
@@ -1722,11 +1987,19 @@ class Asker:
                 done.append("Refused: " + said)
             ok = ok and good
         self.asked = asked
-        self.results = "\n".join(done)
+        self.results = "\n".join(done)             # not the question: it may name parties a wall keeps apart
         if questions and len(questions) == len(do):
             say = questions[0]                      # what the session said it did did not happen: the question did
-        return {"kind": "command", "say": say, "done": done, "launch": launch, "ok": ok,
-                "usage": {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}}
+        if needs:                                   # asked, with the request kept to be answered, as a name that fits two is
+            if needs.keep:
+                self.unclear = self.heard_text[-MAX_REQUEST:]
+                self.question = self.question or self.unclear
+            self.asking = False
+            return {"kind": "clarify", "say": needs.question, "done": done, "launch": launch, "ok": ok, "acted": acted,
+                    "choices": needs.choices,
+                    "usage": {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}}
+        return {"kind": "command", "say": say, "done": done, "launch": launch, "ok": ok, "acted": acted,
+                "choices": choices, "usage": {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}}
 
 
 def zone_colour(ws: Path, zone: str) -> str:

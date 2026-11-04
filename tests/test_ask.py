@@ -277,6 +277,16 @@ class TestCarryOut(AskCase):
         log = (self.jobs / "page-actions.log").read_text().splitlines()
         self.assertEqual(2, len(log))
         self.assertTrue(all(line.endswith("(ask)") for line in log))
+        # #344: what ran goes back with the reply, for the app to hand to the page as a click's is, so the
+        # row moves at once; a refusal and an open are not in it. The record names the caller as well.
+        self.assertEqual(["todo-add", "park"], [a["request"]["verb"] for a in out["acted"]])
+        self.assertTrue(all(a["reply"]["ok"] for a in out["acted"]))
+        self.assertEqual({"ask"}, {json.loads(l).get("via") for l in (self.jobs / "operations.jsonl").read_text().splitlines()})
+
+    def test_a_refused_action_is_not_handed_to_the_page(self):
+        out = ask.Asker(self.root).carry_out("x", [{"verb": "wake", "zone": "Work", "project": "Acme Review",
+                                                    "thread": "Pricing"}], self.names)       # active already
+        self.assertEqual(([], False), (out["acted"], out["ok"]))
 
     def test_what_the_session_is_told(self):
         session = FakeSession('{"say": "Two projects.", "do": []}', '{"say": "Parked.", "do": '

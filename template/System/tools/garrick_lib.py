@@ -3287,8 +3287,14 @@ def has_own_git_dir(folder: PathLike) -> bool:
                            capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError):
         return False
-    return r.returncode == 0 and (Path(folder) / ".git").is_dir() and \
-        os.path.realpath(r.stdout.strip()) == os.path.realpath(str(Path(folder) / ".git"))
+    if r.returncode != 0 or not (Path(folder) / ".git").is_dir():
+        return False
+    # The same directory, not the same spelling: a case-insensitive disk opens
+    # `work` as `Work`. Any error reading either is a refusal.
+    try:
+        return os.path.samefile(r.stdout.strip(), str(Path(folder) / ".git"))
+    except OSError:
+        return False
 
 
 def wall_hook_problem(folder: PathLike) -> Optional[str]:

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -50,7 +51,12 @@ PASSWORD_FILE: Optional[Path] = None  # set from desk's config; the environment 
 
 
 class CmuxError(Exception):
-    """A cmux call failed, with a readable message."""
+    """A cmux call failed, with a readable message. `code` is the error code
+    cmux printed (`Error: <code>: ...`), or None when it printed none."""
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 # --------------------------------------------------------------------------- where things are
@@ -151,7 +157,9 @@ def cmux(*args, parse: bool = False, check: bool = True, timeout: float = 30, pa
         raise CmuxError("cmux %s took longer than %ss" % (args[0], timeout))
     if check and p.returncode != 0:
         msg = (p.stderr or p.stdout).strip().splitlines()
-        raise CmuxError("cmux %s failed: %s" % (args[0], msg[-1] if msg else "no output"))
+        last = msg[-1] if msg else ""
+        codes = [m.group(1) for m in (re.match(r"^Error:\s*([a-z][a-z0-9_]*):\s", l.strip()) for l in msg) if m]
+        raise CmuxError("cmux %s failed: %s" % (args[0], last or "no output"), code=codes[0] if codes else None)
     return json_tail(p.stdout) if parse else p.stdout
 
 

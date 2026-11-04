@@ -398,19 +398,27 @@ def cmux(*args, **kw):
 
 def close_surface(s: dict) -> None:
     """Close a tab's surface. cmux 0.65 refuses a surface that still runs a
-    process (the assistant is one) with `confirmation_required`, unless forced.
-    Desk has checked the tab is idle, so that confirmation repeats its check:
-    force only when cmux asks, so an older cmux, which has no --force, still
-    closes on the first call."""
+    process (the assistant is one) with the code `confirmation_required`,
+    unless forced. Desk has checked the transcript, but that says nothing about
+    what else runs in the terminal, so it forces only when cmux asks and the
+    surface's foreground, read just now, holds the tab's own assistant and
+    nothing else. A job, a dev server or a `!` command would be killed too:
+    those tabs are left for the user. Older cmux has no --force and never asks,
+    so it closes on the first call."""
     args = ["close-surface", "--surface", s["surface"]]
     if s.get("workspace"):
         args += ["--workspace", s["workspace"]]
     try:
-        cmux(*args)
-    except DeskError as e:
-        if "confirmation_required" not in str(e):
-            raise
-        cmux(*args, "--force")
+        cx.cmux(*args)
+        return
+    except cx.CmuxError as e:
+        if e.code != "confirmation_required":
+            raise DeskError(str(e))
+    running = cx.foregrounds().get(s["surface"])
+    if running != [s.get("agent")]:
+        raise DeskError("cmux will not close %s without killing %s; close the tab by hand" % (
+            tab_label(s), ", ".join(running) if running else "a program desk cannot name"))
+    cmux(*args, "--force")
 
 
 def live_sessions() -> List[dict]:

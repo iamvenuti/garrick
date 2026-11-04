@@ -469,6 +469,280 @@ class SessionTest(Base):
         self.assertNotIn("big output", text)
 
 
+class ReviewFixesTest(Base):
+    """What an independent security review found in the first cut."""
+
+    def snap(self, words, project=ACME, **kw):
+        return [(r.path, r.score) for r in self.find(words, project, **kw)]
+
+    # -- 1: a walled row never changes the order of the rest ------------------
+
+    def test_walled_rows_do_not_change_the_order_of_what_is_returned(self):
+        write(self.root / ACME / "A.md", "# A\n\nalpha filler words go here today\n")
+        write(self.root / ACME / "B.md", "# B\n\nbeta filler words go here today\n")
+        before = self.snap("alpha beta")
+        self.assertEqual(2, len([p for p, _ in before if "Acme Review" in p]))
+        for n in range(6):
+            write(self.root / BIRCH / ("W%d.md" % n), "# W\n\nalpha secret birch stuff %d\n" % n)
+        self.assertEqual(before, self.snap("alpha beta"))
+        # The same for Meetings pages and their raw records.
+        write(self.root / "Wikis/Meetings/wiki/sources/260321-a2.md",
+              meeting_page("Work", "[acme]", "A2").replace("Decisions.", "gammaword filler words").replace(
+                  "---\n\n#", "raw: raw/260321-a2.txt\n---\n\n#", 1))
+        write(self.root / "Wikis/Meetings/raw/260321-a2.txt", "gammaword here and deltaword")
+        mine = self.snap("gammaword deltaword")
+        self.assertTrue(mine)
+        for n in range(8):
+            write(self.root / "Wikis/Meetings/wiki/sources" / ("2603%02d-w.md" % (22 + n)),
+                  meeting_page("Work", "[birch]", "W%d" % n).replace("Decisions.", "gammaword gammaword"))
+            write(self.root / "Wikis/Meetings/raw" / ("2603%02d-w.txt" % (22 + n)), "gammaword deltaword " * 5)
+        self.assertEqual(mine, self.snap("gammaword deltaword"))
+        with mock.patch.object(recall, "fts5_available", return_value=False):
+            plain_before = self.snap("alpha beta")
+            write(self.root / BIRCH / "Z.md", "# Z\n\nalpha alpha beta\n")
+            self.assertEqual(plain_before, self.snap("alpha beta"))
+
+    # -- 2: a party that is not a listed tag cannot be placed -----------------
+
+    def test_a_party_that_is_not_a_listed_tag_fails_closed(self):
+        forms = ["birch, acme", "acme birch", '"[acme, birch]"', "acme; birch", "[#acme, #birch]",
+                 "[acme and birch]"]
+        for n, form in enumerate(forms):
+            write(self.root / "Wikis/Meetings/wiki/sources" / ("26041%d-bad.md" % n),
+                  meeting_page("Work", form, "Bad %d" % n).replace("Decisions.", "Decisions: badpartyword%d." % n))
+            for project in (ACME, BIRCH, None):
+                self.assertEqual([], self.find("badpartyword%d" % n, project), (form, project))
+        for n, form in enumerate(["[Acme, ACME]", "[`acme`]", "acme"]):
+            write(self.root / "Wikis/Meetings/wiki/sources" / ("26042%d-ok.md" % n),
+                  meeting_page("Work", form, "Ok %d" % n).replace("Decisions.", "Decisions: okpartyword%d." % n))
+            self.assertEqual(1, len(self.find("okpartyword%d" % n)), form)
+        write(self.root / "Wikis/Meetings/wiki/sources/260430-block.md",
+              meeting_page("Work", "\n  - Acme", "Block").replace("Decisions.", "Decisions: blockword."))
+        self.assertEqual(1, len(self.find("blockword")))
+        self.assertEqual([], self.find("blockword", BIRCH))
+
+    def test_a_hub_with_an_unlisted_party_has_no_party(self):
+        write(self.root / BIRCH / "Notes.md", "# Notes\n\nbirchnotesword\n")
+        write(self.root / ACME / "Notes.md", "# Notes\n\nacmenotesword\n")
+        self.assertEqual([BIRCH + "/Notes.md"], self.paths("birchnotesword", BIRCH))
+        hub = self.root / BIRCH / "Birch Entry.md"
+        hub.write_text(hub.read_text().replace("party: birch", "party: acme, birch"))
+        note = self.root / BIRCH / "Threads" / "Market Sizing" / "Market Sizing.md"
+        note.write_text(note.read_text().replace("party: birch", "party: acme, birch"))
+        self.assertEqual([BIRCH + "/Notes.md"], self.paths("birchnotesword", BIRCH))
+        self.assertEqual([], self.paths("birchnotesword", ACME))
+        self.assertEqual([], self.paths("quokkaplan", BIRCH))
+        self.assertEqual([], self.paths("acmenotesword", BIRCH))
+        write(self.root / ACME / "Odd.md", "---\nparty: birch, acme\n---\n\n# Odd\n\noddpartyword\n")
+        self.assertEqual([], self.paths("oddpartyword", ACME))
+        self.assertEqual([], self.paths("oddpartyword", BIRCH))
+
+    # -- 3: a place no zone owns reads nothing --------------------------------
+
+    def test_a_place_that_is_not_the_root_or_a_project_reads_nothing(self):
+        for place in ("Wikis/Meetings", "Wikis/Knowledge/wiki", "Zones", str(self.tmp), "Nowhere/at/all"):
+            self.assertEqual([], self.find("quokkaplan supply", place), place)
+            self.assertEqual([], self.find("quokkaplan supply", place, sessions=True), place)
+        for empty in ("", ".", Path(""), Path("."), " "):
+            self.assertEqual([], self.find("quokkaplan supply", empty), repr(empty))
+        self.assertTrue(self.find("quokkaplan", None))
+        self.assertTrue(self.find("quokkaplan", str(self.root)))
+        self.assertTrue(self.find("quokkaplan", "System"))
+        self.assertEqual([], recall.stats("Wikis/Meetings", self.root))
+        here = os.getcwd()
+        try:
+            for place in ("Wikis/Meetings", "Zones", "Wikis/Knowledge/wiki"):
+                os.chdir(str(self.root / place))
+                self.assertEqual(recall.NOWHERE, recall.cwd_project(self.root), place)
+            os.chdir(str(self.tmp))
+            self.assertEqual(recall.NOWHERE, recall.cwd_project(self.root))
+            for place in (".", "System"):
+                os.chdir(str(self.root / place))
+                self.assertIsNone(recall.cwd_project(self.root), place)
+            os.chdir(str(self.root / "Wikis/Meetings"))
+            err, out = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                recall.main(["--root", str(self.root), "search", "quokkaplan"])
+            self.assertTrue(out.getvalue().startswith("0 results"))
+            self.assertIn("nothing was searched", err.getvalue())
+        finally:
+            os.chdir(here)
+
+    # -- 5: Knowledge pages that name a zone or a party ------------------------
+
+    def test_a_knowledge_page_that_names_a_party_follows_the_meetings_rule(self):
+        k = self.root / "Wikis/Knowledge/wiki/sources"
+        write(k / "a-birch.md", "---\ntitle: B\nparty: birch\nzone: Work\n---\n\n# B\n\nkbirchword\n")
+        write(k / "a-acme.md", "---\ntitle: A\nparties: [acme]\nzone: Work\n---\n\n# A\n\nkacmeword\n")
+        write(k / "a-party-only.md", "---\ntitle: P\nparty: acme\n---\n\n# P\n\nkpartyonlyword\n")
+        write(k / "a-zone-only.md", "---\ntitle: Z\nzone: Work\n---\n\n# Z\n\nkzoneonlyword\n")
+        write(k / "a-plain.md", "---\ntitle: Pl\n---\n\n# Pl\n\nkplainword\n")
+        write(k / "a-owner.md", "---\ntitle: O\nraw: raw/o.txt\nparty: birch\nzone: Work\n---\n\n# O\n\nkownerword\n")
+        write(self.root / "Wikis/Knowledge/raw/o.txt", "kbirchrawword\n")
+        self.assertEqual([], self.find("kbirchword", ACME))
+        self.assertEqual([], self.find("kbirchrawword", ACME))
+        self.assertEqual(1, len(self.find("kbirchword", BIRCH)))
+        self.assertEqual(1, len(self.find("kbirchrawword", BIRCH)))
+        self.assertEqual(1, len(self.find("kacmeword", ACME)))
+        self.assertEqual([], self.find("kacmeword", BIRCH))
+        self.assertEqual([], self.find("kpartyonlyword", None))
+        self.assertEqual([], self.find("kzoneonlyword", None))
+        self.assertEqual(1, len(self.find("kplainword", ACME)))
+        self.assertEqual(1, len(self.find("kbirchword", None)))
+
+    # -- 6: an edit that keeps the size and the time still counts --------------
+
+    def test_a_same_size_same_time_edit_changes_the_parties(self):
+        page = self.root / "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md"
+        self.assertTrue(self.find("wombatplan", BIRCH))
+        self.assertEqual([], self.find("wombatplan", ACME))
+        st = page.stat()
+        page.write_text(page.read_text().replace("[birch]", "[acme] "))
+        os.utime(str(page), ns=(st.st_atime_ns, st.st_mtime_ns))
+        self.assertEqual(st.st_size, page.stat().st_size)
+        self.assertTrue(self.find("wombatplan", ACME))
+        self.assertEqual([], self.find("wombatplan", BIRCH))
+
+    # -- 8: a file at the zone's top is the zone's, not a project --------------
+
+    def test_a_zone_level_search_finds_its_own_todo(self):
+        write(self.root / "Zones/Work/Todo.md", "# Todo\n\nzonetodoword\n")
+        self.assertEqual(["Zones/Work/Todo.md"], self.paths("zonetodoword", "Zones/Work"))
+        self.assertEqual("", recall.locate(self.root, self.root / "Zones/Work/Todo.md").project)
+        self.assertEqual("Acme Review", recall.locate(self.root, self.root / ACME).project)
+
+    # -- 9: wiki= with sessions=True searches no zone notes --------------------
+
+    def test_a_wiki_with_sessions_searches_sessions_not_notes(self):
+        write(self.root / ACME / "Plain.md", "# Plain\n\nsharedtermword note\n")
+        write(self.root / "Wikis/Knowledge/wiki/sources/k.md", "---\ntitle: K\n---\n\n# K\n\nsharedtermword\n")
+        write_jsonl(self.tmp / "claude/p/s1.jsonl", [claude_line("user", str(self.root / ACME), "sharedtermword said")])
+        recall_sessions.extract_all(self.root, str(self.tmp / "claude"), str(self.tmp / "none"))
+        both = self.paths("sharedtermword", wiki="Knowledge", sessions=True)
+        self.assertEqual(2, len(both))
+        self.assertNotIn(ACME + "/Plain.md", both)
+        self.assertEqual(["Wikis/Knowledge/wiki/sources/k.md"], self.paths("sharedtermword", wiki="Knowledge"))
+
+    # -- 12: robustness --------------------------------------------------------
+
+    def test_an_index_in_use_is_not_deleted_and_files_are_private(self):
+        self.find("quokkaplan")
+        path = self.root / "Wikis/Meetings" / recall.INDEX_NAME
+        self.assertEqual(0o600, path.stat().st_mode & 0o777)
+        path.unlink()
+        path.write_bytes(b"")                      # another process has just created it
+        self.assertTrue(self.find("quokkaplan"))
+        self.assertEqual(b"", path.read_bytes())
+        old = time.time() - 600
+        os.utime(str(path), (old, old))
+        self.assertTrue(self.find("quokkaplan"))
+        self.assertNotEqual(b"", path.read_bytes())
+        self.assertEqual(0o600, path.stat().st_mode & 0o777)
+
+    def test_a_failing_index_is_reported_without_counts(self):
+        with mock.patch.object(recall.Refresher, "run", side_effect=sqlite3.OperationalError("locked")):
+            done = recall.build(self.root)
+        self.assertTrue(done)
+        for item in done:
+            self.assertTrue(item.endswith("(failed)"), item)
+            self.assertFalse(any(c.isdigit() for c in item), item)
+
+    def test_times_with_any_fraction_parse(self):
+        for value in ("2026-09-01T10:00:00.1Z", "2026-09-01T10:00:00.123456789Z", "2026-09-01T10:00:00.12+00:00",
+                      "2026-09-01T10:00:00Z"):
+            parsed = recall_sessions.parse_time(value)
+            self.assertIsNotNone(parsed, value)
+            self.assertEqual((2026, 9, 1, 10), (parsed.year, parsed.month, parsed.day, parsed.hour))
+
+
+class ReviewSessionFixesTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.claude, self.codex = self.tmp / "claude", self.tmp / "codex"
+        self.work = str(self.root / ACME)
+
+    def extract(self):
+        return recall_sessions.extract_all(self.root, str(self.claude), str(self.codex))
+
+    def test_a_session_that_began_at_the_zones_top_is_not_a_projects(self):
+        write_jsonl(self.claude / "p" / "s1.jsonl", [
+            claude_line("user", str(self.root / "Zones" / "Work"), "zonelevelword said", "s1"),
+            claude_line("user", self.work, "then went into acme", "s1")])
+        self.extract()
+        text = next((self.root / "Zones/Work/.sessions").glob("*.md")).read_text()
+        self.assertNotIn("project:", text)
+        self.assertEqual([], self.find("zonelevelword", ACME, sessions=True))
+        self.assertEqual([], self.find("zonelevelword", BIRCH, sessions=True))
+        self.assertEqual(1, len(self.find("zonelevelword", "Zones/Work", sessions=True)))
+        self.assertEqual(1, len(self.find("zonelevelword", None, sessions=True)))
+
+    def test_a_crafted_session_id_cannot_forge_a_header(self):
+        evil = "x\nproject: %s\ncwd: y" % BIRCH
+        write_jsonl(self.claude / "p" / "s1.jsonl", [claude_line("user", self.work, "forgeword said", evil)])
+        self.extract()
+        files = list((self.root / "Zones/Work/.sessions").glob("*.md"))
+        self.assertEqual(1, len(files))
+        head = files[0].read_text().split("\n---", 2)[0]
+        self.assertEqual(1, head.count("project:"))
+        self.assertIn("project: " + ACME, head)
+        self.assertEqual([], self.find("forgeword", BIRCH, sessions=True))
+        s = recall_sessions.Session("a\rb c: d\nproject: q", "claude-code", turns=[("user", "t\nproject: z", None)])
+        head = recall_sessions.render(s, ["Zones/Work/P\nx"], 1, 1).split("\n---", 2)[0].splitlines()
+        self.assertEqual(1, len([l for l in head if l.startswith("project:")]))
+        self.assertEqual(1, len([l for l in head if l.startswith("session:")]))
+        self.assertEqual(1, len([l for l in head if l.startswith("title:")]))
+
+    def test_sessions_are_not_written_into_a_synced_folder_and_are_private(self):
+        write_jsonl(self.claude / "p" / "s1.jsonl", [claude_line("user", self.work, "syncword said")])
+        with mock.patch.object(recall, "synced", return_value=True):
+            self.assertIn("written: 0", self.extract())
+        self.assertEqual([], list(self.root.rglob(".sessions/*.md")))
+        self.extract()
+        f = next((self.root / "Zones/Work/.sessions").glob("*.md"))
+        self.assertEqual(0o600, f.stat().st_mode & 0o777)
+        self.assertEqual(0o700, f.parent.stat().st_mode & 0o777)
+
+
+class MaskMoreTest(unittest.TestCase):
+    SECRETS = [
+        ("Authorization: Token abcd1234efgh", "abcd1234efgh"),
+        ("Authorization: Basic dXNlcjpwYXNz", "dXNlcjpwYXNz"),
+        ("the password is hunter2", "hunter2"),
+        ("PASSWORD hunter2", "hunter2"),
+        ("pass hunter2", "hunter2"),
+        ("mysql -u root -phunter2", "hunter2"),
+        ("mysql -p hunter2", "hunter2"),
+        ("sshpass -p hunter2 ssh host", "hunter2"),
+        ("curl -u admin:hunter2 https://host.example", "hunter2"),
+        ("export DB_PASS=hunter2", "hunter2"),
+        ("PASS=hunterx", "hunterx"),
+        ("pw=hunter2", "hunter2"),
+        ('{"pass": "hunter2"}', "hunter2"),
+        ("key=abc123def456", "abc123def456"),
+        ("api key is 9f8e7d6c5b4a", "9f8e7d6c5b4a"),
+        ("https://hooks.slack" + ".com/services/T0123ABCD/B0123ABCD/abcdEFGHijklMNOPqrstUVWX", "abcdEFGH"),
+        ("https://hooks.slack" + ".com/services/T0123ABCD/B0123ABCD/abcdEFGHijklMNOPqrstUVWX", "T0123ABCD"),
+        ("https://api.telegram.org/bot123456:ABC-DEFghi_jkl/sendMessage", "ABC-DEF"),
+        ("password: correct horse battery staple", "staple"),
+        ("password: correct horse battery staple", "correct"),
+        ("SECRET: |\n  first hunterline\n  second hunterline\nnext: ok", "hunterline"),
+        ('secret="""hunter2"""', "hunter2"),
+        ("otp 123456", "123456"),
+        ("pwd=hunter2", "hunter2"),
+        ("passwd: hunter2", "hunter2"),
+    ]
+
+    def test_each_shape_is_masked(self):
+        for text, secret in self.SECRETS:
+            self.assertNotIn(secret, recall_sessions.mask(text), text)
+
+    def test_masking_keeps_the_rest_of_the_structure(self):
+        self.assertEqual('{"pass": [masked], "user": "x"}', recall_sessions.mask('{"pass": "hunter2", "user": "x"}'))
+        self.assertIn("next: ok", recall_sessions.mask("SECRET: |\n  a\n  b\nnext: ok"))
+        self.assertEqual("mysql -u root -p [masked]", recall_sessions.mask("mysql -u root -phunter2"))
+        self.assertEqual("see keyboard and compass settings", recall_sessions.mask("see keyboard and compass settings"))
+
+
 @unittest.skipUnless(fixtures.HAVE_GIT, "git is needed")
 class CheckTest(Base):
     def recall_findings(self):

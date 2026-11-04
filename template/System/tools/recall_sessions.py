@@ -48,16 +48,49 @@ TITLE_CHARS = 80
 # Masking
 # ---------------------------------------------------------------------------
 
-_SECRET_WORDS = r"(?:api[_-]?key|apikey|access[_-]?key|secret[_-]?key|private[_-]?key|secret|token|passwd|password|" \
-                r"passphrase|pwd|credential[s]?|auth(?:orization)?|bearer|client[_-]?secret)"
+_LONG_WORDS = r"(?:api[\s_-]?key|apikey|access[_-]?key|secret[_-]?key|private[_-]?key|secret|token|passwd|password|" \
+              r"passphrase|credential[s]?|auth(?:orization)?|bearer|client[_-]?secret)"
+_SHORT_WORDS = r"(?:pass|pw|pwd|key|otp)"
+# A name that carries a secret word: it may run on either side of a long word
+# (MY_TOKEN_2), but a short one (pass, pw, key) stands as a word of its own, or
+# between `_`, `.` and `-`, so `keyboard` and `compass` are left alone.
+_NAME = r"(?:\b[\w.-]*" + _LONG_WORDS + r"[\w.-]*|(?<![A-Za-z0-9])(?:[A-Za-z0-9]+[_.-])*" + _SHORT_WORDS + \
+        r"(?:[_.-][A-Za-z0-9]+)*(?![A-Za-z0-9]))"
+_PLAIN_WORDS = r"(?:api[\s_-]?key|apikey|secret|token|password|passwd|passphrase|pass|pwd|pw|key|otp)"
+_QUOTED = r"(\"\"\"[\s\S]*?\"\"\"|'''[\s\S]*?'''|\"[^\"\n]*\"|'[^'\n]*')"
+_COMMANDS = r"(?:mysql\w*|mariadb\w*|sshpass|psql|pg_dump\w*|redis-cli|mongo\w*)"
 MASKERS = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?(?:-----END [A-Z ]*PRIVATE KEY-----|\Z)", re.S), MASK),
     (re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s/@:]+:[^\s/@]+@"), lambda m: m.group(0).split("://")[0] + "://" + MASK + "@"),
+    # Webhook and bot URLs carry the secret in the path.
+    (re.compile(r"(?i)hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+"), "hooks.slack.com/" + MASK),
+    (re.compile(r"(?i)(discord(?:app)?\.com/api/webhooks/)[A-Za-z0-9/_-]+"), lambda m: m.group(1) + MASK),
+    (re.compile(r"(?i)(api\.telegram\.org/(?:file/)?bot)[0-9]+:[A-Za-z0-9_-]+"), lambda m: m.group(1) + MASK),
+    (re.compile(r"\b[0-9]{6,}:[A-Za-z0-9_-]{30,}"), MASK),
+    # A block scalar: SECRET: | and the indented lines under it.
+    (re.compile(r"(?im)^([ \t]*[\w.-]*" + _LONG_WORDS + r"[\w.-]*[ \t]*:[ \t]*[|>][+-]?[ \t]*\n)((?:[ \t]+[^\n]*(?:\n|$))+)"),
+     lambda m: m.group(1) + "  " + MASK + "\n"),
+    # Authorization: Token x / Basic x / Bearer x / anything: the whole value.
+    (re.compile(r"(?i)(\bauthorization\b[\"\']?\s*[:=]\s*[\"\']?)([^\r\n\"\']+)"), lambda m: m.group(1) + MASK),
     (re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}"), lambda m: m.group(1) + " " + MASK),
-    (re.compile(r"(?i)(--?[a-z-]*(?:password|passwd|token|secret|api-?key|apikey)[a-z-]*)([=\s]+)(\"[^\"]*\"|'[^']*'|\S+)"),
+    (re.compile(r"(?i)\b(Token)\s+(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{8,}"), lambda m: m.group(1) + " " + MASK),
+    (re.compile(r"(?i)(--?[a-z-]*(?:password|passwd|pass|token|secret|api-?key|apikey)[a-z-]*)([=\s]+)(\"[^\"]*\"|'[^']*'|\S+)"),
      lambda m: m.group(1) + m.group(2) + MASK),
-    (re.compile(r"(?i)(\b[\w.-]*" + _SECRET_WORDS + r"[\w.-]*\"?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;\"')\]}]+)"),
-     lambda m: m.group(1) + MASK),
+    # Command lines that take a password: mysql -phunter2, mysql -p hunter2, sshpass -p hunter2, curl -u user:pass.
+    (re.compile(r"(?<![\w-])(" + _COMMANDS + r")(\s(?:[^\n|;&]*?\s)?)-p\s*(?=\S)\S+"),
+     lambda m: m.group(1) + m.group(2) + "-p " + MASK),
+    (re.compile(r"(?<!\S)(-u|--user)([=\s]+)([^\s:]+):\S+"), lambda m: m.group(1) + m.group(2) + m.group(3) + ":" + MASK),
+    # NAME = "quoted", NAME: "quoted", """triple quoted""".
+    (re.compile(r"(?i)(" + _NAME + r"[\"\']?\s*[:=]\s*)" + _QUOTED), lambda m: m.group(1) + MASK),
+    # NAME: a value that may be several words: to the end of the line.
+    (re.compile(r"(?i)(" + _NAME + r"[\"\']?[ \t]*:)(?![ \t]*\[masked\])[ \t]*[^\n]+"), lambda m: m.group(1) + " " + MASK),
+    # NAME=value
+    (re.compile(r"(?i)(" + _NAME + r"[\"\']?\s*=)(?!\s*\[masked\])\s*[^\s,;\"')\]}]+"), lambda m: m.group(1) + MASK),
+    # the password is hunter2 / the api key was ...: to the end of the line.
+    (re.compile(r"(?i)(\b" + _PLAIN_WORDS + r"[ \t]+(?:is|was|are|=))(?![ \t]*:?[ \t]*\[masked\])[ \t]+:?[ \t]*[^\n]+"),
+     lambda m: m.group(1) + " " + MASK),
+    # PASSWORD hunter2 / pass hunter2: the next word, whatever it is.
+    (re.compile(r"(?i)(\b" + _PLAIN_WORDS + r"[ \t]+)(?!\[masked\]|(?:is|was|are)\b)[^\s,;\"')\]}]+"), lambda m: m.group(1) + MASK),
     (re.compile(r"\b(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}"), MASK),
     (re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}|\bgithub_pat_[A-Za-z0-9_]{20,}"), MASK),
     (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}"), MASK),
@@ -119,8 +152,12 @@ def add_turn(session: Session, kind: str, text: str) -> None:
 
 
 def parse_time(value) -> Optional[datetime.datetime]:
+    """An ISO time. Python 3.9 reads fractions of three or six digits only, so
+    any other length is made six first."""
+    text = str(value).strip().replace("Z", "+00:00")
+    text = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], text, count=1)
     try:
-        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return datetime.datetime.fromisoformat(text)
     except ValueError:
         return None
 
@@ -258,6 +295,7 @@ def destination(root: Path, s: Session) -> Optional[Tuple[Path, List[str]]]:
     base = root.resolve()
     places = set()
     projects: List[str] = []
+    zone_level = False
     if not s.cwds:
         return None
     for cwd in s.cwds:
@@ -268,6 +306,8 @@ def destination(root: Path, s: Session) -> Optional[Tuple[Path, List[str]]]:
         if place is None:
             return None
         places.add(place.zone)
+        if place.zone and not place.project:
+            zone_level = True
         if place.zone and place.project:
             rel = "Zones/%s/%s" % (place.zone, place.project)
             if rel not in projects:
@@ -282,21 +322,31 @@ def destination(root: Path, s: Session) -> Optional[Tuple[Path, List[str]]]:
         names = [z for z in recall.zone_names(base)]
         if zone not in names:
             return None
-        return folder, projects
+        # A session that was open at the zone's top at any point is the zone's, not a project's:
+        # it is labelled with no project, and only zone-level searches read it.
+        return folder, [] if zone_level else projects
     folder = base / "System"
     return (folder, []) if folder.is_dir() and not folder.is_symlink() else None
 
 
+def header_value(value) -> str:
+    """One line, no control characters, nothing that could close or forge a
+    frontmatter field: whatever a transcript supplies goes through here."""
+    text = "".join(" " if (c.isspace() or ord(c) < 32 or ord(c) == 127) else c for c in str(value))
+    return " ".join(text.replace("\\", "/").replace('"', "'").split())
+
+
 def render(s: Session, projects: List[str], size: int, mtime: int) -> str:
     first = next((t for k, t, _ in s.turns if k == "user"), "")
-    title = " ".join(mask(first).split())[:TITLE_CHARS].replace('"', "'")
+    title = header_value(mask(first))[:TITLE_CHARS]
     date = (s.started or datetime.datetime.now()).date().isoformat()
-    head = ["---", 'title: "%s"' % title, "type: session", "harness: %s" % s.harness, "session: %s" % s.id,
+    head = ["---", 'title: "%s"' % title, "type: session", "harness: %s" % header_value(s.harness),
+            "session: %s" % safe_id(s.id),
             "date: %s" % date]
     if len(projects) == 1:
-        head.append("project: %s" % projects[0])
+        head.append("project: %s" % header_value(projects[0]))
     elif projects:
-        head += ["project:"] + ["  - %s" % p for p in projects]
+        head += ["project:"] + ["  - %s" % header_value(p) for p in projects]
     head += ["source_size: %d" % size, "source_mtime: %d" % mtime, "---", ""]
     out = []
     for kind, text, status in s.turns:
@@ -333,8 +383,8 @@ def write_session(root: Path, source: Path, s: Session) -> Optional[Path]:
         return None
     top, projects = where
     folder = top / recall.SESSIONS_DIR
-    if folder.is_symlink():
-        return None
+    if folder.is_symlink() or recall.synced(top):
+        return None                                 # sync corrupts nothing here, and copies sessions elsewhere
     st = source.stat()
     sid = safe_id(s.id)
     old = existing(folder, sid) if folder.is_dir() else None
@@ -342,10 +392,16 @@ def write_session(root: Path, source: Path, s: Session) -> Optional[Path]:
         head = old.read_text(encoding="utf-8", errors="replace")[:600]
         if "source_size: %d\n" % st.st_size in head and "source_mtime: %d\n" % st.st_mtime_ns in head:
             return None
-    folder.mkdir(exist_ok=True)
+    folder.mkdir(mode=0o700, exist_ok=True)
     target = old or folder / ("%s - %s.md" % (yymmdd(s), sid))
     tmp = folder / (".tmp-%d" % os.getpid())
-    tmp.write_text(render(s, projects, st.st_size, st.st_mtime_ns), encoding="utf-8")
+    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(render(s, projects, st.st_size, st.st_mtime_ns))
+    try:
+        os.chmod(str(tmp), 0o600)
+    except OSError:
+        pass
     os.replace(str(tmp), str(target))
     return target
 

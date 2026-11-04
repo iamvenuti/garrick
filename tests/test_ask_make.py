@@ -470,6 +470,40 @@ class TestMakingThem(MakeCase):
         self.assertIn("never make a party", " ".join(brief.split()))
 
 
+class TestTheBriefSpeaksAsGarrick(unittest.TestCase):
+    """#357: the session answers follow-ups as the whole box, not as the session it runs in."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.brief = " ".join((REPO / "extras" / "status" / "ask-brief.md").read_text(encoding="utf-8").split())
+
+    def test_it_no_longer_claims_to_have_no_reach_into_notes(self):
+        self.assertNotIn("You never read or write a note", self.brief)
+        self.assertIn("You speak as Garrick, the whole box", self.brief)
+        self.assertIn("never say that Garrick cannot read notes", self.brief)
+        self.assertIn("Say only that the box does not edit them", self.brief)
+
+    def test_i_updated_it_sends_the_earlier_find_again_by_recency(self):
+        self.assertIn('"I updated X", "I fixed the note"', self.brief)
+        self.assertIn("news that a record changed, never a request to edit one", self.brief)
+        self.assertIn('Send the find of the earlier question again, the same route, place and words, with "order": "recent"',
+                      self.brief)
+        self.assertIn("With no earlier question to repeat", self.brief)
+
+    def test_a_question_about_what_it_can_do_has_one_true_answer(self):
+        self.assertIn('"What can you do?", "can you open documents?"', self.brief)
+        self.assertIn("I answer from your meetings, the library, your threads and your Todo lists, with links to the records",
+                      self.brief)
+        self.assertIn("I open, park and wake projects and threads, make new ones and add Todo lines", self.brief)
+        self.assertIn("I don't edit notes, send or delete anything", self.brief)
+
+    def test_what_it_says_it_does_is_what_the_box_runs(self):
+        self.assertEqual(("open", "park", "wake", "todo-add", "new-project", "new-thread"), ask.VERBS)
+        for route in ("meetings", "knowledge", "thread", "docs", "actions"):
+            self.assertIn('"%s"' % route, self.brief)
+        self.assertIn('"order": "recent"', self.brief)
+
+
 class TestTheAppShowsTheChoices(unittest.TestCase):
     def test_a_button_runs_a_request_or_an_act(self):
         swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")

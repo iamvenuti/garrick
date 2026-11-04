@@ -316,7 +316,51 @@ class TestPagesToChange(WikiAnswerCase):
         say = self.do("question-work")
         self.assertIn("Change wiki/sources/260310-acme-kickoff.md", say)
         self.assertEqual(1, say.count("Change "))
-        self.assertIn("4 pages are not there.", say)
+        self.assertIn(SENTENCE, say)
+        self.assertNotIn("not there", say)
+
+
+class TestHeldPages(WikiAnswerCase):
+    def worked(self, pages):
+        self.ask(question(pages=pages))
+        self.do("question-answer", words="500")
+        return self.do("question-work")
+
+    def test_a_page_for_nobody_is_held_back(self):
+        write(self.meetings / "wiki" / "entities" / "nobody.md", "---\ntitle: n\ntype: entity\nparty: none\n---\n\nbody\n")
+        write(self.meetings / "wiki" / "entities" / "nobody-list.md", "---\ntitle: n\ntype: entity\nparties: none\n---\n\nbody\n")
+        for page in ("[[wiki/entities/nobody]]", "[[wiki/entities/nobody-list]]"):
+            say = self.worked(page)
+            self.assertIn(SENTENCE, say, page)
+            self.assertIn("No page may be changed.", say, page)
+
+    def test_a_missing_page_looks_like_a_held_one(self):
+        missing = self.worked("[[wiki/sources/260399-nothing-here]]")
+        held = self.worked(BIRCH)
+        self.assertEqual(held.split("\n", 1)[1], missing.split("\n", 1)[1])
+        self.assertNotIn("not there", missing)
+
+    def test_a_knowledge_question_keeps_to_its_own_rules(self):
+        name = "questions/260312 - source-date.md"
+        self.ask("---\ntype: question\nasked: 2026-03-12\nstatus: open\npages: [\"[[wiki/concepts/resilience]]\", \"[[wiki/concepts/gone]]\"]\n---\n\n**Which year?**\n",
+                 wiki="Knowledge", name=name)
+        self.do("question-answer", wiki="Knowledge", file=name, words="2025")
+        say = self.do("question-work", wiki="Knowledge", file=name)
+        self.assertIn("Change wiki/concepts/resilience.md", say)
+        self.assertIn("1 page is not there.", say)
+
+
+class TestSubfolderQuestion(WikiAnswerCase):
+    def test_a_question_in_a_subfolder_is_worked_in_with_its_own_record(self):
+        name = "questions/sub/260312 - volume-floor.md"
+        self.ask(name=name)
+        self.do("question-answer", file=name, words="500")
+        record = (self.meetings / "raw" / "answers" / "261005 - volume-floor.md").read_text()
+        self.assertIn('question: "[[questions/sub/260312 - volume-floor]]"', record)
+        say = self.do("question-work", file=name)
+        self.assertIn("Cite [[raw/answers/261005 - volume-floor]].", say)
+        self.assertNotIn(SENTENCE, say)
+        self.assertEqual("Done. The question is worked in", self.do("question-done", file=name))
 
 
 class TestWorkIn(WikiAnswerCase):

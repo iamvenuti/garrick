@@ -733,7 +733,7 @@ questions", "work in the answers" or "work it in":
 1. List the files in `questions/` with `status: answered`. For each, run
    `question-work --wiki Meetings --file "questions/<file>"`. It names the
    raw answer to cite and the pages the answer may change, and leaves out
-   every page walled from the question's parties or not readable plainly.
+   every page not written for the question's own parties (one walled from them, one for nobody, `party: none`, or not readable plainly), and a page that is not there.
    When it says the wall sentence, say it once, word for word, and name no
    party, page or subject. A refusal with that sentence stops this question;
    go on to the next, and change nothing for it.

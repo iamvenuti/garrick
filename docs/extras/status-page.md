@@ -416,7 +416,7 @@ Each request names one verb, and `page_action.py` takes these and no others. A n
 | `question-later` | Puts a wiki question off to the day `until` names, and writes only the question |
 | `question-close` | Closes a wiki question with nothing to work in, and writes only the question |
 | `question-decide` | Record as a decision, which is not built yet: refused, and nothing is written |
-| `question-work` | Reads an answered wiki question: the raw answer to cite and the pages it may change, leaving out a page walled from the question's parties and saying the rule's wall sentence. It writes nothing |
+| `question-work` | Reads an answered wiki question: the raw answer to cite and the pages it may change, leaving out a Meetings page that does not carry the question's own parties, or is not there, and saying the rule's wall sentence. It writes nothing |
 | `question-done` | Marks an answered wiki question `done`, once its pages are worked in, and writes only the question |
 | `continue` | Commits Garrick's own record of a piece of work, asks Claude where it stands, and opens that session in Claude's desktop app ([Continue](simple-home.md#continue)). The simple home's *Continue* sends it, and so does *Open in Claude* on a thread, on the cards, in the graph's panel and in the app's menu and panel. With `suggested`, a first look's suggested request is asked instead, once. A piece of work kept in a folder of yours is given to Claude to read with `--add-dir`, with an `Edit` deny rule on it in the session folder's Claude settings and in `--settings` |
 | `ask-desktop` | Asks Claude the words typed into Ask something, in the workspace's folder, and opens that session in the desktop app; where the app cannot open it, the answer comes back to the page |

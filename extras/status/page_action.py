@@ -2665,11 +2665,16 @@ def question_pages(q: WikiQuestion, wall: str) -> tuple:
         raise Refused(wall)             # both sides of a wall: nothing named, nothing written
     allowed = []
     for p, tags in readable:
-        if any(q.lib.walled(ctx, a, b) for a in tags for b in mine):
+        # Only a page that carries the question's own parties, and no others:
+        # a page written for nobody (`none`) is guarded by no wall, so the
+        # answer is never written into it.
+        if not tags or not set(tags) <= set(mine) or any(q.lib.walled(ctx, a, b) for a in tags for b in mine):
             held += 1
         else:
             allowed.append(p)
-    return allowed, held, missing
+    # A page that is not there looks like a page held back, so that a `pages:`
+    # list cannot be used to ask whether a walled page exists.
+    return allowed, held + missing, 0
 
 
 def answer_slug(stem: str) -> str:
@@ -2689,7 +2694,7 @@ def raw_answer_text(q: WikiQuestion, words: str, today: dt.date, tags: list) -> 
     where = ["type: answer", "answered: %s" % today.isoformat()]
     if q.name == "Meetings":
         where += ["zone: %s" % str(q.fm.get("zone")).strip(), "parties: [%s]" % ", ".join(tags)]
-    where.append("question: %s" % quoted("[[%s/%s]]" % (WIKI_QUESTION_DIR, q.stem())))
+    where.append("question: %s" % quoted("[[%s]]" % q.path.relative_to(q.dir).with_suffix("").as_posix()))
     fence = fence_for(words)
     return ("---\n%s\n---\n\nQuestion: %s\n\nAnswered on %s, in the user's own words:\n\n%s\n%s\n%s\n"
             % ("\n".join(where), q.bold.strip("*").strip(), today.isoformat(), fence, words, fence))

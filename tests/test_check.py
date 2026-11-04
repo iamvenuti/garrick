@@ -1070,6 +1070,13 @@ class TestWikiQuestions(CheckCase):
         write(self.asked / "260312 - e.md", wiki_question("zone: Work\nparties: [acme]\n" + record, status="answered"))
         self.assertEqual([], self.messages("Wikis/Meetings/questions/260312 - e.md"))
 
+    def test_a_question_in_a_subfolder_owns_a_record_that_links_its_path(self):
+        write(self.meetings / "raw" / "answers" / "260313 - lease.md", answer_record("[acme]", question="sub/260312 - s").replace(
+            "[[questions/sub/260312 - s]]", "[[questions/sub/260312 - s]]"))
+        write(self.asked / "sub" / "260312 - s.md", wiki_question("zone: Work\nparties: [acme]\nanswer: \"[[raw/answers/260313 - lease]]\"\n",
+                                                                  status="answered"))
+        self.assertEqual([], self.messages("Wikis/Meetings/questions/sub/260312 - s.md"))
+
     def test_a_project_may_not_link_a_raw_answer_across_a_wall(self):
         write(self.meetings / "raw" / "answers" / "260313 - birch-lease.md", answer_record("[birch]"))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260313 - birch-lease]].\n")

@@ -32,7 +32,13 @@ tool is three levels up (`../../../System/tools/recall.py`); from a thread
 folder, five; from a zone folder, two. The installer allows `search` and
 `stats` at those depths, so they run without a question. Never change folder
 first (no `cd` to the root, then the tool): from the workspace root or
-`System/` the tool reads as a root session, which may read every zone.
+`System/` the tool reads as a root session, which may read every zone. The
+tool's scope comes only from the folder the process really runs in, with
+symlinks followed, and never from an argument. Where the environment names the
+folder the session was opened in (Claude Code sets `CLAUDE_PROJECT_DIR`; Codex
+sets nothing the tool reads), the scope is the narrower of that folder and the
+current one, and a current folder outside the session's folder searches
+nothing. A folder outside the workspace given by `--root` searches nothing.
 
 ```sh
 python3 ../../../System/tools/recall.py search "invoice export retry"
@@ -48,7 +54,7 @@ python3 ../../../System/tools/recall.py search "retry flag" --sessions
 - `--archived` adds archived pages after the rest. Use it only when the user
   asks to look in the archive. Pages that are dormant join by themselves, when
   the working ones fall short, and the answer says "from older notes".
-- `--project DIR` names the project when the session was not opened in it.
+- There is no `--project`: the scope is the folder, never a choice.
 - `stats` lists the indexes and how many files you may read in each.
 
 ## Where the session was opened
@@ -57,8 +63,7 @@ Only the workspace root and `System/` read as a root session. A session opened
 in a zone folder or below it reads that zone as a zone-level or project session.
 A session opened anywhere else (inside `Wikis/`, in `Zones/` itself, outside
 the workspace) has no place the walls can be checked against, so the tool
-searches nothing and says so. Open the session in a project, or pass
-`--project DIR`.
+searches nothing and says so. Open the session in a project, or at the root.
 
 A `party:` or `parties:` that holds anything but tags from the Parties table
 (`birch, acme`, `acme and birch`) cannot be placed: a Meetings page like that is

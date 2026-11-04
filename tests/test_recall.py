@@ -73,6 +73,28 @@ class Base(unittest.TestCase):
         write(self.root / BIRCH / "Threads" / "Market Sizing" / "Market Sizing.md",
               thread_note("Birch Entry", "Market Sizing", "birch", "Renewal bands for the wombat account."))
 
+        env = mock.patch.dict(os.environ)
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop("CLAUDE_PROJECT_DIR", None)
+
+    def cli(self, cwd, *args, root=True, env=None):
+        """Run the command line as a process opened in `cwd` would: its scope
+        is that folder. Returns (exit code, stdout, stderr)."""
+        here = os.getcwd()
+        out, err = io.StringIO(), io.StringIO()
+        try:
+            os.chdir(str(cwd))
+            with mock.patch.dict(os.environ, env or {}), contextlib.redirect_stdout(out), \
+                    contextlib.redirect_stderr(err):
+                try:
+                    code = recall.main((["--root", str(self.root)] if root else []) + list(args))
+                except SystemExit as why:
+                    code = why.code
+        finally:
+            os.chdir(here)
+        return code, out.getvalue(), err.getvalue()
+
     def find(self, words, project=ACME, **kw):
         return recall.search(words, project=project, root=self.root, **kw)
 
@@ -121,16 +143,12 @@ class WallTest(Base):
                 self.assertNotIn(theirs, r.path.lower())
 
     def test_the_command_line_header_counts_only_what_is_returned(self):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            code = recall.main(["--root", str(self.root), "search", "wombatplan wombat", "--project", ACME])
+        code, out, _ = self.cli(self.root / ACME, "search", "wombatplan wombat")
         self.assertEqual(0, code)
-        self.assertEqual("0 results for 'wombatplan wombat'", out.getvalue().strip())
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            recall.main(["--root", str(self.root), "stats", "--project", ACME])
-        self.assertNotIn("Meetings: 4", out.getvalue())
-        self.assertIn("Meetings: 2 files", out.getvalue())          # the Acme page and its raw record
+        self.assertEqual("0 results for 'wombatplan wombat'", out.strip())
+        _, out, _ = self.cli(self.root / ACME, "stats")
+        self.assertNotIn("Meetings: 4", out)
+        self.assertIn("Meetings: 2 files", out)          # the Acme page and its raw record
 
     def test_stats_counts_only_what_the_project_may_read(self):
         rows = {r["index"]: r["files"] for r in recall.stats(ACME, self.root)}
@@ -219,11 +237,9 @@ class IndexTest(Base):
             found = self.find("quokkaplan renewal")
             self.assertEqual("Wikis/Meetings/wiki/sources/260310-acme-kickoff.md", found[0].path)
             self.assertNotIn("wombat", json.dumps([dataclasses.asdict(r) for r in found]))
-            out = io.StringIO()
-            with contextlib.redirect_stdout(out):
-                recall.main(["--root", str(self.root), "search", "quokkaplan", "--project", ACME])
-        self.assertIn("FTS5 is not in this Python's SQLite", out.getvalue())
-        self.assertIn("1 result", out.getvalue())
+            _, out, _ = self.cli(self.root / ACME, "search", "quokkaplan")
+        self.assertIn("FTS5 is not in this Python's SQLite", out)
+        self.assertIn("1 result", out)
         # And back again: an index made without FTS5 is made again with it.
         self.assertTrue(self.find("quokkaplan"))
 
@@ -284,10 +300,8 @@ class RankingTest(Base):
         for n in range(3):
             write(self.root / ACME / ("N%d.md" % n), "# N\n\nocelotplan\n")
         self.assertEqual({"working"}, {r.grade for r in self.find("ocelotplan", limit=3)})
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            recall.main(["--root", str(self.root), "search", "ocelotplan", "--project", ACME, "--limit", "10"])
-        self.assertIn("from older notes", out.getvalue())
+        _, out, _ = self.cli(self.root / ACME, "search", "ocelotplan", "--limit", "10")
+        self.assertIn("from older notes", out)
 
     def test_the_reach_setting_keeps_dormant_pages_out(self):
         top = self.root / "Wikis" / "Meetings"
@@ -756,6 +770,138 @@ class RawClaimantsTest(Base):
         self.assertEqual([], self.paths("kiwifruit", ACME))
 
 
+class CommandLineScopeTest(Base):
+    """The command line's scope comes only from the process's real folder
+    (and the session marker), never from an argument."""
+
+    def sessions_at_root(self):
+        write(self.root / "System" / ".sessions" / "260901 - r.md", "# Session\n\nrootsession pelicanword\n")
+
+    def test_no_argument_picks_the_scope(self):
+        self.sessions_at_root()
+        acme = self.root / ACME
+        for flag in ("System", ACME.replace("Acme Review", "Birch Entry"), str(self.root), "."):
+            code, out, _ = self.cli(acme, "search", "wombatplan", "--project", flag)
+            self.assertNotEqual(0, code, flag)
+            self.assertNotIn("wombatplan", out)
+            self.assertNotEqual(0, self.cli(acme, "stats", "--project", flag)[0], flag)
+        self.assertTrue(self.cli(self.root, "search", "pelicanword", "--sessions")[1].startswith("1 result"))
+        code, out, _ = self.cli(acme, "search", "pelicanword", "--sessions")
+        self.assertTrue(out.startswith("0 results"), out)
+        self.assertEqual("0 results", self.cli(acme, "search", "wombatplan", "--zone", "Work", "--sessions")[1][:9])
+        self.assertTrue(self.cli(acme, "search", "quokkaplan")[1].startswith("1 result"))
+
+    def test_a_zone_flag_does_not_widen_past_the_projects_party(self):
+        write(self.root / "Zones/Personal/Diary/Diary.md", "# Diary\n\nzonewidenword\n")
+        write(self.root / "Zones/Personal/Diary/Threads/T/T.md", "# T\n\nzonewidenword\n")
+        code, out, _ = self.cli(self.root / ACME, "search", "zonewidenword", "--zone", "Personal")
+        self.assertTrue(out.startswith("0 results"), out)
+        code, out, _ = self.cli(self.root / ACME, "search", "wombatplan", "--zone", "Personal")
+        self.assertTrue(out.startswith("0 results"), out)
+
+    def test_a_folder_outside_the_given_root_reads_nothing(self):
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        code, out, err = self.cli(elsewhere, "search", "quokkaplan")
+        self.assertTrue(out.startswith("0 results"), out)
+        other = build_workspace(self.tmp / "other").resolve()
+        write(other / ACME / "N.md", "# N\n\nquokkaplan\n")
+        # The process is in another workspace, --root names this one: nothing.
+        code, out, _ = self.cli(other / ACME, "search", "quokkaplan")
+        self.assertTrue(out.startswith("0 results"), out)
+        # And the other way round.
+        code, out, _ = self.cli(self.root / ACME, "search", "quokkaplan")
+        self.assertTrue(out.startswith("1 result"), out)
+
+    def test_symlinks_are_followed_to_the_real_folder(self):
+        link = self.tmp / "link"
+        os.symlink(str(self.root / ACME), str(link))
+        self.assertEqual(self.root / ACME, self._cwd(link))
+        out = self.cli(link, "search", "wombatplan")[1]
+        self.assertTrue(out.startswith("0 results"), out)
+
+    def _cwd(self, folder):
+        here = os.getcwd()
+        try:
+            os.chdir(str(folder))
+            return recall.cwd_project(self.root)
+        finally:
+            os.chdir(here)
+
+    def test_the_session_marker_narrows_and_never_widens(self):
+        acme = self.root / ACME
+        marker = {"CLAUDE_PROJECT_DIR": str(acme)}
+        # opened in Acme, cd to the root: nothing, even at depth 0
+        out = self.cli(self.root, "search", "wombatplan", env=marker)[1]
+        self.assertTrue(out.startswith("0 results"), out)
+        self.assertEqual(recall.NOWHERE, self._with(marker, self.root))
+        self.assertEqual(recall.NOWHERE, self._with(marker, self.root / BIRCH))
+        self.assertEqual(recall.NOWHERE, self._with(marker, self.root / "System"))
+        # opened in Acme, in a thread of Acme: the thread
+        self.assertEqual(acme / "Threads" / "Pricing", self._with(marker, acme / "Threads" / "Pricing"))
+        # opened at the root, working in Acme: Acme (the narrower)
+        self.assertEqual(acme, self._with({"CLAUDE_PROJECT_DIR": str(self.root)}, acme))
+        # opened at the root, at the root: the root
+        self.assertIsNone(self._with({"CLAUDE_PROJECT_DIR": str(self.root)}, self.root))
+        # a marker outside the workspace, or in a wiki: nothing
+        self.assertEqual(recall.NOWHERE, self._with({"CLAUDE_PROJECT_DIR": str(self.tmp)}, acme))
+        self.assertEqual(recall.NOWHERE, self._with({"CLAUDE_PROJECT_DIR": str(self.root / "Wikis")}, acme))
+
+    def _with(self, env, folder):
+        with mock.patch.dict(os.environ, env):
+            return self._cwd(folder)
+
+    def test_stats_comes_from_the_folder_too(self):
+        _, out, _ = self.cli(self.root / ACME, "stats")
+        self.assertNotIn("Meetings: 4", out)
+        self.assertNotIn("Meetings:", self.cli(self.tmp, "stats")[1])
+
+
+class AdmitTest(Base):
+    """`admit` narrows a root-scope search before ranking, so walled rows
+    change neither the order nor the scores."""
+
+    def add_meetings(self, birch_notes):
+        meetings = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
+        write(meetings / "260401-a1.md", meeting_page("Work", "[acme]", "A one").replace(
+            "Decisions.", "Decisions: quokkax quokkax quokkax filler filler filler filler."))
+        write(meetings / "260402-a2.md", meeting_page("Work", "[acme]", "A two").replace(
+            "Decisions.", "Decisions: quokkax numbatx numbatx."))
+        for n in range(birch_notes):
+            write(meetings / ("2604%02d-b%d.md" % (10 + n, n)), meeting_page("Work", "[birch]", "B %d" % n).replace(
+                "Decisions.", "Decisions: numbatx."))
+
+    def run_search(self, **kw):
+        return [(r.path, r.score) for r in recall.search("quokkax numbatx", project=None, root=self.root,
+                                                          wiki="Meetings", **kw)]
+
+    def test_a_walled_row_changes_nothing_when_the_caller_admits_its_own_side(self):
+        side = lambda row: row.kind != "meetings" or "birch" not in row.parties      # noqa: E731
+        self.add_meetings(0)
+        base = self.run_search(admit=side)
+        self.assertTrue(base)
+        unfiltered = self.run_search()
+        self.add_meetings(12)
+        self.assertEqual(base, self.run_search(admit=side))
+        self.assertNotEqual(unfiltered, self.run_search())          # without admit the statistics move
+
+    def test_admit_only_narrows_and_fails_closed(self):
+        self.add_meetings(0)
+        self.assertEqual([], self.run_search(admit=lambda row: False))
+        def boom(row):
+            raise RuntimeError("x")
+        self.assertEqual([], self.run_search(admit=boom))
+        # a project's wall still holds when admit says yes to everything
+        self.assertEqual([], [r for r in recall.search("wombatplan", project=ACME, root=self.root,
+                                                       admit=lambda row: True)])
+
+    def test_the_policy_row_carries_kind_zones_project_and_parties(self):
+        seen = []
+        recall.search("quokkaplan", project=None, root=self.root, admit=lambda row: seen.append(row) or True)
+        self.assertTrue(any(r.kind == "meetings" and r.parties == ("acme",) and r.zones == ("work",) for r in seen))
+        self.assertTrue(any(r.kind == "zone" and r.project for r in seen))
+
+
 class MaskMoreTest(unittest.TestCase):
     SECRETS = [
         ("Authorization: Token abcd1234efgh", "abcd1234efgh"),
@@ -783,6 +929,19 @@ class MaskMoreTest(unittest.TestCase):
         ("otp 123456", "123456"),
         ("pwd=hunter2", "hunter2"),
         ("passwd: hunter2", "hunter2"),
+        ("docker login -u u -p hunter2", "hunter2"),
+        ("docker login -u u -p hunter2 registry.example", "hunter2"),
+        ("echo hunter2 | docker login --password-stdin", "hunter2"),
+        ("printf 'hunter2' | docker login -u u --password-stdin reg.example", "hunter2"),
+        ("openssl enc -aes-256-cbc -k hunter2 -in a", "hunter2"),
+        ("openssl enc -aes-256-cbc -pass pass:hunter2 -in a", "hunter2"),
+        ("aws configure set aws_secret_access_key wJalrXUtnFEMI/K7MDENG/bPx" + "RfiCYEXAMPLEKEY", "wJalrXUtnFEMI"),
+        ("aws configure set aws_access_key_id hunter2value", "hunter2value"),
+        ("aws configure set aws_session_token hunter2value", "hunter2value"),
+        ("wJalrXUtnFEMI/K7MDENG/bPx" + "RfiCYEXAMPLEKEY", "K7MDENG"),
+        ("Cookie: session=abcdef0123", "abcdef0123"),
+        ("Set-Cookie: sid=abcdef0123; Path=/", "abcdef0123"),
+        ("curl -H 'Cookie: session=abcdef0123' https://h.example", "abcdef0123"),
     ]
 
     def test_each_shape_is_masked(self):
@@ -801,7 +960,10 @@ class MaskSpeedTest(unittest.TestCase):
     """Masking stays fast on long hyphenated or dotted text, and cuts fail closed."""
 
     CASES = {"dashes": "-" * 20000, "key-": "key-" * 6000, "dots": "a." * 12000, "token_": "token_" * 4000,
-             "mixed": ("Lorem ipsum key-value a.b.c -x- pass=hunter2 user@example.com \n" * 2000)[:100000]}
+             "mixed": ("Lorem ipsum key-value a.b.c -x- pass=hunter2 user@example.com \n" * 2000)[:100000],
+             "docker -p": "docker login -u u -p " * 3000, "stdin": "echo x | docker login " * 3000,
+             "openssl -k": "openssl enc -k -pass pass: " * 3000, "cookie": "Cookie: " * 4000 + "Set-Cookie:" * 3000,
+             "slashes": "a/" * 20000, "plus-slash": "aB3+/" * 8000, "aws": "aws configure set aws_secret_access_key " * 2000}
 
     def render(self, text):
         s = recall_sessions.Session("s", "claude", turns=[("user", text, None), ("command", text, None)])

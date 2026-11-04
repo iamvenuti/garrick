@@ -2077,7 +2077,10 @@ def _bare_path(token: str, line: str, spans: List[Tuple[int, int]]) -> bool:
     extension, so `work/life balance` is words and not a place."""
     if token.startswith(("~", "/")) or re.search(r"\.[A-Za-z0-9]{1,5}$", token.rstrip("/")):
         return False
-    return not any(token in line[a:b] for a, b in spans)
+    folded, text = token.casefold(), line.casefold()
+    if len(text) != len(line) or folded not in text:    # folding moved the spans (ß), or read after rewriting: never bare
+        return False
+    return not any(folded in text[a:b] for a, b in spans)
 
 
 def other_zone_paths(ws: Workspace, note: Path, bases: List[Path], lines: List[str],

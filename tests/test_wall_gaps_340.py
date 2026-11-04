@@ -129,7 +129,7 @@ class ZonePathTest(unittest.TestCase):
 
     def test_a_marked_path_is_one_whether_it_is_there_or_not(self):
         for path in ("`Personal/Nothing/x.md`", "`personal/life`", "[h](personal/life)", "[[personal/life]]",
-                     "Personal/Nothing/x.md"):
+                     "Personal/Nothing/x.md", "Personal%2Flife", "`Personal%2Flife`"):
             self.resume("See %s." % path)
             self.assertEqual(1, len(self.crossings()), path)
 

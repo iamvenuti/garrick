@@ -498,7 +498,8 @@ class TestMove(ManageCase):
         self.assertEqual(0, self.scaffold("party", "--name", "Home Team", "--zone", "Personal", "--what", "Family").returncode)
         r = self.scaffold("project", "--zone", "Personal", "--name", "Garden", "--party", "home", "--thread", "Beds")
         self.assertEqual(0, r.returncode, r.stderr)
-        self.refused("Zones never mix", to="Garden")
+        err = self.refused("There is no project called Garden in Work", to="Garden")
+        self.assertNotIn("Personal", err)
 
     def test_a_name_taken_the_same_project_and_a_missing_project_are_refused(self):
         self.assertEqual(0, self.scaffold("thread", "--zone", "Work", "--project", "Apex", "--name", "Freight").returncode)

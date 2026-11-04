@@ -225,6 +225,16 @@ DECLARED: Dict[str, Op] = {
     # `own:` names the label that takes them (#182).
     "answer": _op(("zone", "file", "label", "text"), ("file", "label", "text"), "zone", True),
     "later": _op(("zone", "file", "until"), ("file", "until"), "zone", True),
+    # A wiki question (#224): the user's words filed as a raw answer, then the
+    # question changed. Neither commits (a wiki's commit is the skill's) and
+    # the words are no part of what the request is. `question-decide` is
+    # point 5, not built: refused. `question-work` only reads.
+    "question-answer": _op(("wiki", "file", "words"), ("wiki", "file"), "workspace"),
+    "question-later": _op(("wiki", "file", "until"), ("wiki", "file", "until"), "workspace"),
+    "question-close": _op(("wiki", "file"), ("wiki", "file"), "workspace"),
+    "question-decide": _op(("wiki", "file"), ("wiki", "file"), "none", retry="safe"),
+    "question-work": _op(("wiki", "file"), ("wiki", "file"), "none", retry="safe"),
+    "question-done": _op(("wiki", "file"), ("wiki", "file"), "workspace"),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
     # `suggested` asks a first look's suggested request instead (#182).

@@ -134,6 +134,15 @@ What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live cop
 
 When an ingest or a lint finds something only you can answer, such as who decides, or which of two figures holds, it writes the question as a file in the wiki's `questions/` folder, `<YYMMDD> - <slug>.md`, and adds no line to the page. A question has the form of a [*Needs you*](extras/simple-home.md#needs-you) question, plus `origin:`, the raw record that raised it, and `pages:`, the pages the answer would change. A Meetings question also carries the zone and parties of the pages it comes from, and the walls read it as they read a page. A Knowledge question carries neither, as nothing in Knowledge does. The schemas are in each wiki's `AGENTS.md`.
 
+You answer in your own words, in one line, and pick one of four outcomes. The command line does it for now, with `page_action.py` in `System/status/`:
+
+- **Answer** (`question-answer`) files your sentence first, word for word, with the question and the date, as `raw/answers/<YYMMDD> - <slug>.md` in the same wiki. Only then does the question say `status: answered` and `answer:` point at that record. A raw answer is never edited, and a name already taken is never written over: the next free one is used, or the action refuses. If the question cannot be updated after the record is filed, the record stays and the error is said.
+- **Later** (`question-later`) puts it off to a day you give, `status: later` and `later:`.
+- **Close** (`question-close`) is for a question with nothing to work in, `status: closed`.
+- **Record as a decision** is not built yet. `question-decide` says so and writes nothing.
+
+Nothing else changes. The pages change in a step of their own: say "work in the questions", and the `meetings` or `knowledge` skill reads each answered question (`question-work`), changes the pages in its `pages:`, cites the raw answer, and sets `status: done` (`question-done`). A Meetings page is changed only if it carries the question's own parties and no others: one walled from them, one written for nobody or not readable plainly is not changed, and the answer says that a wall held something back, in the rule's words, without naming it. A question whose pages sit on both sides of a wall is refused with the same sentence, and nothing is written. A Knowledge question has no parties, so every page it names may change. A Meetings raw answer carries its question's zone and parties, and the walls read it as they read the question.
+
 ### `raw/`
 
 Each wiki keeps the record as it arrived in `raw/`, such as a transcript, a mail or a frozen copy of a page, and writes its pages in `wiki/`. Nothing in `raw/` is edited, and the check reports a raw record changed after it was filed. A page that fades takes its raw record with it, renamed and unchanged.

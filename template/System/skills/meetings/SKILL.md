@@ -706,8 +706,47 @@ pages give both figures.
   in `questions/` for the user, and the page changes only once they answer.
 
 `check.py` warns about a question file with no `type: question`, a status
-other than `open`, `answered` or `later`, a `later` with no date, an
-answer with no `answer:`, no bold line, or no zone or parties.
+other than `open`, `answered`, `later`, `closed` or `done`, a `later` with
+no date, an answer with no `answer:` or one that points at no raw answer, no
+bold line, or no zone or parties.
+
+### Answers, and working them in
+
+The user answers in their own words and picks one outcome, through
+`python3 System/status/page_action.py` (the verbs write the question and the
+raw answer and nothing else, and commit nothing):
+
+| Outcome | Command | Writes |
+|---|---|---|
+| Answer | `question-answer --wiki Meetings --file "questions/<file>" --words "<their sentence>"` | the raw answer `raw/answers/<YYMMDD> - <slug>.md`, word for word with the question and the date, and only then `status: answered` and `answer:` on the question |
+| Later | `question-later --wiki Meetings --file "questions/<file>" --until <YYYY-MM-DD>` | `status: later` and the date |
+| Close | `question-close --wiki Meetings --file "questions/<file>"` | `status: closed` |
+| Decision | `question-decide` | nothing: not built yet, and it says so |
+
+Never write these by hand, and never edit a raw answer: it is the record the
+page rests on. A question that sits on both sides of a wall is refused with
+the rules' sentence, and the user says which side it belongs to.
+
+**Work in the answered questions**, when the user says "work in the
+questions", "work in the answers" or "work it in":
+
+1. List the files in `questions/` with `status: answered`. For each, run
+   `question-work --wiki Meetings --file "questions/<file>"`. It names the
+   raw answer to cite and the pages the answer may change, and leaves out
+   every page not written for the question's own parties (one walled from them, one for nobody, `party: none`, or not readable plainly), and a page that is not there.
+   When it says the wall sentence, say it once, word for word, and name no
+   party, page or subject. A refusal with that sentence stops this question;
+   go on to the next, and change nothing for it.
+2. Change only the pages it lists, to what the answer says. Each change cites
+   the raw answer, as `[[raw/answers/<file>]]`, so the user's word stays the
+   evidence and the page never says "according to the user" in a rewrite.
+   Where the answer is unclear, ask the user rather than guess.
+3. Mark it: `question-done --wiki Meetings --file "questions/<file>"`.
+4. Commit the changed pages, the raw answer and the question in the Wikis
+   repository, by name, in one commit. Never `git add -A`.
+
+A question still `open`, `later` before its date, `closed` or `done` is left
+alone. Nurture lists these questions, and this is the step that works them.
 
 ## Lint: "lint the meetings", "lint the wikis"
 

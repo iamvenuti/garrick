@@ -591,6 +591,8 @@ class TestWorkOnThePage(StatusCase):
         # nor what Settings › Memory would do (#108), which only reads, nor a note read or opened from Explore (#206).
         unzoned = {"run", "settings", "check-name", "back", "stack", "unstack", "ask-desktop", "example", "discover",
                    "files-stop", "files-progress", "work-file", "memory-preview", "note-read", "note-open"}
+        # A wiki question's verbs (#224) act on one wiki under that wiki's own lock, in no zone's repository.
+        unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

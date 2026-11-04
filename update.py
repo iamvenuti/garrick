@@ -643,7 +643,7 @@ def apply(root, p, only=None, today=None):
             allowed = {"add": allow["add"], "remove": allow["remove"], "record": allow["record"]}
             commits.append(git(root, "rev-parse", "--short", "HEAD").stdout.strip() + " in the workspace")
 
-    hooks = []
+    hooks, added = [], []
     for zone in p["hooks"]:
         lib.install_wall_hook(root / "Zones" / zone)
         hooks.append(zone)
@@ -651,6 +651,8 @@ def apply(root, p, only=None, today=None):
         try:
             lib.install_wall_hook(root / "Wikis", wiki=True, root=root)
             hooks.append("Wikis")
+            if p.get("wiki_hook") == "add":
+                added.append("Wikis")
         except (FileExistsError, FileNotFoundError) as exc:
             skipped.append(("Wikis/.git/hooks/pre-commit", "the wikis' wall check was not installed: %s" % exc))
 
@@ -666,6 +668,7 @@ def apply(root, p, only=None, today=None):
     for what, do in next_steps(root, p, done):
         then.append(do() if do else "To do: %s." % what)
     return {"done": done, "skipped": skipped, "commits": commits, "hooks": hooks,
+            "hooks_added": added,
             "problems": problems, "stamped": stamped, "unstamped": unstamped, "then": then,
             "allowlist": allowed}
 
@@ -820,8 +823,12 @@ def say_applied(p, result):
                          ", ".join(path + NEW_SUFFIX for path in done["merge"])))
     if result["commits"]:
         lines.append("Committed as %s." % ", ".join(result["commits"]))
-    if result["hooks"]:
-        lines.append("Refreshed the wall check in: %s." % ", ".join(result["hooks"]))
+    added = result.get("hooks_added", [])
+    if added:
+        lines.append("Added the wall check in: %s." % ", ".join(added))
+    refreshed = [h for h in result["hooks"] if h not in added]
+    if refreshed:
+        lines.append("Refreshed the wall check in: %s." % ", ".join(refreshed))
     lines += say_allowlist(result.get("allowlist"), applied=True)
     for path, why in result["skipped"]:
         lines.append("Skipped %s: %s." % (path, why))

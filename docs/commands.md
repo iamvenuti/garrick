@@ -47,8 +47,8 @@ System/
   briefing.md           what a catch-up raises and what it leaves out, in plain words: Garrick's; yours goes in briefing.local.md
   garrick-settings.json your settings, and which of those allowed commands are Garrick's
   templates/            the zone, project and thread templates scaffold.py copies
-  tools/                scaffold.py, check.py, correct.py, nurture.py, fade.py, briefing.py, probe.py, release.py, and garrick_lib.py, which they share
-  skills/               threads, intake, meetings, knowledge, todo, nurture, interview, setup, update
+  tools/                scaffold.py, check.py, correct.py, nurture.py, fade.py, recall.py, briefing.py, probe.py, release.py, and garrick_lib.py, which they share
+  skills/               threads, intake, meetings, knowledge, todo, nurture, recall, interview, setup, update
 Wikis/                  its own git repository
   Meetings/             every conversation, empty until you feed it
   Knowledge/            published material you study, empty until you feed it
@@ -371,6 +371,26 @@ python3 System/tools/correct.py --old acme-corp.example --new acmecorp.example -
 It searches your assistant's memory entries (the folder `memory` names in the check settings), `System/context.md`, every hub and thread note, each zone's `Todo.md`, and the pages of both wikis. The listing gives each file and line, and changes nothing; `--json` gives it to another program. With `--apply`, your one yes, it writes the new value in place of the old in each of them, re-reading each file first, and commits once per repository, staging only the files it changed. A memory kept outside the workspace is changed and not committed. Before each commit the staged walls check (`check.py --staged --walls-only`) runs in that repository, a wiki or the root as much as a zone, hook or no hook. When it refuses, that repository's files are put back as they were and nothing there is committed; the run names the refusing check and the paths, and says when the cause is a page's form, a check that did not finish, or a file another session has staged there.
 
 The old value is matched as written, never inside a longer word, and a hit that is right where it is, such as a misheard form in Aliases, is kept with `--leave <path>`. Live files show only the new value, with no "was" trail: git has the old one. A raw record is never edited. One that holds the old value is listed, and each wiki page resting on it gets `superseded:` in its frontmatter and a line at its end saying its record holds a value corrected since, and the right one. Then the Meetings index is rebuilt, and the Garrick App's page if you have it.
+
+## Recall
+
+Plain text search returns every line that matches, in no order, and a common word in your work matches thousands. Say "what did we decide about the retry flag", "when did we fix the export error" or "find where we talked about renewals", and the `recall` skill runs `System/tools/recall.py`, which searches an index and gives back the ten best files with a date, a source, a snippet and a path. The routing in `AGENTS.md` still comes first: "where did we land with X" goes to Meetings. A result is a pointer, and the assistant opens the file before it states a fact from it.
+
+```sh
+python3 System/tools/recall.py build                     # bring every index up to date; --rebuild makes them again
+python3 System/tools/recall.py search "invoice export retry" [--after 2026-06-01] [--zone Work] [--wiki Meetings] [--sessions] [--archived] [--limit 10]
+python3 System/tools/recall.py stats                     # the indexes, and how many files you may read in each
+python3 System/tools/recall.py extract                   # write new Claude Code and Codex sessions to .sessions/
+```
+
+- **One index per zone and per wiki**, stored inside it as `.recall.sqlite` and never committed. It is a cache: delete every one and `build` makes them again. An index never sits in a cloud-synced folder; one that would is kept in memory.
+- **Nothing to install.** It uses the SQLite in Python's standard library. When that SQLite has no FTS5 the tool says so and searches plain text, which ranks less well.
+- **The walls apply before a search ranks anything.** Each row carries its zone and its parties. A search from a project drops every row walled from the project's party, using the Walls table the commit hook reads. A Meetings page without its zone or its parties is left out, and a Meetings page of another zone is left out unless the search was asked to reach that zone. Knowledge crosses every wall. The count in the answer includes only what you may read. A session opened at the workspace root or in `System/` has no party and may read every zone; so the tool treats a search run from either folder as a root search.
+- **Ranking.** The words become an OR of quoted words, ranked by BM25 on `unicode61` with accents folded and no stemmer, so it works in any language. A second pass over raw chunks of about 4,000 characters (raw records and session text) is merged in by reciprocal rank fusion (`k` 60, the raw list at half weight). A small bonus favours recent items, and a page with `superseded:` counts half.
+- **The grades of [Fading](#fading) hold.** Working pages are searched first. Dormant pages join when the working ones fall short, if the `reach` setting allows it, and the answer says "from older notes". Archived pages join only with `--archived`.
+- **No scheduler.** Before each search the tool refreshes the files changed since the last one, by modified time and size.
+- **Past sessions.** Claude Code deletes its transcripts after 30 days unless `cleanupPeriodDays` says otherwise, and the `setup` skill offers to raise it. `recall.py extract` writes what the user said, what the assistant said and each command it ran, with its exit status as one short line after it, to `<YYMMDD> - <session id>.md` in the gitignored `.sessions/` folder of the zone the session was opened in. Tool output and everything loaded into the session (rules, context, memory index) are left out, and anything shaped like a key, a token or a password is masked. A session opened at the root or in `System/` goes to `System/.sessions/` and is searched only from the root or `System/`. A session whose folder cannot be placed plainly goes nowhere. With the [scheduled jobs](extras/scheduled-jobs.md#the-nightly-job) extra, the nightly job extracts new sessions and builds the indexes.
+- **The check** reports an index or a `.sessions/` file that is staged or committed.
 
 ## The two memories
 

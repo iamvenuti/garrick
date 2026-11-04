@@ -152,7 +152,11 @@ if xcrun swiftc "${OPT[@]}" -application-extension -parse-as-library -module-nam
      -o "$APPEX/Contents/MacOS/GarrickFinder" "$HERE/GarrickFinder.swift" "$HERE/GarrickShared.swift" \
      -Xlinker -e -Xlinker _NSExtensionMain 2>"$WORK/appex.log"; then
   cp "$WORK/appex-Info.plist" "$APPEX/Contents/Info.plist"
-  sign "$APPEX" "$EXT_ID" "$WORK/appex.entitlements"
+  # sign() hides codesign's words, so the signature is checked: an extension that is not signed is not shipped.
+  if ! { sign "$APPEX" "$EXT_ID" "$WORK/appex.entitlements" && codesign --verify --strict "$APPEX" 2>/dev/null; }; then
+    echo "make-app: the Finder extension did not build, so the app has no Finder menu: its signature failed." >&2
+    rm -rf "$BUNDLE/PlugIns"
+  fi
 else
   echo "make-app: the Finder extension did not build, so the app has no Finder menu:" >&2
   head -n 5 "$WORK/appex.log" >&2

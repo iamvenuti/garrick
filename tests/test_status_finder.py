@@ -367,6 +367,42 @@ class TestCustomDest(unittest.TestCase):
         self.assertNotIn("grep -qF \"$DEST", script)
 
 
+@unittest.skipUnless(SWIFT, "needs macOS with the Swift compiler")
+class TestExtensionSignature(unittest.TestCase):
+    def test_an_extension_that_does_not_sign_is_not_shipped(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t).resolve()
+            stubs = tmp / "stubs"
+            stubs.mkdir()
+            (stubs / "codesign").write_text('#!/bin/sh\ncase "$*" in *--entitlements*) exit 1;; esac\nexec /usr/bin/codesign "$@"\n')
+            (stubs / "codesign").chmod(0o755)
+            done, calls = build_app(tmp / "out", tmp, {"PATH": str(stubs) + os.pathsep + os.environ["PATH"]}, "--scratch")
+            self.assertEqual(0, done.returncode, done.stderr)
+            self.assertIn("the app has no Finder menu: its signature failed", done.stderr)
+            self.assertFalse((tmp / "out" / "Garrick.app" / "Contents" / "PlugIns").exists())
+            ok = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(tmp / "out" / "Garrick.app")], capture_output=True)
+            self.assertEqual(0, ok.returncode)
+
+
+class TestUpdateSaysWhatHappened(unittest.TestCase):
+    def test_the_place_comes_from_stdout_and_a_notice_follows_as_a_sentence(self):
+        sys.path.insert(0, str(REPO))
+        self.addCleanup(sys.path.remove, str(REPO))
+        import update
+        with tempfile.TemporaryDirectory() as t:
+            stub = Path(t) / "make-app.sh"
+            stub.write_text('#!/bin/sh\necho "make-app: Accessibility was reset for Garrick once; allow it again when macOS asks." >&2\necho /Applications/Garrick.app\n')
+            stub.chmod(0o755)
+            code, said = update.make_app([str(stub)])
+            self.assertEqual(0, code)
+            self.assertEqual("/Applications/Garrick.app. Accessibility was reset for Garrick once; allow it again when macOS asks", said)
+            self.assertEqual("Rebuilt Garrick.app: %s." % said, update.say_make_app([str(stub)]))
+            stub.write_text('#!/bin/sh\necho /Applications/Garrick.app\n')
+            self.assertEqual((0, "/Applications/Garrick.app"), update.make_app([str(stub)]))
+            stub.write_text('#!/bin/sh\necho "make-app: no Swift compiler" >&2\nexit 1\n')
+            self.assertEqual((1, "make-app: no Swift compiler"), update.make_app([str(stub)]))
+
+
 class TestHandlerSource(unittest.TestCase):
     """What Garrick.swift does with a link that parsed, read from its source."""
 

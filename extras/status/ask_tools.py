@@ -124,6 +124,9 @@ def tidy(text: str, most: int) -> str:
     return inert(" ".join(str(text).split()))[:most]
 
 
+NAME_A_PLACE = "Name the project or thread you mean."
+
+
 class Conversation:
     """One Ask conversation, as the read server holds it. Its state is saved to
     `out.json` after every call, for ask.py to read; it reads `in.json` before
@@ -282,7 +285,12 @@ class Conversation:
             parties = sc.page_parties(fm, ctx, lib)
             if not parties:
                 return None
-            zone = fm.get("zone") if isinstance(fm.get("zone"), str) else None
+            zone = fm.get("zone")
+            if isinstance(zone, list) and len(zone) == 1:
+                zone = zone[0]
+            if not isinstance(zone, str) or not zone.strip():
+                return None             # a list of zones cannot be placed: fail closed
+            zone = zone.strip()
         elif kind in ("library", "docs"):
             if any(fm.get(k) for k in ("parties", "party", "zone")):
                 return None
@@ -291,7 +299,10 @@ class Conversation:
             hub = sc.hub_parties(self.ws, zone, project, lib)
             if not hub or not hub <= set(ctx.get("parties", {})):
                 return None
-            parties = sorted(sc.place_parties(self.ws, zone, project, thread, lib))
+            own = set(sc._tags(fm.get("party"), lib)) | set(sc._tags(fm.get("parties"), lib))
+            if not own <= set(ctx.get("parties", {})):
+                return None             # a tag the Parties table lacks cannot be walled: drop the row
+            parties = sorted(set(sc.place_parties(self.ws, zone, project, thread, lib)) | own)
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else p.stem
         return {"path": rel, "kind": kind, "zone": zone, "project": project, "thread": thread,
                 "title": title.strip(), "date": sc._date(fm, p), "imported": sc._imported(fm, p),
@@ -521,18 +532,31 @@ class Conversation:
             if z is None:
                 return "No such zone."
             zone = z
-        held, lines = self.held(), []
+        held, listing = self.held(), []
+        if not held and not zone:
+            return NAME_A_PLACE             # nothing held and no zone to list: the user names the place
         for z in ([zone] if zone else list(names)):
             rows = []
             for pr, r in names.get(z, {}).items():
-                parties = sc.place_parties(self.ws, z, pr, None, lib)
-                if parties and not sc.admits(ctx, parties, held, lib):
+                parties = set(sc.place_parties(self.ws, z, pr, None, lib))
+                if not parties or not parties <= set(ctx.get("parties", {})):
+                    continue            # a place no party can be stated for is not named
+                if held and not sc.admits(ctx, parties, held, lib):
                     continue            # names of the far side are left out, not refused
                 ts = "; ".join(t + ("" if s == "active" else " (%s)" % s) for t, s in r["threads"].items())
-                rows.append("- %s [%s]%s" % (inert(pr), r["status"], " threads: " + inert(ts) if ts else ""))
+                rows.append((parties, "- %s [%s]%s" % (inert(pr), r["status"], " threads: " + inert(ts) if ts else "")))
             if rows:
-                lines.append("%s:" % z)
-                lines += rows
+                listing.append((z, rows))
+        listed = {p for _, rows in listing for ps, _ in rows for p in ps}
+        if any(lib.walled(ctx, x, y) for x in listed for y in listed):
+            return NAME_A_PLACE         # the list would hold both sides of a wall: nothing is listed, no count
+        if listed and not self.admit(listed):      # the names are material: what is listed is held
+            return STOPPED
+        self.save()
+        lines = []
+        for z, rows in listing:
+            lines.append("%s:" % z)
+            lines += [t for _, t in rows]
         return "\n".join(lines) or "No projects."
 
     @staticmethod
@@ -589,6 +613,16 @@ class Conversation:
             return nxt - dt.timedelta(days=1), ""
         return None, "period is a date (YYYY-MM-DD), today, tomorrow, this week or this month"
 
+    def zone_walled(self, zone: str, names, ctx: dict, sc, lib) -> bool:
+        """Whether a wall stands between any two parties of a zone's projects (an unplaceable project counts as one)."""
+        every = set()
+        for pr in names.get(zone, {}):
+            ps = set(sc.place_parties(self.ws, zone, pr, None, lib))
+            if not ps or not ps <= set(ctx.get("parties", {})):
+                return True
+            every |= ps
+        return any(lib.walled(ctx, x, y) for x in every for y in every)
+
     def owed(self, a: dict) -> str:
         sc, lib, ctx, names = self.world()
         until, bad = self.period_end(a.get("period"))
@@ -609,6 +643,10 @@ class Conversation:
         found = sc.actions(self.ws, scope, names, ctx, lib, dt.date.today())[:MOST_OWED]
         known = set(ctx.get("parties", {}))
         found = [i for i in found if set(i["parties"]) <= known]
+        # A line that names no party passes every wall test, so it is served only where no wall can matter:
+        # a zone with no wall inside it, and a conversation that holds nothing yet.
+        held = self.held()
+        found = [i for i in found if i["parties"] or (not held and not self.zone_walled(i["zone"], names, ctx, sc, lib))]
         found = self.fair(found, MOST_OWED, ctx, lib, sc)
         if found is None:
             return STOPPED

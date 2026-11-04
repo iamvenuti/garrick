@@ -186,6 +186,9 @@ class TestOneSession(AgentCase):
 
     def test_a_search_with_no_index_says_so_in_the_result(self):
         self.script([[{"call": "search", "args": {"words": "pallet quote", "kind": "meetings"}}, {"say": "ok"}]])
+        # The server is a process of its own, so the index is forced down in the workspace: its own recall.py is
+        # found first, and its search fails, whether or not Garrick's template holds a real one.
+        write(self.root / "System" / "tools" / "recall.py", "def search(*a, **k):\n    raise RuntimeError('index down')\n")
         self.agent().ask("find the pallet quote")
         (got,) = self.results()
         self.assertIn(ask.tools_lib().INDEX_DOWN, got["text"])

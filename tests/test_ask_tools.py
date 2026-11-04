@@ -302,7 +302,7 @@ class TestRead(ToolCase):
 
 class TestTheOtherTools(ToolCase):
     def test_places_lists_the_zone_with_status(self):
-        text, _ = self.conv().call("places", {})
+        text, _ = self.conv(told={"acme"}).call("places", {})
         self.assertIn("Work:", text)
         self.assertIn("- Acme Review [active] threads:", text)
         self.assertNotIn("Personal:", text)
@@ -347,6 +347,7 @@ class TestTheProtocol(ToolCase):
         return [json.loads(l) for l in out.getvalue().splitlines()]
 
     def test_initialize_list_and_call(self):
+        self.tell({"acme"})                  # places() lists nothing across a wall before something is held
         got = self.rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26"}},
                        {"jsonrpc": "2.0", "method": "notifications/initialized"},
                        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
@@ -363,6 +364,7 @@ class TestTheProtocol(ToolCase):
         self.assertEqual(-32601, got[4]["error"]["code"])
 
     def test_over_stdio_in_a_process_of_its_own(self):
+        self.tell({"acme"})
         msgs = [{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
                 {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
                 {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "places", "arguments": {}}}]
@@ -384,6 +386,69 @@ class TestTheProtocol(ToolCase):
 
 TODO_LINES = ("# Work\n\n## Inbox\n- [ ] [[Acme Review]] chase Dana on the pallet quote\n"
               "- [ ] [[Birch Entry]] BIRCHTODOSECRET send Theo the pallet launch plan\n")
+
+
+class TestTheReviewFindings(ToolCase):
+    """The 0.55 release review: places(), describe() and owed() against a conversation that holds nothing, or holds Acme."""
+
+    def test_places_with_nothing_held_does_not_list_both_sides_of_a_wall(self):
+        c = self.conv()
+        text, bad = c.call("places", {})
+        self.assertFalse(bad)
+        for name in ("Birch", "Acme", "Pricing", "Market Sizing"):
+            self.assertNotIn(name, text)
+        self.assertEqual(tools.NAME_A_PLACE, text)
+        self.assertEqual([], self.out()["seen"])
+
+    def test_places_with_acme_held_names_no_birch_and_what_is_listed_is_held(self):
+        text, _ = self.conv(told={"acme"}).call("places", {})
+        self.assertIn("Acme Review", text)
+        self.assertNotIn("Birch", text)
+        self.assertEqual(["acme"], self.out()["seen"])
+
+    def test_places_in_a_zone_with_no_wall_lists_it_and_holds_what_it_names(self):
+        from fixtures import project_hub
+        scoped.write(self.root / "Zones" / "Personal" / "Garden" / "Garden.md", project_hub("Personal", "Garden", party="acme"))
+        text, _ = self.conv(zone="Personal").call("places", {})
+        self.assertIn("Garden", text)
+        self.assertEqual(["acme"], self.out()["seen"])
+
+    def test_a_note_names_its_own_far_side_party(self):
+        own = self.root / "Zones" / "Work" / "Acme Review" / "Notes" / "own.md"
+        scoped.write(own, "---\ntitle: Own\nparties: [birch]\n---\n\nBIRCHOWN41 pallet\n")
+        c = self.conv(told={"acme"})
+        self.assertIn("birch", c.describe("Zones/Work/Acme Review/Notes/own.md", ["pallet"])["parties"])
+        scoped.write(own, "---\ntitle: Own\nparty: nobody-known\n---\n\nUNKNOWN pallet\n")
+        self.assertIsNone(c.describe("Zones/Work/Acme Review/Notes/own.md", ["pallet"]))
+        scoped.write(own, "---\ntitle: Own\nparty: birch\n---\n\nBIRCHOWN41 pallet\n")
+        self.rows = [Hit("Zones/Work/Acme Review/Notes/own.md", "BIRCHOWN41")]
+        text, _ = c.call("search", {"words": "pallet"})
+        self.assertNotIn("BIRCHOWN41", text)
+        scoped.write(own, "---\ntitle: Own\nparty: acme\n---\n\nplain pallet\n")
+        self.assertEqual({"acme"}, set(c.describe("Zones/Work/Acme Review/Notes/own.md", ["pallet"])["parties"]))
+
+    def test_a_meeting_page_with_a_list_of_zones_cannot_be_placed(self):
+        page = self.root / "Wikis/Meetings/wiki/sources/260311-two-zones.md"
+        scoped.write(page, scoped.meeting_page("[Work, Personal]", "[acme]", "Two zones") + "\npallet\n")
+        c = self.conv()
+        self.assertIsNone(c.describe("Wikis/Meetings/wiki/sources/260311-two-zones.md"))
+        scoped.write(page, scoped.meeting_page("[Work]", "[acme]", "One zone") + "\npallet\n")
+        self.assertEqual("Work", c.describe("Wikis/Meetings/wiki/sources/260311-two-zones.md")["zone"])
+
+    def test_a_party_less_todo_line_is_dropped_where_a_wall_stands_in_the_zone(self):
+        scoped.write(self.root / "Zones" / "Work" / "Todo.md", TODO_LINES + "- [ ] ZZPARTYLESS renew the parking permit\n")
+        for told in ((), {"acme"}):
+            text, _ = self.conv(told=told).call("owed", {})
+            self.assertNotIn("ZZPARTYLESS", text)
+        self.assertIn("chase Dana", self.conv(told={"acme"}).call("owed", {})[0])
+
+    def test_a_party_less_todo_line_is_kept_in_a_zone_without_a_wall_while_nothing_is_held(self):
+        from fixtures import project_hub
+        scoped.write(self.root / "Zones" / "Personal" / "Garden" / "Garden.md", project_hub("Personal", "Garden", party="acme"))
+        scoped.write(self.root / "Zones" / "Personal" / "Todo.md", "# Personal\n\n## Inbox\n- [ ] ZZPARTYLESS renew the parking permit\n")
+        self.assertIn("ZZPARTYLESS", self.conv(zone="Personal").call("owed", {})[0])
+        self.state = Path(self._tmp.name) / "state2"
+        self.assertNotIn("ZZPARTYLESS", self.conv(zone="Personal", told={"acme"}).call("owed", {})[0])
 
 
 class TestTheZoneTodoListIsNoRecord(ToolCase):

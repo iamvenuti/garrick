@@ -2677,6 +2677,13 @@ MACHINE_IGNORES = (".DS_Store\n._*\n__pycache__/\n"
                    "**/.obsidian/workspace*.json\n**/.obsidian/graph.json\n")
 
 
+# Recall's indexes are a cache and its extracted sessions are private to the machine
+# (#341): neither is ever committed. `.recall.sqlite*` covers the file, its journal and
+# its write-ahead files.
+RECALL_IGNORES = ("# Recall's search index is a cache rebuilt from the notes, and the sessions it extracts stay on this Mac.\n"
+                  ".recall.sqlite*\n.sessions/\n")
+
+
 def machine_made(rel: str) -> bool:
     """Whether a path, from the top of its repository, is one MACHINE_IGNORES
     names, as git matches those lines: a line with no slash inside it at any
@@ -2718,11 +2725,12 @@ def garrick_ignores(zones) -> Dict[str, str]:
                "# put away when the example was removed. Neither is ever committed.\n"
                "/%s/\n/%s/\n" % (EXAMPLE_DRIVE, ARCHIVE))
     out = {".gitignore": "# Zones and wikis are their own repositories.\nZones/\nWikis/\n" + generated + shared
-                         + example + common,
-           "Wikis/.gitignore": common + transcripts}
+                         + example + common + RECALL_IGNORES.replace(".sessions/", "System/.sessions/").replace(
+                             ".recall.sqlite*", "System/.recall.sqlite*"),
+           "Wikis/.gitignore": common + transcripts + RECALL_IGNORES}
     for zone in zones:
-        out["Zones/%s/.gitignore" % zone] = common + inbox
-    out["/".join(ZONE_TEMPLATE + (".gitignore",))] = common + inbox
+        out["Zones/%s/.gitignore" % zone] = common + inbox + RECALL_IGNORES
+    out["/".join(ZONE_TEMPLATE + (".gitignore",))] = common + inbox + RECALL_IGNORES
     return out
 
 

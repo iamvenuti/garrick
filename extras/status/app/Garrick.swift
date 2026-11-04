@@ -66,6 +66,7 @@ let flags = info["GarrickStatusArgs"] as? [String] ?? []
 // The token a garrick://open link must carry: random per build, put in Info.plist by
 // make-app.sh. Without one, every link is refused, so a bare build opens nothing.
 let linkToken = info["GarrickLinkToken"] as? String ?? ""
+let finderId = info["GarrickFinderId"] as? String ?? ""   // the Finder extension's bundle identifier
 let cmuxBundle = "com.cmuxterm.app"
 let claudeBundle = "com.anthropic.claudefordesktop"
 let codexBundle = "com.openai.codex"
@@ -717,6 +718,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askZonePicker: NSPopUpButton! // the zone the window answers in, beside the field (#317)
 	var askChoices: NSStackView!      // "Which zone?": a button for each zone, in its colour
 	var askAfterReset: (() -> Void)?  // what waits for a new conversation to have started: a zone's question sent again
+	var finderOn = false              // the Finder extension is switched on in System Settings (pluginkit says so)
 	var linkReady = false             // the window is up: a garrick:// link can be answered
 	var pendingLinks: [URL] = []      // links that arrived while the app was starting
 	var askZoneAfterStop = false      // a zone picked during a request: it is stopped, then a new conversation starts under a divider
@@ -809,6 +811,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			self.askKeeper = Timer.scheduledTimer(withTimeInterval: askKeepEvery, repeats: true) { [weak self] _ in self?.askKeep() }
 		}
 		syncFinderOpeners()
+		refreshFinder()
 		linkReady = true
 		let early = pendingLinks
 		pendingLinks = []
@@ -878,7 +881,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// Left in the Dock for days, it still checks the page's age when it comes forward.
-	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen(); syncFinderOpeners() } }
+	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen(); syncFinderOpeners(); refreshFinder() } }
 
 	func load() {
 		shown = modified(page)
@@ -1339,7 +1342,44 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? "",
 		        "askhotkey": askSpec()?["label"] as? String ?? "",
 		        "askdefault": defaults.object(forKey: kAskHotkey) == nil && askSpec() != nil, "said": keySaid,
-		        "dictation": savedDictation().rawValue, "dictationkey": defaults.dictionary(forKey: kDictationKey)?["label"] as? String ?? ""]
+		        "finder": finderStatus, "dictation": savedDictation().rawValue, "dictationkey": defaults.dictionary(forKey: kDictationKey)?["label"] as? String ?? ""]
+	}
+
+	// MARK: the Finder menu (#346)
+	// Whether the extension is switched on in System Settings, as pluginkit reports it: asked at launch
+	// and each time the app comes forward, so a switch made in System Settings shows when you come back.
+	// "missing": this build has none (it did not build, or the app is older). "off" is also what a
+	// extension macOS has not been told of looks like; Settings says how to switch it on.
+	var finderStatus: String {
+		guard !finderId.isEmpty, let plugins = Bundle.main.builtInPlugInsURL,
+		      FileManager.default.fileExists(atPath: plugins.appendingPathComponent("GarrickFinder.appex").path) else { return "missing" }
+		return finderOn ? "on" : "off"
+	}
+
+	func refreshFinder() {
+		guard !checking, !finderId.isEmpty else { return }
+		DispatchQueue.global(qos: .utility).async { [weak self] in
+			let p = Process()
+			p.executableURL = URL(fileURLWithPath: "/usr/bin/pluginkit")
+			p.arguments = ["-m", "-i", finderId]
+			let out = Pipe()
+			p.standardOutput = out
+			p.standardError = FileHandle.nullDevice
+			guard (try? p.run()) != nil else { return }
+			let text = String(data: out.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+			p.waitUntilExit()
+			let on = text.split(separator: "\n").contains { $0.trimmingCharacters(in: .whitespaces).hasPrefix("+") }
+			DispatchQueue.main.async {
+				guard let self, self.finderOn != on else { return }
+				self.finderOn = on
+				self.pushAppState()
+			}
+		}
+	}
+
+	// System Settings › General › Login Items & Extensions, where the extension is switched on.
+	func openExtensionSettings() {
+		if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") { NSWorkspace.shared.open(url) }
 	}
 
 	func appJSON() -> String {
@@ -1429,6 +1469,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if let key = request["askhotkey"] { setKey(kAskHotkey, "askhotkey", key as? [String: Any]) }
 		if let mode = request["dictation"] as? String { setDictation(Dictation(rawValue: mode) ?? .off) }
 		if let key = request["dictationkey"] { setDictationKey(key as? [String: Any]) }
+		if request["finder"] as? String == "settings" { openExtensionSettings() }
 		pushAppState()
 	}
 

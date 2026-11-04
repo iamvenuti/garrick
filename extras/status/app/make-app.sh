@@ -99,7 +99,7 @@ with open(work + "/Garrick.app/Contents/Info.plist", "wb") as f:
         "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1", "LSMinimumSystemVersion": "12.0",
         "LSApplicationCategoryType": "public.app-category.productivity", "NSHighResolutionCapable": True,
         "CFBundleURLTypes": [{"CFBundleURLName": "Garrick link", "CFBundleURLSchemes": ["garrick"]}], "GarrickLinkToken": token,
-        "GarrickFinderState": state, "GarrickWorkspace": ws, "GarrickStatusScript": status, "GarrickPython": py, "GarrickStatusArgs": args,
+        "GarrickFinderState": state, "GarrickFinderId": ext_id, "GarrickWorkspace": ws, "GarrickStatusScript": status, "GarrickPython": py, "GarrickStatusArgs": args,
     }, f)
 # The Finder extension (#346): a Finder Sync extension, which macOS loads from Contents/PlugIns.
 # Its only entitlement is the App Sandbox. It holds the workspace's place, the token a link must

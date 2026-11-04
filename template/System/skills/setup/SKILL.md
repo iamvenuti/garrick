@@ -134,7 +134,10 @@ mode* in the `threads` skill describes.
    compiles the app with the Xcode command line tools, downloads nothing,
    and puts it in `~/Applications`, printing its place as its last line.
    Then: "It's in your Applications folder as Garrick. Drag it to the Dock
-   to keep it there." If it fails, say what its last line means in plain
+   to keep it there." Add, as a statement and not a question, that the app
+   can also put Garrick in Finder's right-click menu for project and thread
+   folders, that this is optional, and that Settings in the app, under
+   Finder menu, turns it on. If it fails, say what its last line means in plain
    words, and that the home still opens in a browser from
    `System/generated/status.html`. On a no, leave it there.
 7. **Hand over.** Read `System/context.md` and list the projects:

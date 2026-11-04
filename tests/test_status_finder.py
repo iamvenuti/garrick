@@ -304,6 +304,20 @@ class TestHandlerSource(unittest.TestCase):
         self.assertIn('dir.appendingPathComponent(k).path', body)
         self.assertIn('for k in ["cmux", "claude", "codex"]', body)
 
+    def test_settings_says_whether_the_extension_is_on_and_opens_the_pane(self):
+        status = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        self.assertIn('id="menu-finder"', status)
+        self.assertIn("Open Login Items &amp; Extensions", status)
+        self.assertIn("tell(e,{finder:'settings'})", status)
+        self.assertIn('"finder": finderStatus', self.swift)
+        self.assertIn("x-apple.systempreferences:com.apple.LoginItems-Settings.extension", self.swift)
+        self.assertIn('request["finder"] as? String == "settings"', self.swift)
+        self.assertIn('arguments = ["-m", "-i", finderId]', self.swift)       # read, never set: the app never enables it
+
+    def test_the_toast_names_the_earlier_build(self):
+        self.assertIn("The permission may belong to an earlier build of Garrick. In System Settings", self.swift)
+        self.assertIn("remove Garrick with the minus button, then allow it again", self.swift)
+
     def test_the_comparison_is_constant_time(self):
         shared = (APP / "GarrickShared.swift").read_text(encoding="utf-8")
         self.assertIn("diff |= x[i] ^ y[i]", shared)

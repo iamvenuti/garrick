@@ -104,6 +104,7 @@ ALLOWED_TOOLS = (
     "System/tools/briefing.py",
     "System/tools/nurture.py",
     "System/tools/fade.py",
+    "System/tools/recall.py",
     "System/tools/discover.py",
     "System/tools/extract.py",
     "System/skills/intake/intake.py",

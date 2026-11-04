@@ -2609,7 +2609,7 @@ def check_anonymous(ws: Workspace) -> List[Finding]:
 TODO_LABEL_RE = re.compile(r"^- \[ \] \[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]*)?\]\]:")
 # Obsidian Tasks reads its fields from the end of a line only: a date with
 # any text after it stays part of the description, unread.
-TASKS_FIELD_RE = re.compile(r"(?:\s*(?:[🔺⏫🔼🔽⏬]\uFE0F?|(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\uFE0F? *\d{4}-\d{2}-\d{2}|#[^\s#]+))$")
+TASKS_FIELD_RE = re.compile(r"(?:\s*(?:[🔺⏫🔼🔽⏬]\uFE0F?|(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\uFE0F? *\d{4}-\d{2}-\d{2}|#(?!\d+(?![\w/-]))[^\s#]+))$")
 TASKS_DATE_RE = re.compile(r"(?:📅|📆|🗓|⏳|⌛|🛫|➕)\uFE0F? *\d{4}-\d{2}-\d{2}")
 # Every task line of a list, ticked or not, and the `<angle bracket>` placeholder
 # that marks the example line a new zone's Todo.md opens with to show the shape.

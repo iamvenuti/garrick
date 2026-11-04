@@ -258,6 +258,36 @@ class TestSaid(ActionCase):
         self.assertEqual("Work: done, " + text, self.last_commit()[0])
 
 
+class TestIssueNumbersAreText(ActionCase):
+    """#360: a `#` followed only by digits is text, as in Obsidian; a tag holds a character that is not a digit."""
+
+    LINE = "- [ ] [[Pricing]]: merge #351, then merge #355 and #356 once green"
+
+    def setUp(self):
+        super().setUp()
+        write(self.work / "Todo.md", "# Work\n\n## Inbox\n\n%s\n\n## Done\n" % self.LINE)
+        git(self.work, "commit", "-qam", "a line with issue numbers")
+
+    def test_a_number_stays_in_the_text_and_a_word_is_still_a_tag(self):
+        t = tl.parse(self.LINE)
+        self.assertEqual("merge #351, then merge #355 and #356 once green", t["text"])
+        self.assertEqual([], t["tags"])
+        for tag in ("#waiting", "#q4", "#2026-plan"):
+            got = tl.parse("- [ ] Chase Theo %s" % tag)
+            self.assertEqual([tag], got["tags"], tag)
+            self.assertEqual("Chase Theo", got["text"], tag)
+
+    def test_todo_done_finds_the_line_by_its_number_and_the_reply_keeps_it(self):
+        say = pa.act(self.root, dict(pa.session_line(self.root, {"verb": "todo-done", "zone": "Work", "line": "merge #351"})),
+                     today=TODAY)
+        self.assertIn("#351", say)
+        self.assertNotIn("- [ ] [[Pricing]]: merge #351", (self.work / "Todo.md").read_text())
+
+    def test_the_reply_to_an_added_line_keeps_the_number(self):
+        say = self.act(verb="todo-add", zone="Work", text="decide whether to close #294", target="-", date="-")
+        self.assertEqual("Added to Inbox: decide whether to close #294", say)
+
+
 class TestRekey(ActionCase):
     """A second click on a row before the page rebuilds carries the key the
     line had when the page was built; the handler follows it to the line."""

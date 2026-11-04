@@ -148,6 +148,97 @@ class TestLinkRules(unittest.TestCase):
         self.assertEqual("false", self.run_h("same", "", ""))
 
 
+def build_app(dest, home, extra_env=None, *flags):
+    """make-app.sh into a scratch folder, in a home of its own, with tccutil, pluginkit and lsregister
+    stubs that only write down that they were called. Returns the log of those calls."""
+    home = Path(home)
+    stubs = home / "stubs"
+    stubs.mkdir(exist_ok=True)
+    log = home / "calls.log"
+    for name in ("tccutil", "pluginkit"):
+        stub = stubs / name
+        stub.write_text('#!/bin/sh\necho "%s $*" >> "%s"\n[ "$1" = "-m" ] && [ -n "$STUB_ENABLED" ] && echo "+    local.garrick.status.finder(1.0)"\nexit 0\n' % (name, log))
+        stub.chmod(0o755)
+    ws = home / "ws"
+    (ws / "Zones").mkdir(parents=True, exist_ok=True)
+    (ws / "System").mkdir(exist_ok=True)
+    (ws / "System" / "rules.md").write_text("x")
+    env = dict(os.environ, HOME=str(home), PATH=str(stubs) + os.pathsep + os.environ["PATH"], GARRICK_SWIFT_OPT="-Onone",
+               GARRICK_LSREGISTER=str(stubs / "lsregister"), GARRICK_WORKSPACE=str(ws))
+    (stubs / "lsregister").write_text('#!/bin/sh\necho "lsregister $*" >> "%s"\n' % log)
+    (stubs / "lsregister").chmod(0o755)
+    env.update(extra_env or {})
+    done = subprocess.run(["bash", str(APP / "make-app.sh"), "--dest", str(dest), *flags], env=env, capture_output=True, text=True, timeout=600)
+    return done, (log.read_text() if log.exists() else "")
+
+
+def plist(path):
+    with open(path, "rb") as f:
+        return plistlib.load(f)
+
+
+@unittest.skipUnless(SWIFT, "needs macOS with the Swift compiler")
+class TestScratchBuild(unittest.TestCase):
+    """make-app.sh --scratch builds the app and its Finder extension into a folder and
+    touches nothing else: not the installed app, the permissions, the extension list or Launch Services."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp()).resolve()
+        cls.dest = cls.tmp / "out"
+        cls.done, cls.calls = build_app(cls.dest, cls.tmp, None, "--scratch")
+        cls.app = cls.dest / "Garrick.app"
+        cls.appex = cls.app / "Contents" / "PlugIns" / "GarrickFinder.appex"
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_it_built(self):
+        self.assertEqual(0, self.done.returncode, self.done.stderr)
+        self.assertEqual(str(self.app), self.done.stdout.strip())
+        self.assertTrue(self.appex.is_dir())
+
+    def test_the_app_and_the_extension_verify(self):
+        done = subprocess.run(["codesign", "--verify", "--deep", "--strict", str(self.app)], capture_output=True, text=True)
+        self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_each_is_signed_with_a_requirement_that_does_not_change(self):
+        def requirement(path):
+            done = subprocess.run(["codesign", "-d", "-r-", str(path)], capture_output=True, text=True)
+            return re.search(r"designated => (.*)", done.stdout + done.stderr).group(1)
+        self.assertEqual('identifier "local.garrick.status"', requirement(self.app))
+        self.assertEqual('identifier "local.garrick.status.finder.scratch"', requirement(self.appex))
+
+    def test_the_extension_has_the_sandbox_and_nothing_else(self):
+        out = subprocess.run(["codesign", "-d", "--entitlements", "-", "--xml", str(self.appex)], capture_output=True).stdout
+        self.assertEqual({"com.apple.security.app-sandbox": True}, plistlib.loads(out[out.index(b"<?xml"):]))
+
+    def test_the_app_registers_the_link_and_both_hold_the_same_token(self):
+        app, ext = plist(self.app / "Contents" / "Info.plist"), plist(self.appex / "Contents" / "Info.plist")
+        self.assertEqual([{"CFBundleURLName": "Garrick link", "CFBundleURLSchemes": ["garrick"]}], app["CFBundleURLTypes"])
+        self.assertRegex(app["GarrickLinkToken"], r"^[0-9a-f]{32}$")
+        self.assertEqual(app["GarrickLinkToken"], ext["GarrickLinkToken"])
+        self.assertEqual(app["GarrickFinderState"], ext["GarrickFinderState"])
+        self.assertEqual(str(self.dest / ".finder-state"), app["GarrickFinderState"])    # a scratch build keeps its own
+        self.assertEqual(app["GarrickWorkspace"], ext["GarrickWorkspace"])
+        self.assertEqual({"NSExtensionPointIdentifier": "com.apple.FinderSync", "NSExtensionPrincipalClass": "GarrickFinder.GarrickFinder"},
+                         ext["NSExtension"])
+        self.assertEqual("XPC!", ext["CFBundlePackageType"])
+        self.assertEqual("local.garrick.status.finder.scratch", ext["CFBundleIdentifier"])
+
+    def test_every_build_has_a_token_of_its_own(self):
+        other = self.tmp / "again"
+        done, _ = build_app(other, self.tmp, None, "--scratch")
+        self.assertEqual(0, done.returncode, done.stderr)
+        self.assertNotEqual(plist(self.app / "Contents" / "Info.plist")["GarrickLinkToken"],
+                            plist(other / "Garrick.app" / "Contents" / "Info.plist")["GarrickLinkToken"])
+
+    def test_nothing_outside_the_folder_was_touched(self):
+        self.assertEqual("", self.calls)                                  # no tccutil, no pluginkit, no lsregister
+        self.assertFalse((self.tmp / "Library" / "Application Support" / "Garrick").exists())
+
+
 class TestHandlerSource(unittest.TestCase):
     """What Garrick.swift does with a link that parsed, read from its source."""
 
@@ -164,12 +255,21 @@ class TestHandlerSource(unittest.TestCase):
     def test_the_folder_the_opener_and_the_install_are_checked_before_launch(self):
         h = self.handler
         order = [h.index(x) for x in ("GarrickLink.openable(link.folder, workspace: workspace.path)", "launcherOn(link.app)",
-                                      "urlForApplication(withBundleIdentifier: bundle)", "launch(link.app, folder.path")]
+                                      "openerInstalled(link.app)", "launch(link.app, folder.path")]
         self.assertEqual(sorted(order), order)
 
     def test_the_handler_is_the_apple_event_for_a_url(self):
         self.assertIn("forEventClass: AEEventClass(kInternetEventClass), andEventID: AEEventID(kAEGetURL)", self.swift)
         self.assertIn('info["GarrickLinkToken"] as? String ?? ""', self.swift)   # no token: every link refused
+
+    def test_the_only_files_the_app_writes_for_finder_are_empty_markers_in_its_state_folder(self):
+        """test_status's 'the app changes no file' reads FileManager.default.x; the markers go through `fm`, so they are held here."""
+        body = self.swift[self.swift.index("func syncFinderOpeners()"):self.swift.index("// One request to ask.py, running")]
+        self.assertEqual(["createFile(atPath: file, contents: Data())"], re.findall(r"fm\.createFile\([^\n]*\)", body))
+        self.assertEqual(1, body.count("removeItem("))
+        self.assertIn("try? fm.removeItem(atPath: file)", body)
+        self.assertIn('dir.appendingPathComponent(k).path', body)
+        self.assertIn('for k in ["cmux", "claude", "codex"]', body)
 
     def test_the_comparison_is_constant_time(self):
         shared = (APP / "GarrickShared.swift").read_text(encoding="utf-8")

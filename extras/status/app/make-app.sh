@@ -48,6 +48,14 @@ PY="$(command -v python3)"
 OPT=(${GARRICK_SWIFT_OPT:--O})
 # What a garrick:// link must carry to be answered: new with every build, in the
 # app's Info.plist and the Finder extension's.
+mkdir -p "$DEST"
+DEST="$(cd "$DEST" && pwd)"
+# The folder where the app tells the extension which openers are on: one empty file each. A scratch
+# build keeps it beside itself, so it never answers for the installed app's extension, and the
+# extension gets an identifier of its own, so it never takes the installed one's place in macOS's list.
+FINDER_STATE="$HOME/Library/Application Support/Garrick/Finder"
+EXT_ID="local.garrick.status.finder"
+if [ "$SCRATCH" = 1 ]; then FINDER_STATE="$DEST/.finder-state"; EXT_ID="$EXT_ID.scratch"; fi
 TOKEN="$("$PY" -c 'import secrets; print(secrets.token_hex(16))')"
 
 WORK="$(mktemp -d)"
@@ -68,9 +76,9 @@ xcrun swiftc "${OPT[@]}" -o "$BUNDLE/MacOS/Garrick" "$WORK/src/main.swift" "$HER
 # The bundle identifier is the one the app had as Garrick's Status, so its
 # settings carry over. The plist is written by plistlib, so no path or flag
 # can break it.
-"$PY" - "$STATUS" "$WORK" "$WS" "$PY" "$TOKEN" "${ARGS[@]+"${ARGS[@]}"}" <<'PY'
+"$PY" - "$STATUS" "$WORK" "$WS" "$PY" "$TOKEN" "$FINDER_STATE" "$EXT_ID" "${ARGS[@]+"${ARGS[@]}"}" <<'PY'
 import importlib.util, plistlib, sys
-status, work, ws, py, token, given = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6:]
+status, work, ws, py, token, state, ext_id, given = sys.argv[1:8] + [sys.argv[8:]]
 args, i = [], 0
 while i < len(given):                  # the flags gone in 0.51.0 (#318), and --obsidian's vault with it
     if given[i] == "--obsidian":
@@ -91,8 +99,22 @@ with open(work + "/Garrick.app/Contents/Info.plist", "wb") as f:
         "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1", "LSMinimumSystemVersion": "12.0",
         "LSApplicationCategoryType": "public.app-category.productivity", "NSHighResolutionCapable": True,
         "CFBundleURLTypes": [{"CFBundleURLName": "Garrick link", "CFBundleURLSchemes": ["garrick"]}], "GarrickLinkToken": token,
-        "GarrickWorkspace": ws, "GarrickStatusScript": status, "GarrickPython": py, "GarrickStatusArgs": args,
+        "GarrickFinderState": state, "GarrickWorkspace": ws, "GarrickStatusScript": status, "GarrickPython": py, "GarrickStatusArgs": args,
     }, f)
+# The Finder extension (#346): a Finder Sync extension, which macOS loads from Contents/PlugIns.
+# Its only entitlement is the App Sandbox. It holds the workspace's place, the token a link must
+# carry and the folder the app keeps the opener files in, and nothing else of the app's.
+with open(work + "/appex-Info.plist", "wb") as f:
+    plistlib.dump({
+        "CFBundleIdentifier": ext_id, "CFBundleName": "GarrickFinder", "CFBundleDisplayName": "Garrick",
+        "CFBundleExecutable": "GarrickFinder", "CFBundlePackageType": "XPC!",
+        "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1", "LSMinimumSystemVersion": "12.0",
+        "NSExtension": {"NSExtensionPointIdentifier": "com.apple.FinderSync",
+                        "NSExtensionPrincipalClass": "GarrickFinder.GarrickFinder"},
+        "GarrickWorkspace": ws, "GarrickLinkToken": token, "GarrickFinderState": state,
+    }, f)
+with open(work + "/appex.entitlements", "wb") as f:
+    plistlib.dump({"com.apple.security.app-sandbox": True}, f)
 PY
 sips -s format png "$WORK/icon.svg" --out "$WORK/icon-1024.png" >/dev/null
 ICONSET="$WORK/AppIcon.iconset"
@@ -120,6 +142,20 @@ sign() {   # sign FILE IDENTIFIER [ENTITLEMENTS]
   [ -z "${3:-}" ] || ent=(--entitlements "$3")
   codesign --force --sign - -r="designated => identifier \"$2\"" ${ent[@]+"${ent[@]}"} "$1" 2>/dev/null
 }
+# The extension is signed first, with its entitlements, then the app that holds it. Its failure to
+# build leaves the app without the Finder menu: the app is still worth having.
+APPEX="$BUNDLE/PlugIns/GarrickFinder.appex"
+mkdir -p "$APPEX/Contents/MacOS"
+if xcrun swiftc "${OPT[@]}" -application-extension -parse-as-library -module-name GarrickFinder \
+     -o "$APPEX/Contents/MacOS/GarrickFinder" "$HERE/GarrickFinder.swift" "$HERE/GarrickShared.swift" \
+     -Xlinker -e -Xlinker _NSExtensionMain 2>"$WORK/appex.log"; then
+  cp "$WORK/appex-Info.plist" "$APPEX/Contents/Info.plist"
+  sign "$APPEX" "$EXT_ID" "$WORK/appex.entitlements"
+else
+  echo "make-app: the Finder extension did not build, so the app has no Finder menu:" >&2
+  head -n 5 "$WORK/appex.log" >&2
+  rm -rf "$BUNDLE/PlugIns"
+fi
 sign "$WORK/$NAME" "$APP_ID"
 
 # The requirement an installed app was signed with: empty when it cannot be read.
@@ -136,7 +172,8 @@ for N in "$NAME" "$OLDNAME"; do
     [ "$N" = "$NAME" ] || continue   # another app called Garrick's Status is none of ours
     echo "make-app: $DEST/$N is another app; move it, or pass --dest." >&2; exit 1
   fi
-  if pgrep -qx Garrick || pgrep -qx GarrickStatus; then
+  # Quit it only if it is the copy being replaced that is running, not an installed one elsewhere.
+  if ps -axo command= | grep -qF "$DEST/$N/Contents/MacOS/"; then
     osascript -e 'tell application id "local.garrick.status" to quit' >/dev/null 2>&1 || true
     sleep 1
   fi
@@ -150,7 +187,7 @@ for N in "$NAME" "$OLDNAME"; do
 done
 mv "$WORK/$NAME" "$DEST/$NAME"
 if [ "$SCRATCH" = 0 ]; then
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$DEST/$NAME" 2>/dev/null || true
+  "${GARRICK_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}" -f "$DEST/$NAME" 2>/dev/null || true
   if [ "$RESET" = 1 ]; then
     # The last time macOS asks: the next permission is kept across builds.
     tccutil reset Accessibility "$APP_ID" >/dev/null 2>&1 || true

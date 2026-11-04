@@ -2936,7 +2936,7 @@ class TestApp(unittest.TestCase):
 
     def test_the_app_is_built_not_shipped(self):
         self.assertTrue(os.access(self.APP / "make-app.sh", os.X_OK))
-        self.assertEqual({"Garrick.swift", "GarrickShared.swift", "make-app.sh"}, {p.name for p in self.APP.iterdir() if not p.name.startswith(".")})
+        self.assertEqual({"Garrick.swift", "GarrickFinder.swift", "GarrickShared.swift", "make-app.sh"}, {p.name for p in self.APP.iterdir() if not p.name.startswith(".")})
 
     def test_the_app_changes_no_file(self):
         swift = (self.APP / "Garrick.swift").read_text()
@@ -3169,7 +3169,7 @@ class TestApp(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             (work / "Garrick.app" / "Contents").mkdir(parents=True)
-            done = subprocess.run([sys.executable, "-", str(STATUS), str(work), "/ws", sys.executable, "token",
+            done = subprocess.run([sys.executable, "-", str(STATUS), str(work), "/ws", sys.executable, "token", "/state", "ext.id",
                                    "--no-graph", "--obsidian", "My Vault", "--no-obsidian", "--obsidian=Other", "--no-cmux"],
                                   input=writer, capture_output=True, text=True, timeout=60)
             self.assertEqual(0, done.returncode, done.stderr)

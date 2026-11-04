@@ -252,6 +252,33 @@ func launcherOn(_ k: String) -> Bool {
 	return true
 }
 
+// Whether an opener's app is here: the page offers none that is not, and neither does the Finder menu.
+func openerInstalled(_ k: String) -> Bool {
+	guard let id = ["cmux": cmuxBundle, "claude": claudeBundle, "codex": codexBundle][k] else { return false }
+	return NSWorkspace.shared.urlForApplication(withBundleIdentifier: id) != nil
+}
+
+// What the Finder extension may know (#346): a sandboxed process cannot read this app's defaults or the
+// workspace's settings, so the app leaves one empty file for each opener that is switched on in Settings
+// and installed, in the folder make-app.sh named in Info.plist. The extension reads whether a file exists
+// and nothing else. Written at launch and each time the page tells the app its menu.
+let finderState = (info["GarrickFinderState"] as? String).map { URL(fileURLWithPath: $0, isDirectory: true) }
+func syncFinderOpeners() {
+	guard let dir = finderState, !checking else { return }
+	// The list the page sent with its menu is the newer one while a change in Settings is still being saved.
+	let sent = (delegate.menuState?["launchers"] as? [String])
+	let fm = FileManager.default
+	try? fm.createDirectory(atPath: dir.path, withIntermediateDirectories: true)
+	for k in ["cmux", "claude", "codex"] {
+		let file = dir.appendingPathComponent(k).path
+		if (sent.map { $0.contains(k) } ?? launcherOn(k)) && openerInstalled(k) {
+			if !fm.fileExists(atPath: file) { fm.createFile(atPath: file, contents: Data()) }
+		} else if fm.fileExists(atPath: file) {
+			try? fm.removeItem(atPath: file)
+		}
+	}
+}
+
 // One request to ask.py, running: Stop interrupts it (SIGINT), and ask.py then says
 // stop on its connection to the server, which ends the turn (#261).
 final class AskRequest {
@@ -721,8 +748,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		guard launcherOn(link.app) else {
 			return toast("\(name) is switched off in Settings, under Opening a thread. Nothing was opened.")
 		}
-		let bundle = ["cmux": cmuxBundle, "claude": claudeBundle, "codex": codexBundle][link.app] ?? ""
-		guard NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) != nil else {
+		guard openerInstalled(link.app) else {
 			return toast("\(name) is not installed here. Nothing was opened.")
 		}
 		launch(link.app, folder.path, phrase: "open " + folder.lastPathComponent)
@@ -782,6 +808,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			self.askKeep()
 			self.askKeeper = Timer.scheduledTimer(withTimeInterval: askKeepEvery, repeats: true) { [weak self] _ in self?.askKeep() }
 		}
+		syncFinderOpeners()
 		linkReady = true
 		let early = pendingLinks
 		pendingLinks = []
@@ -851,7 +878,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	}
 
 	// Left in the Dock for days, it still checks the page's age when it comes forward.
-	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen() } }
+	func applicationDidBecomeActive(_ note: Notification) { if !checking { freshen(); syncFinderOpeners() } }
 
 	func load() {
 		shown = modified(page)
@@ -1409,6 +1436,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// off, which takes the icon or the panel away and brings the window back if it was hidden.
 	func setMenu(_ m: [String: Any]?) {
 		menuState = m
+		syncFinderOpeners()
 		if let m, let data = try? JSONSerialization.data(withJSONObject: m) {
 			defaults.set(data, forKey: kMenu)
 		} else {

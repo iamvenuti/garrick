@@ -928,6 +928,18 @@ def load_context(root: PathLike) -> dict:
         zone = _col(row, "zone")
         if zone:
             ctx["zones"][zone] = _col(row, "holds")
+
+    # A party's zone is compared with a zone's folder name, so it is written as that name: `**Work**` or `work` in
+    # the Zone cell is Work, the folder under Zones/ first, then the Zones table. A zone neither knows is kept as
+    # written, markup taken off, and matches nothing.
+    canon = {z.casefold(): z for z in ctx["zones"]}
+    try:
+        canon.update({d.name.casefold(): d.name for d in (Path(root) / "Zones").iterdir() if d.is_dir()})
+    except OSError:
+        pass
+    for row in ctx["parties"].values():
+        written = row["zone"].replace("*", "").strip().strip("`").strip()
+        row["zone"] = canon.get(written.casefold(), written)
     return ctx
 
 

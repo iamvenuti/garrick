@@ -174,12 +174,22 @@ class TestWhatTheExecutorRefuses(ExecutorCase):
 
     def test_a_party_of_another_zone_is_refused(self):
         ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Marco | own | Personal | `personal` |  |\n\n## Walls", 1))
-        for args in (("--zone", "Work", "--name", "Taxes", "--party", "personal", "--thread", "Return"),):
+        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Home | the household | Personal | `home` |  |\n\n## Walls", 1))
+        for args in (("--zone", "Work", "--name", "Taxes", "--party", "home", "--thread", "Return"),):
             code, out, err, spawned = self.session("new-project", *args)
             self.assertEqual((1, []), (code, spawned))
-            self.assertIn("Marco is a party of Personal, not of Work", err)
+            self.assertIn("Home is a party of Personal, not of Work", err)
         self.assertFalse((self.work / "Taxes").exists())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+    def test_a_party_whose_zone_cell_is_marked_up_or_lower_case_is_of_that_zone(self):
+        """`**Work**` or `work` in the Zone cell is the Work zone: the project is made, and committed."""
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Theo's Shop | a shop | **work** | `theo` |  |\n\n## Walls", 1))
+        code, out, err, spawned = self.session("new-project", "--zone", "Work", "--name", "Shopfront", "--party", "theo",
+                                               "--thread", "Launch")
+        self.assertEqual((0, ""), (code, err))
+        self.assertTrue((self.work / "Shopfront" / "Shopfront.md").is_file())
         self.assertEqual("", self.git("status", "--porcelain").stdout)
 
     def test_the_page_reply_to_a_click_has_no_built_after_a_refusal(self):
@@ -263,7 +273,9 @@ class TestOnePageRequest(ExecutorCase):
         real = pa.subprocess.run
 
         def spy(*a, **kw):
-            seen.append(kw["env"].get("GARRICK_CALLER_BUILDS_PAGE"))
+            argv = a[0] if a else kw.get("args", [])
+            if any(str(x).endswith("scaffold.py") for x in argv):      # not the git calls that check the zone's hook
+                seen.append(kw["env"].get("GARRICK_CALLER_BUILDS_PAGE"))
             return real(*a, **kw)
         with mock.patch.object(pa.subprocess, "run", spy):
             self.perform(self.park())

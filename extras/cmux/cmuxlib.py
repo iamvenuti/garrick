@@ -421,17 +421,16 @@ def sessions_by_folder(workspace: Path) -> Dict[str, str]:
         return {}
 
 
-def foregrounds() -> Dict[str, Optional[List[str]]]:
-    """{surface id: the names of the programs in its terminal's foreground}.
-
-    Read from cmux's process view. A surface whose foreground cmux does not
-    show, or shows without its programs, maps to None: nobody can say what
-    would read a line typed there. Empty when cmux does not answer."""
+def _foreground_view() -> Dict[str, Tuple[Optional[List[str]], Optional[List[int]]]]:
+    """{surface id: (program names, process groups)} of each terminal's
+    foreground, from one read of cmux's process view. Names are None when
+    cmux shows a group without its programs; groups are None when it shows
+    none. Empty when cmux does not answer."""
     try:
         data = cmux("top", "--all", "--processes", "--json", "--id-format", "both", parse=True)
     except CmuxError:
         return {}
-    out: Dict[str, Optional[List[str]]] = {}
+    out: Dict[str, Tuple[Optional[List[str]], Optional[List[int]]]] = {}
 
     def processes(items, found):
         for p in items or []:
@@ -456,13 +455,30 @@ def foregrounds() -> Dict[str, Optional[List[str]]]:
                         names = None
                         break
                     names += [Path(str(p.get("name") or "")).name.lstrip("-") for p in leaders]
-                out[node["id"]] = names or None
+                out[node["id"]] = (names or None, list(groups) or None)
                 return
             for v in node.values():
                 visit(v)
 
     visit(data)
     return out
+
+
+def foregrounds() -> Dict[str, Optional[List[str]]]:
+    """{surface id: the names of the programs in its terminal's foreground}.
+
+    Read from cmux's process view. A surface whose foreground cmux does not
+    show, or shows without its programs, maps to None: nobody can say what
+    would read a line typed there. Empty when cmux does not answer."""
+    return {k: v[0] for k, v in _foreground_view().items()}
+
+
+def foreground_groups() -> Dict[str, Optional[List[int]]]:
+    """{surface id: the process groups in its terminal's foreground}, or None
+    where cmux shows none. An assistant's name in the process view is its
+    version number, so a tab's own assistant is told by its process id, which
+    leads its group. Empty when cmux does not answer."""
+    return {k: v[1] for k, v in _foreground_view().items()}
 
 
 def at_shell_prompt(names: Optional[List[str]]) -> bool:

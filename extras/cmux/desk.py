@@ -401,9 +401,9 @@ def close_surface(s: dict) -> None:
     process (the assistant is one) with the code `confirmation_required`,
     unless forced. Desk has checked the transcript, but that says nothing about
     what else runs in the terminal, so it forces only when cmux asks and the
-    surface's foreground, read just now, holds the tab's own assistant and
-    nothing else. A job, a dev server or a `!` command would be killed too:
-    those tabs are left for the user. Older cmux has no --force and never asks,
+    surface's foreground, read just now, is the tab's own assistant's process
+    group and nothing else (matched by process id: its name is a version number).
+    A job, a dev server or a `!` command would be killed too: those tabs are left for the user. Older cmux has no --force and never asks,
     so it closes on the first call."""
     args = ["close-surface", "--surface", s["surface"]]
     if s.get("workspace"):
@@ -414,9 +414,11 @@ def close_surface(s: dict) -> None:
     except cx.CmuxError as e:
         if e.code != "confirmation_required":
             raise DeskError(str(e))
-    running = cx.foregrounds().get(s["surface"])
-    if running != [s.get("agent")]:
-        raise DeskError("cmux will not close %s without killing %s; close the tab by hand" % (
+    sid = s["surface"]
+    pid = s.get("pid")
+    if not pid or cx.foreground_groups().get(sid) != [pid]:
+        running = cx.foregrounds().get(sid)
+        raise DeskError("cmux will not close %s without possibly killing %s; close the tab by hand" % (
             tab_label(s), ", ".join(running) if running else "a program desk cannot name"))
     cmux(*args, "--force")
 

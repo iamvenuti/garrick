@@ -109,6 +109,19 @@ def top(foreground):
         {"kind": "pane", "surfaces": surfaces}]}]}]}
 
 
+def tab_top(surface, groups):
+    """cmux's process view of one surface: `groups` is a list of
+    (process group, program name); None shows no foreground groups. The
+    assistant's own name is its version number, as in a live tab."""
+    procs = [{"kind": "process", "name": name, "pid": g, "pgid": g, "children": []} for g, name in groups or []]
+    return {"windows": [{"kind": "window", "workspaces": [{"kind": "workspace", "panes": [{"kind": "pane", "surfaces": [
+        {"kind": "surface", "id": surface, "ref": "surface:1",
+         "foreground_pgids": [g for g, _ in groups or []], "processes": procs}]}]}]}]}
+
+
+ASSISTANT_PID = os.getpid()             # a live pid, as a running tab's is
+
+
 def dead_pid():
     p = subprocess.Popen(["true"])
     p.wait()
@@ -574,8 +587,8 @@ class DeskVerbTest(CmuxCase):
         return [c["argv"] for c in self.calls() if c["argv"][0] == "close-surface"]
 
     def test_close_forces_only_when_cmux_asks_for_confirmation(self):
-        self.state({"close_needs_force": True, "top": top({"a-surface": ["claude"]}),
-                    "sessions": [self.session("a", self.pricing, claude_rows())]})
+        self.state({"close_needs_force": True, "top": tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]),
+                    "sessions": [self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)]})
         code, out, err = self.run_desk("close", "--folder", str(self.pricing), "--yes")
         self.assertEqual((code, err), (0, ""))
         first, second = self.close_calls()
@@ -589,9 +602,11 @@ class DeskVerbTest(CmuxCase):
         self.assertEqual(len(self.close_calls()), 1)
         self.assertNotIn("--force", self.close_calls()[0])
 
-    def refused_close(self, **state):
+    def refused_close(self, pid=ASSISTANT_PID, **state):
         self.log.unlink(missing_ok=True)
-        self.state(dict({"close_needs_force": True, "sessions": [self.session("a", self.pricing, claude_rows())]}, **state))
+        session = self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)
+        session["pid"] = pid
+        self.state(dict({"close_needs_force": True, "sessions": [session]}, **state))
         code, _, err = self.run_desk("close", "--folder", str(self.pricing), "--yes")
         self.assertEqual(code, 2)
         self.assertEqual(len(self.close_calls()), 1)
@@ -599,23 +614,24 @@ class DeskVerbTest(CmuxCase):
         return err
 
     def test_close_does_not_force_while_another_program_runs_in_the_tab(self):
-        err = self.refused_close(top=top({"a-surface": ["claude", "vite"]}))
+        err = self.refused_close(top=tab_top("a-surface", [(ASSISTANT_PID, "2.1.318"), (5151, "vite")]))
+        self.assertIn("2.1.318", err)
         self.assertIn("vite", err)
         self.assertIn("by hand", err)
+        self.refused_close(top=tab_top("a-surface", [(5151, "vite")]))
 
     def test_close_does_not_force_when_the_foreground_is_unknown(self):
-        self.refused_close(top=top({"a-surface": None}))
-        self.refused_close(top=top({"b-surface": ["claude"]}))
+        self.refused_close(top=tab_top("a-surface", None))
+        self.refused_close(top=tab_top("b-surface", [(ASSISTANT_PID, "2.1.318")]))
         self.refused_close(top={})
 
-    def test_close_does_not_force_for_another_assistants_name(self):
-        self.refused_close(top=top({"a-surface": ["codex"]}))
+    def test_close_does_not_force_without_a_process_id_for_the_tab(self):
+        self.refused_close(pid=None, top=tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]))
 
     def test_close_forces_only_on_the_exact_error_code(self):
-        self.refused_close(close_error="Error: surface_busy: confirmation_required is not what failed",
-                           top=top({"a-surface": ["claude"]}))
-        self.refused_close(close_error="Error: socket refused (confirmation_required)",
-                           top=top({"a-surface": ["claude"]}))
+        top_ = tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")])
+        self.refused_close(close_error="Error: surface_busy: confirmation_required is not what failed", top=top_)
+        self.refused_close(close_error="Error: socket refused (confirmation_required)", top=top_)
 
     def test_close_never_forces_a_busy_tab(self):
         self.state({"close_needs_force": True, "sessions": [self.session("a", self.pricing, claude_rows(done=False))]})

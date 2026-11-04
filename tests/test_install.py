@@ -204,6 +204,13 @@ class InstallTest(unittest.TestCase):
         for tool in installer.ALLOWED_TOOLS:            # one rule each, and every one is shipped
             self.assertTrue((self.root / tool).is_file(), tool)
             self.assertIn("Bash(python3 %s:*)" % tool, allow)
+        # Recall is allowed for its two read-only words, from the zone, project and thread folders.
+        for depth in (0, 2, 3, 5):
+            for word in ("search", "stats"):
+                self.assertIn("Bash(python3 %sSystem/tools/recall.py %s:*)" % ("../" * depth, word), allow)
+        self.assertNotIn("Bash(python3 System/tools/recall.py:*)", allow)
+        self.assertEqual([], [r for r in allow if "recall.py" in r and not re.search(r"recall\.py (search|stats):\*\)$", r)])
+        self.assertTrue((self.root / "System/tools/recall.py").is_file())
         # Each repository the installer makes, in the spelling the skills write and the plain one.
         for repo in (".", "Wikis", '"Zones/Work"', "Zones/Work", '"Zones/Personal"', "Zones/Personal"):
             for word in ("status", "diff", "log", "add", "commit"):
@@ -228,7 +235,8 @@ class InstallTest(unittest.TestCase):
         for rule in [r for r in allow if r.startswith("Bash(git")]:
             self.assertRegex(rule, r'^Bash\(git -C (?:"[^"]+"|\S+) (?:status|diff|log|add|commit):\*\)$')
         # Nothing outside the workspace, and not the one tool that reaches the network.
-        self.assertEqual([], [r for r in allow if "release.py" in r or ".." in r or "~" in r or "/Users/" in r])
+        self.assertEqual([], [r for r in allow if "release.py" in r or "~" in r or "/Users/" in r
+                                           or (".." in r and not re.match(r"^Bash\(python3 (?:\.\./){2,5}System/tools/recall\.py (?:search|stats):\*\)$", r))])
         self.assertEqual(len(set(allow)), len(allow))
         # Each is the shape the repository already knows for a shell command: the start
         # of the command, as extras/jobs/headless-settings.json writes its own.

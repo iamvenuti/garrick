@@ -703,6 +703,59 @@ class ReviewSessionFixesTest(Base):
         self.assertEqual(0o700, f.parent.stat().st_mode & 0o777)
 
 
+class RawClaimantsTest(Base):
+    """One raw record, several claimants: the strictest policy wins, in any order."""
+
+    RAW = "Wikis/Meetings/raw/260312-birch-kickoff.txt"
+
+    def setUp(self):
+        super().setUp()
+        m = self.root / "Wikis/Meetings"
+        write(m / "raw/260312-birch-kickoff.txt", "Theo: the kiwifruit pricing is eleven euros.\n")
+        self.birch = m / "wiki/sources/260312-birch-kickoff.md"
+        self.acme = m / "wiki/sources/260320-acme-followup.md"
+        self.birch.write_text(self.birch.read_text().replace("---\n\n#", "raw: raw/260312-birch-kickoff.txt\n---\n\n#", 1))
+        write(self.acme, meeting_page("Work", "[acme]", "Acme follow-up").replace(
+            "---\n\n#", "raw: raw/260312-birch-kickoff.txt\n---\n\n#", 1))
+
+    def seen(self):
+        return (self.paths("kiwifruit", ACME), self.paths("kiwifruit", BIRCH), self.paths("kiwifruit", None))
+
+    def test_a_second_claimant_does_not_open_the_record_to_the_other_side(self):
+        acme, birch, _ = self.seen()
+        self.assertEqual([], acme)
+        self.assertEqual([], birch)
+
+    def test_the_result_does_not_depend_on_the_order_the_index_was_built(self):
+        first = self.seen()
+        for index in self.root.rglob(recall.INDEX_NAME):
+            index.unlink()
+        self.acme.rename(self.acme.with_name("250101-acme-followup.md"))     # read first now
+        self.assertEqual(first, self.seen())
+        for index in self.root.rglob(recall.INDEX_NAME):
+            index.unlink()
+        self.assertEqual(first, self.seen())
+
+    def test_an_unfinished_claimant_keeps_the_record_out(self):
+        self.acme.write_text(self.acme.read_text().replace("zone: Work", "zone: "))
+        self.assertEqual(([], [], []), self.seen())
+        # Only the finished owner: both sides of the policy come back.
+        self.acme.unlink()
+        acme, birch, _ = self.seen()
+        self.assertEqual([], acme)
+        self.assertEqual(1, len(birch))
+
+    def test_removing_a_claimant_derives_the_policy_again(self):
+        self.acme.unlink()
+        acme, birch, _ = self.seen()
+        self.assertEqual(([], 1), (acme, len(birch)))
+
+    def test_a_record_claimed_on_one_side_of_a_wall_only_stays_readable_there(self):
+        self.acme.unlink()
+        self.assertEqual(1, len(self.paths("kiwifruit", BIRCH)))
+        self.assertEqual([], self.paths("kiwifruit", ACME))
+
+
 class MaskMoreTest(unittest.TestCase):
     SECRETS = [
         ("Authorization: Token abcd1234efgh", "abcd1234efgh"),
@@ -744,6 +797,80 @@ class MaskMoreTest(unittest.TestCase):
 
 
 @unittest.skipUnless(fixtures.HAVE_GIT, "git is needed")
+class MaskSpeedTest(unittest.TestCase):
+    """Masking stays fast on long hyphenated or dotted text, and cuts fail closed."""
+
+    CASES = {"dashes": "-" * 20000, "key-": "key-" * 6000, "dots": "a." * 12000, "token_": "token_" * 4000,
+             "mixed": ("Lorem ipsum key-value a.b.c -x- pass=hunter2 user@example.com \n" * 2000)[:100000]}
+
+    def render(self, text):
+        s = recall_sessions.Session("s", "claude", turns=[("user", text, None), ("command", text, None)])
+        return recall_sessions.render(s, [], 1, 1)
+
+    def test_long_runs_mask_in_under_a_second(self):
+        for name, text in self.CASES.items():
+            started = time.time()
+            out = self.render(text)
+            elapsed = time.time() - started
+            self.assertNotIn("hunter2", out, name)
+            if not os.environ.get("CI"):
+                self.assertLess(elapsed, 1.0, name)
+
+    def test_a_secret_across_the_cut_does_not_survive_in_part(self):
+        secret = "ghp_" + "Ab3dEf6hIj9lMn2pQr5tUv8xYz1BcDeFgHiJ"
+        for pad in range(recall_sessions.MAX_TEXT - 40, recall_sessions.MAX_TEXT + 10, 3):
+            out = self.render("word " * (pad // 5) + " " + secret + " tail")
+            self.assertNotIn("ghp_", out, pad)
+            self.assertNotIn("Ab3dEf", out, pad)
+        for pad in range(recall_sessions.MAX_COMMAND - 30, recall_sessions.MAX_COMMAND + 10, 3):
+            out = self.render("w " * (pad // 2) + " " + secret)
+            self.assertNotIn("ghp_", out, pad)
+
+
+class IgnoreGuardTest(Base):
+    """Nothing is written where git would see it."""
+
+    def zone_repo(self, ignore):
+        zone = self.root / "Zones" / "Work"
+        if (zone / ".git").is_dir():
+            __import__("shutil").rmtree(str(zone / ".git"))
+        git_init(zone)
+        recall._IGNORED.clear()
+        recall._IGNORE_SAID.clear()
+        if ignore:
+            write(zone / ".gitignore", garrick_lib.RECALL_IGNORES)
+        return zone
+
+    def test_no_ignore_line_means_no_index_file_and_a_search_still_works(self):
+        zone = self.zone_repo(False)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertTrue(self.find("quokkaplan"))
+        self.assertEqual([], list(zone.glob(".recall.sqlite*")))
+        self.assertEqual(1, err.getvalue().count("is not ignored by git"))
+        self.assertIn("check.py", err.getvalue())
+
+    def test_an_ignored_zone_gets_its_index(self):
+        zone = self.zone_repo(True)
+        self.assertTrue(self.find("quokkaplan"))
+        self.assertTrue((zone / recall.INDEX_NAME).is_file())
+
+    def test_no_ignore_line_means_no_session_file(self):
+        zone = self.zone_repo(False)
+        src = write_jsonl(self.tmp / "claude" / "p" / "s.jsonl", [
+            claude_line("user", str(self.root / ACME), "hello gnuword"),
+            claude_line("assistant", str(self.root / ACME), "ok")])
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            made = recall_sessions.write_session(self.root, src, recall_sessions.parse_claude(src))
+        self.assertIsNone(made)
+        self.assertFalse((zone / recall.SESSIONS_DIR).exists())
+        self.assertIn("is not ignored by git", err.getvalue())
+        write(zone / ".gitignore", garrick_lib.RECALL_IGNORES)
+        recall._IGNORED.clear()
+        self.assertIsNotNone(recall_sessions.write_session(self.root, src, recall_sessions.parse_claude(src)))
+
+
 class CheckTest(Base):
     def recall_findings(self):
         return [f for f in check.run_checks(self.root) if f.check == "recall"]
@@ -755,9 +882,11 @@ class CheckTest(Base):
                 __import__("shutil").rmtree(str(p))
         git_init(zone)
         self.assertEqual([], self.recall_findings())
+        write(zone / ".gitignore", garrick_lib.RECALL_IGNORES)        # the index is only written where it is ignored
         write(zone / ".sessions" / "260901 - s.md", "x")
         self.find("quokkaplan")
         self.assertTrue((zone / recall.INDEX_NAME).is_file())
+        (zone / ".gitignore").unlink()
         commit_all(zone)                                              # no ignore file: everything is staged
         found = self.recall_findings()
         self.assertEqual({"Zones/Work/.sessions/260901 - s.md", "Zones/Work/.recall.sqlite"}, {f.path for f in found})

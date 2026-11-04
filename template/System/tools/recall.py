@@ -37,6 +37,7 @@ import math
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import time
 import unicodedata
@@ -64,7 +65,7 @@ PathLike = Union[str, Path]
 INDEX_NAME = ".recall.sqlite"
 SESSIONS_DIR = ".sessions"
 TOKENIZER = "unicode61 remove_diacritics 2"
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 CHUNK_CHARS = 4000
 RRF_K = 60
 RAW_WEIGHT = 0.5
@@ -257,6 +258,47 @@ class Scope:
         return "sessions" if self.kind == "system" else self.name
 
 
+_IGNORE_SAID: Set[str] = set()
+_IGNORED: Dict[str, bool] = {}     # per folder, for this run
+
+
+def git_ignores(path: Path) -> bool:
+    """May `path` be written without git ever seeing it? True when git ignores
+    it, or when no repository holds it. A repository whose answer cannot be had
+    (no git, a timeout) counts as not ignoring it: the file is not written."""
+    path = Path(path)
+    folder = path.parent
+    while not folder.is_dir() and folder != folder.parent:
+        folder = folder.parent
+    try:
+        done = subprocess.run(["git", "-C", str(folder), "check-ignore", "-q", "--", str(path)],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        code = done.returncode
+    except (OSError, subprocess.SubprocessError):
+        code = 128
+    if code == 0:
+        return True
+    if code == 1:
+        return False
+    # Not a repository, or git could not say: fine only when nothing above is one.
+    return not any((d / ".git").is_file() or (d / ".git" / "HEAD").exists() for d in [folder] + list(folder.parents))
+
+
+def safe_to_write(path: Path) -> bool:
+    """git_ignores(), and one line on stderr the first time it says no."""
+    key = str(path.parent)
+    if key not in _IGNORED:
+        _IGNORED[key] = git_ignores(path)
+    if _IGNORED[key]:
+        return True
+    if key not in _IGNORE_SAID:
+        _IGNORE_SAID.add(key)
+        print("recall: %s is not ignored by git, so nothing is written there; add the lines "
+              "`.recall.sqlite*` and `.sessions/` to its .gitignore (check.py reports it)." % path.parent,
+              file=sys.stderr)
+    return False
+
+
 def synced(path: Path) -> bool:
     return any(part in SYNCED or part.startswith("OneDrive") for part in path.resolve().parts)
 
@@ -266,7 +308,7 @@ CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE files(path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER, attrs TEXT);
 CREATE TABLE policies(pid INTEGER PRIMARY KEY, kind TEXT, zone TEXT, project TEXT, parties TEXT,
                       UNIQUE(kind, zone, project, parties));
-CREATE TABLE owners(raw TEXT PRIMARY KEY, page TEXT);
+CREATE TABLE owners(raw TEXT, page TEXT, ok INTEGER, PRIMARY KEY(raw, page));
 CREATE TABLE docs(id INTEGER PRIMARY KEY, path TEXT, kind TEXT, src TEXT, title TEXT, date TEXT, grade TEXT,
                   superseded INTEGER, pid INTEGER, owner TEXT, body TEXT);
 CREATE INDEX docs_path ON docs(path);
@@ -286,7 +328,7 @@ class Index:
         folder = self.path.parent
         if not folder.is_dir():
             return self._memory()
-        if synced(folder):
+        if synced(folder) or not safe_to_write(self.path):
             return self._memory()
         try:
             if self.path.exists():
@@ -644,7 +686,9 @@ class Refresher:
         # A Knowledge page that names a zone or a party is a conversation filed in the wrong
         # wiki: it follows the Meetings policy, and an unfinished one is used nowhere.
         conversation = wiki == "Meetings" or bool(zones) or bool(fm.get("party")) or bool(fm.get("parties"))
-        if parties is None or (conversation and (not zones or not parties)):
+        usable = not (parties is None or (conversation and (not zones or not parties)))
+        self.claim(rel, wiki, grade, fm, usable)
+        if not usable:
             return                                  # an unfinished page, or a party no wall names
         body = body_of(text)
         date = next((d for d in (fade.read_date(fm.get(f)) for f in fade.DATE_FIELDS[wiki]) if d), None) \
@@ -653,19 +697,42 @@ class Refresher:
         pid = self.idx.policy("meetings" if conversation else "knowledge", "|".join(zones), "", parties)
         self.idx.add(rel, "note", wiki.lower(), title, iso(date), grade,
                      bool(str(fm.get("superseded") or "").strip()), pid, "", [body.strip()])
-        if fm.get("raw"):
-            probe = fade.Page(rel, wiki, grade, "")
-            fade.find_raw(self.root / "Wikis" / wiki, probe, fade.link_target(fm.get("raw")))
-            if probe.raw:
-                self.idx.con.execute("INSERT OR REPLACE INTO owners VALUES (?,?)", (probe.raw, rel))
+
+    def claim(self, rel: str, wiki: str, grade: str, fm: dict, usable: bool) -> None:
+        """A page names the raw record it rests on. A record may have several
+        claimants, finished or not; each is kept, so that the record follows
+        the strictest of them whatever order the pages are read in."""
+        if not fm.get("raw"):
+            return
+        probe = fade.Page(rel, wiki, grade, "")
+        fade.find_raw(self.root / "Wikis" / wiki, probe, fade.link_target(fm.get("raw")))
+        if probe.raw:
+            self.idx.con.execute("INSERT OR REPLACE INTO owners VALUES (?,?,?)", (probe.raw, rel, int(usable)))
 
     def owner_row(self, rel: str):
-        row = self.idx.con.execute("SELECT page FROM owners WHERE raw=?", (rel,)).fetchone()
-        if not row:
+        """(first claimant, policy id, title, date, superseded) for a raw record,
+        or None when it has no claimant or any claimant is unfinished or unlisted."""
+        con = self.idx.con
+        claims = con.execute("SELECT page, ok FROM owners WHERE raw=? ORDER BY page", (rel,)).fetchall()
+        if not claims or not all(ok for _, ok in claims):
             return None
-        page = self.idx.con.execute("SELECT pid, title, date, superseded FROM docs WHERE path=? LIMIT 1",
-                                    (row[0],)).fetchone()
-        return (row[0],) + tuple(page) if page else None
+        rows = []
+        for page, _ in claims:
+            row = con.execute("SELECT pid, title, date, superseded FROM docs WHERE path=? LIMIT 1", (page,)).fetchone()
+            if row is None:
+                return None
+            rows.append((page,) + tuple(row))
+        pols = [con.execute("SELECT kind, zone, project, parties FROM policies WHERE pid=?", (r[1],)).fetchone()
+                for r in rows]
+        if len(rows) == 1 or None in pols:
+            pid = rows[0][1]
+        else:
+            kind = "meetings" if any(p[0] == "meetings" for p in pols) else pols[0][0]
+            zones = sorted({z for p in pols for z in p[1].split("|") if z})
+            parties = sorted({x for p in pols for x in p[3].split("|") if x})
+            pid = self.idx.policy(kind, "|".join(zones), "", parties)
+        first = rows[0]
+        return (first[0], pid, first[2], first[3], first[4])
 
     def raw_derived(self, rel: str, path: Path) -> str:
         return json.dumps(self.owner_row(rel))

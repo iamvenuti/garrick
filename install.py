@@ -104,13 +104,20 @@ ALLOWED_TOOLS = (
     "System/tools/briefing.py",
     "System/tools/nurture.py",
     "System/tools/fade.py",
-    "System/tools/recall.py",
     "System/tools/discover.py",
     "System/tools/extract.py",
     "System/skills/intake/intake.py",
     "System/skills/meetings/ingest.py",
     "System/skills/todo/todo.py",
 )
+# Recall is the one tool a session runs from the folder it was opened in, since
+# the tool takes its scope from that folder: a zone is two levels below the
+# root, a project three, a thread five. Only its two read-only words are
+# allowed, at each of those depths and at the root; `build` and `extract`
+# write indexes and sessions, and ask.
+RECALL_TOOL = "System/tools/recall.py"
+RECALL_WORDS = ("search", "stats")
+RECALL_DEPTHS = (0, 2, 3, 4, 5)
 # git's words that only look at history, or save it on this Mac.
 ALLOWED_GIT = ("status", "diff", "log", "add", "commit")
 # The words no rule may carry: the first five reach the internet, the rest can
@@ -560,6 +567,8 @@ def claude_allow_rules(zones):
     the skills spell it: a zone's path in quotes, since a zone name may hold a
     space, and plain as well, for the names that need no quotes."""
     rules = ["Bash(python3 %s:*)" % tool for tool in ALLOWED_TOOLS]
+    rules += ["Bash(python3 %s%s %s:*)" % ("../" * depth, RECALL_TOOL, word)
+              for depth in RECALL_DEPTHS for word in RECALL_WORDS]
     for repo in [".", "Wikis"] + ["Zones/%s" % z for z in zones]:
         spellings = ['"%s"' % repo] if repo.startswith("Zones/") else []
         if PLAIN_PATH.match(repo):

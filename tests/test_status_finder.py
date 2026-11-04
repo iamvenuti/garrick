@@ -239,6 +239,39 @@ class TestScratchBuild(unittest.TestCase):
         self.assertFalse((self.tmp / "Library" / "Application Support" / "Garrick").exists())
 
 
+@unittest.skipUnless(SWIFT, "needs macOS with the Swift compiler")
+class TestInstallBuild(unittest.TestCase):
+    """A build that is not --scratch is an install: it makes the extension known to macOS, switches it
+    off and on only for a user who had it on, and resets Accessibility once, only when it replaces an
+    app signed the old way. All of it against stubs in a home of its own."""
+
+    def test_the_install_steps(self):
+        with tempfile.TemporaryDirectory() as t:
+            tmp = Path(t).resolve()
+            dest, log = tmp / "Applications", tmp / "calls.log"
+            appex = dest / "Garrick.app" / "Contents" / "PlugIns" / "GarrickFinder.appex"
+
+            done, calls = build_app(dest, tmp)                    # first build: nothing there, extension never turned on
+            self.assertEqual(0, done.returncode, done.stderr)
+            self.assertEqual(["pluginkit -m -i local.garrick.status.finder", "lsregister -f %s" % (dest / "Garrick.app"),
+                              "pluginkit -a %s" % appex], calls.splitlines())
+
+            log.unlink()
+            done, calls = build_app(dest, tmp, {"STUB_ENABLED": "1"})      # the user had it on: off and on again
+            self.assertEqual(0, done.returncode, done.stderr)
+            self.assertEqual(["pluginkit -m -i local.garrick.status.finder", "lsregister -f %s" % (dest / "Garrick.app"),
+                              "pluginkit -a %s" % appex, "pluginkit -e ignore -i local.garrick.status.finder",
+                              "pluginkit -e use -i local.garrick.status.finder"], calls.splitlines())     # same requirement: no tccutil
+
+            subprocess.run(["codesign", "--force", "--sign", "-", str(dest / "Garrick.app")], check=True, capture_output=True)
+            log.unlink()
+            done, calls = build_app(dest, tmp)                    # an app signed the old way is replaced
+            self.assertEqual(0, done.returncode, done.stderr)
+            self.assertEqual(["tccutil reset Accessibility local.garrick.status"], [c for c in calls.splitlines() if c.startswith("tccutil")])
+            self.assertFalse([c for c in calls.splitlines() if "-e " in c])      # never enabled for a user who had it off
+            self.assertIn("Accessibility was reset", done.stderr)
+
+
 class TestHandlerSource(unittest.TestCase):
     """What Garrick.swift does with a link that parsed, read from its source."""
 
@@ -265,7 +298,7 @@ class TestHandlerSource(unittest.TestCase):
     def test_the_only_files_the_app_writes_for_finder_are_empty_markers_in_its_state_folder(self):
         """test_status's 'the app changes no file' reads FileManager.default.x; the markers go through `fm`, so they are held here."""
         body = self.swift[self.swift.index("func syncFinderOpeners()"):self.swift.index("// One request to ask.py, running")]
-        self.assertEqual(["createFile(atPath: file, contents: Data())"], re.findall(r"fm\.createFile\([^\n]*\)", body))
+        self.assertEqual(["fm.createFile(atPath: file, contents: Data())"], re.findall(r"fm\.createFile\([^\n]*\)", body))
         self.assertEqual(1, body.count("removeItem("))
         self.assertIn("try? fm.removeItem(atPath: file)", body)
         self.assertIn('dir.appendingPathComponent(k).path', body)

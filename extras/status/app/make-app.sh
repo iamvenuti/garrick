@@ -163,6 +163,13 @@ requirement() { codesign -d -r- "$1" 2>&1 | sed -n 's/^# *//; s/^designated => /
 
 mkdir -p "$DEST"
 RESET=0
+# Whether the user has the Finder extension switched on, read before this build replaces it: the
+# choice stays with the user. Never asked for a scratch build, which touches no election.
+WAS_ON=0
+if [ "$SCRATCH" = 0 ]; then
+  ELECTION="$(pluginkit -m -i "$EXT_ID" 2>/dev/null || true)"
+  case "$ELECTION" in "+"*|" +"*) WAS_ON=1 ;; esac
+fi
 # Replace only an earlier build of this app, under either name, never another
 # app of that name.
 for N in "$NAME" "$OLDNAME"; do
@@ -188,6 +195,16 @@ done
 mv "$WORK/$NAME" "$DEST/$NAME"
 if [ "$SCRATCH" = 0 ]; then
   "${GARRICK_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}" -f "$DEST/$NAME" 2>/dev/null || true
+  # The new extension is made known to macOS. Finder keeps running the copy it started until the
+  # extension is switched off and on, so for a user who had it on it is switched off and on again
+  # here; one who had it off, or never turned it on, is left as they were: nothing is enabled for them.
+  if [ -d "$DEST/$NAME/Contents/PlugIns/GarrickFinder.appex" ]; then
+    pluginkit -a "$DEST/$NAME/Contents/PlugIns/GarrickFinder.appex" >/dev/null 2>&1 || true
+    if [ "$WAS_ON" = 1 ]; then
+      pluginkit -e ignore -i "$EXT_ID" >/dev/null 2>&1 || true
+      pluginkit -e use -i "$EXT_ID" >/dev/null 2>&1 || true
+    fi
+  fi
   if [ "$RESET" = 1 ]; then
     # The last time macOS asks: the next permission is kept across builds.
     tccutil reset Accessibility "$APP_ID" >/dev/null 2>&1 || true

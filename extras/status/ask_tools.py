@@ -125,6 +125,7 @@ def tidy(text: str, most: int) -> str:
 
 
 NAME_A_PLACE = "Name the project or thread you mean."
+NO_PROJECTS = "No projects."
 
 
 class Conversation:
@@ -549,7 +550,7 @@ class Conversation:
                 listing.append((z, rows))
         listed = {p for _, rows in listing for ps, _ in rows for p in ps}
         if any(lib.walled(ctx, x, y) for x in listed for y in listed):
-            return NAME_A_PLACE         # the list would hold both sides of a wall: nothing is listed, no count
+            return NO_PROJECTS          # the list would span a wall: the words of an empty zone, so the text says nothing
         if listed and not self.admit(listed):      # the names are material: what is listed is held
             return STOPPED
         self.save()
@@ -557,7 +558,7 @@ class Conversation:
         for z, rows in listing:
             lines.append("%s:" % z)
             lines += [t for _, t in rows]
-        return "\n".join(lines) or "No projects."
+        return "\n".join(lines) or NO_PROJECTS
 
     @staticmethod
     def resume(text: str) -> str:
@@ -613,15 +614,28 @@ class Conversation:
             return nxt - dt.timedelta(days=1), ""
         return None, "period is a date (YYYY-MM-DD), today, tomorrow, this week or this month"
 
-    def zone_walled(self, zone: str, names, ctx: dict, sc, lib) -> bool:
-        """Whether a wall stands between any two parties of a zone's projects (an unplaceable project counts as one)."""
+    def zone_parties(self, zone: str, names, ctx: dict, sc, lib) -> Optional[set]:
+        """Every party of a zone's projects, or None when a wall stands between any two of them (an unplaceable
+        project counts as one)."""
         every = set()
         for pr in names.get(zone, {}):
             ps = set(sc.place_parties(self.ws, zone, pr, None, lib))
             if not ps or not ps <= set(ctx.get("parties", {})):
-                return True
+                return None
             every |= ps
-        return any(lib.walled(ctx, x, y) for x in every for y in every)
+        return None if any(lib.walled(ctx, x, y) for x in every for y in every) else every
+
+    @staticmethod
+    def surnamed(text: str, ctx: dict) -> set:
+        """The parties of the people a line names by surname alone: the last word of a name the People table holds,
+        written with a capital. A surname two people share names both parties."""
+        out = set()
+        for person in ctx.get("people", []):
+            words = str(person.get("name") or "").split()
+            if len(words) > 1 and person.get("party") and len(words[-1]) >= 3 \
+                    and re.search(r"(?<!\w)%s(?!\w)" % re.escape(words[-1]), text):
+                out.add(person["party"])
+        return out
 
     def owed(self, a: dict) -> str:
         sc, lib, ctx, names = self.world()
@@ -642,11 +656,22 @@ class Conversation:
                          until=until.isoformat() if until else None, waiting=bool(a.get("waiting")))
         found = sc.actions(self.ws, scope, names, ctx, lib, dt.date.today())[:MOST_OWED]
         known = set(ctx.get("parties", {}))
+        for i in found:
+            i["parties"] = sorted(set(i["parties"]) | self.surnamed(i["text"], ctx))
         found = [i for i in found if set(i["parties"]) <= known]
-        # A line that names no party passes every wall test, so it is served only where no wall can matter:
-        # a zone with no wall inside it, and a conversation that holds nothing yet.
+        # A line that names no party is material of its zone, and it passes every wall test by itself. It is served
+        # only in a zone with no wall inside it and a conversation that holds nothing yet, and it counts as every
+        # party of its zone, so what the conversation holds afterwards is walled against all of them.
         held = self.held()
-        found = [i for i in found if i["parties"] or (not held and not self.zone_walled(i["zone"], names, ctx, sc, lib))]
+        kept = []
+        for i in found:
+            if i["parties"]:
+                kept.append(i)
+                continue
+            zp = None if held else self.zone_parties(i["zone"], names, ctx, sc, lib)
+            if zp is not None:
+                kept.append(dict(i, parties=sorted(zp)))
+        found = kept
         found = self.fair(found, MOST_OWED, ctx, lib, sc)
         if found is None:
             return STOPPED

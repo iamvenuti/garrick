@@ -397,7 +397,7 @@ class TestTheReviewFindings(ToolCase):
         self.assertFalse(bad)
         for name in ("Birch", "Acme", "Pricing", "Market Sizing"):
             self.assertNotIn(name, text)
-        self.assertEqual(tools.NAME_A_PLACE, text)
+        self.assertEqual(tools.NO_PROJECTS, text)
         self.assertEqual([], self.out()["seen"])
 
     def test_places_with_acme_held_names_no_birch_and_what_is_listed_is_held(self):
@@ -449,6 +449,54 @@ class TestTheReviewFindings(ToolCase):
         self.assertIn("ZZPARTYLESS", self.conv(zone="Personal").call("owed", {})[0])
         self.state = Path(self._tmp.name) / "state2"
         self.assertNotIn("ZZPARTYLESS", self.conv(zone="Personal", told={"acme"}).call("owed", {})[0])
+
+
+class TestAPartyLessLineAcrossZones(ToolCase):
+    """Third-round review: a wall stands between parties of different zones, as an employer and an advisory client."""
+
+    def setUp(self):
+        super().setUp()
+        from fixtures import project_hub
+        scoped.write(self.root / "Zones" / "Advisory" / "Birch Desk" / "Birch Desk.md",
+                     project_hub("Advisory", "Birch Desk", party="birch"))
+        (self.root / "Zones" / "Advisory" / ".git").mkdir(exist_ok=True)
+
+    def todo(self, line):
+        scoped.write(self.root / "Zones" / "Advisory" / "Todo.md", "# Advisory\n\n## Inbox\n%s\n" % line)
+
+    def test_the_line_is_served_but_the_conversation_then_holds_its_zone(self):
+        self.todo("- [ ] Send Priya Hartley the memo BIRCHSECRET")
+        c = self.conv(zone="Advisory")
+        text, _ = c.call("owed", {})
+        self.assertIn("BIRCHSECRET", text)
+        self.assertEqual(["birch"], self.out()["seen"])
+        later = "\n".join([c.call("search", {"words": "pallet", "place": "Work"})[0],
+                           c.call("thread_state", {"place": "Acme Review/Pricing"})[0]])
+        self.assertNotIn(ACME, later)
+        self.assertNotIn("Acme Review", later)
+        self.assertNotIn("kick-off", later)
+
+    def test_a_line_is_not_served_to_a_conversation_that_already_holds_something(self):
+        self.todo("- [ ] Send Priya Hartley the memo BIRCHSECRET")
+        self.assertNotIn("BIRCHSECRET", self.conv(zone="Advisory", told={"acme"}).call("owed", {})[0])
+
+    def test_a_surname_alone_is_attributed_to_the_persons_party(self):
+        self.todo("- [ ] Send Marsh the memo BIRCHSURNAME")
+        text, _ = self.conv(zone="Advisory", told={"acme"}).call("owed", {})
+        self.assertNotIn("BIRCHSURNAME", text)
+        self.state = Path(self._tmp.name) / "state2"
+        text, _ = self.conv(zone="Advisory").call("owed", {})
+        self.assertIn("BIRCHSURNAME", text)
+        self.assertEqual(["birch"], self.out()["seen"])
+
+
+class TestPlacesSaysTheSameForAnEmptyZone(ToolCase):
+    def test_a_listing_that_spans_a_wall_is_the_text_of_an_empty_zone(self):
+        empty = self.conv(zone="Personal").call("places", {})[0]
+        self.assertEqual(tools.NO_PROJECTS, empty)
+        self.state = Path(self._tmp.name) / "state2"
+        spans = self.conv(zone="Work").call("places", {"zone": "Work"})[0]
+        self.assertEqual(empty.encode(), spans.encode())
 
 
 class TestTheZoneTodoListIsNoRecord(ToolCase):

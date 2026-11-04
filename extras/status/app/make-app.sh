@@ -54,14 +54,16 @@ DEST="$(cd "$DEST" && pwd)"
 # build keeps it beside itself, so it never answers for the installed app's extension, and the
 # extension gets an identifier of its own, so it never takes the installed one's place in macOS's list.
 FINDER_STATE="$HOME/Library/Application Support/Garrick/Finder"
+APP_ID="local.garrick.status"
 EXT_ID="local.garrick.status.finder"
-if [ "$SCRATCH" = 1 ]; then FINDER_STATE="$DEST/.finder-state"; EXT_ID="$EXT_ID.scratch"; fi
+# A scratch app has identifiers of its own throughout: its own defaults, its own requirement (so it never
+# matches the installed app's permissions), and it can run beside the installed app.
+if [ "$SCRATCH" = 1 ]; then APP_ID="$APP_ID.scratch"; EXT_ID="$EXT_ID.scratch"; FINDER_STATE="$DEST/.finder-state"; fi
 TOKEN="$("$PY" -c 'import secrets; print(secrets.token_hex(16))')"
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 NAME="Garrick.app"
-APP_ID="local.garrick.status"
 OLDNAME="Garrick's Status.app"   # its name before 0.10.0
 BUNDLE="$WORK/$NAME/Contents"
 mkdir -p "$BUNDLE/MacOS" "$BUNDLE/Resources"
@@ -76,9 +78,9 @@ xcrun swiftc "${OPT[@]}" -o "$BUNDLE/MacOS/Garrick" "$WORK/src/main.swift" "$HER
 # The bundle identifier is the one the app had as Garrick's Status, so its
 # settings carry over. The plist is written by plistlib, so no path or flag
 # can break it.
-"$PY" - "$STATUS" "$WORK" "$WS" "$PY" "$TOKEN" "$FINDER_STATE" "$EXT_ID" "${ARGS[@]+"${ARGS[@]}"}" <<'PY'
+"$PY" - "$STATUS" "$WORK" "$WS" "$PY" "$TOKEN" "$APP_ID" "$EXT_ID" "$FINDER_STATE" "${ARGS[@]+"${ARGS[@]}"}" <<'PY'
 import importlib.util, plistlib, sys
-status, work, ws, py, token, state, ext_id, given = sys.argv[1:8] + [sys.argv[8:]]
+status, work, ws, py, token, app_id, ext_id, state, given = sys.argv[1:9] + [sys.argv[9:]]
 args, i = [], 0
 while i < len(given):                  # the flags gone in 0.51.0 (#318), and --obsidian's vault with it
     if given[i] == "--obsidian":
@@ -93,7 +95,7 @@ spec.loader.exec_module(mod)
 open(work + "/icon.svg", "w").write(mod.app_icon())
 with open(work + "/Garrick.app/Contents/Info.plist", "wb") as f:
     plistlib.dump({
-        "CFBundleIdentifier": "local.garrick.status", "CFBundleName": "Garrick",
+        "CFBundleIdentifier": app_id, "CFBundleName": "Garrick",
         "CFBundleDisplayName": "Garrick", "CFBundleExecutable": "Garrick",
         "CFBundleIconFile": "AppIcon", "CFBundlePackageType": "APPL",
         "CFBundleShortVersionString": "1.0", "CFBundleVersion": "1", "LSMinimumSystemVersion": "12.0",
@@ -175,13 +177,13 @@ fi
 for N in "$NAME" "$OLDNAME"; do
   [ -e "$DEST/$N" ] || continue
   OLD="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$DEST/$N/Contents/Info.plist" 2>/dev/null || true)"
-  if [ "$OLD" != local.garrick.status ]; then
+  if [ "$OLD" != "$APP_ID" ]; then
     [ "$N" = "$NAME" ] || continue   # another app called Garrick's Status is none of ours
     echo "make-app: $DEST/$N is another app; move it, or pass --dest." >&2; exit 1
   fi
   # Quit it only if it is the copy being replaced that is running, not an installed one elsewhere.
   if ps -axo command= | grep -qF "$DEST/$N/Contents/MacOS/"; then
-    osascript -e 'tell application id "local.garrick.status" to quit' >/dev/null 2>&1 || true
+    osascript -e 'tell application id "'"$APP_ID"'" to quit' >/dev/null 2>&1 || true
     sleep 1
   fi
   # An earlier build whose requirement is not the fixed one holds a grant that

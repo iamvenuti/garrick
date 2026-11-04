@@ -207,7 +207,7 @@ class TestScratchBuild(unittest.TestCase):
         def requirement(path):
             done = subprocess.run(["codesign", "-d", "-r-", str(path)], capture_output=True, text=True)
             return re.search(r"designated => (.*)", done.stdout + done.stderr).group(1)
-        self.assertEqual('identifier "local.garrick.status"', requirement(self.app))
+        self.assertEqual('identifier "local.garrick.status.scratch"', requirement(self.app))     # not the installed app's
         self.assertEqual('identifier "local.garrick.status.finder.scratch"', requirement(self.appex))
 
     def test_the_extension_has_the_sandbox_and_nothing_else(self):
@@ -225,6 +225,8 @@ class TestScratchBuild(unittest.TestCase):
         self.assertEqual({"NSExtensionPointIdentifier": "com.apple.FinderSync", "NSExtensionPrincipalClass": "GarrickFinder.GarrickFinder"},
                          ext["NSExtension"])
         self.assertEqual("XPC!", ext["CFBundlePackageType"])
+        self.assertEqual("local.garrick.status.scratch", app["CFBundleIdentifier"])      # its own defaults, beside the installed app
+        self.assertEqual("local.garrick.status.finder.scratch", app["GarrickFinderId"])
         self.assertEqual("local.garrick.status.finder.scratch", ext["CFBundleIdentifier"])
 
     def test_every_build_has_a_token_of_its_own(self):

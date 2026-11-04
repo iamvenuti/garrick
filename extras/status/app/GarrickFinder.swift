@@ -9,7 +9,10 @@
 // content. Which openers are on is told by files the app keeps in the folder named by
 // GarrickFinderState in this extension's Info.plist: one empty file for each opener
 // that is switched on in Settings and installed. The extension reads whether the file is
-// there, so turning an opener off needs no rebuild.
+// there, so turning an opener off needs no rebuild. Checked on macOS 27 with a scratch build: the
+// sandbox lets this extension stat a path outside its container, anywhere (/tmp, the home folder,
+// Library/Application Support), so it sees that a file exists, but it denies reading one and listing a
+// folder. So it asks only whether a file exists.
 import Cocoa
 import FinderSync
 

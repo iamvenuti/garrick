@@ -3169,7 +3169,7 @@ class TestApp(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             (work / "Garrick.app" / "Contents").mkdir(parents=True)
-            done = subprocess.run([sys.executable, "-", str(STATUS), str(work), "/ws", sys.executable, "token", "/state", "ext.id",
+            done = subprocess.run([sys.executable, "-", str(STATUS), str(work), "/ws", sys.executable, "token", "app.id", "ext.id", "/state",
                                    "--no-graph", "--obsidian", "My Vault", "--no-obsidian", "--obsidian=Other", "--no-cmux"],
                                   input=writer, capture_output=True, text=True, timeout=60)
             self.assertEqual(0, done.returncode, done.stderr)

@@ -562,6 +562,7 @@ class WallRefusalTest(unittest.TestCase):
               SKILLS / "threads" / "SKILL.md",
               SKILLS / "nurture" / "SKILL.md",
               REPO / "template" / "System" / "tools" / "operations.py",
+              REPO / "template" / "System" / "tools" / "scaffold.py",           # a thread moved into a walled project (#354)
               REPO / "examples" / "demo" / "video-script.md")
     # A sentence of the refusal's shape: it opens "A wall" and goes on to hold
     # material or something back or out. Enough to catch a wording written in the

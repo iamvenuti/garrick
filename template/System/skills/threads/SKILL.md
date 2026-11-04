@@ -15,8 +15,8 @@ description: >
   "close for the day", "I'm done for today", "finish X", "X is done", "close
   X for good", "park X", "put X aside", "wake X", "unpark X", "what's
   parked", "is there a thread on X", "find X", "new project X for Acme", "new
-  thread X in Acme", "start a thread on X", "rename X to Y", "delete X", "add
-  a zone called X", "new zone X", "that's wrong, it's Y", or "correct X to
+  thread X in Acme", "start a thread on X", "rename X to Y", "move X to Y",
+  "delete X", "add a zone called X", "new zone X", "that's wrong, it's Y", or "correct X to
   Y".
   Also use at the end of any
   session that produced a decision or a deliverable, so the thread can be
@@ -989,11 +989,62 @@ python3 System/tools/scaffold.py rename --zone <Zone> --project "<Project>" [--t
 4. **The memory pointer**, if you keep one: point it at the new note.
 5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
 
-Moving a thread to another project or zone is not a rename: it crosses
-parties and walls. Say so, and stop.
+Moving a thread to another zone is not a rename: zones never mix. Say so,
+and stop. Moving it to another project of its zone is *Move*, below.
 
 Spoken: "Pricing is Renewal now, and its links follow. The old name still
 finds it."
+
+Written: the script's report, and the commit hash.
+
+## Move: "move X to Y"
+
+X is a thread and Y a project of the same zone. The executor moves it, through
+the scaffolding script, so the folder, the note and every link to it in the
+zone follow together, in one commit:
+
+```sh
+python3 System/status/page_action.py move --zone <Zone> --project "<From project>" --thread "<Thread>" --to "<To project>"
+```
+
+The script moves the thread's place on the interruption stack and the effort
+record with it, and `undo` of the move puts both back; the executor also asks
+for the page to be rebuilt. **Without the status page**, run the script itself,
+which does the same for the stack and the effort record:
+
+```sh
+python3 System/tools/scaffold.py move --zone <Zone> --project "<From project>" --thread "<Thread>" --to "<To project>"
+```
+
+1. **Resolve X and Y.** X must be one thread; its project is the project it is
+   in. If a name could be a thread or a project, or two threads share it, ask
+   which. A project is never moved, and Y in another zone is not a move.
+2. **One match goes ahead**: the instruction named it, so do not ask it back.
+3. **Run the script.** It checks the thread's `party:` and the new project's
+   `party:` against the Walls table in `System/context.md` first, and the
+   old project's party, and the parties of the Meetings pages and other
+   projects' files its notes link. If a wall stands between them, or any party
+   cannot be read plainly, nothing moves:
+   for a wall, say the sentence from *Zones and walls* and nothing more. It
+   also refuses another zone, a thread of that name already in the new project,
+   a new project that is parked or finished (and a parked one as the source),
+   files of the thread that sit outside its folder, changes not committed, and
+   a session mid-turn there; relay the reason as under *New*. Then it moves the
+   folder with git, takes the thread's line out of the old hub and puts it
+   with its description under the same heading in the new one (it refuses if
+   that line cannot be found plainly), sets `project:` and `parent:`,
+   rewrites every link to it and to the files inside its folder (the hubs,
+   `Todo.md`, the notes between; wiki links and Markdown links alike, and it
+   lists any it could not resolve plainly), moves its rows in
+   `Deliverables/published.md` to the new project's, and adds the dated entry
+   "Moved from <old> to <new>.", all in one commit in the zone. The commit
+   goes through the zone's wall check, never around it; `undo` reverts it
+   while it is the zone's last commit.
+4. **The memory pointer**, if you keep one, and a desk tab open on the thread:
+   point them at the new path. The report says so.
+5. What it lists and leaves alone, mentions in the Meetings wiki, say once.
+
+Spoken: "Pricing is in Birch now, and its links follow."
 
 Written: the script's report, and the commit hash.
 

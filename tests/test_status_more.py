@@ -374,10 +374,46 @@ process.stdout.write(JSON.stringify([t,p,ctx.window.GarrickManage({mg:["Work","A
         thread, project, held, added = json.loads(done.stdout)
         self.assertIn("Rename…", thread)
         self.assertIn("Delete…", thread)
+        self.assertIn("Move…", thread)
+        self.assertNotIn("Move…", project)                                    # only a thread moves
         self.assertNotIn("New thread here", thread)
         self.assertIn("New thread here", project)
         self.assertEqual("", held)                                          # parked with its project: nothing to do here
         self.assertIn("click", added)
+
+    def test_a_dialog_never_swaps_the_chosen_project_for_the_first(self):
+        """#353: a project the page does not list yet stays the selected one, and a rename or a new project
+        reaches the dialogs' list at once."""
+        if not shutil.which("node"):
+            self.skipTest("Node is not installed")
+        js = """const vm=require("vm");const code=process.argv[1];const L={};const els={};
+function el(k){return els[k]||(els[k]={innerHTML:"",value:"",focus(){},select(){},querySelector:(q)=>el(q),close(){},remove(){},addEventListener(){}})}
+const ctx={JSON,String,Date,Math,Array,setTimeout:()=>0,clearTimeout:()=>0,localStorage:{getItem:()=>null,setItem:()=>0,removeItem:()=>0},
+document:{readyState:"complete",getElementById:(id)=>id==="manage-data"?{textContent:'{"zones":{"Work":{"projects":["Acme","Zeta"],"parties":[]},"Play":{"projects":["Home"],"parties":[]}},"acting":true}'}:null,
+createElement:()=>{const d=el("dialog");d.showModal=()=>0;return d},addEventListener:(k,f)=>{L[k]=f},body:{appendChild:()=>0}}};
+ctx.window={webkit:{messageHandlers:{garrick:{postMessage:()=>0}}}};vm.createContext(ctx);vm.runInContext(code,ctx);
+function open(mg){L.click({target:{closest:()=>({dataset:{manage:"new-thread",mg:JSON.stringify(mg)}})},preventDefault(){},stopPropagation(){}});return el("#mg-p").innerHTML}
+el("#mg-zone").value="Work";
+const a=open(["Work","Birch","",1,0]);
+ctx.window.GarrickActed({verb:"rename",zone:"Work",project:"Acme",to:"Birch"},{ok:true});
+const b=open(["Work","Birch","",1,0]);
+ctx.window.GarrickActed({verb:"new-project",zone:"Work",name:"Cedar"},{ok:true});
+const c=open(["Work","Zeta","",1,0]);
+el("#mg-zone").value="Play";el("#mg-zone").onchange();
+process.stdout.write(JSON.stringify([a,b,c,el("#mg-p").innerHTML]));"""
+        done = subprocess.run(["node", "-e", js, status.MANAGE_JS], capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        before, renamed, made, other_zone = json.loads(done.stdout)
+        self.assertNotIn("Birch", other_zone)                              # another zone's list never shows the first zone's project
+        self.assertNotIn("Zeta", other_zone)
+        self.assertIn('<option value="Home">', other_zone)
+        self.assertIn('<option value="Birch" selected>Birch (not yet on the page)</option>', before)
+        self.assertEqual(1, before.count("selected"))
+        self.assertNotIn("not yet on the page", renamed)                   # the list knows the new name
+        self.assertIn('<option value="Birch" selected>', renamed)
+        self.assertNotIn('value="Acme"', renamed)
+        self.assertIn('<option value="Cedar">', made)
+        self.assertIn('<option value="Zeta" selected>', made)
 
     def test_undo_wraps_the_hook_park_sets(self):
         page = self.page()

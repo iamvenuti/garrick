@@ -198,6 +198,8 @@ DECLARED: Dict[str, Op] = {
     "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken"),
                       ("kind", "name", "to"), "none"),
     "rename": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
+    # A thread to another project of its zone (#354): `thread` is required by the handler, `to` is the project.
+    "move": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),
     "interrupt": _op(("zone", "project", "thread", "file", "where", "next", "keep", "by"),

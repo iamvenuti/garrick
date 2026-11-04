@@ -401,8 +401,26 @@ class TestActions(AgentCase):
         a = self.agent()
         a.ask("What did Dana say about the quote?")
         out = a.ask("now open the other client")
-        self.assertEqual("wall", out["reset"])
-        self.assertEqual(ask.page_action().wall_refusal(self.root), out["say"])
+        self.assertNotIn("choices", out)
+        self.assertEqual([], out.get("done", []))
+        self.assertIn(ask.page_action().wall_refusal(self.root), out["say"])    # the user is told a wall held something
+
+    def test_a_proposal_after_names_only_is_a_button_not_an_action(self):
+        # places() hands out names, no record: the proposal that follows still waits for a click.
+        self.script([[{"call": "places", "args": {}},
+                      {"call": "propose", "args": {"action": self.PARK}}, {"say": "Pricing is a thread of Acme Review."}]])
+        out = self.agent().ask("park the pricing thread and tell me what is in Acme Review")
+        self.assertEqual("answer", out["kind"])
+        self.assertIn("status: active", self.status("Acme Review/Threads/Pricing/Pricing.md"))
+        self.assertEqual("Park Pricing", out["choices"][0]["label"])
+
+    def test_a_todo_button_shows_the_whole_line_it_will_write(self):
+        text = "Call Dana about the pallet quote and the delivery window before the end of the month, twice"
+        act = {"verb": "todo-add", "zone": "Work", "text": text, "project": "Acme Review"}
+        self.script([[{"call": "places", "args": {}}, {"call": "propose", "args": {"action": act}}, {"say": "Proposed."}]])
+        out = self.agent().ask("add a todo and tell me the projects")
+        self.assertEqual("Add to the Work Todo list: " + text, out["choices"][0]["label"])
+        self.assertEqual(text, out["choices"][0]["act"]["text"])
 
 
 if __name__ == "__main__":

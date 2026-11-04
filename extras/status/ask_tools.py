@@ -68,11 +68,13 @@ LIMIT = 10                  # records one search returns, unless it asks for mor
 MOST = 50                   # the most it may ask for
 OVERSAMPLE = 5              # rows asked of the index for each one returned, since the zone and kind are cut after
 MOST_TEXT = 6000            # characters of one record read() returns
+MOST_TODO = 200             # characters of a Todo line a proposal may carry: the button shows all of it
 MOST_OWED = 40              # items owed() returns
 SNIPPET = 300               # characters of a record a search result shows
 
 STOPPED = "This conversation has been stopped. Do not answer. Reply with the single word: stopped."
 NOT_GIVEN = "That id was not given in this conversation."
+NO_PLACE = "No such place. places() lists the projects and threads."
 INDEX_DOWN = "The search index was not available, so this is a plain keyword find."
 
 # The tags a message is built from: a record's own text never opens or closes one.
@@ -137,6 +139,8 @@ class Conversation:
         self.held_back = 0          # how many times a wall held records back from a first reading, which nothing crossed
         self.told: set = set()      # the parties ask.py wrote to in.json: what the requests named
         self.proposed = 0
+        self.text_seen = False      # any text out of the workspace has been handed to the session (names too)
+        self._world = None          # world(), read once for each tool call
         self.dir.mkdir(parents=True, exist_ok=True)
         try:
             data = json.loads((self.dir / "out.json").read_text(encoding="utf-8"))
@@ -150,6 +154,7 @@ class Conversation:
             self.wall = bool(data.get("wall"))
             self.held_back = int(data.get("held_back") or 0)
             self.proposed = int(data.get("proposed") or 0)
+            self.text_seen = bool(data.get("text_seen"))
         self.save()
 
     # ------------------------------------------------------------ state
@@ -157,7 +162,7 @@ class Conversation:
     def save(self) -> None:
         data = {"nonce": self.nonce, "seen": sorted(self.seen), "handed": self.handed, "count": self.count,
                 "wall": self.wall, "held_back": self.held_back, "proposed": self.proposed,
-                "read": bool(self.handed)}
+                "read": bool(self.handed), "text_seen": self.text_seen}
         tmp = self.dir / "out.json.tmp"
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         os.replace(str(tmp), str(self.dir / "out.json"))
@@ -178,11 +183,14 @@ class Conversation:
         return self.seen | self.told
 
     def world(self):
-        sc = scope_mod()
-        lib = sc.lib(self.ws)
-        if lib is None:
-            raise RuntimeError("garrick_lib.py is not in System/tools")
-        return sc, lib, lib.load_context(self.ws), ask_mod().scan(self.ws)
+        """The scope module, garrick_lib, the context and the workspace list: read once for each tool call."""
+        if self._world is None:
+            sc = scope_mod()
+            lib = sc.lib(self.ws)
+            if lib is None:
+                raise RuntimeError("garrick_lib.py is not in System/tools")
+            self._world = (sc, lib, lib.load_context(self.ws), ask_mod().scan(self.ws))
+        return self._world
 
     def admit(self, parties) -> bool:
         """The wall test (ask_scope.admits()) for records of these parties,
@@ -249,7 +257,9 @@ class Conversation:
         elif parts[:2] == ("System", "garrick-docs"):
             kind, root = "docs", self.ws / "System" / "garrick-docs"
         elif len(parts) == 3 and parts[0] == "Zones" and parts[2] == "Todo.md":
-            kind, root, zone = "todo", self.ws / "Zones" / parts[1], parts[1]
+            # A zone's Todo list holds lines for every project in it, the far side of a wall too, and has no
+            # party of its own: it is not a record. owed() serves it line by line, each line with its own wall test.
+            return None
         elif len(parts) >= 4 and parts[0] == "Zones":
             kind, root, zone, project = "threads", self.ws / "Zones" / parts[1] / parts[2], parts[1], parts[2]
             if len(parts) > 5 and parts[3] == "Threads":
@@ -276,8 +286,6 @@ class Conversation:
         elif kind in ("library", "docs"):
             if any(fm.get(k) for k in ("parties", "party", "zone")):
                 return None
-            parties = []
-        elif kind == "todo":
             parties = []
         else:
             hub = sc.hub_parties(self.ws, zone, project, lib)
@@ -333,7 +341,7 @@ class Conversation:
                         found.add((zz, pr, None))
                     found |= {(zz, pr, t) for t in r["threads"] if low(t) == low(bits[0])}
         if not found:
-            return [], "No such place. places() lists the projects and threads."
+            return [], NO_PLACE
         mine = {f for f in found if f[0] == self.zone}
         found = mine or found
         return sorted(found, key=lambda f: tuple(str(x) for x in f)), ""
@@ -343,15 +351,20 @@ class Conversation:
         found, why = self.resolve(place, names)
         if not found:
             return None, why
-        if len(found) > 1:
-            sc, lib, ctx, _ = self.world()
-            fair = [f for f in found if f[1] is None or sc.admits(ctx, sc.place_parties(self.ws, f[0], f[1], f[2], lib), self.held(), lib)]
-            if not fair:
-                self.admit(set().union(*(sc.place_parties(self.ws, f[0], f[1], f[2], lib) for f in found if f[1])))
-                return None, STOPPED
+        # One test for one match or many: a place the conversation may not hold is left out, and when none is
+        # left the answer is the words for a place that does not exist, so a name on the far side cannot be told
+        # from one that is not there. The wall is noted (held_back) for the user's answer, never for the session.
+        sc, lib, ctx, _ = self.world()
+        fair = [f for f in found if f[1] is None or sc.admits(ctx, sc.place_parties(self.ws, f[0], f[1], f[2], lib), self.held(), lib)]
+        if len(fair) < len(found):
+            self.held_back += 1
+            self.save()
+        if not fair:
+            return None, NO_PLACE
+        if len(fair) > 1:
             return None, "More than one place has that name: %s. Say it as Zone/Project/Thread." % "; ".join(
                 "/".join(x for x in f if x) for f in fair[:6])
-        return found[0], ""
+        return fair[0], ""
 
     # ------------------------------------------------------------ search
 
@@ -619,14 +632,36 @@ class Conversation:
             return "Not something the box does: %r. It proposes %s." % (act.get("verb"), ", ".join(PROPOSED))
         sc, lib, ctx, names = self.world()
         ask = ask_mod()
+        zn, pj = act.get("zone"), act.get("project")
+        if isinstance(zn, str) and isinstance(pj, str) and pj in names.get(zn, {}):
+            # Before anything else about the place is said: a project on the far side of a wall looks like one that
+            # is not there, whatever else the action gets wrong (its thread, its app).
+            if not sc.admits(ctx, set(sc.place_parties(self.ws, zn, pj, None, lib)), self.held(), lib):
+                self.held_back += 1
+                self.save()
+                return "Refused: no project %r in %s." % (pj, zn)
         try:
             ask.proposal(act, names, self.ws)
         except ask.Bad as e:
             return "Refused: %s." % e
         if act.get("project"):
             parties = sc.place_parties(self.ws, act["zone"], act["project"], act.get("thread"), lib)
-            if not self.admit(set(parties)):    # a place on the far side of a wall: the same test
+            if not sc.admits(ctx, set(parties), self.held(), lib):
+                # A place on the far side of a wall looks like one that is not there: the same words as proposal() uses.
+                self.held_back += 1
+                self.save()
+                return "Refused: no project %r in %s." % (act["project"], act["zone"])
+            if not self.admit(set(parties)):
                 return STOPPED
+        elif act.get("verb") == "todo-add":
+            # A Todo line with no project is the zone's own: no party to test. Only the window's zone, and only
+            # while the conversation holds no party.
+            if self.zone and act.get("zone") != self.zone:
+                return "Refused: a Todo line goes in the window's zone, %s, or in a project." % self.zone
+            if self.held():
+                return "Refused: name the project the Todo line is for."
+            if len(str(act.get("text") or "")) > MOST_TODO:
+                return "Refused: a Todo line of at most %d characters." % MOST_TODO
         self.proposed += 1
         with (self.dir / "proposals.jsonl").open("a", encoding="utf-8") as f:
             f.write(json.dumps({"n": self.proposed, "action": act}, ensure_ascii=False) + "\n")
@@ -638,8 +673,14 @@ class Conversation:
     def call(self, name: str, args: dict) -> Tuple[str, bool]:
         """(the text, whether it is an error). Every tool answers STOPPED once the latch is set."""
         self.refresh()
+        self._world = None
         if self.wall:
             return STOPPED, True
+        if name in ("search", "read", "places", "thread_state", "owed"):
+            # Any text out of the workspace, names included, whatever the call finds: from here a proposal is only
+            # ever a button, never run by itself (#358).
+            self.text_seen = True
+            self.save()
         fn = {"search": self.search, "read": self.read, "places": self.places, "thread_state": self.thread_state,
               "owed": self.owed, "propose": self.propose}.get(name)
         if fn is None:

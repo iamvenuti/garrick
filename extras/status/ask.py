@@ -1840,7 +1840,7 @@ class Asker:
                 continue
             name = spoken(names, a["zone"], a.get("project"), a.get("thread")) if a.get("project") else a["zone"]
             verb = item["verb"]
-            label = ("Add to the %s Todo list: %s" % (a["zone"], str(item.get("text"))[:40]) if verb == "todo-add"
+            label = ("Add to the %s Todo list: %s" % (a["zone"], item.get("text")) if verb == "todo-add"
                      else "%s %s" % (verb.capitalize(), name))
             out.append({"label": label, "act": {k: v for k, v in item.items() if k not in ("confirm", "op")}})
         return out
@@ -1860,7 +1860,7 @@ class Asker:
             if isinstance(a, dict) and isinstance(a.get("zone"), str) and a.get("project") in names.get(a["zone"], {}):
                 parties |= set(scope_lib().place_parties(self.ws, a["zone"], a["project"], a.get("thread"),
                                                          scope_lib().lib(self.ws)))
-        if props and not handed:
+        if props and not handed and not state.get("text_seen"):
             out = self.carry_out(said, props, names, usage)
             self.asking = asks_back(text, said, [])
         else:

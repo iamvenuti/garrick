@@ -35,6 +35,7 @@ def _load():
 
 
 tools = _load()
+REAL_RECALL_FOR = tools.recall_for
 
 ACME_PAGE = "Wikis/Meetings/wiki/sources/260310-acme-kickoff.md"
 BIRCH_PAGE = "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md"
@@ -234,13 +235,13 @@ class TestTheWallInTheTools(ToolCase):
     def test_thread_state_on_a_walled_thread_is_the_same_check(self):
         c = self.conv(told={"acme"})
         text, bad = c.call("thread_state", {"place": "Birch Entry/Market Sizing"})
-        self.assertEqual((tools.STOPPED, True), (text, bad))
+        self.assertEqual((tools.NO_PLACE, False), (text, bad))      # the far side looks absent
         self.assertNotIn("BIRCHTHREAD71", text)
 
     def test_propose_on_a_walled_place_is_the_same_check(self):
         c = self.conv(told={"acme"})
         out = c.call("propose", {"action": {"verb": "open", "zone": "Work", "project": "Birch Entry"}})
-        self.assertEqual((tools.STOPPED, True), out)
+        self.assertEqual(("Refused: no project 'Birch Entry' in Work.", False), out)
         self.assertFalse((self.state / "proposals.jsonl").exists())
 
     def test_places_leaves_out_the_far_side_without_a_word(self):
@@ -254,7 +255,7 @@ class TestTheWallInTheTools(ToolCase):
     def test_one_place_name_in_two_zones_lists_only_what_may_be_held(self):
         c = self.conv(told={"acme"})
         text, _ = c.call("thread_state", {"place": "Birch Entry"})
-        self.assertEqual(tools.STOPPED, text)
+        self.assertEqual(tools.NO_PLACE, text)
 
 
 class TestRead(ToolCase):
@@ -379,6 +380,164 @@ class TestTheProtocol(ToolCase):
         got = [json.loads(l) for l in out.getvalue().splitlines()]
         self.assertEqual(-32700, got[0]["error"]["code"])
         self.assertEqual({}, got[1]["result"])
+
+
+TODO_LINES = ("# Work\n\n## Inbox\n- [ ] [[Acme Review]] chase Dana on the pallet quote\n"
+              "- [ ] [[Birch Entry]] BIRCHTODOSECRET send Theo the pallet launch plan\n")
+
+
+class TestTheZoneTodoListIsNoRecord(ToolCase):
+    """A zone's Todo.md has no party and holds lines for every project in it, the far side of a wall too."""
+
+    def put(self):
+        scoped.write(self.root / "Zones" / "Work" / "Todo.md", TODO_LINES)
+        self.rows = [Hit("Zones/Work/Todo.md", "BIRCHTODOSECRET send Theo")]
+
+    def test_search_never_returns_it(self):
+        self.put()
+        for words in ("BIRCHTODOSECRET", "pallet"):
+            text, bad = self.conv().call("search", {"words": words})
+            self.assertNotIn("BIRCHTODOSECRET", text)
+            self.assertNotIn("Todo.md", text)
+            self.assertIn("0 records", text)
+        self.assertFalse(self.out()["wall"])
+
+    def test_no_id_reads_it(self):
+        import re
+        self.put()
+        c = self.conv()
+        text, _ = c.call("owed", {})
+        for rid in re.findall(r"\[(r\d+-\w+)\]", text):
+            got, _ = c.call("read", {"id": rid})
+            self.assertNotIn("BIRCHTODOSECRET", got)
+        self.assertIsNone(c.describe("Zones/Work/Todo.md"))
+        self.assertNotIn("BIRCHTODOSECRET", " ".join(json.dumps(self.out()).split()))
+
+
+class TestAFarSidePlaceLooksAbsent(ToolCase):
+    """One text for a name on the far side and for a name that is not there."""
+
+    def twins(self, name, args, far="Birch Entry", gone="Nope Entry"):
+        c = self.conv(told={"acme"})
+        a = c.call(name, dict(args, **{k: v.replace("@", far) for k, v in args.items() if isinstance(v, str)}))
+        b = self.conv(told={"acme"}).call(name, dict(args, **{k: v.replace("@", gone) for k, v in args.items() if isinstance(v, str)}))
+        return a, b
+
+    def test_search_with_a_place(self):
+        a, b = self.twins("search", {"words": "pallet", "place": "@"})
+        self.assertEqual(a, b)
+        self.assertEqual(tools.NO_PLACE, a[0])
+        self.assertFalse(self.out()["wall"])
+
+    def test_thread_state(self):
+        a, b = self.twins("thread_state", {"place": "@"})
+        self.assertEqual(a, b)
+        a, b = self.twins("thread_state", {"place": "@/Market Sizing"})
+        self.assertEqual(a, b)
+        self.assertFalse(self.out()["wall"])
+
+    def test_propose_differs_only_by_the_name_it_echoes(self):
+        for extra in ({}, {"thread": "Whatever"}, {"app": "cmux"}):
+            act = dict({"verb": "open", "zone": "Work", "project": "@"}, **extra)
+            c1 = self.conv(told={"acme"})
+            a = c1.call("propose", {"action": dict(act, project="Birch Entry")})
+            b = self.conv(told={"acme"}).call("propose", {"action": dict(act, project="Nope Entry")})
+            self.assertEqual(a[0].replace("Birch Entry", "X"), b[0].replace("Nope Entry", "X"))
+            self.assertTrue(a[0].startswith("Refused: no project"))
+            self.assertFalse(self.out()["wall"])
+        self.assertFalse((self.state / "proposals.jsonl").exists())
+
+    def test_the_wall_is_still_noted_for_the_user(self):
+        c = self.conv(told={"acme"})
+        c.call("search", {"words": "pallet", "place": "Birch Entry"})
+        self.assertGreater(self.out()["held_back"], 0)
+
+    def test_a_place_that_may_be_held_still_resolves(self):
+        text, _ = self.conv(told={"acme"}).call("thread_state", {"place": "Acme Review/Pricing"})
+        self.assertNotIn("No such place", text)
+
+
+class TestTodoProposals(ToolCase):
+    def add(self, c, **kw):
+        return c.call("propose", {"action": dict({"verb": "todo-add", "zone": "Work", "text": "Call Dana"}, **kw)})[0]
+
+    def test_no_project_in_another_zone_is_refused(self):
+        self.assertIn("Refused", self.add(self.conv(), zone="Personal"))
+
+    def test_no_project_while_the_conversation_holds_a_party_is_refused(self):
+        self.assertIn("Refused", self.add(self.conv(told={"acme"})))
+        self.assertFalse((self.state / "proposals.jsonl").exists())
+
+    def test_a_project_on_the_far_side_is_refused_as_absent(self):
+        self.assertIn("no project", self.add(self.conv(told={"acme"}), project="Birch Entry"))
+
+    def test_the_zones_own_line_is_proposed_when_nothing_is_held(self):
+        self.assertIn("Proposed", self.add(self.conv()))
+
+    def test_a_line_longer_than_the_button_shows_is_refused(self):
+        self.assertIn("Refused", self.add(self.conv(), text="x" * (tools.MOST_TODO + 1)))
+
+
+class TestTextSeen(ToolCase):
+    def test_places_and_the_others_set_it_and_propose_does_not(self):
+        c = self.conv()
+        self.assertFalse(self.out()["text_seen"])
+        c.call("propose", {"action": {"verb": "open", "zone": "Work", "project": "Acme Review"}})
+        self.assertFalse(self.out()["text_seen"])
+        c.call("places", {})
+        self.assertTrue(self.out()["text_seen"])
+        self.assertEqual([], list(self.out()["handed"]))          # nothing handed out, yet text was seen
+
+    def test_a_search_with_no_result_sets_it(self):
+        self.conv().call("search", {"words": "zzzz"})
+        self.assertTrue(self.out()["text_seen"])
+
+
+class TestTheRealLoader(ToolCase):
+    """The recall module is loaded as the server loads it, not stubbed: only its `search` is."""
+
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(tools, "recall_for", REAL_RECALL_FOR)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_the_branchs_own_recall_loads_with_its_dataclass(self):
+        rc = tools.recall_for(self.root)
+        self.assertIsNotNone(rc)
+        self.assertTrue(hasattr(rc, "Result"))
+
+    def test_a_module_with_future_annotations_and_a_dataclass_loads(self):
+        scope = tools.scope_mod()
+        ws = Path(self._tmp.name) / "fixture-ws"
+        scoped.write(ws / "System" / "tools" / "shape.py",
+                     "from __future__ import annotations\nimport dataclasses\n\n@dataclasses.dataclass(frozen=True)\n"
+                     "class Row:\n    path: str\n    grade: str = 'working'\n\ndef search(words):\n    return [Row('a')]\n")
+        mod = scope._tool(ws, "shape.py", lambda m: callable(getattr(m, "search", None)))
+        self.assertIsNotNone(mod)
+        self.assertEqual("a", mod.search("x")[0].path)
+
+    def test_a_failing_module_is_not_left_in_sys_modules(self):
+        scope = tools.scope_mod()
+        ws = Path(self._tmp.name) / "broken-ws"
+        scoped.write(ws / "System" / "tools" / "broken.py", "raise RuntimeError('no')\n")
+        before = set(sys.modules)
+        self.assertIsNone(scope._tool(ws, "broken.py", lambda m: True))
+        self.assertEqual(before, set(sys.modules))
+
+    def test_the_wall_is_tested_on_what_the_loaded_index_returns(self):
+        rc = tools.recall_for(self.root)
+        scoped.write(self.root / "Zones" / "Work" / "Todo.md", TODO_LINES)
+        rows = [rc.Result(id=x, path=x, title="", date="", source="Work", snippet=sn, score=1.0)
+                for x, sn in ((ACME_PAGE, "ACMESNIP"), ("Zones/Work/Todo.md", "BIRCHTODOSECRET"), (BIRCH_PAGE, "BIRCHSNIP"))]
+        with mock.patch.object(rc, "search", lambda words, **kw: list(rows)):
+            text, bad = self.conv().call("search", {"words": "pallet"})
+        self.assertFalse(bad)
+        self.assertIn("(from the search index)", text)
+        self.assertNotIn("index was not available", text)
+        self.assertIn("Acme kick-off", text)
+        for far in ("BIRCHTODOSECRET", "Todo.md", "BIRCHSNIP", "Birch"):
+            self.assertNotIn(far, text)
 
 
 if __name__ == "__main__":

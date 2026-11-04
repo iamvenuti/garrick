@@ -516,7 +516,7 @@ class TestUndoOfAMade(manage.ManageCase):
         head = self.git("rev-parse", "--short", "HEAD").stdout.strip()                        # "Acme set up"
         r = self.scaffold("undo", "--zone", "Work", "--commit", head)
         self.assertEqual(1, r.returncode)
-        self.assertIn("is not a rename, a deletion or a new project or thread", r.stderr)
+        self.assertIn("is not a rename, a move, a deletion or a new project or thread", r.stderr)
 
 
 if __name__ == "__main__":

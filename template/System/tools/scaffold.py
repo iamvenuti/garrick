@@ -2099,7 +2099,7 @@ def main(argv=None):
         k.add_argument("--thread", help="the thread; without it, the project, and every thread in it with it")
     c = sub.add_parser("checkpoint", help="write or read a thread note's checkpoint; the request is JSON on stdin")
     c.add_argument("--now", help="the time to stamp instead of now, as 2026-10-15T14:32:10+02:00")
-    u = sub.add_parser("undo", help="revert a rename, a deletion or a new project or thread, while it is the zone's last commit")
+    u = sub.add_parser("undo", help="revert a rename, a move, a deletion or a new project or thread, while it is the zone's last commit")
     u.add_argument("--zone", required=True)
     u.add_argument("--commit", required=True, help="the commit the rename or deletion reported")
     for each in (y, p, t, r, mv):

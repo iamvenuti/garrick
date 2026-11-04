@@ -418,6 +418,30 @@ class Conversation:
                     continue
         return list(dict.fromkeys(out))
 
+    def row_admit(self):
+        """recall's `admit` for this conversation, failing closed. It refuses session and system rows; admits a
+        library row that names no party and no zone; refuses any other row with no party, a tag the Parties table
+        does not hold, or a party walled (ask_scope.admits()) from what is held. With nothing held it admits only
+        rows of the window's zone alone. Whether the parties of that zone are walled from each other is not decided
+        row by row: the window zone's rows are admitted and fair() chooses among them, as before."""
+        sc, lib, ctx, _ = self.world()
+        tags = {t.casefold(): t for t in ctx.get("parties", {})}
+        held, zone = set(self.held()), (self.zone or "").casefold()
+
+        def admit(row) -> bool:
+            if row.kind in ("session", "system"):
+                return False
+            if row.kind == "knowledge" and not row.parties and not row.zones:
+                return True
+            if not row.parties or any(p.casefold() not in tags for p in row.parties):
+                return False
+            if not sc.admits(ctx, {tags[p.casefold()] for p in row.parties}, held, lib):
+                return False
+            if not held and tuple(z.casefold() for z in row.zones) != (zone,):
+                return False
+            return True
+        return admit
+
     def indexed(self, words: str, limit: int) -> Tuple[Optional[List[str]], Dict[str, str]]:
         """recall.search()'s paths, best first, and each one's snippet; (None, {})
         when the index is missing or raises. It is asked for no project, so
@@ -426,7 +450,9 @@ class Conversation:
         if rc is None:
             return None, {}
         try:
-            rows = rc.search(words, project=None, limit=limit, root=self.ws)
+            # `admit` (#341) puts the walls before the ranking. A recall that does not take it raises TypeError
+            # here, and the index is then not used: never a second call without it.
+            rows = rc.search(words, project=None, limit=limit, root=self.ws, admit=self.row_admit())
         except Exception:
             return None, {}
         paths, snippets = [], {}

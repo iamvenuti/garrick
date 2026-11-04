@@ -499,6 +499,93 @@ class TestPlacesSaysTheSameForAnEmptyZone(ToolCase):
         self.assertEqual(empty.encode(), spans.encode())
 
 
+class TestTheIndexIsAskedWithTheWalls(ToolCase):
+    """#341's `admit`: the walls are applied before the ranking, and a recall without it is not used."""
+
+    def test_a_recall_without_admit_gives_the_keyword_find_never_an_unfiltered_call(self):
+        calls = []
+
+        def old_search(words, project=None, limit=10, root=None):
+            calls.append(words)
+            return [Hit(ACME_PAGE)]
+        self.recall.search = old_search
+        c = self.conv(told={"acme"})
+        c.refresh()
+        paths, snippets = c.indexed("pallet", 10)
+        self.assertEqual((None, {}), (paths, snippets))
+        self.assertEqual([], calls)
+
+    def test_the_policy_refuses_what_the_conversation_may_not_hold(self):
+        RP = type("RP", (), {"__init__": lambda self, kind, zones, project, parties: self.__dict__.update(
+            kind=kind, zones=zones, project=project, parties=parties)})
+        c = self.conv(told={"acme"})
+        c.refresh()
+        admit = c.row_admit()
+        self.assertTrue(admit(RP("meetings", ("work",), "", ("acme",))))
+        self.assertTrue(admit(RP("knowledge", (), "", ())))
+        self.assertFalse(admit(RP("meetings", ("work",), "", ("birch",))))
+        self.assertFalse(admit(RP("meetings", ("work",), "", ())))
+        self.assertFalse(admit(RP("meetings", ("work",), "", ("acme", "nobody"))))
+        self.assertFalse(admit(RP("session", (), "", ())))
+        self.assertFalse(admit(RP("system", (), "", ("acme",))))
+        self.state = Path(self._tmp.name) / "state2"
+        nothing = self.conv(zone="Work").row_admit()
+        self.assertTrue(nothing(RP("meetings", ("work",), "", ("acme",))))
+        self.assertFalse(nothing(RP("meetings", ("personal",), "", ("acme",))))
+        self.assertFalse(nothing(RP("meetings", ("work", "personal"), "", ("acme",))))
+
+    def test_walled_notes_with_the_query_words_move_neither_order_nor_scores(self):
+        import os
+        import shutil
+        import subprocess
+        repo = REPO
+        if subprocess.run(["git", "-C", str(repo), "rev-parse", "--verify", "-q", "origin/feat-341-recall"],
+                          capture_output=True).returncode:
+            self.skipTest("origin/feat-341-recall is not here")
+        tree = Path(self._tmp.name) / "merged"
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
+        git = lambda *a: subprocess.run(["git", "-C", str(a[0])] + list(a[1:]), capture_output=True, text=True, env=env)  # noqa: E731
+        git(repo, "worktree", "add", "--detach", str(tree), "HEAD")
+        try:
+            merged = git(tree, "merge", "--no-edit", "origin/feat-341-recall")
+            if merged.returncode:
+                self.skipTest("origin/feat-341-recall does not merge: %s" % merged.stdout[-200:])
+            spec = importlib.util.spec_from_file_location("recall_merged", tree / "template" / "System" / "tools" / "recall.py")
+            real = importlib.util.module_from_spec(spec)
+            sys.modules["recall_merged"] = real
+            self.addCleanup(sys.modules.pop, "recall_merged", None)
+            sys.path.insert(0, str(tree / "template" / "System" / "tools"))
+            try:
+                spec.loader.exec_module(real)
+            finally:
+                sys.path.remove(str(tree / "template" / "System" / "tools"))
+            self.assertIn("admit", real.search.__code__.co_varnames)
+            sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
+            for n, party in (("a1", "acme"), ("a2", "acme")):
+                scoped.write(sources / ("260401-%s.md" % n), scoped.meeting_page("Work", "[%s]" % party, n)
+                             + "\nquokkax quokkax numbatx filler\n")
+            patch = mock.patch.object(tools, "recall_for", lambda ws: real)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+            def ask():
+                self.state = Path(self._tmp.name) / ("s%d" % len(list(Path(self._tmp.name).glob("s*"))))
+                c = self.conv(told={"acme"})
+                c.refresh()
+                return c.indexed("quokkax numbatx", 20)
+            base = ask()
+            self.assertTrue(base[0])
+            for n in range(12):
+                scoped.write(sources / ("2604%02d-b%d.md" % (10 + n, n)),
+                             scoped.meeting_page("Work", "[birch]", "B%d" % n) + "\nnumbatx quokkax\n")
+            more = ask()
+            self.assertEqual(base[0], more[0])
+            self.assertFalse(any("-b" in p for p in more[0]))
+        finally:
+            subprocess.run(["git", "-C", str(repo), "worktree", "remove", "--force", str(tree)], capture_output=True)
+
+
 class TestTheZoneTodoListIsNoRecord(ToolCase):
     """A zone's Todo.md has no party and holds lines for every project in it, the far side of a wall too."""
 

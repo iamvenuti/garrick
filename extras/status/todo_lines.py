@@ -41,7 +41,8 @@ UNSURE = re.compile(r"^⚠️ thread\?:\s*")
 SRC = re.compile(r"\s*·\s*\[src\]\(([^)\s]*)\)")
 ALSO = re.compile(r"\s*\(also in ((?:[^()]|\([^()]*\))*)\)")
 MDLINK = re.compile(r"\[([^\]]*)\]\(([^)\s]*)\)")
-TAG = re.compile(r"(?<!\S)#[^\s#]+")
+# A tag holds a character that is not a digit, as in Obsidian: `#351` and `#351,` are text.
+TAG = re.compile(r"(?<!\S)#(?!\d+(?![\w/-]))[^\s#]+")
 # What the walk leaves out when no garrick_lib with live_files() can be found:
 # the folders this file skipped before the check's walk was shared with it.
 SKIP_DIRS = {"archive", "_template", ".obsidian", ".git", ".trash"}

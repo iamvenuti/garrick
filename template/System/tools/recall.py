@@ -513,7 +513,7 @@ class Refresher:
         where, fm = self.session_where(path)
         zone = (locate(self.root, path) or Place("", "", "")).zone
         parties, project = self.session_parties(where)
-        pid = self.idx.policy("session", zone, project, parties)
+        pid = self.idx.policy("session" if zone else "system", zone, project, parties)
         title = str(fm.get("title") or "") or path.stem
         self.idx.add(rel, "chunk", "session", title, iso(fade.name_date(path.name)), "working", False, pid, "",
                      chunks(body_of(text)))
@@ -612,6 +612,8 @@ def permitted(s: Searcher, ctx: dict, kind: str, zone: str, project: str, partie
     reads. A row that cannot be placed is not readable."""
     if kind == "knowledge":
         return True
+    if kind == "system":
+        return s.everything                     # sessions opened at the root or in System/
     zones = [z for z in zone.lower().split("|") if z]
     if kind == "meetings":
         if not zones or not parties:

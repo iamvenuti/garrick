@@ -2502,13 +2502,17 @@ WIKI_NAMES = ("Meetings", "Knowledge")
 WIKI_QUESTION_DIR = "questions"
 WIKI_ANSWER_DIR = ("raw", "answers")
 WORDS_MAX = 4000
-WALL_HELD = "A wall holds some material back from this project, so I have not used it. Nothing was written."
 BOLD_LINE = re.compile(r"(?m)^\s*\*\*(.+)\*\*\s*$")
 NO_DECISION = "Record as a decision is not built yet, so nothing was written. Answer it, put it off or close it instead"
 
 
 def wall_sentence(ws: Path) -> str:
-    return wall_refusal(ws) or WALL_HELD
+    """The rule's sentence, from operations.py's one copy. Without it the wall
+    cannot be said, so nothing is done (fail closed)."""
+    said = wall_refusal(ws)
+    if not said:
+        raise Refused("this workspace's operations.py cannot say the wall sentence, so nothing was written")
+    return said
 
 
 def tags_of(value) -> list:

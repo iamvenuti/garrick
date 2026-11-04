@@ -1479,6 +1479,9 @@ def cmd_move(root, args, today):
                 touched.add(path)
                 path.write_text(changed, encoding="utf-8")
         git_ok(["add", "-A", "--", rel_new] + [str(t.relative_to(zone_dir)) for t in touched if t.exists()], zone_dir)
+        problem = wall_hook_problem(zone_dir)
+        if problem:
+            raise Refusal(f"{problem}, so nothing was committed.")
         # The trailers are what `undo` knows a move by, and where it finds the paths to put back.
         git(["commit", "-q", "-m", f"{name}: moved to {target.name}", "-m",
              f"{MOVE_ACTION}\n{MOVE_PATHS} {rel_old}={rel_new}"], zone_dir)

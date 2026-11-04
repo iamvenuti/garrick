@@ -542,6 +542,19 @@ class TestMove(ManageCase):
         self.assertFalse((self.apex / "Threads" / "Freight").exists())
         self.assertEqual("", self.git("status", "--porcelain").stdout)
 
+    def test_git_sent_past_the_zones_wall_check_moves_nothing(self):
+        """A core.hooksPath that leads away from the zone's hook: the move asks git first, and commits nothing."""
+        empty = self.root / "no-hooks"
+        empty.mkdir()
+        self.git("config", "core.hooksPath", str(empty))
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("wall check", r.stderr)
+        self.assertIn("nothing changed", r.stderr)
+        self.assertTrue(self.freight.is_file())
+        self.assertFalse((self.apex / "Threads" / "Freight").exists())
+        self.assertEqual("", self.git("status", "--porcelain", "--untracked-files=all").stdout)
+
     def test_a_refused_commit_with_ledger_rows_leaves_the_tree_as_it_was(self):
         ledger = self.acme / "Deliverables" / "published.md"
         ledger.parent.mkdir(exist_ok=True)

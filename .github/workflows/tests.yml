@@ -39,12 +39,18 @@ jobs:
         # The version extras/mods/README.md names as tested.
         run: npm install -g @anthropic-ai/claude-code@2.1.295
       - name: Type-check the Mac app
-        # Garrick.swift as make-app.sh compiles it: one file, the SDK's own frameworks, no flags.
-        # Once per run, since neither the Python nor the shard changes it; skipped with no Swift compiler.
+        # As make-app.sh compiles them: the app is Garrick.swift as main.swift plus GarrickShared.swift,
+        # the Finder extension is GarrickFinder.swift plus GarrickShared.swift as a library. The SDK's own
+        # frameworks, no other flags. Once per run, since neither the Python nor the shard changes it;
+        # skipped with no Swift compiler.
         if: matrix.python == 'system' && matrix.shard == 1
         run: |
           if xcrun --find swiftc >/dev/null 2>&1; then
-            xcrun swiftc -typecheck extras/status/app/Garrick.swift
+            T=$(mktemp -d)
+            cp extras/status/app/Garrick.swift "$T/main.swift"
+            xcrun swiftc -typecheck "$T/main.swift" extras/status/app/GarrickShared.swift
+            xcrun swiftc -typecheck -application-extension -parse-as-library -module-name GarrickFinder \
+              extras/status/app/GarrickFinder.swift extras/status/app/GarrickShared.swift
           else
             echo "No Swift compiler on this runner: Garrick.swift is not type-checked."
           fi

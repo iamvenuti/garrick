@@ -333,8 +333,8 @@ ordinary edit.
    later source decides, is also a question file, as *A question for the
    user* says. The report links it.
 5. **Open sections.** The script's list ends with every line under an
-   *Open* or *Open issues* heading. Show it once, ask once for the whole of
-   it, and on a yes run `python3 System/status/page_action.py
+   *Open* or *Open issues* heading. Knowledge has one group: show it, ask once for
+   the whole of it, and on a yes run `python3 System/status/page_action.py
    question-open-sections --wiki Knowledge --confirm true`: one question
    file per line, the page as `origin:` and `pages:`, no zone and no
    parties, and no page changed. Without a yes, write nothing. A line a

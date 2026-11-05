@@ -3090,6 +3090,10 @@ def day_record(wiki: Path, day: str, fm: dict) -> bool:
             continue
         if str(rfm.get("answered") or "").strip() != day and not f.name.startswith(short + " - "):
             continue
+        # only the raw record `question-decide` files carries the marker: an answer filed by `question-answer`
+        # is not the act that settles a decision
+        if str(rfm.get("outcome") or "").strip() != "decision":
+            continue
         if link_target(rfm.get("question")) == want and str(rfm.get("zone") or "").strip() == str(fm.get("zone") or "").strip() \
                 and sorted(strip_tag(t) for t in as_list(rfm.get("parties"))) == parties:
             return True
@@ -3130,7 +3134,9 @@ def decision_events(ws: Workspace, wiki: Path) -> List[dict]:
         elif state(old) != state(new):
             out.append({"path": path, "day": day, "kind": "status", "fm": fm_of(new),
                         "what": "%s to %s" % (state(old) or "none", state(new) or "none")})
-    log = _git(["log", "--format=%x01%H %cs", "-M", "--name-status", "-z", "--", spec], top_path) or ""
+    # -m --first-parent: a merge commit is read against its first parent too, since a plain log shows no diff for
+    # a merge and a status set in one would pass unseen.
+    log = _git(["log", "-m", "--first-parent", "--format=%x01%H %cs", "-M", "--name-status", "-z", "--", spec], top_path) or ""
     for commit, st, path, before in name_status(log):
         sha, _, day = (commit or "").partition(" ")
         try:

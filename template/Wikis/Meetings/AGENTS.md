@@ -127,7 +127,7 @@ revisit: <the reason, when the assistant flags it>   # optional
 ---
 ```
 
-Then four sections: `## Decision` (the user's own words), `## Assumptions`, `## Options turned down` and `## Revisit when`. The assistant may fill the last three later, each line marked *Proposed*, and may add `revisit:` with its reason. It never changes `status:` and never rewords the decision: the user's save is the act that settles it, and only the user marks it `superseded` or `withdrawn`. The walls read a decision by its zone and parties, as they read a question. `check.py` warns when a commit changes `status:` with no raw answer dated the same day.
+Then four sections: `## Decision` (the user's own words), `## Assumptions`, `## Options turned down` and `## Revisit when`. The assistant may fill the last three later, each line marked *Proposed*, and may add `revisit:` with its reason. It never changes `status:` and never rewords the decision: the user's save is the act that settles it, and only the user marks it `superseded` or `withdrawn`. The raw answer a *Record as a decision* files carries `outcome: decision`; `check.py` asks for it, for the page's own question, before a status moves. The walls read a decision by its zone and parties, as they read a question. `check.py` warns when a commit changes `status:` with no raw answer dated the same day.
 
 ## Rules
 

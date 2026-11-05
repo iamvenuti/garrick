@@ -2366,8 +2366,10 @@ def fence_for(words: str) -> str:
     return "`" * max(3, longest + 1)
 
 
-def raw_answer_text(q: WikiQuestion, words: str, today: dt.date, tags: list) -> str:
+def raw_answer_text(q: WikiQuestion, words: str, today: dt.date, tags: list, outcome: str = "") -> str:
     where = ["type: answer", "answered: %s" % today.isoformat()]
+    if outcome:
+        where.append("outcome: %s" % outcome)       # `decision`: the record check.py asks for before a decision's status moves
     if q.name == "Meetings":
         where += ["zone: %s" % str(q.fm.get("zone")).strip(), "parties: [%s]" % ", ".join(tags)]
     where.append("question: %s" % quoted("[[%s]]" % q.path.relative_to(q.dir).with_suffix("").as_posix()))
@@ -2393,13 +2395,13 @@ def write_new(path: Path, text: str) -> None:
         raise
 
 
-def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list) -> Path:
+def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list, outcome: str = "") -> Path:
     folder = q.dir.joinpath(*WIKI_ANSWER_DIR)
     tx_dirs(folder)
     folder.mkdir(parents=True, exist_ok=True)
     if folder.resolve() != folder or q.dir not in folder.parents:
         raise Refused("raw/answers is not a plain folder of this wiki, so nothing was written")
-    body = raw_answer_text(q, words, today, tags)
+    body = raw_answer_text(q, words, today, tags, outcome)
     base = "%s - %s" % (today.strftime("%y%m%d"), answer_slug(q.stem()))
     for n in range(1, 10):
         path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
@@ -2612,7 +2614,7 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
 
             def decide(w):
                 # Both files or neither: a failure anywhere puts every file back, the raw answer too.
-                record = file_raw_answer(q, today, words, tags)
+                record = file_raw_answer(q, today, words, tags, "decision")
                 stem = record.relative_to(q.dir).with_suffix("").as_posix()
                 page = file_decision(q, today, words, tags, stem)
                 decided = page.relative_to(q.dir).with_suffix("").as_posix()
@@ -3505,7 +3507,11 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                 else: not a zone's notes, a memory, a page with no readable party or another party's page."""
                 pages = [hit.path] if hit.kind == "wiki" else list(hit.pages) if hit.kind == "raw" else []
                 base = (ctx.root / "Wikis" / "Meetings" / "wiki").resolve()
-                return bool(pages) and all(base in Path(x).resolve().parents and near_side(lib, ws, view, Path(x)) for x in pages)
+                # A decision page is settled by the user's own save (#224, point 5): no correction rewrites its
+                # `question:`, `status:`, `zone:` or `parties:`, so it is left out whole.
+                settled = base / "decisions"
+                return bool(pages) and all(base in Path(x).resolve().parents and settled not in Path(x).resolve().parents
+                                           and near_side(lib, ws, view, Path(x)) for x in pages)
             try:
                 out = N.run_correction(ctx, [ctx.rel(page)], edit["old"], edit["new"], True, "", [], ctx.rel(page),
                                        commit=False, watch=w.watch, only=only, rebuild=False)

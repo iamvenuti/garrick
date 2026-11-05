@@ -47,10 +47,10 @@ def decision(parties="[acme]", status="valid", extra="", zone="Work", source=REC
             % ("\n".join(head), extra))
 
 
-def answer_record(parties="[acme]", answered="2026-10-05"):
-    return ("---\ntype: answer\nanswered: %s\nzone: Work\nparties: %s\nquestion: \"[[questions/261001 - acme]]\"\n---\n\n"
+def answer_record(parties="[acme]", answered="2026-10-05", outcome="outcome: decision\n"):
+    return ("---\ntype: answer\nanswered: %s\n%szone: Work\nparties: %s\nquestion: \"[[questions/261001 - acme]]\"\n---\n\n"
             "Question: Acme: which volume floor holds?\n\nAnswered on %s, in the user's own words:\n\n```\n500\n```\n"
-            % (answered, parties, answered))
+            % (answered, outcome, parties, answered))
 
 
 class DecisionCase(PanelCase):
@@ -182,6 +182,18 @@ class TestRecordAsADecision(DecisionCase):
         self.assertNotIn("words", pa.LOGGED)
 
 
+class TestNoCorrectionTouchesADecision(DecisionCase):
+    def test_nurture_correct_leaves_a_decision_page_as_it_is(self):
+        write(self.meetings / RECORD, answer_record())
+        page = decision(extra="revisit: \"Mira Holt asked again.\"\n").replace("Acme: which volume floor holds?", "Mira Holt: which floor?")
+        write(self.meetings / DECISION, page)
+        commit_all(self.meetings, "decision names a person")
+        pa.act(self.root, dict(verb="nurture-correct", zone="Work", scope="acme",
+                               path="Wikis/Meetings/wiki/people/mira-holt.md", old="Mira Holt", new="Mira Holte"), today=TODAY)
+        self.assertEqual(page, (self.meetings / DECISION).read_text())
+        self.assertIn("Mira Holte", (self.people / "mira-holt.md").read_text())
+
+
 class TestWorkingItIn(DecisionCase):
     def test_the_work_in_step_leaves_the_status_as_it_is(self):
         self.decide()
@@ -246,6 +258,41 @@ class TestWhatTheCheckSays(DecisionCase):
         old.unlink()
         commit_all(self.meetings, "rename and withdraw")
         self.assertEqual(1, len([f for f in self.findings() if "`status:` changed" in f.message]))
+
+    def test_a_merge_commit_that_sets_the_status_is_warned_about(self):
+        self.decide()
+        commit_all(self.meetings, "decide")
+        git(self.meetings, "checkout", "-q", "-b", "side")
+        write(self.meetings / "wiki/people/note.md", "---\ntitle: Note\ntype: person\nparty: acme\n---\n\nNote.\n")
+        commit_all(self.meetings, "side work")
+        git(self.meetings, "checkout", "-q", "-")
+        git(self.meetings, "-c", "user.name=T", "-c", "user.email=t@example.com", "merge", "--no-ff", "--no-commit", "side")
+        page = self.meetings / DECISION
+        page.write_text(page.read_text().replace("status: valid", "status: withdrawn"))
+        commit_all(self.meetings, "evil merge")
+        self.assertEqual(1, len([f for f in self.findings() if "`status:` changed" in f.message]))
+
+    def test_a_hand_written_decision_after_a_plain_answer_is_warned_about(self):
+        write(self.meetings / RECORD, answer_record(outcome=""))
+        write(self.meetings / DECISION, decision())
+        self.assertTrue([f for f in self.findings() if "for its own question" in f.message])
+        write(self.meetings / RECORD, answer_record())
+        self.assertEqual([], [f for f in self.findings() if "for its own question" in f.message])
+
+    def test_a_status_change_with_only_a_plain_answer_that_day_is_warned_about(self):
+        self.decide()
+        commit_all(self.meetings, "decide")
+        today = dt.date.today()
+        write(self.meetings / ("raw/answers/%s - plain.md" % today.strftime("%y%m%d")), answer_record(answered=today.isoformat(), outcome=""))
+        page = self.meetings / DECISION
+        page.write_text(page.read_text().replace("status: valid", "status: superseded"))
+        self.assertEqual(1, len([f for f in self.findings() if "`status:` changed" in f.message]))
+
+    def test_the_raw_answer_of_a_decision_carries_the_marker_and_a_plain_answer_does_not(self):
+        self.decide()
+        self.assertIn("outcome: decision\n", (self.meetings / RECORD).read_text())
+        pa.act(self.root, dict(verb="question-answer", wiki="Meetings", file="questions/261001 - birch.md", words="x"), today=TODAY)
+        self.assertNotIn("outcome:", (self.meetings / "raw/answers/261005 - birch.md").read_text())
 
     def test_a_plain_rename_is_not(self):
         self.decide()

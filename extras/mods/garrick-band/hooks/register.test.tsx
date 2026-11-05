@@ -1262,7 +1262,7 @@ describe('the one slot', () => {
   // A thread note whose time the test sets, a lock it can plant, and the
   // buttons the band draws. Nothing here answers a model call: a prompt
   // submitted is recorded, and the band must submit none by itself.
-  async function slotted($: any, on: any, o: { note?: string; lock?: string | null } = {}) {
+  async function slotted($: any, on: any, o: { note?: string; lock?: string | null; script?: boolean; reject?: boolean } = {}) {
     const clock = mock.clock(on)
     const state = { noteMs: Date.now() - 60 * MIN, lock: o.lock ?? null as string | null, text: o.note ?? NOTE }
     const submitted: string[] = []
@@ -1272,7 +1272,11 @@ describe('the one slot', () => {
     const lockPath = `${ROOT}/System/generated/${lockFile('Zones/Work/Acme/Acme.md')}`
     on('ui.render', ENGINE)
     on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } as any })
-    on('prompt.submit', async (_$: any, e: any) => { submitted.push(e.text); return { text: e.text } })
+    on('prompt.submit', async (_$: any, e: any) => {
+      if (o.reject) throw new Error('cannot send')
+      submitted.push(e.text)
+      return { text: e.text }
+    })
     on('process.run', async (_$: any, e: any) => {
       ran.push([...e.argv])
       const stdout = e.argv[0] === '/usr/bin/stat' ? `${state.noteMs / 1000}\n` : ''
@@ -1283,7 +1287,7 @@ describe('the one slot', () => {
     on('session.cwd', async () => ({ value: cwd }))
     on('env.get', async () => ({ value: '/Users/someone' }))
     on('fs.exists', async (_$: any, e: any) => ({
-      value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, ...(state.lock === null ? [] : [lockPath])].includes(e.path),
+      value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, ...(o.script ? [`${ROOT}/System/tools/wrap_lock.py`] : []), ...(state.lock === null ? [] : [lockPath])].includes(e.path),
     }))
     on('fs.read', async (_$: any, e: any) => ({ value: e.path === lockPath ? state.lock : state.text }))
     on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
@@ -1383,6 +1387,48 @@ describe('the one slot', () => {
     expect(w.submitted[0]).toMatch(/^Wrap Acme: /)
     expect(w.submitted[0]).not.toContain('foreground')     // the skill asks the question and runs it in the background
     expect((await w.keys()).out).toEqual(['wrapping'])
+  })
+
+  test('the band takes the lock itself before it submits, and the prompt says so', async ($, on) => {
+    const w = await slotted($, on, { script: true })
+    await w.turn()
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' })
+    const lockCall = w.ran.findIndex(r => r[0] === 'python3' && r[2] === 'start')
+    expect(lockCall).toBeGreaterThanOrEqual(0)
+    expect(w.ran[lockCall]![1]).toBe(`${ROOT}/System/tools/wrap_lock.py`)
+    expect(w.submitted[0]).toContain('The band has taken the wrap lock: do not take it')
+  })
+
+  test('without the script the prompt tells the wrap to take the lock', async ($, on) => {
+    const w = await slotted($, on)
+    await w.turn()
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' })
+    expect(w.ran.some(r => r[0] === 'python3')).toBe(false)
+    expect(w.submitted[0]).toContain('Take the wrap lock first')
+  })
+
+  test('a prompt that is refused leaves no Wrapping behind', async ($, on) => {
+    const w = await slotted($, on, { script: true, reject: true })
+    await w.turn()
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' }).catch(() => undefined)
+    await w.clock.advance(100)
+    expect((await w.keys()).out).toEqual(['wrap'])
+    expect(w.ran.some(r => r[0] === 'python3' && r[2] === 'end')).toBe(true)      // and the lock the band took is let go
+  })
+
+  test('Wrap pressed during a turn keeps the guard until the wrap\'s own turn has begun', async ($, on) => {
+    const w = await slotted($, on)
+    await $.turn.start({ text: 'long', turnId: 'long' } as any)
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' })
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'long', reason: 'answer' } as any)
+    expect((await w.keys()).out).toEqual(['wrapping'])                            // the earlier turn's end does not release it
+    await $.turn.start({ text: 'Wrap Acme', turnId: 'wrap' } as any)
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'wrap', reason: 'answer' } as any)
+    expect((await w.keys()).out).toEqual(['wrap'])                                // its own end does, with no lock and no landed note
   })
 
   test('the Close wrap runs in the foreground, with no question', () => {

@@ -21,6 +21,7 @@ none. `status` prints `running` or `idle`. Standard library only.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime
 import json
 import os
@@ -28,6 +29,11 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+try:
+    import fcntl
+except ImportError:             # not on Windows
+    fcntl = None
 
 sys.dont_write_bytecode = True
 
@@ -73,13 +79,33 @@ def running(path: Path, now: Optional[float] = None) -> bool:
     taken = started(path)
     if taken is None:
         return False
-    return (time.time() if now is None else now) - taken < MAX_AGE
+    return abs((time.time() if now is None else now) - taken) < MAX_AGE     # one dated far ahead counts as gone, as in the band
 
 
 def start(root: Path, note: str, now: Optional[float] = None) -> bool:
     """Take the lock. False when a wrap of this note is already running."""
     path = lock_path(root, note)
     path.parent.mkdir(parents=True, exist_ok=True)
+    with serial(path.parent):
+        return take(path, note, now)
+
+
+@contextlib.contextmanager
+def serial(folder: Path):
+    """One start at a time on this machine, so that two starters which both see
+    a dead lock cannot each clear it and each take it."""
+    if fcntl is None:
+        yield
+        return
+    fd = os.open(str(folder / ".wrap-start.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def take(path: Path, note: str, now: Optional[float]) -> bool:
     if path.exists():
         if running(path, now):
             return False

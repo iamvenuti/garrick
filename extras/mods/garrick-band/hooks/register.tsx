@@ -102,8 +102,12 @@ export function projectWrapPrompt(n: Note, foreground = false): string {
   return `Wrap ${n.title}: wrap the thread this session worked on, and the hub \`${n.rel}\` too if its status changed. If the session touched no thread, say so and stop.${foreground ? CLOSING : ''}`
 }
 
-export function wrapPrompt(n: Note, foreground = false): string {
-  return `Wrap ${n.title}: rewrite the Resume here block in \`${n.rel}\` so it describes now, and add today's dated entry below it.${foreground ? CLOSING : ''}`
+export function wrapPrompt(n: Note, foreground = false, lock: 'taken' | 'take' | null = null): string {
+  const note = `\`${n.rel}\``
+  const locking = lock === 'taken'
+    ? ` The band has taken the wrap lock: do not take it, and remove it as the last step with \`python3 System/tools/wrap_lock.py end ${n.rel}\`.`
+    : lock === 'take' ? ` Take the wrap lock first with \`python3 System/tools/wrap_lock.py start ${n.rel}\`, and remove it as the last step.` : ''
+  return `Wrap ${n.title}: rewrite the Resume here block in ${note} so it describes now, and add today's dated entry below it.${foreground ? CLOSING : locking}`
 }
 
 // Close ends the session when the wrap ends, so the wrap runs here, in the
@@ -709,6 +713,7 @@ let before: string | null = null            // the block as the running turn fou
 let asked = false                           // the running turn put a question to the person
 let turnMs: number | null = null            // when the session's last main-loop turn began
 let asking = false                          // Wrap was pressed and its turn has not ended: the question is being asked
+let askStage: 'pending' | 'running' | null = null     // pending: the wrap's turn has not begun; running: it has
 let poller: { cancel: () => void } | null = null
 
 const rels = (n: Note) => (n.resume !== null ? [n.rel] : n.threads.map(t => t.rel))
@@ -755,9 +760,37 @@ async function startWrap($: any, n: Note): Promise<boolean> {
 
     return false
   }
+  // The band takes the lock itself where it can, so the guard does not hang on the model following the skill.
+  let lock: 'taken' | 'take' | null = null
+  if (n.resume !== null) {
+    const root = rootOf(n)
+    const script = `${root}/System/tools/wrap_lock.py`
+    if (await $.fs.exists(script).catch(() => false)) {
+      const r = await $.process.run(['python3', script, 'start', n.rel], { timeoutMs: 10_000 }).catch(() => ({ exitCode: 127 }))
+      if (r.exitCode === 0) lock = 'taken'
+      else if (r.exitCode === 1) {
+        $.ui.toast('A wrap is already running.')
+        void evaluate($).catch(() => undefined)
+
+        return false
+      } else lock = 'take'
+    } else lock = 'take'
+  }
   asking = true
+  askStage = 'pending'
   await update($, slotAtom, () => 'wrapping')
-  await wrap($, n)
+  try {
+    await $.prompt.submit({ text: n.resume ? wrapPrompt(n, false, lock) : projectWrapPrompt(n), asUser: true })
+  } catch (err) {
+    // A prompt that never went must not leave the band saying Wrapping, nor the lock standing.
+    asking = false
+    askStage = null
+    if (lock === 'taken') await $.process.run(['python3', `${rootOf(n)}/System/tools/wrap_lock.py`, 'end', n.rel]).catch(() => undefined)
+    await evaluate($).catch(() => undefined)
+    throw err
+  }
+  // A wrap whose turn never begins must not hold the band for ever: ten minutes, as the lock.
+  $.clock.after(WRAP_LOCK_MS, () => { if (askStage === 'pending') { asking = false; askStage = null; void evaluate($).catch(() => undefined) } })
 
   return true
 }
@@ -887,6 +920,7 @@ export const register: Register = on => {
       asked = false
       wrapped = false
       turnMs = Date.now()
+      if (askStage === 'pending') askStage = 'running'      // the wrap's own turn has begun
       if (closing === 'wrapping' && wrapTurn === null) wrapTurn = e.turnId
       const start = await noteOf($).catch(() => null)
       void evaluate($).catch(() => undefined)
@@ -923,7 +957,10 @@ export const register: Register = on => {
     const found = await refresh($)
     await reindex($).catch(() => undefined)
     if (e.agentId === undefined) {
-      asking = false
+      if (askStage !== 'pending') {                         // the turn that was running when Wrap was pressed does not release it
+        asking = false
+        askStage = null
+      }
       turnMs ??= Date.now()       // a turn whose start was missed: taken as begun now, so the band offers Wrap, not Resume
     }
     await evaluate($).catch(() => undefined)
@@ -1024,7 +1061,7 @@ export const register: Register = on => {
       if (arg === 'wrap' && (await slotFor($, current).catch(() => null)) === 'wrapping') return { text: 'A wrap is already running.' }
       // Submitted once this hook has answered: a prompt submitted from inside a
       // command.run hook would wait on the very turn the hook is holding.
-      $.clock.after(50, () => void (arg === 'resume' ? resume($, current) : startWrap($, current)))
+      $.clock.after(50, () => void (arg === 'resume' ? resume($, current) : startWrap($, current).catch(() => $.ui.toast('The wrap did not start.'))))
 
       return { text: `${arg === 'resume' ? 'Resuming' : 'Wrapping'} ${current.title}.` }
     }
@@ -1087,7 +1124,7 @@ export const register: Register = on => {
           )}
           <Box flexDirection="row" gap={2}>
             {slot === 'wrap' && resumable(current) && (
-              <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void startWrap($, current)} />
+              <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void startWrap($, current).catch(() => $.ui.toast('The wrap did not start.'))} />
             )}
             {slot === 'resume' && resumable(current) && (
               <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />

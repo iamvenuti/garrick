@@ -181,10 +181,17 @@ class TestOutcomes(WikiAnswerCase):
 
 
 class TestWalls(WikiAnswerCase):
+    def answered_anyway(self, **kw):
+        """The question's own file carries a wall finding when it names a page across the wall, and an answer
+        from the panel is refused for it (TestARefusedQuestion); these tests are about the work-in step, so the
+        answered state is made with that one test off."""
+        with mock.patch.object(pa, "walls_on_written", return_value=[]):
+            return self.do("question-answer", **kw)
+
     def test_a_page_across_the_wall_is_left_out_and_the_sentence_said(self):
         self.ask(question(pages=BIRCH))
         before = snapshot(self.root)
-        self.do("question-answer", words="500")
+        self.answered_anyway(words="500")
         self.changed(before)
         say = self.do("question-work")
         self.assertIn(SENTENCE, say)
@@ -323,10 +330,21 @@ class TestPagesToChange(WikiAnswerCase):
         self.assertNotIn("not there", say)
 
 
+class TestARefusedQuestion(WikiAnswerCase):
+    def test_a_question_that_carries_a_wall_finding_is_not_answered_later_or_closed_from_the_panel(self):
+        self.ask(question(pages=BIRCH))
+        before = snapshot(self.root)
+        for verb, kw in (("question-answer", {"words": "500"}), ("question-later", {"until": "2026-12-01"}), ("question-close", {})):
+            with self.assertRaisesRegex(pa.Refused, "^A wall holds some material back"):
+                self.do(verb, **kw)
+        self.assertEqual([], self.changed(before))
+
+
 class TestHeldPages(WikiAnswerCase):
     def worked(self, pages):
         self.ask(question(pages=pages))
-        self.do("question-answer", words="500")
+        with mock.patch.object(pa, "walls_on_written", return_value=[]):
+            self.do("question-answer", words="500")
         return self.do("question-work")
 
     def test_a_page_for_nobody_is_held_back(self):

@@ -120,6 +120,15 @@ class TestWhatIsListed(Panel):
         d = self.data()
         self.assertEqual(["Knowledge: which year?"], [q["title"] for q in d["knowledge"]])
 
+    def test_a_question_whose_file_carries_a_wall_finding_is_not_listed(self):
+        # it names a page on the other side of the wall, which is a finding on the question's own file
+        write(self.meetings / "questions" / "261001 - acme.md", question(ACME, pages="[[wiki/sources/260312-birch-kickoff]]"))
+        commit_all(self.meetings, "wall question")
+        C = self.check()
+        self.assertTrue(any("261001 - acme" in f["path"] and qp.page_action().wallish(f["check"], f["message"]) for f in C["findings"]),
+                        "the fixture must carry the finding")
+        self.assertEqual([], self.titles(self.data(C)["buckets"]["Work|acme"]))
+
     def test_later_is_hidden_until_its_day(self):
         write(self.meetings / "questions" / "261001 - acme.md",
               question(ACME, status="later", extra="later: 2026-11-20\n", pages="[[wiki/sources/260310-acme-kickoff]]"))

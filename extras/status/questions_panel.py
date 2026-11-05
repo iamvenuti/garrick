@@ -328,8 +328,13 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
     buckets: Dict[str, dict] = {k: {"questions": [], "answered": 0, "review": {"entities": [], "people": [], "read": []},
                                     "picks": {"entities": [], "parties": []}} for k in views}
     knowledge, answered_k = [], 0
+    # A question whose own file carries a walls-family finding is not listed: a save would be refused.
+    wall_files = {re.sub(r":\d+$", "", str(f.get("path"))) for f in (C or {}).get("findings", [])
+                  if isinstance(f, dict) and pa.wallish(f.get("check"), f.get("message"))}
     for wiki in WIKIS:
         for rel in question_files(ws, wiki):
+            if "Wikis/%s/%s" % (wiki, rel) in wall_files:
+                continue
             q = read_question(ws, wiki, rel, today, link)
             if q is None:
                 continue

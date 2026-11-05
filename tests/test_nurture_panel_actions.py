@@ -155,7 +155,7 @@ class TestSave(PanelCase):
     def test_a_count_made_worse_leaves_every_file_and_commits_nothing(self):
         names = self.many(3)
         before, wiki_log = snap(self.root), self.head()
-        with mock.patch.object(pa, "check_counts", side_effect=[{"check:warning": 1}, {"check:warning": 2}]):
+        with mock.patch.object(pa, "check_counts", side_effect=[{"check:warning": 1}, {"check:warning": 2}, {"check:warning": 2}]):
             with self.assertRaisesRegex(pa.Refused, "got worse.*back as it was"):
                 self.save([self.org(n) for n in names])
         self.assertEqual(before, snap(self.root))

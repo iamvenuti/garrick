@@ -221,12 +221,13 @@ DECLARED: Dict[str, Op] = {
     "later": _op(("zone", "file", "until"), ("file", "until"), "zone", True),
     # A wiki question (#224): the user's words filed as a raw answer, then the
     # question changed. Neither commits (a wiki's commit is the skill's) and
-    # the words are no part of what the request is. `question-decide` is
-    # point 5, not built: refused. `question-work` only reads.
+    # the words are no part of what the request is. `question-decide` (point
+    # 5) writes the raw answer and the decision page in one transaction.
+    # `question-work` only reads.
     "question-answer": _op(("wiki", "file", "words"), ("wiki", "file"), "workspace"),
     "question-later": _op(("wiki", "file", "until"), ("wiki", "file", "until"), "workspace"),
     "question-close": _op(("wiki", "file"), ("wiki", "file"), "workspace"),
-    "question-decide": _op(("wiki", "file"), ("wiki", "file"), "none", retry="safe"),
+    "question-decide": _op(("wiki", "file", "words"), ("wiki", "file"), "workspace"),
     "question-work": _op(("wiki", "file"), ("wiki", "file"), "none", retry="safe"),
     "question-done": _op(("wiki", "file"), ("wiki", "file"), "workspace"),
     # The Questions panel's Nurture answers (#224): an entity page's party, where

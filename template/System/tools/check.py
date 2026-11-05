@@ -151,6 +151,7 @@ CHECKS = [
     ("anonymous", "Anonymous projects"),
     ("todo", "To-do lists"),
     ("questions", "Questions"),
+    ("decisions", "Decisions"),
     ("links", "Links"),
     ("meetings", "Meeting pages"),
     ("people", "Person pages"),
@@ -185,6 +186,7 @@ EAR_GROUP = {
     "anonymous": "{n} files in anonymous projects name a party",
     "todo": "the to-do lists have {n} problems",
     "questions": "{n} things need fixing in question files",
+    "decisions": "{n} things need fixing on decision pages",
     "links": "{n} links cross a boundary or lead somewhere fragile",
     "meetings": "{n} things need fixing on meeting pages",
     "people": "{n} things need fixing on person pages",
@@ -253,6 +255,7 @@ class Workspace:
     meetings: Dict[Path, dict] = field(default_factory=dict)  # meeting page or Meetings question -> frontmatter
     meeting_questions: set = field(default_factory=set)  # the Meetings questions among them (#224), and the answers
     meeting_answers: set = field(default_factory=set)  # the raw answers among those (#224): raw/answers/, read as the question's parties
+    meeting_decisions: set = field(default_factory=set)  # the decision pages among those (#224): wiki/decisions/, read as the question's parties
     wiki_files: List[Path] = field(default_factory=list)  # every .md under Wikis/
     quote_index: Optional["QuoteIndex"] = None  # built on first use by the walls check
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
@@ -971,6 +974,13 @@ def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
         ws.meetings[answer] = meeting_view(ws, answer, note_frontmatter(ws, answer))
         ws.meeting_questions.add(answer)
         ws.meeting_answers.add(answer)
+    # A decision page (#224, point 5) carries its question's zone and parties
+    # and is read as the question is: the walls hold it to those, not to a
+    # `party:` of its own.
+    for decision in wiki_decisions(root / "Wikis" / "Meetings"):
+        ws.meetings[decision] = meeting_view(ws, decision, note_frontmatter(ws, decision))
+        ws.meeting_questions.add(decision)
+        ws.meeting_decisions.add(decision)
     return ws
 
 
@@ -1017,12 +1027,31 @@ def wiki_answers(wiki: Path) -> List[Path]:
     return sorted(f for f in folder.rglob("*.md") if f.is_file())
 
 
+# A decision (#224, point 5): the user's answer settled, as a page of the
+# Meetings wiki, `wiki/decisions/<YYMMDD> - <slug>.md`. Its `zone:` and
+# `parties:` are its question's, copied and never widened.
+WIKI_DECISIONS = ("wiki", "decisions")
+DECISION_STATUSES = ("valid", "superseded", "withdrawn")
+DECISION_SECTIONS = ("Decision", "Assumptions", "Options turned down", "Revisit when")
+DECISION_NAME = re.compile(r"^\d{6} - \S.*$")
+
+
+def wiki_decisions(wiki: Path) -> List[Path]:
+    """The decision pages of one wiki, at any depth under wiki/decisions/."""
+    folder = wiki.joinpath(*WIKI_DECISIONS)
+    if not folder.is_dir():
+        return []
+    return sorted(f for f in folder.rglob("*.md") if f.is_file())
+
+
 def meeting_noun(ws: Workspace, page: Path, kind: str = "meeting") -> str:
     """How a finding names a file the walls read in the Meetings wiki: an
     answer for a raw answer and a question for a question file (#224),
     `kind` for a meeting page."""
     if page in ws.meeting_answers:
         return "reply"
+    if page in ws.meeting_decisions:
+        return "decision"
     return "question" if page in ws.meeting_questions else kind
 
 
@@ -3007,6 +3036,133 @@ def check_questions(ws: Workspace) -> List[Finding]:
     return out
 
 
+# A decision's status moves only on the user's say-so (#224, point 5). The user's
+# own save through the panel files their words as a raw answer the same day; a
+# hand edit of `status:` with no such record that day is the assistant's guess,
+# or a slip, and is warned about. A change older than this is no longer asked about.
+DECISION_STATUS_DAYS = 30
+
+
+def decision_sections(text: str) -> set:
+    """The `## ` headings of a decision page, outside fences."""
+    names, fence = set(), None
+    for line in body_of(text).splitlines():
+        m = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if m:
+            mark = m.group(1)
+            if fence is None:
+                fence = mark
+            elif mark[0] == fence[0] and len(mark) >= len(fence):
+                fence = None
+            continue
+        if fence is None:
+            h = re.match(r"^##\s+(.+?)\s*#*\s*$", line)
+            if h:
+                names.add(h.group(1).strip())
+    return names
+
+
+def day_record(wiki: Path, day: str) -> bool:
+    """Whether the wiki holds a raw answer dated `day` (YYYY-MM-DD): by its
+    `answered:` date, or by the date its name begins with."""
+    folder = wiki.joinpath(*WIKI_ANSWERS)
+    if not folder.is_dir():
+        return False
+    short = day[2:4] + day[5:7] + day[8:10]
+    for f in wiki_answers(wiki):
+        fm = parse_frontmatter(f)
+        if fm.get("type") == "answer" and (str(fm.get("answered") or "").strip() == day or f.name.startswith(short + " - ")):
+            return True
+    return False
+
+
+def decision_status_changes(ws: Workspace, f: Path) -> List[Tuple[str, str]]:
+    """(day, what changed) for each time git, or the disk against git's last
+    commit, shows `status:` of a decision page changed, within
+    DECISION_STATUS_DAYS. The day of an uncommitted change is today."""
+    top = _git(["rev-parse", "--show-toplevel"], f.parent)
+    if not top:
+        return []
+    top_path = Path(top.strip()).resolve()
+    try:
+        name = f.resolve().relative_to(top_path).as_posix()
+    except ValueError:
+        return []
+    out = []
+
+    def status_of(text: Optional[str]) -> Optional[str]:
+        if text is None:
+            return None
+        return str(parse_frontmatter_text(text).get("status") or "").strip().lower()
+    log = _git(["log", "--format=%x01%H %cs", "--no-renames", "--", name], top_path) or ""
+    today = datetime.date.today()
+    for block in [b for b in log.split("\x01") if b.strip()]:
+        commit, _, day = block.split("\n")[0].partition(" ")
+        try:
+            age = (today - datetime.date.fromisoformat(day.strip())).days
+        except ValueError:
+            continue
+        before = _git(["show", "%s^:%s" % (commit, name)], top_path)
+        if before is None or age > DECISION_STATUS_DAYS:
+            continue                                       # the commit that made the page, or an old one
+        now = _git(["show", "%s:%s" % (commit, name)], top_path)
+        if now is not None and status_of(before) != status_of(now):
+            out.append((day.strip(), "%s to %s" % (status_of(before) or "none", status_of(now) or "none")))
+    head = _git(["show", "HEAD:%s" % name], top_path)
+    disk = read_text(f)
+    if head is not None and disk is not None and status_of(head) != status_of(disk):
+        out.append((today.isoformat(), "%s to %s" % (status_of(head) or "none", status_of(disk) or "none")))
+    return out
+
+
+def check_decisions(ws: Workspace) -> List[Finding]:
+    """A decision page (#224, point 5) is `wiki/decisions/<YYMMDD> - <slug>.md`
+    in the Meetings wiki, `type: decision`, with its question's `zone:` and
+    `parties:`, a `status:` of valid, superseded or withdrawn, the raw answer
+    it rests on in `source:`, and four sections. Its zone and parties are its
+    raw answer's, never wider. A change of `status:` with no raw answer dated
+    the same day is warned about: only the user settles a decision."""
+    out = []
+    wiki = ws.root / "Wikis" / "Meetings"
+    for f in sorted(ws.meeting_decisions):
+        r = rel(ws, f)
+        text = read_text(f) or ""
+        fm = ws.meeting_raw.get(f, ws.meetings.get(f, {}))
+        raw = parse_frontmatter_text(text)
+        if raw.get("type") != "decision":
+            out.append(Finding(WARNING, "decisions", r, "frontmatter `type` is %r, should be decision" % raw.get("type"),
+                               "A decision page is not marked as one"))
+        status = str(raw.get("status") or "").strip().lower()
+        if status not in DECISION_STATUSES:
+            out.append(Finding(WARNING, "decisions", r, "`status` is %r; a decision is %s" % (raw.get("status"), ", ".join(DECISION_STATUSES)),
+                               "A decision page has a status Garrick does not read"))
+        if not DECISION_NAME.match(f.stem):
+            out.append(Finding(WARNING, "decisions", r, "file name should be `YYMMDD - slug.md`", "A decision page is misnamed"))
+        out += party_findings(ws, "decisions", r, fm, "Meetings decision", "decide it once for each side")
+        have = decision_sections(text)
+        lacking = [n for n in DECISION_SECTIONS if n not in have]
+        if lacking:
+            out.append(Finding(WARNING, "decisions", r, "no `## %s` section" % "`, `## ".join(lacking),
+                               "A decision page lacks one of its four sections"))
+        record = raw_answer_there(wiki, raw.get("source")) if raw.get("source") else None
+        if record is None:
+            out.append(Finding(WARNING, "decisions", r, "rests on no raw answer: `source:` points at none in raw/answers/",
+                               "A decision page cites no raw answer"))
+        else:
+            rfm = parse_frontmatter(record)
+            if str(rfm.get("zone") or "").strip() != str(raw.get("zone") or "").strip() or \
+                    sorted(strip_tag(t) for t in as_list(rfm.get("parties"))) != sorted(strip_tag(t) for t in as_list(raw.get("parties"))):
+                out.append(Finding(WARNING, "decisions", r, "carries a zone or parties that are not its raw answer's, which it must copy exactly",
+                                   "A decision page carries other parties than its raw answer"))
+        for day, what in decision_status_changes(ws, f):
+            if not day_record(wiki, day):
+                out.append(Finding(WARNING, "decisions", r,
+                                   "`status:` changed (%s) on %s, with no raw answer dated that day; only your own answer "
+                                   "settles a decision, so file it, or put the status back" % (what, day),
+                                   "A decision's status changed without a raw answer the same day"))
+    return out
+
+
 def check_links(ws: Workspace) -> List[Finding]:
     """Links that cross a boundary or lead somewhere fragile: a link from one
     zone into another; an absolute path into a cloud-synced folder; a link to
@@ -3406,10 +3562,12 @@ def cited_across_walls(ws: Workspace) -> List[Finding]:
             if hits:
                 b = next(strip_tag(t) for t in as_list(ws.meetings[hits[0]].get("parties"))
                          if any(walled(ws.context, a, strip_tag(t)) for a in tags))
-                out.append(Finding(WARNING, "questions" if question else "meetings", rel(ws, page),
+                decided = page in ws.meeting_decisions
+                out.append(Finding(WARNING, "decisions" if decided else "questions" if question else "meetings", rel(ws, page),
                                    "cites %s, a %s with %s, but is written for %s, across a wall"
                                    % (hits[0].stem, meeting_noun(ws, hits[0]), b, ", ".join(sorted(tags))),
-                                   "A Meetings question cites a meeting across a wall" if question
+                                   "A Meetings decision cites a meeting across a wall" if decided
+                                   else "A Meetings question cites a meeting across a wall" if question
                                    else "A page for one party cites a meeting across a wall"))
                 break
     return out
@@ -5796,6 +5954,8 @@ def form_scope(ws: Workspace, path: Path) -> Optional[Tuple[str, ...]]:
         inner = _fold_parts(here.parts)[len(wiki.parts):]
         if wiki == meetings and inner[:2] == WIKI_ANSWERS:
             return ()                       # a raw answer is read by the walls as its question is (#224)
+        if wiki == meetings and inner[:2] == WIKI_DECISIONS:
+            return ()                       # so is a decision page, which carries its question's zone and parties
         if "raw" in inner[:-1]:
             return None
         if wiki == meetings and (inner[0] == WIKI_QUESTIONS or inner[:2] in (("wiki", "entities"), ("wiki", "sources"))
@@ -6033,9 +6193,11 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
     folders = meeting_sources(ws.root)
     asked = ws.root / "Wikis" / "Meetings" / WIKI_QUESTIONS
     answered = ws.root.joinpath("Wikis", "Meetings", *WIKI_ANSWERS)
+    decided = ws.root.joinpath("Wikis", "Meetings", *WIKI_DECISIONS)
     for path, text in sorted(ws.git_view.items()):
         is_answer = answered in path.parents
-        question = asked in path.parents or is_answer
+        is_decision = decided in path.parents
+        question = asked in path.parents or is_answer or is_decision
         if (question or any(f in path.parents for f in folders)) and path.suffix.lower() == ".md":
             then = meeting_view(ws, path, parse_frontmatter_text(text), text)
             if path not in ws.meetings:
@@ -6045,6 +6207,8 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
                         ws.meeting_questions.add(path)
                     if is_answer:
                         ws.meeting_answers.add(path)
+                    if is_decision:
+                        ws.meeting_decisions.add(path)
                 continue
             now = ws.meetings[path]
             if path in ws.misread:
@@ -6813,7 +6977,7 @@ ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
     check_hooks,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
-    check_todo, check_questions, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
+    check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
     check_raw, check_generated, check_preferences, check_review, check_updates,
 ]
 

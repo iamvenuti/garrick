@@ -12,6 +12,7 @@ Every conversation you have, from every zone, in one place: calls and meetings, 
         sources/        one page per meeting, and one per mail
         people/         one page per person met
         entities/       one page per organisation, at most one per party
+        decisions/      one page per decision the user recorded, `<YYMMDD> - <slug>.md`
         index.md        every working page, newest first
         index-dormant.md  every dormant page: its date, the day it went dormant, and why
         log.md          one line per ingest, newest first
@@ -107,6 +108,26 @@ pages: ["[[wiki/sources/<YYMMDD-slug>]]"]
 ```
 
 Then the question as one bold line, why it matters, and the options, if there are any, as `- [<label>] <what the pages would then say>`. `origin` is the record that raised it; `pages` are the pages the answer would change. A question carries the zone and parties of what it is about, and the walls read it as they read a page.
+
+## A decision
+
+When the user answers a question with *Record as a decision*, the answer is filed in `raw/answers/` first, word for word, and then `wiki/decisions/<YYMMDD> - <slug>.md` is written, in the same transaction:
+
+```yaml
+---
+type: decision
+title: <the question, as one line>
+status: valid                # valid, superseded or withdrawn
+decided: YYYY-MM-DD
+zone: <zone name>            # copied exactly from the question
+parties: [<tag>]             # copied exactly from the question, never widened
+source: "[[raw/answers/<YYMMDD> - <slug>]]"
+question: questions/<YYMMDD> - <slug>
+revisit: <the reason, when the assistant flags it>   # optional
+---
+```
+
+Then four sections: `## Decision` (the user's own words), `## Assumptions`, `## Options turned down` and `## Revisit when`. The assistant may fill the last three later, each line marked *Proposed*, and may add `revisit:` with its reason. It never changes `status:` and never rewords the decision: the user's save is the act that settles it, and only the user marks it `superseded` or `withdrawn`. The walls read a decision by its zone and parties, as they read a question. `check.py` warns when a commit changes `status:` with no raw answer dated the same day.
 
 ## Rules
 

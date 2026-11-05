@@ -98,8 +98,14 @@ zone's repository, as the skills would:
                 see question-work), and nothing is committed
     question-later   a wiki question put off to a day: {"wiki", "file", "until"}
     question-close   a wiki question with nothing to work in: {"wiki", "file"}
-    question-decide  Record as a decision is not built yet (#224, point 5):
-                refused, and nothing is written
+    question-decide  Record as a decision (#224, point 5): {"wiki", "file", "words"}.
+                One transaction writes the words as the raw answer, word for
+                word, then the decision page Wikis/Meetings/wiki/decisions/
+                <YYMMDD> - <slug>.md with status: valid, the same zone and
+                parties as the question, and the words under Decision; the
+                question then says answered and points at both. Meetings
+                only: a question with no zone or parties is refused. The
+                status of a decision is never changed by any other verb
     question-work    read only: the pages an answered question may change, and
                 the record to cite. A page walled from the question's parties
                 is left out and the wall sentence said; a question whose
@@ -275,7 +281,7 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
 # starting with an underscore nor longer than its FOUND_KIND_MAX. This request cannot see the pages, so it holds
 # a found kind to that shape; a kind no page has is never drawn.
 GRAPH_OFF = ("Red", "Crimson", "Amber")
-GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity")
+GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity", "decision")
 GRAPH_FOUND = re.compile(r"[^\W_][\w -]{0,59}")
 # Settings › Home: which the page opens on. Its words are status.py's HOMES too.
 HOMES = ("simple", "full")
@@ -2146,7 +2152,11 @@ WIKI_QUESTION_DIR = "questions"
 WIKI_ANSWER_DIR = ("raw", "answers")
 WORDS_MAX = 4000
 BOLD_LINE = re.compile(r"(?m)^\s*\*\*(.+)\*\*\s*$")
-NO_DECISION = "Record as a decision is not built yet, so nothing was written. Answer it, put it off or close it instead"
+WIKI_DECISION_DIR = ("wiki", "decisions")
+DECISION_SECTIONS = ("Decision", "Assumptions", "Options turned down", "Revisit when")
+NO_DECISION = ("a Knowledge question has no zone and no parties for a decision to carry, so nothing was written. "
+               "Answer it, put it off or close it instead")
+NOT_SET = "Not set yet. The assistant may propose some, each marked *Proposed*; you settle what stays."
 
 
 def wall_sentence(ws: Path) -> str:
@@ -2379,6 +2389,41 @@ def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list) -> 
     raise Refused("nine answers to this question are already filed today, so nothing was written")
 
 
+def decision_text(q: WikiQuestion, words: str, today: dt.date, tags: list, record: str) -> str:
+    """The decision page: its question's zone and parties copied exactly,
+    status valid (the user's own save is the act that settles it), and the
+    user's words under Decision, fenced so nothing in them can open a section."""
+    title = q.bold.strip("*").strip()
+    where = ["type: decision", "title: %s" % quoted(title), "status: valid", "decided: %s" % today.isoformat(),
+             "zone: %s" % str(q.fm.get("zone")).strip(), "parties: [%s]" % ", ".join(tags),
+             "source: %s" % quoted("[[%s]]" % record),
+             "question: %s" % quoted(q.path.relative_to(q.dir).with_suffix("").as_posix()),
+             "created: %s" % today.isoformat(), "updated: %s" % today.isoformat()]
+    fence = fence_for(words)
+    return ("---\n%s\n---\n\n# %s\n\n## Decision\n\n%s\n%s\n%s\n\n## Assumptions\n\n%s\n\n"
+            "## Options turned down\n\n%s\n\n## Revisit when\n\n%s\n"
+            % ("\n".join(where), title, fence, words, fence, NOT_SET, NOT_SET, NOT_SET))
+
+
+def file_decision(q: WikiQuestion, today: dt.date, words: str, tags: list, record: str) -> Path:
+    folder = q.dir.joinpath(*WIKI_DECISION_DIR)
+    tx_dirs(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    if folder.resolve() != folder or q.dir not in folder.parents:
+        raise Refused("wiki/decisions is not a plain folder of this wiki, so nothing was written")
+    body = decision_text(q, words, today, tags, record)
+    base = "%s - %s" % (today.strftime("%y%m%d"), answer_slug(q.stem()))
+    for n in range(1, 10):
+        path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
+        try:
+            write_new(path, body)
+            tx_made(path)
+            return path
+        except FileExistsError:
+            continue
+    raise Refused("nine decisions on this question are already filed today, so nothing was written")
+
+
 def wiki_words(req: dict) -> str:
     words = req.get("words")
     if not isinstance(words, str) or not words.strip():
@@ -2396,8 +2441,6 @@ def write_question(path: Path, text: str) -> None:
 
 def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
     verb = req["verb"]
-    if verb == "question-decide":
-        raise Refused(NO_DECISION)
     wall = wall_sentence(ws)
     q = WikiQuestion(ws, req)
     if verb in ("question-work", "question-done"):
@@ -2408,6 +2451,24 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
             raise Refused("that question is %s, not open" % (q.status or "unreadable"))
         tags = question_parties(q, wall)
         question_pages(q, wall)         # a question across a wall is refused before anything is written
+        if verb == "question-decide":
+            if q.name != "Meetings" or not tags:
+                raise Refused(NO_DECISION)
+            words = wiki_words(req)
+            set_front(q.text, {"status": "answered"})
+
+            def decide(w):
+                # Both files or neither: a failure anywhere puts every file back, the raw answer too.
+                record = file_raw_answer(q, today, words, tags)
+                stem = record.relative_to(q.dir).with_suffix("").as_posix()
+                page = file_decision(q, today, words, tags, stem)
+                decided = page.relative_to(q.dir).with_suffix("").as_posix()
+                write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
+                                                          "answered": today.isoformat(), "decision": quoted("[[%s]]" % decided)},
+                                                 drop=("later",)))
+                return ("Recorded as a decision. Your words are filed as %s and the decision as %s. "
+                        "The pages change when you say work them in" % (stem, decided))
+            return transaction(ws, decide)
         if verb == "question-close":
             def close(w):
                 write_question(q.path, set_front(q.text, {"status": "closed", "closed": today.isoformat()}, drop=("later",)))
@@ -4975,7 +5036,7 @@ CLI_FIELDS = {
     "undo": ("zone", "commit"),
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
-    "question-close": ("wiki", "file"), "question-decide": ("wiki", "file"),
+    "question-close": ("wiki", "file"), "question-decide": ("wiki", "file", "words"),
     "question-work": ("wiki", "file"), "question-done": ("wiki", "file"),
     "todo-done": ("zone", "line", "file"), "todo-undo": ("zone", "line", "file"),
     "todo-date": ("zone", "line", "file", "date"),

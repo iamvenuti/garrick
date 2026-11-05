@@ -339,7 +339,7 @@ def rebuild_index(root: Path) -> Tuple[Path, int]:
     file holds, a coverage table or notes at the top, is kept as it is."""
     meetings = meetings_root(root)
     pages: List[Path] = []
-    for folder in (meetings / "wiki" / "sources", meetings / "wiki" / "people"):
+    for folder in (meetings / "wiki" / "sources", meetings / "wiki" / "people", meetings / "wiki" / "decisions"):
         if folder.is_dir():
             pages += sorted(p for p in folder.glob("*.md"))
     rows = [_page_row(root, p) for p in pages]

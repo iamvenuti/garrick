@@ -2766,7 +2766,7 @@ def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
 KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
          ("note", "other notes", "#9aa0a6"), ("meeting", "meeting", "#7a5af8"), ("mail", "mail", "#c94f9c"),
          ("person", "person", "#13a38a"), ("source", "source", "#7c9a2d"), ("concept", "concept", "#8c6d1f"),
-         ("entity", "entity", "#4b6584")]
+         ("entity", "entity", "#4b6584"), ("decision", "decision", "#0b7f97")]
 
 # Each place's kinds come from Garrick's own model of it first: a page whose
 # type names a kind of the model's wikis takes it in any wiki, so a Meetings
@@ -2778,7 +2778,7 @@ KINDS = [("project", "project", "#e07b39"), ("thread", "thread", "#3d73e0"),
 # (#320), the concepts and entities in any other wiki. A place opens on its
 # hubs, but Meetings on its people (OPENS): entities are in the legend there,
 # off until turned on.
-WIKI_KINDS = ("meeting", "mail", "person", "source", "concept", "entity")
+WIKI_KINDS = ("meeting", "mail", "person", "source", "concept", "entity", "decision")
 HUBS = {"": ("project", "thread"), "Meetings": ("person", "entity"), "*": ("concept", "entity")}
 OPENS = {"Meetings": ("person",)}
 KIND_FROM_PAGES = 3
@@ -2789,7 +2789,7 @@ KIND_FROM_PAGES = 3
 PAGE_COLOURS = ("#00a3c4", "#a83fbf", "#2f9e44", "#a14a6b", "#6b8fcf", "#9b5d3a")
 # How the legend names each kind: plural, as a filter reads (#250).
 KIND_SAID = {"project": "Projects", "thread": "Threads", "note": "Other notes", "meeting": "Meetings", "mail": "Mail",
-             "person": "People", "source": "Sources", "concept": "Concepts", "entity": "Entities"}
+             "person": "People", "source": "Sources", "concept": "Concepts", "entity": "Entities", "decision": "Decisions"}
 WIKI_LABEL = 40          # characters of a wiki page's title drawn on the graph; the card has it whole
 
 

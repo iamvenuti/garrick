@@ -154,7 +154,9 @@ def lint(wiki: Path) -> dict:
             elif found in files and found != key and key in files:
                 out_links[key].add(found)
                 in_links[found].add(key)
-    orphans = sorted(k for k in files if not out_links[k] and not in_links[k])
+    # A decision page (#224) is reached from the Questions panel and from the
+    # raw answer it rests on, not from other pages: it is no orphan.
+    orphans = sorted(k for k in files if not out_links[k] and not in_links[k] and not k.startswith("wiki/decisions/"))
     return {
         "wiki": wiki.name,
         "pages": len(files),

@@ -212,6 +212,9 @@ MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s<>]|\([^()\s<>]*\))+))
 # HTML anchor's href.
 REFDEF_RE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^<>\n]*)>|(\S+))")
 HREF_RE = re.compile(r"(?i)<a\b(?:[^<>\"']|\"[^\"]*\"|'[^']*')*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
+# An HTML tag that embeds a file, such as an image, by its src: read as a link
+# is, with the same bounded shape as HREF_RE.
+SRC_RE = re.compile(r"(?i)<(?:img|source|video|audio|embed|iframe|track|input)\b(?:[^<>\"']|\"[^\"]*\"|'[^']*')*?\bsrc\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
 # Where a code span or a fenced block opens, as CommonMark reads them: a span
 # closes on a run of backticks as long as the one that opened it, and a
 # fence is three or more backticks or tildes, closed by a run of the same
@@ -582,7 +585,7 @@ def say(n: int) -> str:
 def extract_links(text: str) -> List[Tuple[str, str]]:
     """(as written, target) for every wikilink, obsidian:// URI, relative
     Markdown link (inline, in angle brackets or by reference) and HTML
-    anchor in `text`. Targets are vault-relative or file-relative paths
+    anchor, and the src of an embedding HTML tag such as an image, in `text`. Targets are vault-relative or file-relative paths
     without the alias or heading."""
     links = []
     for m in WIKILINK_RE.finditer(text):
@@ -597,13 +600,18 @@ def extract_links(text: str) -> List[Tuple[str, str]]:
             for value in query.get(key, []):
                 target = unquote(value).split("#", 1)[0]
                 links.append((uri, "obsidian:%s:%s" % (vault, target) if key == "file" else target))
-    for regex in (MDLINK_RE, REFDEF_RE, HREF_RE):
+    for regex in (MDLINK_RE, REFDEF_RE, HREF_RE, SRC_RE):
         for m in regex.finditer(text):
             found = next((g for g in m.groups() if g is not None), "")
             target = unquote(found.strip()).split("#", 1)[0]
             if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
                 continue  # web or obsidian URI, handled above or not ours
-            written = '<a href="%s">' % found if regex is HREF_RE else m.group(0).strip()
+            if regex is HREF_RE:
+                written = '<a href="%s">' % found
+            elif regex is SRC_RE:
+                written = '<img src="%s">' % found
+            else:
+                written = m.group(0).strip()
             links.append((written, target))
     return links
 
@@ -4768,16 +4776,29 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
     return tags, where
 
 
+# What separates one candidate path from the next in a code line: white space,
+# quotes, brackets, pipes, redirects, separators and `=`. A path with a space
+# in it is read whole, as the span or line holds it.
+CODE_TOKEN_RE = re.compile(r"[^\s\"'`()<>|;,=&{}\[\]]+")
+
+
 def code_paths(text: str) -> List[Tuple[str, str]]:
     """(as written, target) for every path written as code in `text`: a code
-    span, or a line of a fenced block, that holds a slash (code_texts).
-    Nothing resolves these as a link does, but a person or an assistant
+    span, or a line of a fenced block, that holds a slash (code_texts). The
+    whole of the span or line is read as a path, and so is each slash-bearing
+    token of it, since `cat Harbour/Notes.md` names a file as `Harbour/Notes.md`
+    does. Nothing resolves these as a link does, but a person or an assistant
     follows one just the same, and Nurture may turn one into a link."""
     out = []
     for written, body in code_texts(text):
-        target = body.strip().strip("\"'").split("#", 1)[0].strip()
-        if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
-            out.append((written, target))
+        seen = set()
+        whole = body.strip().strip("\"'").split("#", 1)[0].strip()
+        for target in [whole] + [t.split("#", 1)[0].rstrip(".:,;") for t in CODE_TOKEN_RE.findall(body)]:
+            if target in seen:
+                continue
+            seen.add(target)
+            if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                out.append((written, target))
     return out
 
 
@@ -4792,7 +4813,7 @@ def project_index(ws: Workspace) -> "PathIndex":
         owner: Dict[Path, Path] = {}
         skip = set(checkouts(ws))
         for project, _ in ws.projects:
-            for path in walk_files(project, skip):
+            for path in walk_files(project, skip, nested=True):
                 owner.setdefault(path, project)
             for path in sorted(p for p in ws.git_view if project in p.parents and not p.exists()):
                 owner.setdefault(path, project)
@@ -4812,6 +4833,11 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
     if len(parts) > 2 and parts[0] == "Threads":
         tags |= party_tags(ws, project / "Threads" / parts[1] / (parts[1] + ".md"))
     return tags
+
+
+# Paths every project holds by Garrick's own layout: written by themselves they
+# name no project, whoever else holds one.
+SHARED_PROJECT_PATHS = ("deliverables/published",)
 
 
 def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
@@ -5055,7 +5081,8 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                     continue  # it means a file of this project
                 if ws.wiki_links is None:
                     ws.wiki_links = PathIndex(ws, ws.wiki_files)
-                elsewhere = bool(near) or bool(resolve(ws, path, target, ws.wiki_links))
+                elsewhere = bool(near) or bool(resolve(ws, path, target, ws.wiki_links)) or \
+                    "/".join(_strip_md(tuple(x.lower() for x in target.replace("\\", "/").split("/") if x and x != "."))) in SHARED_PROJECT_PATHS
                 if elsewhere and not any(names_project(ws, target, h, o) for h, o, _ in far_hits):
                     severity = WARNING
             hit, other, (a, b) = far_hits[0]

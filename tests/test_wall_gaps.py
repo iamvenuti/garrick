@@ -837,6 +837,9 @@ class TestProjectLinks(GapCase):
 
     def setUp(self):
         super().setUp()
+        self.build()
+
+    def build(self):
         ctx = self.root / "System" / "context.md"
         ctx.write_text(ctx.read_text().replace(
             "mail.birchco.example |\n",
@@ -920,7 +923,7 @@ class TestProjectLinks(GapCase):
 
     def test_a_short_path_every_project_may_hold(self):
         write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
-        self.assertEqual([("error", "writes the path `Deliverables/published.md`" + self.TAIL)],
+        self.assertEqual([("warning", "writes the path `Deliverables/published.md`" + self.TAIL)],
                          self.says("`Deliverables/published.md`"))
         self.assertEqual([("error", "links [[Deliverables/published]]" + self.TAIL)],
                          self.says("[[Deliverables/published]]"))
@@ -1028,7 +1031,9 @@ class TestProjectLinks(GapCase):
         import time
         for text in ("<a " * 30000, "<a " + "x=1 " * 20000 + 'href="a/b">', "](" + "a" * 80000, "](a" * 30000,
                      "](a (" * 20000, "".join("`" * k + "a" for k in range(1, 400)), "`a " * 30000,
-                     "`" + "x" * 80000 + "`"):
+                     "`" + "x" * 80000 + "`", "<img " * 30000, "<img " + "x=1 " * 20000 + 'src="a/b">',
+                     "<img src=" + "a" * 80000, "\n```\n" + " ".join("a/b%d" % i for i in range(20000)) + "\n```\n",
+                     "\n```\n" + "a/" * 40000 + "\n```\n", "`" + "a/b " * 240 + "`" * 3):
             started = time.monotonic()
             check.extract_links(text)
             check.code_paths(text)
@@ -1069,6 +1074,103 @@ class TestProjectLinks(GapCase):
             found = check.run_checks(self.root, staged=self.work)
         self.assertIn(("error", self.where, "links [[Harbour]]" + self.TAIL),
                       [(f.severity, f.path, f.message) for f in found])
+
+
+class TestFormsRead(GapCase):
+    """The wall check reads a path inside a longer code line, the src of an
+    embedding tag and a path into a repository kept in a project, as it reads
+    a link or a whole code span. Harbour is Birch & Co's, in a folder that does
+    not name its party; Northwind is Acme's, and walled from it."""
+
+    TAIL = ", a note of birch; a wall stands between acme and birch"
+    def setUp(self):
+        GapCase.setUp(self)
+        TestProjectLinks.build(self)
+
+    project = TestProjectLinks.project
+    walls = TestProjectLinks.walls
+    says = TestProjectLinks.says
+
+    def refused(self, written, verb="writes the path"):
+        self.assertEqual([("error", "%s %s%s" % (verb, written, self.TAIL))], self.says(written))
+
+    def test_a_path_inside_a_longer_code_line(self):
+        for written in ("`cat Harbour/Threads/Tender/Tender.md`",
+                        "`cd Harbour && cat Threads/Tender/Tender.md | head`",
+                        "`grep -n \"rate\" 'Harbour/Threads/Tender/Tender.md'`",
+                        "`diff --color=always Harbour/Threads/Tender/Tender.md x.md`"):
+            with self.subTest(written):
+                self.refused(written)
+
+    def test_a_path_inside_a_fenced_line(self):
+        for fence in ("```", "~~~"):
+            with self.subTest(fence):
+                text = "\n%s sh\n$ open Harbour/Threads/Tender/Tender.md\n%s\n" % (fence, fence)
+                write(self.note, "# Notes\n%s" % text)
+                found = self.walls()
+                self.assertEqual(["error"], [f.severity for f in found], found)
+                self.assertTrue(found[0].message.endswith(self.TAIL), found[0].message)
+
+    def test_a_token_that_lands_nowhere_stays_silent(self):
+        for written in ("`cat nowhere/at/all.md`", "`grep -r rate src/ docs/ | sort`", "`python3 System/tools/check.py --root .`",
+                        "`curl https://example.com/Harbour/Threads/Tender/Tender.md`",
+                        "`cat Lantern/Threads/Freight/Freight.md`", "`cat Northwind/Threads/Freight/Freight.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_the_src_of_an_image_is_a_link(self):
+        for written in ('<img src="../../../Harbour/Sources/Bid brief (1).md">', "<img alt='x' src='../../../Harbour/Threads/Tender/Tender.md'>",
+                        '<IMG width=40 SRC=../../../Harbour/Threads/Tender/Tender.md>',
+                        '<video controls src="Zones/Work/Harbour/Threads/Tender/Tender.md"></video>'):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [sev for sev, _ in found], found)
+                self.assertTrue(found[0][1].endswith(self.TAIL), found[0][1])
+        self.assertEqual([], self.says('<img src="https://example.com/Harbour/Tender.png">'))
+        self.assertEqual([], self.says('<img src="../../../Lantern/Threads/Survey/Survey.md">'))
+
+    def test_a_path_into_a_repository_kept_in_a_project(self):
+        repo = self.work / "Harbour" / "Code"
+        (repo / ".git").mkdir(parents=True)
+        write(repo / "docs" / "Spec.md", "# Spec\n")
+        write(repo / "notes" / "Rate sheet.md", "# Rates\n")
+        for written in ("`Code/docs/Spec.md`", "`Harbour/Code/docs/Spec.md`", "`cat Harbour/Code/docs/Spec.md`",
+                        "`Code/notes/Rate sheet.md`"):
+            with self.subTest(written):
+                self.refused(written)
+
+    def test_a_garrick_checkout_in_a_project_stays_set_apart(self):
+        checkout = self.work / "Harbour" / "Garrick"
+        for name in ("VERSION", "install.py", "update.py"):
+            write(checkout / name, "x\n")
+        (checkout / "template" / "System").mkdir(parents=True)
+        write(checkout / "template" / "System" / "rules.md", "# Rules\n")
+        write(checkout / "docs" / "guide.md", "# Guide\n")
+        self.assertEqual([], self.says("`Harbour/Garrick/docs/guide.md`"))
+
+    def test_a_path_that_names_no_project_warns_when_only_a_walled_ledger_holds_it(self):
+        write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        self.assertEqual([("warning", "writes the path `Deliverables/published.md`" + self.TAIL)],
+                         self.says("`Deliverables/published.md`"))
+        # With the project's name in front it names the project, and is refused.
+        self.refused("`Harbour/Deliverables/published.md`")
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_reads_each_form_too(self):
+        real_repo(self.work)
+        (self.work / "Harbour" / "Code" / ".git").mkdir(parents=True)
+        write(self.work / "Harbour" / "Code" / "Spec.md", "# Spec\n")
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            for written in ("`cat Harbour/Threads/Tender/Tender.md`", "\n```\nopen Harbour/Threads/Tender/Tender.md\n```\n",
+                            '<img src="../../../Harbour/Threads/Tender/Tender.md">', "`Code/Spec.md`"):
+                with self.subTest(written):
+                    write(self.note, "# Notes\n\nSee %s now.\n" % written)
+                    git(self.work, "add", "-A")
+                    found = check.run_checks(self.root, staged=self.work)
+                    self.assertEqual([("error", "walls", "Zones/Work/Northwind/Threads/Freight/Notes.md")],
+                                     [(f.severity, f.check, f.path) for f in found])
+
 
 if __name__ == "__main__":
     unittest.main()

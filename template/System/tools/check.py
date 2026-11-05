@@ -4896,9 +4896,21 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
                 if target in seen:
                     continue
                 seen.add(target)
-                if target.endswith("/"):
-                    continue  # a folder path: never matched by name to a note (the folder reading follows it)
-                if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                target = re.sub(r"/[*?]+$", "/", target)  # `Demo.md/*`: a glob tail
+                slashed = target.endswith("/")
+                if slashed:
+                    # A folder path is never matched by name to a note (the
+                    # folder reading follows it). A last segment with an
+                    # extension is a file written with a stray slash: it is
+                    # read as the same token without it.
+                    target = target.rstrip("/")
+                    if not re.search(r"\.[A-Za-z0-9]{1,5}$", target) or target in seen:
+                        continue
+                    seen.add(target)
+                    if lexical(target) and lexical(target) not in seen:  # as _forms settles it
+                        seen.add(lexical(target))
+                        out.append((written, lexical(target)))
+                if ("/" in target or slashed) and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
                     out.append((written, target))
     return out
 

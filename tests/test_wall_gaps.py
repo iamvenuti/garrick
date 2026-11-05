@@ -848,6 +848,20 @@ class TestFolderPaths(GapCase):
                 found = self.says(written)
                 self.assertEqual(["error"], [s for s, _ in found], found)
 
+    def test_a_file_written_with_a_trailing_slash_is_still_a_file(self):
+        for written in ("`Notes/Demo.md/`", "`cat Notes/Demo.md/`", "`Tender2.md/`", "`Notes/Demo.md/:3`",
+                        "`Notes/Demo.md/?x`", "`Notes/Demo.md/#h`", "`cat Notes/Demo.md/*`",
+                        "`Deliverables/../Tender2.md/`", "`Harbour/Notes/Demo.md/`"):
+            with self.subTest(written):
+                write(self.work / "Harbour" / "Tender2.md", "# Tender2\n")
+                found = self.says(written)
+                self.assertEqual(["error"], [s for s, _ in found], found)
+
+    def test_a_folder_named_like_a_note_stays_the_documented_limit(self):
+        for written in ("`Notes/Demo/`", "`cat Notes/Demo/`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
     def test_a_path_into_the_workspace_is_still_a_workspace_path(self):
         for written in ("`%s/Zones/Work/Harbour/Notes/Demo.md`" % self.root,
                         "`cat %s/Zones/Work/Harbour/Notes/Demo.md`" % self.root,

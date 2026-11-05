@@ -404,7 +404,12 @@ def close_surface(s: dict) -> None:
     surface's foreground, read just now, is the tab's own assistant's process
     group and nothing else (matched by process id: its name is a version number).
     A job, a dev server or a `!` command would be killed too: those tabs are left for the user. Older cmux has no --force and never asks,
-    so it closes on the first call."""
+    so it closes on the first call.
+
+    cmux will not close the last surface of a workspace (`invalid_state`, saying
+    "last surface"). When the tab is the only surface in the only pane there, and the same check on the foreground holds,
+    the workspace is closed instead (#376). Any other `invalid_state` keeps
+    cmux's own message."""
     args = ["close-surface", "--surface", s["surface"]]
     if s.get("workspace"):
         args += ["--workspace", s["workspace"]]
@@ -412,14 +417,54 @@ def close_surface(s: dict) -> None:
         cx.cmux(*args)
         return
     except cx.CmuxError as e:
+        if e.code == "invalid_state" and "last surface" in str(e).lower() and s.get("workspace") and only_surface(s):
+            close_workspace(s)
+            return
         if e.code != "confirmation_required":
             raise DeskError(str(e))
+    require_own_foreground(s)
+    cmux(*args, "--force")
+
+
+def require_own_foreground(s: dict) -> None:
+    """Refuse unless the tab's foreground, read just now, is its own assistant's
+    process group and nothing else."""
     sid = s["surface"]
     pid = s.get("pid")
     if not pid or cx.foreground_groups().get(sid) != [pid]:
         running = cx.foregrounds().get(sid)
         raise DeskError("cmux will not close %s without possibly killing %s; close the tab by hand" % (
             tab_label(s), ", ".join(running) if running else "a program desk cannot name"))
+
+
+def only_surface(s: dict) -> bool:
+    """Whether the tab is the one surface its workspace holds: one pane, with
+    this surface alone in it. `list-pane-surfaces` reads the focused pane only,
+    so the workspace's panes are listed and each one's surfaces counted. False
+    when cmux cannot say."""
+    try:
+        data = cx.cmux("list-panes", "--workspace", s["workspace"], "--json", "--id-format", "both", parse=True)
+        panes = data.get("panes")
+    except (cx.CmuxError, AttributeError):
+        return False
+    if not isinstance(panes, list) or len(panes) != 1 or not isinstance(panes[0], dict):
+        return False
+    pane = panes[0]
+    ids = pane.get("surface_ids")
+    return isinstance(ids, list) and pane.get("surface_count", len(ids)) == 1 and ids == [s["surface"]]
+
+
+def close_workspace(s: dict) -> None:
+    """Close the workspace of a tab that is its last. Only after the tab's
+    foreground is shown to be its own assistant and nothing else."""
+    require_own_foreground(s)
+    args = ["close-workspace", "--workspace", s["workspace"]]
+    try:
+        cx.cmux(*args)
+        return
+    except cx.CmuxError as e:
+        if e.code != "confirmation_required":
+            raise DeskError(str(e))
     cmux(*args, "--force")
 
 

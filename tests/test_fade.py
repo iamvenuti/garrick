@@ -554,7 +554,8 @@ class ApplyTest(Base):
                           and "a meeting with birch" in f["message"])
 
         before = walled()
-        self.assertEqual(3, len(before), before)
+        # The code span is read as a link and, token by token, as a path: four.
+        self.assertEqual(4, len(before), before)
         self.propose()
         self.apply()
         self.assertTrue(self.page("dormant/wiki/sources/260312-birch-kickoff.md").is_file())

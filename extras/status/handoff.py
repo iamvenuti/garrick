@@ -32,7 +32,7 @@ types into the desktop app or sends anything: the question is Garrick's own
 ("Where am I on Pricing?") or the words the user typed into Ask something.
 
 **What is kept**, in System/generated/desktop-sessions.json, never committed:
-it is this Mac's state, as the interruption stack is.
+it is this Mac's state.
 
     {"sessions": {"<Zone>/<note from the zone>": {"id", "at", "folder",
                   "files": {"<path>": [mtime, size]}, "seen"}},

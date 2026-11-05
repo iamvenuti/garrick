@@ -627,23 +627,13 @@ class TestMove(ManageCase):
         self.assertIn("[p](../../../Acme/Threads/Pricing/Pricing.md)", moved)
         self.assertIn("[h](../../../Acme/Acme.md)", moved)
 
-    def stack_files(self):
-        stack = self.root / "System" / "generated" / "interrupted.json"
-        stack.parent.mkdir(parents=True, exist_ok=True)
-        stack.write_text(json.dumps({"stack": [{"zone": "Work", "project": "Acme", "thread": "Freight",
-                                                "file": "Acme/Threads/Freight/Freight.md", "at": "2027-01-01T10:00:00"}]}))
-        return stack, self.root / "System" / "generated" / "moved.json"
-
-    def test_scaffold_alone_moves_the_stack_and_the_effort_record_and_undo_puts_them_back(self):
-        stack, moved = self.stack_files()
+    def test_scaffold_alone_moves_the_effort_record_and_undo_puts_it_back(self):
+        moved = self.root / "System" / "generated" / "moved.json"
         self.assertEqual(0, self.move().returncode)
-        e = json.loads(stack.read_text())["stack"][0]
-        self.assertEqual(("Apex", "Apex/Threads/Freight/Freight.md"), (e["project"], e["file"]))
         self.assertEqual({"Zones/Work/Acme/Threads/Freight": "Zones/Work/Apex/Threads/Freight"}, json.loads(moved.read_text()))
+        self.assertFalse((self.root / "System" / "generated" / "interrupted.json").exists())
         commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
         self.assertEqual(0, self.scaffold("undo", "--zone", "Work", "--commit", commit).returncode)
-        e = json.loads(stack.read_text())["stack"][0]
-        self.assertEqual(("Acme", "Acme/Threads/Freight/Freight.md"), (e["project"], e["file"]))
         self.assertNotIn("Zones/Work/Acme/Threads/Freight", json.loads(moved.read_text()))
 
     def test_undo_knows_a_move_by_its_trailer_not_its_subject(self):
@@ -1059,33 +1049,15 @@ class TestFromThePage(ManageCase):
             self.assertNotIn(self.wall(), str(said.exception), req)
         self.assertTrue((self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").is_file())    # made, left for the user
 
-    def test_the_interruption_stack_follows_a_rename_and_a_delete(self):
-        """Interrupted (#32) on the template's own thread note: the rows filled,
-        the rest left as scaffolded; a rename moves the entry, a deletion
-        drops it, and the stack file is never committed anywhere."""
-        for thread in ("Pricing", "Freight"):
-            self.act(verb="interrupt", zone="Work", project="Acme", thread=thread, where="Mid-sheet",
-                     next="Fill in row 14", keep="The rate is a guess")
-        note = self.work / "Acme" / "Threads" / "Pricing" / "Pricing.md"
-        text = note.read_text()
-        self.assertRegex(text, r"### Resume here\n\n\*\*Interrupted \d\d:\d\d, \d{1,2} [A-Z][a-z]+ \d{4}\.\*\* Mid-sheet\n\n\| \| \|\n")
-        self.assertIn("| Next action | Fill in row 14 |\n| Keep in mind | The rate is a guess |\n| Waiting on | <who, or nobody> |", text)
-        self.assertEqual("", self.git("status", "--porcelain").stdout)
+    def test_a_rename_and_a_delete_keep_no_stack_file(self):
+        """There is no interruption stack (#367): the record of where a thread
+        stood is its note, and a rename or a deletion writes nothing else."""
         self.act(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Renewal")
-        stack = lambda: [(e["project"], e["thread"], e["file"]) for e in self.act(verb="stack")["stack"]]
-        self.assertEqual([("Acme", "Freight", "Acme/Threads/Freight/Freight.md"),
-                          ("Acme", "Renewal", "Acme/Threads/Renewal/Renewal.md")], stack())
         self.act(verb="rename", zone="Work", project="Acme", to="Apex")
-        self.assertEqual([("Apex", "Freight", "Apex/Threads/Freight/Freight.md"),
-                          ("Apex", "Renewal", "Apex/Threads/Renewal/Renewal.md")], stack())
-        self.act(verb="delete", zone="Work", project="Apex", thread="Freight")         # a dry run drops nothing
-        self.assertEqual(2, len(stack()))
         self.act(verb="delete", zone="Work", project="Apex", thread="Freight", confirm="Freight")
-        self.assertEqual("Back to Apex, Renewal.", self.act(verb="back")["say"].split(" Interrupted")[0])
-        self.assertTrue((self.root / "System" / "generated" / "interrupted.json").is_file())
-        root = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=str(self.root),
-                              capture_output=True, text=True, env=self.env).stdout
-        self.assertNotIn("interrupted.json", root)
+        self.assertFalse((self.root / "System" / "generated" / "interrupted.json").exists())
+        with self.assertRaises(pa.Refused):
+            self.act(verb="stack")
 
 
 class TestARenameFromThePageFinishes(ManageCase):
@@ -1242,7 +1214,7 @@ class TestParkBothWays(ManageCase):
 
     def test_the_two_dated_entry_copies_agree_where_a_note_has_an_anchor(self):
         """scaffold.py's dated_entry writes rename's entry and now park's;
-        page_action.py keeps its own for `interrupt`. The two already read a
+        page_action.py keeps its own for `answer`. The two already read a
         note with no anchor differently, so park asks for the page's reading
         of that one, and the other difference is pinned here rather than
         left to be found by a note."""

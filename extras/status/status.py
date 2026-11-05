@@ -2058,7 +2058,7 @@ ACTION_POLL = 3
 ACTION_UNKNOWN = 60
 ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-thread", "undo")
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename", "move",
-              "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
+              "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
               "bring-back", "files")
 
 WORK_CSS = r"""
@@ -7089,7 +7089,7 @@ def wait_settings(ws: Path) -> str:
             '</span></div></section>'
             % (set_head("While you wait", "wait", "While your assistant works through a long turn, Garrick can suggest one "
                         "thing worth doing elsewhere."), help_text("wait", 'While a turn runs longer than the threshold, the Garrick '
-               'band shows one thing worth doing elsewhere: the top of the interruption stack, a Todo line due today or late, a chase '
+               'band shows one thing worth doing elsewhere: the thread you left most recently today, a Todo line due today or late, a chase '
                'that has come due, what waits in an Inbox, a parked thread to park or finish, a live one to wrap. It is said in a few '
                'words, never quotes a meeting and never names the thread the turn is working on. <code>/garrick next</code>, '
                '<code>open</code>, <code>tick</code> and <code>later</code> act on it, and none of them touches the running session. '

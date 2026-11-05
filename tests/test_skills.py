@@ -364,7 +364,7 @@ class SkillsTest(unittest.TestCase):
         for work already done; what came of it is the thread note's. The todo
         skill says the same, and names the check that holds them to it."""
         threads = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
-        wrap = flat(section(threads, '## Wrap: "close X", "wrap X"'))
+        wrap = flat(section(threads, '## Wrap: "close X", "wrap X", "I\'m being interrupted", "hold this", "hold X"'))
         finish = flat(section(threads, '## Finish: "finish X", "X is done"'))
         todo = (SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8")
         does_not = flat(section(todo, "## What this skill does not do"))
@@ -382,7 +382,7 @@ class SkillsTest(unittest.TestCase):
         """So a zone the nightly sweep never reaches still loses the lines ticked
         on an earlier day, and the archive goes in the wrap's own commit."""
         threads = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
-        step = section(threads, '## Wrap: "close X", "wrap X"').split("\n12. ", 1)[1].split("\n13. ", 1)[0]
+        step = section(threads, '## Wrap: "close X", "wrap X", "I\'m being interrupted", "hold this", "hold X"').split("\n12. ", 1)[1].split("\n13. ", 1)[0]
         command = "python3 System/skills/todo/todo.py archive --zone <Zone>"
         self.assertIn(command, step)
         self.assertLess(step.index(command), step.index('git -C "Zones/<Zone>" add'))

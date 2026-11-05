@@ -84,7 +84,7 @@ Where two say different things, the local file wins over the Garrick file beside
 
 | Skill | What it does | Started by |
 |---|---|---|
-| `threads` | Opens, wraps, holds, parks, finishes, renames and creates threads, catches you up on what changed, and adds zones | "open X", "wrap it", "close for the day", "I'm being interrupted", "back", "park X", "what's open", "what's next", "catch me up", "new project X for Acme" |
+| `threads` | Opens, wraps, parks, finishes, renames and creates threads, catches you up on what changed, and adds zones | "open X", "wrap it", "close for the day", "I'm being interrupted", "back", "park X", "what's open", "what's next", "catch me up", "new project X for Acme" |
 | `intake` | Sorts the inboxes, one item at a time, by the Ways in rules | "process the inbox", "file my mail", "file this" |
 | `meetings` | Files a conversation as a Meetings page, and briefs for a meeting | "file this transcript", "log this call", "prep me for X" |
 | `knowledge` | Freezes published material into the Knowledge wiki, and answers from it | "read this", "add this to knowledge", "what does my library say about X" |
@@ -140,7 +140,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 
 ### A working day
 
-You press Continue on the Garrick App's home, or open a session in your app or terminal and say "open Acme pricing". The assistant reads the thread's Resume here block and answers in two sentences: where it stands, and the next action. You work, and what the session writes is committed in the zone's repository, where the wall check runs on every commit. If something cuts in, "I'm being interrupted" saves your place in the block and puts the thread on the interruption stack, and "back" brings it back. At the end, "wrap it" rewrites the Resume here block so it describes now, adds a dated entry below it, puts open actions in the zone's `Todo.md` and commits. "Close for the day" does that for every thread touched today. The next session, in either assistant, starts from that block.
+You press Continue on the Garrick App's home, or open a session in your app or terminal and say "open Acme pricing". The assistant reads the thread's Resume here block and answers in two sentences: where it stands, and the next action. You work, and what the session writes is committed in the zone's repository, where the wall check runs on every commit. If something cuts in, or at the end, "wrap it" (or "I'm being interrupted") asks one line, "Anything only in your head?", then rewrites the Resume here block so it describes now, adds a dated entry below it, puts open actions in the zone's `Todo.md` and commits. "Close for the day" does that for every thread touched today. The next session, in either assistant, starts from that block.
 
 ### The walls
 

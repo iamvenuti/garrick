@@ -98,23 +98,17 @@ class TestTheCommandLine(ExecutorCase):
         self.assertEqual((0, [self.build]), (code, spawned), err)
         self.assertTrue((self.work / "Acme" / "Threads" / "Lanes" / "Lanes.md").is_file())
 
-    def test_a_move_is_the_same_action_as_the_button_and_follows_the_stack(self):
+    def test_a_move_is_the_same_action_as_the_button(self):
         for name, party in (("Apex", "acme"), ("Birch Entry", "birch")):
             self.assertEqual(0, self.scaffold("project", "--zone", "Work", "--name", name, "--party", party,
                                               "--thread", "Kickoff").returncode)
         self.commit("two more projects")
-        stack = self.root / "System" / "generated" / "interrupted.json"
-        stack.parent.mkdir(parents=True, exist_ok=True)
-        stack.write_text(json.dumps({"stack": [{"zone": "Work", "project": "Acme", "thread": "Freight",
-                                                "file": "Acme/Threads/Freight/Freight.md", "at": "2027-01-01T10:00:00"}]}))
         code, out, err, spawned = self.session("move", "--zone", "Work", "--project", "Acme", "--thread", "Freight",
                                                "--to", "Apex")
         self.assertEqual((0, ""), (code, err), out)
         self.assertEqual([self.build], spawned)                                # the page asked for, once
         self.assertEqual("Freight: moved to Apex", self.head())
         self.assertIn("To undo: python3 System/status/page_action.py undo --zone Work", out)
-        self.assertEqual("Apex/Threads/Freight/Freight.md", json.loads(stack.read_text())["stack"][0]["file"])
-        self.assertEqual("Apex", json.loads(stack.read_text())["stack"][0]["project"])
         commit = out.split("--commit ")[1].split()[0]
         code, out, err, spawned = self.session("undo", "--zone", "Work", "--commit", commit)
         self.assertEqual((0, [self.build]), (code, spawned), err)
@@ -169,7 +163,7 @@ class TestTheCommandLine(ExecutorCase):
         self.assertEqual("", self.git("status", "--porcelain").stdout)
 
     def test_the_json_form_is_still_there_for_the_verbs_with_no_options(self):
-        request = json.dumps({"verb": "stack"})
+        request = json.dumps({"verb": "memory-preview"})
         out = io.StringIO()
         with mock.patch("sys.stdin", io.StringIO(request)), contextlib.redirect_stdout(out):
             code = pa.main(["--workspace", str(self.root), "--via", "session"])
@@ -262,7 +256,7 @@ class TestOnePageRequest(ExecutorCase):
         wake = {"verb": "wake", "zone": "Work", "project": "Acme", "thread": "Pricing"}
         out, spawned = self.perform(wake)                                      # active already
         self.assertEqual((False, False, []), (out["ok"], "built" in out, spawned))     # the host rebuilds, as the refusal says
-        out, spawned = self.perform({"verb": "stack"})
+        out, spawned = self.perform({"verb": "memory-preview"})
         self.assertEqual(([], False), (spawned, "built" in out))               # a read has no say in it
         out, spawned = self.perform({"verb": "delete", "zone": "Work", "project": "Acme", "thread": "Pricing"})
         self.assertEqual(([], False), (spawned, out.get("built") is True))      # the first form of a delete
@@ -327,9 +321,9 @@ class TestTheCallerIsNamed(ExecutorCase):
     def test_the_log_ends_each_line_with_the_caller(self):
         self.session("park", "--zone", "Work", "--project", "Acme", "--thread", "Freight")
         self.session("wake", "--zone", "Work", "--project", "Acme", "--thread", "Pricing")           # refused: active already
-        with mock.patch("sys.stdin", io.StringIO(json.dumps({"verb": "stack"}))), \
+        with mock.patch("sys.stdin", io.StringIO(json.dumps({"verb": "memory-preview"}))), \
                 contextlib.redirect_stdout(io.StringIO()):
-            pa.main(["--workspace", str(self.root)])                                                  # a read: no line
+            pa.main(["--workspace", str(self.root)])                                                  # a read
         with mock.patch("sys.stdin", io.StringIO(json.dumps({"verb": "wake", "zone": "Work", "project": "Acme",
                                                               "thread": "Freight"}))), \
                 mock.patch.object(self.lib, "detach", return_value=True), contextlib.redirect_stdout(io.StringIO()):
@@ -338,7 +332,7 @@ class TestTheCallerIsNamed(ExecutorCase):
         self.assertEqual(4, len(lines), lines)         # the stack is read, and a read is logged too
         self.assertRegex(lines[0], r"  ->  ok: Acme, Freight is parked  \(session\)$")
         self.assertRegex(lines[1], r"  ->  refused: .*  \(session\)$")
-        self.assertRegex(lines[2], r"^\S+ \S+  stack  ->  ok: .*  \(page\)$")
+        self.assertRegex(lines[2], r"^\S+ \S+  memory-preview  ->  ok: .*  \(page\)$")
         self.assertRegex(lines[3], r"  ->  ok: Acme, Freight is awake again  \(page\)$")
 
     def test_an_unknown_caller_is_not_recorded(self):
@@ -396,7 +390,7 @@ class TestTheSkillsDegrade(unittest.TestCase):
     def test_the_threads_skill_runs_each_verb_through_the_executor(self):
         for command in ("page_action.py park --zone", "page_action.py new-project --zone", "page_action.py new-thread --zone",
                         "page_action.py rename --zone", "page_action.py delete --zone", "page_action.py undo --zone",
-                        "page_action.py unstack --zone", "page_action.py todo-done --zone"):
+                        "page_action.py todo-done --zone"):
             self.assertIn(command, self.threads)
         self.assertIn("python3 System/status/page_action.py todo-done", self.todo)
 
@@ -414,7 +408,7 @@ class TestTheSkillsDegrade(unittest.TestCase):
 
     def test_nothing_the_executor_does_is_done_by_hand_beside_it(self):
         flat = self.flat(self.threads)
-        self.assertIn("do not also run `scaffold.py`, commit or `unstack` by hand for them: it has done all three", flat)
+        self.assertIn("do not also run `scaffold.py` or commit by hand for them: it has done both", flat)
         self.assertIn("**Where `System/status/page_action.py` exists, tick through it, before appending anything**", flat)
 
     def test_the_skills_stay_harness_neutral(self):

@@ -600,8 +600,8 @@ class TestResume(CheckCase):
         self.assertFinds("resume", "warning", "`left-pad/index.js`, which is not there")
 
     def test_a_generated_file_is_not_checked(self):
-        # interrupted.json exists only while a thread is held.
-        self.resume("`System/generated/interrupted.json` and `%s/System/generated/status.html`" % self.root)
+        # Nothing under System/generated/ is committed, so a path into it need not exist.
+        self.resume("`System/generated/wrap-x.lock` and `%s/System/generated/status.html`" % self.root)
         self.assertClean("resume")
 
     def test_a_path_that_exists_nowhere_is_still_reported(self):

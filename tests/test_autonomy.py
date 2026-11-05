@@ -394,7 +394,7 @@ class CheckpointDialogueTest(unittest.TestCase):
 
     def wrap_wording(self):
         return flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"),
-                            '## Wrap: "close X", "wrap X"'))
+                            '## Wrap: "close X", "wrap X", "I\'m being interrupted", "hold this", "hold X"'))
 
     # -- the dialogues -----------------------------------------------------
 

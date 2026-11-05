@@ -7785,6 +7785,9 @@ var N=G.nodes,seed=7;function rnd(){seed=(seed*16807)%2147483647;return seed/214
 N.forEach(function(n,i){n.i=i;n.adj=[]});
 G.edges.forEach(function(e){N[e[0]].adj.push(e[1]);N[e[1]].adj.push(e[0])});
 var places=[];N.forEach(function(n){if(places.indexOf(n.z)<0)places.push(n.z);n.r=(n.h?7:n.c?5:4)+Math.min(5,Math.sqrt(n.adj.length)*.8)});
+/* 3D (#372): a view switched to, never the default. A note has a depth, zz (its z is its place); yaw and tilt turn the
+   graph, ysw is the sway round the vertical axis, and DIST is how far the eye stands from the middle of it. */
+var d3=st.get('garrick-graph-3d')==='1',yaw=0,tilt=.3,T0=.3,ysw=0,SWAY3=.45,DIST=1400,sz=11;function rz(){sz=(sz*16807)%2147483647;return sz/2147483647}
 var V=[],E=[],alpha=1,theta=0,phase=0,SWAY=.1,pull=1.4,ticks=0,scale=1,px=0,py=0,auto=true,hover=null,sel=null,drag=null,W=0,H=0,dpr=1,asp=2,running=false,shown=false,glides=0,last=0,idle=0,C={},bar=wrap.querySelector('.gbar'),top=58;
 /* Where each zone and wiki sits: its notes are drawn toward that spot. A few
    places that fit across the card go in a row, more go round an ellipse in the
@@ -7853,17 +7856,60 @@ k=(d-L)/d*alpha*(a.z===b.z?.3:.09)/Math.max(1,Math.min(a.deg,b.deg));a.vx+=dx*k;
 /* The pull toward a place's spot is weaker across the card than down it, so
    the notes spread in the card's proportions. Every few steps it is adjusted
    by how far the notes' own proportions still are from the card's. */
-if(alpha>.05&&++ticks%10===0&&V.length>1){var bx=box([0]),la=(bx[1]-bx[0]+40)/(bx[3]-bx[2]+40);pull=Math.max(.7,Math.min(4,pull*Math.pow(asp/la,.3)))}
+if(alpha>.05&&++ticks%10===0&&V.length>1){var bx=box2([0]),la=(bx[1]-bx[0]+40)/(bx[3]-bx[2]+40);pull=Math.max(.7,Math.min(4,pull*Math.pow(asp/la,.3)))}
 var q=pull;V.forEach(function(n){var g=(n.deg?.04:.08)*alpha;n.vx-=(n.x-n.ax)*g/q;n.vy-=(n.y-n.ay)*g*q;if(n===drag)return;n.vx*=.6;n.vy*=.6;n.x+=n.vx;n.y+=n.vy});
 var mx=0,my=0;V.forEach(function(n){mx+=n.x;my+=n.y});mx/=V.length||1;my/=V.length||1;if(!drag)V.forEach(function(n){n.x-=mx;n.y-=my});
 alpha=Math.max(0,alpha-(alpha>.02?.005:.0005)*(V.length>BIG?2:1))}
-function toScreen(n){var c=Math.cos(theta),s=Math.sin(theta);return[W/2+px+scale*(n.x*c-n.y*s),H/2+py+scale*(n.x*s+n.y*c)]}
-function toWorld(x,y){var c=Math.cos(theta),s=Math.sin(theta),u=(x-W/2-px)/scale,v=(y-H/2-py)/scale;return[u*c+v*s,-u*s+v*c]}
+/* The same layout in three dimensions (#372): the octree stands in for the quadtree past BIG notes, and the places stay on
+   one plane, so a zone still reads as one cluster. Only used while the view is 3D, so the flat layout is untouched. */
+function oct(x,y,z,s){return{x:x,y:y,z:z,s:s,m:0,cx:0,cy:0,cz:0,kids:null,pts:null}}
+function put3(q,n,d){q.cx=(q.cx*q.m+n.x)/(q.m+1);q.cy=(q.cy*q.m+n.y)/(q.m+1);q.cz=(q.cz*q.m+n.zz)/(q.m+1);q.m++;if(q.kids)return into3(q,n,d);
+if(!q.pts||d>24){(q.pts||(q.pts=[])).push(n);return}var o=q.pts,h=q.s/2,i;q.pts=null;q.kids=[];
+for(i=0;i<8;i++)q.kids.push(oct(q.x+(i&1?h:0),q.y+(i&2?h:0),q.z+(i&4?h:0),h));o.forEach(function(p){into3(q,p,d)});into3(q,n,d)}
+function into3(q,n,d){var h=q.s/2;put3(q.kids[(n.x>=q.x+h?1:0)+(n.y>=q.y+h?2:0)+(n.zz>=q.z+h?4:0)],n,d+1)}
+function tree3(){var x0=1e9,y0=1e9,z0=1e9,x1=-1e9,y1=-1e9,z1=-1e9;V.forEach(function(n){x0=Math.min(x0,n.x);y0=Math.min(y0,n.y);z0=Math.min(z0,n.zz);x1=Math.max(x1,n.x);y1=Math.max(y1,n.y);z1=Math.max(z1,n.zz)});
+var t=oct(x0,y0,z0,Math.max(x1-x0,y1-y0,z1-z0)+1);V.forEach(function(n){put3(t,n,0)});return t}
+function apart3(a,b,S){var dx=b.x-a.x,dy=b.y-a.y,dz=b.zz-a.zz,d2=dx*dx+dy*dy+dz*dz||1,k,m;if(d2>360000)return;k=S*alpha/d2;a.vx-=dx*k;a.vy-=dy*k;a.vz-=dz*k;
+m=a.r+b.r+(a.h&&b.h?55:a.h||b.h?28:14);if(d2<m*m){k=(m-Math.sqrt(d2))/Math.sqrt(d2)*.25;a.x-=dx*k;a.y-=dy*k;a.zz-=dz*k}}
+function shove3(q,a,S){if(!q.m)return;if(q.pts){for(var i=0;i<q.pts.length;i++)if(q.pts[i]!==a)apart3(a,q.pts[i],S);return}
+var dx=q.cx-a.x,dy=q.cy-a.y,dz=q.cz-a.zz,d2=dx*dx+dy*dy+dz*dz,inside=a.x>=q.x&&a.x<q.x+q.s&&a.y>=q.y&&a.y<q.y+q.s&&a.zz>=q.z&&a.zz<q.z+q.s;
+if(!inside&&q.s*q.s<1.2*d2){if(d2<=360000){var k=S*alpha*q.m/d2;a.vx-=dx*k;a.vy-=dy*k;a.vz-=dz*k}return}
+for(var j=0;j<8;j++)shove3(q.kids[j],a,S)}
+function step3(){var L=70,S=900,i,j,a,b,dx,dy,dz,d2,k,m;
+if(V.length>BIG){var t=tree3();V.forEach(function(n){shove3(t,n,S)})}
+else for(i=0;i<V.length;i++){a=V[i];for(j=i+1;j<V.length;j++){b=V[j];dx=b.x-a.x;dy=b.y-a.y;dz=b.zz-a.zz;d2=dx*dx+dy*dy+dz*dz||1;if(d2>360000)continue;
+k=S*alpha/d2;a.vx-=dx*k;a.vy-=dy*k;a.vz-=dz*k;b.vx+=dx*k;b.vy+=dy*k;b.vz+=dz*k;
+m=a.r+b.r+(a.h&&b.h?55:a.h||b.h?28:14);if(d2<m*m){k=(m-Math.sqrt(d2))/Math.sqrt(d2)*.25;a.x-=dx*k;a.y-=dy*k;a.zz-=dz*k;b.x+=dx*k;b.y+=dy*k;b.zz+=dz*k}}}
+E.forEach(function(e){a=N[e[0]];b=N[e[1]];dx=b.x+b.vx-a.x-a.vx;dy=b.y+b.vy-a.y-a.vy;dz=b.zz+b.vz-a.zz-a.vz;var d=Math.sqrt(dx*dx+dy*dy+dz*dz)||1;
+k=(d-L)/d*alpha*(a.z===b.z?.3:.09)/Math.max(1,Math.min(a.deg,b.deg));a.vx+=dx*k;a.vy+=dy*k;a.vz+=dz*k;b.vx-=dx*k;b.vy-=dy*k;b.vz-=dz*k});
+if(alpha>.05&&++ticks%10===0&&V.length>1){var bx=box2([0]),la=(bx[1]-bx[0]+40)/(bx[3]-bx[2]+40);pull=Math.max(.7,Math.min(4,pull*Math.pow(asp/la,.3)))}
+var q=pull;V.forEach(function(n){var g=(n.deg?.04:.08)*alpha;n.vx-=(n.x-n.ax)*g/q;n.vy-=(n.y-n.ay)*g*q;n.vz-=n.zz*g*.6;if(n===drag){n.vz=0;return}n.vx*=.6;n.vy*=.6;n.vz*=.6;n.x+=n.vx;n.y+=n.vy;n.zz+=n.vz});
+var mx=0,my=0,mz=0;V.forEach(function(n){mx+=n.x;my+=n.y;mz+=n.zz});mx/=V.length||1;my/=V.length||1;mz/=V.length||1;if(!drag)V.forEach(function(n){n.x-=mx;n.y-=my;n.zz-=mz});
+alpha=Math.max(0,alpha-(alpha>.02?.005:.0005)*(V.length>BIG?2:1))}
+function tick(){if(d3)step3();else step()}
+/* The camera (#372). A note is turned round the vertical axis by yaw, tilted by tilt and seen in perspective from DIST
+   away, so a near note is larger and a far one smaller; it comes back as [x, y, depth, scale] on the card. Flat, the
+   same call turns it by theta and the depth is 0 and the scale 1. toWorld undoes it for a given depth, so the point
+   a pointer is over, in the plane facing the viewer at that depth, comes back as the point the note started from. */
+var K={yw:NaN,tl:NaN,c:1,s:0,ct:1,sn:0};/* the sines and cosines of the turn in use, worked out once, not for each note */
+function trig(yw){if(K.yw!==yw||K.tl!==tilt){K.yw=yw;K.tl=tilt;K.c=Math.cos(yw);K.s=Math.sin(yw);K.ct=Math.cos(tilt);K.sn=Math.sin(tilt)}}
+function cam(x,y,z,yw){trig(yw);var x1=x*K.c+z*K.s,z1=-x*K.s+z*K.c,y2=y*K.ct-z1*K.sn,z2=y*K.sn+z1*K.ct,f=DIST/Math.max(60,DIST+z2);return[x1*f,y2*f,z2,f]}
+function toScreen(n){if(d3){var o=cam(n.x,n.y,n.zz,yaw+ysw);return[W/2+px+scale*o[0],H/2+py+scale*o[1],o[2],o[3]]}
+var c=Math.cos(theta),s=Math.sin(theta);return[W/2+px+scale*(n.x*c-n.y*s),H/2+py+scale*(n.x*s+n.y*c),0,1]}
+function toWorld(x,y,zc){if(d3){var f=DIST/Math.max(60,DIST+zc),u=(x-W/2-px)/scale/f,v=(y-H/2-py)/scale/f,yw=yaw+ysw,c=Math.cos(yw),s=Math.sin(yw),ct=Math.cos(tilt),sn=Math.sin(tilt),
+wy=v*ct+zc*sn,z1=-v*sn+zc*ct;return[u*c-z1*s,wy,u*s+z1*c]}
+var c2=Math.cos(theta),s2=Math.sin(theta),u2=(x-W/2-px)/scale,v2=(y-H/2-py)/scale;return[u2*c2+v2*s2,-u2*s2+v2*c2]}
+/* how dim a far note or link is drawn: 1 for the nearest, .35 for the farthest (3D only) */
+function shade(f){return Math.max(.35,Math.min(1,.45+(f-.74)*.9))}
 /* Fit: the box the visible notes fill, as drawn, over the whole sway while it
    sways, scaled the same both ways into the card and centred in it. Room is
    kept for the buttons at the top and the names under the lowest notes. */
-function box(turns){var b=[1e9,-1e9,1e9,-1e9];(turns||(spin?[-SWAY,SWAY,theta]:[theta])).forEach(function(t){var c=Math.cos(t),s=Math.sin(t);
+function box2(turns){var b=[1e9,-1e9,1e9,-1e9];(turns||(spin?[-SWAY,SWAY,theta]:[theta])).forEach(function(t){var c=Math.cos(t),s=Math.sin(t);
 V.forEach(function(n){var x=n.x*c-n.y*s,y=n.x*s+n.y*c;if(x<b[0])b[0]=x;if(x>b[1])b[1]=x;if(y<b[2])b[2]=y;if(y>b[3])b[3]=y})});return b}
+/* in 3D, the box of the projected notes over the whole sway */
+function box3(){var b=[1e9,-1e9,1e9,-1e9];(spin?[yaw-SWAY3,yaw+SWAY3,yaw+ysw]:[yaw+ysw]).forEach(function(t){
+V.forEach(function(n){var o=cam(n.x,n.y,n.zz,t),x=o[0],y=o[1];if(x<b[0])b[0]=x;if(x>b[1])b[1]=x;if(y<b[2])b[2]=y;if(y>b[3])b[3]=y})});return b}
+function box(){return d3?box3():box2()}
 function fit(now){if(!W||!H||!V.length)return;var b=box(),l=34,r=34,t=top,u=36,
 k=Math.min((W-l-r)/Math.max(1,b[1]-b[0]),(H-t-u)/Math.max(1,b[3]-b[2]),2.2),
 x=l+(W-l-r)/2-W/2-k*(b[0]+b[1])/2,y=t+(H-t-u)/2-H/2-k*(b[2]+b[3])/2;
@@ -7879,16 +7925,18 @@ function ring(n){return n.s||!n.lt?null:C['--critical']}
 function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
 var f=sel||hover,near={},M=q?mt:null;if(f){near[f.i]=1;f.adj.forEach(function(i){near[i]=1})}
 var P={};V.forEach(function(n){P[n.i]=toScreen(n)});
-E.forEach(function(e){var a=P[e[0]],b=P[e[1]],hot=f&&(e[0]===f.i||e[1]===f.i);
-ctx.globalAlpha=f&&!hot||!f&&M&&!(M[e[0]]&&M[e[1]])?.12:(N[e[0]].s||N[e[1]].s)?.25:.55;ctx.strokeStyle=hot?C['--accent']:C['--base'];ctx.lineWidth=hot?1.6:1;
+/* in 3D far notes are drawn first, so near ones cover them, and are smaller and fainter (#372) */
+var ord=V;if(d3){ord=V.slice();ord.sort(function(a,b){return P[b.i][2]-P[a.i][2]||a.i-b.i})}
+E.forEach(function(e){var a=P[e[0]],b=P[e[1]],hot=f&&(e[0]===f.i||e[1]===f.i),df=d3?(a[3]+b[3])/2:1,sh=d3?shade(df):1;
+ctx.globalAlpha=(f&&!hot||!f&&M&&!(M[e[0]]&&M[e[1]])?.12:(N[e[0]].s||N[e[1]].s)?.25:.55)*sh;ctx.strokeStyle=hot?C['--accent']:C['--base'];ctx.lineWidth=(hot?1.6:1)*df;
 ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke()});
 var zs=Math.max(.7,Math.min(1.6,scale));
-V.forEach(function(n){var p=P[n.i],r=n.r*zs;ctx.globalAlpha=f&&!near[n.i]||!f&&M&&!M[n.i]?.15:n.s?.3:1;
+ord.forEach(function(n){var p=P[n.i],r=n.r*zs*p[3],sh=d3?shade(p[3]):1;ctx.globalAlpha=(f&&!near[n.i]||!f&&M&&!M[n.i]?.15:n.s?.3:1)*sh;
 ctx.fillStyle=fill(n);ctx.beginPath();ctx.arc(p[0],p[1],r,0,6.283);ctx.fill();
 var rc=ring(n);if(rc){ctx.strokeStyle=rc;ctx.lineWidth=2.2;ctx.beginPath();ctx.arc(p[0],p[1],r+3.2,0,6.283);ctx.stroke()}
 if(n===sel){ctx.strokeStyle=C['--ink'];ctx.lineWidth=2;ctx.beginPath();ctx.arc(p[0],p[1],r+(rc?6.4:3),0,6.283);ctx.stroke()}});
 ctx.textAlign='left';ctx.textBaseline='top';ctx.lineJoin='round';
-names(P,f,near,zs).forEach(function(l){var n=l.n;ctx.globalAlpha=f&&!near[n.i]||!f&&M&&!M[n.i]?.2:n.s?.45:1;ctx.font=l.font;
+names(P,f,near,zs).forEach(function(l){var n=l.n;ctx.globalAlpha=(f&&!near[n.i]||!f&&M&&!M[n.i]?.2:n.s?.45:1)*(d3?Math.max(.55,shade(P[n.i][3])):1);ctx.font=l.font;
 ctx.strokeStyle=C['--raise'];ctx.lineWidth=3.5;ctx.strokeText(n.n,l.x,l.y);ctx.fillStyle=l.big?C['--ink']:C['--ink2'];ctx.fillText(n.n,l.x,l.y)});
 ctx.globalAlpha=1}
 /* Which names to draw, and where. They are placed most wanted first: the note
@@ -7908,12 +7956,12 @@ var FONT='system-ui,-apple-system,sans-serif';
 function names(P,f,near,zs){var want=[],out=[],cells={},M=q?mt:null,few=M&&hits.length<=20;
 /* a hub of the kinds its place opens on is named before the rest: in Meetings its people, then its entities with the other notes (#320) */
 var op=(G.op||{})[zsel];V.forEach(function(n){want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c&&(!op||op.indexOf(n.k)>=0)?3:4,n])});
-want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i});
+want.sort(function(a,b){return a[0]-b[0]||(d3?P[a[1].i][2]-P[b[1].i][2]:0)||b[1].deg-a[1].deg||a[1].i-b[1].i});
 function each(b,fn){for(var x=Math.floor(b[0]/64);x<=Math.floor(b[2]/64);x++)for(var y=Math.floor(b[1]/64);y<=Math.floor(b[3]/64);y++)if(fn(x+' '+y))return true;return false}
 function free(b){return!each(b,function(k){return(cells[k]||[]).some(function(o){return b[0]<o[2]&&o[0]<b[2]&&b[1]<o[3]&&o[1]<b[3]})})}
 var tried=0;want.forEach(function(e){var n=e[1],p=P[n.i],big=n.h||n===f;if(p[0]<-200||p[0]>W+200||p[1]<-40||p[1]>H+40||e[0]===4&&++tried>BIG){n.lp=-1;return}
 var font=(big?'600 12px ':'11px ')+FONT,lw=n.tw||(n.tw={});if(lw[font]==null){ctx.font=font;lw[font]=ctx.measureText(n.n).width}
-var w=lw[font],h=big?14:13,r=n.r*zs+(ring(n)?6:3),at=[[p[0]-w/2,p[1]+r+1],[p[0]-w/2,p[1]-r-1-h],[p[0]+r+4,p[1]-h/2],[p[0]-r-4-w,p[1]-h/2]],
+var w=lw[font],h=big?14:13,r=n.r*zs*p[3]+(ring(n)?6:3),at=[[p[0]-w/2,p[1]+r+1],[p[0]-w/2,p[1]-r-1-h],[p[0]+r+4,p[1]-h/2],[p[0]-r-4-w,p[1]-h/2]],
 tries=n.lp>=0?[n.lp,0,1,2,3]:[0,1,2,3],pad=n.lp>=0?-1:1,got=-1,box=null;
 for(var i=0;i<tries.length&&got<0;i++){var x=Math.max(2,Math.min(W-w-2,at[tries[i]][0])),y=at[tries[i]][1],b=[x-2-pad,y-pad,x+w+2+pad,y+h+pad];
 if(free(b)){got=tries[i];box=[x,y,b]}}
@@ -7924,22 +7972,26 @@ return out.reverse()}
    the fit easing, a drag, a glide, or the sway (with its pause after a touch).
    When all is still it stops, and any touch, button or new size wakes it. */
 function frame(t){if(!running)return;var dt=Math.min(64,t-(last||t)),moving=alpha>0||!!drag||glides>0;last=t;
-if(alpha>0){step();if(V.length<=BIG)step()}if(auto&&fit())moving=true;
-idle+=dt;if(spin&&!hover&&!sel&&!drag){moving=true;if(idle>2500){phase+=dt*.0002;theta=SWAY*Math.sin(phase)}}
+if(alpha>0){tick();if(V.length<=BIG)tick()}if(auto&&fit())moving=true;
+idle+=dt;if(spin&&!hover&&!sel&&!drag){moving=true;if(idle>2500){phase+=dt*.0002;if(d3)ysw=SWAY3*Math.sin(phase);else theta=SWAY*Math.sin(phase)}}
 if((frame.k=(frame.k||0)+1)%30===0||!C['--ink'])colors();draw();if(moving)requestAnimationFrame(frame);else running=false}
 function size(){var r=wrap.getBoundingClientRect();W=r.width;H=r.height;dpr=window.devicePixelRatio||1;cv.width=W*dpr;cv.height=H*dpr;
 if(bar&&bar.offsetHeight)top=bar.offsetTop+bar.offsetHeight+14;/* the buttons, however many lines they wrap to */
 var a=W>120&&H>top+120?Math.max(.5,Math.min(3,(W-68)/(H-top-36))):asp;if(Math.abs(Math.log(a/asp))>.15){asp=a;return true}}
 function wake(){if(shown&&!running){running=true;last=0;requestAnimationFrame(frame)}}
 function start(){shown=true;wake()}function stop(){shown=false;running=false}
-function at(e){var r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,best=null,bd=1e9;
-V.forEach(function(n){var p=toScreen(n),d=Math.hypot(p[0]-x,p[1]-y);if(d<n.r*Math.max(.7,Math.min(1.6,scale))+5&&d<bd){bd=d;best=n}});return{x:x,y:y,n:best}}
+function at(e){var r=cv.getBoundingClientRect(),x=e.clientX-r.left,y=e.clientY-r.top,best=null,bd=1e9,bz=1e9;
+/* in 3D the nearest note in front wins where several lie under the pointer; flat, the closest to it */
+V.forEach(function(n){var p=toScreen(n),d=Math.hypot(p[0]-x,p[1]-y);if(d<n.r*Math.max(.7,Math.min(1.6,scale))*p[3]+5&&(d3?p[2]<bz-.5||Math.abs(p[2]-bz)<=.5&&d<bd:d<bd)){bd=d;bz=p[2];best=n}});return{x:x,y:y,n:best}}
 var down=null;
-cv.addEventListener('pointerdown',function(e){var h=at(e);idle=0;down={x:h.x,y:h.y,n:h.n,px:px,py:py,moved:false};if(h.n){drag=h.n;alpha=Math.max(alpha,.25)}cv.classList.add('drag');cv.setPointerCapture(e.pointerId);wake()});
+cv.addEventListener('pointerdown',function(e){var h=at(e);idle=0;down={x:h.x,y:h.y,n:h.n,px:px,py:py,yaw:yaw,tilt:tilt,zc:h.n&&d3?toScreen(h.n)[2]:0,moved:false};if(h.n){drag=h.n;alpha=Math.max(alpha,.25)}cv.classList.add('drag');cv.setPointerCapture(e.pointerId);wake()});
 cv.addEventListener('pointermove',function(e){var h=at(e);idle=0;if(down||h.n!==hover)wake();
 if(down){if(Math.hypot(h.x-down.x,h.y-down.y)>4)down.moved=true;
-if(drag&&down.moved){var w=toWorld(h.x,h.y);drag.x=w[0];drag.y=w[1];drag.vx=drag.vy=0;alpha=Math.max(alpha,.2)}
-else if(!drag&&down.moved){auto=false;px=down.px+h.x-down.x;py=down.py+h.y-down.y}return}
+if(drag&&down.moved){var w=toWorld(h.x,h.y,down.zc);drag.x=w[0];drag.y=w[1];if(d3)drag.zz=w[2];drag.vx=drag.vy=drag.vz=0;alpha=Math.max(alpha,.2)}
+else if(!drag&&down.moved){auto=false;
+/* 3D: dragging empty space turns the graph, shift-drag moves it (#372) */
+if(d3&&!e.shiftKey){yaw=down.yaw-(h.x-down.x)*.008;tilt=Math.max(-1.3,Math.min(1.3,down.tilt+(h.y-down.y)*.008))}
+else{px=down.px+h.x-down.x;py=down.py+h.y-down.y}}return}
 hover=h.n;cv.classList.toggle('hot',!!h.n);
 if(h.n){var n=h.n;cv.dataset.tip=(n.N||n.n)+' · '+G.kinds.filter(function(k){return k[0]===n.k})[0][1]+(n.d!=null?' · updated '+n.d+'d ago':'')+(n.s?' · parked':'')+' · click for options'}else delete cv.dataset.tip});
 cv.addEventListener('pointerup',function(){cv.classList.remove('drag');if(!down)return;if(!down.moved){if(down.n)select(down.n);else close()}drag=null;down=null;wake()});
@@ -7950,6 +8002,7 @@ var lit=null;
 window.GarrickGraph={focus:function(u){if(down)return false;if(!u){if(lit&&hover===lit)hover=null;lit=null;wake();return false}
 var n=null;V.forEach(function(m){if(m.u===u)n=m});if(!n)return false;lit=hover=n;wake();return true},
 /* the place shown, and showing a zone as the drop-down would, without storing it or reordering the card (#142) */
+cam:{screen:toScreen,world:toWorld,notes:function(){return V},view:function(){return[d3,yaw+ysw,tilt]}},
 place:function(){return zsel},follow:function(z){if(held||z===zsel||places.indexOf(z)<0)return false;show(z);return true}};
 /* a double-click opens the note: in a host, over its bridge, as every file link goes (#318); in a browser, as a link */
 cv.addEventListener('dblclick',function(e){var h=at(e),hb=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
@@ -7997,16 +8050,20 @@ else if(e.key==='Escape'&&(fq.value||q)){e.preventDefault();e.stopPropagation();
 if(fm)fm.onclick=function(){Object.keys(more).forEach(function(k){ks[k]=1});keep();redo()};
 var sp=document.getElementById('gspin');function spinBtn(){sp.textContent=spin?'Pause rotation':'Rotate';sp.disabled=reduce;if(reduce)sp.title='Reduced motion is on'}
 sp.onclick=function(){spin=!spin;st.set('garrick-graph-spin',spin?'1':'0');spinBtn();wake()};spinBtn();
-document.getElementById('gfit').onclick=function(){auto=true;theta=phase=0;wake()};
+document.getElementById('gfit').onclick=function(){auto=true;theta=phase=0;yaw=ysw=0;tilt=T0;wake()};
+/* 2D or 3D (#372): the button names the view it switches to; the notes, the filter and the selection are kept */
+var b3=document.getElementById('g3d');function btn3(){if(b3){b3.textContent=d3?'2D':'3D';b3.setAttribute('aria-pressed',d3?'true':'false');b3.title=d3?'Back to the flat graph':'Turn the graph in three dimensions'}}
+function view3(on){d3=on;st.set('garrick-graph-3d',on?'1':'0');yaw=ysw=0;tilt=T0;btn3();if(drag)drag=null;alpha=Math.max(alpha,on?.8:.5);auto=true;wake()}
+if(b3){b3.onclick=function(){view3(!d3)};btn3()}
 var pk=document.getElementById('gpark');function parkBtn(){pk.textContent=parked?'Hide parked':'Show parked';pk.classList.toggle('on',parked)}
 pk.hidden=!N.some(function(n){return n.s});pk.onclick=function(){parked=!parked;st.set('garrick-graph-parked',parked?'1':'0');parkBtn();if(sel&&!visible(sel))close();rebuild();alpha=Math.max(alpha,.5);auto=true;wake()};parkBtn();
 /* Every note starts near its place's spot, as if everything were drawn, so a
    note that a wider view brings in arrives from where it belongs. */
 size();var A0=spots(N,G.edges);N.forEach(function(n){var a=A0[n.z]||[0,0],t=rnd()*6.2832,d=Math.sqrt(rnd())*room(8);
-n.x=a[0]+Math.cos(t)*d;n.y=a[1]+Math.sin(t)*d;n.vx=n.vy=0});
+n.x=a[0]+Math.cos(t)*d;n.y=a[1]+Math.sin(t)*d;n.vx=n.vy=0;n.zz=(rz()*2-1)*room(8);n.vz=0});
 /* The warm-up: 400 steps, or 160 cooling twice as fast past BIG notes, so a
    large workspace opens in about a second rather than ten. */
-rebuild();for(var i=0;i<(V.length>BIG?160:400);i++)step();colors();fit(true);
+rebuild();for(var i=0;i<(V.length>BIG?160:400);i++)tick();colors();fit(true);
 if('ResizeObserver' in window)new ResizeObserver(function(){if(size()){anchors();alpha=Math.max(alpha,.3)}if(auto)fit(true);draw();wake()}).observe(wrap);
 /* a still graph redraws itself when the theme changes, by the switch or the system */
 function recolor(){colors();draw()}
@@ -8544,7 +8601,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                           '<div class="gbar"><span class="gzw">' + marks + '<select class="gzsel" aria-label="Place">' + switch + '</select></span>'
                           '<input type="search" class="gfind" id="gfind" placeholder="Find a note" aria-label="Find a note on the graph" autocomplete="off" spellcheck="false">'
                           '<button id="gfmore" type="button" hidden></button><button id="gpark" type="button"></button></div>'
-                          '<div class="gbar gcorner"><button id="gspin"></button><button id="gfit">Fit</button></div>'
+                          '<div class="gbar gcorner"><button id="gspin"></button><button id="g3d" type="button"></button><button id="gfit">Fit</button></div>'
                           '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
                           '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data),
                           open_=False)

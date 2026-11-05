@@ -1292,6 +1292,42 @@ class TestFormsRead(GapCase):
                 self.assertEqual([], self.says(written))
         self.assertRefused("`Harbour/Deliverables/260305 - New plan (draft).md`")
 
+    def test_a_dot_dot_in_the_middle_of_a_path(self):
+        write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        write(self.work / "Northwind" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        for written in ("`cat Deliverables/../../Harbour/Threads/Tender/Tender.md`", "`cat x/../Harbour/Threads/Tender/Tender.md`",
+                        "`cat Deliverables/published.md/../../Harbour/Threads/Tender/Tender.md`", "`cat x/../Harbour/Threads/Tender/Q3;x.md`",
+                        "[x](Deliverables/../../Harbour/Threads/Tender/Tender.md)", '<img src="x/../Harbour/Threads/Tender/Tender.md">',
+                        "`cat ./a/../../../../Harbour/Threads/Tender/Tender.md`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+        for written in ("`cat Threads/Freight/../Freight/Notes.md`", "`cat Harbour/../Northwind/Threads/Freight/Freight.md`",
+                        "`cat Harbour/../Northwind/Threads/Freight/a;b.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_symbolic_link_to_a_folder_of_a_project(self):
+        (self.work / "Northwind" / "Link").symlink_to("../Harbour")
+        (self.work / "Zone link").symlink_to("Harbour/Threads")
+        for written in ("`cat Link/Threads/Tender/Tender.md`", "`cat Link/zzz.md`", "`cat Link/Threads/Tender/a;b.md`",
+                        "`cat Zone link/Tender/Q3 pricing.md`", "[x](Link/Threads/Tender/Tender.md)", "[x](../../Link/zzz.md)",
+                        '<img src="Link/Threads/Tender/Tender.md">', "`cat Link/Threads/*/Tender.md`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+        self.assertEqual([], self.says("`ls Link/Threads/Tender`"))
+
+    def test_a_link_out_of_the_workspace_is_not_followed(self):
+        elsewhere = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, elsewhere, True)
+        write(elsewhere / "Harbour" / "Threads" / "Tender" / "x y.md", "# Out\n")
+        (self.work / "Northwind" / "Shared").symlink_to(elsewhere)
+        shared = self.work / ".shared"
+        shared.mkdir(exist_ok=True)
+        (shared / "library").symlink_to(elsewhere)
+        for written in ("`cat Shared/Harbour/Threads/Tender/x y.md`", "`cat Shared/zzz;y.md`", "`cat .shared/library/Harbour/Threads/Tender/x y.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
     def test_a_checkout_in_a_project_is_still_set_apart_from_the_folder_reading(self):
         checkout = self.work / "Harbour" / "Garrick"
         for name in ("VERSION", "install.py", "update.py"):
@@ -1299,6 +1335,20 @@ class TestFormsRead(GapCase):
         (checkout / "template" / "System").mkdir(parents=True)
         write(checkout / "docs" / "guide to it.md", "# Guide\n")
         self.assertEqual([], self.says("`cat Harbour/Garrick/docs/guide to it;x.md`"))
+
+    def test_a_long_srcset_stays_small_and_fast(self):
+        import time
+        import tracemalloc
+        text = '<img srcset="' + ",".join("a/b%d.png %dx" % (i, i) for i in range(30000)) + '">'
+        tracemalloc.start()
+        check.extract_links(text)
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        self.assertLess(peak, 200 * 1024 * 1024)
+        write(self.note, "# Notes\n" + text)
+        started = time.monotonic()
+        self.walls()
+        self.assertLess(time.monotonic() - started, 60.0)
 
     def test_hostile_lines_stay_fast(self):
         import time

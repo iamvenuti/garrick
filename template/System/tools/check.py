@@ -38,6 +38,7 @@ import html
 import json
 import marshal
 import os
+import posixpath
 import re
 import subprocess
 import sys
@@ -600,7 +601,17 @@ def _link_forms(raw: str) -> List[str]:
     elif not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
         return []  # web or obsidian URI, handled above or not ours
     forms = [target, target.split("?", 1)[0]]
+    forms += [lexical(f) for f in forms if ".." in f]
     return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
+
+
+def lexical(path: str) -> str:
+    """`path` with its `.` and `..` names settled by the words alone, a
+    leading `..` that has nothing to cancel kept: `Deliverables/../../Harbour/x`
+    is `../Harbour/x`. Only the first 2048 characters are read."""
+    if not path or path.startswith("/") or ".." not in path[:2048]:
+        return ""
+    return posixpath.normpath(path[:2048]) if path[:2048].strip("/") else ""
 
 
 def extract_links(text: str) -> List[Tuple[str, str]]:
@@ -642,9 +653,13 @@ def extract_links(text: str) -> List[Tuple[str, str]]:
             url = re.search(r"(?i)\burl\s*=\s*(.*)", value)
             if url:
                 values.append(url.group(1).strip().strip("\"'` "))
-            for one in values:
+            for n, one in enumerate(values):
+                # As written: the attribute's value, or for a piece of a list the
+                # piece, cut short, so the text kept grows with the list and not with
+                # its square.
+                shown = (found if n == 0 else one)[:200]
                 for target in _link_forms(unquote(one)):
-                    links.append(('<%s %s="%s">' % (name, key, found), target))
+                    links.append(('<%s %s="%s">' % (name, key, shown), target))
     return links
 
 
@@ -4848,6 +4863,7 @@ def _forms(raw: str) -> List[str]:
     plain = base.split("?", 1)[0]
     forms = [base, base.rstrip(".:,;"), plain, _without_position(plain).rstrip(".:,;")]
     forms += [unquote(f) for f in forms if "%" in f]
+    forms += [lexical(f) for f in forms if ".." in f]
     return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
 
 
@@ -4917,6 +4933,7 @@ class DirIndex:
     names: Dict[Path, set] = field(default_factory=dict)
     owner: Dict[Path, Optional[Path]] = field(default_factory=dict)
     memo: Dict[tuple, frozenset] = field(default_factory=dict)
+    links: Dict[str, List[Tuple[Path, Path]]] = field(default_factory=dict)  # a symlinked folder's lower-cased name -> (its parent, the folder it leads to)
 
     def add(self, folder: Path, project: Optional[Path]) -> None:
         if folder in self.owner:
@@ -4937,13 +4954,20 @@ def project_dir_index(ws: Workspace) -> DirIndex:
         skip = set(checkouts(ws))
         for apart in skip:  # named, so a path into one ends there; never entered
             idx.names.setdefault(apart.parent, set()).add(apart.name.lower())
+        pending_links: List[Tuple[Path, str]] = []
         for project, _ in ws.projects:
             for above in project.parents:
+                if above not in idx.owner:
+                    try:
+                        pending_links += [(above, e.name) for e in os.scandir(above) if e.is_symlink() and e.is_dir()]
+                    except OSError:
+                        pass
                 idx.add(above, None)
                 if above == ws.root:
                     break
             for dirpath, dirnames, _ in os.walk(project):
                 here = Path(dirpath)
+                pending_links += [(here, d) for d in dirnames if (here / d).is_symlink() and here / d not in skip]
                 dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and here / d not in skip)
                 idx.add(here, project)
             for path in ws.git_view:
@@ -4952,6 +4976,19 @@ def project_dir_index(ws: Workspace) -> DirIndex:
                         if above == project:
                             break
                         idx.add(above, project)
+        # A symbolic link to a folder is a name for the folder it leads to, when
+        # that is inside the workspace. One that leads out of it (a shared
+        # drive) is never followed.
+        real_root = Path(os.path.realpath(ws.root))
+        for parent, name in pending_links:
+            try:
+                target = Path(os.path.realpath(parent / name)).relative_to(real_root)
+            except ValueError:
+                continue
+            folder = ws.root.joinpath(*target.parts)
+            if folder in idx.owner:
+                idx.links.setdefault(name.lower(), []).append((parent, folder))
+                idx.names.setdefault(parent, set()).add(name.lower())
         ws.project_dirs = idx
     return ws.project_dirs
 
@@ -4999,6 +5036,9 @@ def _step(idx: DirIndex, here: Optional[frozenset], name: str, key: tuple) -> fr
             got = frozenset(f for f in named if f.parent in here)
         else:
             got = frozenset(c for p in here for c in (idx.child.get((p, low)),) if c is not None)
+        led = idx.links.get(low)
+        if led:
+            got = got | frozenset(f for p, f in led if here is None or p in here)
         idx.memo[key] = got
     return got
 
@@ -5066,6 +5106,12 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
         if first == -1 and not head.startswith(("file:", "~")):
             continue
         window = text[start:min(end, start + 4096)]
+        settled = lexical(window)
+        if settled and settled != window:
+            # `x/../Harbour/…` is `Harbour/…`; a `..` left in front is read from the note and by its names alone.
+            for variant in {settled, settled.lstrip("./") if settled.startswith("../") else settled}:
+                found += dir_crossings(ws, source, variant, True)
+            continue
         word = window.split(None, 1)[0] if window.strip() else ""
         if "/".join(_strip_md(tuple(x.lower() for x in word.split("/") if x and x != "."))) in SHARED_PROJECT_PATHS:
             continue  # every project holds this one: the file reading says how

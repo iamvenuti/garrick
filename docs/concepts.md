@@ -53,7 +53,7 @@ What a checkpoint does not cover, and nothing pretends otherwise:
 - work done after the last checkpoint and before the session ended. "Open X" says the time the checkpoint covers, so the gap is visible rather than claimed;
 - a session in which none of the three things happened: there is nothing to record and no block;
 - an assistant that does not load the rule. It is asked, not enforced: see [What is enforced, and what is asked](enforced.md), and [Claude Code and Codex](harnesses.md#what-has-been-tested) for what has been checked in each;
-- a workspace installed before the tool existed. The assistant says so once, and "wrap it" or "hold this" before you leave is what saves the place;
+- a workspace installed before the tool existed. The assistant says so once, and "wrap it" before you leave is what saves the place;
 - another machine. The block is not committed and zones are not pushed, so it stays on the machine that wrote it.
 
 No host's close event is used for any of it: none of them fires on a crash, a killed terminal or a closed lid, and none can hold a conversation, so none could supply what an item needs.
@@ -64,15 +64,15 @@ The row of the Resume here block that names the single next thing, small enough 
 
 ### Keep in mind
 
-The row for what is only in your head: a decision half made and why, a doubt, or nothing. It is what a cold resume would otherwise lose. "I'm being interrupted" fills it with its third question.
+The row for what is only in your head: a decision half made and why, a doubt, or nothing. It is what a cold resume would otherwise lose. A wrap asks for it with its one question, "Anything only in your head?", and Enter skips it.
 
 ### Status
 
 Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
 
-### The interruption stack
+### Wrap and Resume
 
-When something cuts in, "I'm being interrupted" or "hold this" asks three short questions, writes the answers into the thread's Resume here block with the time, and puts the thread on a stack. "Back" opens the thread on top, so the last one held comes back first, and "back to X" takes one from anywhere in it. The stack only keeps the order, in `System/generated/interrupted.json`, which the [Garrick App](#the-garrick-app)'s `page_action.py` keeps; without that extra, the answers are still saved and "back" offers the thread you worked on last. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks one line, "Anything only in your head?", then rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. A wrap still running holds a lock file in `System/generated/` for as long as it runs, so it cannot be started twice. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### Catch up
 
@@ -84,7 +84,7 @@ What a catch-up raises first, says in a line, and leaves out, in plain words: "a
 
 ### What's next
 
-"What's next", or "what should I do while I wait": one thing worth doing elsewhere while a long turn runs. `System/tools/next_up.py` ranks it by plain rules, never the thread in focus: the top of the interruption stack, Todo lines due today or late, chases come due, what waits in an inbox, a thread parked for 30 days, a live one not wrapped for 14. The assistant reads the first pick and offers to open or tick it; it never acts on its own. [The Garrick band](#the-garrick-band) shows the same list while a turn runs, where its *While you wait* preview feature is switched on.
+"What's next", or "what should I do while I wait": one thing worth doing elsewhere while a long turn runs. `System/tools/next_up.py` ranks it by plain rules, never the thread in focus: the thread left most recently today, Todo lines due today or late, chases come due, what waits in an inbox, a thread parked for 30 days, a live one not wrapped for 14. The assistant reads the first pick and offers to open or tick it; it never acts on its own. [The Garrick band](#the-garrick-band) shows the same list while a turn runs, where its *While you wait* preview feature is switched on.
 
 ## Parties and walls
 
@@ -291,7 +291,7 @@ The skill that comes with the cmux extra: one cmux tab per thread, opened, wrapp
 
 ### The Garrick band
 
-A Claude Code mod, optional: two lines above the prompt, with the current thread, its status and how full the context is, and the buttons *Wrap*, *Clear*, *Close* (wraps the thread if it needs it, then closes the session where it runs) and *Finder*, with *Obsidian* where it is offered; and file paths in replies you can Cmd-click. It shows what the notes already say and enforces nothing. See [the Garrick band](../extras/mods/README.md).
+A Claude Code mod, optional: two lines above the prompt, with the current thread, its status and how full the context is, and one slot that follows the record, *Wrap* after work since the note was last written and *Resume* once it is current, then *Clear*, *Close* (wraps the thread if it needs it, then closes the session where it runs) and *Finder*, with *Obsidian* where it is offered; and file paths in replies you can Cmd-click. It shows what the notes already say and enforces nothing. See [the Garrick band](../extras/mods/README.md).
 
 ## Updates
 

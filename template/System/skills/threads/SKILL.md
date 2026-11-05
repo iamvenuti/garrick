@@ -486,8 +486,9 @@ focus, as under *No name given*). Then:
    closing the day, or for the band's *Close*, which waits for the note before
    it ends the session, do not ask and do not run in the background: the wrap
    runs in the foreground, each thread in turn.
-- **Take the lock**, so a second wrap of this thread cannot start while one is
-   running, and so the band can show it:
+- **Take the lock**, unless the request says the band has taken it already,
+   so a second wrap of this thread cannot start while one is running, and so
+   the band can show it:
    ```sh
    python3 System/tools/wrap_lock.py start "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
    ```
@@ -501,9 +502,15 @@ focus, as under *No name given*). Then:
    the steps need, since it has not seen it: the thread note's path, what this
    session did and decided, the files it touched, the actions to file and the
    lines to tick, any deliverable that left the workspace and who edits it
-   next, and the answer to the question word for word. Tell it to follow the
+   next, and the answer to the question word for word. The brief carries the
+   walls too, since a cold run knows none: the project's `party` (from its
+   hub), the walls that stand against that party (from the Walls table in
+   `System/context.md`), and any material in this session that a wall held
+   back, named only as "held back" with no content, no party and no subject.
+   Tell it to do the wall check (*The wall check*, step 4 above) before it
+   writes anything, and to write nothing it cannot place. Tell it to follow the
    steps to the letter, to touch nothing outside this thread, and to end with
-   step 13. Where the assistant has no background run, do the steps yourself,
+   step 13. The foreground run needs none of this: it has the session. Where the assistant has no background run, do the steps yourself,
    in the foreground, as a wrap always was.
 - **The last act of the wrap, success or failure,** is step 13: remove the
    lock. A wrap that died leaves the lock behind, and it expires by itself.

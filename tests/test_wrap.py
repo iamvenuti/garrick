@@ -83,6 +83,29 @@ class LockTest(unittest.TestCase):
         os.utime(path, (old, old))
         self.assertFalse(wl.running(path))
 
+    def test_a_lock_dated_far_ahead_counts_as_gone_as_in_the_band(self):
+        now = time.time()
+        wl.start(self.root, NOTE, now=now + 3600)
+        self.assertFalse(wl.running(self.lock(), now=now))
+        self.assertTrue(wl.start(self.root, NOTE, now=now))
+
+    def test_at_most_one_of_many_starters_wins_over_a_dead_lock(self):
+        import threading
+        now = time.time()
+        wl.start(self.root, NOTE, now=now - 700)
+        wins, barrier = [], threading.Barrier(8)
+
+        def go():
+            barrier.wait()
+            wins.append(wl.start(self.root, NOTE))
+        threads = [threading.Thread(target=go) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(1, wins.count(True), wins)
+        self.assertTrue(wl.running(self.lock()))
+
     def test_only_a_thread_note_under_zones(self):
         for bad in ("System/rules.md", "Zones/../x.md", "Zones/Work/Acme", ""):
             with self.assertRaises(ValueError):
@@ -137,6 +160,14 @@ class SkillTest(unittest.TestCase):
         self.assertIn("Keep in mind", wrap)
         self.assertRegex(wrap, r"foreground")
 
+    def test_the_background_brief_carries_the_walls(self):
+        wrap = self.text[self.text.index("## Wrap:"):self.text.index("## Back:")]
+        brief = " ".join(wrap[wrap.index("Brief the subagent"):wrap.index("The last act of the wrap")].split())
+        for needed in ("`party`", "Walls table in `System/context.md`", 'named only as "held back"',
+                       "wall check (*The wall check*, step 4 above) before it writes anything",
+                       "write nothing it cannot place", "The foreground run needs none of this"):
+            self.assertIn(needed, brief)
+
     def test_the_wrap_takes_and_releases_the_lock(self):
         wrap = self.text[self.text.index("## Wrap:"):self.text.index("## Back:")]
         self.assertIn("wrap_lock.py start", wrap)
@@ -170,6 +201,13 @@ class WordsTest(unittest.TestCase):
             self.assertNotRegex(text, r"(?i)\bhold this\b[^.]{0,40}(when|if) (someone|something) (interrupts|cuts)", page)
             self.assertNotIn("**\"Hold", text, page)
             self.assertNotIn("thirty-second", text, page)
+
+    def test_nothing_still_names_an_interrupt_or_an_interruption_as_a_verb(self):
+        for page in ("docs/concepts.md", "docs/extras/status-page.md"):
+            text = (REPO / page).read_text(encoding="utf-8")
+            self.assertNotIn("or an interrupt confirms", text, page)
+            self.assertNotIn("*Wake*, an interruption", text, page)
+        self.assertIn("modification time", (REPO / "docs" / "concepts.md").read_text(encoding="utf-8"))
 
     def test_the_band_readme_names_wrap_and_resume_in_one_slot(self):
         text = (REPO / "extras" / "mods" / "README.md").read_text(encoding="utf-8")

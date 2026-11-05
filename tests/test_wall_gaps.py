@@ -1167,7 +1167,7 @@ class TestFormsRead(GapCase):
             with self.subTest(written):
                 self.refused(written)
         write(self.note, "# Notes\n\n```\ncat Deliverables/published.md\ncat Harbour/Threads/Tender/Tender.md\n```\n")
-        self.assertEqual(["warning", "error"], sorted(f.severity for f in self.walls()))
+        self.assertEqual(["error", "warning"], sorted(f.severity for f in self.walls()))
 
     def test_a_path_with_spaces_inside_a_longer_code_line(self):
         write(self.work / "Harbour" / "Deliverables" / "261105 - Bid.md", "# Bid\n")

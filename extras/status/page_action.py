@@ -344,6 +344,12 @@ class Refused(Exception):
     pass
 
 
+class KeepRecord(Refused):
+    """A refusal that leaves what was filed where it is: the user's own words
+    are evidence, so a transaction does not take them away when the question
+    that cites them could not be updated."""
+
+
 def ops_lib(ws: Optional[Path] = None):
     """The first System/tools/operations.py that loads and speaks the API this
     file expects, or None: the workspace's own copy first, then the one beside
@@ -2736,6 +2742,7 @@ def write_new(path: Path, text: str) -> None:
 
 def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list) -> Path:
     folder = q.dir.joinpath(*WIKI_ANSWER_DIR)
+    tx_dirs(folder)
     folder.mkdir(parents=True, exist_ok=True)
     if folder.resolve() != folder or q.dir not in folder.parents:
         raise Refused("raw/answers is not a plain folder of this wiki, so nothing was written")
@@ -2745,6 +2752,7 @@ def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list) -> 
         path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
         try:
             write_new(path, body)
+            tx_made(path)
             return path
         except FileExistsError:
             continue
@@ -2762,6 +2770,7 @@ def wiki_words(req: dict) -> str:
 
 
 def write_question(path: Path, text: str) -> None:
+    tx_watch(path)
     path.write_text(text, encoding="utf-8")
 
 
@@ -2780,8 +2789,10 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
         tags = question_parties(q, wall)
         question_pages(q, wall)         # a question across a wall is refused before anything is written
         if verb == "question-close":
-            write_question(q.path, set_front(q.text, {"status": "closed", "closed": today.isoformat()}, drop=("later",)))
-            return "Closed. Nothing was worked in"
+            def close(w):
+                write_question(q.path, set_front(q.text, {"status": "closed", "closed": today.isoformat()}, drop=("later",)))
+                return "Closed. Nothing was worked in"
+            return transaction(ws, close)
         if verb == "question-later":
             until = req.get("until")
             try:
@@ -2790,20 +2801,26 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
                 day = None
             if day is None or day <= today:
                 raise Refused("not a later day: %r" % (until,))
-            write_question(q.path, set_front(q.text, {"status": "later", "later": day.isoformat()}))
-            return "Put off until %s %d %s. It is hidden until then" % (day.strftime("%A"), day.day, MONTHS[day.month - 1])
+
+            def put_off_until(w):
+                write_question(q.path, set_front(q.text, {"status": "later", "later": day.isoformat()}))
+                return "Put off until %s %d %s. It is hidden until then" % (day.strftime("%A"), day.day, MONTHS[day.month - 1])
+            return transaction(ws, put_off_until)
         words = wiki_words(req)
         # A question that cannot be rewritten stops here, with nothing written.
         set_front(q.text, {"status": "answered"})
-        path = file_raw_answer(q, today, words, tags)
-        stem = path.relative_to(q.dir).with_suffix("").as_posix()
-        try:
-            write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
-                                                      "answered": today.isoformat()}, drop=("later",)))
-        except Exception as e:
-            raise Refused("the answer is filed as %s, but the question could not be updated (%s: %s); "
-                          "the record stays" % (stem, type(e).__name__, e))
-        return "Noted. Your words are filed as %s. The pages change when you say work them in" % stem
+
+        def file_answer(w):
+            path = file_raw_answer(q, today, words, tags)
+            stem = path.relative_to(q.dir).with_suffix("").as_posix()
+            try:
+                write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
+                                                          "answered": today.isoformat()}, drop=("later",)))
+            except Exception as e:
+                raise KeepRecord("the answer is filed as %s, but the question could not be updated (%s: %s); "
+                                 "the record stays" % (stem, type(e).__name__, e))
+            return "Noted. Your words are filed as %s. The pages change when you say work them in" % stem
+        return transaction(ws, file_answer)
 
 
 def own_record(q: WikiQuestion, wall: str) -> str:
@@ -2860,8 +2877,8 @@ def wiki_work(ws: Path, q: WikiQuestion, req: dict, today: dt.date, wall: str) -
             q.reload()
             if q.status != "answered":
                 raise Refused("that question is %s, not answered" % (q.status or "unreadable"))
-            write_question(q.path, set_front(q.text, {"status": "done", "done": today.isoformat()}))
-        return "Done. The question is worked in"
+            return transaction(ws, lambda w: write_question(q.path, set_front(q.text, {"status": "done", "done": today.isoformat()}))
+                               or "Done. The question is worked in")
     lines = ["Cite [[%s]]." % record]
     lines += ["Change %s" % p.relative_to(q.dir).as_posix() for p in pages] or ["No page may be changed."]
     if missing:
@@ -2906,6 +2923,275 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
     if wall and WALL_LINE.match(why):
         raise Refused(wall)
     raise Refused("not committed, so nothing changed: %s" % why)
+
+
+# ---- One transaction for every write that changes pages (#224, point 6) ------------------
+# A write that changes wiki pages runs inside transaction(): the files are
+# written, check.py and each wiki's lint are counted before and after, and if
+# any count is worse every file goes back as it was, byte for byte, a file the
+# write made removed. Otherwise, where the action commits, the files are
+# committed once per repository. The wiki-question actions write and commit
+# nothing themselves (the work-in step commits), so they pass no `commit`; the
+# Nurture review page's save commits. The measuring is `check_counts`, a name
+# the tests replace.
+TX = None
+CHECK_TIMEOUT = 900
+
+
+class Writes:
+    """The files a transaction has written, and what each held before: the
+    bytes, or None for a file that was not there."""
+
+    def __init__(self):
+        self.before = {}            # Path -> bytes or None
+        self.made_dirs = []         # folders the transaction made, outermost first
+
+    def watch(self, path) -> None:
+        path = Path(path)
+        if path in self.before:
+            return
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise Refused("%s is not a plain file, so nothing was written" % path.name)
+        self.before[path] = path.read_bytes() if path.exists() else None
+
+    def made(self, path) -> None:
+        self.before.setdefault(Path(path), None)
+
+    def dirs(self, folder) -> None:
+        missing = []
+        d = Path(folder)
+        while not d.exists() and d.parent != d:
+            missing.append(d)
+            d = d.parent
+        for m in reversed(missing):
+            if m not in self.made_dirs:
+                self.made_dirs.append(m)
+
+    def write(self, path, text: str) -> None:
+        path = Path(path)
+        self.watch(path)
+        self.dirs(path.parent)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def changed(self) -> list:
+        out = []
+        for p, was in self.before.items():
+            now = p.read_bytes() if p.is_file() else None
+            if now != was:
+                out.append(p)
+        return out
+
+    def undo(self, paths=None) -> None:
+        """Put the given files (all, by default) back as they were."""
+        for p in list(self.before) if paths is None else [Path(x) for x in paths]:
+            if p not in self.before:
+                continue
+            was = self.before[p]
+            try:
+                if was is None:
+                    if p.exists():
+                        p.unlink()
+                else:
+                    p.write_bytes(was)
+            except OSError:
+                pass
+
+    def restore(self) -> None:
+        self.undo()
+        for d in reversed(self.made_dirs):
+            try:
+                d.rmdir()               # only if empty: it was made here
+            except OSError:
+                pass
+
+
+def tx_watch(path) -> None:
+    if TX is not None:
+        TX.watch(path)
+
+
+def tx_made(path) -> None:
+    if TX is not None:
+        TX.made(path)
+
+
+def tx_dirs(folder) -> None:
+    if TX is not None:
+        TX.dirs(folder)
+
+
+def check_counts(ws: Path) -> Optional[dict]:
+    """What the workspace's checks count now: check.py's errors and warnings,
+    and each wiki's orphans and missing links. None when a check cannot run
+    or its answer cannot be read: a write is then not made, since nothing can
+    say it did no harm."""
+    tools = Path(ws) / "System" / "tools"
+    out = {}
+
+    def run(*args):
+        script = tools / args[0]
+        if not script.is_file():
+            return None
+        try:
+            r = subprocess.run([sys.executable, str(script), "--root", str(ws)] + list(args[1:]), capture_output=True, text=True,
+                               timeout=CHECK_TIMEOUT, stdin=subprocess.DEVNULL, cwd=str(ws))
+            data = json.loads(r.stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+        return data if isinstance(data, dict) else None
+    found = run("check.py", "--json")
+    if found is None or not isinstance(found.get("findings"), list):
+        return None
+    for f in found["findings"]:
+        if isinstance(f, dict):
+            key = "check:%s" % (f.get("severity") or "warning")
+            out[key] = out.get(key, 0) + 1
+    for wiki in WIKI_NAMES:
+        if not (Path(ws) / "Wikis" / wiki / "wiki").is_dir():
+            continue
+        lint = run("wiki_lint.py", "--wiki", wiki, "--json")
+        if lint is None:
+            return None
+        out["lint:%s:orphans" % wiki] = len(lint.get("orphans") or [])
+        out["lint:%s:missing" % wiki] = sum(len(m.get("linked_from") or []) for m in lint.get("missing") or [] if isinstance(m, dict))
+    return out
+
+
+def worse_counts(before: dict, after: dict) -> list:
+    names = {"check:error": "errors", "check:warning": "warnings"}
+    out = []
+    for key in sorted(set(before) | set(after)):
+        if after.get(key, 0) > before.get(key, 0):
+            what = names.get(key) or key.replace("lint:", "").replace(":", " ")
+            out.append("%s %d to %d" % (what, before.get(key, 0), after.get(key, 0)))
+    return out
+
+
+def repo_of_path(ws: Path, path: Path) -> Optional[Path]:
+    """The nearest folder above `path`, inside the workspace, with a .git of its own."""
+    d = path.parent
+    top = Path(ws).resolve()
+    while True:
+        if os.path.lexists(str(d / ".git")):
+            return d
+        if d == top or top not in d.parents:
+            return None
+        d = d.parent
+
+
+def stage(repo: Path, rels: list) -> tuple:
+    return git(repo, "add", "-A", "--", *rels)
+
+
+def unstage(repo: Path, rels: list) -> None:
+    git(repo, "reset", "-q", "--", *rels, timeout=10)
+
+
+def walls_on_staged(ws: Path, repo: Path, rels: list) -> str:
+    """The walls check on what is staged in `repo`, as the commit hook runs it
+    (garrick_lib.staged_walls_refusal), "" when it passes. A repository with no
+    hook (Wikis/ has none) is checked all the same. Without that function in
+    this workspace's garrick_lib, a refusal: nothing can say the change is fine."""
+    lib = prefs().lib(ws)
+    fn = getattr(lib, "staged_walls_refusal", None)
+    if not callable(fn):
+        return "this workspace's garrick_lib.py cannot run the walls check on a staged change"
+    try:
+        return fn(ws, repo, rels) or ""
+    except Exception as e:
+        return "the walls check could not run (%s)" % type(e).__name__
+
+
+def refusal_kind(said: str) -> str:
+    """wall, form or foreign, from the words of staged_walls_refusal."""
+    if "another session has staged" in said:
+        return "foreign"
+    if "for a page's form" in said:
+        return "form"
+    return "wall"
+
+
+def commit_groups(ws: Path, w: Writes, message_for) -> dict:
+    """Commit what `w` changed, once per repository, each after the walls check
+    on it staged. Returns {"commits": {repo: sha}, "refused": {repo: why},
+    "uncommitted": [rel]}; the files of a refused repository are put back."""
+    done = {"commits": {}, "refused": {}, "uncommitted": []}
+    groups = {}
+    for p in w.changed():
+        repo = repo_of_path(ws, p)
+        if repo is None:
+            done["uncommitted"].append(str(p.relative_to(Path(ws).resolve())) if Path(ws).resolve() in p.parents else p.name)
+        else:
+            groups.setdefault(repo, []).append(p)
+    for repo, files in sorted(groups.items()):
+        rels = sorted(str(f.relative_to(repo)) for f in files)
+        label = str(repo.relative_to(Path(ws).resolve())) if repo != Path(ws).resolve() else "."
+        why, code = "", 0
+        problem = commit_refusal(repo) if repo.parent.name == "Zones" else None
+        if problem:
+            code, why = 1, "%s, so nothing was committed" % problem
+        else:
+            code, why = stage(repo, rels)
+            if code == 0:
+                said = walls_on_staged(ws, repo, rels)
+                if said:
+                    code, why = 1, said
+            if code == 0:
+                note_event("phase", "checking")
+                code, why = git(repo, "commit", "-q", "-m", message_for(label, rels), "--", *rels, timeout=COMMIT_TIMEOUT)
+        if code == 0:
+            sha = git(repo, "rev-parse", "--short", "HEAD")[1].strip()
+            done["commits"][label] = sha
+            continue
+        unstage(repo, rels)
+        w.undo(files)
+        why = why if code is None else ((why.strip().splitlines() or ["git refused"])[-1])
+        done["refused"][label] = why
+    return done
+
+
+def transaction(ws: Path, change, *, commit=None, after=None):
+    """Run change(w) and what it wrote either holds or is undone.
+
+    `change(w)` writes through `w` (or the tx_* hooks) and returns the action's
+    result. check_counts() runs before and after: a check that cannot run,
+    before or after, or any count worse, puts every file back and refuses.
+    With `commit`, a function (repository, paths) -> message, the changed
+    files are then committed once per repository; `after(result, done)` then
+    returns the action's final result, and may raise Refused (the files of a
+    refused repository are already back). Without `commit` nothing is staged
+    or committed."""
+    global TX
+    if TX is not None:
+        raise Refused("a transaction is already open")
+    before = check_counts(ws)
+    if before is None:
+        raise Refused("the workspace's checks (check.py and the wiki lint) cannot run, so nothing was written")
+    w = Writes()
+    TX = w
+    try:
+        try:
+            result = change(w)
+        except KeepRecord:
+            raise
+        except BaseException:
+            w.restore()
+            raise
+        now = check_counts(ws)
+        if now is None:
+            w.restore()
+            raise Refused("the workspace's checks (check.py and the wiki lint) could not run afterwards, so nothing was written")
+        bad = worse_counts(before, now)
+        if bad:
+            w.restore()
+            raise Refused("a check got worse (%s), so every file is back as it was and nothing was committed" % "; ".join(bad))
+        if commit is None:
+            return result
+        done = commit_groups(ws, w, commit)
+        return after(result, done) if after else result
+    finally:
+        TX = None
 
 
 def managed_places() -> Optional[list]:

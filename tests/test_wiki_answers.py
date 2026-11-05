@@ -8,6 +8,7 @@ a raw record first; a page across a wall is never changed.
 
 from __future__ import annotations
 
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -36,6 +37,8 @@ def snapshot(root: Path) -> dict:
 class WikiAnswerCase(ActionCase):
     def setUp(self):
         super().setUp()
+        for tool in ("check.py", "wiki_lint.py", "correct.py", "nurture.py"):
+            shutil.copy2(pa.HERE.parent.parent / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         self.meetings = self.root / "Wikis" / "Meetings"
         self.knowledge = self.root / "Wikis" / "Knowledge"
         self.q = "questions/260312 - volume-floor.md"

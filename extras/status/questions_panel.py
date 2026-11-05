@@ -40,6 +40,7 @@ WHY_MAX = 600
 TITLE_MAX = 300
 LINE_MAX = 200
 VERDICTS = ("done", "stale", "duplicate")
+ALL = "*"           # the choice that means every zone, or every party of a zone (#384)
 _PA = None
 
 
@@ -286,6 +287,73 @@ def pick_lists(ws: Path, lib, views: Dict[str, object]) -> Dict[str, dict]:
     return out
 
 
+def group_views(zones: List[dict], zone: str = ALL, party: str = ALL) -> List[dict]:
+    """The groups the panel shows for a Zone and Party choice, *All* included (#384).
+
+    `zones` is build()'s `zones` list. Each group is one view, exactly what
+    0.56.0 shows for that zone and party: {"key": the bucket's key, "zone",
+    "party" (a tag, or ""), "kind": "zone" | "party" | "unattributed",
+    "heading": "Work · Acme Corp"}. A zone no wall divides is one group; a
+    zone whose parties a wall divides is one group per party, or only the
+    party chosen; the zone's unattributed entity pages come after its
+    groups. A zone shown alone keeps 0.56.0's rule: a party that is not one of
+    its own is read as its default. With a party chosen and All zones, only the
+    zone that owns the party is shown. Order is the zones' own, then the parties'.
+    Nothing here joins groups: it only lists them."""
+    out: List[dict] = []
+    for info in zones:
+        name = info.get("zone")
+        if zone != ALL and name != zone:
+            continue
+        scopes = info.get("scopes") or []
+        tags = [sc["tag"] for sc in scopes]
+        if not scopes:
+            if party != ALL and zone == ALL:
+                continue            # a party is chosen: a zone with no party menu does not own it
+            out.append({"key": "%s|" % name, "zone": name, "party": "", "kind": "zone", "heading": name})
+        else:
+            if party == ALL:
+                chosen = tags
+            elif party in tags:
+                chosen = [party]
+            elif zone == ALL:
+                continue
+            else:
+                chosen = [info.get("default") or tags[0]]
+            for sc in scopes:
+                if sc["tag"] in chosen:
+                    out.append({"key": "%s|%s" % (name, sc["tag"]), "zone": name, "party": sc["tag"], "kind": "party",
+                                "heading": "%s \u00b7 %s" % (name, sc.get("name") or sc["tag"])})
+        if info.get("unattributed"):
+            out.append({"key": "unattributed|%s" % name, "zone": name, "party": "", "kind": "unattributed",
+                        "heading": "%s \u00b7 Unattributed" % name})
+    return out
+
+
+def can_sum(views: List[dict]) -> bool:
+    """Whether one number may stand for these groups. Only when at most one
+    holds parties: two groups may have a wall between them, and the page
+    cannot show that they do not, so it fails closed and counts them apart.
+    The unattributed group holds entity pages that name no party and the
+    Knowledge group has none, so neither has a wall to cross."""
+    return sum(1 for v in views if v["kind"] != "unattributed") <= 1
+
+
+def selections(zones: List[dict]) -> Dict[str, dict]:
+    """group_views for every Zone and Party choice the menus offer, keyed
+    "zone|party" with All as *: {"views": [...], "sum": can_sum(views)}. The
+    page looks a choice up here and does not work groups out itself."""
+    zone_choices = [ALL] + [z["zone"] for z in zones]
+    tags = [sc["tag"] for z in zones for sc in z.get("scopes") or []]
+    out: Dict[str, dict] = {}
+    for zc in zone_choices:
+        own = tags if zc == ALL else [sc["tag"] for z in zones if z["zone"] == zc for sc in z.get("scopes") or []]
+        for pc in [ALL] + own + ([] if zc == ALL else [""]):
+            views = group_views(zones, zc, pc)
+            out["%s|%s" % (zc, pc)] = {"views": views, "sum": can_sum(views)}
+    return out
+
+
 def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) -> Optional[dict]:
     """Everything the Questions panel draws, or None where the workspace has
     nothing to build it from (no garrick_lib that reads the walls, or no
@@ -307,7 +375,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         parties = sorted(t for t, p in (ctx.get("parties") or {}).items() if str(p.get("zone") or "").strip() == zone)
         if not parties:
             continue
-        info = {"zone": zone, "scopes": [], "default": ""}
+        info = {"zone": zone, "scopes": [], "default": "", "unattributed": False}
         try:
             views["%s|" % zone] = pa.View(ws, lib, zone, None)
         except pa.Refused:
@@ -321,6 +389,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
             info["default"] = info["scopes"][0]["tag"] if info["scopes"] else ""
         try:
             views["unattributed|%s" % zone] = pa.View(ws, lib, pa.UNATTRIBUTED, zone)
+            info["unattributed"] = True
         except pa.Refused:
             pass
         if any(k.startswith(zone + "|") for k in views):
@@ -361,7 +430,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         key = "%s|%s" % (info["zone"], info["default"])
         if key in buckets:
             menu[info["zone"]] = len(buckets[key]["questions"]) + len(knowledge)
-    return {"today": today.isoformat(), "root": str(ws), "zones": zone_info, "buckets": buckets, "knowledge": knowledge,
+    return {"today": today.isoformat(), "root": str(ws), "zones": zone_info, "select": selections(zone_info), "buckets": buckets, "knowledge": knowledge,
             "knowledge_answered": answered_k, "menu": menu}
 
 

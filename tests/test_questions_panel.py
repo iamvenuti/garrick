@@ -249,6 +249,79 @@ def entity_page(title, party):
             % (title, "party: %s\n" % party if party else "", title))
 
 
+ZONES = [
+    {"zone": "Personal", "scopes": [], "default": "", "unattributed": True},
+    {"zone": "Work", "scopes": [{"tag": "acme", "name": "Acme Corp"}, {"tag": "birch", "name": "Birch & Co"}],
+     "default": "acme", "unattributed": True},
+]
+
+
+def keys(views):
+    return [v["key"] for v in views]
+
+
+class TestGroupModel(unittest.TestCase):
+    """group_views (#384): a Zone and Party choice, All included, as the list of views, each what 0.56.0 shows."""
+
+    def test_one_zone_and_a_party_is_that_view_and_the_zones_unattributed_pages(self):
+        self.assertEqual(["Work|birch", "unattributed|Work"], keys(qp.group_views(ZONES, "Work", "birch")))
+
+    def test_a_zone_a_wall_divides_is_one_group_per_party_under_all(self):
+        got = qp.group_views(ZONES, "Work", qp.ALL)
+        self.assertEqual(["Work|acme", "Work|birch", "unattributed|Work"], keys(got))
+        self.assertEqual(["Work \u00b7 Acme Corp", "Work \u00b7 Birch & Co", "Work \u00b7 Unattributed"], [v["heading"] for v in got])
+
+    def test_a_zone_no_wall_divides_is_one_group(self):
+        self.assertEqual(["Personal|", "unattributed|Personal"], keys(qp.group_views(ZONES, "Personal", qp.ALL)))
+        self.assertEqual(["Personal|", "unattributed|Personal"], keys(qp.group_views(ZONES, "Personal", "acme")))
+
+    def test_all_and_all_lists_every_zones_groups_in_order(self):
+        self.assertEqual(["Personal|", "unattributed|Personal", "Work|acme", "Work|birch", "unattributed|Work"],
+                         keys(qp.group_views(ZONES)))
+
+    def test_a_party_with_all_zones_is_only_the_zone_that_owns_it(self):
+        self.assertEqual(["Work|birch", "unattributed|Work"], keys(qp.group_views(ZONES, qp.ALL, "birch")))
+
+    def test_a_party_that_is_not_the_zones_is_read_as_its_default_as_before(self):
+        self.assertEqual(["Work|acme", "unattributed|Work"], keys(qp.group_views(ZONES, "Work", "zzz")))
+        self.assertEqual(["Work|acme", "unattributed|Work"], keys(qp.group_views(ZONES, "Work", "")))
+
+    def test_an_unknown_zone_is_nothing(self):
+        self.assertEqual([], qp.group_views(ZONES, "Nowhere", qp.ALL))
+
+    def test_two_groups_that_hold_parties_are_never_summed(self):
+        self.assertFalse(qp.can_sum(qp.group_views(ZONES, "Work", qp.ALL)))
+        self.assertFalse(qp.can_sum(qp.group_views(ZONES)))
+        self.assertTrue(qp.can_sum(qp.group_views(ZONES, "Work", "acme")))      # one party group, and pages naming no party
+        self.assertTrue(qp.can_sum(qp.group_views(ZONES, "Personal", qp.ALL)))
+
+    def test_every_choice_the_menus_offer_is_precomputed(self):
+        sel = qp.selections(ZONES)
+        for zc in ("*", "Work", "Personal"):
+            self.assertIn("%s|*" % zc, sel)
+        self.assertEqual(keys(qp.group_views(ZONES, "Work", "birch")), keys(sel["Work|birch"]["views"]))
+        self.assertEqual(keys(qp.group_views(ZONES, "*", "acme")), keys(sel["*|acme"]["views"]))
+        self.assertFalse(sel["Work|*"]["sum"])
+        self.assertTrue(sel["Work|acme"]["sum"])
+
+
+class TestGroupModelOnTheFixture(Panel):
+    def test_the_page_carries_a_group_list_for_all_made_from_the_buckets_that_exist(self):
+        d = self.data()
+        got = keys(d["select"]["Work|*"]["views"])
+        self.assertEqual(["Work|acme", "Work|birch", "Work|cedar", "unattributed|Work"], got)
+        for k in got:
+            self.assertIn(k, d["buckets"])
+        self.assertEqual(sorted(d["buckets"]), sorted(keys(qp.group_views(d["zones"]))))
+
+    def test_all_adds_nothing_to_a_group_a_group_holds_what_the_old_view_holds(self):
+        d = self.data()
+        self.assertEqual([ACME], self.titles(d["buckets"]["Work|acme"]))
+        self.assertNotIn(BIRCH, json.dumps(d["buckets"]["Work|acme"]))
+        self.assertNotIn(ACME, json.dumps(d["buckets"]["Work|birch"]))
+        self.assertFalse(d["select"]["Work|*"]["sum"])
+
+
 class TestThePage(Panel):
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_is_valid(self):

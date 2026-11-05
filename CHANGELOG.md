@@ -4,6 +4,23 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.55.0] - 2026-11-05
+
+`System/rules.md` is less than half its old size, so every session loads less with every request; the procedures it held now live in the skills that run them. desk closes a tab again under cmux 0.65, and the Finder menu's items open what they name.
+
+**Upgrading.** The update replaces `System/rules.md` and brings the `threads`, `intake` and `nurture` skills with it, and `desk` where the cmux extra is in. If one of those skills waits on a merge, `rules.md` is held back until it is merged, and the update says so.
+
+### Changed
+
+- **`System/rules.md` is less than half its old size** ([#366](https://github.com/iamvenuti/garrick/issues/366)). It goes from about 17,700 characters to under 7,900. It is loaded into every session on every request. The procedures that only one kind of request needs now live in the skill that runs them: the spoken thread commands, the checkpoint, parked projects and the interruption stack in `threads`, the Ways in procedure in `intake`, the fade words in `nurture`, the tab commands in `desk`. `rules.md` keeps Autonomy, Zones and walls, Secrets, Talking to me, the rules that guard against loss, and a pointer to each skill. The wall sentence, the *Talking to me* heading and its bullets, and the ear rule are unchanged, word for word.
+- `check.py` warns when `System/rules.md` passes 8,000 characters (#366).
+- An update that replaces `rules.md` now brings the skills it points to in the same step, and holds `rules.md` back while one of them waits on a merge (#366).
+
+### Fixed
+
+- **desk closes a tab again under cmux 0.65** ([#373](https://github.com/iamvenuti/garrick/issues/373)). cmux 0.65 asks for confirmation before it closes a tab whose assistant still runs, so Close on the band, "close X" and "close the X tab" wrapped and then left the tab open. desk now answers that question with `--force`, once, and only for a tab it found idle whose terminal's foreground, read just before, is the tab's own assistant and nothing else. A tab with a background job, a dev server or a `!` command running stays open, and desk names what runs there so you can close it by hand. Older cmux closes without the flag, as before.
+- **The Finder menu's items open what they name** ([#346](https://github.com/iamvenuti/garrick/issues/346)). Finder copies an extension's menu into its own process and drops what each item carries, so *Open in cmux*, *Open in Claude* and *Open in Codex* did nothing. The choice now travels in the item's tag, which Finder keeps.
+
 ## [0.54.0] - 2026-11-04
 
 Right-click a project or thread folder in Finder to open it in cmux, Claude or Codex, and a rebuild of Garrick.app keeps its Accessibility grant. A wiki question can also be answered in your own words from the command line, and the answer is kept as a raw record before anything else changes; working it into the wiki's pages is a step of its own, behind the walls. Ask stops saying it cannot read notes, and an issue number on a Todo line stays text.
@@ -1253,7 +1270,8 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.55.0...HEAD
+[0.55.0]: https://github.com/iamvenuti/garrick/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/iamvenuti/garrick/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/iamvenuti/garrick/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/iamvenuti/garrick/compare/v0.51.0...v0.52.0

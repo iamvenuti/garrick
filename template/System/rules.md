@@ -49,7 +49,9 @@ Sorting: `intake` skill.
 
 ## Voice
 
-Spoken commands: the `threads`, `desk` and `nurture` skills.
+Spoken commands: the `threads` and `nurture` skills.
+
+Tab commands, where the cmux extra is installed: the `desk` skill.
 
 - **Say the shortest unique name.** A thread name alone, if only one thread has it; otherwise project and thread ("Acme, pricing"). The zone only if two projects share a name.
 - **When a name matches more than one thing**, or a heard name is close to two entries, ask in one line, naming the candidates. Never guess.

@@ -837,6 +837,9 @@ class TestProjectLinks(GapCase):
 
     def setUp(self):
         super().setUp()
+        self.build()
+
+    def build(self):
         ctx = self.root / "System" / "context.md"
         ctx.write_text(ctx.read_text().replace(
             "mail.birchco.example |\n",
@@ -920,7 +923,7 @@ class TestProjectLinks(GapCase):
 
     def test_a_short_path_every_project_may_hold(self):
         write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
-        self.assertEqual([("error", "writes the path `Deliverables/published.md`" + self.TAIL)],
+        self.assertEqual([("warning", "writes the path `Deliverables/published.md`" + self.TAIL)],
                          self.says("`Deliverables/published.md`"))
         self.assertEqual([("error", "links [[Deliverables/published]]" + self.TAIL)],
                          self.says("[[Deliverables/published]]"))
@@ -1028,7 +1031,12 @@ class TestProjectLinks(GapCase):
         import time
         for text in ("<a " * 30000, "<a " + "x=1 " * 20000 + 'href="a/b">', "](" + "a" * 80000, "](a" * 30000,
                      "](a (" * 20000, "".join("`" * k + "a" for k in range(1, 400)), "`a " * 30000,
-                     "`" + "x" * 80000 + "`"):
+                     "`" + "x" * 80000 + "`", "<img " * 30000, "<img " + "x=1 " * 20000 + 'src="a/b">',
+                     "<img src=" + "a" * 80000, "\n```\n" + " ".join("a/b%d" % i for i in range(20000)) + "\n```\n",
+                     "\n```\n" + "a/" * 40000 + "\n```\n", "`" + "a/b " * 240 + "`" * 3,
+                     '<img srcset="' * 30000, "<a '" * 30000, '<a title="' + "x<a " * 30000, "<div " + "data=1 " * 20000,
+                     "\n```\n" + "a/ " * 30000 + "\n```\n", "\n```\n" + ":1" * 40000 + "/x\n```\n",
+                     "\n```\n" + "'a/ " * 20000 + "\n```\n", "\n```\n" + "a/b:1:2: " * 10000 + "\n```\n"):
             started = time.monotonic()
             check.extract_links(text)
             check.code_paths(text)
@@ -1069,6 +1077,307 @@ class TestProjectLinks(GapCase):
             found = check.run_checks(self.root, staged=self.work)
         self.assertIn(("error", self.where, "links [[Harbour]]" + self.TAIL),
                       [(f.severity, f.path, f.message) for f in found])
+
+
+class TestFormsRead(GapCase):
+    """The wall check reads a path inside a longer code line, the src of an
+    embedding tag and a path into a repository kept in a project, as it reads
+    a link or a whole code span. Harbour is Birch & Co's, in a folder that does
+    not name its party; Northwind is Acme's, and walled from it."""
+
+    TAIL = ", a note of birch; a wall stands between acme and birch"
+    def setUp(self):
+        GapCase.setUp(self)
+        TestProjectLinks.build(self)
+
+    project = TestProjectLinks.project
+    walls = TestProjectLinks.walls
+    says = TestProjectLinks.says
+
+    def refused(self, written, verb="writes the path"):
+        self.assertEqual([("error", "%s %s%s" % (verb, written, self.TAIL))], self.says(written))
+
+    def test_a_path_inside_a_longer_code_line(self):
+        for written in ("`cat Harbour/Threads/Tender/Tender.md`",
+                        "`cd Harbour && cat Threads/Tender/Tender.md | head`",
+                        "`grep -n \"rate\" 'Harbour/Threads/Tender/Tender.md'`",
+                        "`diff --color=always Harbour/Threads/Tender/Tender.md x.md`"):
+            with self.subTest(written):
+                self.refused(written)
+
+    def test_a_path_inside_a_fenced_line(self):
+        for fence in ("```", "~~~"):
+            with self.subTest(fence):
+                text = "\n%s sh\n$ open Harbour/Threads/Tender/Tender.md\n%s\n" % (fence, fence)
+                write(self.note, "# Notes\n%s" % text)
+                found = self.walls()
+                self.assertEqual(["error"], [f.severity for f in found], found)
+                self.assertTrue(found[0].message.endswith(self.TAIL), found[0].message)
+
+    def test_a_token_that_lands_nowhere_stays_silent(self):
+        for written in ("`cat nowhere/at/all.md`", "`grep -r rate src/ docs/ | sort`", "`python3 System/tools/check.py --root .`",
+                        "`curl https://example.com/Harbour/Threads/Tender/Tender.md`",
+                        "`cat Lantern/Threads/Freight/Freight.md`", "`cat Northwind/Threads/Freight/Freight.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_the_src_of_an_image_is_a_link(self):
+        for written in ('<img src="../../../Harbour/Sources/Bid brief (1).md">', "<img alt='x' src='../../../Harbour/Threads/Tender/Tender.md'>",
+                        '<IMG width=40 SRC=../../../Harbour/Threads/Tender/Tender.md>',
+                        '<video controls src="Zones/Work/Harbour/Threads/Tender/Tender.md"></video>'):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [sev for sev, _ in found], found)
+                self.assertTrue(found[0][1].endswith(self.TAIL), found[0][1])
+        self.assertEqual([], self.says('<img src="https://example.com/Harbour/Tender.png">'))
+        self.assertEqual([], self.says('<img src="../../../Lantern/Threads/Survey/Survey.md">'))
+
+    def test_a_path_into_a_repository_kept_in_a_project(self):
+        repo = self.work / "Harbour" / "Code"
+        (repo / ".git").mkdir(parents=True)
+        write(repo / "docs" / "Spec.md", "# Spec\n")
+        write(repo / "notes" / "Rate sheet.md", "# Rates\n")
+        for written in ("`Code/docs/Spec.md`", "`Harbour/Code/docs/Spec.md`", "`cat Harbour/Code/docs/Spec.md`",
+                        "`Code/notes/Rate sheet.md`"):
+            with self.subTest(written):
+                self.refused(written)
+
+    def test_a_garrick_checkout_in_a_project_stays_set_apart(self):
+        checkout = self.work / "Harbour" / "Garrick"
+        for name in ("VERSION", "install.py", "update.py"):
+            write(checkout / name, "x\n")
+        (checkout / "template" / "System").mkdir(parents=True)
+        write(checkout / "template" / "System" / "rules.md", "# Rules\n")
+        write(checkout / "docs" / "guide.md", "# Guide\n")
+        self.assertEqual([], self.says("`Harbour/Garrick/docs/guide.md`"))
+
+    def test_a_path_that_names_no_project_warns_when_only_a_walled_ledger_holds_it(self):
+        write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        self.assertEqual([("warning", "writes the path `Deliverables/published.md`" + self.TAIL)],
+                         self.says("`Deliverables/published.md`"))
+        # With the project's name in front it names the project, and is refused.
+        self.refused("`Harbour/Deliverables/published.md`")
+
+    def test_a_path_that_names_no_project_does_not_hide_one_that_does(self):
+        write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        for written in ("`Deliverables/published.md Harbour/Threads/Tender/Tender.md`",
+                        "`Harbour/Threads/Tender/Tender.md Deliverables/published.md`",
+                        "`cat Deliverables/published.md; cat Harbour/Threads/Tender/Tender.md`",
+                        "`cat Harbour/Threads/Tender/Tender.md; cat Deliverables/published.md`"):
+            with self.subTest(written):
+                self.refused(written)
+        write(self.note, "# Notes\n\n```\ncat Deliverables/published.md\ncat Harbour/Threads/Tender/Tender.md\n```\n")
+        self.assertEqual(["error", "warning"], sorted(f.severity for f in self.walls()))
+
+    def test_a_path_with_spaces_inside_a_longer_code_line(self):
+        write(self.work / "Harbour" / "Deliverables" / "261105 - Bid.md", "# Bid\n")
+        write(self.work / "Harbour" / "Threads" / "Tender" / "Rate card.md", "# Rate card\n")
+        for written in ("`cat Harbour/Deliverables/261105 - Bid.md`", "`open 'Harbour/Deliverables/261105 - Bid.md'`",
+                        '`cat "Harbour/Threads/Tender/Rate card.md"`', "`cat Harbour/Threads/Tender/Bid\\ model.md`",
+                        "`cp Harbour/Deliverables/261105 - Bid.md /tmp/x`", "`cat Harbour/Deliverables/261105 - Bid.md | head`"):
+            with self.subTest(written):
+                self.refused(written)
+        write(self.note, "# Notes\n\n```sh\ncat Harbour/Deliverables/261105 - Bid.md\n```\n")
+        self.assertEqual(["error"], [f.severity for f in self.walls()])
+        self.assertEqual([], self.says("`cat Lantern/Deliverables/261105 - Bid.md and some words`"))
+
+    def test_a_line_position_or_a_query_after_a_path(self):
+        for written in ("`cat Harbour/Threads/Tender/Tender.md:12`", "`Harbour/Threads/Tender/Tender.md:12:3:`",
+                        "`less Harbour/Threads/Tender/Tender.md?x=1`", "`vim Harbour/Threads/Tender/Tender.md:7:`"):
+            with self.subTest(written):
+                self.refused(written)
+
+    def test_every_attribute_that_names_a_file(self):
+        target = "../../../Harbour/Threads/Tender/Tender.md"
+        for written in ('<img src="ok.png" srcset="small.png 1x, %s 2x">' % target,
+                        '<img SRCSET=\'%s 480w\'>' % target,
+                        '<object data="%s"></object>' % target,
+                        '<link rel="stylesheet" href="%s">' % target,
+                        '<area shape="rect" href=%s>' % target,
+                        '<svg><image xlink:href="%s"/></svg>' % target,
+                        '<use XLINK:HREF="%s"/>' % target,
+                        '<video poster="%s"></video>' % target,
+                        '<table background="%s">' % target,
+                        '<div data-src="%s">' % target,
+                        '<img alt="a<b" src="x.png" data="%s">' % target):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [sev for sev, _ in found], found)
+        self.assertEqual([], self.says('<img srcset="a.png 1x, https://example.com/b.png 2x" poster="p.png" data="d.bin">'))
+
+    def tender(self, *names):
+        for name in names:
+            write(self.work / "Harbour" / "Threads" / "Tender" / name, "# Note\n")
+
+    def assertRefused(self, written):
+        found = self.says(written)
+        self.assertEqual(["error"], [sev for sev, _ in found], (written, found))
+
+    def test_a_name_the_reading_cannot_tell_from_a_path_followed_by_more(self):
+        self.tender("a;b.md", "p&q.md", "a,b.md", "a=b.md", "x(1).md", "Bid brief (1).md", "x\u202fy.md", "x\u00a0y.md", "x\u200by.md",
+                    "Bid model v2 final draft for the board and the others.md", "Q3 pricing.md")
+        for written in ("`cat Harbour/Threads/Tender/a;b.md`", "`cat Harbour/Threads/Tender/p&q.md`", "`cat Harbour/Threads/Tender/a,b.md`",
+                        "`cat Harbour/Threads/Tender/a=b.md`", "`cat Harbour/Threads/Tender/x(1).md`",
+                        "`cat Harbour/Threads/Tender/Bid brief (1).md`", "`cat Harbour/Threads/Tender/x\u202fy.md`",
+                        "`cat Harbour/Threads/Tender/x\u00a0y.md`", "`cat Harbour/Threads/Tender/x\u200by.md`",
+                        "`cat Harbour/Threads/Tender/Bid model v2 final draft for the board and the others.md`",
+                        "`cat Harbour/Threads/Tender/Q3%20pricing.md`", "`cat Harbour/Threads/Tender/Bid\u200b model.md`",
+                        "`cat Harb\u200bour/Threads/Tender/Q3 pricing.md`", "`cat HARBOUR/THREADS/TENDER/q3 pricing.md`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_glob_or_a_brace_expansion_into_a_project(self):
+        for written in ("`cat Harbour/Threads/*/Tender.md`", "`cat Harbour/Threads/Tender/*.md`", "`cat Harbour/Threads/Tender/T?nder.md`",
+                        "`cat Harbour/Threads/Tender/{Tender,Plan}.md`", "`cat Harbour/Threads/Tender/[T]ender.md`", "`cat Harbour/**/Tender.md`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_path_to_a_folder_is_not_read(self):
+        for written in ("`ls Harbour/Threads/Tender`", "`cd Harbour/Threads/Tender/`", "`ls 'Harbour/Threads/Tender'`", "`ls Harbour/Threads/Tender | head`",
+                        "`ls Harbour/Threads/Tender -la`", "`cd Harbour/Threads/Tender && ls`", "`Harbour/Threads/Tender/`", "`ls Harbour/Threads/Tender;`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_path_into_this_project_or_one_without_a_wall_is_not_refused(self):
+        write(self.work / "Northwind" / "Threads" / "Freight" / "Rate sheet (2).md", "# Rates\n")
+        write(self.work / "Lantern" / "Threads" / "Survey" / "Q3 pricing.md", "# Survey\n")
+        for written in ("`cat Northwind/Threads/Freight/Rate sheet (2).md`", "`cat Threads/Freight/Rate sheet (2).md`",
+                        "`cat Lantern/Threads/Survey/Q3 pricing.md`", "`cat Lantern/Threads/Survey/a;b.md`", "`cat nowhere/at all/x;y.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_query_after_a_link_or_an_attribute(self):
+        target = "../../../Harbour/Threads/Tender/Tender.md"
+        for written in ("[x](%s?v=1)" % target, '<a href="%s?v=1">x</a>' % target, '<img src="%s?v=1">' % target,
+                        '<img src="%s?v=1#top">' % target, "[x](%s?a=b&c=d)" % target, "`cat Harbour/Threads/Tender/Tender.md?v=1`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_an_attribute_written_with_entities_or_left_unclosed(self):
+        for written in ('<img src="../../../Harbour/Threads/Tender/Tender&#46;md">', '<img src="../../../Harbour/Threads/Tender/Tender&period;md">',
+                        '<img src="..&#47;..&#47;..&#47;Harbour&#47;Threads&#47;Tender&#47;Tender.md">',
+                        '<img src="..&sol;..&sol;..&sol;Harbour&sol;Threads&sol;Tender&sol;Tender.md">',
+                        '<img src="../../../Harbour/Threads/Tender/Tender.md', "<img src='../../../Harbour/Threads/Tender/Tender.md",
+                        '<img src=&quot;../../../Harbour/Threads/Tender/Tender.md">'):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_srcset_with_a_name_that_holds_spaces_or_commas(self):
+        self.tender("Bid model.md", "a,b.md")
+        for written in ('<img srcset="../../../Harbour/Threads/Tender/Bid model.md 2x">', '<img srcset="x.png 1x, ../../../Harbour/Threads/Tender/a,b.md 2x">',
+                        '<img srcset="x.png 1x,\n../../../Harbour/Threads/Tender/Bid model.md">'):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_every_attribute_is_read(self):
+        target = "../../../Harbour/Threads/Tender/Tender.md"
+        for written in ('<button formaction="%s">' % target, '<form action="%s">' % target, '<a ping="%s">' % target,
+                        '<blockquote cite="%s">' % target, '<meta http-equiv="refresh" content="0;url=%s">' % target,
+                        '<meta content="0; URL = %s">' % target, '<x-el anything="%s">' % target, '<img alt="x src=" %s">' % target):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_file_address_into_a_project(self):
+        home = Path(os.path.expanduser("~"))
+        for written in ("[x](file://%s/Zones/Work/Harbour/Threads/Tender/Tender.md)" % self.root, "`open file://%s/Zones/Work/Harbour/Threads/Tender/Tender.md`" % self.root,
+                        "`open file:///elsewhere/Zones/Work/Harbour/Threads/Tender/Q3 pricing.md`", "`cat ~/Harbour/Threads/Tender/Q3 pricing.md`",
+                        '<img src="file:///x/Zones/Work/Harbour/Threads/Tender/Tender.md">'):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_layout_folder_written_alone_means_the_notes_own_project(self):
+        write(self.work / "Harbour" / "Deliverables" / "260301 - Sizing.md", "# Sizing\n")
+        for written in ("`Deliverables/260305 - New plan (draft).md`", "`Sources/brief;v2.md`", "`Deliverables/260305 - Next.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+        self.assertRefused("`Harbour/Deliverables/260305 - New plan (draft).md`")
+
+    def test_a_dot_dot_in_the_middle_of_a_path(self):
+        write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        write(self.work / "Northwind" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        for written in ("`cat Deliverables/../../Harbour/Threads/Tender/Tender.md`", "`cat x/../Harbour/Threads/Tender/Tender.md`",
+                        "`cat Deliverables/published.md/../../Harbour/Threads/Tender/Tender.md`", "`cat x/../Harbour/Threads/Tender/Q3;x.md`",
+                        "[x](Deliverables/../../Harbour/Threads/Tender/Tender.md)", '<img src="x/../Harbour/Threads/Tender/Tender.md">',
+                        "`cat ./a/../../../../Harbour/Threads/Tender/Tender.md`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+        for written in ("`cat Threads/Freight/../Freight/Notes.md`", "`cat Harbour/../Northwind/Threads/Freight/Freight.md`",
+                        "`cat Harbour/../Northwind/Threads/Freight/a;b.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_symbolic_link_to_a_folder_of_a_project(self):
+        (self.work / "Northwind" / "Link").symlink_to("../Harbour")
+        (self.work / "Zone link").symlink_to("Harbour/Threads")
+        for written in ("`cat Link/Threads/Tender/Tender.md`", "`cat Link/zzz.md`", "`cat Link/Threads/Tender/a;b.md`",
+                        "`cat Zone link/Tender/Q3 pricing.md`", "[x](Link/Threads/Tender/Tender.md)", "[x](../../Link/zzz.md)",
+                        '<img src="Link/Threads/Tender/Tender.md">', "`cat Link/Threads/*/Tender.md`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+        self.assertEqual([], self.says("`ls Link/Threads/Tender`"))
+
+    def test_a_link_out_of_the_workspace_is_not_followed(self):
+        elsewhere = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, elsewhere, True)
+        write(elsewhere / "Harbour" / "Threads" / "Tender" / "x y.md", "# Out\n")
+        (self.work / "Northwind" / "Shared").symlink_to(elsewhere)
+        shared = self.work / ".shared"
+        shared.mkdir(exist_ok=True)
+        (shared / "library").symlink_to(elsewhere)
+        for written in ("`cat Shared/Harbour/Threads/Tender/x y.md`", "`cat Shared/zzz;y.md`", "`cat .shared/library/Harbour/Threads/Tender/x y.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_checkout_in_a_project_is_still_set_apart_from_the_folder_reading(self):
+        checkout = self.work / "Harbour" / "Garrick"
+        for name in ("VERSION", "install.py", "update.py"):
+            write(checkout / name, "x\n")
+        (checkout / "template" / "System").mkdir(parents=True)
+        write(checkout / "docs" / "guide to it.md", "# Guide\n")
+        self.assertEqual([], self.says("`cat Harbour/Garrick/docs/guide to it;x.md`"))
+
+    def test_a_long_srcset_stays_small_and_fast(self):
+        import time
+        import tracemalloc
+        text = '<img srcset="' + ",".join("a/b%d.png %dx" % (i, i) for i in range(30000)) + '">'
+        tracemalloc.start()
+        check.extract_links(text)
+        peak = tracemalloc.get_traced_memory()[1]
+        tracemalloc.stop()
+        self.assertLess(peak, 200 * 1024 * 1024)
+        write(self.note, "# Notes\n" + text)
+        started = time.monotonic()
+        self.walls()
+        self.assertLess(time.monotonic() - started, 60.0)
+
+    def test_hostile_lines_stay_fast(self):
+        import time
+        for text in ("\n```\n" + " ".join("a/Tender.md" for _ in range(20000)) + "\n```\n",
+                     "\n```\n" + "\n".join("a b c d e f g h i j/Tender k l m n" for _ in range(4000)) + "\n```\n",
+                     "\n```\n" + " ".join("w/x%d" % i for i in range(20000)) + "\n```\n",
+                     "\n".join("`" + " ".join("w/x%d.md" % i for i in range(60)) + "`" for _ in range(100)),
+                     "\n```\n" + "Threads/" * 20000 + "\n```\n", "\n```\n" + "Harbour/Threads/" * 5000 + "x y\n```\n"):
+            write(self.note, "# Notes\n" + text)
+            started = time.monotonic()
+            self.walls()
+            self.assertLess(time.monotonic() - started, 30.0, text[:30])
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_the_hook_reads_each_form_too(self):
+        real_repo(self.work)
+        (self.work / "Harbour" / "Code" / ".git").mkdir(parents=True)
+        write(self.work / "Harbour" / "Code" / "Spec.md", "# Spec\n")
+        with mock.patch.dict(os.environ, NO_USER_GIT):
+            commit_all(self.work, "start")
+            for written in ("`cat Harbour/Threads/Tender/Tender.md`", "\n```\nopen Harbour/Threads/Tender/Tender.md\n```\n",
+                            '<img src="../../../Harbour/Threads/Tender/Tender.md">', "`Code/Spec.md`"):
+                with self.subTest(written):
+                    write(self.note, "# Notes\n\nSee %s now.\n" % written)
+                    git(self.work, "add", "-A")
+                    found = check.run_checks(self.root, staged=self.work)
+                    self.assertEqual([("error", "walls", "Zones/Work/Northwind/Threads/Freight/Notes.md")],
+                                     [(f.severity, f.check, f.path) for f in found])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6366,41 +6366,70 @@ def check_inbox(ws: Workspace) -> List[Finding]:
     return out
 
 
-def frontmatter_keys_named(text: str, names) -> List[str]:
-    """The names (lower case) among `names` that the frontmatter's own lines use as a key, whatever the key's
-    case, quoting or depth, also as a list item's key (`- parties: x`). A key with no value and nothing under
-    it is not counted. A value that holds the word (`title: Parties to the agreement`) is not a key."""
+_FM_KEY = re.compile(r"""^(\s*)((?:-\s+)*)([A-Za-z0-9_][A-Za-z0-9_ .-]*?)\s*:(?:\s+(.*))?$""")
+_FM_DQ = re.compile(r'''^"(?:[^"\\]|\\.)*"\s*(?:#.*)?$''')
+_FM_SQ = re.compile(r"""^'(?:[^']|'')*'\s*(?:#.*)?$""")
+_FM_ITEM = r"""\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s,\[\]{}:\\"'&!*?][^,\[\]{}:\\"']*)?\s*"""
+_FM_LIST = re.compile(r"^\[(?:%s(?:,%s)*)?\]\s*(?:#.*)?$" % (_FM_ITEM, _FM_ITEM))
+
+
+def _frontmatter_value_ok(value: str) -> bool:
+    """A value the allowlist reads: empty, a block scalar's opener, a quoted scalar, a one-line flow list whose
+    items are plain scalars (none holding `{ [ ] : \\`, none starting `& ! * ?`) or quoted scalars (which may
+    hold anything), or a plain scalar that does not start with a flow, anchor, tag, alias or key mark."""
+    v = value.strip()
+    if not v or v[0] in "|>":
+        return True
+    if v[0] == '"':
+        return bool(_FM_DQ.match(v))
+    if v[0] == "'":
+        return bool(_FM_SQ.match(v))
+    if v[0] == "[":
+        return bool(_FM_LIST.match(v))
+    return v[0] not in "{&!*?" and not v.startswith("<<")
+
+
+def scan_frontmatter(text: str, names) -> tuple:
+    """Read a Knowledge page's frontmatter against an allowlist (#388): (names among `names` used as keys,
+    whether any line cannot be read plainly). A line is blank, a comment, `key: value` or `key:` with an
+    unquoted key of letters, digits, `_`, space, `.` and `-`, a block list item `- value`, or a line of a block
+    scalar (`|` or `>`) opened above; a value is a plain or quoted scalar or a one-line flow list of scalars.
+    Anything else could spell `parties` in a way a scan cannot see, so the page is refused. A key with no value
+    and nothing under it is not counted."""
     body = _frontmatter_body(text) or []
-    found = []
+    found, unreadable, block = [], False, None
     for i, line in enumerate(body):
-        # A key inside a flow mapping or a flow sequence (`{a: 1, parties: x}`, `[a, zone: Work]`) counts
-        # wherever the line holds one.
-        found += [k.lower() for k in re.findall(r"""[\[{,]\s*["']?([A-Za-z_]+)["']?\s*:""", line)
-                  if ("{" in line or "[" in line) and k.lower() in names]
-        m = re.match(r"""^\s*(?:-\s+)*["']?([A-Za-z_]+)["']?\s*:(.*)$""", line)
-        if not m or m.group(1).lower() not in names:
+        indent = len(line) - len(line.lstrip())
+        if block is not None and (not line.strip() or indent > block):
             continue
-        value = m.group(2).split(" #")[0].strip()
-        nested = False
-        for nxt in body[i + 1:]:
-            if nxt.strip() and not nxt.lstrip().startswith("#"):
-                nested = (len(nxt) - len(nxt.lstrip())) > (len(line) - len(line.lstrip())) \
-                    or nxt.lstrip().startswith("- ")
-                break
-        if value not in ("", "[]", "''", '""', "null", "~") or nested:
-            found.append(m.group(1).lower())
-    return found
-
-
-def frontmatter_unreadable(text: str) -> bool:
-    """True when a frontmatter line has a key that cannot be read plainly: a line that starts, after its indent
-    or `- `, with `{`, `?`, `!`, `&`, `*` or `<<`, or a quoted key holding a backslash. Such a line can spell
-    `parties` in a way the scan cannot see, so a Knowledge page holding one is refused (#388)."""
-    for line in _frontmatter_body(text) or []:
-        if re.match(r"""^\s*(?:-\s+)*(?:[{?!&*]|<<)""", line) \
-                or re.match(r"""^\s*(?:-\s+)*(?:"[^"]*\\[^"]*"|'[^']*\\[^']*')\s*:""", line):
-            return True
-    return False
+        block = None
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        m = _FM_KEY.match(line)
+        if m:
+            value = (m.group(4) or "")
+            if not _frontmatter_value_ok(value):
+                unreadable = True
+            if value.strip()[:1] in ("|", ">") and value.strip():
+                block = indent
+            key = m.group(3).strip().lower()
+            if key in names:
+                plain = value.split(" #")[0].strip()
+                nested = False
+                for nxt in body[i + 1:]:
+                    if nxt.strip() and not nxt.lstrip().startswith("#"):
+                        nested = (len(nxt) - len(nxt.lstrip())) > indent or nxt.lstrip().startswith("- ")
+                        break
+                if plain not in ("", "[]", "''", '""', "null", "~") or nested:
+                    found.append(key)
+            continue
+        item = re.match(r"^\s*-\s+(.*)$", line)
+        if item and "\t" not in line[:indent] and _frontmatter_value_ok(item.group(1)):
+            if item.group(1).strip()[:1] in ("|", ">"):
+                block = indent
+            continue
+        unreadable = True
+    return found, unreadable
 
 
 def check_knowledge(ws: Workspace) -> List[Finding]:
@@ -6454,8 +6483,10 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                                    "as other notes" % (fm.get("type"), ", ".join(sorted(known_types))),
                                    "A Knowledge page has a type the schema does not know"))
             carried = [k for k in ("party", "parties", "zone") if as_list(fm.get(k))]
+            unreadable = False
             if suffix == ".md":
-                carried += [k for k in frontmatter_keys_named(text, ("party", "parties", "zone")) if k not in carried]
+                named, unreadable = scan_frontmatter(text, ("party", "parties", "zone"))
+                carried += [k for k in named if k not in carried]
             if carried:
                 carried.sort(key=("party", "parties", "zone").index)
                 out.append(Finding(ERROR, "knowledge", rel(ws, path),
@@ -6463,7 +6494,7 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                                    "Take the field out, or file the item in Meetings if it is a conversation"
                                    % " and ".join("`%s`" % k for k in carried),
                                    "A Knowledge page carries parties"))
-            if suffix == ".md" and frontmatter_unreadable(text):
+            if unreadable:
                 out.append(Finding(ERROR, "knowledge", rel(ws, path),
                                    "frontmatter the check cannot read plainly; Knowledge carries nobody's confidence. "
                                    "Write each key on a line of its own, unquoted and without tags, anchors or braces",

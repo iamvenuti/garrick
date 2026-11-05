@@ -451,6 +451,7 @@ Each request names one verb, and `page_action.py` takes these and no others. A n
 | `question-close` | Closes a wiki question with nothing to work in, and writes only the question |
 | `question-decide` | Record as a decision, which is not built yet: refused, and nothing is written |
 | `question-work` | Reads an answered wiki question: the raw answer to cite and the pages it may change, leaving out a Meetings page that does not carry the question's own parties, or is not there, and saying the rule's wall sentence. It writes nothing |
+| `question-open-sections` | Lists the lines under a page's *Open* or *Open issues* heading as questions; with `confirm` it writes one question file per line, the page as origin and its own zone and parties, commits nothing and changes no page |
 | `question-done` | Marks an answered wiki question `done`, once its pages are worked in, and writes only the question |
 | `nurture-answer` | Gives an entity page in the Meetings wiki the `party:` it asks for (a party of the zone chosen, or `none`), with `nurture.py`'s own code, in the one transaction, and commits it |
 | `nurture-organisation` | Writes a person page's `organisation:` link (the proposal worked out again, or the entity page named in `entity`), as `nurture.py organisation` does, and commits it |

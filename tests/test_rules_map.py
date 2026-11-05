@@ -184,7 +184,7 @@ class TestRulesAreKeptAndMapped(unittest.TestCase):
 
     def test_each_moved_block_leaves_a_pointer(self):
         rules = flat(RULES.read_text(encoding="utf-8"))
-        for needle in ("`intake` skill", "`threads` skill", "`threads`, `desk` and `nurture` skills"):
+        for needle in ("`intake` skill", "`threads` skill", "`threads` and `nurture` skills", "the `desk` skill"):
             self.assertIn(needle, rules, needle)
 
     def test_the_skills_that_carry_rules_are_the_ones_the_update_installs_with_them(self):

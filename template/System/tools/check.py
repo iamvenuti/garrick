@@ -38,12 +38,14 @@ import html
 import json
 import marshal
 import os
+import posixpath
 import re
 import subprocess
 import sys
 import time
 import unicodedata
 from array import array
+from bisect import bisect_left
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
@@ -212,6 +214,15 @@ MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s<>]|\([^()\s<>]*\))+))
 # HTML anchor's href.
 REFDEF_RE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^<>\n]*)>|(\S+))")
 HREF_RE = re.compile(r"(?i)<a\b(?:[^<>\"']|\"[^\"]*\"|'[^']*')*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
+# An HTML tag, name and attributes, up to its `>`, or a `<` outside a quoted
+# value, or the end of the text. A quoted value runs to its closing quote, or to
+# the end of the text when none closes it. Nothing follows the repeat, so it
+# never backtracks: each branch starts on a different character.
+TAG_RE = re.compile(r"<([A-Za-z][^\s<>/\"']*)((?:[^<>\"']|\"[^\"]*\"?|'[^']*'?)*)")
+# Every attribute of a tag, in any case and any quoting. Whatever it holds is
+# read as a path: `src`, `href`, `srcset`, `data`, `poster`, `formaction` and
+# the rest all name files, and a list of names would always be one short.
+ATTR_RE = re.compile(r"(?<![\w:.-])([A-Za-z_:][-\w:.]*)\s*=\s*(?:\"([^\"]*)\"?|'([^']*)'?|([^\s\"'>]+))")
 # Where a code span or a fenced block opens, as CommonMark reads them: a span
 # closes on a run of backticks as long as the one that opened it, and a
 # fence is three or more backticks or tildes, closed by a run of the same
@@ -246,6 +257,7 @@ class Workspace:
     quote_index: Optional["QuoteIndex"] = None  # built on first use by the walls check
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
     project_links: Optional["PathIndex"] = None  # every project's files, indexed for links on first use
+    project_dirs: Optional["DirIndex"] = None  # every project's folders, indexed on first use
     project_files: Optional[Dict[Path, Path]] = None  # each of those files -> its project
     thread_owners: Optional[Dict[str, set]] = None  # a thread's name, lower case -> the projects that have one
     wiki_links: Optional["PathIndex"] = None  # every wiki page, indexed for links on first use
@@ -579,10 +591,34 @@ def say(n: int) -> str:
 # Links
 # ---------------------------------------------------------------------------
 
+def _link_forms(raw: str) -> List[str]:
+    """The relative paths a link or an attribute value may name: without a
+    heading, then without a query too, and a `file://` address as the path it
+    holds. Nothing for a web or other address, or for no path."""
+    target = raw.strip().split("#", 1)[0]
+    if re.match(r"(?i)^file:", target):
+        target = re.sub(r"(?i)^file:(?://[^/]*)?", "", target)
+    elif not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
+        return []  # web or obsidian URI, handled above or not ours
+    forms = [target, target.split("?", 1)[0]]
+    forms += [lexical(f) for f in forms if ".." in f]
+    return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
+
+
+def lexical(path: str) -> str:
+    """`path` with its `.` and `..` names settled by the words alone, a
+    leading `..` that has nothing to cancel kept: `Deliverables/../../Harbour/x`
+    is `../Harbour/x`. Only the first 2048 characters are read."""
+    if not path or path.startswith("/") or ".." not in path[:2048]:
+        return ""
+    return posixpath.normpath(path[:2048]) if path[:2048].strip("/") else ""
+
+
 def extract_links(text: str) -> List[Tuple[str, str]]:
     """(as written, target) for every wikilink, obsidian:// URI, relative
     Markdown link (inline, in angle brackets or by reference) and HTML
-    anchor in `text`. Targets are vault-relative or file-relative paths
+    anchor, and the file an HTML tag names by `src`, `srcset`, `data`, `href`,
+    `xlink:href`, `poster` or `background`, in `text`. Targets are vault-relative or file-relative paths
     without the alias or heading."""
     links = []
     for m in WIKILINK_RE.finditer(text):
@@ -597,15 +633,40 @@ def extract_links(text: str) -> List[Tuple[str, str]]:
             for value in query.get(key, []):
                 target = unquote(value).split("#", 1)[0]
                 links.append((uri, "obsidian:%s:%s" % (vault, target) if key == "file" else target))
-    for regex in (MDLINK_RE, REFDEF_RE, HREF_RE):
+    for regex in (MDLINK_RE, REFDEF_RE):
         for m in regex.finditer(text):
             found = next((g for g in m.groups() if g is not None), "")
-            target = unquote(found.strip()).split("#", 1)[0]
-            if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
-                continue  # web or obsidian URI, handled above or not ours
-            written = '<a href="%s">' % found if regex is HREF_RE else m.group(0).strip()
-            links.append((written, target))
+            for target in _link_forms(unquote(found.strip())):
+                links.append((m.group(0).strip(), target))
+    for tag in TAG_RE.finditer(text):
+        name = tag.group(1).lower()
+        for attr in ATTR_RE.finditer(tag.group(2)):
+            key = attr.group(1).lower()
+            found = next((g for g in attr.groups()[1:] if g is not None), "")
+            value = html.unescape(found).strip().strip("\"'` ")
+            values = [value]
+            if key == "srcset":
+                # A list: each URL, then an optional descriptor. A name may hold
+                # a comma or a space, so each piece is read whole as well.
+                pieces = [p.strip() for p in value.split(",") if p.strip()]
+                values += pieces + [piece.split()[0] for piece in pieces]
+            url = re.search(r"(?i)\burl\s*=\s*(.*)", value)
+            if url:
+                values.append(url.group(1).strip().strip("\"'` "))
+            for n, one in enumerate(values):
+                # As written: the attribute's value, or for a piece of a list the
+                # piece, cut short, so the text kept grows with the list and not with
+                # its square.
+                shown = (found if n == 0 else one)[:200]
+                for target in _link_forms(unquote(one)):
+                    links.append(('<%s %s="%s">' % (name, key, shown), target))
     return links
+
+
+def tag_texts(text: str) -> List[Tuple[str, str]]:
+    """(as written, what it holds) for every HTML tag in `text`: its name and
+    attributes, up to the `>` or the end of the text."""
+    return [("<%s>" % m.group(1).lower(), html.unescape(m.group(2))) for m in TAG_RE.finditer(text)]
 
 
 def code_texts(text: str) -> List[Tuple[str, str]]:
@@ -4768,16 +4829,74 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
     return tags, where
 
 
+# What separates one candidate path from the next in a code line: white space,
+# quotes, brackets, pipes, redirects, separators and `=`. A path with a space
+# in it is read as a run of words (below), or as a quoted string.
+CODE_TOKEN_RE = re.compile(r"[^\s\"'`()<>|;,=&{}\[\]]+")
+QUOTED_RE = re.compile(r"\"([^\"]*)\"|'([^']*)'")
+SHELL_BREAK_RE = re.compile(r"[;|&<>]")
+MAX_RUN_WORDS = 8  # words a path with spaces in it may span in a code line
+
+
+def _without_position(token: str) -> str:
+    """`token` with a trailing `:12`, `:12:3` or `:12:3:` taken off, in one
+    pass from the end."""
+    end = len(token)
+    while end and token[end - 1] == ":":
+        end -= 1
+    while True:
+        i = end
+        while i and token[i - 1].isdigit():
+            i -= 1
+        if 0 < i < end and token[i - 1] == ":":
+            end = i - 1
+        else:
+            return token[:end]
+
+
+def _forms(raw: str) -> List[str]:
+    """The paths one candidate may mean: as written, without a heading, a
+    query or a line position, and without trailing punctuation."""
+    base = raw.split("#", 1)[0].strip()
+    if re.match(r"(?i)^file:", base):
+        base = re.sub(r"(?i)^file:(?://[^/]*)?", "", base)
+    plain = base.split("?", 1)[0]
+    forms = [base, base.rstrip(".:,;"), plain, _without_position(plain).rstrip(".:,;")]
+    forms += [unquote(f) for f in forms if "%" in f]
+    forms += [lexical(f) for f in forms if ".." in f]
+    return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
+
+
 def code_paths(text: str) -> List[Tuple[str, str]]:
     """(as written, target) for every path written as code in `text`: a code
-    span, or a line of a fenced block, that holds a slash (code_texts).
-    Nothing resolves these as a link does, but a person or an assistant
-    follows one just the same, and Nurture may turn one into a link."""
+    span, or a line of a fenced block, that holds a slash (code_texts). The
+    whole of the span or line is read as a path, and so is each slash-bearing
+    token of it, each quoted string, and each run of up to eight words that
+    holds a slash, since `cat Harbour/Notes.md` names a file as
+    `Harbour/Notes.md` does and a file name may hold spaces. A trailing `:12`
+    or `?x` is taken off as well as kept. Nothing resolves these as a link
+    does, but a person or an assistant follows one just the same, and Nurture
+    may turn one into a link."""
     out = []
     for written, body in code_texts(text):
-        target = body.strip().strip("\"'").split("#", 1)[0].strip()
-        if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
-            out.append((written, target))
+        candidates = [body.strip().strip("\"'")]
+        candidates += [a or b for a, b in QUOTED_RE.findall(body)]
+        shell = body.replace("\\ ", "\0")                      # `Bid\ model.md` is one word
+        candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)]
+        for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
+            words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()]
+            for i in range(len(words)):
+                for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
+                    if any("/" in w for w in words[i:j]):
+                        candidates.append(" ".join(words[i:j]))
+        seen = set()
+        for candidate in candidates:
+            for target in _forms(candidate):
+                if target in seen:
+                    continue
+                seen.add(target)
+                if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                    out.append((written, target))
     return out
 
 
@@ -4792,13 +4911,257 @@ def project_index(ws: Workspace) -> "PathIndex":
         owner: Dict[Path, Path] = {}
         skip = set(checkouts(ws))
         for project, _ in ws.projects:
-            for path in walk_files(project, skip):
+            for path in walk_files(project, skip, nested=True):
                 owner.setdefault(path, project)
             for path in sorted(p for p in ws.git_view if project in p.parents and not p.exists()):
                 owner.setdefault(path, project)
         ws.project_files = owner
         ws.project_links = PathIndex(ws, owner)
     return ws.project_links
+
+
+@dataclass
+class DirIndex:
+    """Every folder of every project, nested repositories included, and the
+    folders above them up to the workspace. A Garrick checkout is left out, as
+    project_index leaves it. `by_name` maps a folder's lower-cased name to its
+    folders, `child` a (parent, lower-cased name) to the folder, `names` a
+    folder to the lower-cased names of its folders and `owner` a folder to its
+    project (None above the projects)."""
+    by_name: Dict[str, List[Path]] = field(default_factory=dict)
+    child: Dict[Tuple[Path, str], Path] = field(default_factory=dict)
+    names: Dict[Path, set] = field(default_factory=dict)
+    owner: Dict[Path, Optional[Path]] = field(default_factory=dict)
+    memo: Dict[tuple, frozenset] = field(default_factory=dict)
+    links: Dict[str, List[Tuple[Path, Path]]] = field(default_factory=dict)  # a symlinked folder's lower-cased name -> (its parent, the folder it leads to)
+
+    def add(self, folder: Path, project: Optional[Path]) -> None:
+        if folder in self.owner:
+            return
+        self.owner[folder] = project
+        name = folder.name.lower()
+        self.by_name.setdefault(name, []).append(folder)
+        self.child[(folder.parent, name)] = folder
+        self.names.setdefault(folder.parent, set()).add(name)
+
+
+def project_dir_index(ws: Workspace) -> DirIndex:
+    """The folders a path written in a note may lead into (DirIndex), built once
+    a run. In staged mode, the folders of a file deleted from disk but still in
+    git count too."""
+    if ws.project_dirs is None:
+        idx = DirIndex()
+        skip = set(checkouts(ws))
+        for apart in skip:  # named, so a path into one ends there; never entered
+            idx.names.setdefault(apart.parent, set()).add(apart.name.lower())
+        pending_links: List[Tuple[Path, str]] = []
+        for project, _ in ws.projects:
+            for above in project.parents:
+                if above not in idx.owner:
+                    try:
+                        pending_links += [(above, e.name) for e in os.scandir(above) if e.is_symlink() and e.is_dir()]
+                    except OSError:
+                        pass
+                idx.add(above, None)
+                if above == ws.root:
+                    break
+            for dirpath, dirnames, _ in os.walk(project):
+                here = Path(dirpath)
+                pending_links += [(here, d) for d in dirnames if (here / d).is_symlink() and here / d not in skip]
+                dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and here / d not in skip)
+                idx.add(here, project)
+            for path in ws.git_view:
+                if project in path.parents:
+                    for above in path.parents:
+                        if above == project:
+                            break
+                        idx.add(above, project)
+        # A symbolic link to a folder is a name for the folder it leads to, when
+        # that is inside the workspace. One that leads out of it (a shared
+        # drive) is never followed.
+        real_root = Path(os.path.realpath(ws.root))
+        for parent, name in pending_links:
+            try:
+                target = Path(os.path.realpath(parent / name)).relative_to(real_root)
+            except ValueError:
+                continue
+            folder = ws.root.joinpath(*target.parts)
+            if folder in idx.owner:
+                idx.links.setdefault(name.lower(), []).append((parent, folder))
+                idx.names.setdefault(parent, set()).add(name.lower())
+        ws.project_dirs = idx
+    return ws.project_dirs
+
+
+# What may follow a folder's name without being part of a longer name, and what
+# ends a path written in a note: white space, a quote, a closing bracket, a
+# comma and the like. Anything else after a folder and its slash is part of a
+# longer path.
+PATH_ENDERS = set("'\"`)]}>,;|&:")
+UNSEEN = dict.fromkeys(list(range(0x200b, 0x2010)) + list(range(0x202a, 0x202f)) + list(range(0x2060, 0x2065)) + [0xfeff, 0xad])
+SPACES = {ord(c): " " for c in "\u00a0\u202f\u3000\u1680\u180e"} | {c: " " for c in range(0x2000, 0x200b)}
+# The folders every project has by Garrick's layout. Written without the
+# project's name, one means the note's own project, whether or not that
+# project has made it yet.
+LAYOUT_FOLDERS = ("deliverables", "sources", "threads", "notes")
+DIR_NAME_MAX = 255  # the longest a file name can be
+
+
+def plain_text(text: str) -> str:
+    """`text` as a person reads a path in it: zero-width characters gone,
+    every kind of space a space, a backslash before a space gone, and `%20`
+    and the like undone."""
+    text = text.translate(UNSEEN).translate(SPACES).replace("\\ ", " ")
+    return unquote(text) if "%" in text else text
+
+
+def _namey(c: str) -> bool:
+    return c.isalnum() or c in "_-."
+
+
+def _ends_path(c: str) -> bool:
+    return c.isspace() or c in PATH_ENDERS
+
+
+def _step(idx: DirIndex, here: Optional[frozenset], name: str, key: tuple) -> frozenset:
+    """The folders called `name` inside any of `here` (any folder at all when
+    `here` is None), remembered by `key`."""
+    got = idx.memo.get(key)
+    if got is None:
+        low = name.lower()
+        named = idx.by_name.get(low, ())
+        if here is None:
+            got = frozenset(named)
+        elif len(named) <= len(here):
+            got = frozenset(f for f in named if f.parent in here)
+        else:
+            got = frozenset(c for p in here for c in (idx.child.get((p, low)),) if c is not None)
+        led = idx.links.get(low)
+        if led:
+            got = got | frozenset(f for p, f in led if here is None or p in here)
+        idx.memo[key] = got
+    return got
+
+
+def _run(idx: DirIndex, text: str, start: int, end: int, here: Optional[frozenset], ctx: str = ""):
+    """From `start`, how far the written path follows folders: (the folders
+    reached, how many names led there, whether the path goes on past them with
+    a name). `ctx` says where `here` is, for the memory. A path that ends
+    at a folder, with or without its slash, or goes on only with white space
+    or a closing quote, is a path to a folder and does not go on."""
+    pos = start
+    key: tuple = (ctx,)
+    reached: Optional[frozenset] = None
+    count = 0
+    while pos < end:
+        slash = text.find("/", pos, end)
+        stop = end if slash == -1 else slash
+        seg = text[pos:stop]
+        if not seg:
+            pos = stop + 1
+            continue
+        if len(seg) > DIR_NAME_MAX:
+            nxt = frozenset()
+        else:
+            key = key + (seg.lower(),)
+            nxt = _step(idx, here, seg, key)
+        if nxt:
+            reached, here, count = nxt, nxt, count + 1
+            if slash == -1:
+                return reached, count, False
+            pos = slash + 1
+            continue
+        if here is None:
+            return None, 0, False
+        # No folder of that name. A folder's name with a space or a closing
+        # quote after it is a path to the folder, with something after it.
+        known = set().union(*(idx.names.get(f, ()) for f in here))
+        low = seg.lower()
+        for i in range(1, len(seg) + 1):
+            if (i == len(seg) or not _namey(seg[i])) and low[:i] in known:
+                return reached, count, False
+        return reached, count, not _ends_path(seg[0])
+    return reached, count, False
+
+
+def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[List[Tuple[Path, bool]]]:
+    """(folder, whether the path names its project) for each project folder that a path written in `text` leads
+    into and goes on past with a name. A path is read from each start in
+    `text` when `whole` is False (a code line, a tag), and from its first
+    character when True (a link). It ends at the next `; | & < >`. It is read
+    from the folders above the note (`./`, `../`), from the workspace (a path
+    from `Zones/` or the workspace's own folder, with or without what is in
+    front) or by its last names: a folder anywhere whose names end the same
+    way. Nothing in a Garrick checkout counts."""
+    idx = project_dir_index(ws)
+    text = plain_text(text)
+    breaks = [m.start() for m in SHELL_BREAK_RE.finditer(text)]
+    root_name, found = ws.root.name, []
+    starts = [0] if whole else [m.start() for m in CODE_TOKEN_RE.finditer(text)]
+    for start in starts:
+        k = bisect_left(breaks, start)
+        end = breaks[k] if k < len(breaks) else len(text)
+        first = text.find("/", start, min(end, start + DIR_NAME_MAX + 1))
+        head = text[start:start + 8].lower()
+        if first == -1 and not head.startswith(("file:", "~")):
+            continue
+        window = text[start:min(end, start + 4096)]
+        settled = lexical(window)
+        if settled and settled != window:
+            # `x/../Harbour/…` is `Harbour/…`; a `..` left in front is read from the note and by its names alone.
+            for variant in {settled, settled.lstrip("./") if settled.startswith("../") else settled}:
+                found += dir_crossings(ws, source, variant, True)
+            continue
+        word = window.split(None, 1)[0] if window.strip() else ""
+        if "/".join(_strip_md(tuple(x.lower() for x in word.split("/") if x and x != "."))) in SHARED_PROJECT_PATHS:
+            continue  # every project holds this one: the file reading says how
+        tries: List[Tuple[int, Optional[frozenset], str]] = []
+        rest = window
+        if head.startswith("file:"):
+            rest = re.sub(r"(?i)^file:(?://[^/]*)?", "", rest)
+            start += len(window) - len(rest)
+        if rest.startswith(("/", "~")):
+            for m in re.finditer(r"(?<=/)([^/]{1,%d})(?=/|$)" % DIR_NAME_MAX, rest[:4096]):
+                name = m.group(1)
+                if name == root_name:
+                    tries.append((start + m.end() + 1, frozenset({ws.root}), "@"))
+                elif name in ("Zones", "Wikis"):
+                    tries.append((start + m.start(), frozenset({ws.root}), "@"))
+            if rest.startswith("~/"):
+                name = rest[2:].split("/", 1)[0]
+                if name == root_name:
+                    tries.append((start + 2 + len(name) + 1, frozenset({ws.root}), "@"))
+            # A site-relative or home-relative path is also read by its names alone.
+            tries.append((start + (2 if rest.startswith("~/") else 1), None, ""))
+        elif rest.startswith(("./", "../")):
+            base, pos = source.parent, start
+            while True:
+                part = text[pos:pos + 3]
+                if part.startswith("./"):
+                    pos += 2
+                elif part.startswith("../"):
+                    base, pos = base.parent, pos + 3
+                else:
+                    break
+            if base in idx.owner:
+                tries.append((pos, frozenset({base}), "@" + str(base)))
+        else:
+            tries.append((start, None, ""))
+        group: List[Tuple[Path, bool]] = []
+        for pos, here, ctx in tries:
+            reached, count, goes_on = _run(idx, text, pos, end, here, ctx)
+            if reached and goes_on:
+                for folder in reached:
+                    project = idx.owner.get(folder)
+                    if project is not None:
+                        # It names the project when it is read from a fixed place, or its names reach the project's folder.
+                        names = bool(ctx) or count >= len(folder.relative_to(project).parts) + 1
+                        if not names and folder.parent == project and folder.name.lower() in LAYOUT_FOLDERS:
+                            continue  # `Deliverables/…` from any project: its own folder, made or not yet
+                        group.append((folder, names))
+        if group:
+            found.append(group)
+    return found
 
 
 def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
@@ -4812,6 +5175,11 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
     if len(parts) > 2 and parts[0] == "Threads":
         tags |= party_tags(ws, project / "Threads" / parts[1] / (parts[1] + ".md"))
     return tags
+
+
+# Paths every project holds by Garrick's own layout: written by themselves they
+# name no project, whoever else holds one.
+SHARED_PROJECT_PATHS = ("deliverables/published",)
 
 
 def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
@@ -5030,9 +5398,35 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # project, is refused; one that lands across a wall and also on a wiki
     # page or a project with no wall, a path every project may hold such as
     # `Deliverables/published.md`, is a warning.
-    if tags and targets:
+    # Folders: a path that leads into a folder of a project across a wall and
+    # goes on past it with a name is refused, whatever the name, since a name
+    # that cannot be read plainly (a `;`, a space, a glob, a `%20`, a long run of
+    # words) cannot be told from a file there. A path that ends at the folder
+    # is a path to a folder, which is not read.
+    folders = [("writes the path", w, b, False) for w, b in code_texts(text) if "/" in b or "file:" in b.lower()]
+    folders += [("links", w, b, False) for w, b in tag_texts(text) if "/" in b or "file:" in b.lower()]
+    folders += [("links", w, t, True) for w, t in extract_links(text) if not w.startswith("[[")]
+    if tags and (targets or folders):
         index = project_index(ws)
-        named = set()
+        named: Dict[Tuple[str, Path], int] = {}  # (written, project) -> its finding's place in out
+
+        def record(severity: str, verb: str, written: str, what: str, ear: str, a: str, b: str, other: Path) -> None:
+            # One finding for each (written, project), the worst of its readings:
+            # a warning never stands in for the refusal of another.
+            key = ("<tag>" if written.startswith("<") else written, other)  # a tag is one finding, however it was read
+            earlier = named.get(key)
+            if earlier is not None and (severity == WARNING or out[earlier].severity == ERROR):
+                return
+            if severity == ERROR:
+                reported.add(b)  # a warning must not stand in for the name check's refusal
+            found = Finding(severity, "walls", r, "%s %s%s; a wall stands between %s and %s" % (verb, written, what, a, b),
+                            "A note in %s uses %s" % (where, ear))
+            if earlier is None:
+                named[key] = len(out)
+                out.append(found)
+            else:
+                out[earlier] = found
+
         for verb, written, target in targets:
             code = verb != "links"
             hits = resolve(ws, path, target, index) if code else link_dests(ws, path, target)
@@ -5055,19 +5449,36 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                     continue  # it means a file of this project
                 if ws.wiki_links is None:
                     ws.wiki_links = PathIndex(ws, ws.wiki_files)
-                elsewhere = bool(near) or bool(resolve(ws, path, target, ws.wiki_links))
+                elsewhere = bool(near) or bool(resolve(ws, path, target, ws.wiki_links)) or \
+                    "/".join(_strip_md(tuple(x.lower() for x in target.replace("\\", "/").split("/") if x and x != "."))) in SHARED_PROJECT_PATHS
                 if elsewhere and not any(names_project(ws, target, h, o) for h, o, _ in far_hits):
                     severity = WARNING
             hit, other, (a, b) = far_hits[0]
-            if (written, other) in named:
-                continue
-            named.add((written, other))
-            if severity == ERROR:
-                reported.add(b)  # a warning must not stand in for the name check's refusal
             noun = "note" if hit.suffix.lower() == ".md" else "file"
-            out.append(Finding(severity, "walls", r,
-                               "%s %s, a %s of %s; a wall stands between %s and %s" % (verb, written, noun, b, a, b),
-                               "A note in %s uses a %s of %s" % (where, noun, party_name(ws, b))))
+            record(severity, verb, written, ", a %s of %s" % (noun, b), "a %s of %s" % (noun, party_name(ws, b)), a, b, other)
+        # The folder reading: the backstop for what the readings above could not tell.
+        for verb, written, body, whole in folders:
+            for group in dir_crossings(ws, path, body, whole):
+                far_dirs: Dict[Path, tuple] = {}
+                elsewhere = own = False
+                for folder, names in group:
+                    other = project_dir_index(ws).owner.get(folder)
+                    if other is None:
+                        continue
+                    pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, folder / "_") if walled(ws.context, a, b))
+                    if pair:
+                        prev = far_dirs.get(other)
+                        far_dirs[other] = (pair[0], names or (prev[1] if prev else False))
+                    elif other == project:
+                        own = True
+                    else:
+                        elsewhere = True
+                if own:
+                    continue  # it means a folder of this project
+                for other, ((a, b), names) in far_dirs.items():
+                    record(WARNING if elsewhere and not names else ERROR, verb, written,
+                           ", a path that leads into a project of %s" % b, "a path into a project of %s" % party_name(ws, b),
+                           a, b, other)
     far = {t for t in ws.context["parties"] if any(walled(ws.context, a, t) for a in tags)}
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.

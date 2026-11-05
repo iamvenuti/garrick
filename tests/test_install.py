@@ -384,6 +384,27 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(found, [])
 
 
+class EveryExtraTest(unittest.TestCase):
+    """Garrick's own instruction files read clean in a workspace with every
+    extra installed, the cmux extra's desk skill included (#375)."""
+
+    def test_check_finds_nothing_to_say_about_an_instruction_file_garrick_ships(self):
+        box = Sandbox()
+        self.addCleanup(box.close)
+        root, made = box.install("every")
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        sys.path.insert(0, str(REPO))
+        import install as installer
+        for extra, _, places in installer.EXTRAS:
+            for src, dest, skip in places:
+                shutil.copytree(REPO / src, root / dest, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("__pycache__", *skip))
+        self.assertTrue((root / "System" / "skills" / "desk" / "SKILL.md").is_file())
+        r = run([root / "System" / "tools" / "check.py", "--root", root, "--json"], box.env)
+        found = [f for f in json.loads(r.stdout)["findings"] if f["check"] == "instructions"]
+        self.assertEqual(found, [])
+
+
 class RefusalTest(unittest.TestCase):
     def setUp(self):
         self.box = Sandbox()

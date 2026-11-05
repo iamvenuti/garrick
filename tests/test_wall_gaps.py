@@ -867,6 +867,29 @@ class TestFolderPaths(GapCase):
             with self.subTest(written):
                 self.assertEqual([], self.says(written))
 
+    def test_every_form_has_the_verdict_it_had_in_0_56_0(self):
+        """Only a slash-ended token whose refusal came from the bare-name match
+        of its last segment to a note, with no segment naming a project's
+        folder, may pass now. Every other verdict is the one 0.56.0 gave
+        (a folder written alone, or a path to one, passed then and passes now)."""
+        root = self.root
+        table = (
+            # Leads into Harbour and goes on, or names its folder: refused, ending in / or not.
+            ("cat Harbour/Notes/Demo/", True), ("Harbour/Notes/Demo/", True), ("Harbour/Notes/Demo.md", True),
+            ("Harbour/", True), ("Zones/Work/Harbour/Notes/Demo/", True),
+            ("%s/Zones/Work/Harbour/Notes/Demo/" % root, True),
+            ("~/%s/Zones/Work/Harbour/Notes/Demo/" % root.name, True),
+            # A path that ends at Harbour's folder is not read, as in 0.56.0.
+            ("Harbour/Notes/", False), ("cat Harbour/Notes/", False), ("Zones/Work/Harbour/Notes/", False),
+            ("%s/Zones/Work/Harbour/Notes/" % root, False), ("~/%s/Zones/Work/Harbour/Notes/" % root.name, False),
+            ("/elsewhere/Zones/Work/Harbour/Notes/", False),
+            # The bare-name match of a folder's last segment to a note: the one change.
+            ("Demo/", False), ("Notes/Demo/", False), ("see Demo/ now", False), ("~/Applications/Garrick Demo/", False))
+        for written, refused in table:
+            with self.subTest(written):
+                found = self.says("`%s`" % written)
+                self.assertEqual(["error"] if refused else [], [s for s, _ in found], found)
+
     def test_a_folder_named_like_a_note_stays_the_documented_limit(self):
         for written in ("`Notes/Demo/`", "`cat Notes/Demo/`"):
             with self.subTest(written):

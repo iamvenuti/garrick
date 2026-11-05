@@ -5366,7 +5366,8 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # note follows just the same.
     def exact_file(target: str) -> bool:
         # A slash-ended token with no extension is a file only when a regular
-        # file has exactly that path (no `.md` added, no bare name).
+        # file has exactly that path (no `.md` added, no bare name), or when a
+        # segment of it names a project's folder (0.56.0's rule, unchanged).
         if target.startswith(("/", "~")):
             try:
                 if Path(os.path.expanduser(target)).is_file():
@@ -5374,6 +5375,8 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             except (OSError, ValueError):
                 pass
         parts = [x.lower() for x in target.replace("\\", "/").split("/") if x and x not in (".", "..")]
+        if set(parts) & {project.name.lower() for project, _ in ws.projects}:
+            return True  # a segment names a project's folder: read as before, never as a bare folder name
         if "/" not in target or not parts:
             return False
         if target.startswith(("/", "~")):  # read from where it reaches the workspace, as a path from outside is

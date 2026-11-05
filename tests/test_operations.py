@@ -97,7 +97,8 @@ class TestDeclared(unittest.TestCase):
             self.assertEqual(len(set(spec.fields)), len(spec.fields), verb)
             self.assertFalse(set(spec.fields) & set(ops.ALWAYS), verb)    # verb and op belong to every verb
             if spec.commits:
-                self.assertEqual("zone", spec.scope, verb)                # only a zone's repository is committed in
+                # a zone's repository, or, for the Nurture answers (#224), the wikis and zones the answers touch
+                self.assertIn(spec.scope, ("zone", "workspace") if verb.startswith("nurture-") else ("zone",), verb)
 
     def test_only_the_six_the_page_sends_under_the_lock_keep_a_record(self):
         """`OPS` is what page_action.py has read since 0.26.0. A newer copy of

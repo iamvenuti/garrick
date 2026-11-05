@@ -259,7 +259,8 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
-         "work-file", "memory-preview", "note-read", "note-open")
+         "work-file", "memory-preview", "note-read", "note-open",
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -325,6 +326,12 @@ CURRENT = None
 
 class Refused(Exception):
     pass
+
+
+class KeepRecord(Refused):
+    """A refusal that leaves what was filed where it is: the user's own words
+    are evidence, so a transaction does not take them away when the question
+    that cites them could not be updated."""
 
 
 def ops_lib(ws: Optional[Path] = None):
@@ -2355,6 +2362,7 @@ def write_new(path: Path, text: str) -> None:
 
 def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list) -> Path:
     folder = q.dir.joinpath(*WIKI_ANSWER_DIR)
+    tx_dirs(folder)
     folder.mkdir(parents=True, exist_ok=True)
     if folder.resolve() != folder or q.dir not in folder.parents:
         raise Refused("raw/answers is not a plain folder of this wiki, so nothing was written")
@@ -2364,6 +2372,7 @@ def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list) -> 
         path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
         try:
             write_new(path, body)
+            tx_made(path)
             return path
         except FileExistsError:
             continue
@@ -2381,6 +2390,7 @@ def wiki_words(req: dict) -> str:
 
 
 def write_question(path: Path, text: str) -> None:
+    tx_watch(path)
     path.write_text(text, encoding="utf-8")
 
 
@@ -2399,8 +2409,10 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
         tags = question_parties(q, wall)
         question_pages(q, wall)         # a question across a wall is refused before anything is written
         if verb == "question-close":
-            write_question(q.path, set_front(q.text, {"status": "closed", "closed": today.isoformat()}, drop=("later",)))
-            return "Closed. Nothing was worked in"
+            def close(w):
+                write_question(q.path, set_front(q.text, {"status": "closed", "closed": today.isoformat()}, drop=("later",)))
+                return "Closed. Nothing was worked in"
+            return transaction(ws, close)
         if verb == "question-later":
             until = req.get("until")
             try:
@@ -2409,20 +2421,26 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
                 day = None
             if day is None or day <= today:
                 raise Refused("not a later day: %r" % (until,))
-            write_question(q.path, set_front(q.text, {"status": "later", "later": day.isoformat()}))
-            return "Put off until %s %d %s. It is hidden until then" % (day.strftime("%A"), day.day, MONTHS[day.month - 1])
+
+            def put_off_until(w):
+                write_question(q.path, set_front(q.text, {"status": "later", "later": day.isoformat()}))
+                return "Put off until %s %d %s. It is hidden until then" % (day.strftime("%A"), day.day, MONTHS[day.month - 1])
+            return transaction(ws, put_off_until)
         words = wiki_words(req)
         # A question that cannot be rewritten stops here, with nothing written.
         set_front(q.text, {"status": "answered"})
-        path = file_raw_answer(q, today, words, tags)
-        stem = path.relative_to(q.dir).with_suffix("").as_posix()
-        try:
-            write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
-                                                      "answered": today.isoformat()}, drop=("later",)))
-        except Exception as e:
-            raise Refused("the answer is filed as %s, but the question could not be updated (%s: %s); "
-                          "the record stays" % (stem, type(e).__name__, e))
-        return "Noted. Your words are filed as %s. The pages change when you say work them in" % stem
+
+        def file_answer(w):
+            path = file_raw_answer(q, today, words, tags)
+            stem = path.relative_to(q.dir).with_suffix("").as_posix()
+            try:
+                write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
+                                                          "answered": today.isoformat()}, drop=("later",)))
+            except Exception as e:
+                raise KeepRecord("the answer is filed as %s, but the question could not be updated (%s: %s); "
+                                 "the record stays" % (stem, type(e).__name__, e))
+            return "Noted. Your words are filed as %s. The pages change when you say work them in" % stem
+        return transaction(ws, file_answer)
 
 
 def own_record(q: WikiQuestion, wall: str) -> str:
@@ -2479,8 +2497,8 @@ def wiki_work(ws: Path, q: WikiQuestion, req: dict, today: dt.date, wall: str) -
             q.reload()
             if q.status != "answered":
                 raise Refused("that question is %s, not answered" % (q.status or "unreadable"))
-            write_question(q.path, set_front(q.text, {"status": "done", "done": today.isoformat()}))
-        return "Done. The question is worked in"
+            return transaction(ws, lambda w: write_question(q.path, set_front(q.text, {"status": "done", "done": today.isoformat()}))
+                               or "Done. The question is worked in")
     lines = ["Cite [[%s]]." % record]
     lines += ["Change %s" % p.relative_to(q.dir).as_posix() for p in pages] or ["No page may be changed."]
     if missing:
@@ -2525,6 +2543,931 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
     if wall and WALL_LINE.match(why):
         raise Refused(wall)
     raise Refused("not committed, so nothing changed: %s" % why)
+
+
+# ---- One transaction for every write that changes pages (#224, point 6) ------------------
+# A write that changes wiki pages runs inside transaction(): the files are
+# written, check.py and each wiki's lint are counted before and after, and if
+# any count is worse every file goes back as it was, byte for byte, a file the
+# write made removed. Otherwise, where the action commits, the files are
+# committed once per repository. The wiki-question actions write and commit
+# nothing themselves (the work-in step commits), so they pass no `commit`; the
+# Nurture review page's save commits. The measuring is `check_counts`, a name
+# the tests replace.
+TX = None
+CHECK_TIMEOUT = 270     # two runs and a commit fit inside the page's ACTION_LOST (a test pins the sum); a run that takes longer writes nothing
+
+
+class Writes:
+    """The files a transaction has written, and what each held before: the
+    bytes, or None for a file that was not there."""
+
+    def __init__(self):
+        self.before = {}            # Path -> bytes or None
+        self.made_dirs = []         # folders the transaction made, outermost first
+        self.tag = None             # the row being written, so a file knows whose it is
+        self.owners = {}            # Path -> the tags that wrote it
+
+    def watch(self, path) -> None:
+        path = Path(path)
+        if self.tag is not None:
+            self.owners.setdefault(path, set()).add(self.tag)
+        if path in self.before:
+            return
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise Refused("%s is not a plain file, so nothing was written" % path.name)
+        self.before[path] = path.read_bytes() if path.exists() else None
+
+    def made(self, path) -> None:
+        if self.tag is not None:
+            self.owners.setdefault(Path(path), set()).add(self.tag)
+        self.before.setdefault(Path(path), None)
+
+    def dirs(self, folder) -> None:
+        missing = []
+        d = Path(folder)
+        while not d.exists() and d.parent != d:
+            missing.append(d)
+            d = d.parent
+        for m in reversed(missing):
+            if m not in self.made_dirs:
+                self.made_dirs.append(m)
+
+    def write(self, path, text: str) -> None:
+        path = Path(path)
+        self.watch(path)
+        self.dirs(path.parent)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def changed(self) -> list:
+        out = []
+        for p, was in self.before.items():
+            now = p.read_bytes() if p.is_file() else None
+            if now != was:
+                out.append(p)
+        return out
+
+    def undo(self, paths=None) -> None:
+        """Put the given files (all, by default) back as they were."""
+        for p in list(self.before) if paths is None else [Path(x) for x in paths]:
+            if p not in self.before:
+                continue
+            was = self.before[p]
+            try:
+                if was is None:
+                    if p.exists():
+                        p.unlink()
+                else:
+                    p.write_bytes(was)
+            except OSError:
+                pass
+
+    def restore(self) -> None:
+        self.undo()
+        for d in reversed(self.made_dirs):
+            try:
+                d.rmdir()               # only if empty: it was made here
+            except OSError:
+                pass
+
+
+def tx_watch(path) -> None:
+    if TX is not None:
+        TX.watch(path)
+
+
+def tx_made(path) -> None:
+    if TX is not None:
+        TX.made(path)
+
+
+def tx_dirs(folder) -> None:
+    if TX is not None:
+        TX.dirs(folder)
+
+
+# A finding of the walls family, by its check or its words: a page naming, linking or quoting across a wall,
+# repeating a meeting's wording, or two parties a wall divides. Any severity. The words are nurture.py's
+# (claim_wall), kept here because the transaction reads findings without loading it.
+WALLISH = re.compile(r"across a wall|wall stands between|which a wall keeps apart|a wall keeps|eight or more words|"
+                     r"names both \S+ and \S+|a Meetings page|from zone \S+|filed in zone \S+", re.I)
+
+
+def wallish(check, message) -> bool:
+    return str(check) == "walls" or bool(WALLISH.search(str(message or "")))
+
+
+def check_counts(ws: Path) -> Optional[dict]:
+    """What the workspace's checks count now: check.py's errors and warnings,
+    and each wiki's orphans and missing links. None when a check cannot run
+    or its answer cannot be read: a write is then not made, since nothing can
+    say it did no harm."""
+    tools = Path(ws) / "System" / "tools"
+    out = {}
+
+    def run(*args):
+        script = tools / args[0]
+        if not script.is_file():
+            return None
+        try:
+            r = subprocess.run([sys.executable, str(script), "--root", str(ws)] + list(args[1:]), capture_output=True, text=True,
+                               timeout=CHECK_TIMEOUT, stdin=subprocess.DEVNULL, cwd=str(ws))
+            data = json.loads(r.stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+        return data if isinstance(data, dict) else None
+    # The whole check, wording included: a sentence copied from the far side is read only in a full run.
+    found = run("check.py", "--json")
+    if found is None or not isinstance(found.get("findings"), list):
+        return None
+    for f in found["findings"]:
+        if isinstance(f, dict):
+            key = "check:%s" % (f.get("severity") or "warning")
+            out.setdefault(key, set()).add((str(f.get("check")), re.sub(r":\d+$", "", str(f.get("path"))), str(f.get("message"))))
+    for wiki in WIKI_NAMES:
+        if not (Path(ws) / "Wikis" / wiki / "wiki").is_dir():
+            continue
+        lint = run("wiki_lint.py", "--wiki", wiki, "--json")
+        if lint is None:
+            return None
+        out["lint:%s:orphans" % wiki] = {("orphan", "Wikis/%s/%s.md" % (wiki, o), "") for o in lint.get("orphans") or []}
+        out["lint:%s:missing" % wiki] = {("missing", "Wikis/%s/%s.md" % (wiki, p), str(m.get("target")))
+                                         for m in lint.get("missing") or [] if isinstance(m, dict) for p in m.get("linked_from") or []}
+    return out
+
+
+def worse_counts(before: dict, after: dict) -> list:
+    """What got worse between two readings. A reading holds, for each check, the
+    findings it made (check, path, message), or a number where a caller only
+    counts. A finding present after and not before is worse, even when another
+    was fixed in the same write: one fix never pays for a new problem. Only
+    names and numbers are said, never a path or a message."""
+    names = {"check:error": "errors", "check:warning": "warnings"}
+    out = []
+    for key in sorted(set(before) | set(after)):
+        was, now = before.get(key, set()), after.get(key, set())
+        what = names.get(key) or key.replace("lint:", "").replace(":", " ")
+        if isinstance(was, int) or isinstance(now, int):
+            if (now if isinstance(now, int) else len(now)) > (was if isinstance(was, int) else len(was)):
+                out.append("%s %d to %d" % (what, was if isinstance(was, int) else len(was), now if isinstance(now, int) else len(now)))
+        elif now - was:
+            out.append("%s: %d new" % (what, len(now - was)))
+    return out
+
+
+def repo_of_path(ws: Path, path: Path) -> Optional[Path]:
+    """The nearest folder above `path`, inside the workspace, with a .git of its own."""
+    d = path.parent
+    top = Path(ws).resolve()
+    while True:
+        if os.path.lexists(str(d / ".git")):
+            return d
+        if d == top or top not in d.parents:
+            return None
+        d = d.parent
+
+
+def stage(repo: Path, rels: list) -> tuple:
+    return git(repo, "add", "-A", "--", *rels)
+
+
+def unstage(repo: Path, rels: list) -> None:
+    git(repo, "reset", "-q", "--", *rels, timeout=10)
+
+
+def walls_on_staged(ws: Path, repo: Path, rels: list) -> str:
+    """The walls check on what is staged in `repo`, as the commit hook runs it
+    (garrick_lib.staged_walls_refusal), "" when it passes. A repository with no
+    hook (Wikis/ has none) is checked all the same. Without that function in
+    this workspace's garrick_lib, a refusal: nothing can say the change is fine."""
+    lib = prefs().lib(ws)
+    fn = getattr(lib, "staged_walls_refusal", None)
+    if not callable(fn):
+        return "this workspace's garrick_lib.py cannot run the walls check on a staged change"
+    try:
+        return fn(ws, repo, rels) or ""
+    except Exception as e:
+        return "the walls check could not run (%s)" % type(e).__name__
+
+
+def refusal_kind(said: str) -> str:
+    """wall, form or foreign, from the words of staged_walls_refusal."""
+    if "another session has staged" in said:
+        return "foreign"
+    if "for a page's form" in said:
+        return "form"
+    return "wall"
+
+
+def commit_groups(ws: Path, w: Writes, message_for, *, wall: Optional[str]) -> dict:
+    """Commit what `w` changed, once per repository, each after the walls check
+    on it staged. Returns {"commits": {repo: sha}, "refused": {repo: why},
+    "uncommitted": [rel]}; the files of a repository whose commit is refused
+    are put back. Before any commit, every repository is asked whether it can
+    commit at all, and one that cannot refuses the lot: nothing is committed
+    in one and not another for a reason that was known. `wall` is the rules'
+    sentence, which a refusal by the wall check ends on."""
+    done = {"commits": {}, "refused": {}, "uncommitted": []}
+    groups = {}
+    top = Path(ws).resolve()
+    for p in w.changed():
+        repo = repo_of_path(ws, p)
+        if repo is None:
+            done["uncommitted"].append(str(p.relative_to(top)) if top in p.parents else p.name)
+        else:
+            groups.setdefault(repo, []).append(p)
+    for repo in sorted(groups):
+        problem = commit_refusal(repo) if repo.parent.name == "Zones" else None
+        if problem:
+            raise Refused("%s, so nothing was committed and nothing was written" % problem)
+    for repo, files in sorted(groups.items()):
+        rels = sorted(str(f.relative_to(repo)) for f in files)
+        label = str(repo.relative_to(top)) if repo != top else "."
+        code, why = stage(repo, rels)
+        if code == 0:
+            said = walls_on_staged(ws, repo, rels)
+            if said:
+                code, why = 1, said
+        if code == 0:
+            code, why = committing(repo, rels, message_for(label, rels))
+        if code == 0:
+            done["commits"][label] = git(repo, "rev-parse", "--short", "HEAD")[1].strip()
+            continue
+        unstage(repo, rels)
+        w.undo(files)
+        if wall and (WALL_LINE.match(why or "") or "walls check refused" in (why or "")):
+            why = wall
+        done["refused"][label] = why
+    return done
+
+
+def new_findings(before: dict, now: dict) -> list:
+    """(reading, finding) for each finding present now and not before."""
+    out = []
+    for key, found in now.items():
+        if isinstance(found, set):
+            was = before.get(key, set())
+            out += [(key, f) for f in sorted(found - (was if isinstance(was, set) else set()))]
+    return out
+
+
+def walls_on_written(now: dict, written: set) -> list:
+    """Every walls-family finding now on a file the transaction wrote, whatever
+    the reading before held: a finding's identity stays equal while what it
+    reports grows (more words repeated, one more cite), so none is let through."""
+    return [(key, f) for key, found in now.items() if isinstance(found, set)
+            for f in sorted(found) if wallish(f[0], f[2]) and f[1] in written]
+
+
+def transaction(ws: Path, change, *, commit=None, after=None, triage=None):
+    """Run change(w) and what it wrote either holds or is undone.
+
+    `change(w)` writes through `w` (or the tx_* hooks) and returns the action's
+    result; `w.before_counts` is the reading taken before. check_counts() runs
+    before and after: a check that cannot run puts every file back and
+    refuses. So does a finding that is new, and so does any walls-family
+    finding on a file written, whatever the reading before held. With a
+    `triage(w, new, walls)`, those are first attributed by path to the rows
+    that wrote the files and the rows put back; the check then runs once more,
+    and only what no row accounts for refuses the lot. With `commit`, a
+    function (repository, paths) -> message, the changed files are then
+    committed once per repository; `after(result, done)` then returns the
+    action's final result. Without `commit` nothing is staged or committed."""
+    global TX
+    if TX is not None:
+        raise Refused("a transaction is already open")
+    before = check_counts(ws)
+    if before is None:
+        raise Refused("the workspace's checks (check.py and the wiki lint) cannot run, so nothing was written")
+    w = Writes()
+    w.before_counts = before
+    TX = w
+    top = Path(ws).resolve()
+    try:
+        try:
+            result = change(w)
+        except KeepRecord:
+            raise
+        except BaseException:
+            w.restore()
+            raise
+
+        def reading():
+            now = check_counts(ws)
+            if now is None:
+                w.restore()
+                raise Refused("the workspace's checks (check.py and the wiki lint) could not run afterwards, so nothing was written")
+            written = {str(p.relative_to(top)) for p in w.changed() if top in p.parents}
+            return now, worse_counts(before, now), new_findings(before, now), walls_on_written(now, written)
+        now, bad, new, walls = reading()
+        if (bad or walls) and triage is not None:
+            try:
+                triage(w, new, walls)
+            except BaseException:
+                w.restore()
+                raise
+            now, bad, new, walls = reading()
+        if walls:
+            w.restore()
+            raise Refused(wall_sentence(ws))
+        if bad:
+            w.restore()
+            raise Refused("a check got worse (%s), so every file is back as it was and nothing was committed. "
+                          "If something else changed in the workspace meanwhile, that can cause it: try again" % "; ".join(bad))
+        if commit is None:
+            return result
+        try:
+            done = commit_groups(ws, w, commit, wall=wall_refusal(ws))
+        except BaseException as e:
+            w.restore()
+            if isinstance(e, Refused):
+                raise
+            raise Refused("the commit could not be made (%s), so every file is back as it was" % type(e).__name__)
+        return after(result, done) if after else result
+    finally:
+        TX = None
+
+
+# ---- Nurture's answers, from the Questions panel (#224, point 9) --------------------------
+# nurture-answer (an entity page's party), nurture-organisation (where a person
+# works) and nurture-correct (a value written wrong) call the same code as
+# `nurture.py answered`, `organisation` and `correct`, so the chat and the panel
+# write the same way and record in the day's Nurture report. nurture-save is the
+# review page's Save: its rows go through one transaction, the walls check runs
+# on what is staged and a row it refuses is put back and named while the rest
+# go on, and the files are committed once per repository. Every row is read
+# again from the page it names: nothing a row carries is trusted, and its text
+# is data, never a command or a path to open.
+NURTURE_VERBS = ("nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save")
+NURTURE_LATER = ("System", "generated", "nurture", "later.json")
+NURTURE_ROWS_MAX = 200
+NURTURE_WORD_MAX = 200
+NURTURE_ROW_KEYS = ("do", "key", "path", "choice", "pick", "until", "edit")
+NURTURE_DO = ("answer", "organisation", "correct")
+NURTURE_CHOICES = ("yes", "no", "another", "later")
+UNATTRIBUTED = "unattributed"           # the view of entity pages that do not say whose they are
+KEY_RE = re.compile(r"[0-9a-f]{12}")
+_NURTURE_MOD = {}
+
+
+@contextlib.contextmanager
+def nurture_tools(ws: Path):
+    """The workspace's own nurture.py, loaded with its System/tools/ on the
+    path for as long as the block runs, and its context for today. Nothing
+    beside this extra: what it counts is that workspace's pages."""
+    key = Path(ws)
+    src = key / "System" / "tools" / "nurture.py"
+    if not src.is_file():
+        raise Refused("System/tools/nurture.py is missing; update Garrick")
+    with tools_path(key):
+        if key not in _NURTURE_MOD:
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_page_nurture", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules["garrick_page_nurture"] = mod
+                spec.loader.exec_module(mod)
+            except Exception as e:
+                raise Refused("System/tools/nurture.py cannot be loaded (%s); update Garrick" % type(e).__name__)
+            if not all(callable(getattr(mod, n, None)) for n in ("organisation_item", "party_item", "record_answer",
+                                                                  "run_correction", "record_correction", "Ctx")):
+                raise Refused("this workspace's nurture.py is too old for the Questions panel; update Garrick")
+            _NURTURE_MOD[key] = mod
+        yield _NURTURE_MOD[key]
+
+
+class RowRefused(Exception):
+    """One row put back, with the words the row says."""
+
+
+def zone_names(ws: Path) -> set:
+    folder = Path(ws) / "Zones"
+    return {z.name for z in folder.iterdir() if z.is_dir()} if folder.is_dir() else set()
+
+
+class View:
+    """The near side of the walls for what the Questions panel shows: the zone
+    shown, and the party chosen in it. `ok(tags)` is the one test, for what the
+    panel lists, counts and offers and for what a save may write: every tag
+    belongs to the zone, no two are walled from each other, and, with a party
+    chosen, it is among them and none is walled from it. The view of entity
+    pages that do not say whose they are (`zone` is UNATTRIBUTED) names, as
+    `scope`, the zone whose parties may be given to them. Fail closed: an
+    unknown zone or party, or a zone whose own parties a wall divides with no
+    party chosen, is refused with the rules' sentence."""
+
+    def __init__(self, ws: Path, lib, zone, scope):
+        wall = wall_sentence(ws)
+        self.lib, self.ctx = lib, lib.load_context(ws)
+        zones = zone_names(ws)
+        self.unattributed = zone == UNATTRIBUTED and zone not in zones
+        home = str(scope).strip() if self.unattributed and scope else zone
+        scope = bare_tag(lib, str(scope)) if scope not in (None, "") and not self.unattributed else None
+        if not isinstance(home, str) or home not in zones:
+            raise Refused(wall)
+        self.zone = home
+        self.parties = {t for t, p in (self.ctx.get("parties") or {}).items() if str(p.get("zone") or "").strip() == home}
+        self.chosen = None
+        if self.unattributed:
+            return
+        if scope is not None:
+            if scope not in self.parties:
+                raise Refused(wall)
+            self.chosen = scope
+        elif not self.parties or any(lib.walled(self.ctx, a, b) for a in self.parties for b in self.parties):
+            raise Refused(wall)
+
+    def ok(self, tags) -> bool:
+        tags = set(tags or ())
+        if self.unattributed or not tags or not tags <= self.parties:
+            return False
+        if any(self.lib.walled(self.ctx, a, b) for a in tags for b in tags):
+            return False
+        return self.chosen is None or self.chosen in tags
+
+
+def page_party_tags(lib, ws: Path, path: Path) -> Optional[set]:
+    """The party tags a Meetings page names, `party:` and `parties:`; None when
+    it cannot be read plainly or names none (treated as walled)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    if lib.frontmatter_form_problem(text):
+        return None
+    fm = lib.parse_frontmatter_text(text)
+    # Two spellings of the party key (`party:` and `PARTY:`) can be read two ways: the page says whose it is to no one.
+    if any(str(k).strip().lower() in ("party", "parties") and str(k).strip() not in ("party", "parties") for k in fm):
+        return None
+    tags = {bare_tag(lib, t) for t in tags_of(fm.get("party")) + tags_of(fm.get("parties"))}
+    known = lib.load_context(ws).get("parties", {})
+    return tags if tags and all(t in known for t in tags) else None
+
+
+def near_side(lib, ws: Path, view: "View", path: Path) -> bool:
+    return view.ok(page_party_tags(lib, ws, path))
+
+
+def meetings_page(ws: Path, rel, folder: str) -> Path:
+    """A page of the Meetings wiki's wiki/<folder>/, by its path from the
+    workspace's top; anything else, a link, or a path out of the folder, is
+    refused."""
+    if not isinstance(rel, str) or not rel.endswith(".md") or rel.startswith(("/", "~")) or "\0" in rel or len(rel) > 400:
+        raise RowRefused("not a page of the Meetings wiki")
+    base = (Path(ws) / "Wikis" / "Meetings" / "wiki" / folder).resolve()
+    raw = Path(ws) / rel
+    path = raw.resolve()
+    if base not in path.parents or raw.is_symlink() or not path.is_file() or SKIP & set(path.relative_to(base).parts):
+        raise RowRefused("that page is not in wiki/%s/ any more" % folder)
+    # On a disk that ignores case a path can be spelled two ways and git knows one: only the spelling on disk is taken.
+    here = Path(ws).resolve()
+    for part in path.relative_to(here).parts:
+        if part not in os.listdir(str(here)):
+            raise RowRefused("that page is not in wiki/%s/ any more" % folder)
+        here = here / part
+    return path
+
+
+def clean_in_repo(ws: Path, path: Path) -> None:
+    """Refuse a page whose repository cannot be found, or that has changes not
+    committed or is not committed at all: a commit of it would carry somebody
+    else's work."""
+    repo = repo_of_path(ws, path)
+    if repo is None:
+        raise RowRefused("no repository holds that page, so it could not be undone")
+    code, said = git(repo, "status", "--porcelain", "--untracked-files=all", "--", str(path.relative_to(repo)))
+    if code != 0 or said.strip():
+        raise RowRefused("that page has changes not committed, or is not committed at all")
+
+
+def clean_rows(req: dict) -> list:
+    rows = req.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise Refused("there is nothing to save")
+    if len(rows) > NURTURE_ROWS_MAX:
+        raise Refused("at most %d answers are saved at once" % NURTURE_ROWS_MAX)
+    out = []
+    for r in rows:
+        if not isinstance(r, dict) or set(r) - set(NURTURE_ROW_KEYS):
+            raise Refused("an answer carries a field the review page does not send, so nothing was written")
+        if r.get("do") not in NURTURE_DO or r.get("choice", "yes") not in NURTURE_CHOICES:
+            raise Refused("an answer is not one the review page sends, so nothing was written")
+        for k in ("key", "path", "pick", "until"):
+            v = r.get(k)
+            if v is not None and (not isinstance(v, str) or len(v) > 400 or "\0" in v or (k == "pick" and len(v) > NURTURE_WORD_MAX)):
+                raise Refused("an answer carries a value the review page does not send, so nothing was written")
+        if r.get("key") is not None and not KEY_RE.fullmatch(r["key"]):
+            raise Refused("an answer names a finding by a key the review page does not make, so nothing was written")
+        edit = r.get("edit")
+        if edit is not None:
+            if isinstance(edit, dict) and isinstance(edit.get("old"), str) and len(edit["old"].strip()) < 3:
+                raise Refused("the value to correct needs at least three characters, so nothing was written")
+            if not isinstance(edit, dict) or set(edit) - {"old", "new"} or not all(
+                    isinstance(edit.get(k), str) and 0 < len(edit[k]) <= NURTURE_WORD_MAX
+                    and not any(ord(c) < 32 or c == "\x7f" for c in edit[k]) for k in ("old", "new")):
+                raise Refused("a correction carries more than the two values, so nothing was written")
+        out.append(dict(r, choice=r.get("choice", "yes")))
+    return out
+
+
+def later_path(ws: Path) -> Path:
+    return Path(ws).joinpath(*NURTURE_LATER)
+
+
+def read_later(ws: Path) -> dict:
+    """Rows put off: {key: {"until": day, "path": page}}. A key is bound to the
+    page it was put off for, so a forged key cannot hide another finding."""
+    try:
+        data = json.loads(later_path(ws).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if KEY_RE.fullmatch(str(k)) and isinstance(v, dict)
+            and isinstance(v.get("until"), str) and isinstance(v.get("path"), str)}
+
+
+def save_later(ws: Path, put: dict, drop: set) -> None:
+    """Rows put off until a date, and rows that were answered: a small file the
+    tools own, beside the day's report, never committed."""
+    data = read_later(ws)
+    if not put and not (drop & set(data)):
+        return
+    for k in drop:
+        data.pop(k, None)
+    data.update(put)
+    target = later_path(ws)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=1, sort_keys=True) + "\n")
+        os.replace(tmp, str(target))
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def put_back(w: Writes, rows: list, bad: dict, say_wall: str, refuse) -> None:
+    """Put back the rows in `bad` ({tag: kind}) and any row that shares a real
+    file with one, until no more do, and say each: the rules' sentence for a
+    wall, else what the kind is. What is put back is worked out after the
+    sharing is settled, so a row said not to be written has all its files back."""
+    while True:
+        back = set()
+        for tag in bad:
+            back |= {p for p, o in w.owners.items() if tag in o}
+        more = {tag for tag, row in rows if tag not in bad and any(tag in o for p, o in w.owners.items() if p in back)}
+        if not more:
+            break
+        for tag in more:
+            bad[tag] = "wall"
+    w.undo(back)
+    for tag, kind in bad.items():
+        refuse(tag, say_wall if kind == "wall" else
+               "the walls check could not read this page's form, so nothing was written for it" if kind == "form" else
+               "a check found something new on this page, so nothing was written for it" if kind == "new" else
+               "another session has files staged in that repository, so nothing was written for it")
+
+
+def walls_gate(ws: Path, w: Writes, rows: list, say_wall: str, refuse) -> None:
+    """The walls check on what the rows wrote, staged, per repository. When it
+    refuses, each row is checked on its own files, the rows it refuses are put
+    back (and any row that shares a file with one), and the rest are checked
+    again. `rows` are (tag, the row); `refuse(tag, why)` records a row put
+    back. A refusal no row accounts for refuses the lot."""
+    def check(files) -> str:
+        groups = {}
+        for p in files:
+            repo = repo_of_path(ws, p)
+            if repo is None:
+                continue
+            groups.setdefault(repo, []).append(str(p.relative_to(repo)))
+        for repo, rels in groups.items():
+            stage(repo, rels)
+            try:
+                said = walls_on_staged(ws, repo, rels)
+            finally:
+                unstage(repo, rels)
+            if said:
+                return said
+        return ""
+    changed = set(w.changed())
+    said = check(changed)
+    if not said:
+        return
+    bad = {}
+    for tag, row in rows:
+        mine = [p for p, o in w.owners.items() if tag in o and p in changed]
+        one = check(mine) if mine else ""
+        if one:
+            bad[tag] = refusal_kind(one)
+    if not bad:
+        raise Refused(say_wall if refusal_kind(said) == "wall" else
+                      "the walls check could not pass the change as a whole (%s), so nothing was written" % refusal_kind(said))
+    put_back(w, rows, bad, say_wall, refuse)
+    left = set(w.changed())
+    again = check(left) if left else ""
+    if again:
+        raise Refused(say_wall if refusal_kind(again) == "wall" else
+                      "the walls check could not pass what was left, so nothing was written")
+
+
+def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool = False):
+    """Save rows (see clean_rows) as one transaction. Returns the reply, or,
+    for a single verb, its sentence."""
+    wall = wall_sentence(ws)
+    lib = prefs().lib(ws)
+    if lib is None or not all(callable(getattr(lib, n, None)) for n in
+                              ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled",
+                               "entity_names", "staged_walls_refusal")):
+        raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
+    view = View(ws, lib, req.get("zone"), req.get("scope"))
+    headless = os.environ.get("GARRICK_HEADLESS", "").strip() not in ("", "0")
+    results = {}                    # index -> {"key", "ok", "say"}
+    plan = []                       # (index, row, how, item, asked, extra)
+
+    def refuse(i, why):
+        r = rows[i]
+        results[i] = {"key": r.get("key"), "ok": False, "say": why}
+        plan[:] = [entry for entry in plan if entry[0] != i]
+
+    with held("nurture-answers.lock", busy="another answer is still being saved"), nurture_tools(ws) as N:
+        ctx = N.Ctx(Path(ws).resolve(), headless=headless, today=today)
+
+        def open_walls(w):
+            """The pages that carry a walls-family finding already: not writable from the panel."""
+            before = getattr(w, "before_counts", None) or {}
+            return {f[1] for found in before.values() if isinstance(found, set) for f in found if wallish(f[0], f[2])}
+
+        def one(i, row, w):
+            """Write one row's change; a RowRefused leaves nothing of it."""
+            path_rel = row.get("path")
+            if row["choice"] in ("no", "later"):
+                if row["do"] == "answer":
+                    page = meetings_page(ws, path_rel, "entities")
+                    if not view.unattributed:
+                        raise RowRefused(wall)
+                else:
+                    page = meetings_page(ws, path_rel, "people")
+                    if view.unattributed or not near_side(lib, ws, view, page):
+                        raise RowRefused(wall)
+                if row.get("edit") and row["do"] != "answer":
+                    run_edit(i, row, page, w)
+                if row["choice"] == "later":
+                    try:
+                        day = dt.date.fromisoformat(row.get("until") or "")
+                    except ValueError:
+                        raise RowRefused("not a later day: %r" % (row.get("until"),))
+                    if day <= today:
+                        raise RowRefused("not a later day: %r" % (row.get("until"),))
+                    if not isinstance(row.get("key"), str):
+                        raise RowRefused("a row put off is named by its key")
+                    plan.append((i, row, "later", None, "", {"until": day.isoformat(), "path": ctx.rel(page)}))
+                    return
+                plan.append((i, row, "no", None, ctx.rel(page), ""))
+                return
+            do = row["do"]
+            folder = "entities" if do == "answer" else "people"
+            if do == "correct":
+                if not row.get("edit"):
+                    raise RowRefused("say the old value and the new one")
+                page = meetings_page(ws, path_rel, "people") if "/people/" in "/" + str(path_rel) else meetings_page(ws, path_rel, "entities")
+            else:
+                page = meetings_page(ws, path_rel, folder)
+            if do == "answer":
+                if not view.unattributed:
+                    raise RowRefused(wall)          # an entity page is asked about in the unattributed view only
+                tag = bare_tag(lib, str(row.get("pick") or "").strip())
+                if tag != "none" and tag not in view.parties:
+                    raise RowRefused(wall)          # only the parties of the zone chosen are offered
+            else:
+                if view.unattributed or not near_side(lib, ws, view, page):
+                    raise RowRefused(wall)
+            if do != "correct":
+                if ctx.rel(page) in open_walls(w):
+                    raise RowRefused(wall)          # a page with a wall finding open is read-only here
+                clean_in_repo(ws, page)
+            edit = row.get("edit")
+            if edit and do != "correct":
+                run_edit(i, row, page, w)
+            if do == "correct":
+                run_edit(i, row, page, w)
+                return
+            try:
+                if do == "answer":
+                    if row["choice"] != "another":
+                        raise RowRefused("say whose it is: a party, or none")
+                    item, asked = N.party_item(ctx, ctx.rel(page), row.get("pick") or "")
+                    answer = item.fix["party"]
+                else:
+                    pick = row.get("pick") or "" if row["choice"] == "another" else ""
+                    if row["choice"] == "another" and not pick.strip():
+                        raise RowRefused("name the entity page")
+                    item, asked = N.organisation_item(ctx, ctx.rel(page), pick)
+                    answer = "yes" if not pick else "another page: %s" % pick
+                    target = re.fullmatch(r"\[\[wiki/entities/([^\]|#]+)\]\]", item.fix["link"])
+                    entity = ctx.root.joinpath("Wikis", "Meetings", "wiki", "entities", (target.group(1) if target else "") + ".md")
+                    if not target or not near_side(lib, ws, view, entity):
+                        raise RowRefused(wall)
+            except N.Refusal as e:
+                # A page picked by name that cannot be used is said as a wall, whatever stopped it: a typed or
+                # forged name must not tell a page that is not there from one on the far side.
+                raise RowRefused(wall if (do == "organisation" and row["choice"] == "another") else str(e))
+            w.tag = i
+            N.OPS[item.fix["op"]](ctx, item, ShimJournal(w))
+            plan.append((i, row, do, item, asked, answer))
+
+        def run_edit(i, row, page, w):
+            if view.unattributed or not near_side(lib, ws, view, page) or ctx.rel(page) in open_walls(w):
+                raise RowRefused(wall)
+            edit = row["edit"]
+            w.tag = i
+            index = ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md"
+
+            def only(hit) -> bool:
+                """A correction in the panel reaches Meetings wiki pages on the near side of the view, and nothing
+                else: not a zone's notes, a memory, a page with no readable party or another party's page."""
+                pages = [hit.path] if hit.kind == "wiki" else list(hit.pages) if hit.kind == "raw" else []
+                base = (ctx.root / "Wikis" / "Meetings" / "wiki").resolve()
+                return bool(pages) and all(base in Path(x).resolve().parents and near_side(lib, ws, view, Path(x)) for x in pages)
+            try:
+                out = N.run_correction(ctx, [ctx.rel(page)], edit["old"], edit["new"], True, "", [], ctx.rel(page),
+                                       commit=False, watch=w.watch, only=only, rebuild=False)
+            except ValueError as e:
+                raise RowRefused(str(e))
+            plan.append((i, row, "correct", out, "", edit))
+
+        def rebuild_index(w):
+            """The Meetings index, once, from the pages that remain: it belongs to no row, so a row put back
+            never leaves it describing pages it did not write."""
+            index = ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md"
+            w.tag = None
+            if not any(e[2] == "correct" and e[3].get("done") and e[3]["done"].changed for e in plan):
+                if index in w.before:
+                    w.undo([index])
+                return
+            ingest = ctx.root.joinpath(*N.correct.INGEST)
+            if not ingest.is_file():
+                raise Refused("the Meetings index cannot be rebuilt (the meetings skill's ingest.py is missing), so nothing was written")
+            w.watch(index)
+            try:
+                r = subprocess.run([sys.executable, str(ingest), "--root", str(ctx.root), "index"], capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, timeout=CHECK_TIMEOUT)
+            except subprocess.SubprocessError:
+                raise Refused("the Meetings index took too long to rebuild, so nothing was written")
+            if r.returncode != 0:
+                w.undo([index])
+                raise Refused("the Meetings index could not be rebuilt, so nothing was written")
+
+        def triage(w, new, walls):
+            """Findings the write made, or walls-family findings on a file it wrote, put on the rows that wrote
+            those files by path: the rows are put back with their own reply, and the rest go on."""
+            root = Path(ws).resolve()
+            hit = {f[1] for _k, f in new} | {f[1] for _k, f in walls}
+            wallish_paths = {f[1] for _k, f in walls} | {f[1] for _k, f in new if wallish(f[0], f[2])}
+            bad = {}
+            for e in plan:
+                if e[2] not in NURTURE_DO:
+                    continue
+                mine = {str(p.relative_to(root)) for p, o in w.owners.items() if e[0] in o and root in p.parents}
+                if mine & hit:
+                    bad[e[0]] = "wall" if mine & wallish_paths else "new"
+            if bad:
+                put_back(w, [(e[0], e[1]) for e in plan if e[2] in NURTURE_DO], bad, wall, refuse)
+                rebuild_index(w)
+
+        def change(w):
+            for i, row in enumerate(rows):
+                w.tag = i
+                try:
+                    one(i, row, w)
+                except RowRefused as e:
+                    refuse(i, str(e))
+                except N.Held as e:
+                    refuse(i, "held: %s" % e)
+            w.tag = None
+            walls_gate(ws, w, [(e[0], e[1]) for e in plan if e[2] in NURTURE_DO], wall, refuse)
+            rebuild_index(w)
+            return None
+
+        def message(label, rels):
+            repo = Path(ws).resolve() / label if label != "." else Path(ws).resolve()
+            counts = {}
+            for e in plan:
+                if e[2] in NURTURE_DO and any(e[0] in o and repo_of_path(ws, p) == repo for p, o in TX.owners.items()):
+                    counts[e[2]] = counts.get(e[2], 0) + 1
+            words = {"answer": ("entity party", "entity parties"), "organisation": ("organisation link", "organisation links"),
+                     "correct": ("correction", "corrections")}
+            return "%s: context nurtured by hand; %s" % (
+                label.split("/", 1)[-1] if label != "." else "Workspace",
+                ", ".join("%d %s" % (n, words[k][0 if n == 1 else 1]) for k, n in sorted(counts.items())))
+
+        def finish(result, done):
+            refused_repos = done["refused"]
+            put, answered_keys = {}, set()
+            for e in list(plan):
+                i, row, how, item, asked, extra = e
+                if how in ("no", "later"):
+                    if how == "later":
+                        put[row["key"]] = extra
+                    said = "Left as it is" if how == "no" else "Put off until %s" % extra["until"]
+                    before = results.get(i)
+                    one_outcome = before["say"] if before and before["ok"] and how == "no" else \
+                        "%s; %s" % (before["say"], said.lower()) if before and before["ok"] else said
+                    results[i] = {"key": row.get("key"), "ok": True, "say": one_outcome}
+                    continue
+                files = [p for p, o in TX.owners.items() if i in o] if TX else []
+                repos = {repo_of_path(ws, p) for p in files}
+                failed = [r for r in repos if r is not None and (str(r.relative_to(Path(ws).resolve())) if r != Path(ws).resolve() else ".") in refused_repos]
+                if failed:
+                    names = {str(r.relative_to(Path(ws).resolve())) if r != Path(ws).resolve() else "." for r in repos if r is not None}
+                    kept = sorted(n for n in names if n in done["commits"])
+                    results[i] = {"key": row.get("key"), "ok": False,
+                                  "say": ("committed in %s, not committed elsewhere and put back there" % ", ".join(kept)) if kept
+                                  else "not committed, so nothing changed"}
+                    continue
+                if how == "correct":
+                    out = item
+                    said = "Corrected %s to %s" % (extra["old"], extra["new"]) if out.get("done") and out["done"].changed else \
+                        "Nothing live held the old value"
+                    results[i] = {"key": row.get("key"), "ok": True, "say": said}
+                    continue
+                results[i] = {"key": row.get("key"), "ok": True,
+                              "say": ("Whose it is: %s" % extra) if how == "answer" else "Where they work: written"}
+                answered_keys.add(row.get("key"))
+            # the day's report: the same lines the chat path writes
+            for e in plan:
+                i, row, how, item, asked, extra = e
+                if how == "no" and results.get(i, {}).get("ok"):
+                    N.record_answer(ctx, asked, "Is the proposed answer right?", "no", settled=False)
+                    continue
+                if not results.get(i, {}).get("ok") or how in ("no", "later"):
+                    continue
+                if how == "correct":
+                    class Done:
+                        pass
+                    d = Done()
+                    app = item.get("done")
+                    d.commits = [(r, s) for r, s in done["commits"].items()]
+                    d.changed = list(app.changed) if app else []
+                    d.superseded = list(app.superseded) if app else []
+                    d.uncommitted = [(p, "in no repository, so changed and not committed") for p in done["uncommitted"]]
+                    d.refused = list(done["refused"].items())
+                    rec = N.read_record(ctx)
+                    N.record_correction(ctx, rec, item["item"], extra["old"], extra["new"], "", d)
+                    N.write_report(ctx, rec)
+                elif how == "answer":
+                    N.record_answer(ctx, item.path, asked, extra)
+                else:
+                    N.organisation_answered(ctx, item, asked, "" if extra == "yes" else extra.split(": ", 1)[-1])
+            save_later(ws, put, {k for k in answered_keys if k})
+            return results
+
+        if not any(True for _ in rows):
+            raise Refused("there is nothing to save")
+        out = transaction(ws, change, commit=message, after=finish, triage=triage)
+    saved = sum(1 for r in out.values() if r["ok"] and not r["say"].startswith(("Left as it is", "Put off")))
+    later = sum(1 for r in out.values() if r["ok"] and r["say"].startswith("Put off"))
+    held_back = [r for r in out.values() if not r["ok"]]
+    if single:
+        only = out[0]
+        if not only["ok"]:
+            raise Refused(only["say"])
+        return only["say"]
+    say = "Saved %d answer%s" % (saved, "" if saved == 1 else "s")
+    if later:
+        say += ", put off %d" % later
+    if held_back:
+        say += ". %d row%s put back, named below" % (len(held_back), " was" if len(held_back) == 1 else "s were")
+    return {"say": say, "rows": [dict(out[i], index=i) for i in sorted(out)]}
+
+
+class ShimJournal:
+    """What nurture's fixes write through, in place of its Journal: the
+    transaction's Writes, which put every file back."""
+
+    def __init__(self, w):
+        self.w = w
+
+    def write(self, path, text):
+        self.w.write(path, text)
+
+
+def nurture_act(ws: Path, req: dict, today: dt.date):
+    verb = req["verb"]
+    if verb == "nurture-save":
+        return nurture_save(ws, req, clean_rows(req), today)
+    if verb == "nurture-answer":
+        row = {"do": "answer", "path": req.get("path"), "choice": "another", "pick": req.get("party")}
+    elif verb == "nurture-organisation":
+        row = {"do": "organisation", "path": req.get("path"), "choice": "another" if req.get("entity") else "yes",
+               "pick": req.get("entity") or None}
+    else:
+        row = {"do": "correct", "path": req.get("path"), "choice": "yes",
+               "edit": {"old": req.get("old"), "new": req.get("new")}}
+    return nurture_save(ws, req, clean_rows({"rows": [{k: v for k, v in row.items() if v is not None}]}), today, single=True)
 
 
 def managed_places() -> Optional[list]:
@@ -3885,6 +4828,8 @@ def act(ws: Path, req, today=None, now=None):
         return put_off(ws, req, today or dt.date.today())
     if req["verb"].startswith("question-"):
         return wiki_question_act(ws, req, today or dt.date.today())
+    if req["verb"].startswith("nurture-"):
+        return nurture_act(ws, req, today or dt.date.today())
     if req["verb"] == "continue":
         return continue_work(ws, req, now)
     if req["verb"] == "ask-desktop":

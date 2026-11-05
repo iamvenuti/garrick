@@ -1719,6 +1719,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if text.isEmpty, let inbox = inboxItem() {
 			menu.addItem(inbox)
 		}
+		if text.isEmpty, let questions = questionsItem() {
+			menu.addItem(questions)
+		}
 		menu.addItem(.separator())
 		for (n, zone) in shownZones().enumerated() {
 			if n > 0 { menu.addItem(.separator()) }
@@ -2002,6 +2005,36 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// row with nothing of its own to show takes a line from the rows that do.
 	@objc func openCatchUp(_ sender: Any?) { web.evaluateJavaScript("window.GarrickCatchUp && window.GarrickCatchUp.open()") }
 
+	// MARK: questions (#224)
+	// The Questions row, under Catch Up in File and beside the inbox in the menu and the panel: it
+	// brings the window forward on the page's Questions panel. The number is the open count of the
+	// zones the menu shows, as the page worked it out for each of them (menuData "questions"), never
+	// a sum of zones the menu does not show. A page that sent no count has no row.
+	func questionsOpen() -> Int? {
+		guard let z = ((menuState?["data"] as? [String: Any])?["questions"] as? [String: Any])?["z"] as? [String: Any] else { return nil }
+		return shownZones().reduce(0) { $0 + ($1["z"].flatMap { $0 as? String }.flatMap { z[$0] as? Int } ?? 0) }
+	}
+
+	func questionsTitle() -> String? {
+		guard let n = questionsOpen() else { return nil }
+		return n == 0 ? "Questions" : "Questions · \(n) open"
+	}
+
+	@objc func openQuestions(_ sender: Any? = nil) {
+		showWindow()
+		web.evaluateJavaScript("window.GarrickQuestions && window.GarrickQuestions.open()")
+	}
+
+	func questionsItem() -> NSMenuItem? {
+		guard let title = questionsTitle() else { return nil }
+		let item = NSMenuItem(title: title, action: #selector(openQuestions(_:)), keyEquivalent: "")
+		item.identifier = NSUserInterfaceItemIdentifier("questions")
+		item.target = self
+		show(item, symbol("questionmark.bubble"))
+		item.toolTip = "Opens the Questions panel"
+		return item
+	}
+
 	// MARK: the panel
 	// The menu's rows for the panel: the same zones, rows, actions and Keep
 	// awake, each running as its menu item does.
@@ -2024,6 +2057,13 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 					self.openInbox(act)
 				}
 			})
+		}
+		m.questions = questionsTitle().map { title in
+			PanelInbox(title: title, places: "", why: "Opens the Questions panel", run: { [weak self] in
+				guard let self else { return }
+				if checking { return self.heard.append("panel:questions") }
+				self.openQuestions()
+			}, icon: "questionmark.bubble")
 		}
 		m.awakeLabel = "Keep Awake" + awakeState()
 		m.awakeHeld = !held.isEmpty
@@ -3327,6 +3367,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		sub("File", [
 			ask,
 			item("Catch Up…", #selector(openCatchUp(_:)), ""),     // the page's Catch up, period and threads (#27)
+			item("Questions", #selector(openQuestions(_:)), ""),   // the page's Questions panel (#224)
 			item("Open in Browser", #selector(openInBrowser(_:)), "o"),
 			.separator(),
 			item("Close Window", #selector(NSWindow.performClose(_:)), "w"),
@@ -3433,6 +3474,7 @@ struct PanelInbox {
 	let places: String
 	let why: String              // the tooltip: what a click opens, or why it opens nothing
 	let run: (() -> Void)?
+	var icon = "tray.and.arrow.down"
 }
 
 // Empty, a status line in secondary text. Something waiting, a button: highlighted under the
@@ -3445,7 +3487,7 @@ struct PanelInboxLine: View {
 
 	var line: some View {
 		HStack(alignment: .firstTextBaseline, spacing: 6) {
-			Image(systemName: "tray.and.arrow.down").frame(width: 12)
+			Image(systemName: inbox.icon).frame(width: 12)
 			VStack(alignment: .leading, spacing: 2) {
 				Text(inbox.title)
 					.font(.system(size: 13, weight: inbox.run == nil ? .regular : .medium))
@@ -3493,6 +3535,7 @@ final class PanelModel: ObservableObject {
 	@Published var zones: [PanelZone] = []
 	@Published var everywhere: [PanelZone] = []    // every zone, the one in view first: what a search looks through (#338)
 	@Published var inbox: PanelInbox?
+	@Published var questions: PanelInbox?    // the Questions row (#224), under the inbox
 	@Published var trouble = false
 	@Published var mark = NSImage()
 	@Published var awakeLabel = "Keep Awake"
@@ -3643,6 +3686,12 @@ struct PanelView: View {
 				VStack(alignment: .leading, spacing: 1) {
 					if let inbox = model.inbox, query.isEmpty {
 						PanelInboxLine(inbox: inbox, perform: model.perform)
+						if let questions = model.questions {
+							PanelInboxLine(inbox: questions, perform: model.perform)
+						}
+						Divider().padding(.vertical, 4)
+					} else if let questions = model.questions, query.isEmpty {
+						PanelInboxLine(inbox: questions, perform: model.perform)
 						Divider().padding(.vertical, 4)
 					}
 					if !query.isEmpty && listed().isEmpty {
@@ -3854,7 +3903,7 @@ final class EdgePanel: NSObject, NSWindowDelegate {
 		let rows = model.zones.reduce(0) { n, z in
 			n + max(1, z.rows.count) + z.rows.reduce(0) { $0 + (model.unfolded.contains($1.id) ? $1.threads.count : 0) }
 		}
-		return 24 + 36 + (model.inbox == nil ? 0 : 52) + CGFloat(model.zones.count) * 24 + CGFloat(rows) * 25 + 44 + 24
+		return 24 + 36 + (model.inbox == nil ? 0 : 52) + (model.questions == nil ? 0 : 30) + CGFloat(model.zones.count) * 24 + CGFloat(rows) * 25 + 44 + 24
 	}
 
 	// Where it rests open on a screen, where it slides from, and the room its curves and the notch take.

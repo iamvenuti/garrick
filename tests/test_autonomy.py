@@ -708,7 +708,7 @@ class WallRefusalTest(unittest.TestCase):
                 if call.func.id == "git" and any(isinstance(a, ast.Constant) and a.value == "commit" for a in call.args):
                     committers.add(name)
         self.assertEqual({"committing", "commit_all", "commit_record"}, committers)
-        helpers = {"commit", "commit_all", "commit_new", "commit_record"}
+        helpers = {"commit", "commit_all", "commit_new", "commit_record", "commit_groups"}
         for name in sorted(helpers):
             self.assertIn("wall", [a.arg for a in functions[name].args.kwonlyargs], name)       # no default to forget
             self.assertEqual([None], functions[name].args.kw_defaults, name)

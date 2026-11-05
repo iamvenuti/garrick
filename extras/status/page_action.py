@@ -2529,6 +2529,8 @@ def open_sections_act(ws: Path, req: dict, today: dt.date) -> str:
     if not (Path(ws) / "Wikis" / wiki / "wiki").is_dir():
         raise Refused("no wiki called %s" % wiki)
     only = req.get("pages")
+    if isinstance(only, str):                   # typed in a terminal: --pages "a,b"
+        only = [x.strip() for x in only.split(",") if x.strip()]
     if only is not None and not (isinstance(only, list) and all(isinstance(x, str) for x in only)):
         raise Refused("pages is a list of page names")
     confirm = req.get("confirm")
@@ -2539,10 +2541,17 @@ def open_sections_act(ws: Path, req: dict, today: dt.date) -> str:
     wall = wall_sentence(ws)
     meetings = wiki == "Meetings"
 
+    def group_of(r):
+        return (r["zone"], tuple(sorted(r["parties"])))
+
     def say(rows):
         todo = [r for r in rows if r["state"] == "propose"]
-        lines = ["%d open line%s would become a question." % (len(todo), "" if len(todo) == 1 else "s")]
-        lines += ["  %s: %s" % (r["page"], r["line"]) for r in todo]
+        groups = sorted({group_of(r) for r in todo})
+        lines = ["%d open line%s would become a question, in %d group%s. Ask once per group, never for two together."
+                 % (len(todo), "" if len(todo) == 1 else "s", len(groups), "" if len(groups) == 1 else "s")]
+        for g in groups:
+            lines.append("Group%s:" % (" (%s, %s)" % (g[0], ", ".join(g[1])) if meetings else ""))
+            lines += ["  %s: %s" % (r["page"], r["line"]) for r in todo if group_of(r) == g]
         done = sum(r["state"] == "converted" for r in rows)
         if done:
             lines.append("%d already asked." % done)
@@ -2558,6 +2567,9 @@ def open_sections_act(ws: Path, req: dict, today: dt.date) -> str:
         rows = [r for r in open_section_rows(ws, wiki, wall, only) if r["state"] == "propose"]
         if not rows:
             return "Nothing to write. No open line is waiting for a question"
+        if len({group_of(r) for r in rows}) > 1:
+            raise Refused("those lines belong to more than one zone and party group, so nothing was written. "
+                          "Confirm one group at a time, naming its pages")
         folder = Path(ws) / "Wikis" / wiki / WIKI_QUESTION_DIR
         used = set()
 
@@ -5240,7 +5252,7 @@ CLI_FIELDS = {
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
     "question-close": ("wiki", "file"), "question-decide": ("wiki", "file", "words"),
-    "question-open-sections": ("wiki", "confirm"),
+    "question-open-sections": ("wiki", "confirm", "pages"),
     "question-work": ("wiki", "file"), "question-done": ("wiki", "file"),
     "todo-done": ("zone", "line", "file"), "todo-undo": ("zone", "line", "file"),
     "todo-date": ("zone", "line", "file", "date"),
@@ -5296,7 +5308,7 @@ def command_parser() -> argparse.ArgumentParser:
                                                   "with a verb, page with JSON)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
-                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until"):
+                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages"):
         ap.add_argument("--" + name)
     return ap
 

@@ -74,7 +74,7 @@ class TestConversion(OpenCase):
         self.page(ACME)
         before = snapshot(self.root)
         say = self.run_verb()
-        self.assertIn("2 open lines would become a question.", say)
+        self.assertIn("2 open lines would become a question, in 1 group.", say)
         self.assertIn("Who signs the volume floor?", say)
         self.assertEqual(before, snapshot(self.root))
         self.assertEqual(before, snapshot(self.root))
@@ -112,7 +112,7 @@ class TestConversion(OpenCase):
         self.page(ACME)
         self.run_verb(confirm=True)
         say = self.run_verb()
-        self.assertIn("0 open lines would become a question.", say)
+        self.assertIn("0 open lines would become a question, in 0 groups.", say)
         self.assertIn("2 already asked.", say)
         before = snapshot(self.root)
         self.assertIn("Nothing to write", self.run_verb(confirm=True))
@@ -172,7 +172,8 @@ class TestWalls(OpenCase):
     def test_the_question_carries_the_pages_parties_exactly_never_merged(self):
         self.page(ACME)
         write(self.meetings / (BIRCH + ".md"), meeting_page("Work", "[birch]", "Birch kick-off") + "\n## Open\n\n- Is the pilot paid?\n")
-        self.run_verb(confirm=True)
+        self.run_verb(confirm=True, pages=[ACME])
+        self.run_verb(confirm=True, pages=[BIRCH])
         seen = {}
         for q in self.files():
             text = q.read_text()
@@ -203,9 +204,47 @@ class TestWalls(OpenCase):
         self.assertIn("[birch]", q.read_text())
 
 
+class TestGroups(OpenCase):
+    def two(self):
+        self.page(ACME)
+        write(self.meetings / (BIRCH + ".md"), meeting_page("Work", "[birch]", "Birch kick-off") + "\n## Open\n\n- Is the pilot paid?\n")
+
+    def test_the_read_groups_by_zone_and_party_and_asks_once_per_group(self):
+        self.two()
+        say = self.run_verb()
+        self.assertIn("in 2 groups. Ask once per group, never for two together.", say)
+        self.assertEqual(["Group (Work, acme):", "Group (Work, birch):"], [l for l in say.splitlines() if l.startswith("Group")])
+        lines = say.splitlines()
+        acme, birch = lines.index("Group (Work, acme):"), lines.index("Group (Work, birch):")
+        self.assertTrue(all("acme" in l or "Acme" in l or "volume" in l or "price" in l for l in lines[acme + 1:birch - 0] if l.startswith("  ")))
+        self.assertNotIn("Is the pilot paid?", "\n".join(lines[acme:birch]))
+
+    def test_a_confirm_over_two_groups_is_refused_and_writes_nothing(self):
+        self.two()
+        before = snapshot(self.root)
+        for kw in ({}, {"pages": [ACME, BIRCH]}, {"pages": "%s,%s" % (ACME, BIRCH)}):
+            with self.assertRaisesRegex(pa.Refused, "more than one zone and party group"):
+                self.run_verb(confirm=True, **kw)
+        self.assertEqual(before, snapshot(self.root))
+
+    def test_a_confirm_takes_one_group_at_a_time(self):
+        self.two()
+        self.run_verb(confirm=True, pages=[ACME])
+        self.assertEqual(2, len(self.files()))
+        self.run_verb(confirm=True, pages=[BIRCH])
+        self.assertEqual(3, len(self.files()))
+
+    def test_the_same_parties_on_two_pages_are_one_group(self):
+        self.page(ACME)
+        self.page("wiki/sources/260311-acme-second", title="Acme second")
+        self.assertIn("in 1 group.", self.run_verb())
+        self.run_verb(confirm=True)
+        self.assertEqual(4, len(self.files()))
+
+
 class TestRefusals(OpenCase):
     def test_a_wrong_wiki_or_pages_is_refused(self):
-        for kw in ({"wiki": "Nowhere"}, {"pages": "all"}, {"confirm": "yes"}):
+        for kw in ({"wiki": "Nowhere"}, {"pages": 3}, {"confirm": "yes"}):
             with self.assertRaises(pa.Refused):
                 self.run_verb(**dict({"wiki": "Meetings"}, **kw))
 

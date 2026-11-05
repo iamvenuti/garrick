@@ -782,10 +782,13 @@ As the `knowledge` skill's *Lint*, for this wiki, and it changes no page:
    records do not decide, is also a question file, as *A question for the
    user* says, for one party at a time. The report line links it.
 5. **Open sections.** The script's list ends with every line under an
-   *Open* or *Open issues* heading, each a question it could become. Show
-   the user that list once and ask once for the whole of it. On a yes, run
+   *Open* or *Open issues* heading, each a question it could become. The
+   list comes in groups, one per zone and party. Show one group at a time
+   and ask once per group, never once for two groups together, and never
+   for groups a wall stands between. On a yes, run
    `python3 System/status/page_action.py question-open-sections --wiki
-   Meetings --confirm true`; it writes one question file per line, the page
+   Meetings --confirm true --pages "<page>,<page>"` naming that group's pages; it refuses pages from
+   two groups. It writes one question file per line, the page
    as `origin:` and `pages:`, the page's own `zone:` and `parties:` copied
    exactly, and changes no page. Without a yes, write nothing: a run
    without `--confirm` only lists. A page with no `zone:` or `parties:`

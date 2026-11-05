@@ -179,10 +179,10 @@ def read_decision(ws: Path, lib, rel: str, link: Callable) -> Optional[dict]:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return None
-    if lib.frontmatter_form_problem(text):
+    pa = page_action()
+    if lib.frontmatter_form_problem(text) or pa.party_keys_two_ways(text):
         return None
     fm = lib.parse_frontmatter_text(text)
-    pa = page_action()
     status = str(fm.get("status") or "").strip().lower()
     zone = fm.get("zone")
     tags = [pa.bare_tag(lib, t) for t in pa.tags_of(fm.get("parties"))]

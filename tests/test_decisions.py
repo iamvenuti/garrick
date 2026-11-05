@@ -153,6 +153,23 @@ class TestRecordAsADecision(DecisionCase):
         self.assertEqual(SENTENCE, str(caught.exception))
         self.assertEqual([], self.changed(before))
 
+    def test_a_zone_that_does_not_own_the_parties_is_refused_with_the_sentence(self):
+        write(self.meetings / "questions/261001 - strayed.md", question("Strayed: where?", zone="Personal"))
+        before = snap(self.root)
+        with self.assertRaises(pa.Refused) as caught:
+            self.decide(file="questions/261001 - strayed.md")
+        self.assertEqual(SENTENCE, str(caught.exception))
+        self.assertEqual([], self.changed(before))
+
+    def test_a_question_naming_its_parties_two_ways_is_refused(self):
+        for name, extra in (("both", "party: birch\n"), ("caps", "PARTIES: [birch]\n")):
+            write(self.meetings / ("questions/261001 - %s.md" % name), question("Two: which?", extra=extra))
+        before = snap(self.root)
+        for name in ("both", "caps"):
+            with self.assertRaisesRegex(pa.Refused, "two ways|nothing was written", msg=name):
+                self.decide(file="questions/261001 - %s.md" % name)
+        self.assertEqual([], self.changed(before))
+
     def test_a_knowledge_question_is_refused_plainly(self):
         k = self.root / "Wikis" / "Knowledge" / "questions" / "260901 - year.md"
         write(k, "---\ntype: question\nasked: 2026-09-01\nstatus: open\n---\n\n**Knowledge: which year?**\n\nThe report differs.\n")
@@ -210,6 +227,55 @@ class TestWhatTheCheckSays(DecisionCase):
         page = self.meetings / DECISION
         page.write_text(page.read_text().replace("status: valid", "status: superseded"))
         self.assertEqual([], [f for f in self.findings() if "`status:` changed" in f.message])
+
+    def test_a_record_of_another_question_the_same_day_does_not_count(self):
+        self.decide()
+        commit_all(self.meetings, "decide")
+        today = dt.date.today()
+        other = answer_record(answered=today.isoformat()).replace("questions/261001 - acme", "questions/261001 - birch")
+        write(self.meetings / ("raw/answers/%s - other.md" % today.strftime("%y%m%d")), other)
+        page = self.meetings / DECISION
+        page.write_text(page.read_text().replace("status: valid", "status: superseded"))
+        self.assertEqual(1, len([f for f in self.findings() if "`status:` changed" in f.message]))
+
+    def test_a_rename_with_a_status_edit_in_one_commit_is_warned_about(self):
+        self.decide()
+        commit_all(self.meetings, "decide")
+        old, new = self.meetings / DECISION, self.meetings / "wiki/decisions/261006 - acme-renamed.md"
+        new.write_text(old.read_text().replace("status: valid", "status: withdrawn"))
+        old.unlink()
+        commit_all(self.meetings, "rename and withdraw")
+        self.assertEqual(1, len([f for f in self.findings() if "`status:` changed" in f.message]))
+
+    def test_a_plain_rename_is_not(self):
+        self.decide()
+        commit_all(self.meetings, "decide")
+        old, new = self.meetings / DECISION, self.meetings / "wiki/decisions/261006 - acme-renamed.md"
+        new.write_text(old.read_text())
+        old.unlink()
+        commit_all(self.meetings, "rename")
+        self.assertEqual([], [f.message for f in self.findings() if "`status:` changed" in f.message])
+
+    def test_a_new_decision_that_does_not_start_valid_is_warned_about(self):
+        write(self.meetings / RECORD, answer_record())
+        write(self.meetings / DECISION, decision(status="superseded"))
+        self.assertTrue([f for f in self.findings() if "is new with `status: superseded`" in f.message])
+        commit_all(self.meetings, "hand made")
+        self.assertTrue([f for f in self.findings() if "is new with `status: superseded`" in f.message])
+
+    def test_a_new_decision_whose_day_has_no_record_of_its_own_question_is_warned_about(self):
+        write(self.meetings / RECORD, answer_record().replace("questions/261001 - acme", "questions/261001 - birch"))
+        write(self.meetings / DECISION, decision())
+        self.assertTrue([f for f in self.findings() if "no raw answer dated 2026-10-05 for its own question" in f.message])
+        write(self.meetings / RECORD, answer_record())
+        self.assertEqual([], [f for f in self.findings() if "for its own question" in f.message])
+
+    def test_both_party_keys_on_a_decision_or_a_question_are_warned_about(self):
+        write(self.meetings / RECORD, answer_record())
+        write(self.meetings / DECISION, decision(extra="party: birch\n"))
+        write(self.meetings / "questions/261001 - two.md", question("Two: which?", extra="PARTY: birch\n"))
+        messages = [f.message for f in self.findings("decisions") + self.findings("questions")]
+        self.assertEqual(2, len([m for m in messages if "both `party` and `parties`" in m]), messages)
 
     def test_a_decision_with_other_parties_than_its_raw_answer_is_warned_about(self):
         write(self.meetings / RECORD, answer_record())
@@ -286,6 +352,16 @@ class TestWhatThePanelLists(DecisionCase):
                 self.assertNotIn(hidden, blob, (view["key"], hidden))
         self.assertNotIn("Birch:", json.dumps(d["buckets"]["Work|acme"]["decisions"]))
         self.assertNotIn("Acme:", json.dumps(d["buckets"]["Work|birch"]["decisions"]))
+
+    def test_a_decision_naming_its_parties_two_ways_is_not_listed(self):
+        d = self.meetings / "wiki" / "decisions"
+        write(d / "261005 - twoway.md", decision(extra="party: birch\n").replace("Acme: which", "Twoway: which").replace(
+            "revisit", "revisit").replace("---\n\n#", "revisit: \"x\"\n---\n\n#", 1))
+        write(d / "261005 - caps.md", decision(extra="PARTIES: [birch]\nrevisit: \"x\"\n").replace("Acme: which", "Caps: which"))
+        commit_all(self.meetings, "two ways")
+        blob = json.dumps(self.data()["buckets"])
+        self.assertNotIn("Twoway:", blob)
+        self.assertNotIn("Caps:", blob)
 
     def test_a_decision_with_a_wall_finding_is_not_listed(self):
         write(self.meetings / "wiki/decisions/261005 - acme.md",

@@ -3029,6 +3029,10 @@ def check_questions(ws: Workspace) -> List[Finding]:
             if f in ws.meeting_questions:
                 out += party_findings(ws, "questions", rel(ws, f), ws.meeting_raw.get(f, ws.meetings[f]), "Meetings question",
                                       "ask it once for each side")
+                if party_keys_problem(read_text(f) or ""):
+                    out.append(Finding(WARNING, "questions", rel(ws, f), "carries both `party` and `parties`, or spells one in "
+                                       "capitals, which a reader could take two ways; the walls read `parties:` alone, so it "
+                                       "is placed nowhere", "A Meetings question names its parties two ways"))
         for f in wiki_answers(wiki):
             if f in ws.meeting_answers:
                 out += party_findings(ws, "questions", rel(ws, f), ws.meeting_raw.get(f, ws.meetings[f]), "Meetings answer",
@@ -3062,57 +3066,119 @@ def decision_sections(text: str) -> set:
     return names
 
 
-def day_record(wiki: Path, day: str) -> bool:
-    """Whether the wiki holds a raw answer dated `day` (YYYY-MM-DD): by its
-    `answered:` date, or by the date its name begins with."""
-    folder = wiki.joinpath(*WIKI_ANSWERS)
-    if not folder.is_dir():
+def link_target(value) -> str:
+    """The target of a `[[link]]` or a bare path, without brackets or `.md`, for comparing."""
+    v = str(value or "").strip()
+    m = re.fullmatch(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]", v)
+    v = (m.group(1) if m else v).strip()
+    return v[:-3] if v.endswith(".md") else v
+
+
+def day_record(wiki: Path, day: str, fm: dict) -> bool:
+    """Whether the wiki holds a raw answer dated `day` (YYYY-MM-DD) that is the
+    one for this decision's own question: it names the same question as the
+    decision's `question:`, and carries the decision's zone and parties. Any
+    other record that day does not count."""
+    want = link_target(fm.get("question"))
+    if not want:
         return False
+    parties = sorted(strip_tag(t) for t in as_list(fm.get("parties")))
     short = day[2:4] + day[5:7] + day[8:10]
     for f in wiki_answers(wiki):
-        fm = parse_frontmatter(f)
-        if fm.get("type") == "answer" and (str(fm.get("answered") or "").strip() == day or f.name.startswith(short + " - ")):
+        rfm = parse_frontmatter(f)
+        if rfm.get("type") != "answer" or frontmatter_form_problem(read_text(f) or ""):
+            continue
+        if str(rfm.get("answered") or "").strip() != day and not f.name.startswith(short + " - "):
+            continue
+        if link_target(rfm.get("question")) == want and str(rfm.get("zone") or "").strip() == str(fm.get("zone") or "").strip() \
+                and sorted(strip_tag(t) for t in as_list(rfm.get("parties"))) == parties:
             return True
     return False
 
 
-def decision_status_changes(ws: Workspace, f: Path) -> List[Tuple[str, str]]:
-    """(day, what changed) for each time git, or the disk against git's last
-    commit, shows `status:` of a decision page changed, within
-    DECISION_STATUS_DAYS. The day of an uncommitted change is today."""
-    top = _git(["rev-parse", "--show-toplevel"], f.parent)
+def decision_events(ws: Workspace, wiki: Path) -> List[dict]:
+    """What git, and the disk against git's last commit, show of the decision
+    pages of one wiki (renames followed): {"path", "day", "kind": "new" |
+    "status", "what", "fm"}. A page new to the history, or moved into the
+    folder, is "new" (its day is its own `decided:`); a page whose `status:`
+    changed, in place or with a rename in the same commit, is "status"
+    (its day is the commit's, or today's for an uncommitted change). Changes
+    older than DECISION_STATUS_DAYS are no longer asked about."""
+    top = _git(["rev-parse", "--show-toplevel"], wiki)
     if not top:
         return []
     top_path = Path(top.strip()).resolve()
     try:
-        name = f.resolve().relative_to(top_path).as_posix()
+        spec = (wiki.resolve() / Path(*WIKI_DECISIONS)).relative_to(top_path).as_posix()
     except ValueError:
         return []
-    out = []
-
-    def status_of(text: Optional[str]) -> Optional[str]:
-        if text is None:
-            return None
-        return str(parse_frontmatter_text(text).get("status") or "").strip().lower()
-    log = _git(["log", "--format=%x01%H %cs", "--no-renames", "--", name], top_path) or ""
     today = datetime.date.today()
-    for block in [b for b in log.split("\x01") if b.strip()]:
-        commit, _, day = block.split("\n")[0].partition(" ")
+    out: List[dict] = []
+
+    def fm_of(text: Optional[str]) -> dict:
+        return parse_frontmatter_text(text) if text is not None else {}
+
+    def state(text: Optional[str]) -> str:
+        return str(fm_of(text).get("status") or "").strip().lower()
+
+    def add(path: str, day: str, old: Optional[str], new: Optional[str], moved_in: bool = False) -> None:
+        if not path.endswith(".md") or new is None:
+            return
+        if old is None or moved_in:
+            out.append({"path": path, "day": str(fm_of(new).get("decided") or "").strip()[:10], "kind": "new",
+                        "what": state(new) or "none", "fm": fm_of(new)})
+        elif state(old) != state(new):
+            out.append({"path": path, "day": day, "kind": "status", "fm": fm_of(new),
+                        "what": "%s to %s" % (state(old) or "none", state(new) or "none")})
+    log = _git(["log", "--format=%x01%H %cs", "-M", "--name-status", "-z", "--", spec], top_path) or ""
+    for commit, st, path, before in name_status(log):
+        sha, _, day = (commit or "").partition(" ")
         try:
-            age = (today - datetime.date.fromisoformat(day.strip())).days
+            if (today - datetime.date.fromisoformat(day.strip())).days > DECISION_STATUS_DAYS:
+                continue
         except ValueError:
             continue
-        before = _git(["show", "%s^:%s" % (commit, name)], top_path)
-        if before is None or age > DECISION_STATUS_DAYS:
-            continue                                       # the commit that made the page, or an old one
-        now = _git(["show", "%s:%s" % (commit, name)], top_path)
-        if now is not None and status_of(before) != status_of(now):
-            out.append((day.strip(), "%s to %s" % (status_of(before) or "none", status_of(now) or "none")))
-    head = _git(["show", "HEAD:%s" % name], top_path)
-    disk = read_text(f)
-    if head is not None and disk is not None and status_of(head) != status_of(disk):
-        out.append((today.isoformat(), "%s to %s" % (status_of(head) or "none", status_of(disk) or "none")))
-    return out
+        new = _git(["show", "%s:%s" % (sha, path)], top_path)
+        if st[:1] == "A":
+            add(path, day.strip(), None, new)
+        elif st[:1] == "M":
+            add(path, day.strip(), _git(["show", "%s^:%s" % (sha, path)], top_path), new)
+        elif st[:1] == "R":
+            inside = (before or "").startswith(spec + "/")
+            add(path, day.strip(), _git(["show", "%s^:%s" % (sha, before)], top_path) if inside else None, new, moved_in=not inside)
+    diff = _git(["diff", "HEAD", "-M", "--name-status", "-z", "--", spec], top_path) or ""
+    for _, st, path, before in name_status(diff):
+        disk = read_text(top_path / path)
+        if st[:1] == "A":
+            add(path, today.isoformat(), None, disk)
+        elif st[:1] == "M":
+            add(path, today.isoformat(), _git(["show", "HEAD:%s" % path], top_path), disk)
+        elif st[:1] == "R":
+            inside = (before or "").startswith(spec + "/")
+            add(path, today.isoformat(), _git(["show", "HEAD:%s" % before], top_path) if inside else None, disk, moved_in=not inside)
+    for path in (_git(["ls-files", "--others", "--exclude-standard", "-z", "--", spec], top_path) or "").split("\0"):
+        if path:
+            add(path, today.isoformat(), None, read_text(top_path / path))
+    out_unique, seen = [], set()
+    for e in out:
+        key = (e["path"], e["kind"], e["what"], e["day"])
+        if key not in seen:
+            seen.add(key)
+            out_unique.append(e)
+    for e in out_unique:
+        e["top"] = top_path
+    return out_unique
+
+
+def party_keys_problem(text: str) -> bool:
+    """Whether a Meetings question or decision spells its party keys so that
+    a reader could take them two ways: `party:` beside `parties:`, or either
+    in capitals. The walls read `parties:` alone there."""
+    m = re.match(r"---\n(.*?)\n---", text or "", re.S)
+    if not m:
+        return False
+    keys = [k for k in re.findall(r"(?m)^([A-Za-z_][\w-]*)\s*:", m.group(1)) if k.lower() in ("party", "parties")]
+    return bool(keys) and (len({k.lower() for k in keys}) > 1 or any(k != k.lower() for k in keys))
 
 
 def check_decisions(ws: Workspace) -> List[Finding]:
@@ -3154,12 +3220,25 @@ def check_decisions(ws: Workspace) -> List[Finding]:
                     sorted(strip_tag(t) for t in as_list(rfm.get("parties"))) != sorted(strip_tag(t) for t in as_list(raw.get("parties"))):
                 out.append(Finding(WARNING, "decisions", r, "carries a zone or parties that are not its raw answer's, which it must copy exactly",
                                    "A decision page carries other parties than its raw answer"))
-        for day, what in decision_status_changes(ws, f):
-            if not day_record(wiki, day):
-                out.append(Finding(WARNING, "decisions", r,
-                                   "`status:` changed (%s) on %s, with no raw answer dated that day; only your own answer "
-                                   "settles a decision, so file it, or put the status back" % (what, day),
-                                   "A decision's status changed without a raw answer the same day"))
+        if party_keys_problem(text):
+            out.append(Finding(WARNING, "decisions", r, "carries both `party` and `parties`, or spells one in capitals, which a "
+                               "reader could take two ways; the walls read `parties:` alone, so it is placed nowhere",
+                               "A decision page names its parties two ways"))
+    for e in decision_events(ws, wiki):
+        r = rel(ws, e["top"] / e["path"])
+        if e["kind"] == "new":
+            if e["what"] != "valid":
+                out.append(Finding(WARNING, "decisions", r, "is new with `status: %s`; a decision starts valid, by your own save, "
+                                   "and only you move it on" % e["what"], "A new decision page does not start valid"))
+            elif not (e["day"] and day_record(wiki, e["day"], e["fm"])):
+                out.append(Finding(WARNING, "decisions", r, "is new, with no raw answer dated %s for its own question, zone and "
+                                   "parties; only your own answer settles a decision" % (e["day"] or "its day"),
+                                   "A new decision page has no raw answer of its own"))
+        elif not day_record(wiki, e["day"], e["fm"]):
+            out.append(Finding(WARNING, "decisions", r,
+                               "`status:` changed (%s) on %s, with no raw answer dated that day for its own question; only your "
+                               "own answer settles a decision, so file it, or put the status back" % (e["what"], e["day"]),
+                               "A decision's status changed without a raw answer the same day"))
     return out
 
 

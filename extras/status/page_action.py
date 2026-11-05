@@ -2229,6 +2229,18 @@ class WikiQuestion:
         return self.path.stem
 
 
+def party_keys_two_ways(text: str) -> bool:
+    """Whether a page spells its party keys so a reader could take them two
+    ways: `party:` beside `parties:`, or either in capitals. The walls read
+    `parties:` alone on a Meetings question or decision, so such a page is
+    placed nowhere and nothing is saved from it (fail closed)."""
+    m = re.match(r"---\n(.*?)\n---", text or "", re.S)
+    if not m:
+        return False
+    keys = [k for k in re.findall(r"(?m)^([A-Za-z_][\w-]*)\s*:", m.group(1)) if k.lower() in ("party", "parties")]
+    return bool(keys) and (len({k.lower() for k in keys}) > 1 or any(k != k.lower() for k in keys))
+
+
 def question_parties(q: WikiQuestion, wall: str) -> list:
     """The question's own parties, checked: a Meetings question names its zone
     and parties, every one a tag the workspace knows, and no two walled from
@@ -2454,6 +2466,11 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
         if verb == "question-decide":
             if q.name != "Meetings" or not tags:
                 raise Refused(NO_DECISION)
+            if party_keys_two_ways(q.text):
+                raise Refused("that question names its parties two ways, so nothing was written")
+            # the zone must own the parties: the panel's own test, with its wording
+            if not View(ws, q.lib, str(q.fm.get("zone")).strip(), tags[0]).ok(tags):
+                raise Refused(wall)
             words = wiki_words(req)
             set_front(q.text, {"status": "answered"})
 

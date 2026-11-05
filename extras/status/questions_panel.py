@@ -28,7 +28,9 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import os
 import re
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -131,6 +133,15 @@ def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable)
                 if f.is_file() and not f.is_symlink() and f.resolve().parent.name != "" and (q.dir / "raw").resolve() in f.resolve().parents:
                     origin = {"name": Path(name).name, "href": link(f)}
                     break
+            else:
+                # An origin that is a wiki page (a question the lint made from an Open section): shown the way a
+                # `pages:` link is, and only when that page is on the question's own side of every wall.
+                page = pa.page_target(q, l)
+                if page is not None:
+                    ptags = pa.page_tags(q, page) if q.name == "Meetings" else []
+                    if q.name == "Knowledge" or (ptags and set(ptags) <= set(tags) and not any(
+                            q.lib.walled(q.context, a, b) for a in ptags for b in tags)):
+                        origin = {"name": page.relative_to(q.dir).as_posix(), "href": link(page)}
     slug = pa.answer_slug(q.stem())
     answer_file = "Wikis/%s/raw/answers/%s - %s.md" % (wiki, today.strftime("%y%m%d"), slug)
     qpath = "Wikis/%s/%s" % (wiki, rel)
@@ -441,17 +452,36 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         if any(k.startswith(zone + "|") for k in views):
             zone_info.append(info)
     buckets: Dict[str, dict] = {k: {"questions": [], "answered": 0, "review": {"entities": [], "people": [], "read": []},
-                                    "picks": {"entities": [], "parties": []}, "decisions": []} for k in views}
+                                    "picks": {"entities": [], "parties": []}, "decisions": [], "waiting": 0} for k in views}
     knowledge, answered_k = [], 0
     # A question whose own file carries a walls-family finding is not listed: a save would be refused.
     wall_files = {re.sub(r":\d+$", "", str(f.get("path"))) for f in (C or {}).get("findings", [])
                   if isinstance(f, dict) and pa.wallish(f.get("check"), f.get("message"))}
+    # The kept check result is only as new as its time: a question file edited after it was made has not been
+    # checked, so it is not shown but counted as waiting for the next check, per group and with no text. A result
+    # made by this build is as new as the build; no result, or one that failed, leaves every question waiting.
+    checked_at = None
+    if C and not C.get("failed"):
+        checked_at = C["at"] if isinstance(C.get("at"), (int, float)) else time.time()
+    waiting_k = 0
     for wiki in WIKIS:
         for rel in question_files(ws, wiki):
             if "Wikis/%s/%s" % (wiki, rel) in wall_files:
                 continue
             q = read_question(ws, wiki, rel, today, link)
             if q is None:
+                continue
+            try:
+                stale = checked_at is None or os.stat(Path(ws) / "Wikis" / wiki / rel).st_mtime > checked_at
+            except OSError:
+                stale = True
+            if stale:
+                if wiki == "Knowledge":
+                    waiting_k += 1
+                else:
+                    for key, view in views.items():
+                        if not key.startswith("unattributed|") and q["zone"] == view.zone and view.ok(q["parties"]):
+                            buckets[key]["waiting"] += 1
                 continue
             if wiki == "Knowledge":
                 if q["status"] == "answered":
@@ -491,7 +521,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         per_group[info["zone"]] = [{"h": v["heading"], "n": len(buckets[v["key"]]["questions"])}
                                    for v in group_views([info]) if v["kind"] != "unattributed"]
     return {"today": today.isoformat(), "root": str(ws), "zones": zone_info, "select": selections(zone_info), "buckets": buckets, "knowledge": knowledge,
-            "knowledge_answered": answered_k, "menu": menu, "menu_groups": per_group,
+            "knowledge_answered": answered_k, "knowledge_waiting": waiting_k, "menu": menu, "menu_groups": per_group,
             "menu_knowledge": len(knowledge)}
 
 
@@ -590,7 +620,7 @@ function pkey(){var l=scopes();if(!l.length)return S.zone==='*'?'*':'';if(S.part
 if(l.some(function(s){return s.tag===S.party}))return S.party;return S.zone==='*'?'*':zinfo().default}
 /* the groups to show come from the page's own table (group_views in Python), never worked out here */
 function sel(){return(D.select||{})[S.zone+'|'+pkey()]||{views:[],sum:false}}
-var EMPTY={questions:[],answered:0,decisions:[],review:{entities:[],people:[],read:[]},picks:{entities:[],parties:[]}};
+var EMPTY={questions:[],answered:0,decisions:[],waiting:0,review:{entities:[],people:[],read:[]},picks:{entities:[],parties:[]}};
 function bucketOf(k){return(D.buckets||{})[k]||EMPTY}
 function qviews(){return sel().views.filter(function(v){return v.kind!=='unattributed'})}
 function uviews(){return sel().views.filter(function(v){return v.kind==='unattributed'})}
@@ -598,9 +628,9 @@ function key(q){return q.wiki+'/'+q.file}
 function age(q){return Math.floor((new Date(D.today)-new Date(q.asked||D.today))/864e5)}
 var AGE={any:0,week:7,month:30};
 /* one entry per group: its own questions and its own count. Knowledge carries no party, so it is a group of its own. */
-function groups(){var gs=qviews().map(function(v){var b=bucketOf(v.key);return{v:v,qs:b.questions.filter(function(q){return !S.gone[key(q)]}),answered:b.answered,decs:b.decisions||[]}});
+function groups(){var gs=qviews().map(function(v){var b=bucketOf(v.key);return{v:v,qs:b.questions.filter(function(q){return !S.gone[key(q)]}),answered:b.answered,decs:b.decisions||[],wait:b.waiting||0}});
 var k=(D.knowledge||[]).filter(function(q){return !S.gone[key(q)]});
-if(k.length||D.knowledge_answered)gs.push({v:{key:'knowledge',heading:'Knowledge',kind:'knowledge'},qs:k,answered:D.knowledge_answered||0,decs:[]});return gs}
+if(k.length||D.knowledge_answered||D.knowledge_waiting)gs.push({v:{key:'knowledge',heading:'Knowledge',kind:'knowledge'},qs:k,answered:D.knowledge_answered||0,decs:[],wait:D.knowledge_waiting||0});return gs}
 function shown(){var flat=[],gs=groups();gs.forEach(function(g){g.items=g.qs.filter(function(q){return !q.verdict&&(!S.wiki||q.wiki===S.wiki)&&age(q)>=AGE[S.age]})
 .sort(function(a,b){return(a.asked||'').localeCompare(b.asked||'')||a.file.localeCompare(b.file)});g.items.forEach(function(q){flat.push({q:q,g:g})})});return{gs:gs,flat:flat}}
 function ekey(e){return e.g.v.key+'|'+key(e.q)}
@@ -611,10 +641,10 @@ function nurtureN(){if(!sel().sum)return null;var n=0;
 uviews().forEach(function(v){n+=bucketOf(v.key).review.entities.filter(function(r){return !S.gone['r:'+r.key]}).length});
 qviews().forEach(function(v){n+=bucketOf(v.key).review.people.filter(function(r){return !S.gone['r:'+r.key]}).length});return n}
 function counts(){var c=$('qp-counts'),gs=groups();c.textContent='';
-function chips(box,qs,ans,decs){function chip(n,t){var s=el('span','chip');s.appendChild(el('b','',String(n)));s.appendChild(document.createTextNode(t));box.appendChild(s)}
-chip(open(qs),'open');chip(qs.filter(function(q){return q.due}).length,'due today');chip(qs.filter(function(q){return q.verdict}).length,'proposed verdicts');chip(decs,'decisions to review');chip(ans,'answered, not worked in')}
-if(sel().sum){var all=[],ans=0,dn=0;gs.forEach(function(g){all=all.concat(g.qs);ans+=g.answered;dn+=g.decs.length});chips(c,all,ans,dn)}
-else gs.forEach(function(g){var row=el('div','qp-gcount');row.appendChild(el('strong','',g.v.heading));chips(row,g.qs,g.answered,g.decs.length);c.appendChild(row)});
+function chips(box,qs,ans,decs,wait){function chip(n,t){var s=el('span','chip');s.appendChild(el('b','',String(n)));s.appendChild(document.createTextNode(t));box.appendChild(s)}
+chip(open(qs),'open');chip(qs.filter(function(q){return q.due}).length,'due today');chip(qs.filter(function(q){return q.verdict}).length,'proposed verdicts');chip(decs,'decisions to review');chip(ans,'answered, not worked in');if(wait)chip(wait,'waiting for the next check')}
+if(sel().sum){var all=[],ans=0,dn=0,wn=0;gs.forEach(function(g){all=all.concat(g.qs);ans+=g.answered;dn+=g.decs.length;wn+=g.wait});chips(c,all,ans,dn,wn)}
+else gs.forEach(function(g){var row=el('div','qp-gcount');row.appendChild(el('strong','',g.v.heading));chips(row,g.qs,g.answered,g.decs.length,g.wait);c.appendChild(row)});
 var tn=$('qp-tab-n');if(tn){var n=wikiN();tn.textContent=n===null?'':String(n)}}
 function answeredText(){var gs=groups().filter(function(g){return g.answered});if(sel().sum)return gs.reduce(function(n,g){return n+g.answered},0)+' answered, waiting to be worked in.';
 return gs.map(function(g){return g.v.heading+' '+g.answered}).join('; ')+' answered, waiting to be worked in.'}

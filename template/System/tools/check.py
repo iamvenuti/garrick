@@ -970,17 +970,21 @@ def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
         ws.meeting_questions.add(question)
     # A raw answer (#224) is the question's parties' material too: whoever
     # may not see the question may not see what was said in answer to it.
-    for answer in wiki_answers(root / "Wikis" / "Meetings"):
-        ws.meetings[answer] = meeting_view(ws, answer, note_frontmatter(ws, answer))
-        ws.meeting_questions.add(answer)
-        ws.meeting_answers.add(answer)
+    # A page that faded keeps its zone and parties, so a raw answer or a decision at any grade is read too.
+    homes = [root / "Wikis" / "Meetings"] + [root / "Wikis" / "Meetings" / g for g in FADED]
+    for home in homes:
+        for answer in wiki_answers(home):
+            ws.meetings[answer] = meeting_view(ws, answer, note_frontmatter(ws, answer))
+            ws.meeting_questions.add(answer)
+            ws.meeting_answers.add(answer)
     # A decision page (#224, point 5) carries its question's zone and parties
     # and is read as the question is: the walls hold it to those, not to a
     # `party:` of its own.
-    for decision in wiki_decisions(root / "Wikis" / "Meetings"):
-        ws.meetings[decision] = meeting_view(ws, decision, note_frontmatter(ws, decision))
-        ws.meeting_questions.add(decision)
-        ws.meeting_decisions.add(decision)
+    for home in homes:
+        for decision in wiki_decisions(home):
+            ws.meetings[decision] = meeting_view(ws, decision, note_frontmatter(ws, decision))
+            ws.meeting_questions.add(decision)
+            ws.meeting_decisions.add(decision)
     return ws
 
 
@@ -6039,8 +6043,11 @@ def form_scope(ws: Workspace, path: Path) -> Optional[Tuple[str, ...]]:
         inner = _fold_parts(here.parts)[len(wiki.parts):]
         if wiki == meetings and inner[:2] == WIKI_ANSWERS:
             return ()                       # a raw answer is read by the walls as its question is (#224)
-        if wiki == meetings and inner[:2] == WIKI_DECISIONS:
+        faded = wiki == meetings and inner[:1] and inner[0] in FADED
+        if wiki == meetings and (inner[:2] == WIKI_DECISIONS or (faded and inner[1:3] == WIKI_DECISIONS)):
             return ()                       # so is a decision page, which carries its question's zone and parties
+        if faded and inner[1:3] == WIKI_ANSWERS:
+            return ()                       # and a raw answer that faded with it
         if "raw" in inner[:-1]:
             return None
         if wiki == meetings and (inner[0] == WIKI_QUESTIONS or inner[:2] in (("wiki", "entities"), ("wiki", "sources"))
@@ -6277,11 +6284,11 @@ def apply_git_view(ws: Workspace, committing: Path) -> List[Finding]:
     ws.git_view = git_view(ws, committing)
     folders = meeting_sources(ws.root)
     asked = ws.root / "Wikis" / "Meetings" / WIKI_QUESTIONS
-    answered = ws.root.joinpath("Wikis", "Meetings", *WIKI_ANSWERS)
-    decided = ws.root.joinpath("Wikis", "Meetings", *WIKI_DECISIONS)
+    answered = [ws.root.joinpath("Wikis", "Meetings", *g, *WIKI_ANSWERS) for g in [()] + [(x,) for x in FADED]]
+    decided = [ws.root.joinpath("Wikis", "Meetings", *g, *WIKI_DECISIONS) for g in [()] + [(x,) for x in FADED]]
     for path, text in sorted(ws.git_view.items()):
-        is_answer = answered in path.parents
-        is_decision = decided in path.parents
+        is_answer = any(a in path.parents for a in answered)
+        is_decision = any(d in path.parents for d in decided)
         question = asked in path.parents or is_answer or is_decision
         if (question or any(f in path.parents for f in folders)) and path.suffix.lower() == ".md":
             then = meeting_view(ws, path, parse_frontmatter_text(text), text)

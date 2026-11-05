@@ -194,6 +194,53 @@ class TestNoCorrectionTouchesADecision(DecisionCase):
         self.assertIn("Mira Holte", (self.people / "mira-holt.md").read_text())
 
 
+class TestAFadedDecision(DecisionCase):
+    """A page keeps its zone and parties wherever it fades to, so the walls read it there as in wiki/decisions."""
+    FORMS = {
+        "wikilink": "See [[261005 - pallets]].\n",
+        "markdown": "See [it](../../../../../Wikis/Meetings/%s/wiki/decisions/261005%%20-%%20pallets.md).\n",
+        "code": "See `Wikis/Meetings/%s/wiki/decisions/261005 - pallets.md`.\n",
+    }
+
+    def walls_on_note(self, body):
+        note = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "faded-link.md"
+        write(note, "---\nparty: birch\n---\n\n" + body)
+        rel = str(note.relative_to(self.root))
+        return [f for f in check.run_checks(self.root) if f.check == "walls" and f.path == rel]
+
+    def put(self, home):
+        write(self.meetings / RECORD, answer_record())
+        write(self.meetings / home / "wiki/decisions/261005 - pallets.md", decision())
+        write(self.meetings / home / "raw/answers/261005 - pallets.md", answer_record())
+
+    def test_a_live_decision_is_refused_on_each_form(self):
+        self.put("")
+        for name, body in self.FORMS.items():
+            body = body % "" if "%s" in body else body
+            self.assertTrue(self.walls_on_note(body.replace("Meetings//", "Meetings/")), name)
+
+    def test_a_dormant_or_archived_decision_is_refused_on_each_form(self):
+        for grade in ("dormant", "archive"):
+            self.put(grade)
+            for name, body in self.FORMS.items():
+                body = body % grade if "%s" in body else body
+                self.assertTrue(self.walls_on_note(body), (grade, name))
+
+    def test_a_faded_raw_answer_is_read_as_its_question_is(self):
+        self.put("dormant")
+        ws = check.discover(self.root)
+        self.assertIn(self.meetings / "dormant/wiki/decisions/261005 - pallets.md", ws.meeting_decisions)
+        self.assertIn(self.meetings / "dormant/raw/answers/261005 - pallets.md", ws.meeting_answers)
+
+    def test_fade_leaves_a_decision_in_place(self):
+        spec_ = importlib.util.spec_from_file_location("garrick_fade_decisions_test", str(TOOLS / "fade.py"))
+        fade = importlib.util.module_from_spec(spec_)
+        sys.modules[spec_.name] = fade
+        spec_.loader.exec_module(fade)
+        self.assertIn("decision", fade.FIXED_TYPES)
+        self.assertIn("decisions", fade.FIXED_FOLDERS)
+
+
 class TestWorkingItIn(DecisionCase):
     def test_the_work_in_step_leaves_the_status_as_it_is(self):
         self.decide()
@@ -369,7 +416,7 @@ class TestWhatThePanelLists(DecisionCase):
         commit_all(self.meetings, "decisions")
 
     def data(self):
-        return qp.build(self.root, None, status.nurture_lib(self.root), TODAY, status.Links(self.root))
+        return qp.build(self.root, {"findings": []}, status.nurture_lib(self.root), TODAY, status.Links(self.root))
 
     def titles(self, bucket):
         return sorted(d["title"] for d in bucket["decisions"])

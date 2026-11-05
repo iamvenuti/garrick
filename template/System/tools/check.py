@@ -6373,6 +6373,9 @@ def frontmatter_keys_named(text: str, names) -> List[str]:
     body = _frontmatter_body(text) or []
     found = []
     for i, line in enumerate(body):
+        # A key inside a flow mapping (`{a: 1, parties: x}`) counts wherever the line holds one.
+        found += [k.lower() for k in re.findall(r"""[{,]\s*["']?([A-Za-z_]+)["']?\s*:""", line)
+                  if "{" in line and k.lower() in names]
         m = re.match(r"""^\s*(?:-\s+)*["']?([A-Za-z_]+)["']?\s*:(.*)$""", line)
         if not m or m.group(1).lower() not in names:
             continue
@@ -6386,6 +6389,17 @@ def frontmatter_keys_named(text: str, names) -> List[str]:
         if value not in ("", "[]", "''", '""', "null", "~") or nested:
             found.append(m.group(1).lower())
     return found
+
+
+def frontmatter_unreadable(text: str) -> bool:
+    """True when a frontmatter line has a key that cannot be read plainly: a line that starts, after its indent
+    or `- `, with `{`, `?`, `!`, `&`, `*` or `<<`, or a quoted key holding a backslash. Such a line can spell
+    `parties` in a way the scan cannot see, so a Knowledge page holding one is refused (#388)."""
+    for line in _frontmatter_body(text) or []:
+        if re.match(r"""^\s*(?:-\s+)*(?:[{?!&*]|<<)""", line) \
+                or re.match(r"""^\s*(?:-\s+)*(?:"[^"]*\\[^"]*"|'[^']*\\[^']*')\s*:""", line):
+            return True
+    return False
 
 
 def check_knowledge(ws: Workspace) -> List[Finding]:
@@ -6446,6 +6460,11 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                                    "Take the field out, or file the item in Meetings if it is a conversation"
                                    % " and ".join("`%s`" % k for k in carried),
                                    "A Knowledge page carries parties"))
+            if suffix == ".md" and frontmatter_unreadable(text):
+                out.append(Finding(ERROR, "knowledge", rel(ws, path),
+                                   "frontmatter the check cannot read plainly; Knowledge carries nobody's confidence. "
+                                   "Write each key on a line of its own, unquoted and without tags, anchors or braces",
+                                   "A Knowledge page has frontmatter the check cannot read"))
             for problem in ([] if is_faded(ws, path) else bad_dates(fm)):
                 out.append(Finding(ERROR, "knowledge", rel(ws, path), problem,
                                    "A Knowledge page has a date in the wrong form"))

@@ -952,6 +952,28 @@ class TestKnowledge(CheckCase):
                 self.knowledge_page(frontmatter)
                 self.assertFinds("knowledge", "error", "carries %s; Knowledge holds published material" % named)
 
+    def test_flow_mappings_and_keys_written_in_other_ways_are_refused(self):
+        """#388, the wall review: forms that make `parties` a real key, or hide it from a plain scan."""
+        found = [("{type: concept, parties: [birch]}\n", "carries `parties`"),
+                 ("meta: {parties: x}\n", "carries `parties`"), ("items:\n  - {zone: Work}\n", "carries `zone`")]
+        unreadable = ['"par\\x74ies": [birch]\n', "? parties\n: [birch]\n", "!!str parties: [birch]\n",
+                      "&k parties: [birch]\n", "x: &a {parties: [birch]}\n<<: *a\n", "<<: *a\n"]
+        for frontmatter, named in found:
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertFinds("knowledge", "error", named)
+        for frontmatter in unreadable:
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertFinds("knowledge", "error", "frontmatter the check cannot read plainly")
+
+    def test_a_value_with_braces_or_an_ampersand_stays_silent(self):
+        for frontmatter in ("title: Terms & conditions {draft}\n", "title: Parties to the agreement\n",
+                            "note: see *this* and !that\n"):
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertClean("knowledge")
+
     def test_a_value_that_holds_the_word_stays_silent(self):
         for frontmatter in ("title: Parties to the agreement\n", "summary: the zone and party fields\n",
                             "tags: [parties, zone]\n", "Party:\n", "source:\n  author: Jo\n"):

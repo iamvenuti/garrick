@@ -122,6 +122,7 @@ from garrick_lib import (  # noqa: E402
     TODO_ALSO_RE,
 )
 from garrick_lib import _listed  # noqa: E402  (#340)
+from garrick_lib import _frontmatter_body  # noqa: E402  (#388)
 from garrick_lib import (  # noqa: E402  (#330)
     FRONTMATTER_PLAIN, PERSON_KEYS, PERSON_PLAIN, PERSON_SHAPE, WALLS_KEYS, WIKI_GIT_REASON, frontmatter_form_problem,
     entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, org_key, organisation_link,
@@ -6365,6 +6366,28 @@ def check_inbox(ws: Workspace) -> List[Finding]:
     return out
 
 
+def frontmatter_keys_named(text: str, names) -> List[str]:
+    """The names (lower case) among `names` that the frontmatter's own lines use as a key, whatever the key's
+    case, quoting or depth, also as a list item's key (`- parties: x`). A key with no value and nothing under
+    it is not counted. A value that holds the word (`title: Parties to the agreement`) is not a key."""
+    body = _frontmatter_body(text) or []
+    found = []
+    for i, line in enumerate(body):
+        m = re.match(r"""^\s*(?:-\s+)*["']?([A-Za-z_]+)["']?\s*:(.*)$""", line)
+        if not m or m.group(1).lower() not in names:
+            continue
+        value = m.group(2).split(" #")[0].strip()
+        nested = False
+        for nxt in body[i + 1:]:
+            if nxt.strip() and not nxt.lstrip().startswith("#"):
+                nested = (len(nxt) - len(nxt.lstrip())) > (len(line) - len(line.lstrip())) \
+                    or nxt.lstrip().startswith("- ")
+                break
+        if value not in ("", "[]", "''", '""', "null", "~") or nested:
+            found.append(m.group(1).lower())
+    return found
+
+
 def check_knowledge(ws: Workspace) -> List[Finding]:
     """Knowledge holds published material, which every side may use. A page
     carries no party and no zone, links nowhere into Meetings, and neither it
@@ -6414,7 +6437,10 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                                    "as other notes" % (fm.get("type"), ", ".join(sorted(known_types))),
                                    "A Knowledge page has a type the schema does not know"))
             carried = [k for k in ("party", "parties", "zone") if as_list(fm.get(k))]
+            if suffix == ".md":
+                carried += [k for k in frontmatter_keys_named(text, ("party", "parties", "zone")) if k not in carried]
             if carried:
+                carried.sort(key=("party", "parties", "zone").index)
                 out.append(Finding(ERROR, "knowledge", rel(ws, path),
                                    "carries %s; Knowledge holds published material, which carries nobody's confidence. "
                                    "Take the field out, or file the item in Meetings if it is a conversation"

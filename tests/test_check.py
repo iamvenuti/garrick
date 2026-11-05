@@ -936,6 +936,28 @@ class TestKnowledge(CheckCase):
         write(self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "people.md", "[[dana-whitlock]]\n")
         self.assertFinds("knowledge", "error")
 
+    def knowledge_page(self, frontmatter):
+        write(self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "terms.md",
+              "---\ntype: concept\n%s---\n\nPublished text.\n" % frontmatter)
+
+    def test_a_party_key_in_any_case_or_depth_is_refused_as_the_plain_one_is(self):
+        """#388: the frontmatter's own lines are scanned, not only the parsed fields. Fail closed: a quoted key,
+        a list item's key and a block-style value count too."""
+        cases = [("Parties: [birch]\n", "`parties`"), ("PARTY: birch\n", "`party`"), ("Zone: Work\n", "`zone`"),
+                 ("source:\n  parties: [birch]\n", "`parties`"), ("source:\n  - parties: birch\n", "`parties`"),
+                 ('"Parties": [birch]\n', "`parties`"), ("'zone': Work\n", "`zone`"),
+                 ("Parties:\n  - birch\n", "`parties`"), ("parties: [birch]\nPARTY: birch\n", "`party` and `parties`")]
+        for frontmatter, named in cases:
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertFinds("knowledge", "error", "carries %s; Knowledge holds published material" % named)
+
+    def test_a_value_that_holds_the_word_stays_silent(self):
+        for frontmatter in ("title: Parties to the agreement\n", "summary: the zone and party fields\n",
+                            "tags: [parties, zone]\n", "Party:\n", "source:\n  author: Jo\n"):
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertClean("knowledge")
 
 
 def wiki_question(fields="zone: Work\nparties: [acme]\n", status="open", bold=True,

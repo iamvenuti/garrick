@@ -18,7 +18,7 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 from fixtures import git, write  # noqa: E402
-from test_nurture_panel_actions import PanelCase, SENTENCE, commit_all, snap  # noqa: E402
+from test_nurture_panel_actions import PanelCase, SENTENCE, SaveThroughAll, commit_all, snap  # noqa: E402
 from test_page_action import TODAY, pa  # noqa: E402
 from test_questions_panel import entity_page, person_page  # noqa: E402
 
@@ -330,6 +330,13 @@ class TestFailClosed(Hardening):
     def test_no_with_an_edit_reads_as_one_outcome(self):
         out = self.save([self.org("mira-holt", choice="no", edit={"old": "Mira Holt", "new": "Mira Holte"})])
         self.assertEqual("Corrected Mira Holt to Mira Holte", out["rows"][0]["say"])
+
+
+# Every wall test of the panel's save, once more with the save sent from the All view (#384).
+for _name, _cls in list(globals().items()):
+    if isinstance(_cls, type) and issubclass(_cls, Hardening) and _cls is not Hardening and not _name.endswith("FromAll"):
+        globals()[_name + "FromAll"] = type(_name + "FromAll", (SaveThroughAll, _cls), {})
+del _name, _cls
 
 
 if __name__ == "__main__":

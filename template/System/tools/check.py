@@ -5377,7 +5377,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
         parts = [x.lower() for x in target.replace("\\", "/").split("/") if x and x not in (".", "..")]
         if set(parts) & {project.name.lower() for project, _ in ws.projects}:
             return True  # a segment names a project's folder: read as before, never as a bare folder name
-        if "/" not in target or not parts:
+        if not parts:
             return False
         if target.startswith(("/", "~")):  # read from where it reaches the workspace, as a path from outside is
             starts = [i + 1 for i, x in enumerate(parts) if x == ws.root.name.lower()]

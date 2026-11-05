@@ -859,11 +859,11 @@ class TestFolderPaths(GapCase):
 
     def test_an_extensionless_file_written_with_a_trailing_slash_is_still_a_file(self):
         write(self.work / "Harbour" / "Notes" / "Plan", "plan\n")
-        for written in ("`Notes/Plan/`", "`cat Notes/Plan/`", "`Harbour/Notes/Plan/`"):
+        for written in ("`Notes/Plan/`", "`cat Notes/Plan/`", "`Harbour/Notes/Plan/`", "`Plan/`", "`cat Plan/`"):
             with self.subTest(written):
                 found = self.says(written)
                 self.assertEqual(["error"], [s for s, _ in found], found)
-        for written in ("`Notes/Demo/`", "`Demo/`", "`~/Applications/Garrick Demo/`", "`Plan/`"):
+        for written in ("`Notes/Demo/`", "`Demo/`", "`~/Applications/Garrick Demo/`", "`Tender2/`"):
             with self.subTest(written):
                 self.assertEqual([], self.says(written))
 

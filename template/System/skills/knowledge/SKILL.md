@@ -332,7 +332,15 @@ ordinary edit.
 4. **A finding only the user can settle**, such as a contradiction no
    later source decides, is also a question file, as *A question for the
    user* says. The report links it.
-5. **Commit** the report and the question files in the Wikis repository,
+5. **Open sections.** The script's list ends with every line under an
+   *Open* or *Open issues* heading. Show it once, ask once for the whole of
+   it, and on a yes run `python3 System/status/page_action.py
+   question-open-sections --wiki Knowledge --confirm true`: one question
+   file per line, the page as `origin:` and `pages:`, no zone and no
+   parties, and no page changed. Without a yes, write nothing. A line a
+   question already asks is not proposed again. A Knowledge page that
+   carries a `zone:` or `parties:` gets no question, and the list says why.
+6. **Commit** the report and the question files in the Wikis repository,
    and nothing else, and say how many findings of each kind there are.
 
 Spoken: "Four things in the library: two pages disagree on failover times,

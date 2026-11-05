@@ -98,6 +98,13 @@ zone's repository, as the skills would:
                 see question-work), and nothing is committed
     question-later   a wiki question put off to a day: {"wiki", "file", "until"}
     question-close   a wiki question with nothing to work in: {"wiki", "file"}
+    question-open-sections  the lines under a page's *Open* or *Open issues*
+                heading as questions (#224, point 8): {"wiki", "confirm"?,
+                "pages"?}. Without confirm: read only, the lines that would
+                become a question file and the pages that cannot, with why.
+                With "confirm": true: one question file per line, the page as
+                origin and pages, its zone and parties copied exactly (a
+                Knowledge question has neither). No page is changed
     question-decide  Record as a decision is not built yet (#224, point 5):
                 refused, and nothing is written
     question-work    read only: the pages an answered question may change, and
@@ -257,7 +264,7 @@ sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-thread", "check-name", "rename", "move", "delete", "undo",
          "answer", "later", "question-answer", "question-later",
-         "question-close", "question-decide", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
+         "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open",
          "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save")
@@ -2394,8 +2401,133 @@ def write_question(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def open_section_slug(title: str, line: str) -> str:
+    words = re.findall(r"[a-z0-9]+", ("%s %s" % (title, line)).lower())
+    slug = "-".join(words)[:60].strip("-")
+    return slug or "open-line"
+
+
+def open_section_text(row: dict, today: dt.date, meetings: bool) -> str:
+    where = ["type: question", "asked: %s" % today.isoformat(), "status: open"]
+    if meetings:
+        where += ["zone: %s" % row["zone"], "parties: [%s]" % ", ".join(row["parties"])]
+    link = quoted("[[%s]]" % row["page"])
+    where += ["origin: %s" % link, "pages: [%s]" % link]
+    return ("---\n%s\n---\n\n**%s**\n\nThe page lists this under Open, and nothing on the page has changed. "
+            "Answer it, put it off or close it; the page changes only once the answer is worked in.\n"
+            % ("\n".join(where), row["bold"]))
+
+
+def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> list:
+    """The open-section rows of a wiki, as wiki_lint.py reads them, each
+    proposal checked the way a question's own fields are: a zone the workspace
+    has, parties it knows, none two sides of a wall. A row that fails is
+    skipped with the reason, and nothing about the other side is named."""
+    tool = Path(ws) / "System" / "tools" / "wiki_lint.py"
+    lib = prefs().lib(ws)
+    if not tool.is_file() or lib is None or not all(callable(getattr(lib, n, None)) for n in
+                                                     ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled")):
+        raise Refused("this workspace's wiki_lint.py or garrick_lib.py cannot read the pages, so nothing was written")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("wiki_lint_for_open_sections", str(tool))
+    mod = importlib.util.module_from_spec(spec)
+    saved = list(sys.path)
+    try:
+        sys.path.insert(0, str(tool.parent))
+        spec.loader.exec_module(mod)
+    except Exception:
+        raise Refused("this workspace's wiki_lint.py cannot be read, so nothing was written")
+    finally:
+        sys.path[:] = saved
+    if not callable(getattr(mod, "open_sections", None)):
+        raise Refused("this workspace's wiki_lint.py does not list open sections, so nothing was written")
+    rows = mod.open_sections(Path(ws) / "Wikis" / wiki)
+    if only is not None:
+        rows = [r for r in rows if r["page"] in only]
+    ctx = lib.load_context(ws)
+    zones = {z.name for z in (Path(ws) / "Zones").iterdir() if z.is_dir()}
+    for r in rows:
+        if r["state"] != "propose" or wiki != "Meetings":
+            continue
+        tags = [bare_tag(lib, t) for t in r["parties"]]
+        if r["zone"] not in zones or any(t not in ctx.get("parties", {}) for t in tags):
+            r.update(state="skipped", reason="its zone or parties are not ones this workspace knows")
+        elif any(lib.walled(ctx, a, b) for a in tags for b in tags):
+            r.update(state="skipped", reason=wall)
+        else:
+            r["parties"] = [t.strip() for t in r["parties"]]
+    return rows
+
+
+def open_sections_act(ws: Path, req: dict, today: dt.date) -> str:
+    wiki = req.get("wiki")
+    if wiki not in WIKI_NAMES:
+        raise Refused("no wiki called %s; the wikis with questions are %s" % (wiki, " and ".join(WIKI_NAMES)))
+    if not (Path(ws) / "Wikis" / wiki / "wiki").is_dir():
+        raise Refused("no wiki called %s" % wiki)
+    only = req.get("pages")
+    if only is not None and not (isinstance(only, list) and all(isinstance(x, str) for x in only)):
+        raise Refused("pages is a list of page names")
+    confirm = req.get("confirm")
+    if confirm == "true":                       # typed in a terminal: --confirm true
+        confirm = True
+    if confirm not in (None, False, True):
+        raise Refused("confirm is true or left out")
+    wall = wall_sentence(ws)
+    meetings = wiki == "Meetings"
+
+    def say(rows):
+        todo = [r for r in rows if r["state"] == "propose"]
+        lines = ["%d open line%s would become a question." % (len(todo), "" if len(todo) == 1 else "s")]
+        lines += ["  %s: %s" % (r["page"], r["line"]) for r in todo]
+        done = sum(r["state"] == "converted" for r in rows)
+        if done:
+            lines.append("%d already asked." % done)
+        for r in rows:
+            if r["state"] == "skipped" and r["reason"] != wall:
+                lines.append("No question for %s: %s." % (r["page"], r["reason"]))
+        if any(r["state"] == "skipped" and r["reason"] == wall for r in rows):
+            lines.append(wall)
+        return lines
+    if confirm is not True:
+        return "\n".join(say(open_section_rows(ws, wiki, wall, only)))
+    with held("question-%s.lock" % wiki, busy="another question in %s is still being written" % wiki):
+        rows = [r for r in open_section_rows(ws, wiki, wall, only) if r["state"] == "propose"]
+        if not rows:
+            return "Nothing to write. No open line is waiting for a question"
+        folder = Path(ws) / "Wikis" / wiki / WIKI_QUESTION_DIR
+        used = set()
+
+        def write_all(w):
+            tx_dirs(folder)
+            folder.mkdir(parents=True, exist_ok=True)
+            if folder.resolve() != folder or folder.parent.parent != Path(ws).resolve() / "Wikis":
+                raise Refused("questions is not a plain folder of this wiki, so nothing was written")
+            made = 0
+            for r in rows:
+                if r["bold"] in used:
+                    continue
+                used.add(r["bold"])
+                base = "%s - %s" % (today.strftime("%y%m%d"), open_section_slug(r["title"], r["line"]))
+                for n in range(1, 100):
+                    path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
+                    try:
+                        write_new(path, open_section_text(r, today, meetings))
+                    except FileExistsError:
+                        continue
+                    tx_made(path)
+                    made += 1
+                    break
+                else:
+                    raise Refused("too many questions with one name today, so nothing was written")
+            return "%d question%s written in %s/questions. No page was changed" % (made, "" if made == 1 else "s", wiki)
+        return transaction(ws, write_all)
+
+
 def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
     verb = req["verb"]
+    if verb == "question-open-sections":
+        return open_sections_act(ws, req, today)
     if verb == "question-decide":
         raise Refused(NO_DECISION)
     wall = wall_sentence(ws)
@@ -4976,6 +5108,7 @@ CLI_FIELDS = {
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
     "question-close": ("wiki", "file"), "question-decide": ("wiki", "file"),
+    "question-open-sections": ("wiki", "confirm"),
     "question-work": ("wiki", "file"), "question-done": ("wiki", "file"),
     "todo-done": ("zone", "line", "file"), "todo-undo": ("zone", "line", "file"),
     "todo-date": ("zone", "line", "file", "date"),

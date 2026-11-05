@@ -319,10 +319,14 @@ deferred: 1
      else about it.
    - **A shared-file difference never causes an overwrite**, in either
      direction. Name it, and change nothing.
-   - **A finding never becomes a Needs you question.** Technical findings
-     stay on the Checks card. The questions a wiki keeps in its
-     `questions/` folder are not part of this review yet; a check's finding
-     about one is.
+   - **An attribution finding can be answered in the Questions panel; it
+     never becomes a thread's Needs you question.** Technical findings stay
+     on the Checks card. The panel's Nurture page writes each answer as the
+     chat does and records it in the day's report
+     (`System/generated/nurture/<date>.json`, its `answered` list, by path),
+     so an item answered there counts as `answered` here: read that list
+     before asking, and do not ask again. The questions a wiki keeps in its
+     `questions/` folder are not part of this review; the panel answers them.
 6. **Show what remains.** Run *Gather* again, so the count is the one after
    the changes. Update the record: each decision made, each source that
    failed, and the three counts. When every item has a decision, set

@@ -58,6 +58,9 @@ elif a[:1] == ["list-windows"]:
     print(json.dumps({"windows": [{"id": "window-1"}]}))
 elif a[:2] == ["workspace", "list"]:
     print(json.dumps({"workspaces": state.get("workspaces", [])}))
+elif a[:1] == ["list-panes"]:
+    panes = state.get("panes", {}).get(a[a.index("--workspace") + 1], [])
+    print(json.dumps({"panes": [{"id": "pane-" + str(n), "surface_ids": ids, "surface_count": len(ids)} for n, ids in enumerate(panes)]}))
 elif a[:1] == ["list-pane-surfaces"]:
     print(json.dumps({"surfaces": state.get("surfaces", {}).get(a[a.index("--workspace") + 1], [])}))
 elif a[:1] == ["close-surface"] and state.get("close_invalid_state"):
@@ -636,28 +639,46 @@ class DeskVerbTest(CmuxCase):
         self.refused_close(close_error="Error: surface_busy: confirmation_required is not what failed", top=top_)
         self.refused_close(close_error="Error: socket refused (confirmation_required)", top=top_)
 
-    def last_tab(self, surfaces, top, message="Cannot close the last surface in a workspace"):
-        self.state({"close_invalid_state": message, "top": top, "surfaces": {"ws-work": surfaces},
+    def last_tab(self, panes, top, message="Cannot close the last surface in a workspace"):
+        self.state({"close_invalid_state": message, "top": top, "panes": {"ws-work": panes},
                     "sessions": [self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)]})
         return self.run_desk("close", "--folder", str(self.pricing), "--yes")
 
+    def alone(self):
+        return tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")])
+
     def test_close_closes_the_workspace_when_the_tab_is_its_last(self):
-        code, _, err = self.last_tab([{"id": "a-surface", "title": "Pricing"}],
-                                     tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]))
+        code, _, err = self.last_tab([["a-surface"]], self.alone())
         self.assertEqual((code, err), (0, ""))
         closed = [c["argv"] for c in self.calls() if c["argv"][0] == "close-workspace"]
         self.assertEqual(closed, [["close-workspace", "--workspace", "ws-work"]])
 
     def test_close_closes_only_the_tab_when_the_workspace_has_a_sibling(self):
-        code, _, err = self.last_tab([{"id": "a-surface", "title": "Pricing"}, {"id": "b-surface", "title": "Birch"}],
-                                     tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]))
+        code, _, err = self.last_tab([["a-surface", "b-surface"]], self.alone())
         self.assertEqual(code, 2)
         self.assertIn("invalid_state", err)
         self.assertNotIn("close-workspace", self.verbs())
 
+    def test_close_leaves_the_workspace_when_another_pane_holds_a_tab(self):
+        code, _, err = self.last_tab([["a-surface"], ["b-surface"]], self.alone())
+        self.assertEqual(code, 2)
+        self.assertNotIn("close-workspace", self.verbs())
+
+    def test_close_leaves_the_workspace_on_another_invalid_state(self):
+        code, _, err = self.last_tab([["a-surface"]], self.alone(), message="Surface is pinned")
+        self.assertEqual(code, 2)
+        self.assertIn("Surface is pinned", err)
+        self.assertNotIn("close-workspace", self.verbs())
+
+    def test_close_leaves_the_workspace_when_cmux_cannot_list_its_panes(self):
+        self.state({"close_invalid_state": "Cannot close the last surface in a workspace", "top": self.alone(),
+                    "sessions": [self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)]})
+        code, _, err = self.run_desk("close", "--folder", str(self.pricing), "--yes")
+        self.assertEqual(code, 2)
+        self.assertNotIn("close-workspace", self.verbs())
+
     def test_close_leaves_the_workspace_when_its_last_tab_runs_a_job(self):
-        code, _, err = self.last_tab([{"id": "a-surface", "title": "Pricing"}],
-                                     tab_top("a-surface", [(ASSISTANT_PID, "2.1.318"), (5151, "vite")]))
+        code, _, err = self.last_tab([["a-surface"]], tab_top("a-surface", [(ASSISTANT_PID, "2.1.318"), (5151, "vite")]))
         self.assertEqual(code, 2)
         self.assertIn("vite", err)
         self.assertIn("by hand", err)

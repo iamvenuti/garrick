@@ -406,8 +406,8 @@ def close_surface(s: dict) -> None:
     A job, a dev server or a `!` command would be killed too: those tabs are left for the user. Older cmux has no --force and never asks,
     so it closes on the first call.
 
-    cmux will not close the last surface of a workspace (`invalid_state`). When
-    the tab is the only one there, and the same check on the foreground holds,
+    cmux will not close the last surface of a workspace (`invalid_state`, saying
+    "last surface"). When the tab is the only surface in the only pane there, and the same check on the foreground holds,
     the workspace is closed instead (#376). Any other `invalid_state` keeps
     cmux's own message."""
     args = ["close-surface", "--surface", s["surface"]]
@@ -417,7 +417,7 @@ def close_surface(s: dict) -> None:
         cx.cmux(*args)
         return
     except cx.CmuxError as e:
-        if e.code == "invalid_state" and s.get("workspace") and only_surface(s):
+        if e.code == "invalid_state" and "last surface" in str(e).lower() and s.get("workspace") and only_surface(s):
             close_workspace(s)
             return
         if e.code != "confirmation_required":
@@ -438,15 +438,20 @@ def require_own_foreground(s: dict) -> None:
 
 
 def only_surface(s: dict) -> bool:
-    """Whether the tab is the one surface its workspace holds. False when cmux
-    cannot say."""
+    """Whether the tab is the one surface its workspace holds: one pane, with
+    this surface alone in it. `list-pane-surfaces` reads the focused pane only,
+    so the workspace's panes are listed and each one's surfaces counted. False
+    when cmux cannot say."""
     try:
-        data = cx.cmux("list-pane-surfaces", "--workspace", s["workspace"], "--json", "--id-format", "both",
-                       parse=True)
-        surfaces = data.get("surfaces", [])
+        data = cx.cmux("list-panes", "--workspace", s["workspace"], "--json", "--id-format", "both", parse=True)
+        panes = data.get("panes")
     except (cx.CmuxError, AttributeError):
         return False
-    return [sf.get("id") for sf in surfaces] == [s["surface"]]
+    if not isinstance(panes, list) or len(panes) != 1 or not isinstance(panes[0], dict):
+        return False
+    pane = panes[0]
+    ids = pane.get("surface_ids")
+    return isinstance(ids, list) and pane.get("surface_count", len(ids)) == 1 and ids == [s["surface"]]
 
 
 def close_workspace(s: dict) -> None:

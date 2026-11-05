@@ -72,7 +72,7 @@ Claude does the work underneath. Codex works too, in its app or a terminal, with
 **The rules** are plain files the assistant reads first. They say what goes where and who never mixes:
 
 - `AGENTS.md` at the root is the entry point. It sends the assistant to `System/rules.md` and `System/context.md`, and routes each question by its subject. Each zone, `Wikis/` and each wiki has its own `AGENTS.md`, which adds what holds only there.
-- `System/rules.md` says how the assistant behaves: what it may do without asking, the walls, the ways in, threads, voice and files. It is Garrick's, as shipped.
+- `System/rules.md` says how the assistant behaves: what it may do without asking, the walls, what lands in an inbox first, the resume point, how it answers and which files it never edits. It is Garrick's, as shipped, and it stays under 8,000 characters because every session loads it: the procedures live in the skills (`intake`, `threads`, `desk`, `nurture`), which load only when they run.
 - `System/context.md` says who you are and who you deal with: zones, parties, walls, people and aliases. It is yours.
 - `System/rules.local.md`, and an `AGENTS.local.md` beside any `AGENTS.md`, hold your own rules and routing.
 

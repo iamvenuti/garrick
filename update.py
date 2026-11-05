@@ -551,6 +551,14 @@ def first_missing(root, path):
     return top
 
 
+# System/rules.md keeps what every session needs and points to the skills for
+# the procedures. These are the skills that carry what it moved out (#366), so
+# an update writes them in the same step as the rules, and holds the rules back
+# when it cannot: a rule must never stand in neither place.
+RULES = "System/rules.md"
+RULE_SKILLS = tuple("System/skills/%s/SKILL.md" % name for name in ("threads", "intake", "nurture", "desk"))
+
+
 def apply(root, p, only=None, today=None):
     """Make the changes `p` lists: every replace, add and merge, or only the
     paths in `only`, which may also name a file to restore. Returns what was
@@ -566,6 +574,10 @@ def apply(root, p, only=None, today=None):
         if held:
             raise UpdateError("%s: Garrick's instruction file, changed by you. Move your text out with --split; "
                               "it puts Garrick's back as shipped." % ", ".join(held))
+    if picked is not None and RULES in picked:
+        # The rules go with the skills that now carry their procedures.
+        picked |= {path for path in RULE_SKILLS
+                   for kind in ("replace", "add", "restore") if path in p["actions"][kind]}
     todo = []          # (kind, path, where it is written, bytes, mode)
     skipped = []       # (path, reason)
     done = {kind: [] for kind in ("replace", "add", "restore", "merge")}
@@ -596,6 +608,18 @@ def apply(root, p, only=None, today=None):
                 skipped.append((path, "a file is there now"))
                 continue
             todo.append((kind, path, dest, data, mode))
+
+    if any(path == RULES and kind == "replace" for kind, path, _, _, _ in todo):
+        written_now = {path for kind, path, _, _, _ in todo if kind != "merge"}
+        behind = [path for path in RULE_SKILLS if path in p["files"] and path not in written_now
+                  and (path in p["actions"]["merge"] or path in p["actions"]["split"]
+                       or path in {s for s, _ in skipped}
+                       or path in p["actions"]["replace"] or path in p["actions"]["add"]
+                       or path in p["actions"]["restore"])]
+        if behind:
+            todo = [item for item in todo if item[1] != RULES]
+            skipped.append((RULES, "the skills that carry the procedures it points to are not updated yet (%s); "
+                                   "merge or commit them, then run again" % ", ".join(behind)))
 
     by_repo = {}
     for kind, path, dest, data, mode in todo:

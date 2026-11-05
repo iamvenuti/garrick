@@ -200,7 +200,7 @@ class SkillsTest(unittest.TestCase):
         self.assertIn('## Park: "park X", "put X aside"; wake: "wake X", "unpark X"',
                       (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         self.assertNotIn("up again", text)
-        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Voice"))
+        rules = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"), "## The rules behind the commands"))
         for needle in ('**"wrap it"** for the thread in hand', '**"Wake X"** or **"unpark X"**'):
             self.assertIn(needle, rules, needle)
 
@@ -218,7 +218,7 @@ class SkillsTest(unittest.TestCase):
                        "**The first fade on a wiki only proposes.**", "`System/retention.local.md`, which wins",
                        '"Keep" is the word, never "wake", "back", "open" or "restore"'):
             self.assertIn(needle, fading, needle)
-        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Voice"))
+        rules = flat(section(text, '## Fading: "fade the meetings", "fade the library", "what would fade"'))
         self.assertIn('**"Fade the meetings"**, **"fade the library"** or **"what would fade"**', rules)
         self.assertIn('**"Keep X"** keeps a wiki page in working memory for good', rules)
         for skill in ("meetings", "knowledge"):
@@ -307,8 +307,8 @@ class SkillsTest(unittest.TestCase):
     def test_the_hook_is_only_as_good_as_git_running_it(self):
         """A `core.hooksPath` setting sends commits past the zone's hook; the check warns
         then, and neither the rules nor the threads skill promises more than that."""
-        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"),
-                             "## Zones and walls"))
+        rules = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"),
+                             "## The wall check"))
         threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
         for text in (rules, threads):
             self.assertIn("Git skips the hook when its `core.hooksPath` setting sends commits past it", text)
@@ -319,7 +319,7 @@ class SkillsTest(unittest.TestCase):
         """"Close X" means wrap, and a parked thread keeps its pointer; the rule for
         System/generated/ lives in the rules, and the root AGENTS.md points to it."""
         rules = (REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8")
-        threads = flat(section(rules, "## Threads"))
+        threads = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"), "## The rules behind the commands"))
         self.assertIn("one entry per live or parked thread", threads)
         self.assertIn("Delete the entry when the thread is finished.", threads)
         self.assertNotIn("when the thread closes", threads)
@@ -426,7 +426,7 @@ class SkillsTest(unittest.TestCase):
         lib = (tools / "garrick_lib.py").read_text(encoding="utf-8")
         for decides in ("def is_path_safe(", "def is_display_name(", "def is_sayable("):
             self.assertIn(decides, lib, decides)
-        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Voice"))
+        rules = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"), "## The rules behind the commands"))
         for needle in ("a full stop inside an acronym", "`spoken:` in the note's frontmatter",
                        "a zone name has to say how it is said"):
             self.assertIn(needle, rules, needle)

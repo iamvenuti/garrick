@@ -48,6 +48,8 @@ with the same arguments, where `<garrick>` is the Garrick download.
 | "what tabs are open" | `desk status` | Spoken: how many, then the busy ones by name. |
 | "new workspace X" | `desk workspace X` | |
 
+**The tabs, in the rules' words.** Where the desk skill is installed (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation. "Open X" opens or brings forward X's tab, and the session there answers. "Close X" has that session wrap X, then closes the tab; "close the X tab" closes it without a wrap. "Close for the day" wraps each tab used today in its own session, then quits cmux. "Shut everything down" quits without wrapping. "Start the day" or "restore my tabs" brings them back, and "what tabs are open" lists them.
+
 `--yes` and `--force` are the user's to give, never yours. Read the dry run
 back first, and say everything you need to say before a quit: it lands three
 seconds after `--yes` and takes this session with it.

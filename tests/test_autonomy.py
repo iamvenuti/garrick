@@ -58,7 +58,7 @@ lib = _load(TOOLS / "garrick_lib.py", "garrick_lib_autonomy")
 SOURCES = {
     "autonomy": (REPO / "template" / "System" / "rules.md", "## Autonomy"),
     "walls": (REPO / "template" / "System" / "rules.md", "## Zones and walls"),
-    "ways in": (REPO / "template" / "System" / "rules.md", "## Ways in"),
+    "ways in": (SKILLS / "intake" / "SKILL.md", "## The rules for where things go"),
     "voice": (REPO / "template" / "System" / "rules.md", "## Voice"),
     "threads skill": (SKILLS / "threads" / "SKILL.md", None),
     "rename": (SKILLS / "threads" / "SKILL.md", '## Rename: "rename X to Y"'),
@@ -213,7 +213,8 @@ STILL_STOPS = [
         "the name matches more than one thing",
         "\"Open pricing\", and two projects have a Pricing thread.",
         "voice",
-        ["**When a name matches more than one thing**, ask in one line, naming the candidates. Never guess."],
+        ["**When a name matches more than one thing**, or a heard name is close to two entries, ask in one line, "
+         "naming the candidates. Never guess."],
     ),
     case(
         "the name matches more than one thread, in the procedure",
@@ -443,7 +444,8 @@ class CheckpointDialogueTest(unittest.TestCase):
         self.assertEqual(self.before, self.todo.read_bytes())            # and never the list itself
         # The two places the wording has to agree: the row that is not a
         # deadline, and the line that reaches the list.
-        rules = flat(section((REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8"), "## Threads"))
+        rules = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"),
+                             "## The rules behind the commands"))
         self.assertIn('The Deadline row reads "not given" where nobody has dated the work, and "none" only '
                       "where somebody said there is none.", rules)
         self.assertIn("| Deadline | <date, and what breaks if it slips; none; or not given> |", self.wrap_wording())

@@ -530,6 +530,13 @@ Every note drawn is named where there is room for its name, at any zoom. Names a
 
 The graph sways a few degrees back and forth when left alone. A hover, a drag, an open panel or your system's reduced-motion setting stops it, and once nothing moves it stops drawing. *Fit* brings back the whole graph after you zoom in or move it.
 
+*3D*, beside *Rotate* and *Fit*, draws the graph in three dimensions; the button then reads *2D* and switches back. The graph opens in 2D, which is the better view for reading names, since in 3D notes cover each other and fewer names find room. The choice is kept in this window. The page draws the 3D view itself, in perspective, and loads no library. The notes, the legend filter, *Find a note* and the selected note stay as they were when you switch. In 3D:
+
+- The places stay on one plane, so a zone still reads as one cluster, and each note takes a depth of its own.
+- Dragging empty space turns the graph, and `Shift` with the drag moves it. *Fit* turns it back to face you.
+- Near notes are drawn over far ones, and far notes, links and names are smaller and fainter. A click picks the nearest note under the pointer, and a double-click opens it, as in 2D. Dragging a note moves it in the plane facing you.
+- The sway is a slow turn round the vertical axis. With the system's reduced-motion setting on, the graph stays still until you drag it.
+
 ## Reading the job strips
 
 The strip has one cell per day for the last fourteen days, oldest first, with no legend under it. Each cell is coloured by how the day *ended*: red when its last run failed or most of its runs did, amber when a run failed and the job recovered, green when every run was clean, grey when nothing ran. A day is not painted red for one failure among many runs; a page that is always red gets ignored as surely as one that is never red. Hover a cell for its runs and their exit codes.

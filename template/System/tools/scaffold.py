@@ -843,7 +843,7 @@ def dated_entry(text, line, today, append=True):
     block's rule, as the threads skill writes one. A note with no block of
     either kind takes it at the end, unless `append` is off, when the note is
     left as it is: that is what park did while its own copy of this lived in
-    page_action.py, which keeps one for `interrupt`."""
+    page_action.py, which keeps one for `answer`."""
     d = datetime.date.fromisoformat(today)
     entry = f"**{d.day} {MONTHS[d.month - 1]} {d.year}.** {line}"
     resume = text.find("### Resume here")
@@ -1266,37 +1266,21 @@ def thread_material_walls(root, zone_dir, thread_dir, target_tag):
     return None
 
 
-STATE_STACK = ("System", "generated", "interrupted.json")
 STATE_MOVED = ("System", "generated", "moved.json")
 
 
 def write_json_atomic(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name("." + path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False, sort_keys="stack" not in data) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(str(tmp), str(path))
 
 
 def move_state(root, zone, name, was, now):
     """What a thread's move changes outside the zone, where this script owns
-    it: its place on the interruption stack and the effort history's record of
-    the move (System/generated, never committed). `was` and `now` are the
-    thread's folder from the zone's top. Best effort: a file that is not
-    there or cannot be read is left alone."""
-    project, to = was.split("/")[0], now.split("/")[0]
-    path = root.joinpath(*STATE_STACK)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        entries = data["stack"]
-        changed = False
-        for e in entries:
-            if isinstance(e, dict) and e.get("zone") == zone and e.get("project") == project and e.get("thread") == name:
-                e["project"], e["file"] = to, f"{now}/{name}.md"
-                changed = True
-        if changed:
-            write_json_atomic(path, data)
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
+    it: the effort history's record of the move (System/generated, never
+    committed). `was` and `now` are the thread's folder from the zone's top.
+    Best effort: a file that is not there or cannot be read is left alone."""
     path = root.joinpath(*STATE_MOVED)
     old, new = f"Zones/{zone}/{was}", f"Zones/{zone}/{now}"
     try:
@@ -1504,7 +1488,7 @@ def cmd_move(root, args, today):
     if unresolved:
         said.append("Markdown links left as they are, because they could not be resolved plainly: "
                     + ", ".join(f"{n} ({l})" for n, l in unresolved[:5]) + (f" and {len(unresolved) - 5} more" if len(unresolved) > 5 else "") + ".")
-    said.append("Its place on the interruption stack and the status page's effort history follow it. If your assistant "
+    said.append("The status page's effort history follows it. If your assistant "
                 f"keeps a memory pointer to it, or a cmux tab is open on it, point them at {rel_new}/{name}.md.")
     return "\n".join(said)
 

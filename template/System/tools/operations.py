@@ -202,12 +202,6 @@ DECLARED: Dict[str, Op] = {
     "move": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),
-    "interrupt": _op(("zone", "project", "thread", "file", "where", "next", "keep", "by"),
-                     ("project", "thread", "file"), "zone", True),
-    # The interruption stack is in System/generated/, which is never committed.
-    "back": _op(("zone", "project", "thread", "file"), ("project", "thread", "file"), "workspace"),
-    "stack": _op((), (), "none", retry="safe"),
-    "unstack": _op(("zone", "project", "thread"), ("project", "thread"), "workspace"),
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
     "settings": _op(("launchers", "default", "zones", "graph", "notifications", "while-you-wait", "home", "memory",

@@ -680,6 +680,7 @@ def apply(root, p, only=None, today=None):
         except (FileExistsError, FileNotFoundError) as exc:
             skipped.append(("Wikis/.git/hooks/pre-commit", "the wikis' wall check was not installed: %s" % exc))
 
+    tidied = clear_retired_state(root) if picked is None else []
     written = [path for kind in ("replace", "add", "restore") for path in done[kind]]
     problems = check_errors(root, written)
     stamped, unstamped = False, ""
@@ -692,9 +693,30 @@ def apply(root, p, only=None, today=None):
     for what, do in next_steps(root, p, done):
         then.append(do() if do else "To do: %s." % what)
     return {"done": done, "skipped": skipped, "commits": commits, "hooks": hooks,
-            "hooks_added": added,
+            "hooks_added": added, "tidied": tidied,
             "problems": problems, "stamped": stamped, "unstamped": unstamped, "then": then,
             "allowlist": allowed}
+
+
+# State Garrick once kept in System/generated/, which belongs to the tools and is
+# never committed. An update takes these out: nothing reads them any more (#367).
+RETIRED_STATE = ("System/generated/interrupted.json",)
+
+
+def clear_retired_state(root):
+    """Remove the retired state files a workspace still has. Returns the ones
+    removed. A file that is not a plain file, or a link, is left alone."""
+    gone = []
+    for rel in RETIRED_STATE:
+        path = root / rel
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            path.unlink()
+        except OSError:
+            continue
+        gone.append(rel)
+    return gone
 
 
 def commit_files(root, files, message):
@@ -854,6 +876,8 @@ def say_applied(p, result):
     if refreshed:
         lines.append("Refreshed the wall check in: %s." % ", ".join(refreshed))
     lines += say_allowlist(result.get("allowlist"), applied=True)
+    for rel in result.get("tidied", []):
+        lines.append("Removed %s: Back now reads the thread notes, and nothing keeps that file." % rel)
     for path, why in result["skipped"]:
         lines.append("Skipped %s: %s." % (path, why))
     if result.get("unstamped"):

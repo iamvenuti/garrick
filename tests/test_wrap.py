@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -148,6 +149,83 @@ class SkillTest(unittest.TestCase):
         self.assertIn("never the answer", back)
         self.assertIn("stat -f %m", back)
         self.assertIn("After two wraps it is the later one", back)
+
+
+class WordsTest(unittest.TestCase):
+    """One vocabulary (#367): Wrap and Resume, and no stack, in the pages and the band's README."""
+
+    PAGES = ("README.md", "docs/commands.md", "docs/concepts.md", "docs/principles.md", "docs/architecture.md",
+             "docs/extras/status-page.md", "docs/extras/cmux.md", "extras/mods/README.md", "extras/cmux/desk/SKILL.md",
+             "presentation/index.html", "docs/architecture/overview.html")
+
+    def test_no_page_mentions_a_stack_or_the_file_it_kept(self):
+        for page in self.PAGES:
+            text = (REPO / page).read_text(encoding="utf-8").lower()
+            for gone in ("interruption stack", "interrupted.json", "stack of held", "unstack", "off the stack"):
+                self.assertNotIn(gone, text, "%s: %s" % (page, gone))
+
+    def test_no_page_offers_hold_as_a_command_of_its_own(self):
+        for page in self.PAGES:
+            text = (REPO / page).read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"(?i)\bhold this\b[^.]{0,40}(when|if) (someone|something) (interrupts|cuts)", page)
+            self.assertNotIn("**\"Hold", text, page)
+            self.assertNotIn("thirty-second", text, page)
+
+    def test_the_band_readme_names_wrap_and_resume_in_one_slot(self):
+        text = (REPO / "extras" / "mods" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("*Wrap* (`w`) and *Resume* (`r`) share one slot", text)
+        self.assertIn("older than ten minutes counts as gone", text)
+
+    def test_the_commands_page_says_the_one_question_and_the_record(self):
+        text = (REPO / "docs" / "commands.md").read_text(encoding="utf-8")
+        self.assertIn('"Anything only in your head?"', text)
+        self.assertIn("the thread whose note was written most recently and is not finished or parked", text)
+
+
+class BackTest(unittest.TestCase):
+    """The shell the skill gives for "back", run against a workspace: the
+    thread whose note was written most recently and is not finished or parked."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        text = SKILL.read_text(encoding="utf-8")
+        back = text[text.index("## Back:"):text.index("## Close for the day")]
+        self.script = re.search(r"```sh\n\s*(find Zones.*?)```", back, re.S).group(1)
+
+    def note(self, thread, status="active", at=0, project="Acme"):
+        path = self.root / "Zones" / "Work" / project / "Threads" / thread / (thread + ".md")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("---\nstatus: %s\n---\n# %s\n" % (status, thread), encoding="utf-8")
+        os.utime(path, (1_800_000_000 + at, 1_800_000_000 + at))
+
+    def back(self):
+        done = subprocess.run(["sh", "-c", self.script], cwd=str(self.root), capture_output=True, text=True)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return [line.split("\t", 1)[1].split("/")[4] for line in done.stdout.splitlines()]
+
+    def test_after_two_wraps_it_is_the_later_one(self):
+        self.note("Pricing", at=10)
+        self.note("Freight", at=20)
+        self.assertEqual(["Freight", "Pricing"], self.back())
+        self.note("Pricing", at=30)                       # wrapped again
+        self.assertEqual("Pricing", self.back()[0])
+
+    def test_a_finished_or_parked_thread_is_never_the_answer(self):
+        self.note("Pricing", at=10)
+        self.note("Freight", status="done", at=50)
+        self.note("Rebate", status="parked", at=60)
+        self.assertEqual(["Pricing"], self.back())
+
+    def test_nothing_to_resume_prints_nothing(self):
+        self.note("Freight", status="done", at=50)
+        self.assertEqual([], self.back())
+
+    def test_a_folder_that_starts_with_an_underscore_is_not_work(self):
+        self.note("Pricing", at=10)
+        self.note("_Scratch", at=90)
+        self.assertEqual(["Pricing"], self.back())
 
 
 if __name__ == "__main__":

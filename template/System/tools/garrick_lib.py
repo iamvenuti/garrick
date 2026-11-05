@@ -30,7 +30,6 @@ functions below keep their signatures:
     read_checkpoint(text) -> dict or None
     render_checkpoint(at, base, items) -> (block, key)
     place_checkpoint(text, body) -> str or None
-    rebase_checkpoint(text, base) -> str or None
     checkpoint_key(base, content) -> str
     write_if_unchanged(note, text, expect) -> bool
     same_action(line) -> str
@@ -173,7 +172,6 @@ __all__ = [
     "read_checkpoint",
     "render_checkpoint",
     "place_checkpoint",
-    "rebase_checkpoint",
     "said_time",
     "write_if_unchanged",
     "same_action",
@@ -2294,19 +2292,6 @@ def place_checkpoint(text: str, body: str) -> Optional[str]:
     if at is None:
         return None
     return text[:at] + "\n" + CHECKPOINT_HEADING + "\n\n" + body + "\n" + text[at:]
-
-
-def rebase_checkpoint(text: str, base: str) -> Optional[str]:
-    """The note with its checkpoint written against `base`: the same items at
-    the same time, a new base and the key that follows from it. For the
-    interrupt, the one writer that rewrites Resume here without folding the
-    checkpoint, so that a hold does not make it stale. None where there is no
-    valid block to rebase."""
-    block = read_checkpoint(text)
-    if block is None or not block["valid"]:
-        return None
-    body, _ = render_checkpoint(block["at"], base, block["items"])
-    return place_checkpoint(text, body)
 
 
 def write_if_unchanged(note: PathLike, text: str, expect: bytes) -> bool:

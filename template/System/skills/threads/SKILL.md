@@ -495,7 +495,7 @@ focus, as under *No name given*). Then:
    already running and exits 1: then say so and stop. The lock is a file in
    `System/generated/`; a lock older than ten minutes counts as gone.
 - **Run the steps below**, 1 to 12. Where the assistant can start a
-   background subagent (Claude Code's Agent tool), start one for them and
+   background subagent, start one for them and
    return to the user at once: "Acme pricing is being wrapped. Say back when
    you're done." Brief the subagent with everything the conversation holds that
    the steps need, since it has not seen it: the thread note's path, what this
@@ -718,7 +718,7 @@ modification time, and nothing else keeps a place.
      case "$f" in */_*) continue;; esac
      [ "$(basename "$f" .md)" = "$(basename "$(dirname "$f")")" ] || continue
      case "$(grep -m1 '^status:' "$f" | cut -d' ' -f2)" in done|parked) continue;; esac
-     printf '%s\t%s\n' "$(stat -f %m "$f")" "$f"
+     printf '%s\t%s\n' "$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")" "$f"
    done | sort -rn | head -3
    ```
    The first line is the thread. After two wraps it is the later one. A wrap

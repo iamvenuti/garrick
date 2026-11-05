@@ -5381,6 +5381,13 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                 named |= {e.name.lower() for e in os.scandir(project / "Threads") if e.is_dir()}
             except OSError:
                 pass
+        if set(parts) & {"wikis", "wiki", "raw"}:
+            return True  # a path into a wiki
+        stems = {_strip_md(Path(rel(ws, f)).parts)[-1].lower() for f in ws.wiki_files
+                 if "Meetings" in Path(rel(ws, f)).parts[:3]}
+        stems |= {page.stem.lower() for page in ws.meetings}
+        if parts and parts[-1] in stems:
+            return True  # it names a Meetings page, whatever its type or grade
         if set(parts) & named:
             return True  # a segment names a project's or a thread's folder: read as before, never as a bare folder name
         if not parts:

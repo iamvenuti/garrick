@@ -867,6 +867,30 @@ class TestFolderPaths(GapCase):
             with self.subTest(written):
                 self.assertEqual([], self.says(written))
 
+    def test_a_slash_ended_name_of_a_meetings_page_keeps_its_verdict(self):
+        """A Meetings page of any type or grade, written with a trailing slash,
+        is read as 0.56.0 read it: Demo/ names only a project note and passes."""
+        meetings = self.root / "Wikis" / "Meetings"
+        page = meeting_page("Work", "[birch]", "Harvest")
+        write(meetings / "wiki" / "sources" / "260315-harvest.md", page)
+        write(meetings / "wiki" / "people" / "theo-marsh.md",
+              "---\ntitle: Theo Marsh\ntype: person\nzone: Work\nparty: birch\n---\n\n# Theo Marsh\n")
+        write(meetings / "wiki" / "entities" / "harvest-co.md",
+              "---\ntitle: Harvest Co\ntype: entity\nparty: birch\n---\n\n# Harvest Co\n")
+        write(meetings / "dormant" / "wiki" / "sources" / "260316-old-call.md", page)
+        write(meetings / "archive" / "wiki" / "sources" / "260317-older-call.md", page)
+        table = (
+            ("Wikis/Meetings/wiki/sources/260315-harvest/", True), ("260315-harvest/", True),
+            ("wiki/sources/260315-harvest/", True), ("cat Wikis/Meetings/wiki/sources/260315-harvest/", True),
+            ("theo-marsh/", True), ("wiki/people/theo-marsh/", True),
+            ("harvest-co/", False), ("wiki/entities/harvest-co/", False),  # an entity page: passed in 0.56.0 too ("260316-old-call/", True), ("dormant/wiki/sources/260316-old-call/", True),
+            ("260317-older-call/", True), ("archive/wiki/sources/260317-older-call/", True),
+            ("Demo/", False))
+        for written, refused in table:
+            with self.subTest(written):
+                found = self.says("`%s`" % written)
+                self.assertEqual(["error"] if refused else [], [s for s, _ in found], found)
+
     def test_every_form_has_the_verdict_it_had_in_0_56_0(self):
         """Only a slash-ended token whose refusal came from the bare-name match
         of its last segment to a note, with no segment naming a project's

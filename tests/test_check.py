@@ -964,7 +964,8 @@ class TestKnowledge(CheckCase):
             "m: {&a party: x}\n", "m: {!!str party: x}\n", "m: {? party : x}\n",
             "x: {a: 1,\n  b: [1,\n  2], party: x}\n", "tags: [a, [b]]\n", "tags: [a, b\n", "tags: [&a b]\n",
             "tags: [*a]\n", "tags: [a\\b]\n", "k: *alias\n", "k: !!str v\n", "k: &anchor v\n", "k: ? v\n",
-            "a plain line with no key\n"]
+            "a plain line with no key\n", "t: a\u2028party: b\n", "t: a\u0085party: b\n", "t: a\u2029party: b\n",
+            "t: a\x0cparty: b\n", "t: a\x0bparty: b\n", "summary: |\n  text\u2028party: b\n"]
         for frontmatter in forms:
             with self.subTest(frontmatter=frontmatter):
                 self.knowledge_page(frontmatter)

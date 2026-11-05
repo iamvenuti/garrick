@@ -6389,6 +6389,11 @@ def _frontmatter_value_ok(value: str) -> bool:
     return v[0] not in "{&!*?" and not v.startswith("<<")
 
 
+# A character some YAML readers take as a line break or cannot print: C0 and C1 controls but tab, and U+2028 and
+# U+2029. `a party: b` after one is a key to such a reader (#388).
+_FM_ODD_CHAR = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
+
+
 def scan_frontmatter(text: str, names) -> tuple:
     """Read a Knowledge page's frontmatter against an allowlist (#388): (names among `names` used as keys,
     whether any line cannot be read plainly). A line is blank, a comment, `key: value` or `key:` with an
@@ -6399,6 +6404,8 @@ def scan_frontmatter(text: str, names) -> tuple:
     body = _frontmatter_body(text) or []
     found, unreadable, block = [], False, None
     for i, line in enumerate(body):
+        if _FM_ODD_CHAR.search(line):
+            unreadable = True
         indent = len(line) - len(line.lstrip())
         if block is not None and (not line.strip() or indent > block):
             continue

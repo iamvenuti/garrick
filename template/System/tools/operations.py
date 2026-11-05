@@ -230,6 +230,9 @@ DECLARED: Dict[str, Op] = {
     "question-decide": _op(("wiki", "file", "words"), ("wiki", "file"), "workspace"),
     "question-work": _op(("wiki", "file"), ("wiki", "file"), "none", retry="safe"),
     "question-done": _op(("wiki", "file"), ("wiki", "file"), "workspace"),
+    # Open sections as questions (#224, point 8): a read without `confirm`; with it,
+    # one question file per line, committing nothing and changing no page.
+    "question-open-sections": _op(("wiki", "confirm", "pages"), ("wiki", "confirm"), "workspace"),
     # The Questions panel's Nurture answers (#224): an entity page's party, where
     # a person works, a value corrected, and the review page's one Save. `zone`
     # and `scope` name the view the rows were shown in (a zone, and a party of

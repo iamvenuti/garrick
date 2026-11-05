@@ -781,8 +781,20 @@ As the `knowledge` skill's *Lint*, for this wiki, and it changes no page:
 4. **A finding only the user can settle**, such as a contradiction the
    records do not decide, is also a question file, as *A question for the
    user* says, for one party at a time. The report line links it.
-5. Commit the report and the question files together, and nothing else.
-6. "Lint the wikis" runs both, this one and the `knowledge` skill's.
+5. **Open sections.** The script's list ends with every line under an
+   *Open* or *Open issues* heading, each a question it could become. Show
+   the user that list once and ask once for the whole of it. On a yes, run
+   `python3 System/status/page_action.py question-open-sections --wiki
+   Meetings --confirm true`; it writes one question file per line, the page
+   as `origin:` and `pages:`, the page's own `zone:` and `parties:` copied
+   exactly, and changes no page. Without a yes, write nothing: a run
+   without `--confirm` only lists. A page with no `zone:` or `parties:`
+   gets no question, and the list says why: it is an unfinished page, so
+   finish it first. A line a question already asks is not proposed again,
+   whatever that question's status. Nothing is removed from the page; the
+   line stays until its question is answered and worked in.
+6. Commit the report and the question files together, and nothing else.
+7. "Lint the wikis" runs both, this one and the `knowledge` skill's.
 
 ## Listening mode
 

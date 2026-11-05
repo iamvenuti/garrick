@@ -2936,7 +2936,7 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
 # Nurture review page's save commits. The measuring is `check_counts`, a name
 # the tests replace.
 TX = None
-CHECK_TIMEOUT = 900
+CHECK_TIMEOUT = 270     # two runs and a commit fit inside the page's ACTION_LOST (a test pins the sum); a run that takes longer writes nothing
 
 
 class Writes:
@@ -3047,35 +3047,42 @@ def check_counts(ws: Path) -> Optional[dict]:
         except (OSError, ValueError, subprocess.SubprocessError):
             return None
         return data if isinstance(data, dict) else None
-    try:
-        quick = ["--quick"] if "--quick" in (tools / "check.py").read_text(encoding="utf-8") else []
-    except OSError:
-        quick = []
-    found = run("check.py", "--json", *quick)
+    # The whole check, wording included: a sentence copied from the far side is read only in a full run.
+    found = run("check.py", "--json")
     if found is None or not isinstance(found.get("findings"), list):
         return None
     for f in found["findings"]:
         if isinstance(f, dict):
             key = "check:%s" % (f.get("severity") or "warning")
-            out[key] = out.get(key, 0) + 1
+            out.setdefault(key, set()).add((str(f.get("check")), re.sub(r":\d+$", "", str(f.get("path"))), str(f.get("message"))))
     for wiki in WIKI_NAMES:
         if not (Path(ws) / "Wikis" / wiki / "wiki").is_dir():
             continue
         lint = run("wiki_lint.py", "--wiki", wiki, "--json")
         if lint is None:
             return None
-        out["lint:%s:orphans" % wiki] = len(lint.get("orphans") or [])
-        out["lint:%s:missing" % wiki] = sum(len(m.get("linked_from") or []) for m in lint.get("missing") or [] if isinstance(m, dict))
+        out["lint:%s:orphans" % wiki] = {str(o) for o in lint.get("orphans") or []}
+        out["lint:%s:missing" % wiki] = {(str(m.get("target")), str(p)) for m in lint.get("missing") or []
+                                         if isinstance(m, dict) for p in m.get("linked_from") or []}
     return out
 
 
 def worse_counts(before: dict, after: dict) -> list:
+    """What got worse between two readings. A reading holds, for each check, the
+    findings it made (check, path, message), or a number where a caller only
+    counts. A finding present after and not before is worse, even when another
+    was fixed in the same write: one fix never pays for a new problem. Only
+    names and numbers are said, never a path or a message."""
     names = {"check:error": "errors", "check:warning": "warnings"}
     out = []
     for key in sorted(set(before) | set(after)):
-        if after.get(key, 0) > before.get(key, 0):
-            what = names.get(key) or key.replace("lint:", "").replace(":", " ")
-            out.append("%s %d to %d" % (what, before.get(key, 0), after.get(key, 0)))
+        was, now = before.get(key, set()), after.get(key, set())
+        what = names.get(key) or key.replace("lint:", "").replace(":", " ")
+        if isinstance(was, int) or isinstance(now, int):
+            if (now if isinstance(now, int) else len(now)) > (was if isinstance(was, int) else len(was)):
+                out.append("%s %d to %d" % (what, was if isinstance(was, int) else len(was), now if isinstance(now, int) else len(now)))
+        elif now - was:
+            out.append("%s: %d new" % (what, len(now - was)))
     return out
 
 
@@ -3123,41 +3130,44 @@ def refusal_kind(said: str) -> str:
     return "wall"
 
 
-def commit_groups(ws: Path, w: Writes, message_for) -> dict:
+def commit_groups(ws: Path, w: Writes, message_for, *, wall: Optional[str]) -> dict:
     """Commit what `w` changed, once per repository, each after the walls check
     on it staged. Returns {"commits": {repo: sha}, "refused": {repo: why},
-    "uncommitted": [rel]}; the files of a refused repository are put back."""
+    "uncommitted": [rel]}; the files of a repository whose commit is refused
+    are put back. Before any commit, every repository is asked whether it can
+    commit at all, and one that cannot refuses the lot: nothing is committed
+    in one and not another for a reason that was known. `wall` is the rules'
+    sentence, which a refusal by the wall check ends on."""
     done = {"commits": {}, "refused": {}, "uncommitted": []}
     groups = {}
+    top = Path(ws).resolve()
     for p in w.changed():
         repo = repo_of_path(ws, p)
         if repo is None:
-            done["uncommitted"].append(str(p.relative_to(Path(ws).resolve())) if Path(ws).resolve() in p.parents else p.name)
+            done["uncommitted"].append(str(p.relative_to(top)) if top in p.parents else p.name)
         else:
             groups.setdefault(repo, []).append(p)
-    for repo, files in sorted(groups.items()):
-        rels = sorted(str(f.relative_to(repo)) for f in files)
-        label = str(repo.relative_to(Path(ws).resolve())) if repo != Path(ws).resolve() else "."
-        why, code = "", 0
+    for repo in sorted(groups):
         problem = commit_refusal(repo) if repo.parent.name == "Zones" else None
         if problem:
-            code, why = 1, "%s, so nothing was committed" % problem
-        else:
-            code, why = stage(repo, rels)
-            if code == 0:
-                said = walls_on_staged(ws, repo, rels)
-                if said:
-                    code, why = 1, said
-            if code == 0:
-                note_event("phase", "checking")
-                code, why = git(repo, "commit", "-q", "-m", message_for(label, rels), "--", *rels, timeout=COMMIT_TIMEOUT)
+            raise Refused("%s, so nothing was committed and nothing was written" % problem)
+    for repo, files in sorted(groups.items()):
+        rels = sorted(str(f.relative_to(repo)) for f in files)
+        label = str(repo.relative_to(top)) if repo != top else "."
+        code, why = stage(repo, rels)
         if code == 0:
-            sha = git(repo, "rev-parse", "--short", "HEAD")[1].strip()
-            done["commits"][label] = sha
+            said = walls_on_staged(ws, repo, rels)
+            if said:
+                code, why = 1, said
+        if code == 0:
+            code, why = committing(repo, rels, message_for(label, rels))
+        if code == 0:
+            done["commits"][label] = git(repo, "rev-parse", "--short", "HEAD")[1].strip()
             continue
         unstage(repo, rels)
         w.undo(files)
-        why = why if code is None else ((why.strip().splitlines() or ["git refused"])[-1])
+        if wall and (WALL_LINE.match(why or "") or "walls check refused" in (why or "")):
+            why = wall
         done["refused"][label] = why
     return done
 
@@ -3196,10 +3206,15 @@ def transaction(ws: Path, change, *, commit=None, after=None):
         bad = worse_counts(before, now)
         if bad:
             w.restore()
-            raise Refused("a check got worse (%s), so every file is back as it was and nothing was committed" % "; ".join(bad))
+            raise Refused("a check got worse (%s), so every file is back as it was and nothing was committed. "
+                          "If something else changed in the workspace meanwhile, that can cause it: try again" % "; ".join(bad))
         if commit is None:
             return result
-        done = commit_groups(ws, w, commit)
+        try:
+            done = commit_groups(ws, w, commit, wall=wall_refusal(ws))
+        except Refused:
+            w.restore()
+            raise
         return after(result, done) if after else result
     finally:
         TX = None
@@ -3312,6 +3327,9 @@ def page_party_tags(lib, ws: Path, path: Path) -> Optional[set]:
     if lib.frontmatter_form_problem(text):
         return None
     fm = lib.parse_frontmatter_text(text)
+    # Two spellings of the party key (`party:` and `PARTY:`) can be read two ways: the page says whose it is to no one.
+    if any(str(k).strip().lower() in ("party", "parties") and str(k).strip() not in ("party", "parties") for k in fm):
+        return None
     tags = {bare_tag(lib, t) for t in tags_of(fm.get("party")) + tags_of(fm.get("parties"))}
     known = lib.load_context(ws).get("parties", {})
     return tags if tags and all(t in known for t in tags) else None
@@ -3332,6 +3350,12 @@ def meetings_page(ws: Path, rel, folder: str) -> Path:
     path = raw.resolve()
     if base not in path.parents or raw.is_symlink() or not path.is_file() or SKIP & set(path.relative_to(base).parts):
         raise RowRefused("that page is not in wiki/%s/ any more" % folder)
+    # On a disk that ignores case a path can be spelled two ways and git knows one: only the spelling on disk is taken.
+    here = Path(ws).resolve()
+    for part in path.relative_to(here).parts:
+        if part not in os.listdir(str(here)):
+            raise RowRefused("that page is not in wiki/%s/ any more" % folder)
+        here = here / part
     return path
 
 
@@ -3367,6 +3391,8 @@ def clean_rows(req: dict) -> list:
             raise Refused("an answer names a finding by a key the review page does not make, so nothing was written")
         edit = r.get("edit")
         if edit is not None:
+            if isinstance(edit, dict) and isinstance(edit.get("old"), str) and len(edit["old"].strip()) < 3:
+                raise Refused("the value to correct needs at least three characters, so nothing was written")
             if not isinstance(edit, dict) or set(edit) - {"old", "new"} or not all(
                     isinstance(edit.get(k), str) and 0 < len(edit[k]) <= NURTURE_WORD_MAX
                     and not any(ord(c) < 32 or c == "\x7f" for c in edit[k]) for k in ("old", "new")):
@@ -3380,12 +3406,16 @@ def later_path(ws: Path) -> Path:
 
 
 def read_later(ws: Path) -> dict:
+    """Rows put off: {key: {"until": day, "path": page}}. A key is bound to the
+    page it was put off for, so a forged key cannot hide another finding."""
     try:
         data = json.loads(later_path(ws).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
-    return {k: v for k, v in data.items() if isinstance(data, dict) and KEY_RE.fullmatch(str(k)) and isinstance(v, str)} \
-        if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if KEY_RE.fullmatch(str(k)) and isinstance(v, dict)
+            and isinstance(v.get("until"), str) and isinstance(v.get("path"), str)}
 
 
 def save_later(ws: Path, put: dict, drop: set) -> None:
@@ -3445,12 +3475,17 @@ def walls_gate(ws: Path, w: Writes, rows: list, say_wall: str, refuse) -> None:
     if not bad:
         raise Refused(say_wall if refusal_kind(said) == "wall" else
                       "the walls check could not pass the change as a whole (%s), so nothing was written" % refusal_kind(said))
-    back = set()
-    for tag in list(bad):
-        back |= {p for p, o in w.owners.items() if tag in o}
-    for tag, row in rows:
-        if tag not in bad and any(tag in o for p, o in w.owners.items() if p in back):
-            bad[tag] = "wall"                       # it shares a file with a row put back
+    # A row that shares a real file with a row put back goes back too, until no more do; what is put back is
+    # worked out after that, so every row said not to be written has all its files back.
+    while True:
+        back = set()
+        for tag in bad:
+            back |= {p for p, o in w.owners.items() if tag in o}
+        more = {tag for tag, row in rows if tag not in bad and any(tag in o for p, o in w.owners.items() if p in back)}
+        if not more:
+            break
+        for tag in more:
+            bad[tag] = "wall"
     w.undo(back)
     for tag, kind in bad.items():
         refuse(tag, say_wall if kind == "wall" else
@@ -3489,8 +3524,15 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
             """Write one row's change; a RowRefused leaves nothing of it."""
             path_rel = row.get("path")
             if row["choice"] in ("no", "later"):
+                if row["do"] == "answer":
+                    page = meetings_page(ws, path_rel, "entities")
+                    if not view.unattributed:
+                        raise RowRefused(wall)
+                else:
+                    page = meetings_page(ws, path_rel, "people")
+                    if view.unattributed or not near_side(lib, ws, view, page):
+                        raise RowRefused(wall)
                 if row.get("edit") and row["do"] != "answer":
-                    page = meetings_page(ws, path_rel, "people" if "/people/" in "/" + str(path_rel) else "entities")
                     run_edit(i, row, page, w)
                 if row["choice"] == "later":
                     try:
@@ -3501,9 +3543,9 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                         raise RowRefused("not a later day: %r" % (row.get("until"),))
                     if not isinstance(row.get("key"), str):
                         raise RowRefused("a row put off is named by its key")
-                    plan.append((i, row, "later", None, "", day.isoformat()))
+                    plan.append((i, row, "later", None, "", {"until": day.isoformat(), "path": ctx.rel(page)}))
                     return
-                plan.append((i, row, "no", None, "", ""))
+                plan.append((i, row, "no", None, ctx.rel(page), ""))
                 return
             do = row["do"]
             folder = "entities" if do == "answer" else "people"
@@ -3559,12 +3601,38 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                 raise RowRefused(wall)
             edit = row["edit"]
             w.tag = i
+            index = ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md"
+
+            def only(hit) -> bool:
+                """A correction in the panel reaches Meetings wiki pages on the near side of the view, and nothing
+                else: not a zone's notes, a memory, a page with no readable party or another party's page."""
+                pages = [hit.path] if hit.kind == "wiki" else list(hit.pages) if hit.kind == "raw" else []
+                base = (ctx.root / "Wikis" / "Meetings" / "wiki").resolve()
+                return bool(pages) and all(base in Path(x).resolve().parents and near_side(lib, ws, view, Path(x)) for x in pages)
             try:
                 out = N.run_correction(ctx, [ctx.rel(page)], edit["old"], edit["new"], True, "", [], ctx.rel(page),
-                                       commit=False, watch=w.watch)
+                                       commit=False, watch=w.watch, only=only, rebuild=False)
             except ValueError as e:
                 raise RowRefused(str(e))
             plan.append((i, row, "correct", out, "", edit))
+
+        def rebuild_index(w):
+            """The Meetings index, once, from the pages that remain: it belongs to no row, so a row put back
+            never leaves it describing pages it did not write."""
+            index = ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md"
+            w.tag = None
+            if not any(e[2] == "correct" and e[3].get("done") and e[3]["done"].changed for e in plan):
+                if index in w.before:
+                    w.undo([index])
+                return
+            ingest = ctx.root.joinpath(*N.correct.INGEST)
+            if not ingest.is_file():
+                return
+            w.watch(index)
+            r = subprocess.run([sys.executable, str(ingest), "--root", str(ctx.root), "index"], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=CHECK_TIMEOUT)
+            if r.returncode != 0:
+                w.undo([index])
 
         def change(w):
             for i, row in enumerate(rows):
@@ -3577,6 +3645,7 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                     refuse(i, "held: %s" % e)
             w.tag = None
             walls_gate(ws, w, [(e[0], e[1]) for e in plan if e[2] in NURTURE_DO], wall, refuse)
+            rebuild_index(w)
             return None
 
         def message(label, rels):
@@ -3599,7 +3668,7 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                 if how in ("no", "later"):
                     if how == "later":
                         put[row["key"]] = extra
-                    said = "Left as it is" if how == "no" else "Put off until %s" % extra
+                    said = "Left as it is" if how == "no" else "Put off until %s" % extra["until"]
                     before = results.get(i)
                     results[i] = {"key": row.get("key"), "ok": True,
                                   "say": "%s; %s" % (before["say"], said.lower()) if before and before["ok"] else said}
@@ -3608,14 +3677,16 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                 repos = {repo_of_path(ws, p) for p in files}
                 failed = [r for r in repos if r is not None and (str(r.relative_to(Path(ws).resolve())) if r != Path(ws).resolve() else ".") in refused_repos]
                 if failed:
-                    results[i] = {"key": row.get("key"), "ok": False, "say": "not committed, so nothing changed"}
+                    names = {str(r.relative_to(Path(ws).resolve())) if r != Path(ws).resolve() else "." for r in repos if r is not None}
+                    kept = sorted(n for n in names if n in done["commits"])
+                    results[i] = {"key": row.get("key"), "ok": False,
+                                  "say": ("committed in %s, not committed elsewhere and put back there" % ", ".join(kept)) if kept
+                                  else "not committed, so nothing changed"}
                     continue
                 if how == "correct":
                     out = item
                     said = "Corrected %s to %s" % (extra["old"], extra["new"]) if out.get("done") and out["done"].changed else \
                         "Nothing live held the old value"
-                    if out["wall"]:
-                        said += ". " + out["wall"]
                     results[i] = {"key": row.get("key"), "ok": True, "say": said}
                     continue
                 results[i] = {"key": row.get("key"), "ok": True,
@@ -3624,6 +3695,9 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
             # the day's report: the same lines the chat path writes
             for e in plan:
                 i, row, how, item, asked, extra = e
+                if how == "no" and results.get(i, {}).get("ok"):
+                    N.record_answer(ctx, asked, "Is the proposed answer right?", "no", settled=False)
+                    continue
                 if not results.get(i, {}).get("ok") or how in ("no", "later"):
                     continue
                 if how == "correct":

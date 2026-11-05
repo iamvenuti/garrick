@@ -224,9 +224,9 @@ class TestNurtureFindings(Panel):
 
     def test_a_row_put_off_stays_hidden_until_its_day(self):
         key = next(r["key"] for r in self.data(self.C)["buckets"]["Work|acme"]["review"]["people"] if r["title"] == "Jo Lee")
-        pa.save_later(self.root, {key: "2026-11-20"}, set())
+        pa.save_later(self.root, {key: {"until": "2026-11-20", "path": "Wikis/Meetings/wiki/people/jo-lee.md"}}, set())
         self.assertNotIn("Jo Lee", self.rows("Work|acme", "people"))
-        pa.save_later(self.root, {key: "2026-11-05"}, set())
+        pa.save_later(self.root, {key: {"until": "2026-11-05", "path": "Wikis/Meetings/wiki/people/jo-lee.md"}}, set())
         self.assertIn("Jo Lee", self.rows("Work|acme", "people"))
 
 

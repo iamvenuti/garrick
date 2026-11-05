@@ -141,10 +141,10 @@ class TestSave(PanelCase):
         self.assertEqual("Saved 30 answers", out["say"])
         self.assertTrue(all(r["ok"] for r in out["rows"]))
         self.assertEqual(wiki_before + 1, len(self.head()))
-        self.assertEqual(work_before + 1, len(self.head(self.work)))
+        self.assertEqual(work_before, len(self.head(self.work)))      # an edit in the panel stays in the view: no zone note
         for n in names[1:]:
             self.assertIn('organisation: "[[wiki/entities/acme-corp]]"', (self.people / (n + ".md")).read_text())
-        self.assertIn("Mira Holte", hub.read_text())
+        self.assertNotIn("Mira Holte", hub.read_text())
         self.assertEqual("", git(self.meetings, "status", "--porcelain").strip())
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())
         rec = json.loads(self.report().read_text())
@@ -214,7 +214,7 @@ class TestSave(PanelCase):
         self.assertTrue(out["rows"][0]["ok"], out)
         self.assertIn("Mira Holte", (self.people / "mira-holt.md").read_text())
         self.assertNotIn("organisation:", (self.people / "mira-holt.md").read_text())
-        self.assertEqual({"aaaaaaaaaaaa": "2026-11-20"}, pa.read_later(self.root))
+        self.assertEqual({"aaaaaaaaaaaa": {"until": "2026-11-20", "path": "Wikis/Meetings/wiki/people/mira-holt.md"}}, pa.read_later(self.root))
 
     def test_an_entity_page_takes_only_a_party_of_the_zone_chosen(self):
         write(self.root / "System" / "context.md", CONTEXT.replace("| Cedar Ltd | Supplier to Acme | Work |", "| Cedar Ltd | Supplier to Acme | Personal |"))
@@ -259,7 +259,7 @@ class TestSave(PanelCase):
                          self.org("mira-holt", choice="later", until="2026-11-20", key="bbbbbbbbbbbb")])
         self.assertTrue(all(r["ok"] for r in out["rows"]))
         self.assertEqual(before, snap(self.root))
-        self.assertEqual({"bbbbbbbbbbbb": "2026-11-20"}, pa.read_later(self.root))
+        self.assertEqual({"bbbbbbbbbbbb": {"until": "2026-11-20", "path": "Wikis/Meetings/wiki/people/mira-holt.md"}}, pa.read_later(self.root))
         out = self.save([self.org("mira-holt", choice="later", until="2026-01-01", key="cccccccccccc")])
         self.assertFalse(out["rows"][0]["ok"])
         self.assertIn("not a later day", out["rows"][0]["say"])

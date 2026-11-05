@@ -1346,7 +1346,8 @@ register(Kind("correction", "Corrections", 25, lambda ctx, item: False,
 
 
 def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, why: str = "",
-                   leave: Optional[List[str]] = None, path: str = "", commit: bool = True, watch=None) -> dict:
+                   leave: Optional[List[str]] = None, path: str = "", commit: bool = True, watch=None,
+                   only=None, rebuild: bool = True) -> dict:
     """A correction the user gave, as one finding: listed, and on `yes`
     applied by correct.py, which commits once per repository. Recorded in the
     day's report: what it fixed, the yes, and what a wall or another
@@ -1356,7 +1357,10 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     changes (the Questions panel's save): `watch(path)` is called with every
     file about to be written, before it is, so the caller can put it back,
     the Meetings index correct.py rebuilds included; nothing is recorded
-    here, and `record_correction` records it once the caller has committed."""
+    here, and `record_correction` records it once the caller has committed.
+    `only(hit)` keeps the copies a caller may change (the panel: Meetings wiki
+    pages on the near side of its view); the others are left alone and not
+    said. `rebuild=False` leaves the Meetings index to the caller."""
     if not new or not new.strip():
         raise ValueError("Say what it should be: --new cannot be empty.")
     if old == new:
@@ -1368,6 +1372,8 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     go, crossing, shaped = person_links_held(ctx, go, old, new)
     withheld = withheld or crossing
     held = held + shaped
+    if only is not None:
+        go = [h for h in go if only(h)]
     item = correction_item(ctx, old, new, go, path)
     out = {"old": old, "new": new, "item": item, "hits": correct.listing(go, ctx.root), "held": held, "done": None,
            "wall": WALL_REFUSAL if withheld else "", "go": go}
@@ -1377,9 +1383,8 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
                 for h in go:
                     for f in ([h.path] if h.kind != "raw" else list(h.pages)):
                         watch(f)
-                watch(ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md")
             out["done"] = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat(), commit=False,
-                                        rebuild=True)
+                                        rebuild=rebuild)
         return out
     rec = read_record(ctx)
     rec["runs"].append({"at": datetime.datetime.now().strftime("%H:%M"), "scope": scope_key(scopes),
@@ -2209,16 +2214,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     return code
 
 
-def record_answer(ctx: Ctx, path: str, asked: str, answer: str) -> Path:
+def record_answer(ctx: Ctx, path: str, asked: str, answer: str, settled: bool = True) -> Path:
     """A question the user answered, in the day's report: the line, and the
     finding off the list of what is left. `answered` says it, and so does the
     Questions panel's save (page_action.py), so both record the same way."""
     rec = read_record(ctx)
     rec["answered"].append({"path": path, "asked": asked, "answer": answer})
-    here = lambda i: i.get("path") == path and i.get("kind") == "attribution"
-    for items in rec["left"].values():
-        items[:] = [i for i in items if not here(i)]
-    settle(ctx, rec, here, [])
+    if settled:             # a "no" settles nothing: the finding is still there, and the review sees the line
+        here = lambda i: i.get("path") == path and i.get("kind") == "attribution"
+        for items in rec["left"].values():
+            items[:] = [i for i in items if not here(i)]
+        settle(ctx, rec, here, [])
     return write_report(ctx, rec)
 
 

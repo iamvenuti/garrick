@@ -12,11 +12,13 @@ The walls decide what is listed. Every item is placed in a bucket, a zone and
 a party of it, by page_action.py's View.ok(tags), the one test a save is held
 to as well: a question or a finding whose parties cannot be read plainly, or
 that is not wholly on the near side of the zone shown, is placed nowhere, and
-so is never listed, never counted and never offered as a pick. Only the
-buckets are written into the page, so a hidden zone's items are not in it. A
-wall finding is never shown here; the Checks card says it in its own words.
-Everything the page draws from the data is text (textContent), never markup,
-a link or a command.
+so is never listed, never counted and never offered as a pick. The page is one
+static file, as status.py's always is (it holds every zone's projects, todos
+and Needs you questions, and the app picks the zone): every bucket is in the
+page source and the script shows one. What a bucket holds is only what is on
+the near side of its own view. A wall finding is never shown here; the Checks
+card says it in its own words. Everything the page draws from the data is text
+(textContent), never markup, a link or a command.
 
 Standard library only, Python 3.9.
 """
@@ -145,6 +147,20 @@ def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable)
     }
 
 
+def plain_party_keys(path: Path) -> bool:
+    """False for a page that spells its party key two ways (`party:` and
+    `PARTY:`), which a reader could take either way: it is placed nowhere."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+        keys = _KEY_LINE.findall(re.match(r"---\n(.*?)\n---", text, re.S).group(1))
+    except (OSError, UnicodeError, AttributeError):
+        return False
+    return all(k in ("party", "parties") for k in keys if k.lower() in ("party", "parties"))
+
+
+_KEY_LINE = re.compile(r"(?m)^([A-Za-z_][\w-]*)\s*:")
+
+
 def first_line(path: Path) -> str:
     try:
         text = path.read_text(encoding="utf-8")
@@ -191,7 +207,8 @@ def review_rows(ws: Path, nurture, C: Optional[dict], lib, ctx: dict, today: dt.
         if item.kind not in ("attribution", "judgment") or item.key in seen or item.path in walled_paths:
             continue
         seen.add(item.key)
-        if later.get(item.key, "") > today.isoformat():
+        put_off = later.get(item.key)
+        if put_off and put_off["path"] == item.path and put_off["until"] > today.isoformat():
             continue
         path = root / item.path
         if not str(path).startswith(str(root) + "/") or path.is_symlink() or not path.is_file():
@@ -203,7 +220,7 @@ def review_rows(ws: Path, nurture, C: Optional[dict], lib, ctx: dict, today: dt.
             and item.message.startswith(N.NO_ENTITY_PARTY)
         if ents:
             e = next((x for x in index if x["rel"] == rel[len("Wikis/Meetings/wiki/entities/"):-3]), None)
-            if e is None or e["tagged"] or e["misread"] or e["parties"]:
+            if e is None or e["tagged"] or e["misread"] or e["parties"] or not plain_party_keys(path):
                 continue
             row = {"key": item.key, "do": "answer", "path": rel, "title": clip(e["title"], LINE_MAX), "href": link(path)}
             for key, view in views.items():
@@ -261,7 +278,7 @@ def pick_lists(ws: Path, lib, views: Dict[str, object]) -> Dict[str, dict]:
             continue
         ents = []
         for e in index:
-            if e["misread"] or not e["tagged"] or not e["parties"] or not view.ok(e["parties"]):
+            if e["misread"] or not e["tagged"] or not e["parties"] or not view.ok(e["parties"]) or not plain_party_keys(e["path"]):
                 continue
             names = [n for n in e["names"] if n not in (e["title"], e["rel"])]
             ents.append({"rel": e["rel"], "title": clip(e["title"], LINE_MAX), "aliases": [clip(n, LINE_MAX) for n in names[:6]]})
@@ -509,16 +526,17 @@ var extra=el('div','qp-extra');row.appendChild(extra);
 var pick=el('input');pick.type='text';pick.setAttribute('aria-label','Another page');pick.autocomplete='off';pick.placeholder=kind==='organisation'?'An entity page':'A party, or none';
 var dl=el('datalist');dl.id='dl-'+r.key;pick.setAttribute('list',dl.id);
 ((kind==='organisation'?(bk.picks.entities||[]).map(function(e){return[e.rel,e.title+(e.aliases.length?' ('+e.aliases.join(', ')+')':'')]}):(bk.picks.parties||[]).map(function(p){return[p.tag,p.name]}))).forEach(function(o){var op=el('option');op.value=o[0];op.label=o[1];dl.appendChild(op)});
-var oldv=mk('input','text','',r.title,false),newv=mk('input','text','','',false),until=mk('input','date','','',false);
-oldv.setAttribute('aria-label','The value as written');newv.setAttribute('aria-label','What it should be');newv.placeholder='What it should be';until.setAttribute('aria-label','Come back on');
+var oldv=mk('input','text','','',false),newv=mk('input','text','','',false),until=mk('input','date','','',false);
+oldv.setAttribute('aria-label','The value as written');oldv.placeholder='The value as written (three characters or more)';newv.setAttribute('aria-label','What it should be');newv.placeholder='What it should be';until.setAttribute('aria-label','Come back on');
 [pick,dl,oldv,newv,until].forEach(function(e){extra.appendChild(e)});
 function choice(){var c=ch.querySelector('input[type=radio]:checked');return c?c.value:'none'}
 function paint(){var c=choice();pick.hidden=c!=='another';until.hidden=c!=='later';oldv.hidden=newv.hidden=!edc.checked;extra.hidden=pick.hidden&&until.hidden&&oldv.hidden;if(out.change)out.change()}
 ch.addEventListener('change',paint);
 var out={key:r.key,el:row,
-action:function(){var c=choice(),e=edc.checked&&oldv.value&&newv.value;if(c==='yes'||c==='another')return'save';if(c==='later')return'later';return e?'save':'none'},
+action:function(){var c=choice(),e=edc.checked&&oldv.value&&newv.value;if(c==='yes'||c==='another')return'save';if(c==='later')return'later';
+if(c==='no')return'no';return e?'save':'none'},
 value:function(){var c=choice(),v={do:kind,key:r.key,path:r.path};
-if(c==='yes'||c==='another'||c==='later'){v.choice=c;if(c==='another')v.pick=pick.value.trim();if(c==='later')v.until=until.value}
+if(c==='yes'||c==='another'||c==='later'||c==='no'){v.choice=c;if(c==='another')v.pick=pick.value.trim();if(c==='later')v.until=until.value}
 else{v.do='correct';v.choice='yes'}
 if(edc.checked&&oldv.value&&newv.value)v.edit={old:oldv.value,new:newv.value};return v}};
 paint();return out}

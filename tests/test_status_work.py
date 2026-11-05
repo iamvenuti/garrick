@@ -593,6 +593,8 @@ class TestWorkOnThePage(StatusCase):
                    "files-stop", "files-progress", "work-file", "memory-preview", "note-read", "note-open"}
         # A wiki question's verbs (#224) act on one wiki under that wiki's own lock, in no zone's repository.
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
+        # The Questions panel's Nurture answers (#224) act on the wikis and zones their rows name, under their own lock.
+        unzoned |= {v for v in page_action.VERBS if v.startswith("nurture-")}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

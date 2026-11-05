@@ -208,6 +208,21 @@ class TestSave(PanelCase):
         out = self.save([row], zone=pa.UNATTRIBUTED, scope="Work")
         self.assertTrue(out["rows"][0]["ok"], out)
 
+    def test_an_edit_runs_with_a_row_that_is_put_off(self):
+        out = self.save([self.org("mira-holt", choice="later", until="2026-11-20", key="aaaaaaaaaaaa",
+                                  edit={"old": "Mira Holt", "new": "Mira Holte"})])
+        self.assertTrue(out["rows"][0]["ok"], out)
+        self.assertIn("Mira Holte", (self.people / "mira-holt.md").read_text())
+        self.assertNotIn("organisation:", (self.people / "mira-holt.md").read_text())
+        self.assertEqual({"aaaaaaaaaaaa": "2026-11-20"}, pa.read_later(self.root))
+
+    def test_an_entity_page_takes_only_a_party_of_the_zone_chosen(self):
+        write(self.root / "System" / "context.md", CONTEXT.replace("| Cedar Ltd | Supplier to Acme | Work |", "| Cedar Ltd | Supplier to Acme | Personal |"))
+        row = {"do": "answer", "path": "Wikis/Meetings/wiki/entities/harbour-ltd.md", "choice": "another", "pick": "cedar"}
+        out = self.save([row], zone=pa.UNATTRIBUTED, scope="Work")
+        self.assertEqual(SENTENCE, out["rows"][0]["say"])
+        self.assertNotIn("party:", (self.entities / "harbour-ltd.md").read_text())
+
     def test_a_view_whose_zone_holds_walled_parties_needs_a_party(self):
         with self.assertRaisesRegex(pa.Refused, "^A wall holds"):
             self.save([self.org("mira-holt")], scope=None)

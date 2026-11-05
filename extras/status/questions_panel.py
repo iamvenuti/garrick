@@ -182,7 +182,7 @@ def review_rows(ws: Path, nurture, C: Optional[dict], lib, ctx: dict, today: dt.
     sorted_items = []
     for f in C.get("findings", []):
         try:
-            sorted_items += [N.sort_item(nctx, i) for i in N.check_items(f)]
+            sorted_items += [N.sort_item(nctx, i, light=True) for i in N.check_items(f)]
         except Exception:
             continue
     # A page with a wall finding on it has no row: a save would be refused, and the Checks card says the wall.
@@ -310,14 +310,16 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
             zone_info.append(info)
     buckets: Dict[str, dict] = {k: {"questions": [], "answered": 0, "review": {"entities": [], "people": [], "read": []},
                                     "picks": {"entities": [], "parties": []}} for k in views}
-    knowledge = []
+    knowledge, answered_k = [], 0
     for wiki in WIKIS:
         for rel in question_files(ws, wiki):
             q = read_question(ws, wiki, rel, today, link)
             if q is None:
                 continue
             if wiki == "Knowledge":
-                if q["status"] != "answered" and q["shown"]:
+                if q["status"] == "answered":
+                    answered_k += 1
+                elif q["shown"]:
                     knowledge.append(q)
                 continue
             for key, view in views.items():
@@ -331,11 +333,6 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         buckets[key]["review"] = rows
     for key, picks in pick_lists(ws, lib, views).items():
         buckets[key]["picks"] = picks
-    answered_k = 0
-    for wiki, rel in ((w, r) for w in ("Knowledge",) for r in question_files(ws, "Knowledge")):
-        q = read_question(ws, wiki, rel, today, link)
-        if q and q["status"] == "answered":
-            answered_k += 1
     # the menu's number: the open questions of each zone's default bucket, Knowledge's included
     menu = {}
     for info in zone_info:
@@ -507,7 +504,7 @@ else mid.appendChild(el('span','','Whose is it: a party, or none?'));
 row.appendChild(mid);
 var ch=el('div','qp-choice');ch.dataset.name='c-'+r.key;
 if(hasProp)opt(ch,'yes','Yes',true);opt(ch,'no','No',false);opt(ch,'another','Another page',false);opt(ch,'later','Later',false);
-var ed=el('label'),edc=mk('input','checkbox','', 'edit',false);ed.appendChild(edc);ed.appendChild(document.createTextNode('Edit'));ch.appendChild(ed);row.appendChild(ch);
+var ed=el('label'),edc=mk('input','checkbox','', 'edit',false);ed.appendChild(edc);ed.appendChild(document.createTextNode('Edit'));if(kind==='organisation')ch.appendChild(ed);row.appendChild(ch);
 var extra=el('div','qp-extra');row.appendChild(extra);
 var pick=el('input');pick.type='text';pick.setAttribute('aria-label','Another page');pick.autocomplete='off';pick.placeholder=kind==='organisation'?'An entity page':'A party, or none';
 var dl=el('datalist');dl.id='dl-'+r.key;pick.setAttribute('list',dl.id);

@@ -3047,7 +3047,11 @@ def check_counts(ws: Path) -> Optional[dict]:
         except (OSError, ValueError, subprocess.SubprocessError):
             return None
         return data if isinstance(data, dict) else None
-    found = run("check.py", "--json")
+    try:
+        quick = ["--quick"] if "--quick" in (tools / "check.py").read_text(encoding="utf-8") else []
+    except OSError:
+        quick = []
+    found = run("check.py", "--json", *quick)
     if found is None or not isinstance(found.get("findings"), list):
         return None
     for f in found["findings"]:
@@ -3485,6 +3489,9 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
             """Write one row's change; a RowRefused leaves nothing of it."""
             path_rel = row.get("path")
             if row["choice"] in ("no", "later"):
+                if row.get("edit") and row["do"] != "answer":
+                    page = meetings_page(ws, path_rel, "people" if "/people/" in "/" + str(path_rel) else "entities")
+                    run_edit(i, row, page, w)
                 if row["choice"] == "later":
                     try:
                         day = dt.date.fromisoformat(row.get("until") or "")
@@ -3589,12 +3596,13 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
             put, answered_keys = {}, set()
             for e in list(plan):
                 i, row, how, item, asked, extra = e
-                if how == "no":
-                    results[i] = {"key": row.get("key"), "ok": True, "say": "Left as it is"}
-                    continue
-                if how == "later":
-                    put[row["key"]] = extra
-                    results[i] = {"key": row.get("key"), "ok": True, "say": "Put off until %s" % extra}
+                if how in ("no", "later"):
+                    if how == "later":
+                        put[row["key"]] = extra
+                    said = "Left as it is" if how == "no" else "Put off until %s" % extra
+                    before = results.get(i)
+                    results[i] = {"key": row.get("key"), "ok": True,
+                                  "say": "%s; %s" % (before["say"], said.lower()) if before and before["ok"] else said}
                     continue
                 files = [p for p, o in TX.owners.items() if i in o] if TX else []
                 repos = {repo_of_path(ws, p) for p in files}
@@ -3641,7 +3649,7 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
         if not any(True for _ in rows):
             raise Refused("there is nothing to save")
         out = transaction(ws, change, commit=message, after=finish)
-    saved = sum(1 for r in out.values() if r["ok"] and r["say"] not in ("Left as it is",) and not r["say"].startswith("Put off"))
+    saved = sum(1 for r in out.values() if r["ok"] and not r["say"].startswith(("Left as it is", "Put off")))
     later = sum(1 for r in out.values() if r["ok"] and r["say"].startswith("Put off"))
     put_back = [r for r in out.values() if not r["ok"]]
     if single:

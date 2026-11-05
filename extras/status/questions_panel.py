@@ -425,19 +425,26 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
     for key, picks in pick_lists(ws, lib, views).items():
         buckets[key]["picks"] = picks
     # the menu's number: the open questions of each zone's default bucket, Knowledge's included
-    menu = {}
+    menu, per_group = {}, {}
     for info in zone_info:
         key = "%s|%s" % (info["zone"], info["default"])
         if key in buckets:
             menu[info["zone"]] = len(buckets[key]["questions"]) + len(knowledge)
+        # each group's own open count, for the menu to name apart (#384): never added up, and Knowledge apart
+        per_group[info["zone"]] = [{"h": v["heading"], "n": len(buckets[v["key"]]["questions"])}
+                                   for v in group_views([info]) if v["kind"] != "unattributed"]
     return {"today": today.isoformat(), "root": str(ws), "zones": zone_info, "select": selections(zone_info), "buckets": buckets, "knowledge": knowledge,
-            "knowledge_answered": answered_k, "menu": menu}
+            "knowledge_answered": answered_k, "menu": menu, "menu_groups": per_group,
+            "menu_knowledge": len(knowledge)}
 
 
 def counts_of(data: dict) -> dict:
-    """The panel's menu rows: the open count of each zone, for the app to
-    add up over the zones it shows."""
-    return {"z": dict(data.get("menu") or {})}
+    """The panel's menu rows. "g" is each zone's groups with the open count of
+    each, "k" the open Knowledge questions, which carry no party: the app names
+    them apart and adds none of them (#384). "z" is the count of each zone's
+    default group with Knowledge, as 0.56.0 sent it, for a menu not yet updated;
+    it is not added up either."""
+    return {"z": dict(data.get("menu") or {}), "g": dict(data.get("menu_groups") or {}), "k": int(data.get("menu_knowledge") or 0)}
 
 
 def tab_button() -> str:
@@ -454,8 +461,9 @@ def body(data: dict) -> str:
             '<div class="qp-counts" id="qp-counts" role="status"></div>'
             '<div class="qp-bar">'
             '<label>Zone <select id="qp-zone"></select></label>'
-            '<label>Show <select id="qp-source"><option value="wiki">Wiki questions</option>'
-            '<option value="nurture">Nurture findings</option></select></label>'
+            '<div class="qp-show"><span>Show</span><div class="qp-switch" id="qp-source" role="group" aria-label="Show">'
+            '<button type="button" data-source="wiki" aria-pressed="true">Wiki questions</button>'
+            '<button type="button" data-source="nurture" aria-pressed="false">Nurture findings</button></div></div>'
             '<label class="qp-wikiq-only">Wiki <select id="qp-wiki"><option value="">Both</option>'
             '<option value="Meetings">Meetings</option><option value="Knowledge">Knowledge</option></select></label>'
             '<label id="qp-party-l">Party <select id="qp-party"></select></label>'
@@ -485,6 +493,13 @@ CSS = r"""
 .qp-open textarea{width:100%;box-sizing:border-box;min-height:84px;font:inherit;font-size:14px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
 .qp-open .qp-links{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;margin:0 0 10px}
 .qp-open .qp-writes{font-size:12px;color:var(--muted);margin:8px 0}.qp-open .gacts{margin-top:8px}
+.qp-show{display:flex;align-items:center;gap:6px;color:var(--ink2)}
+.qp-switch{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.qp-switch button{font:inherit;font-size:13px;color:var(--ink2);background:var(--surface);border:0;padding:4px 12px;cursor:pointer}
+.qp-switch button+button{border-left:1px solid var(--line)}
+.qp-switch button[aria-pressed=true]{color:var(--ink);background:var(--raise);box-shadow:inset 0 -2px 0 var(--accent)}
+.qp-list li.qp-gh{cursor:default;font-weight:600;background:var(--bg);color:var(--ink2)}
+.qp-gcount{display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%}.qp-gcount strong{font-size:13px}
 .qp-empty{padding:16px;color:var(--muted);font-size:13px}
 .qp-group{margin:0 0 18px}.qp-group h3{margin:0 0 8px;font:600 16px/1.3 var(--display)}
 .qp-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(220px,2fr) auto;gap:8px 14px;align-items:start;padding:10px 0;border-top:1px solid var(--line);font-size:13px}
@@ -509,28 +524,49 @@ function link(name,href){var a=el('a','',name);a.setAttribute('href',href);retur
 var S={zone:'',party:'',source:'wiki',wiki:'',age:'any',cursor:'',gone:{},typed:{}};
 try{Object.assign(S,JSON.parse(ss(SK)||'{}'))}catch(e){}
 function keep(){ss(SK,JSON.stringify(S))}
-var zones=D.zones||[];if(!zones.some(function(z){return z.zone===S.zone}))S.zone=zones.length?zones[0].zone:'';
+var zones=D.zones||[];if(S.zone!=='*'&&!zones.some(function(z){return z.zone===S.zone}))S.zone=zones.length?zones[0].zone:'';
 function zinfo(){return zones.filter(function(z){return z.zone===S.zone})[0]||{scopes:[]}}
-function scoped(){return zinfo().scopes.length>0}
-function pkey(){var z=zinfo();return scoped()?(z.scopes.some(function(s){return s.tag===S.party})?S.party:z.default):''}
+function scopes(){if(S.zone!=='*')return zinfo().scopes;var o=[];zones.forEach(function(z){z.scopes.forEach(function(s){o.push(s)})});return o}
+function scoped(){return scopes().length>0}
+/* the party shown: * is All; a zone shown alone with a party that is not its own reads as its default */
+function pkey(){var l=scopes();if(!l.length)return S.zone==='*'?'*':'';if(S.party==='*')return'*';
+if(l.some(function(s){return s.tag===S.party}))return S.party;return S.zone==='*'?'*':zinfo().default}
+/* the groups to show come from the page's own table (group_views in Python), never worked out here */
+function sel(){return(D.select||{})[S.zone+'|'+pkey()]||{views:[],sum:false}}
 var EMPTY={questions:[],answered:0,review:{entities:[],people:[],read:[]},picks:{entities:[],parties:[]}};
-function bucket(){return(D.buckets||{})[S.zone+'|'+pkey()]||EMPTY}
-function ubucket(){return(D.buckets||{})['unattributed|'+S.zone]||EMPTY}
+function bucketOf(k){return(D.buckets||{})[k]||EMPTY}
+function qviews(){return sel().views.filter(function(v){return v.kind!=='unattributed'})}
+function uviews(){return sel().views.filter(function(v){return v.kind==='unattributed'})}
 function key(q){return q.wiki+'/'+q.file}
-function pool(){return bucket().questions.concat(D.knowledge||[]).filter(function(q){return !S.gone[key(q)]})}
 function age(q){return Math.floor((new Date(D.today)-new Date(q.asked||D.today))/864e5)}
 var AGE={any:0,week:7,month:30};
-function visible(){return pool().filter(function(q){return !q.verdict&&(!S.wiki||q.wiki===S.wiki)&&age(q)>=AGE[S.age]})
-.sort(function(a,b){return(a.asked||'').localeCompare(b.asked||'')||a.file.localeCompare(b.file)})}
-function answeredN(){return bucket().answered+(D.knowledge_answered||0)}
-function counts(){var all=pool(),c=$('qp-counts');c.textContent='';
-function chip(n,t){var s=el('span','chip');s.appendChild(el('b','',String(n)));s.appendChild(document.createTextNode(t));c.appendChild(s)}
-chip(all.filter(function(q){return !q.verdict}).length,'open');chip(all.filter(function(q){return q.due}).length,'due today');var tn=$('qp-tab-n');if(tn)tn.textContent=String(all.filter(function(q){return !q.verdict}).length);
-chip(all.filter(function(q){return q.verdict}).length,'proposed verdicts');chip(answeredN(),'answered, not worked in')}
+/* one entry per group: its own questions and its own count. Knowledge carries no party, so it is a group of its own. */
+function groups(){var gs=qviews().map(function(v){var b=bucketOf(v.key);return{v:v,qs:b.questions.filter(function(q){return !S.gone[key(q)]}),answered:b.answered}});
+var k=(D.knowledge||[]).filter(function(q){return !S.gone[key(q)]});
+if(k.length||D.knowledge_answered)gs.push({v:{key:'knowledge',heading:'Knowledge',kind:'knowledge'},qs:k,answered:D.knowledge_answered||0});return gs}
+function shown(){var flat=[],gs=groups();gs.forEach(function(g){g.items=g.qs.filter(function(q){return !q.verdict&&(!S.wiki||q.wiki===S.wiki)&&age(q)>=AGE[S.age]})
+.sort(function(a,b){return(a.asked||'').localeCompare(b.asked||'')||a.file.localeCompare(b.file)});g.items.forEach(function(q){flat.push({q:q,g:g})})});return{gs:gs,flat:flat}}
+function ekey(e){return e.g.v.key+'|'+key(e.q)}
+function open(qs){return qs.filter(function(q){return !q.verdict}).length}
+/* A number stands for several groups only where the table says one may (sum): otherwise each group counts alone. */
+function wikiN(){if(!sel().sum)return null;var n=0;groups().forEach(function(g){n+=open(g.qs)});return n}
+function nurtureN(){if(!sel().sum)return null;var n=0;
+uviews().forEach(function(v){n+=bucketOf(v.key).review.entities.filter(function(r){return !S.gone['r:'+r.key]}).length});
+qviews().forEach(function(v){n+=bucketOf(v.key).review.people.filter(function(r){return !S.gone['r:'+r.key]}).length});return n}
+function counts(){var c=$('qp-counts'),gs=groups();c.textContent='';
+function chips(box,qs,ans){function chip(n,t){var s=el('span','chip');s.appendChild(el('b','',String(n)));s.appendChild(document.createTextNode(t));box.appendChild(s)}
+chip(open(qs),'open');chip(qs.filter(function(q){return q.due}).length,'due today');chip(qs.filter(function(q){return q.verdict}).length,'proposed verdicts');chip(ans,'answered, not worked in')}
+if(sel().sum){var all=[],ans=0;gs.forEach(function(g){all=all.concat(g.qs);ans+=g.answered});chips(c,all,ans)}
+else gs.forEach(function(g){var row=el('div','qp-gcount');row.appendChild(el('strong','',g.v.heading));chips(row,g.qs,g.answered);c.appendChild(row)});
+var tn=$('qp-tab-n');if(tn){var n=wikiN();tn.textContent=n===null?'':String(n)}}
+function answeredText(){var gs=groups().filter(function(g){return g.answered});if(sel().sum)return gs.reduce(function(n,g){return n+g.answered},0)+' answered, waiting to be worked in.';
+return gs.map(function(g){return g.v.heading+' '+g.answered}).join('; ')+' answered, waiting to be worked in.'}
 function fill(sel,opts,cur){sel.textContent='';opts.forEach(function(o){var e=el('option','',o[1]);e.value=o[0];if(o[0]===cur)e.selected=true;sel.appendChild(e)})}
-function bar(){fill($('qp-zone'),zones.map(function(z){return[z.zone,z.zone]}),S.zone);
-$('qp-party-l').hidden=!scoped();if(scoped())fill($('qp-party'),zinfo().scopes.map(function(s){return[s.tag,s.name]}),pkey());
-$('qp-source').value=S.source;$('qp-wiki').value=S.wiki;$('qp-age').value=S.age;
+function bar(){fill($('qp-zone'),[['*','All']].concat(zones.map(function(z){return[z.zone,z.zone]})),S.zone);
+var sc=scopes();$('qp-party-l').hidden=!sc.length;if(sc.length)fill($('qp-party'),[['*','All']].concat(sc.map(function(s){return[s.tag,s.name]})),pkey());
+$('qp-wiki').value=S.wiki;$('qp-age').value=S.age;
+[['wiki','Wiki questions',wikiN()],['nurture','Nurture findings',nurtureN()]].forEach(function(o){var b=root.querySelector('#qp-source [data-source="'+o[0]+'"]');
+b.textContent=o[1]+(o[2]===null?'':' '+o[2]);b.setAttribute('aria-pressed',S.source===o[0]?'true':'false')});
 root.querySelectorAll('.qp-wikiq-only').forEach(function(e){e.hidden=S.source!=='wiki'});
 $('qp-wikiq').hidden=S.source!=='wiki';$('qp-nurture').hidden=S.source!=='nurture'}
 /* ---- one question open at a time ---- */
@@ -539,13 +575,17 @@ host.postMessage({act:q});say(said);return true}
 function phrase(q,how,extra){var w=(q.wiki==='Knowledge'?'the Knowledge':'the Meetings')+' question';
 return how==='answer'?'answer '+w+' “'+q.title+'” with: '+extra:how==='later'?'put off '+w+' “'+q.title+'” until '+extra:'close '+w+' “'+q.title+'”'}
 function copyWords(q,how,extra){var p=phrase(q,how,extra);if(window.GarrickCopy)GarrickCopy(p).then(function(){say('Copied. Paste it to your assistant.')})}
-function list(){var qs=visible(),ol=$('qp-list');ol.textContent='';
-if(!qs.length){ol.appendChild(el('li','qp-empty','Nothing open here.'));$('qp-open').textContent='';return}
-var at=qs.findIndex(function(q){return key(q)===S.cursor});if(at<0){at=0;S.cursor=key(qs[0])}
-qs.forEach(function(q,i){var li=el('li',i===at?'on':'',q.title);li.appendChild(el('small','',q.wiki+(q.asked?' · asked '+q.asked:'')+(q.due?' · due':'')));
-li.onclick=function(){S.cursor=key(q);keep();list()};ol.appendChild(li)});
-opened(qs[at],qs[at+1]||qs[at-1]||null)}
-function opened(q,next){var box=$('qp-open');box.textContent='';box.appendChild(el('h3','',q.title));
+function list(){var v=shown(),ol=$('qp-list'),es=v.flat;ol.textContent='';
+var many=v.gs.length>1;
+if(!es.length&&!many){ol.appendChild(el('li','qp-empty','Nothing open here.'));$('qp-open').textContent='';return}
+var at=es.findIndex(function(e){return ekey(e)===S.cursor});if(at<0){at=0;S.cursor=es.length?ekey(es[0]):''}
+v.gs.forEach(function(g){if(many){var h=el('li','qp-gh',g.v.heading+' ('+open(g.qs)+')');h.setAttribute('role','presentation');ol.appendChild(h)}
+g.items.forEach(function(q){var e=es.filter(function(x){return x.q===q&&x.g===g})[0],i=es.indexOf(e);
+var li=el('li',i===at?'on':'',q.title);li.appendChild(el('small','',q.wiki+(q.asked?' · asked '+q.asked:'')+(q.due?' · due':'')));
+li.onclick=function(){S.cursor=ekey(e);keep();list()};ol.appendChild(li)})});
+if(!es.length){ol.appendChild(el('li','qp-empty','Nothing open here.'));$('qp-open').textContent='';return}
+opened(es[at].q,es[at+1]||es[at-1]||null)}
+function opened(q,nextE){var box=$('qp-open');box.textContent='';box.appendChild(el('h3','',q.title));
 if(q.why)box.appendChild(el('p','',q.why));
 var ls=el('div','qp-links');if(q.origin){ls.appendChild(el('span','','Came from'));ls.appendChild(link(q.origin.name,q.origin.href))}
 if(q.pages.length){ls.appendChild(el('span','','Would change'));q.pages.forEach(function(p){ls.appendChild(link(p.name,p.href))})}
@@ -558,7 +598,7 @@ var acts=el('div','gacts'),ans=el('button','act primary','Answer'),lat=el('butto
 [ans,lat,clo,dec].forEach(function(b){b.type='button'});
 function req(how,extra){var r={verb:'question-'+how,wiki:q.wiki,file:q.file};if(how==='answer')r.words=extra;if(how==='later')r.until=extra;return r}
 function go(how,extra,said){if(!host){copyWords(q,how,extra);return}
-if(act(req(how,extra),said)){S.gone[key(q)]=1;S.cursor=next?key(next):'';delete S.typed[key(q)];keep();counts();list()}}
+if(act(req(how,extra),said)){S.gone[key(q)]=1;S.cursor=nextE?ekey(nextE):'';delete S.typed[key(q)];keep();counts();list()}}
 function save(){var v=ta.value.trim();if(!v){ta.focus();return}go('answer',v,'Filing your answer…')}
 ans.onclick=save;ta.onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();save()}};
 lat.onclick=function(){if(!date.value){date.focus();say('Pick the day to come back on.');return}go('later',date.value,'Putting it off…')};
@@ -570,19 +610,21 @@ lat.addEventListener('mouseover',function(){writes('later')});clo.addEventListen
 if(!host)box.appendChild(el('p','hint','In a browser this page cannot save: each button copies what to say to your assistant.'))}
 /* ---- proposed verdicts, one by one or all at once, each a close ---- */
 var line=[];
-function drain(){var q=line.shift();if(!q)return;S.gone[key(q)]=1;keep();act({verb:'question-close',wiki:q.wiki,file:q.file},'Closing…')}
-function vlist(){var box=$('qp-verdicts'),vs=pool().filter(function(q){return q.verdict});box.textContent='';if(!vs.length)return;
-var h=el('div','qp-group');h.appendChild(el('h3','','Proposed verdicts'));
+function drain(){var q=line.shift();if(!q)return;if(S.gone[key(q)])return drain();S.gone[key(q)]=1;keep();act({verb:'question-close',wiki:q.wiki,file:q.file},'Closing…')}
+function vlist(){var box=$('qp-verdicts'),gs=groups().filter(function(g){return g.qs.some(function(q){return q.verdict})});box.textContent='';
+gs.forEach(function(g){var vs=g.qs.filter(function(q){return q.verdict});
+var h=el('div','qp-group');h.appendChild(el('h3','',groups().length>1?'Proposed verdicts · '+g.v.heading:'Proposed verdicts'));
 vs.forEach(function(q){var r=el('div','qp-row');r.appendChild(el('div','',q.title));r.appendChild(el('div','',q.verdict+(q.reason?': '+q.reason:'')));
-var b=el('button','act','Accept');b.type='button';b.onclick=function(){if(!host){copyWords(q,'close');return}line=[q];drain();counts();vlist();list()};
+var b=el('button','act','Accept');b.type='button';b.onclick=function(){if(!host){copyWords(q,'close');return}line=[q];drain();all()};
 r.appendChild(b);h.appendChild(r)});
-var all=el('button','act primary','Accept all');all.type='button';all.onclick=function(){if(!host){say('Accept them one at a time in a browser.');return}line=vs.slice();drain();counts();vlist();list()};
-h.appendChild(all);box.appendChild(h)}
+/* Accept all closes the group's own, one question at a time, each as a save from its own view */
+var every=el('button','act primary','Accept all');every.type='button';every.onclick=function(){if(!host){say('Accept them one at a time in a browser.');return}line=vs.slice();drain();all()};
+h.appendChild(every);box.appendChild(h)})}
 /* ---- Work them in: the route Process the Inbox takes ---- */
-function work(){var box=$('qp-work');box.textContent='';var n=answeredN();if(!n)return;
+function work(){var box=$('qp-work');box.textContent='';if(!groups().some(function(g){return g.answered}))return;
 var b=el('button','act primary','Work them in');b.type='button';b.setAttribute('data-request','work through the open questions');
 b.setAttribute('data-folder',D.root||'');b.title='Hand “work through the open questions” to your assistant';box.appendChild(b);
-box.appendChild(el('span','hint',n+' answered, waiting to be worked in.'))}
+box.appendChild(el('span','hint',answeredText()))}
 /* ---- the review page for Nurture's findings: one row each, the proposal chosen, one Save ---- */
 var rows=[];
 function mk(tag,type,name,value,on){var i=el(tag);i.type=type;if(name)i.name=name;i.value=value;i.checked=!!on;return i}
@@ -614,37 +656,48 @@ if(c==='yes'||c==='another'||c==='later'||c==='no'){v.choice=c;if(c==='another')
 else{v.do='correct';v.choice='yes'}
 if(edc.checked&&oldv.value&&newv.value)v.edit={old:oldv.value,new:newv.value};return v}};
 paint();return out}
-function review(){var box=$('qp-nurture');box.textContent='';rows=[];var v=ubucket(),b=bucket();
-var groups=[['Unattributed','whose entity pages are',v.review.entities,v,'answer'],[S.zone,'where people work',b.review.people,b,'organisation']];
-groups.forEach(function(g){var items=g[2].filter(function(r){return !S.gone['r:'+r.key]});if(!items.length)return;
-var sec=el('div','qp-group');sec.appendChild(el('h3','',g[0]+': '+g[1]+', '+items.length));
-items.forEach(function(r){var row=rowFor(r,g[3],g[4]);rows.push(row);sec.appendChild(row.el)});box.appendChild(sec)});
-if(b.review.read.length){var d=el('details','qp-group');d.appendChild(el('summary','','Judgment and other findings, to open ('+b.review.read.length+')'));
-b.review.read.forEach(function(r){var p=el('div','qp-row');p.appendChild(link(r.path,r.href));p.appendChild(el('div','',r.check));p.appendChild(el('div'));d.appendChild(p)});box.appendChild(d)}
+function review(){var box=$('qp-nurture');box.textContent='';rows=[];var secs=[],zs=[],labels=[];
+sel().views.forEach(function(v){if(zs.indexOf(v.zone)<0)zs.push(v.zone)});
+zs.forEach(function(z){var vs=sel().views.filter(function(v){return v.zone===z});
+vs.filter(function(v){return v.kind==='unattributed'}).concat(vs.filter(function(v){return v.kind!=='unattributed'})).forEach(function(v){
+var b=bucketOf(v.key),un=v.kind==='unattributed',items=(un?b.review.entities:b.review.people).filter(function(r){return !S.gone['r:'+r.key]});
+secs.push({v:v,b:b,un:un,items:items,rows:[]})})});
+var many=sel().views.length>1&&!sel().sum;
+function nOf(rs){return rs.filter(function(r){return r.action()==='save'}).length}
+function label(btn,rs){btn.textContent='Save '+nOf(rs)+' answer'+(nOf(rs)===1?'':'s')}
+/* A save is one request per group, however many groups are on the screen: the page sends each group with the view its rows were shown in. */
+function groupOf(sec){var rs=sec.rows.filter(function(r){return r.action()!=='none'}),g={zone:sec.un?'unattributed':sec.v.zone,rows:rs.map(function(r){return r.value()})};
+var sc=sec.un?sec.v.zone:sec.v.party;if(sc)g.scope=sc;return g}
+function send(list){var gs=list.map(groupOf).filter(function(g){return g.rows.length});if(!gs.length){say('Nothing to save.');return}
+if(gs.length===1)act({verb:'nurture-save',zone:gs[0].zone,scope:gs[0].scope,rows:gs[0].rows},'Saving…');
+else act({verb:'nurture-save-all',groups:gs},'Saving…')}
+secs.forEach(function(sec){if(!sec.items.length)return;
+var d=el('div','qp-group');d.appendChild(el('h3','',sec.v.heading+': '+(sec.un?'whose entity pages are':'where people work')+', '+sec.items.length));
+sec.items.forEach(function(r){var row=rowFor(r,sec.b,sec.un?'answer':'organisation');sec.rows.push(row);rows.push(row);d.appendChild(row.el)});
+if(many){var sb=el('button','act primary qp-hostonly');sb.type='button';sec.rows.forEach(function(r){r.change=function(){labels.forEach(function(f){f()})}});
+var f=function(){label(sb,sec.rows)};labels.push(f);f();sb.onclick=function(){send([sec])};var ft=el('div','qp-save');ft.appendChild(sb);d.appendChild(ft)}
+box.appendChild(d)});
+qviews().forEach(function(v){var rd=bucketOf(v.key).review.read;if(!rd.length)return;
+var d=el('details','qp-group');d.appendChild(el('summary','',(sel().views.length>1?v.heading+': ':'')+'Judgment and other findings, to open ('+rd.length+')'));
+rd.forEach(function(r){var p=el('div','qp-row');p.appendChild(link(r.path,r.href));p.appendChild(el('div','',r.check));p.appendChild(el('div'));d.appendChild(p)});box.appendChild(d)});
 if(!rows.length){box.appendChild(el('div','qp-empty','No findings to answer here.'));return}
 var foot=el('div','qp-save'),sv=el('button','act primary qp-hostonly');sv.type='button';
-function n(){return rows.filter(function(r){return r.action()==='save'}).length}
-function label(){sv.textContent='Save '+n()+' answer'+(n()===1?'':'s')}
-rows.forEach(function(r){r.change=label});label();
-sv.onclick=function(){var mine=rows.filter(function(r){return r.action()!=='none'});if(!mine.length){say('Nothing to save.');return}
-var un=mine.filter(function(r){return r.value().do==='answer'}),pe=mine.filter(function(r){return r.value().do!=='answer'});
-if(un.length&&pe.length){say('Save the entity pages and the people one at a time.');return}
-var q={verb:'nurture-save',zone:un.length?'unattributed':S.zone,rows:mine.map(function(r){return r.value()})};
-if(un.length)q.scope=S.zone;else if(pkey())q.scope=pkey();
-act(q,'Saving '+mine.length+' answer'+(mine.length===1?'':'s')+'…')};
+if(many){sv.textContent='Save all answers'}
+else{rows.forEach(function(r){r.change=function(){label(sv,rows)}});label(sv,rows)}
+sv.onclick=function(){send(secs)};
 foot.appendChild(sv);
 var web=el('button','act qp-webonly','Review in the chat');web.type='button';web.setAttribute('data-request','review the context with me');web.setAttribute('data-folder',D.root||'');
 foot.appendChild(web);box.appendChild(foot)}
 var prevActed=window.GarrickActed;window.GarrickActed=function(q,res){
-if(q&&q.verb==='nurture-save'){(res&&res.rows||[]).forEach(function(x){var r=rows.filter(function(y){return y.key===x.key})[0];if(!r)return;
+if(q&&(q.verb==='nurture-save'||q.verb==='nurture-save-all')){(res&&res.rows||[]).forEach(function(x){var r=rows.filter(function(y){return y.key===x.key})[0];if(!r)return;
 if(x.ok){S.gone['r:'+x.key]=1}else{r.el.classList.add('refused');var m=r.el.querySelector('.qp-say');if(!m){m=el('div','qp-say');r.el.appendChild(m)}m.textContent=x.say}});
 keep();if(res&&res.ok){var m=rows.filter(function(r){return r.el.classList.contains('refused')});if(!m.length)setTimeout(review,0)}}
 if(q&&q.verb==='question-close'&&line.length)drain();
 if(prevActed)return prevActed(q,res)};
 function all(){bar();counts();list();vlist();work();review();keep()}
-$('qp-zone').onchange=function(){S.zone=this.value;S.party='';S.cursor='';all()};
+$('qp-zone').onchange=function(){S.zone=this.value;S.party=this.value==='*'?'*':'';S.cursor='';all()};
 $('qp-party').onchange=function(){S.party=this.value;S.cursor='';all()};
-$('qp-source').onchange=function(){S.source=this.value;all()};
+root.querySelectorAll('#qp-source button').forEach(function(b){b.onclick=function(){S.source=b.getAttribute('data-source');all()}});
 $('qp-wiki').onchange=function(){S.wiki=this.value;S.cursor='';all()};
 $('qp-age').onchange=function(){S.age=this.value;S.cursor='';all()};
 window.GarrickQuestions={open:function(){if(window.StatusTab)StatusTab('questions');window.scrollTo(0,0);var t=root.querySelector('textarea');if(t)t.focus()}};

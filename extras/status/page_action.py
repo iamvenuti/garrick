@@ -3474,13 +3474,15 @@ def nurture_save_all(ws: Path, req: dict, today: dt.date):
     for gi, (zone, scope, mine) in enumerate(clean):
         try:
             reply = nurture_save(ws, {"zone": zone, "scope": scope}, mine, today)
-            ok = True
+            ok, whole = True, False
         except Refused as e:
+            whole = True
             reply = {"say": str(e), "rows": [{"key": r.get("key"), "ok": False, "say": str(e), "index": i} for i, r in enumerate(mine)]}
             ok = False
         rows.extend(dict(r, group=gi) for r in reply["rows"])
         said.append(reply["say"])
-        results.append({"zone": zone, "scope": scope, "ok": ok and all(r["ok"] for r in reply["rows"]), "say": reply["say"]})
+        results.append({"zone": zone, "scope": scope, "ok": ok and all(r["ok"] for r in reply["rows"]), "say": reply["say"],
+                        "refused": whole})
     return {"say": " | ".join(said), "rows": rows, "groups": results}
 
 

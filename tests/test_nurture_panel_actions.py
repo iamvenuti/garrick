@@ -119,6 +119,18 @@ class TestSingleActions(PanelCase):
         self.assertTrue(any("Mira Holte" in f["line"] for f in rec["fixed"]))
 
 
+class SaveThroughAll:
+    """Mixed into a class of save tests: the same tests, each save sent from the All view as one group, so
+    every wall test of the save runs a second time through nurture-save-all (#384)."""
+
+    def save(self, rows, zone="Work", scope="acme"):
+        out = pa.act(self.root, dict(verb="nurture-save-all", groups=[dict(zone=zone, scope=scope, rows=rows)]), today=TODAY)
+        group = out["groups"][0]
+        if group["refused"]:
+            raise pa.Refused(group["say"])
+        return {"say": out["say"], "rows": [{k: v for k, v in r.items() if k != "group"} for r in out["rows"]]}
+
+
 class TestSaveAll(PanelCase):
     """A save from the All view (#384): one transaction and one commit per group, as from the group's own view."""
 
@@ -350,6 +362,11 @@ class TestSave(PanelCase):
         out = self.save([self.org("mira-holt", choice="later", until="2026-01-01", key="cccccccccccc")])
         self.assertFalse(out["rows"][0]["ok"])
         self.assertIn("not a later day", out["rows"][0]["say"])
+
+
+class TestSaveFromAll(SaveThroughAll, TestSave):
+    pass
+
 
 
 if __name__ == "__main__":

@@ -2005,19 +2005,32 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// row with nothing of its own to show takes a line from the rows that do.
 	@objc func openCatchUp(_ sender: Any?) { web.evaluateJavaScript("window.GarrickCatchUp && window.GarrickCatchUp.open()") }
 
-	// MARK: questions (#224)
+	// MARK: questions (#224, #384)
 	// The Questions row, under Catch Up in File and beside the inbox in the menu and the panel: it
-	// brings the window forward on the page's Questions panel. The number is the open count of the
-	// zones the menu shows, as the page worked it out for each of them (menuData "questions"), never
-	// a sum of zones the menu does not show. A page that sent no count has no row.
-	func questionsOpen() -> Int? {
-		guard let z = ((menuState?["data"] as? [String: Any])?["questions"] as? [String: Any])?["z"] as? [String: Any] else { return nil }
-		return shownZones().reduce(0) { $0 + ($1["z"].flatMap { $0 as? String }.flatMap { z[$0] as? Int } ?? 0) }
+	// brings the window forward on the page's Questions panel. The page sends the open count of each
+	// group (menuData "questions", "g"): a zone no wall divides is one group, a zone whose parties a wall
+	// divides is one group per party. The row names each group with its own count and never adds two
+	// groups, in a zone or across the zones the menu shows: it cannot tell that no wall stands between
+	// them. Knowledge carries no party and is named apart. A page that sent no groups has no row.
+	func questionGroups() -> [(String, Int)]? {
+		guard let q = (menuState?["data"] as? [String: Any])?["questions"] as? [String: Any],
+		      let g = q["g"] as? [String: Any] else { return nil }
+		var out: [(String, Int)] = []
+		for z in shownZones() {
+			guard let name = z["z"] as? String, let list = g[name] as? [[String: Any]] else { continue }
+			for e in list {
+				if let h = e["h"] as? String, let n = e["n"] as? Int, n > 0 { out.append((h, n)) }
+			}
+		}
+		if let k = q["k"] as? Int, k > 0 { out.append(("Knowledge", k)) }
+		return out
 	}
 
 	func questionsTitle() -> String? {
-		guard let n = questionsOpen() else { return nil }
-		return n == 0 ? "Questions" : "Questions · \(n) open"
+		guard let groups = questionGroups() else { return nil }
+		if groups.isEmpty { return "Questions" }
+		if groups.count == 1 { return "Questions · \(groups[0].1) open" }
+		return "Questions · " + groups.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
 	}
 
 	@objc func openQuestions(_ sender: Any? = nil) {

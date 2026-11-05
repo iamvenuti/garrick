@@ -50,7 +50,7 @@ class TestCountsAreIdentities(Hardening):
 
     def test_the_refusal_says_a_change_elsewhere_can_cause_it(self):
         self.ask_q = None
-        with mock.patch.object(pa, "check_counts", side_effect=[{"check:warning": set()}, {"check:warning": {("x", "p", "m")}}]):
+        with mock.patch.object(pa, "check_counts", side_effect=[{"check:warning": set()}, {"check:warning": {("x", "p", "m")}}, {"check:warning": {("x", "p", "m")}}]):
             with self.assertRaisesRegex(pa.Refused, "something else changed|changed meanwhile"):
                 self.save([self.org("mira-holt")])
 
@@ -216,6 +216,120 @@ class TestDuplicateKeys(Hardening):
         self.assertIsNone(pa.page_party_tags(lib, self.root, self.people / "odd.md"))
         out = self.save([self.org("odd")])
         self.assertFalse(out["rows"][0]["ok"])
+
+
+SECOND = "Birch has chosen the Rotterdam depot as its first site and will announce the lease before the autumn board"
+
+
+class TestOpenWallFindings(Hardening):
+    def seed_open_wording(self):
+        birch = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
+        birch.write_text(birch.read_text() + "\n%s.\n\n%s.\n" % (BIRCH_SENTENCE, SECOND))
+        page = self.people / "mira-holt.md"
+        page.write_text(page.read_text() + "\n%s.\n" % BIRCH_SENTENCE)
+        commit_all(self.meetings, "open wording")
+        counts = pa.check_counts(self.root)
+        walls = [f for found in counts.values() if isinstance(found, set) for f in found if pa.wallish(f[0], f[2])]
+        self.assertTrue(any(f[1].endswith("mira-holt.md") for f in walls), "the fixture must carry the open finding: %r" % (walls,))
+
+    def test_a_page_with_an_open_wall_finding_is_read_only(self):
+        self.seed_open_wording()
+        before, log = snap(self.root), self.head()
+        out = self.save([dict(do="correct", path="Wikis/Meetings/wiki/people/mira-holt.md", edit={"old": "Someone at a party", "new": SECOND})])
+        self.assertEqual(SENTENCE, out["rows"][0]["say"])
+        out = self.save([self.org("mira-holt")])
+        self.assertEqual(SENTENCE, out["rows"][0]["say"])
+        self.assertEqual([], self.diff(before))
+        self.assertEqual(log, self.head())
+
+    def test_a_wall_finding_on_a_file_a_correction_reached_refuses_the_row(self):
+        page = self.people / "dana-whitlock.md"
+        page.write_text(page.read_text() + "\nWorked with Mira Holt.\n\n%s.\n" % BIRCH_SENTENCE)
+        birch = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
+        birch.write_text(birch.read_text() + "\n%s.\n" % BIRCH_SENTENCE)
+        commit_all(self.meetings, "dana")
+        before = snap(self.root)
+        out = self.save([dict(do="correct", path="Wikis/Meetings/wiki/people/mira-holt.md", edit={"old": "Mira Holt", "new": "Mira Holte"})])
+        self.assertEqual(SENTENCE, out["rows"][0]["say"])
+        self.assertEqual([k for k in self.diff(before) if "generated" not in k], [])
+
+
+class TestPerRowAttribution(Hardening):
+    def test_a_party_flip_is_that_rows_wall_reply_not_a_refusal_of_the_save(self):
+        mira = self.people / "mira-holt.md"
+        mira.write_text(mira.read_text().replace("party: acme\n", 'party: acme\norganisation: "[[wiki/entities/acme-corp]]"\n'))
+        commit_all(self.meetings, "mira")
+        before, log = snap(self.root), self.head()
+        out = self.save([dict(do="correct", key="a" * 12, path="Wikis/Meetings/wiki/people/mira-holt.md",
+                              edit={"old": "party: acme", "new": "party: birch"})])
+        self.assertEqual(SENTENCE, out["rows"][0]["say"], out)
+        self.assertEqual([k for k in self.diff(before) if "generated" not in k], [])
+        self.assertEqual(log, self.head())
+
+    def test_a_new_ordinary_finding_puts_back_only_the_row_that_made_it(self):
+        write(self.people / "jo-lee.md", person_page("Jo Lee", "acme"))
+        commit_all(self.meetings, "jo")
+        real, calls = pa.check_counts, [0]
+
+        def fake(ws):
+            r = real(ws)
+            calls[0] += 1
+            if calls[0] == 2:           # the reading after the write: a new finding on the page the first row wrote
+                r["check:warning"] = set(r.get("check:warning", set())) | {("x", "Wikis/Meetings/wiki/people/mira-holt.md", "something new")}
+            return r
+        with mock.patch.object(pa, "check_counts", fake):
+            out = self.save([dict(do="correct", key="c" * 12, path="Wikis/Meetings/wiki/people/mira-holt.md",
+                                  edit={"old": "Mira Holt", "new": "Mira Holte"}),
+                             self.org("jo-lee", key="b" * 12)])
+        by = {r["key"]: r for r in out["rows"]}
+        self.assertFalse(by["c" * 12]["ok"], out)
+        self.assertIn("found something new", by["c" * 12]["say"])
+        self.assertNotIn("something else changed", by["c" * 12]["say"])
+        self.assertTrue(by["b" * 12]["ok"], out)
+        self.assertIn("Mira Holt", (self.people / "mira-holt.md").read_text())
+        self.assertNotIn("Mira Holte", (self.people / "mira-holt.md").read_text())
+
+    def test_a_finding_on_a_file_no_row_wrote_refuses_the_lot_with_the_hint(self):
+        before = snap(self.root)
+        new = {("x", "Zones/Work/Todo.md", "something new")}
+        with mock.patch.object(pa, "check_counts", side_effect=[{"check:warning": set()}, {"check:warning": new}, {"check:warning": new}]):
+            with self.assertRaisesRegex(pa.Refused, "something else changed"):
+                self.save([self.org("mira-holt")])
+        self.assertEqual([], self.diff(before))
+
+
+class TestFailClosed(Hardening):
+    def test_any_exception_in_the_commit_puts_every_file_back(self):
+        before = snap(self.root)
+        with mock.patch.object(pa, "commit_groups", side_effect=OSError("git went away")):
+            with self.assertRaisesRegex(pa.Refused, "every file is back"):
+                self.save([self.org("mira-holt")])
+        self.assertEqual([], self.diff(before))
+
+    def test_a_slow_index_rebuild_is_a_sentence_and_nothing_is_written(self):
+        import subprocess
+        real = subprocess.run
+
+        def slow(cmd, *a, **kw):
+            if cmd and cmd[-1] == "index":
+                raise subprocess.TimeoutExpired(cmd, 1)
+            return real(cmd, *a, **kw)
+        before = snap(self.root)
+        with mock.patch.object(pa.subprocess, "run", slow):
+            with self.assertRaisesRegex(pa.Refused, "took too long"):
+                self.save([dict(do="correct", path="Wikis/Meetings/wiki/people/mira-holt.md", edit={"old": "Mira Holt", "new": "Mira Holte"})])
+        self.assertEqual([], self.diff(before))
+
+    def test_a_missing_ingest_refuses_rather_than_skips_the_index(self):
+        (self.root / "System" / "skills" / "meetings" / "ingest.py").unlink()
+        before = snap(self.root)
+        with self.assertRaisesRegex(pa.Refused, "ingest.py is missing"):
+            self.save([dict(do="correct", path="Wikis/Meetings/wiki/people/mira-holt.md", edit={"old": "Mira Holt", "new": "Mira Holte"})])
+        self.assertEqual([], self.diff(before))
+
+    def test_no_with_an_edit_reads_as_one_outcome(self):
+        out = self.save([self.org("mira-holt", choice="no", edit={"old": "Mira Holt", "new": "Mira Holte"})])
+        self.assertEqual("Corrected Mira Holt to Mira Holte", out["rows"][0]["say"])
 
 
 if __name__ == "__main__":

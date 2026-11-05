@@ -44,6 +44,8 @@ class PanelCase(ActionCase):
         for f in TOOLS.glob("*.py"):
             shutil.copy2(f, self.root / "System" / "tools" / f.name)
         write(self.root / "System" / "context.md", CONTEXT)
+        # the meetings skill's ingest.py rebuilds the index after a correction
+        shutil.copytree(TOOLS.parent / "skills" / "meetings", self.root / "System" / "skills" / "meetings", dirs_exist_ok=True)
         self.meetings = self.root / "Wikis" / "Meetings"
         self.people = self.meetings / "wiki" / "people"
         self.entities = self.meetings / "wiki" / "entities"

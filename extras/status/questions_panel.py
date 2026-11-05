@@ -202,7 +202,7 @@ def review_rows(ws: Path, nurture, C: Optional[dict], lib, ctx: dict, today: dt.
         except Exception:
             continue
     # A page with a wall finding on it has no row: a save would be refused, and the Checks card says the wall.
-    walled_paths = {i.path for i in sorted_items if i.kind == "wall"} | {w for i in sorted_items if i.kind == "wall" for w in i.where}
+    walled_paths = {i.path for i in sorted_items if i.kind == "wall" or pa.wallish(i.check, i.message)} | {w for i in sorted_items if i.kind == "wall" for w in i.where}
     for item in sorted_items:
         if item.kind not in ("attribution", "judgment") or item.key in seen or item.path in walled_paths:
             continue

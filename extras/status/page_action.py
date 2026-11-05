@@ -3028,6 +3028,17 @@ def tx_dirs(folder) -> None:
         TX.dirs(folder)
 
 
+# A finding of the walls family, by its check or its words: a page naming, linking or quoting across a wall,
+# repeating a meeting's wording, or two parties a wall divides. Any severity. The words are nurture.py's
+# (claim_wall), kept here because the transaction reads findings without loading it.
+WALLISH = re.compile(r"across a wall|wall stands between|which a wall keeps apart|a wall keeps|eight or more words|"
+                     r"names both \S+ and \S+|a Meetings page|from zone \S+|filed in zone \S+", re.I)
+
+
+def wallish(check, message) -> bool:
+    return str(check) == "walls" or bool(WALLISH.search(str(message or "")))
+
+
 def check_counts(ws: Path) -> Optional[dict]:
     """What the workspace's checks count now: check.py's errors and warnings,
     and each wiki's orphans and missing links. None when a check cannot run
@@ -3061,9 +3072,9 @@ def check_counts(ws: Path) -> Optional[dict]:
         lint = run("wiki_lint.py", "--wiki", wiki, "--json")
         if lint is None:
             return None
-        out["lint:%s:orphans" % wiki] = {str(o) for o in lint.get("orphans") or []}
-        out["lint:%s:missing" % wiki] = {(str(m.get("target")), str(p)) for m in lint.get("missing") or []
-                                         if isinstance(m, dict) for p in m.get("linked_from") or []}
+        out["lint:%s:orphans" % wiki] = {("orphan", "Wikis/%s/%s.md" % (wiki, o), "") for o in lint.get("orphans") or []}
+        out["lint:%s:missing" % wiki] = {("missing", "Wikis/%s/%s.md" % (wiki, p), str(m.get("target")))
+                                         for m in lint.get("missing") or [] if isinstance(m, dict) for p in m.get("linked_from") or []}
     return out
 
 
@@ -3172,17 +3183,38 @@ def commit_groups(ws: Path, w: Writes, message_for, *, wall: Optional[str]) -> d
     return done
 
 
-def transaction(ws: Path, change, *, commit=None, after=None):
+def new_findings(before: dict, now: dict) -> list:
+    """(reading, finding) for each finding present now and not before."""
+    out = []
+    for key, found in now.items():
+        if isinstance(found, set):
+            was = before.get(key, set())
+            out += [(key, f) for f in sorted(found - (was if isinstance(was, set) else set()))]
+    return out
+
+
+def walls_on_written(now: dict, written: set) -> list:
+    """Every walls-family finding now on a file the transaction wrote, whatever
+    the reading before held: a finding's identity stays equal while what it
+    reports grows (more words repeated, one more cite), so none is let through."""
+    return [(key, f) for key, found in now.items() if isinstance(found, set)
+            for f in sorted(found) if wallish(f[0], f[2]) and f[1] in written]
+
+
+def transaction(ws: Path, change, *, commit=None, after=None, triage=None):
     """Run change(w) and what it wrote either holds or is undone.
 
     `change(w)` writes through `w` (or the tx_* hooks) and returns the action's
-    result. check_counts() runs before and after: a check that cannot run,
-    before or after, or any count worse, puts every file back and refuses.
-    With `commit`, a function (repository, paths) -> message, the changed
-    files are then committed once per repository; `after(result, done)` then
-    returns the action's final result, and may raise Refused (the files of a
-    refused repository are already back). Without `commit` nothing is staged
-    or committed."""
+    result; `w.before_counts` is the reading taken before. check_counts() runs
+    before and after: a check that cannot run puts every file back and
+    refuses. So does a finding that is new, and so does any walls-family
+    finding on a file written, whatever the reading before held. With a
+    `triage(w, new, walls)`, those are first attributed by path to the rows
+    that wrote the files and the rows put back; the check then runs once more,
+    and only what no row accounts for refuses the lot. With `commit`, a
+    function (repository, paths) -> message, the changed files are then
+    committed once per repository; `after(result, done)` then returns the
+    action's final result. Without `commit` nothing is staged or committed."""
     global TX
     if TX is not None:
         raise Refused("a transaction is already open")
@@ -3190,7 +3222,9 @@ def transaction(ws: Path, change, *, commit=None, after=None):
     if before is None:
         raise Refused("the workspace's checks (check.py and the wiki lint) cannot run, so nothing was written")
     w = Writes()
+    w.before_counts = before
     TX = w
+    top = Path(ws).resolve()
     try:
         try:
             result = change(w)
@@ -3199,11 +3233,25 @@ def transaction(ws: Path, change, *, commit=None, after=None):
         except BaseException:
             w.restore()
             raise
-        now = check_counts(ws)
-        if now is None:
+
+        def reading():
+            now = check_counts(ws)
+            if now is None:
+                w.restore()
+                raise Refused("the workspace's checks (check.py and the wiki lint) could not run afterwards, so nothing was written")
+            written = {str(p.relative_to(top)) for p in w.changed() if top in p.parents}
+            return now, worse_counts(before, now), new_findings(before, now), walls_on_written(now, written)
+        now, bad, new, walls = reading()
+        if (bad or walls) and triage is not None:
+            try:
+                triage(w, new, walls)
+            except BaseException:
+                w.restore()
+                raise
+            now, bad, new, walls = reading()
+        if walls:
             w.restore()
-            raise Refused("the workspace's checks (check.py and the wiki lint) could not run afterwards, so nothing was written")
-        bad = worse_counts(before, now)
+            raise Refused(wall_sentence(ws))
         if bad:
             w.restore()
             raise Refused("a check got worse (%s), so every file is back as it was and nothing was committed. "
@@ -3212,9 +3260,11 @@ def transaction(ws: Path, change, *, commit=None, after=None):
             return result
         try:
             done = commit_groups(ws, w, commit, wall=wall_refusal(ws))
-        except Refused:
+        except BaseException as e:
             w.restore()
-            raise
+            if isinstance(e, Refused):
+                raise
+            raise Refused("the commit could not be made (%s), so every file is back as it was" % type(e).__name__)
         return after(result, done) if after else result
     finally:
         TX = None
@@ -3440,6 +3490,28 @@ def save_later(ws: Path, put: dict, drop: set) -> None:
         raise
 
 
+def put_back(w: Writes, rows: list, bad: dict, say_wall: str, refuse) -> None:
+    """Put back the rows in `bad` ({tag: kind}) and any row that shares a real
+    file with one, until no more do, and say each: the rules' sentence for a
+    wall, else what the kind is. What is put back is worked out after the
+    sharing is settled, so a row said not to be written has all its files back."""
+    while True:
+        back = set()
+        for tag in bad:
+            back |= {p for p, o in w.owners.items() if tag in o}
+        more = {tag for tag, row in rows if tag not in bad and any(tag in o for p, o in w.owners.items() if p in back)}
+        if not more:
+            break
+        for tag in more:
+            bad[tag] = "wall"
+    w.undo(back)
+    for tag, kind in bad.items():
+        refuse(tag, say_wall if kind == "wall" else
+               "the walls check could not read this page's form, so nothing was written for it" if kind == "form" else
+               "a check found something new on this page, so nothing was written for it" if kind == "new" else
+               "another session has files staged in that repository, so nothing was written for it")
+
+
 def walls_gate(ws: Path, w: Writes, rows: list, say_wall: str, refuse) -> None:
     """The walls check on what the rows wrote, staged, per repository. When it
     refuses, each row is checked on its own files, the rows it refuses are put
@@ -3475,22 +3547,7 @@ def walls_gate(ws: Path, w: Writes, rows: list, say_wall: str, refuse) -> None:
     if not bad:
         raise Refused(say_wall if refusal_kind(said) == "wall" else
                       "the walls check could not pass the change as a whole (%s), so nothing was written" % refusal_kind(said))
-    # A row that shares a real file with a row put back goes back too, until no more do; what is put back is
-    # worked out after that, so every row said not to be written has all its files back.
-    while True:
-        back = set()
-        for tag in bad:
-            back |= {p for p, o in w.owners.items() if tag in o}
-        more = {tag for tag, row in rows if tag not in bad and any(tag in o for p, o in w.owners.items() if p in back)}
-        if not more:
-            break
-        for tag in more:
-            bad[tag] = "wall"
-    w.undo(back)
-    for tag, kind in bad.items():
-        refuse(tag, say_wall if kind == "wall" else
-               "the walls check could not read this page's form, so nothing was written for it" if kind == "form" else
-               "another session has files staged in that repository, so nothing was written for it")
+    put_back(w, rows, bad, say_wall, refuse)
     left = set(w.changed())
     again = check(left) if left else ""
     if again:
@@ -3519,6 +3576,11 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
 
     with held("nurture-answers.lock", busy="another answer is still being saved"), nurture_tools(ws) as N:
         ctx = N.Ctx(Path(ws).resolve(), headless=headless, today=today)
+
+        def open_walls(w):
+            """The pages that carry a walls-family finding already: not writable from the panel."""
+            before = getattr(w, "before_counts", None) or {}
+            return {f[1] for found in before.values() if isinstance(found, set) for f in found if wallish(f[0], f[2])}
 
         def one(i, row, w):
             """Write one row's change; a RowRefused leaves nothing of it."""
@@ -3565,6 +3627,8 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                 if view.unattributed or not near_side(lib, ws, view, page):
                     raise RowRefused(wall)
             if do != "correct":
+                if ctx.rel(page) in open_walls(w):
+                    raise RowRefused(wall)          # a page with a wall finding open is read-only here
                 clean_in_repo(ws, page)
             edit = row.get("edit")
             if edit and do != "correct":
@@ -3597,7 +3661,7 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
             plan.append((i, row, do, item, asked, answer))
 
         def run_edit(i, row, page, w):
-            if view.unattributed or not near_side(lib, ws, view, page):
+            if view.unattributed or not near_side(lib, ws, view, page) or ctx.rel(page) in open_walls(w):
                 raise RowRefused(wall)
             edit = row["edit"]
             w.tag = i
@@ -3627,12 +3691,33 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                 return
             ingest = ctx.root.joinpath(*N.correct.INGEST)
             if not ingest.is_file():
-                return
+                raise Refused("the Meetings index cannot be rebuilt (the meetings skill's ingest.py is missing), so nothing was written")
             w.watch(index)
-            r = subprocess.run([sys.executable, str(ingest), "--root", str(ctx.root), "index"], capture_output=True, text=True,
-                               stdin=subprocess.DEVNULL, timeout=CHECK_TIMEOUT)
+            try:
+                r = subprocess.run([sys.executable, str(ingest), "--root", str(ctx.root), "index"], capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, timeout=CHECK_TIMEOUT)
+            except subprocess.SubprocessError:
+                raise Refused("the Meetings index took too long to rebuild, so nothing was written")
             if r.returncode != 0:
                 w.undo([index])
+                raise Refused("the Meetings index could not be rebuilt, so nothing was written")
+
+        def triage(w, new, walls):
+            """Findings the write made, or walls-family findings on a file it wrote, put on the rows that wrote
+            those files by path: the rows are put back with their own reply, and the rest go on."""
+            root = Path(ws).resolve()
+            hit = {f[1] for _k, f in new} | {f[1] for _k, f in walls}
+            wallish_paths = {f[1] for _k, f in walls} | {f[1] for _k, f in new if wallish(f[0], f[2])}
+            bad = {}
+            for e in plan:
+                if e[2] not in NURTURE_DO:
+                    continue
+                mine = {str(p.relative_to(root)) for p, o in w.owners.items() if e[0] in o and root in p.parents}
+                if mine & hit:
+                    bad[e[0]] = "wall" if mine & wallish_paths else "new"
+            if bad:
+                put_back(w, [(e[0], e[1]) for e in plan if e[2] in NURTURE_DO], bad, wall, refuse)
+                rebuild_index(w)
 
         def change(w):
             for i, row in enumerate(rows):
@@ -3670,8 +3755,9 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
                         put[row["key"]] = extra
                     said = "Left as it is" if how == "no" else "Put off until %s" % extra["until"]
                     before = results.get(i)
-                    results[i] = {"key": row.get("key"), "ok": True,
-                                  "say": "%s; %s" % (before["say"], said.lower()) if before and before["ok"] else said}
+                    one_outcome = before["say"] if before and before["ok"] and how == "no" else \
+                        "%s; %s" % (before["say"], said.lower()) if before and before["ok"] else said
+                    results[i] = {"key": row.get("key"), "ok": True, "say": one_outcome}
                     continue
                 files = [p for p, o in TX.owners.items() if i in o] if TX else []
                 repos = {repo_of_path(ws, p) for p in files}
@@ -3722,10 +3808,10 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
 
         if not any(True for _ in rows):
             raise Refused("there is nothing to save")
-        out = transaction(ws, change, commit=message, after=finish)
+        out = transaction(ws, change, commit=message, after=finish, triage=triage)
     saved = sum(1 for r in out.values() if r["ok"] and not r["say"].startswith(("Left as it is", "Put off")))
     later = sum(1 for r in out.values() if r["ok"] and r["say"].startswith("Put off"))
-    put_back = [r for r in out.values() if not r["ok"]]
+    held_back = [r for r in out.values() if not r["ok"]]
     if single:
         only = out[0]
         if not only["ok"]:
@@ -3734,8 +3820,8 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
     say = "Saved %d answer%s" % (saved, "" if saved == 1 else "s")
     if later:
         say += ", put off %d" % later
-    if put_back:
-        say += ". %d row%s put back, named below" % (len(put_back), " was" if len(put_back) == 1 else "s were")
+    if held_back:
+        say += ". %d row%s put back, named below" % (len(held_back), " was" if len(held_back) == 1 else "s were")
     return {"say": say, "rows": [dict(out[i], index=i) for i in sorted(out)]}
 
 

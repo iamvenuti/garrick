@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-import type { Note, Thread, Wait, WaitPick } from '../types'
+import type { Note, Slot, Thread, Wait, WaitPick } from '../types'
 
 // Garrick blue, from docs/assets/garrick-mark.svg.
 const BLUE = 0x3d73e0
@@ -12,6 +12,9 @@ const note = atom({ plugin: 'garrick-band', key: 'note' } as const, null)
 const isHidden = atom({ plugin: 'garrick-band', key: 'isHidden' } as const, false)
 const used = atom({ plugin: 'garrick-band', key: 'used' } as const, null)
 const wait = atom({ plugin: 'garrick-band', key: 'wait' } as const, null)
+// What the one slot offers: see bandSlot. 'unknown' until the first look, when the band
+// draws what it always drew, so a /clear or a fresh render never shows less.
+const slotAtom = atom({ plugin: 'garrick-band', key: 'slot' } as const, 'unknown' as Slot | 'unknown')
 
 // The mark, the cabinet, as a 4×2 cell tile, as tall as the band's two lines:
 // a 4×4 grid of half-block pixels, two to a cell, each pixel about square. The
@@ -95,12 +98,65 @@ export function projectResumePrompt(n: Note): string {
 
 // At a project kept in threads: thread-wrap works out from the session which
 // thread the work was for, and says so when it was none.
-export function projectWrapPrompt(n: Note): string {
-  return `Wrap ${n.title}: wrap the thread this session worked on, and the hub \`${n.rel}\` too if its status changed. If the session touched no thread, say so and stop.`
+export function projectWrapPrompt(n: Note, foreground = false): string {
+  return `Wrap ${n.title}: wrap the thread this session worked on, and the hub \`${n.rel}\` too if its status changed. If the session touched no thread, say so and stop.${foreground ? CLOSING : ''}`
 }
 
-export function wrapPrompt(n: Note): string {
-  return `Wrap ${n.title}: rewrite the Resume here block in \`${n.rel}\` so it describes now, and add today's dated entry below it.`
+export function wrapPrompt(n: Note, foreground = false): string {
+  return `Wrap ${n.title}: rewrite the Resume here block in \`${n.rel}\` so it describes now, and add today's dated entry below it.${foreground ? CLOSING : ''}`
+}
+
+// Close ends the session when the wrap ends, so the wrap runs here, in the
+// foreground, with no question: the note must be written before the turn is.
+const CLOSING = ' This wrap closes the session: run it in the foreground and do not ask the question.'
+
+// --- One slot that follows the record (#367) -----------------------------------
+// Wrap, Resume or nothing, decided with no model call from three facts: the time
+// the thread note was last written, the time the session's last turn began, and
+// a lock the wrap holds in System/generated/ while it runs (System/tools/wrap_lock.py).
+
+// A lock older than this counts as gone: a wrap that died must not block the thread for good.
+export const WRAP_LOCK_MS = 10 * 60 * 1000
+
+// The lock's file name for a note given by its path from the workspace root: wrap_lock.py's.
+export const lockFile = (rel: string) => 'wrap-' + rel.replace(/^\/+|\/+$/g, '').split('/').join('__') + '.lock'
+
+// When the lock was taken, from the JSON it holds; null when it does not read.
+export function lockStart(text: string | null | undefined): number | null {
+  try {
+    const t = Date.parse(JSON.parse(String(text)).started)
+
+    return Number.isFinite(t) ? t : null
+  } catch {
+    return null
+  }
+}
+
+// A lock that is there and less than ten minutes old. One dated further ahead than that counts as gone.
+export const lockRunning = (startedMs: number | null, nowMs: number): boolean =>
+  startedMs !== null && Math.abs(nowMs - startedMs) < WRAP_LOCK_MS
+
+// Work since the note was last written: Wrap. The note current, from a wrap just
+// done or a session with no turn yet: Resume. A thread not live: nothing. A wrap
+// that is running shows as such, and offers no second start. A note whose time
+// cannot be read is taken as not current: Wrap is safe to offer twice, the lock stops a second run.
+export function bandSlot(s: { live: boolean; wrapping: boolean; noteMs: number | null; turnMs: number | null }): Slot {
+  if (!s.live) return null
+  if (s.wrapping) return 'wrapping'
+  if (s.turnMs === null) return 'resume'
+  if (s.noteMs === null) return 'wrap'
+
+  return s.noteMs >= s.turnMs ? 'resume' : 'wrap'
+}
+
+// A thread the slot is about: it has a block, and is neither finished nor set aside.
+export const liveNote = (n: Note | null): n is Note => n !== null && (n.resume !== null || n.threads.length > 0) && n.status !== 'done' && n.status !== 'parked'
+
+// The most recent modification time, in ms, of the files given; null when none reads.
+export function newestMs(stdout: string): number | null {
+  const times = stdout.split('\n').map(line => Number.parseFloat(line.trim()) * 1000).filter(t => Number.isFinite(t) && t > 0)
+
+  return times.length === 0 ? null : Math.max(...times)
 }
 
 // The Resume block for the pane: wikilinks become links to the file they name,
@@ -243,7 +299,8 @@ export const obsidianUrl = (abs: string) => 'obsidian://open?path=' + encodeURIC
 const openNote = ($: any, n: Note) => $.ui.open({ id: PANE, title: n.title, focus: true, closeOnEscape: true })
 const resume = ($: any, n: Note) => $.prompt.submit({ text: n.resume ? resumePrompt(n) : projectResumePrompt(n), asUser: true })
 const resumable = (n: Note | null): n is Note => n !== null && (n.resume !== null || n.threads.length > 0)
-const wrap = ($: any, n: Note) => $.prompt.submit({ text: n.resume ? wrapPrompt(n) : projectWrapPrompt(n), asUser: true })
+const wrap = ($: any, n: Note, foreground = false) =>
+  $.prompt.submit({ text: n.resume ? wrapPrompt(n, foreground) : projectWrapPrompt(n, foreground), asUser: true })
 // The cleared conversation's figure is not the new one's: none until its first reply.
 const clear = async ($: any) => {
   await $.command.run({ command: 'clear' })
@@ -650,6 +707,60 @@ let wrapTurn: string | null = null          // the turn the wrap runs in, once i
 let wrapped = false                         // the last turn rewrote the block, and none has run since
 let before: string | null = null            // the block as the running turn found it
 let asked = false                           // the running turn put a question to the person
+let turnMs: number | null = null            // when the session's last main-loop turn began
+let asking = false                          // Wrap was pressed and its turn has not ended: the question is being asked
+let poller: { cancel: () => void } | null = null
+
+const rels = (n: Note) => (n.resume !== null ? [n.rel] : n.threads.map(t => t.rel))
+
+// The slot for the thread the band shows, from the note's time, the last turn's
+// time and the lock. No model: two file reads and one stat.
+async function slotFor($: any, n: Note | null): Promise<Slot> {
+  if (!liveNote(n)) return null
+  const root = rootOf(n)
+  const now = Date.now()
+  let wrapping = asking
+  for (const rel of rels(n)) {
+    const path = `${root}/System/generated/${lockFile(rel)}`
+    if (!(await $.fs.exists(path).catch(() => false))) continue
+    if (lockRunning(lockStart(await $.fs.read(path).catch(() => null)), now)) wrapping = true
+  }
+  let noteMs: number | null = null
+  try {
+    const r = await $.process.run(['/usr/bin/stat', '-f', '%Fm', ...rels(n).map(rel => `${root}/${rel}`)], { timeoutMs: 5_000 })
+    noteMs = r.exitCode === 0 ? newestMs(String(r.stdout ?? '')) : null
+  } catch {
+    noteMs = null
+  }
+
+  return bandSlot({ live: true, wrapping, noteMs, turnMs })
+}
+
+// Looks again and keeps the answer for the band. While a wrap runs it looks every
+// few seconds, so Resume appears when the lock is gone and the note has landed.
+async function evaluate($: any): Promise<Slot> {
+  const slot = await slotFor($, await noteOf($).catch(() => null)).catch(() => null)
+  await update($, slotAtom, () => slot)
+  poller?.cancel()
+  poller = null
+  if (slot === 'wrapping') poller = $.clock.after(5000, () => { poller = null; void evaluate($).catch(() => undefined) })
+
+  return slot
+}
+
+// Wrap, from the button or /garrick: not while one is running on this thread.
+async function startWrap($: any, n: Note): Promise<boolean> {
+  if ((await slotFor($, n).catch(() => null)) === 'wrapping') {
+    $.ui.toast('A wrap is already running.')
+
+    return false
+  }
+  asking = true
+  await update($, slotAtom, () => 'wrapping')
+  await wrap($, n)
+
+  return true
+}
 
 const pause = ($: any, ms: number) => new Promise<void>(done => void $.clock.after(ms, () => done()))
 const lastLine = (text: string) => String(text).trim().split('\n').pop() ?? ''
@@ -700,12 +811,18 @@ function closeSoon($: any) {
 
 async function startClose($: any): Promise<string> {
   const n = await noteOf($)
+  // Close does not start a wrap beside one that is running, and does not end the session under it.
+  if (n !== null && (await slotFor($, n).catch(() => null)) === 'wrapping') {
+    closing = null
+
+    return `A wrap of ${n.title} is running. Close it when the wrap has landed.`
+  }
   if (n !== null && (await needsWrap($, n))) {
     closing = 'wrapping'
     wrapTurn = null
     // A wrap that cannot be sent must not leave Close answering "already under way" until a reload.
     void Promise.resolve()
-      .then(() => wrap($, n))
+      .then(() => wrap($, n, true))
       .catch(() => {
         closing = null
         wrapTurn = null
@@ -757,6 +874,7 @@ export const register: Register = on => {
     await update($, wait, () => null)
     await refresh($)
     await reindex($).catch(() => undefined)
+    await evaluate($).catch(() => undefined)
 
     return next(e)
   })
@@ -768,8 +886,10 @@ export const register: Register = on => {
       running = e.turnId
       asked = false
       wrapped = false
+      turnMs = Date.now()
       if (closing === 'wrapping' && wrapTurn === null) wrapTurn = e.turnId
       const start = await noteOf($).catch(() => null)
+      void evaluate($).catch(() => undefined)
       before = start === null ? null : signature(start)
       timer?.cancel()
       timer = null
@@ -802,6 +922,11 @@ export const register: Register = on => {
     }
     const found = await refresh($)
     await reindex($).catch(() => undefined)
+    if (e.agentId === undefined) {
+      asking = false
+      turnMs ??= Date.now()       // a turn whose start was missed: taken as begun now, so the band offers Wrap, not Resume
+    }
+    await evaluate($).catch(() => undefined)
     if (e.agentId === undefined) {
       const rewrote = before !== null && signature(found) !== before
       wrapped = e.reason === 'answer' && rewrote
@@ -896,9 +1021,10 @@ export const register: Register = on => {
       return { text: 'Resume here pane opened.' }
     }
     if (arg === 'resume' || arg === 'wrap') {
+      if (arg === 'wrap' && (await slotFor($, current).catch(() => null)) === 'wrapping') return { text: 'A wrap is already running.' }
       // Submitted once this hook has answered: a prompt submitted from inside a
       // command.run hook would wait on the very turn the hook is holding.
-      $.clock.after(50, () => void (arg === 'resume' ? resume($, current) : wrap($, current)))
+      $.clock.after(50, () => void (arg === 'resume' ? resume($, current) : startWrap($, current)))
 
       return { text: `${arg === 'resume' ? 'Resuming' : 'Wrapping'} ${current.title}.` }
     }
@@ -911,6 +1037,9 @@ export const register: Register = on => {
     if (e.props.hasSurvey || current === null || (await read($, isHidden))) return next(e)
 
     const percent = await read($, used)
+    const chosen = await read($, slotAtom)
+    // Before the first look the band offers Wrap on any thread that is not finished, as it always did.
+    const slot: Slot = chosen === 'unknown' ? (resumable(current) && current.status !== 'done' ? 'wrap' : null) : chosen
     // Only ever set where the preview is on: offer() runs from turn.start's timer.
     const offered = e.props.isWorking ? shownPick(await read($, wait)) : null
     const { Box, Text, Button, ...rest } = $.ui.resolve(e)
@@ -957,9 +1086,13 @@ export const register: Register = on => {
             </Box>
           )}
           <Box flexDirection="row" gap={2}>
-            {resumable(current) && current.status !== 'done' && (
-              <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void wrap($, current)} />
+            {slot === 'wrap' && resumable(current) && (
+              <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void startWrap($, current)} />
             )}
+            {slot === 'resume' && resumable(current) && (
+              <Button key="resume" label="Resume" hotkey="r" plain onPress={() => void resume($, current)} />
+            )}
+            {slot === 'wrapping' && <Text dimColor>Wrapping…</Text>}
             <Button key="clear" label="Clear" hotkey="c" plain onPress={() => void clear($)} />
             <Button key="close" label="Close" hotkey="q" plain onPress={() => void close($).then(t => $.ui.toast(t))} />
             {current.finder && <Button key="finder" label="Finder" hotkey="f" plain onPress={() => void finder($, current)} />}

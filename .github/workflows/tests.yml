@@ -48,8 +48,8 @@ jobs:
           if xcrun --find swiftc >/dev/null 2>&1; then
             T=$(mktemp -d)
             cp extras/status/app/Garrick.swift "$T/main.swift"
-            xcrun swiftc -typecheck "$T/main.swift" extras/status/app/GarrickShared.swift
-            xcrun swiftc -typecheck -application-extension -parse-as-library -module-name GarrickFinder \
+            xcrun swiftc -typecheck -warnings-as-errors "$T/main.swift" extras/status/app/GarrickShared.swift
+            xcrun swiftc -typecheck -warnings-as-errors -application-extension -parse-as-library -module-name GarrickFinder \
               extras/status/app/GarrickFinder.swift extras/status/app/GarrickShared.swift
           else
             echo "No Swift compiler on this runner: Garrick.swift is not type-checked."

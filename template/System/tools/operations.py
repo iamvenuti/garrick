@@ -238,6 +238,9 @@ DECLARED: Dict[str, Op] = {
     "nurture-organisation": _op(("zone", "scope", "path", "entity"), ("path", "entity"), "workspace", True),
     "nurture-correct": _op(("zone", "scope", "path", "old", "new"), ("path", "old", "new"), "workspace", True),
     "nurture-save": _op(("zone", "scope", "rows"), ("zone", "scope"), "workspace", True),
+    # The same from the panel's All view (#384): `groups` is a list of
+    # {zone, scope, rows}, each saved as its own transaction and commit.
+    "nurture-save-all": _op(("groups",), (), "workspace", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
     # `suggested` asks a first look's suggested request instead (#182).

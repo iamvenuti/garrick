@@ -260,7 +260,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open",
-         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save")
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -2899,7 +2899,7 @@ def transaction(ws: Path, change, *, commit=None, after=None, triage=None):
 # go on, and the files are committed once per repository. Every row is read
 # again from the page it names: nothing a row carries is trusted, and its text
 # is data, never a command or a path to open.
-NURTURE_VERBS = ("nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save")
+NURTURE_VERBS = ("nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all")
 NURTURE_LATER = ("System", "generated", "nurture", "later.json")
 NURTURE_ROWS_MAX = 200
 NURTURE_WORD_MAX = 200
@@ -3444,6 +3444,46 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
     return {"say": say, "rows": [dict(out[i], index=i) for i in sorted(out)]}
 
 
+NURTURE_GROUPS_MAX = 20
+
+
+def nurture_save_all(ws: Path, req: dict, today: dt.date):
+    """A save from the panel's *All* view (#384). `groups` is a list of
+    {"zone", "scope", "rows"}, one for each view the rows were shown in. Each
+    group is saved as it would be from its own view: its own View, its own
+    transaction, its own check and its own commit, through nurture_save. Two
+    groups are never one transaction, so a wall between them cannot be
+    crossed by saving together. A group that is refused as a whole (its view
+    refused, the checks cannot run) is named and the others go on; the walls
+    still hold in each. The reply is nurture_save's, with the rows of every
+    group and the say of each."""
+    groups = req.get("groups")
+    if not isinstance(groups, list) or not groups:
+        raise Refused("there is nothing to save")
+    if len(groups) > NURTURE_GROUPS_MAX:
+        raise Refused("at most %d groups are saved at once" % NURTURE_GROUPS_MAX)
+    clean = []
+    for g in groups:
+        if not isinstance(g, dict) or set(g) - {"zone", "scope", "rows"}:
+            raise Refused("a group carries a field the review page does not send, so nothing was written")
+        for k in ("zone", "scope"):
+            if g.get(k) is not None and (not isinstance(g[k], str) or len(g[k]) > 200 or "\0" in g[k]):
+                raise Refused("a group carries a value the review page does not send, so nothing was written")
+        clean.append((g.get("zone"), g.get("scope"), clean_rows(g)))
+    rows, said, results = [], [], []
+    for gi, (zone, scope, mine) in enumerate(clean):
+        try:
+            reply = nurture_save(ws, {"zone": zone, "scope": scope}, mine, today)
+            ok = True
+        except Refused as e:
+            reply = {"say": str(e), "rows": [{"key": r.get("key"), "ok": False, "say": str(e), "index": i} for i, r in enumerate(mine)]}
+            ok = False
+        rows.extend(dict(r, group=gi) for r in reply["rows"])
+        said.append(reply["say"])
+        results.append({"zone": zone, "scope": scope, "ok": ok and all(r["ok"] for r in reply["rows"]), "say": reply["say"]})
+    return {"say": " | ".join(said), "rows": rows, "groups": results}
+
+
 class ShimJournal:
     """What nurture's fixes write through, in place of its Journal: the
     transaction's Writes, which put every file back."""
@@ -3459,6 +3499,8 @@ def nurture_act(ws: Path, req: dict, today: dt.date):
     verb = req["verb"]
     if verb == "nurture-save":
         return nurture_save(ws, req, clean_rows(req), today)
+    if verb == "nurture-save-all":
+        return nurture_save_all(ws, req, today)
     if verb == "nurture-answer":
         row = {"do": "answer", "path": req.get("path"), "choice": "another", "pick": req.get("party")}
     elif verb == "nurture-organisation":

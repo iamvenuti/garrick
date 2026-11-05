@@ -119,6 +119,91 @@ class TestSingleActions(PanelCase):
         self.assertTrue(any("Mira Holte" in f["line"] for f in rec["fixed"]))
 
 
+class TestSaveAll(PanelCase):
+    """A save from the All view (#384): one transaction and one commit per group, as from the group's own view."""
+
+    def save_all(self, groups):
+        return pa.act(self.root, dict(verb="nurture-save-all", groups=groups), today=TODAY)
+
+    def test_two_walled_groups_are_two_transactions_and_two_commits_never_one(self):
+        before = len(self.head())
+        calls = []
+        real = pa.transaction
+
+        def counting(ws, change, **kw):
+            calls.append(1)
+            return real(ws, change, **kw)
+        with mock.patch.object(pa, "transaction", counting):
+            out = self.save_all([{"zone": "Work", "scope": "acme", "rows": [self.org("mira-holt")]},
+                                 {"zone": "Work", "scope": "birch", "rows": [self.org("theo-marsh")]}])
+        self.assertEqual(2, len(calls))
+        self.assertEqual(before + 2, len(self.head()))
+        self.assertEqual([(0, True), (1, True)], [(r["group"], r["ok"]) for r in out["rows"]])
+        self.assertEqual([True, True], [g["ok"] for g in out["groups"]])
+        # each commit holds only its own group's page
+        commits = git(self.meetings, "log", "-2", "--format=%H").split()
+        for c in commits:
+            changed = [f for f in git(self.meetings, "show", "--format=", "--name-only", c).split() if f.startswith("wiki/people/")]
+            self.assertEqual(1, len(changed), changed)
+        self.assertEqual("", git(self.meetings, "status", "--porcelain").strip())
+
+    def test_the_same_answers_from_their_own_views_write_the_same_files(self):
+        out = self.save_all([{"zone": "Work", "scope": "acme", "rows": [self.org("mira-holt")]},
+                             {"zone": "Work", "scope": "birch", "rows": [self.org("theo-marsh")]}])
+        all_state = {k: v for k, v in snap(self.meetings).items() if "people/" in k}
+        self.assertIn("Saved 1 answer", out["say"])
+        other = PanelCase("run")
+        other.setUp()
+        try:
+            other.save([other.org("mira-holt")], scope="acme")
+            other.save([other.org("theo-marsh")], scope="birch")
+            own = {k: v for k, v in snap(other.meetings).items() if "people/" in k}
+        finally:
+            other.tearDown()
+        self.assertEqual(own, all_state)
+
+    def test_a_row_sent_in_the_wrong_groups_view_is_still_refused_with_the_sentence(self):
+        out = self.save_all([{"zone": "Work", "scope": "acme", "rows": [self.org("theo-marsh")]},
+                             {"zone": "Work", "scope": "birch", "rows": [self.org("theo-marsh")]}])
+        self.assertEqual([(0, False, SENTENCE), (1, True, "Where they work: written")],
+                         [(r["group"], r["ok"], r["say"]) for r in out["rows"]])
+        self.assertEqual(2, len(self.head()))
+
+    def test_a_group_refused_as_a_whole_does_not_stop_the_others_and_says_the_sentence(self):
+        out = self.save_all([{"zone": "Work", "scope": None, "rows": [self.org("mira-holt")]},     # Work is divided: a party is needed
+                             {"zone": "Work", "scope": "acme", "rows": [self.org("mira-holt")]}])
+        self.assertEqual([False, True], [g["ok"] for g in out["groups"]])
+        self.assertEqual(SENTENCE, out["groups"][0]["say"])
+        self.assertIn("organisation:", (self.people / "mira-holt.md").read_text())
+
+    def test_a_check_made_worse_in_one_group_puts_back_only_that_group(self):
+        state = {"n": 0}
+
+        def counts(ws):
+            state["n"] += 1
+            return {"check:warning": 1} if state["n"] <= 3 else {"check:warning": 2}      # the second group's reading after its write is worse
+        with mock.patch.object(pa, "check_counts", counts):
+            try:
+                out = self.save_all([{"zone": "Work", "scope": "acme", "rows": [self.org("mira-holt")]},
+                                     {"zone": "Work", "scope": "birch", "rows": [self.org("theo-marsh")]}])
+            except pa.Refused:
+                out = None
+        self.assertIn("organisation:", (self.people / "mira-holt.md").read_text())
+        self.assertNotIn("organisation:", (self.people / "theo-marsh.md").read_text())
+        self.assertEqual(2, len(self.head()))
+        self.assertIsNotNone(out)
+        self.assertEqual([True, False], [g["ok"] for g in out["groups"]])
+
+    def test_the_request_is_closed(self):
+        for bad in ([], "x", [{"zone": "Work", "scope": "acme", "rows": [self.org("mira-holt")], "extra": 1}],
+                    [{"zone": "Work", "scope": "acme", "rows": []}]):
+            with self.assertRaises(pa.Refused):
+                self.save_all(bad)
+        with self.assertRaisesRegex(pa.Refused, "takes no zone"):
+            pa.act(self.root, dict(verb="nurture-save-all", groups=[], zone="Work"), today=TODAY)
+        self.assertEqual(1, len(self.head()))
+
+
 class TestSave(PanelCase):
     def many(self, n=30):
         names = []

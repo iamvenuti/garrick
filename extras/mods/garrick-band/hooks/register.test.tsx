@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { buildIndex, endsWithQuestion, fileHref, FULL, label, launcherSettings, linkify, lookup, MARK, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
+import { bandSlot, buildIndex, endsWithQuestion, fileHref, FULL, label, launcherSettings, linkify, liveNote, lockFile, lockRunning, lockStart, lookup, MARK, markCells, newestMs, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, WRAP_LOCK_MS, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -1210,5 +1210,230 @@ describe('Close', () => {
     await $.turn.complete({ answer: 'Built.', durationMs: 1, isAborted: false, turnId: 'long', reason: 'answer' } as any)
     await c.clock.advance(100)
     expect(c.submitted).toHaveLength(1)
+  })
+})
+
+// One slot that follows the record (#367): Wrap after work since the note was
+// written, Resume once it is current, nothing on a thread that is not live, and
+// a running wrap shown as such. No model is asked: the note's time, the time of
+// the last turn and a lock decide.
+describe('the one slot', () => {
+  const MIN = 60_000
+  const base = { path: '', rel: 'Zones/Work/Acme/Acme.md', where: '', title: 'Acme', status: 'active', heading: 'Resume here', resume: 'x', finder: false, obsidian: false, threads: [] }
+
+  test('the state logic, from the three facts', () => {
+    const live = { live: true, wrapping: false }
+    expect(bandSlot({ ...live, noteMs: 1000, turnMs: 2000 })).toBe('wrap')        // work since the note was written
+    expect(bandSlot({ ...live, noteMs: 3000, turnMs: 2000 })).toBe('resume')      // the wrap landed after the last turn began
+    expect(bandSlot({ ...live, noteMs: 2000, turnMs: 2000 })).toBe('resume')
+    expect(bandSlot({ ...live, noteMs: 1000, turnMs: null })).toBe('resume')      // a fresh session
+    expect(bandSlot({ ...live, noteMs: null, turnMs: 2000 })).toBe('wrap')        // a time that cannot be read: Wrap, which the lock keeps single
+    expect(bandSlot({ live: true, wrapping: true, noteMs: 1000, turnMs: 2000 })).toBe('wrapping')
+    expect(bandSlot({ live: true, wrapping: true, noteMs: 3000, turnMs: 2000 })).toBe('wrapping')
+    expect(bandSlot({ live: false, wrapping: true, noteMs: 1000, turnMs: 2000 })).toBeNull()
+  })
+
+  test('a thread that is finished, parked or without a block offers nothing', () => {
+    expect(liveNote({ ...base })).toBe(true)
+    expect(liveNote({ ...base, status: 'done' })).toBe(false)
+    expect(liveNote({ ...base, status: 'parked' })).toBe(false)
+    expect(liveNote({ ...base, resume: null, threads: [] })).toBe(false)
+    expect(liveNote({ ...base, resume: null, threads: [{ title: 't', rel: 'r', heading: null, resume: 'y' }] })).toBe(true)
+    expect(liveNote(null)).toBe(false)
+  })
+
+  test('the lock: named for the note as wrap_lock.py names it, gone after ten minutes', () => {
+    expect(lockFile('Zones/Work/Acme/Threads/Pricing/Pricing.md')).toBe('wrap-Zones__Work__Acme__Threads__Pricing__Pricing.md.lock')
+    const taken = Date.parse('2026-11-05T10:00:00Z')
+    expect(lockStart('{"note": "x", "started": "2026-11-05T10:00:00Z"}')).toBe(taken)
+    for (const bad of [null, '', 'not json', '{}', '{"started": "soon"}']) expect(lockStart(bad)).toBeNull()
+    expect(lockRunning(taken, taken + 1000)).toBe(true)
+    expect(lockRunning(taken, taken + WRAP_LOCK_MS - 1)).toBe(true)
+    expect(lockRunning(taken, taken + WRAP_LOCK_MS)).toBe(false)
+    expect(lockRunning(taken, taken - WRAP_LOCK_MS)).toBe(false)                  // dated far ahead: not trusted
+    expect(lockRunning(null, taken)).toBe(false)
+  })
+
+  test('the newest modification time of the notes stat printed', () => {
+    expect(newestMs('1700000000.5\n1700000100.25\n')).toBe(1700000100250)
+    for (const none of ['', 'stat: no such file\n', '0\n']) expect(newestMs(none)).toBeNull()
+  })
+
+  // A thread note whose time the test sets, a lock it can plant, and the
+  // buttons the band draws. Nothing here answers a model call: a prompt
+  // submitted is recorded, and the band must submit none by itself.
+  async function slotted($: any, on: any, o: { note?: string; lock?: string | null; script?: boolean; reject?: boolean } = {}) {
+    const clock = mock.clock(on)
+    const state = { noteMs: Date.now() - 60 * MIN, lock: o.lock ?? null as string | null, text: o.note ?? NOTE }
+    const submitted: string[] = []
+    const toasts: string[] = []
+    const ran: string[][] = []
+    const cwd = `${ROOT}/Zones/Work/Acme`
+    const lockPath = `${ROOT}/System/generated/${lockFile('Zones/Work/Acme/Acme.md')}`
+    on('ui.render', ENGINE)
+    on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } as any })
+    on('prompt.submit', async (_$: any, e: any) => {
+      if (o.reject) throw new Error('cannot send')
+      submitted.push(e.text)
+      return { text: e.text }
+    })
+    on('process.run', async (_$: any, e: any) => {
+      ran.push([...e.argv])
+      const stdout = e.argv[0] === '/usr/bin/stat' ? `${state.noteMs / 1000}\n` : ''
+
+      return { value: { exitCode: 0, stdout, stderr: '' } } as any
+    })
+    on('session.root', async () => ({ value: cwd }))
+    on('session.cwd', async () => ({ value: cwd }))
+    on('env.get', async () => ({ value: '/Users/someone' }))
+    on('fs.exists', async (_$: any, e: any) => ({
+      value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, ...(o.script ? [`${ROOT}/System/tools/wrap_lock.py`] : []), ...(state.lock === null ? [] : [lockPath])].includes(e.path),
+    }))
+    on('fs.read', async (_$: any, e: any) => ({ value: e.path === lockPath ? state.lock : state.text }))
+    on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
+    on('turn.complete', async () => ({ text: '' }))
+    let n = 0
+    const turn = async () => {
+      const turnId = `t${++n}`
+      await $.turn.start({ text: 'x', turnId } as any)
+      await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId, reason: 'answer' } as any)
+    }
+    const keys = async () => {
+      const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+      const out: string[] = []
+      for (const key of ['wrap', 'resume']) if ((await band.find({ key })) !== undefined) out.push(key)
+      if ((await band.find({ text: /Wrapping/ })) !== undefined) out.push('wrapping')
+
+      return { band, out }
+    }
+
+    return { clock, state, submitted, toasts, ran, turn, keys, lockPath }
+  }
+
+  test('Wrap after a new turn, Resume after the wrap lands, and no model call to decide', async ($, on) => {
+    const w = await slotted($, on)
+    await w.turn()                                          // work, and the note is an hour old
+    expect((await w.keys()).out).toEqual(['wrap'])
+    // The wrap's own turn began, then the note was written after it began: the turn's end finds it current.
+    await $.turn.start({ text: 'Wrap Acme', turnId: 'wrap' } as any)
+    w.state.noteMs = Date.now() + 5_000
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'wrap', reason: 'answer' } as any)
+    expect((await w.keys()).out).toEqual(['resume'])
+    expect(w.submitted).toEqual([])                         // deciding asked no model
+  })
+
+  test('a new turn after the wrap brings Wrap back', async ($, on) => {
+    const w = await slotted($, on)
+    w.state.noteMs = Date.now() - 1000
+    await w.turn()
+    expect((await w.keys()).out).toEqual(['wrap'])
+  })
+
+  test('a finished thread shows neither', async ($, on) => {
+    const w = await slotted($, on, { note: '---\nstatus: done\n---\n## State of play\n\n### Outcome\n\nSigned.\n' })
+    await w.turn()
+    expect((await w.keys()).out).toEqual([])
+  })
+
+  test('a parked thread shows neither', async ($, on) => {
+    const w = await slotted($, on, { note: NOTE.replace('status: active', 'status: parked') })
+    await w.turn()
+    expect((await w.keys()).out).toEqual([])
+  })
+
+  test('a wrap that is running shows as such and cannot be started twice', async ($, on) => {
+    const w = await slotted($, on, { lock: JSON.stringify({ note: 'Zones/Work/Acme/Acme.md', started: new Date(Date.now() - 2 * MIN).toISOString() }) })
+    await w.turn()
+    const { band, out } = await w.keys()
+    expect(out).toEqual(['wrapping'])
+    expect(await band.find({ key: 'wrap' })).toBeUndefined()
+    const garrick = async (args: string) => (await $.command.run({ command: 'garrick', args } as any)).text
+    expect(await garrick('wrap')).toBe('A wrap is already running.')
+    expect(w.submitted).toEqual([])
+  })
+
+  test('a lock older than ten minutes counts as gone', async ($, on) => {
+    const w = await slotted($, on, { lock: JSON.stringify({ note: 'Zones/Work/Acme/Acme.md', started: new Date(Date.now() - 11 * MIN).toISOString() }) })
+    await w.turn()
+    expect((await w.keys()).out).toEqual(['wrap'])
+  })
+
+  test('Resume comes back when the lock is removed and the note has landed', async ($, on) => {
+    const w = await slotted($, on, { lock: JSON.stringify({ note: 'Zones/Work/Acme/Acme.md', started: new Date().toISOString() }) })
+    await w.turn()
+    expect((await w.keys()).out).toEqual(['wrapping'])
+    w.state.lock = null
+    w.state.noteMs = Date.now() + 5_000
+    await w.clock.advance(6_000)                     // the band looks again while a wrap runs
+    expect((await w.keys()).out).toEqual(['resume'])
+    expect(w.submitted).toEqual([])
+  })
+
+  test('Close does not start a wrap beside a running one, and does not close', async ($, on) => {
+    const w = await slotted($, on, { lock: JSON.stringify({ note: 'Zones/Work/Acme/Acme.md', started: new Date().toISOString() }) })
+    await w.turn()
+    const { band } = await w.keys()
+    await band.press({ key: 'close' })
+    expect(w.submitted).toEqual([])
+    expect(w.ran.filter(r => r[0] === 'desk')).toEqual([])
+  })
+
+  test('Wrap pressed shows Wrapping at once and submits one wrap', async ($, on) => {
+    const w = await slotted($, on)
+    await w.turn()
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' })
+    expect(w.submitted).toHaveLength(1)
+    expect(w.submitted[0]).toMatch(/^Wrap Acme: /)
+    expect(w.submitted[0]).not.toContain('foreground')     // the skill asks the question and runs it in the background
+    expect((await w.keys()).out).toEqual(['wrapping'])
+  })
+
+  test('the band takes the lock itself before it submits, and the prompt says so', async ($, on) => {
+    const w = await slotted($, on, { script: true })
+    await w.turn()
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' })
+    const lockCall = w.ran.findIndex(r => r[0] === 'python3' && r[2] === 'start')
+    expect(lockCall).toBeGreaterThanOrEqual(0)
+    expect(w.ran[lockCall]![1]).toBe(`${ROOT}/System/tools/wrap_lock.py`)
+    expect(w.submitted[0]).toContain('The band has taken the wrap lock: do not take it')
+  })
+
+  test('without the script the prompt tells the wrap to take the lock', async ($, on) => {
+    const w = await slotted($, on)
+    await w.turn()
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' })
+    expect(w.ran.some(r => r[0] === 'python3')).toBe(false)
+    expect(w.submitted[0]).toContain('Take the wrap lock first')
+  })
+
+  test('a prompt that is refused leaves no Wrapping behind', async ($, on) => {
+    const w = await slotted($, on, { script: true, reject: true })
+    await w.turn()
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' }).catch(() => undefined)
+    await w.clock.advance(100)
+    expect((await w.keys()).out).toEqual(['wrap'])
+    expect(w.ran.some(r => r[0] === 'python3' && r[2] === 'end')).toBe(true)      // and the lock the band took is let go
+  })
+
+  test('Wrap pressed during a turn keeps the guard until the wrap\'s own turn has begun', async ($, on) => {
+    const w = await slotted($, on)
+    await $.turn.start({ text: 'long', turnId: 'long' } as any)
+    const { band } = await w.keys()
+    await band.press({ key: 'wrap' })
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'long', reason: 'answer' } as any)
+    expect((await w.keys()).out).toEqual(['wrapping'])                            // the earlier turn's end does not release it
+    await $.turn.start({ text: 'Wrap Acme', turnId: 'wrap' } as any)
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'wrap', reason: 'answer' } as any)
+    expect((await w.keys()).out).toEqual(['wrap'])                                // its own end does, with no lock and no landed note
+  })
+
+  test('the Close wrap runs in the foreground, with no question', () => {
+    const n = { ...base, path: '/v/x', rel: 'Zones/Work/Acme/Acme.md', resume: 'x' }
+    expect(wrapPrompt(n, true)).toContain('run it in the foreground and do not ask the question')
+    expect(wrapPrompt(n)).not.toContain('foreground')
   })
 })

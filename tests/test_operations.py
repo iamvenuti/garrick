@@ -284,7 +284,7 @@ def shapes(text, line0=1):
 # The verbs each shape can carry, and the fields it adds where no scanner can
 # read them. Keyed by the text of the `verb` value, exactly as the file has it.
 ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
-         "rename", "move", "delete", "undo", "interrupt", "answer", "later", "continue", "fix", "suggestion", "start",
+         "rename", "move", "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start",
          "stop-using", "bring-back", "files")
 SHAPES = {
     # --- 1. object literals in the page's own script ----------------------

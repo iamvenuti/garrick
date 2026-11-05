@@ -384,5 +384,32 @@ class TestWhatThePanelLists(DecisionCase):
         self.assertIn("decisions to review", qp.JS)
 
 
+import shutil  # noqa: E402
+
+import test_questions_panel_all as allpanel  # noqa: E402
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestDecisionsPerGroup(unittest.TestCase):
+    def data(self):
+        d = allpanel.data()
+        flag = lambda t, parties: {"file": "wiki/decisions/%s.md" % t, "title": t, "status": "valid", "decided": "2026-10-05",
+                                   "revisit": "The floor changed.", "zone": "Work", "parties": parties, "href": "#"}
+        d["buckets"]["Work|acme"]["decisions"] = [flag("Acme decision", ["acme"])]
+        d["buckets"]["Work|birch"]["decisions"] = [flag("Birch decision", ["birch"]), flag("Birch second", ["birch"])]
+        return d
+
+    def test_across_a_wall_each_group_counts_its_own_decisions_and_none_is_added(self):
+        got = allpanel.run([["zone", "Work"], ["party", "*"]], d=self.data())[-1]
+        self.assertEqual(3, len(got["counts"]))
+        self.assertIn("1decisions to review", got["counts"][0])
+        self.assertIn("2decisions to review", got["counts"][1])
+        self.assertNotIn("3decisions to review", " ".join(got["counts"]))
+
+    def test_one_party_shown_alone_counts_its_own(self):
+        got = allpanel.run([["zone", "Work"], ["party", "birch"]], d=self.data())[-1]
+        self.assertIn("2decisions to review", " ".join(got["counts"]))
+
+
 if __name__ == "__main__":
     unittest.main()

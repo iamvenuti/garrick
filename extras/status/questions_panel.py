@@ -600,7 +600,7 @@ var AGE={any:0,week:7,month:30};
 /* one entry per group: its own questions and its own count. Knowledge carries no party, so it is a group of its own. */
 function groups(){var gs=qviews().map(function(v){var b=bucketOf(v.key);return{v:v,qs:b.questions.filter(function(q){return !S.gone[key(q)]}),answered:b.answered,decs:b.decisions||[]}});
 var k=(D.knowledge||[]).filter(function(q){return !S.gone[key(q)]});
-if(k.length||D.knowledge_answered)gs.push({v:{key:'knowledge',heading:'Knowledge',kind:'knowledge'},qs:k,answered:D.knowledge_answered||0});return gs}
+if(k.length||D.knowledge_answered)gs.push({v:{key:'knowledge',heading:'Knowledge',kind:'knowledge'},qs:k,answered:D.knowledge_answered||0,decs:[]});return gs}
 function shown(){var flat=[],gs=groups();gs.forEach(function(g){g.items=g.qs.filter(function(q){return !q.verdict&&(!S.wiki||q.wiki===S.wiki)&&age(q)>=AGE[S.age]})
 .sort(function(a,b){return(a.asked||'').localeCompare(b.asked||'')||a.file.localeCompare(b.file)});g.items.forEach(function(q){flat.push({q:q,g:g})})});return{gs:gs,flat:flat}}
 function ekey(e){return e.g.v.key+'|'+key(e.q)}

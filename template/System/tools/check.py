@@ -4963,6 +4963,10 @@ def project_dir_index(ws: Workspace) -> DirIndex:
 PATH_ENDERS = set("'\"`)]}>,;|&:")
 UNSEEN = dict.fromkeys(list(range(0x200b, 0x2010)) + list(range(0x202a, 0x202f)) + list(range(0x2060, 0x2065)) + [0xfeff, 0xad])
 SPACES = {ord(c): " " for c in "\u00a0\u202f\u3000\u1680\u180e"} | {c: " " for c in range(0x2000, 0x200b)}
+# The folders every project has by Garrick's layout. Written without the
+# project's name, one means the note's own project, whether or not that
+# project has made it yet.
+LAYOUT_FOLDERS = ("deliverables", "sources", "threads", "notes")
 DIR_NAME_MAX = 255  # the longest a file name can be
 
 
@@ -5105,7 +5109,10 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
                     project = idx.owner.get(folder)
                     if project is not None:
                         # It names the project when it is read from a fixed place, or its names reach the project's folder.
-                        group.append((folder, bool(ctx) or count >= len(folder.relative_to(project).parts) + 1))
+                        names = bool(ctx) or count >= len(folder.relative_to(project).parts) + 1
+                        if not names and folder.parent == project and folder.name.lower() in LAYOUT_FOLDERS:
+                            continue  # `Deliverables/…` from any project: its own folder, made or not yet
+                        group.append((folder, names))
         if group:
             found.append(group)
     return found

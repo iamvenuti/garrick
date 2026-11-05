@@ -1285,6 +1285,13 @@ class TestFormsRead(GapCase):
             with self.subTest(written):
                 self.assertRefused(written)
 
+    def test_a_layout_folder_written_alone_means_the_notes_own_project(self):
+        write(self.work / "Harbour" / "Deliverables" / "260301 - Sizing.md", "# Sizing\n")
+        for written in ("`Deliverables/260305 - New plan (draft).md`", "`Sources/brief;v2.md`", "`Deliverables/260305 - Next.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+        self.assertRefused("`Harbour/Deliverables/260305 - New plan (draft).md`")
+
     def test_a_checkout_in_a_project_is_still_set_apart_from_the_folder_reading(self):
         checkout = self.work / "Harbour" / "Garrick"
         for name in ("VERSION", "install.py", "update.py"):

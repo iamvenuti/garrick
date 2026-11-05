@@ -60,6 +60,9 @@ elif a[:2] == ["workspace", "list"]:
     print(json.dumps({"workspaces": state.get("workspaces", [])}))
 elif a[:1] == ["list-pane-surfaces"]:
     print(json.dumps({"surfaces": state.get("surfaces", {}).get(a[a.index("--workspace") + 1], [])}))
+elif a[:1] == ["close-surface"] and state.get("close_invalid_state"):
+    sys.stderr.write("Error: invalid_state: " + state["close_invalid_state"] + "\\n")
+    sys.exit(1)
 elif a[:1] == ["close-surface"] and state.get("close_error"):
     sys.stderr.write(state["close_error"] + "\\n")
     sys.exit(1)
@@ -632,6 +635,33 @@ class DeskVerbTest(CmuxCase):
         top_ = tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")])
         self.refused_close(close_error="Error: surface_busy: confirmation_required is not what failed", top=top_)
         self.refused_close(close_error="Error: socket refused (confirmation_required)", top=top_)
+
+    def last_tab(self, surfaces, top, message="Cannot close the last surface in a workspace"):
+        self.state({"close_invalid_state": message, "top": top, "surfaces": {"ws-work": surfaces},
+                    "sessions": [self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)]})
+        return self.run_desk("close", "--folder", str(self.pricing), "--yes")
+
+    def test_close_closes_the_workspace_when_the_tab_is_its_last(self):
+        code, _, err = self.last_tab([{"id": "a-surface", "title": "Pricing"}],
+                                     tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]))
+        self.assertEqual((code, err), (0, ""))
+        closed = [c["argv"] for c in self.calls() if c["argv"][0] == "close-workspace"]
+        self.assertEqual(closed, [["close-workspace", "--workspace", "ws-work"]])
+
+    def test_close_closes_only_the_tab_when_the_workspace_has_a_sibling(self):
+        code, _, err = self.last_tab([{"id": "a-surface", "title": "Pricing"}, {"id": "b-surface", "title": "Birch"}],
+                                     tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]))
+        self.assertEqual(code, 2)
+        self.assertIn("invalid_state", err)
+        self.assertNotIn("close-workspace", self.verbs())
+
+    def test_close_leaves_the_workspace_when_its_last_tab_runs_a_job(self):
+        code, _, err = self.last_tab([{"id": "a-surface", "title": "Pricing"}],
+                                     tab_top("a-surface", [(ASSISTANT_PID, "2.1.318"), (5151, "vite")]))
+        self.assertEqual(code, 2)
+        self.assertIn("vite", err)
+        self.assertIn("by hand", err)
+        self.assertNotIn("close-workspace", self.verbs())
 
     def test_close_never_forces_a_busy_tab(self):
         self.state({"close_needs_force": True, "sessions": [self.session("a", self.pricing, claude_rows(done=False))]})

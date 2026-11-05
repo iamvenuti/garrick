@@ -5006,6 +5006,30 @@ def handoff_mod():
     return _HO
 
 
+# ---- the Questions panel (#224): its data and page are questions_panel.py's -------------
+_QP = None
+
+
+def questions_mod():
+    """questions_panel.py, beside this file: what the Questions panel may show,
+    placed by the walls, and its page."""
+    global _QP
+    if _QP is None:
+        spec = importlib.util.spec_from_file_location("garrick_status_questions", str(Path(__file__).with_name("questions_panel.py")))
+        _QP = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_QP)
+    return _QP
+
+
+def questions_data(ws: Path, C: Optional[dict], today: dt.date, link: "Links") -> Optional[dict]:
+    """The panel's data, or None: no panel. Any fault leaves the panel out
+    rather than a page that shows what it could not place."""
+    try:
+        return questions_mod().build(ws, C, nurture_lib(ws), today, link)
+    except Exception:
+        return None
+
+
 _YW = None
 
 
@@ -8088,6 +8112,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
+    qdata = questions_data(ws, C, now.date(), link)        # the Questions panel (#224), None where it cannot be placed
 
     # ---- what needs attention, worst first
     attn = []
@@ -8582,13 +8607,16 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist">' + ('<button type="button" role="tab" data-tab="home">Home</button>' if simple else "")
             + '<button type="button" role="tab" data-tab="overview">Overview</button>%s'
-            '<button type="button" role="tab" data-tab="status">Status%s</button>'
+            '<button type="button" role="tab" data-tab="status">Status%s</button>%s'
             '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
-               '<span class="dot critical" title="something failed"></span>' if trouble else ""))
+               '<span class="dot critical" title="something failed"></span>' if trouble else "",
+               questions_mod().tab_button() if qdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
+    if qdata:
+        md["questions"] = questions_mod().counts_of(qdata)       # the open count of each zone, for the menu's Questions row
     if cmux:          # an app to open folders in; the app shows the row only with an assistant among them
         md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
                         "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
@@ -8616,8 +8644,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                      + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)
                                + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s</main>%s%s'
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s</main>%s%s'
             % (home_tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
+               section("questions", True, questions_mod().body(qdata)) if qdata else "",
                section("guide", True, guide_body), menu, catch_dialog(ws, T, bool(DK))))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
@@ -8628,12 +8657,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, SIMPLE_JS, WHERE_JS, MENU_JS, guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + (questions_mod().CSS if qdata else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),

@@ -1,0 +1,289 @@
+"""The Questions panel's data and page (#224, point 9). Walls first: the panel
+never lists a question or a finding from the far side of a wall from the zone
+and party shown, never counts one and never offers a page from there; a wall
+finding never shows; a page whose parties cannot be read is placed nowhere.
+
+    cd tests && python3 -m unittest test_questions_panel
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import importlib.util
+import json
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.dont_write_bytecode = True
+
+from fixtures import write  # noqa: E402
+from test_nurture_panel_actions import PanelCase, commit_all  # noqa: E402
+from test_page_action import pa  # noqa: E402
+
+HERE = Path(__file__).resolve().parent.parent / "extras" / "status"
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+status = _load("garrick_status_questions_test", HERE / "status.py")
+qp = status.questions_mod()
+
+TODAY = dt.date(2026, 11, 5)
+ACME = "Acme: which volume floor holds?"
+BIRCH = "Birch: which launch date holds?"
+MIXED = "Mixed: whose figure is it?"
+
+
+def question(title, zone="Work", parties="[acme]", pages="", status="open", extra=""):
+    fields = ("zone: %s\n" % zone if zone else "") + ("parties: %s\n" % parties if parties else "")
+    return ("---\ntype: question\nasked: 2026-10-01\nstatus: %s\n%s%s%s---\n\n**%s**\n\nThe call and the mail differ.\n"
+            % (status, fields, extra, ('pages: ["%s"]\n' % pages) if pages else "", title))
+
+
+class Panel(PanelCase):
+    def setUp(self):
+        super().setUp()
+        q = self.meetings / "questions"
+        write(q / "261001 - acme.md", question(ACME, pages="[[wiki/sources/260310-acme-kickoff]]"))
+        write(q / "261001 - birch.md", question(BIRCH, parties="[birch]", pages="[[wiki/sources/260312-birch-kickoff]]"))
+        write(q / "261001 - mixed.md", question(MIXED, parties="[acme, birch]"))
+        write(q / "261001 - across.md", question("Across: both sides?", pages="[[wiki/sources/260310-acme-kickoff]]\", \"[[wiki/sources/260312-birch-kickoff]]"))
+        write(q / "261001 - nozone.md", question("Nozone: where?", zone=""))
+        write(q / "261001 - elsewhere.md", question("Elsewhere: another zone?", zone="Personal"))
+        write(q / "261001 - unknown.md", question("Unknown: who?", parties="[zzz]"))
+        write(q / "261001 - unreadable.md", question("Unreadable: form?").replace("parties: [acme]", "parties: [acme]\nparties: [birch]"))
+        write(q / "261001 - answered.md", question("Answered: done?", status="answered"))
+        write(self.knowledge_q, "---\ntype: question\nasked: 2026-09-01\nstatus: open\n---\n\n**Knowledge: which year?**\n\nThe report differs.\n")
+        commit_all(self.meetings, "questions")
+
+    @property
+    def knowledge_q(self):
+        return self.root / "Wikis" / "Knowledge" / "questions" / "260901 - year.md"
+
+    def data(self, C=None):
+        link = status.Links(self.root)
+        nurture = status.nurture_lib(self.root)
+        return qp.build(self.root, C, nurture, TODAY, link)
+
+    def check(self):
+        return status.check(self.root)
+
+    def titles(self, bucket):
+        return sorted(q["title"] for q in bucket["questions"])
+
+
+class TestWhatIsListed(Panel):
+    def test_each_party_of_a_zone_walled_inside_it_has_a_bucket_of_its_own(self):
+        d = self.data()
+        self.assertEqual(["Work"], [z["zone"] for z in d["zones"]])
+        self.assertEqual(["acme", "birch", "cedar"], [s["tag"] for s in d["zones"][0]["scopes"]])
+        self.assertEqual([ACME], self.titles(d["buckets"]["Work|acme"]))
+        self.assertEqual([BIRCH], self.titles(d["buckets"]["Work|birch"]))
+        self.assertEqual([], self.titles(d["buckets"]["Work|cedar"]))
+
+    def test_nothing_unreadable_or_across_a_wall_is_in_the_page_at_all(self):
+        html = qp.body(self.data())
+        for hidden in (MIXED, "Across:", "Nozone:", "Elsewhere:", "Unknown:", "Unreadable:", "Answered: done"):
+            self.assertNotIn(hidden, html, hidden)
+        self.assertIn(ACME, html)
+
+    def test_a_far_side_bucket_holds_no_near_side_title_and_the_reverse(self):
+        d = self.data()
+        self.assertNotIn(BIRCH, json.dumps(d["buckets"]["Work|acme"]))
+        self.assertNotIn(ACME, json.dumps(d["buckets"]["Work|birch"]))
+        self.assertNotIn("birch", json.dumps(d["buckets"]["Work|acme"]["questions"]))
+
+    def test_a_pages_list_never_names_a_page_from_the_far_side(self):
+        d = self.data()
+        pages = [p["name"] for q in d["buckets"]["Work|acme"]["questions"] for p in q["pages"]]
+        self.assertEqual(["wiki/sources/260310-acme-kickoff.md"], pages)
+
+    def test_the_counts_are_the_default_buckets_and_never_add_the_far_side(self):
+        d = self.data()
+        self.assertEqual({"Work": 1 + 1}, d["menu"])               # Acme's question, and Knowledge's, which no wall divides
+        self.assertEqual({"z": {"Work": 2}}, qp.counts_of(d))
+        self.assertEqual(1, d["buckets"]["Work|acme"]["answered"])
+        self.assertEqual(0, d["buckets"]["Work|birch"]["answered"])
+
+    def test_knowledge_questions_are_listed_apart_for_every_zone(self):
+        d = self.data()
+        self.assertEqual(["Knowledge: which year?"], [q["title"] for q in d["knowledge"]])
+
+    def test_later_is_hidden_until_its_day(self):
+        write(self.meetings / "questions" / "261001 - acme.md",
+              question(ACME, status="later", extra="later: 2026-11-20\n", pages="[[wiki/sources/260310-acme-kickoff]]"))
+        self.assertEqual([], self.titles(self.data()["buckets"]["Work|acme"]))
+        write(self.meetings / "questions" / "261001 - acme.md",
+              question(ACME, status="later", extra="later: 2026-11-05\n", pages="[[wiki/sources/260310-acme-kickoff]]"))
+        got = self.data()["buckets"]["Work|acme"]["questions"]
+        self.assertEqual([(ACME, True)], [(q["title"], q["due"]) for q in got])
+
+    def test_the_line_naming_the_files_a_save_writes(self):
+        q = self.data()["buckets"]["Work|acme"]["questions"][0]
+        self.assertEqual(["Wikis/Meetings/raw/answers/261105 - acme.md", "Wikis/Meetings/questions/261001 - acme.md"],
+                         q["writes"]["answer"])
+        self.assertEqual(["Wikis/Meetings/questions/261001 - acme.md"], q["writes"]["later"])
+
+    def test_a_proposed_verdict_is_read_from_the_question(self):
+        write(self.meetings / "questions" / "261001 - acme.md",
+              question(ACME, extra="verdict: stale\nverdict_reason: the call moved on\n", pages="[[wiki/sources/260310-acme-kickoff]]"))
+        q = self.data()["buckets"]["Work|acme"]["questions"][0]
+        self.assertEqual(("stale", "the call moved on"), (q["verdict"], q["reason"]))
+
+    def test_text_is_data_never_markup(self):
+        evil = "<script>alert(1)</script> & </script><img src=x onerror=1>"
+        write(self.meetings / "questions" / "261001 - acme.md", question(evil, pages="[[wiki/sources/260310-acme-kickoff]]"))
+        html = qp.body(self.data())
+        self.assertNotIn("<script>alert", html)
+        self.assertNotIn("<img", html)
+        self.assertEqual(1, len(re.findall(r'<script type="application/json" id="qp-data">', html)))
+        blob = re.search(r'id="qp-data">(.*?)</script>', html, re.S).group(1)
+        self.assertEqual(evil.replace("  ", " "), json.loads(blob)["buckets"]["Work|acme"]["questions"][0]["title"])
+        js = qp.JS
+        for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
+            self.assertNotIn(bad, js)
+
+
+class TestNurtureFindings(Panel):
+    def setUp(self):
+        super().setUp()
+        write(self.people / "jo-lee.md", person_page("Jo Lee", "acme"))
+        write(self.entities / "harbour-ltd.md", entity_page("Harbour Ltd", ""))
+        write(self.people / "ines-quill.md", person_page("Ines Quill", "acme").replace("Someone at a party.", "Works at Harbour Ltd."))
+        commit_all(self.meetings, "more")
+        self.C = self.check()
+
+    def rows(self, key, kind):
+        return sorted(r["title"] for r in self.data(self.C)["buckets"][key]["review"][kind])
+
+    def test_people_rows_sit_in_the_bucket_of_their_own_party(self):
+        self.assertEqual(["Dana Whitlock", "Jo Lee", "Mira Holt"], [t for t in self.rows("Work|acme", "people") if t != "Ines Quill"])
+        self.assertEqual(["Theo Marsh"], self.rows("Work|birch", "people"))
+        self.assertEqual([], self.rows("Work|cedar", "people"))
+
+    def test_a_row_proposes_the_entity_page_with_its_title_and_first_line(self):
+        row = next(r for r in self.data(self.C)["buckets"]["Work|acme"]["review"]["people"] if r["title"] == "Mira Holt")
+        self.assertEqual({"rel": "acme-corp", "title": "Acme Corp", "line": "An organisation."}, row["proposal"])
+
+    def test_entity_pages_with_no_party_are_offered_only_in_the_unattributed_view(self):
+        self.assertEqual(["Harbour Ltd"], self.rows("unattributed|Work", "entities"))
+        for k in ("Work|acme", "Work|birch", "Work|cedar"):
+            self.assertEqual([], self.rows(k, "entities"))
+
+    def test_the_pickers_offer_near_side_pages_and_the_zones_parties(self):
+        d = self.data(self.C)["buckets"]
+        self.assertEqual(["acme-corp"], [e["rel"] for e in d["Work|acme"]["picks"]["entities"]])
+        self.assertEqual(["birch-co"], [e["rel"] for e in d["Work|birch"]["picks"]["entities"]])
+        self.assertNotIn("birch", json.dumps(d["Work|acme"]["picks"]))
+        self.assertEqual(["acme", "birch", "cedar", "none"], [p["tag"] for p in d["unattributed|Work"]["picks"]["parties"]])
+
+    def test_a_wall_finding_is_never_in_any_bucket(self):
+        # An Acme person page that links Birch's meeting is a wall finding: the Checks card says it, the panel does not.
+        # It has no other finding, and a page with a wall on it has no row for any other.
+        page = person_page("Wall Page", "acme").replace("party: acme\n", 'party: acme\norganisation: "[[wiki/entities/acme-corp]]"\n')
+        write(self.people / "wall-page.md", page.replace("Someone at a party.", "See [[wiki/sources/260312-birch-kickoff]]."))
+        commit_all(self.meetings, "wall")
+        C = self.check()
+        self.assertTrue(any("wall-page" in f["path"] for f in C["findings"]), "the fixture must raise a wall finding")
+        N, nctx = status.nurture_lib(self.root)
+        kinds = [N.sort_item(nctx, i).kind for f in C["findings"] if "wall-page" in f["path"] for i in N.check_items(f)]
+        self.assertIn("wall", kinds)
+        blob = json.dumps(self.data(C))
+        self.assertNotIn("wall-page", blob)
+        self.assertNotIn("Wall Page", blob)
+
+    def test_a_page_with_a_wall_finding_has_no_row_for_another_finding(self):
+        write(self.people / "wall-page.md", person_page("Wall Page", "acme").replace("Someone at a party.",
+              "See [[wiki/sources/260312-birch-kickoff]]."))
+        commit_all(self.meetings, "wall")
+        self.assertNotIn("Wall Page", json.dumps(self.data(self.check())))
+
+    def test_a_page_whose_form_cannot_be_read_is_placed_nowhere(self):
+        write(self.people / "odd.md", person_page("Odd Person", "acme").replace("party: acme", "party: acme\nparty: birch"))
+        commit_all(self.meetings, "odd")
+        blob = json.dumps(self.data(self.check()))
+        self.assertNotIn("Odd Person", blob)
+
+    def test_judgment_rows_carry_a_path_and_the_checks_name_only(self):
+        write(self.people / "dangling.md", person_page("Dangling", "acme") + "\nSee [[wiki/people/not-there]].\n")
+        commit_all(self.meetings, "dangling")
+        read = self.data(self.check())["buckets"]["Work|acme"]["review"]["read"]
+        for r in read:
+            self.assertEqual({"key", "path", "check", "href"}, set(r))
+
+    def test_a_row_put_off_stays_hidden_until_its_day(self):
+        key = next(r["key"] for r in self.data(self.C)["buckets"]["Work|acme"]["review"]["people"] if r["title"] == "Jo Lee")
+        pa.save_later(self.root, {key: "2026-11-20"}, set())
+        self.assertNotIn("Jo Lee", self.rows("Work|acme", "people"))
+        pa.save_later(self.root, {key: "2026-11-05"}, set())
+        self.assertIn("Jo Lee", self.rows("Work|acme", "people"))
+
+
+def person_page(name, party):
+    return ("---\ntitle: %s\ntype: person\nparty: %s\ncreated: 2026-03-10\nupdated: 2026-03-10\n---\n\n# %s\n\nSomeone at a party.\n"
+            % (name, party, name))
+
+
+def entity_page(title, party):
+    return ("---\ntitle: %s\ntype: entity\n%screated: 2026-03-10\nupdated: 2026-03-10\n---\n\n# %s\n\nAn organisation.\n"
+            % (title, "party: %s\n" % party if party else "", title))
+
+
+class TestThePage(Panel):
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_the_script_is_valid(self):
+        with tempfile.TemporaryDirectory() as t:
+            f = Path(t) / "panel.js"
+            f.write_text(qp.JS, encoding="utf-8")
+            r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_the_tab_the_panel_and_its_script_are_in_the_page(self):
+        with mock.patch.object(status, "launch_agents", lambda: self.root / "LaunchAgents"):
+            html = status.build(self.root, now=dt.datetime(2026, 11, 5, 9, 0), folder=self.jobs)
+        self.assertIn('data-tab="questions"', html)
+        self.assertIn('id="tab-questions"', html)
+        self.assertIn("window.GarrickQuestions", html)
+        self.assertIn('"questions": {"z": {"Work": 2}}', html.replace('"questions":{"z":{"Work":2}}', '"questions": {"z": {"Work": 2}}'))
+
+    def test_no_panel_where_the_walls_cannot_be_read(self):
+        with mock.patch.object(qp, "build", side_effect=RuntimeError("x")):
+            self.assertIsNone(status.questions_data(self.root, None, TODAY, status.Links(self.root)))
+
+
+class TestTheMenu(unittest.TestCase):
+    """The Questions row (decision 8): under Catch Up in File, in the menu bar's menu and in the edge panel."""
+
+    def setUp(self):
+        self.swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    def test_file_menu_has_it_under_catch_up(self):
+        self.assertRegex(self.swift, r'item\("Catch Up…".*\n\s*item\("Questions", #selector\(openQuestions\(_:\)\), ""\)')
+
+    def test_the_menu_and_the_panel_have_a_row_with_the_count_of_the_zones_they_show(self):
+        self.assertIn("if text.isEmpty, let questions = questionsItem()", self.swift)
+        self.assertIn("m.questions = questionsTitle()", self.swift)
+        self.assertIn('?["questions"] as? [String: Any])?["z"]', self.swift)
+        self.assertIn("shownZones().reduce(0)", self.swift)           # never a sum of zones the menu does not show
+
+    def test_it_brings_the_window_forward_on_the_panel_the_page_defines(self):
+        self.assertIn("window.GarrickQuestions && window.GarrickQuestions.open()", self.swift)
+        self.assertIn("window.GarrickQuestions={open:", qp.JS)
+
+    def test_the_page_sends_the_count_per_zone_in_the_menu_data(self):
+        self.assertIn('md["questions"] = questions_mod().counts_of(qdata)', (HERE / "status.py").read_text(encoding="utf-8"))
+
+
+if __name__ == "__main__":
+    unittest.main()

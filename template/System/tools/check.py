@@ -4867,7 +4867,7 @@ def _forms(raw: str) -> List[str]:
     return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
 
 
-def code_paths(text: str) -> List[Tuple[str, str]]:
+def code_paths(text: str, is_file: Optional[Callable[[str], bool]] = None) -> List[Tuple[str, str]]:
     """(as written, target) for every path written as code in `text`: a code
     span, or a line of a fenced block, that holds a slash (code_texts). The
     whole of the span or line is read as a path, and so is each slash-bearing
@@ -4877,7 +4877,8 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
     or `?x` is taken off as well as kept. Nothing resolves these as a link
     does, but a person or an assistant follows one just the same, and Nurture
     may turn one into a link. A target that ends in `/` names a folder and is
-    left out: matched by name it would find a note of that name."""
+    left out, unless its last segment has an extension or `is_file` says a file
+    has exactly that path: matched by name it would find a note of that name."""
     out = []
     for written, body in code_texts(text):
         candidates = [body.strip().strip("\"'")]
@@ -4904,8 +4905,9 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
                     # extension is a file written with a stray slash: it is
                     # read as the same token without it.
                     target = target.rstrip("/")
-                    if not re.search(r"\.[A-Za-z0-9]{1,5}$", target) or target in seen:
-                        continue
+                    if target in seen or not (re.search(r"\.[A-Za-z0-9]{1,5}$", target)
+                                              or (is_file is not None and is_file(target))):
+                        continue  # no extension, and no file of exactly that name: a folder
                     seen.add(target)
                     if lexical(target) and lexical(target) not in seen:  # as _forms settles it
                         seen.add(lexical(target))
@@ -5362,7 +5364,33 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
 
     # Links, and paths written as code (code_paths), which whoever reads the
     # note follows just the same.
-    targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text)]
+    def exact_file(target: str) -> bool:
+        # A slash-ended token with no extension is a file only when a regular
+        # file has exactly that path (no `.md` added, no bare name).
+        if target.startswith(("/", "~")):
+            try:
+                if Path(os.path.expanduser(target)).is_file():
+                    return True
+            except (OSError, ValueError):
+                pass
+        parts = [x.lower() for x in target.replace("\\", "/").split("/") if x and x not in (".", "..")]
+        if "/" not in target or not parts:
+            return False
+        if target.startswith(("/", "~")):  # read from where it reaches the workspace, as a path from outside is
+            starts = [i + 1 for i, x in enumerate(parts) if x == ws.root.name.lower()]
+            starts += [i for i, x in enumerate(parts) if x in ("zones", "wikis") and i > 0]
+            tails = [parts[i:] for i in starts if i < len(parts)]
+        else:
+            tails = [parts]
+        project_index(ws)
+        known = ws.project_files or {}
+        for f in known:
+            have = [x.lower() for x in Path(rel(ws, f)).parts]
+            if any(have[-len(t):] == t for t in tails if t and len(t) <= len(have)):
+                return True
+        return False
+
+    targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text, exact_file)]
     seen = set()
     for verb, written, target in targets if meetings.items else []:
         for page in resolve(ws, path, target, meetings):

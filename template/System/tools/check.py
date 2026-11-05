@@ -5375,8 +5375,14 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             except (OSError, ValueError):
                 pass
         parts = [x.lower() for x in target.replace("\\", "/").split("/") if x and x not in (".", "..")]
-        if set(parts) & {project.name.lower() for project, _ in ws.projects}:
-            return True  # a segment names a project's folder: read as before, never as a bare folder name
+        named = {project.name.lower() for project, _ in ws.projects}
+        for project, _ in ws.projects:
+            try:
+                named |= {e.name.lower() for e in os.scandir(project / "Threads") if e.is_dir()}
+            except OSError:
+                pass
+        if set(parts) & named:
+            return True  # a segment names a project's or a thread's folder: read as before, never as a bare folder name
         if not parts:
             return False
         if target.startswith(("/", "~")):  # read from where it reaches the workspace, as a path from outside is

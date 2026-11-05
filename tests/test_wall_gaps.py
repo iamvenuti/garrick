@@ -876,7 +876,7 @@ class TestFolderPaths(GapCase):
         table = (
             # Leads into Harbour and goes on, or names its folder: refused, ending in / or not.
             ("cat Harbour/Notes/Demo/", True), ("Harbour/Notes/Demo/", True), ("Harbour/Notes/Demo.md", True),
-            ("Harbour/", True), ("Zones/Work/Harbour/Notes/Demo/", True),
+            ("Harbour/", True), ("Tender/", True), ("cat Tender/", True), ("Zones/Work/Harbour/Notes/Demo/", True),
             ("%s/Zones/Work/Harbour/Notes/Demo/" % root, True),
             ("~/%s/Zones/Work/Harbour/Notes/Demo/" % root.name, True),
             # A path that ends at Harbour's folder is not read, as in 0.56.0.

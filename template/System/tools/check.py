@@ -6373,9 +6373,10 @@ def frontmatter_keys_named(text: str, names) -> List[str]:
     body = _frontmatter_body(text) or []
     found = []
     for i, line in enumerate(body):
-        # A key inside a flow mapping (`{a: 1, parties: x}`) counts wherever the line holds one.
-        found += [k.lower() for k in re.findall(r"""[{,]\s*["']?([A-Za-z_]+)["']?\s*:""", line)
-                  if "{" in line and k.lower() in names]
+        # A key inside a flow mapping or a flow sequence (`{a: 1, parties: x}`, `[a, zone: Work]`) counts
+        # wherever the line holds one.
+        found += [k.lower() for k in re.findall(r"""[\[{,]\s*["']?([A-Za-z_]+)["']?\s*:""", line)
+                  if ("{" in line or "[" in line) and k.lower() in names]
         m = re.match(r"""^\s*(?:-\s+)*["']?([A-Za-z_]+)["']?\s*:(.*)$""", line)
         if not m or m.group(1).lower() not in names:
             continue
@@ -6433,6 +6434,8 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
             fm = {}
             if suffix == ".md":  # read once; a page too big to scan still has its fields read
                 fm = parse_frontmatter_text(text) if text else parse_frontmatter(path)
+                if isinstance(fm.get("type"), list):   # a stray `- [..]` line reads as a list; not a kind of page
+                    fm["type"] = str(fm["type"])
             if suffix == ".md" and fm and path.parent == sources and declared:
                 lacking = [f for f in sfields if not as_list(fm.get(f))]
                 if fm.get("type") != stype or lacking:

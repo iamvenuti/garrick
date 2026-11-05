@@ -955,7 +955,9 @@ class TestKnowledge(CheckCase):
     def test_flow_mappings_and_keys_written_in_other_ways_are_refused(self):
         """#388, the wall review: forms that make `parties` a real key, or hide it from a plain scan."""
         found = [("{type: concept, parties: [birch]}\n", "carries `parties`"),
-                 ("meta: {parties: x}\n", "carries `parties`"), ("items:\n  - {zone: Work}\n", "carries `zone`")]
+                 ("meta: {parties: x}\n", "carries `parties`"), ("m: [party: x]\n", "carries `party`"),
+                 ("tags: [a, zone: Work]\n", "carries `zone`"), ("- [party: x]\n", "carries `party`"),
+                 ('m: ["party": x]\n', "carries `party`"), ("tags: [a, parties: [Acme]]\n", "carries `parties`"), ("items:\n  - {zone: Work}\n", "carries `zone`")]
         unreadable = ['"par\\x74ies": [birch]\n', "? parties\n: [birch]\n", "!!str parties: [birch]\n",
                       "&k parties: [birch]\n", "x: &a {parties: [birch]}\n<<: *a\n", "<<: *a\n"]
         for frontmatter, named in found:
@@ -969,7 +971,7 @@ class TestKnowledge(CheckCase):
 
     def test_a_value_with_braces_or_an_ampersand_stays_silent(self):
         for frontmatter in ("title: Terms & conditions {draft}\n", "title: Parties to the agreement\n",
-                            "note: see *this* and !that\n"):
+                            "note: see *this* and !that\n", "tags: [party planning]\n", "tags: [zone-a, b]\n"):
             with self.subTest(frontmatter=frontmatter):
                 self.knowledge_page(frontmatter)
                 self.assertClean("knowledge")

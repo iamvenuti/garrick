@@ -4876,7 +4876,8 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
     `Harbour/Notes.md` does and a file name may hold spaces. A trailing `:12`
     or `?x` is taken off as well as kept. Nothing resolves these as a link
     does, but a person or an assistant follows one just the same, and Nurture
-    may turn one into a link."""
+    may turn one into a link. A target that ends in `/` names a folder and is
+    left out: matched by name it would find a note of that name."""
     out = []
     for written, body in code_texts(text):
         candidates = [body.strip().strip("\"'")]
@@ -4895,6 +4896,8 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
                 if target in seen:
                     continue
                 seen.add(target)
+                if target.endswith("/"):
+                    continue  # a folder path: never matched by name to a note (the folder reading follows it)
                 if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
                     out.append((written, target))
     return out

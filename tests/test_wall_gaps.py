@@ -810,6 +810,54 @@ class TestSharedSurname(GapCase):
         self.assertEqual(1, len(found), found)
 
 
+class TestFolderPaths(GapCase):
+    """A token that ends in `/` names a folder and is never matched by bare
+    name to a note. Northwind is for Acme; Harbour, which holds Notes/Demo.md,
+    for Birch."""
+
+    def setUp(self):
+        super().setUp()
+        for name, party, thread in (("Northwind", "acme", "Freight"), ("Harbour", "birch", "Tender")):
+            folder = self.work / name
+            write(folder / (name + ".md"), project_hub("Work", name, party, [thread]))
+            write(folder / "Threads" / thread / (thread + ".md"), thread_note(name, thread, party))
+        write(self.work / "Harbour" / "Notes" / "Demo.md", "# Demo\n")
+        self.note = self.work / "Northwind" / "Threads" / "Freight" / "Notes.md"
+        self.where = "Zones/Work/Northwind/Threads/Freight/Notes.md"
+
+    def says(self, written):
+        write(self.note, "# Notes\n\nSee %s now.\n" % written)
+        return [(f.severity, f.message) for f in self.findings("walls") if f.path == self.where]
+
+    def test_a_folder_path_whose_last_folder_names_a_note_across_the_wall_passes(self):
+        for written in ("`~/Applications/Garrick Demo/`", "`see Demo/ now`", "`Demo/`", "`/opt/tools/Demo/`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_the_name_alone_keeps_its_verdict(self):
+        # No slash, so a code span is no path (as before); a wikilink is read by name.
+        for written in ("`Demo`", "`Demo.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+        found = self.says("[[Demo]]")
+        self.assertEqual(["error"], [s for s, _ in found], found)
+
+    def test_a_path_that_leads_into_the_walled_folder_and_goes_on_is_refused(self):
+        for written in ("`cat Harbour/Notes/Demo.md`", "`Harbour/Notes/Demo.md`", "`cat Harbour/Notes/Demo/`"):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [s for s, _ in found], found)
+
+    def test_a_path_into_the_workspace_is_still_a_workspace_path(self):
+        for written in ("`%s/Zones/Work/Harbour/Notes/Demo.md`" % self.root,
+                        "`cat %s/Zones/Work/Harbour/Notes/Demo.md`" % self.root,
+                        "`~/%s/Zones/Work/Harbour/Notes/Demo.md`" % self.root.name,
+                        "`/elsewhere/Zones/Work/Harbour/Notes/Demo.md`"):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [s for s, _ in found], found)
+
+
 class TestProjectLinks(GapCase):
     """A link or a path into a note of a project walled from this one is
     refused, by the commit hook and the full check alike, whether or not the

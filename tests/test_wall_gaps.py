@@ -1205,6 +1205,106 @@ class TestFormsRead(GapCase):
                 self.assertEqual(["error"], [sev for sev, _ in found], found)
         self.assertEqual([], self.says('<img srcset="a.png 1x, https://example.com/b.png 2x" poster="p.png" data="d.bin">'))
 
+    def tender(self, *names):
+        for name in names:
+            write(self.work / "Harbour" / "Threads" / "Tender" / name, "# Note\n")
+
+    def assertRefused(self, written):
+        found = self.says(written)
+        self.assertEqual(["error"], [sev for sev, _ in found], (written, found))
+
+    def test_a_name_the_reading_cannot_tell_from_a_path_followed_by_more(self):
+        self.tender("a;b.md", "p&q.md", "a,b.md", "a=b.md", "x(1).md", "Bid brief (1).md", "x\u202fy.md", "x\u00a0y.md", "x\u200by.md",
+                    "Bid model v2 final draft for the board and the others.md", "Q3 pricing.md")
+        for written in ("`cat Harbour/Threads/Tender/a;b.md`", "`cat Harbour/Threads/Tender/p&q.md`", "`cat Harbour/Threads/Tender/a,b.md`",
+                        "`cat Harbour/Threads/Tender/a=b.md`", "`cat Harbour/Threads/Tender/x(1).md`",
+                        "`cat Harbour/Threads/Tender/Bid brief (1).md`", "`cat Harbour/Threads/Tender/x\u202fy.md`",
+                        "`cat Harbour/Threads/Tender/x\u00a0y.md`", "`cat Harbour/Threads/Tender/x\u200by.md`",
+                        "`cat Harbour/Threads/Tender/Bid model v2 final draft for the board and the others.md`",
+                        "`cat Harbour/Threads/Tender/Q3%20pricing.md`", "`cat Harbour/Threads/Tender/Bid\u200b model.md`",
+                        "`cat Harb\u200bour/Threads/Tender/Q3 pricing.md`", "`cat HARBOUR/THREADS/TENDER/q3 pricing.md`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_glob_or_a_brace_expansion_into_a_project(self):
+        for written in ("`cat Harbour/Threads/*/Tender.md`", "`cat Harbour/Threads/Tender/*.md`", "`cat Harbour/Threads/Tender/T?nder.md`",
+                        "`cat Harbour/Threads/Tender/{Tender,Plan}.md`", "`cat Harbour/Threads/Tender/[T]ender.md`", "`cat Harbour/**/Tender.md`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_path_to_a_folder_is_not_read(self):
+        for written in ("`ls Harbour/Threads/Tender`", "`cd Harbour/Threads/Tender/`", "`ls 'Harbour/Threads/Tender'`", "`ls Harbour/Threads/Tender | head`",
+                        "`ls Harbour/Threads/Tender -la`", "`cd Harbour/Threads/Tender && ls`", "`Harbour/Threads/Tender/`", "`ls Harbour/Threads/Tender;`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_path_into_this_project_or_one_without_a_wall_is_not_refused(self):
+        write(self.work / "Northwind" / "Threads" / "Freight" / "Rate sheet (2).md", "# Rates\n")
+        write(self.work / "Lantern" / "Threads" / "Survey" / "Q3 pricing.md", "# Survey\n")
+        for written in ("`cat Northwind/Threads/Freight/Rate sheet (2).md`", "`cat Threads/Freight/Rate sheet (2).md`",
+                        "`cat Lantern/Threads/Survey/Q3 pricing.md`", "`cat Lantern/Threads/Survey/a;b.md`", "`cat nowhere/at all/x;y.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_query_after_a_link_or_an_attribute(self):
+        target = "../../../Harbour/Threads/Tender/Tender.md"
+        for written in ("[x](%s?v=1)" % target, '<a href="%s?v=1">x</a>' % target, '<img src="%s?v=1">' % target,
+                        '<img src="%s?v=1#top">' % target, "[x](%s?a=b&c=d)" % target, "`cat Harbour/Threads/Tender/Tender.md?v=1`"):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_an_attribute_written_with_entities_or_left_unclosed(self):
+        for written in ('<img src="../../../Harbour/Threads/Tender/Tender&#46;md">', '<img src="../../../Harbour/Threads/Tender/Tender&period;md">',
+                        '<img src="..&#47;..&#47;..&#47;Harbour&#47;Threads&#47;Tender&#47;Tender.md">',
+                        '<img src="..&sol;..&sol;..&sol;Harbour&sol;Threads&sol;Tender&sol;Tender.md">',
+                        '<img src="../../../Harbour/Threads/Tender/Tender.md', "<img src='../../../Harbour/Threads/Tender/Tender.md",
+                        '<img src=&quot;../../../Harbour/Threads/Tender/Tender.md">'):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_srcset_with_a_name_that_holds_spaces_or_commas(self):
+        self.tender("Bid model.md", "a,b.md")
+        for written in ('<img srcset="../../../Harbour/Threads/Tender/Bid model.md 2x">', '<img srcset="x.png 1x, ../../../Harbour/Threads/Tender/a,b.md 2x">',
+                        '<img srcset="x.png 1x,\n../../../Harbour/Threads/Tender/Bid model.md">'):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_every_attribute_is_read(self):
+        target = "../../../Harbour/Threads/Tender/Tender.md"
+        for written in ('<button formaction="%s">' % target, '<form action="%s">' % target, '<a ping="%s">' % target,
+                        '<blockquote cite="%s">' % target, '<meta http-equiv="refresh" content="0;url=%s">' % target,
+                        '<meta content="0; URL = %s">' % target, '<x-el anything="%s">' % target, '<img alt="x src=" %s">' % target):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_file_address_into_a_project(self):
+        home = Path(os.path.expanduser("~"))
+        for written in ("[x](file://%s/Zones/Work/Harbour/Threads/Tender/Tender.md)" % self.root, "`open file://%s/Zones/Work/Harbour/Threads/Tender/Tender.md`" % self.root,
+                        "`open file:///elsewhere/Zones/Work/Harbour/Threads/Tender/Q3 pricing.md`", "`cat ~/Harbour/Threads/Tender/Q3 pricing.md`",
+                        '<img src="file:///x/Zones/Work/Harbour/Threads/Tender/Tender.md">'):
+            with self.subTest(written):
+                self.assertRefused(written)
+
+    def test_a_checkout_in_a_project_is_still_set_apart_from_the_folder_reading(self):
+        checkout = self.work / "Harbour" / "Garrick"
+        for name in ("VERSION", "install.py", "update.py"):
+            write(checkout / name, "x\n")
+        (checkout / "template" / "System").mkdir(parents=True)
+        write(checkout / "docs" / "guide to it.md", "# Guide\n")
+        self.assertEqual([], self.says("`cat Harbour/Garrick/docs/guide to it;x.md`"))
+
+    def test_hostile_lines_stay_fast(self):
+        import time
+        for text in ("\n```\n" + " ".join("a/Tender.md" for _ in range(20000)) + "\n```\n",
+                     "\n```\n" + "\n".join("a b c d e f g h i j/Tender k l m n" for _ in range(4000)) + "\n```\n",
+                     "\n```\n" + " ".join("w/x%d" % i for i in range(20000)) + "\n```\n",
+                     "\n".join("`" + " ".join("w/x%d.md" % i for i in range(60)) + "`" for _ in range(100)),
+                     "\n```\n" + "Threads/" * 20000 + "\n```\n", "\n```\n" + "Harbour/Threads/" * 5000 + "x y\n```\n"):
+            write(self.note, "# Notes\n" + text)
+            started = time.monotonic()
+            self.walls()
+            self.assertLess(time.monotonic() - started, 30.0, text[:30])
+
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_the_hook_reads_each_form_too(self):
         real_repo(self.work)

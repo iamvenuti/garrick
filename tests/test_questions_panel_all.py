@@ -209,5 +209,35 @@ class TestAllOnTheRealFixture(Panel):
         self.assertNotIn("Acme:", by["Work|birch"])
 
 
+class TestTwoPartyKeys(Panel):
+    """A question with `parties: [acme]` and a `party:` key of another case or name reads two ways: it is
+    listed in no group and every save of it is refused (#384)."""
+
+    def setUp(self):
+        super().setUp()
+        self.f = self.meetings / "questions" / "261001 - acme.md"
+        self.text = self.f.read_text()
+
+    def spoil(self, line):
+        self.f.write_text(self.text.replace("parties: [acme]\n", "parties: [acme]\n" + line + "\n"))
+
+    def test_listed_in_no_group_under_any_selection(self):
+        for line in ("party: birch", "party: acme", "PARTY: birch", "Parties: [birch]"):
+            self.spoil(line)
+            d = self.data()
+            self.assertNotIn(ACME, json.dumps(d), line)
+            for sel in d["select"].values():
+                for v in sel["views"]:
+                    self.assertEqual([], [x for x in d["buckets"][v["key"]]["questions"] if "acme.md" in x["file"]], line)
+
+    def test_every_save_of_it_is_refused(self):
+        self.spoil("party: birch")
+        before = self.f.read_text()
+        for req in (dict(verb="question-answer", words="Yes"), dict(verb="question-later", until="2026-12-01"), dict(verb="question-close")):
+            with self.assertRaisesRegex(qp.page_action().Refused, "cannot be read plainly"):
+                qp.page_action().act(self.root, dict(req, wiki="Meetings", file="questions/261001 - acme.md"), today=__import__("datetime").date(2026, 11, 5))
+        self.assertEqual(before, self.f.read_text())
+
+
 if __name__ == "__main__":
     unittest.main()

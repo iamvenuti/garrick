@@ -2225,6 +2225,10 @@ def question_parties(q: WikiQuestion, wall: str) -> list:
     each other. A Knowledge question names neither. Anything else is refused."""
     ctx = q.context
     zone = q.fm.get("zone")
+    # Both spellings of the party key, or one in another case, read two ways: the question says whose it is to no one.
+    keys = [k for k in q.fm if str(k).strip().lower() in ("party", "parties")]
+    if any(k != "parties" for k in keys):
+        raise Refused("that question's frontmatter cannot be read plainly, so nothing was written")
     tags = q.parties()
     if q.name == "Knowledge":
         if zone not in (None, "") or tags:

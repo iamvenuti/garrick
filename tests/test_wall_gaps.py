@@ -1033,7 +1033,10 @@ class TestProjectLinks(GapCase):
                      "](a (" * 20000, "".join("`" * k + "a" for k in range(1, 400)), "`a " * 30000,
                      "`" + "x" * 80000 + "`", "<img " * 30000, "<img " + "x=1 " * 20000 + 'src="a/b">',
                      "<img src=" + "a" * 80000, "\n```\n" + " ".join("a/b%d" % i for i in range(20000)) + "\n```\n",
-                     "\n```\n" + "a/" * 40000 + "\n```\n", "`" + "a/b " * 240 + "`" * 3):
+                     "\n```\n" + "a/" * 40000 + "\n```\n", "`" + "a/b " * 240 + "`" * 3,
+                     '<img srcset="' * 30000, "<a '" * 30000, '<a title="' + "x<a " * 30000, "<div " + "data=1 " * 20000,
+                     "\n```\n" + "a/ " * 30000 + "\n```\n", "\n```\n" + ":1" * 40000 + "/x\n```\n",
+                     "\n```\n" + "'a/ " * 20000 + "\n```\n", "\n```\n" + "a/b:1:2: " * 10000 + "\n```\n"):
             started = time.monotonic()
             check.extract_links(text)
             check.code_paths(text)
@@ -1154,6 +1157,53 @@ class TestFormsRead(GapCase):
                          self.says("`Deliverables/published.md`"))
         # With the project's name in front it names the project, and is refused.
         self.refused("`Harbour/Deliverables/published.md`")
+
+    def test_a_path_that_names_no_project_does_not_hide_one_that_does(self):
+        write(self.work / "Harbour" / "Deliverables" / "published.md", "| Date | File |\n|---|---|\n")
+        for written in ("`Deliverables/published.md Harbour/Threads/Tender/Tender.md`",
+                        "`Harbour/Threads/Tender/Tender.md Deliverables/published.md`",
+                        "`cat Deliverables/published.md; cat Harbour/Threads/Tender/Tender.md`",
+                        "`cat Harbour/Threads/Tender/Tender.md; cat Deliverables/published.md`"):
+            with self.subTest(written):
+                self.refused(written)
+        write(self.note, "# Notes\n\n```\ncat Deliverables/published.md\ncat Harbour/Threads/Tender/Tender.md\n```\n")
+        self.assertEqual(["warning", "error"], sorted(f.severity for f in self.walls()))
+
+    def test_a_path_with_spaces_inside_a_longer_code_line(self):
+        write(self.work / "Harbour" / "Deliverables" / "261105 - Bid.md", "# Bid\n")
+        write(self.work / "Harbour" / "Threads" / "Tender" / "Rate card.md", "# Rate card\n")
+        for written in ("`cat Harbour/Deliverables/261105 - Bid.md`", "`open 'Harbour/Deliverables/261105 - Bid.md'`",
+                        '`cat "Harbour/Threads/Tender/Rate card.md"`', "`cat Harbour/Threads/Tender/Bid\\ model.md`",
+                        "`cp Harbour/Deliverables/261105 - Bid.md /tmp/x`", "`cat Harbour/Deliverables/261105 - Bid.md | head`"):
+            with self.subTest(written):
+                self.refused(written)
+        write(self.note, "# Notes\n\n```sh\ncat Harbour/Deliverables/261105 - Bid.md\n```\n")
+        self.assertEqual(["error"], [f.severity for f in self.walls()])
+        self.assertEqual([], self.says("`cat Lantern/Deliverables/261105 - Bid.md and some words`"))
+
+    def test_a_line_position_or_a_query_after_a_path(self):
+        for written in ("`cat Harbour/Threads/Tender/Tender.md:12`", "`Harbour/Threads/Tender/Tender.md:12:3:`",
+                        "`less Harbour/Threads/Tender/Tender.md?x=1`", "`vim Harbour/Threads/Tender/Tender.md:7:`"):
+            with self.subTest(written):
+                self.refused(written)
+
+    def test_every_attribute_that_names_a_file(self):
+        target = "../../../Harbour/Threads/Tender/Tender.md"
+        for written in ('<img src="ok.png" srcset="small.png 1x, %s 2x">' % target,
+                        '<img SRCSET=\'%s 480w\'>' % target,
+                        '<object data="%s"></object>' % target,
+                        '<link rel="stylesheet" href="%s">' % target,
+                        '<area shape="rect" href=%s>' % target,
+                        '<svg><image xlink:href="%s"/></svg>' % target,
+                        '<use XLINK:HREF="%s"/>' % target,
+                        '<video poster="%s"></video>' % target,
+                        '<table background="%s">' % target,
+                        '<div data-src="%s">' % target,
+                        '<img alt="a<b" src="x.png" data="%s">' % target):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [sev for sev, _ in found], found)
+        self.assertEqual([], self.says('<img srcset="a.png 1x, https://example.com/b.png 2x" poster="p.png" data="d.bin">'))
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_the_hook_reads_each_form_too(self):

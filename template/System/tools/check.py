@@ -212,9 +212,14 @@ MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s<>]|\([^()\s<>]*\))+))
 # HTML anchor's href.
 REFDEF_RE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^<>\n]*)>|(\S+))")
 HREF_RE = re.compile(r"(?i)<a\b(?:[^<>\"']|\"[^\"]*\"|'[^']*')*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
-# An HTML tag that embeds a file, such as an image, by its src: read as a link
-# is, with the same bounded shape as HREF_RE.
-SRC_RE = re.compile(r"(?i)<(?:img|source|video|audio|embed|iframe|track|input)\b(?:[^<>\"']|\"[^\"]*\"|'[^']*')*?\bsrc\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
+# An HTML tag, name and attributes, up to its `>`, a `<` outside a quoted value
+# or the end of the text. Nothing follows the repeat, so it never backtracks:
+# each branch starts on a different character.
+TAG_RE = re.compile(r"<([A-Za-z][^\s<>/\"']*)((?:[^<>\"']|\"[^\"]*\"|'[^']*')*)")
+# The attributes of a tag that name a file or a page: where it links, embeds
+# or loads from. Read on any tag, in any case and any quoting.
+ATTR_RE = re.compile(r"(?i)(?<![\w:-])(src|srcset|data|data-src|href|xlink:href|poster|background)\s*=\s*"
+                     r"(?:\"([^\"]*)\"|'([^']*)'|([^\s\"'>]+))")
 # Where a code span or a fenced block opens, as CommonMark reads them: a span
 # closes on a run of backticks as long as the one that opened it, and a
 # fence is three or more backticks or tildes, closed by a run of the same
@@ -585,7 +590,8 @@ def say(n: int) -> str:
 def extract_links(text: str) -> List[Tuple[str, str]]:
     """(as written, target) for every wikilink, obsidian:// URI, relative
     Markdown link (inline, in angle brackets or by reference) and HTML
-    anchor, and the src of an embedding HTML tag such as an image, in `text`. Targets are vault-relative or file-relative paths
+    anchor, and the file an HTML tag names by `src`, `srcset`, `data`, `href`,
+    `xlink:href`, `poster` or `background`, in `text`. Targets are vault-relative or file-relative paths
     without the alias or heading."""
     links = []
     for m in WIKILINK_RE.finditer(text):
@@ -600,19 +606,25 @@ def extract_links(text: str) -> List[Tuple[str, str]]:
             for value in query.get(key, []):
                 target = unquote(value).split("#", 1)[0]
                 links.append((uri, "obsidian:%s:%s" % (vault, target) if key == "file" else target))
-    for regex in (MDLINK_RE, REFDEF_RE, HREF_RE, SRC_RE):
+    for regex in (MDLINK_RE, REFDEF_RE):
         for m in regex.finditer(text):
             found = next((g for g in m.groups() if g is not None), "")
             target = unquote(found.strip()).split("#", 1)[0]
             if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
                 continue  # web or obsidian URI, handled above or not ours
-            if regex is HREF_RE:
-                written = '<a href="%s">' % found
-            elif regex is SRC_RE:
-                written = '<img src="%s">' % found
-            else:
-                written = m.group(0).strip()
-            links.append((written, target))
+            links.append((m.group(0).strip(), target))
+    for tag in TAG_RE.finditer(text):
+        name = tag.group(1).lower()
+        for attr in ATTR_RE.finditer(tag.group(2)):
+            key = attr.group(1).lower()
+            found = next((g for g in attr.groups()[1:] if g is not None), "")
+            # srcset is a list: each URL, then an optional descriptor.
+            values = [piece.split()[0] for piece in found.split(",") if piece.split()] if key == "srcset" else [found]
+            for value in values:
+                target = unquote(value.strip()).split("#", 1)[0]
+                if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                    continue
+                links.append(('<%s %s="%s">' % (name, key, value), target))
     return links
 
 
@@ -4778,27 +4790,68 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
 
 # What separates one candidate path from the next in a code line: white space,
 # quotes, brackets, pipes, redirects, separators and `=`. A path with a space
-# in it is read whole, as the span or line holds it.
+# in it is read as a run of words (below), or as a quoted string.
 CODE_TOKEN_RE = re.compile(r"[^\s\"'`()<>|;,=&{}\[\]]+")
+QUOTED_RE = re.compile(r"\"([^\"]*)\"|'([^']*)'")
+SHELL_BREAK_RE = re.compile(r"[;|&<>]")
+MAX_RUN_WORDS = 8  # words a path with spaces in it may span in a code line
+
+
+def _without_position(token: str) -> str:
+    """`token` with a trailing `:12`, `:12:3` or `:12:3:` taken off, in one
+    pass from the end."""
+    end = len(token)
+    while end and token[end - 1] == ":":
+        end -= 1
+    while True:
+        i = end
+        while i and token[i - 1].isdigit():
+            i -= 1
+        if 0 < i < end and token[i - 1] == ":":
+            end = i - 1
+        else:
+            return token[:end]
+
+
+def _forms(raw: str) -> List[str]:
+    """The paths one candidate may mean: as written, without a heading, a
+    query or a line position, and without trailing punctuation."""
+    base = raw.split("#", 1)[0].strip()
+    plain = base.split("?", 1)[0]
+    forms = [base, base.rstrip(".:,;"), plain, _without_position(plain).rstrip(".:,;")]
+    return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
 
 
 def code_paths(text: str) -> List[Tuple[str, str]]:
     """(as written, target) for every path written as code in `text`: a code
     span, or a line of a fenced block, that holds a slash (code_texts). The
     whole of the span or line is read as a path, and so is each slash-bearing
-    token of it, since `cat Harbour/Notes.md` names a file as `Harbour/Notes.md`
-    does. Nothing resolves these as a link does, but a person or an assistant
-    follows one just the same, and Nurture may turn one into a link."""
+    token of it, each quoted string, and each run of up to eight words that
+    holds a slash, since `cat Harbour/Notes.md` names a file as
+    `Harbour/Notes.md` does and a file name may hold spaces. A trailing `:12`
+    or `?x` is taken off as well as kept. Nothing resolves these as a link
+    does, but a person or an assistant follows one just the same, and Nurture
+    may turn one into a link."""
     out = []
     for written, body in code_texts(text):
+        candidates = [body.strip().strip("\"'")]
+        candidates += [a or b for a, b in QUOTED_RE.findall(body)]
+        shell = body.replace("\\ ", "\0")                      # `Bid\ model.md` is one word
+        candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)]
+        for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
+            words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()]
+            for i in range(len(words)):
+                for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
+                    if any("/" in w for w in words[i:j]):
+                        candidates.append(" ".join(words[i:j]))
         seen = set()
-        whole = body.strip().strip("\"'").split("#", 1)[0].strip()
-        for target in [whole] + [t.split("#", 1)[0].rstrip(".:,;") for t in CODE_TOKEN_RE.findall(body)]:
-            if target in seen:
-                continue
-            seen.add(target)
-            if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
-                out.append((written, target))
+        for candidate in candidates:
+            for target in _forms(candidate):
+                if target in seen:
+                    continue
+                seen.add(target)
+                if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                    out.append((written, target))
     return out
 
 
@@ -5058,7 +5111,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # `Deliverables/published.md`, is a warning.
     if tags and targets:
         index = project_index(ws)
-        named = set()
+        named: Dict[Tuple[str, Path], int] = {}  # (written, project) -> its finding's place in out
         for verb, written, target in targets:
             code = verb != "links"
             hits = resolve(ws, path, target, index) if code else link_dests(ws, path, target)
@@ -5086,15 +5139,22 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                 if elsewhere and not any(names_project(ws, target, h, o) for h, o, _ in far_hits):
                     severity = WARNING
             hit, other, (a, b) = far_hits[0]
-            if (written, other) in named:
+            # One finding for each (written, project), the worst of its targets:
+            # a warning for one token never stands in for the refusal of another.
+            earlier = named.get((written, other))
+            if earlier is not None and (severity == WARNING or out[earlier].severity == ERROR):
                 continue
-            named.add((written, other))
             if severity == ERROR:
                 reported.add(b)  # a warning must not stand in for the name check's refusal
             noun = "note" if hit.suffix.lower() == ".md" else "file"
-            out.append(Finding(severity, "walls", r,
-                               "%s %s, a %s of %s; a wall stands between %s and %s" % (verb, written, noun, b, a, b),
-                               "A note in %s uses a %s of %s" % (where, noun, party_name(ws, b))))
+            found = Finding(severity, "walls", r,
+                            "%s %s, a %s of %s; a wall stands between %s and %s" % (verb, written, noun, b, a, b),
+                            "A note in %s uses a %s of %s" % (where, noun, party_name(ws, b)))
+            if earlier is None:
+                named[(written, other)] = len(out)
+                out.append(found)
+            else:
+                out[earlier] = found
     far = {t for t in ws.context["parties"] if any(walled(ws.context, a, t) for a in tags)}
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.

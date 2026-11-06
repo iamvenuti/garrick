@@ -607,6 +607,10 @@ function ss(k,v){try{if(v===undefined)return sessionStorage.getItem(k);if(v===nu
 function say(s){if(window.GarrickSay)GarrickSay(s)}
 var $=function(id){return document.getElementById(id)};
 function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e}
+/* A group heading: the zone's name in the zone's colour (D.zcls, from Settings), the rest and the count in the entry colour. Knowledge has no zone. */
+function head(box,v,tail){var c=v.kind==='knowledge'?'':((D.zcls||{})[v.zone]||'');
+if(!c||v.heading.indexOf(v.zone)!==0){box.appendChild(document.createTextNode(v.heading+(tail||'')));return box}
+box.appendChild(el('span',c.trim(),v.zone));box.appendChild(document.createTextNode(v.heading.slice(v.zone.length)+(tail||'')));return box}
 function link(name,href){var a=el('a','',name);a.setAttribute('href',href);return a}
 var S={zone:'',party:'',source:'wiki',wiki:'',age:'any',cursor:'',gone:{},typed:{}};
 try{Object.assign(S,JSON.parse(ss(SK)||'{}'))}catch(e){}
@@ -644,7 +648,7 @@ function counts(){var c=$('qp-counts'),gs=groups();c.textContent='';
 function chips(box,qs,ans,decs,wait){function chip(n,t){var s=el('span','chip');s.appendChild(el('b','',String(n)));s.appendChild(document.createTextNode(t));box.appendChild(s)}
 chip(open(qs),'open');chip(qs.filter(function(q){return q.due}).length,'due today');chip(qs.filter(function(q){return q.verdict}).length,'proposed verdicts');chip(decs,'decisions to review');chip(ans,'answered, not worked in');if(wait)chip(wait,'waiting for the next check')}
 if(sel().sum){var all=[],ans=0,dn=0,wn=0;gs.forEach(function(g){all=all.concat(g.qs);ans+=g.answered;dn+=g.decs.length;wn+=g.wait});chips(c,all,ans,dn,wn)}
-else gs.forEach(function(g){var row=el('div','qp-gcount');row.appendChild(el('strong','',g.v.heading));chips(row,g.qs,g.answered,g.decs.length,g.wait);c.appendChild(row)});
+else gs.forEach(function(g){var row=el('div','qp-gcount');row.appendChild(head(el('strong',''),g.v));chips(row,g.qs,g.answered,g.decs.length,g.wait);c.appendChild(row)});
 var tn=$('qp-tab-n');if(tn){var n=wikiN();tn.textContent=n===null?'':String(n)}}
 function answeredText(){var gs=groups().filter(function(g){return g.answered});if(sel().sum)return gs.reduce(function(n,g){return n+g.answered},0)+' answered, waiting to be worked in.';
 return gs.map(function(g){return g.v.heading+' '+g.answered}).join('; ')+' answered, waiting to be worked in.'}
@@ -666,7 +670,7 @@ function list(){var v=shown(),ol=$('qp-list'),es=v.flat;ol.textContent='';
 var many=v.gs.length>1;
 if(!es.length&&!many){ol.appendChild(el('li','qp-empty','Nothing open here.'));$('qp-open').textContent='';return}
 var at=es.findIndex(function(e){return ekey(e)===S.cursor});if(at<0){at=0;S.cursor=es.length?ekey(es[0]):''}
-v.gs.forEach(function(g){if(many){var h=el('li','qp-gh',g.v.heading+' ('+open(g.qs)+')');h.setAttribute('role','presentation');ol.appendChild(h)}
+v.gs.forEach(function(g){if(many){var h=head(el('li','qp-gh'),g.v,' ('+open(g.qs)+')');h.setAttribute('role','presentation');ol.appendChild(h)}
 g.items.forEach(function(q){var e=es.filter(function(x){return x.q===q&&x.g===g})[0],i=es.indexOf(e);
 var li=el('li',i===at?'on':'',q.title);li.appendChild(el('small','',q.wiki+(q.asked?' · asked '+q.asked:'')+(q.due?' · due':'')));
 li.onclick=function(){S.cursor=ekey(e);keep();list()};ol.appendChild(li)})});

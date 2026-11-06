@@ -21,11 +21,11 @@ from test_status_more import DOM  # noqa: E402
 
 HARNESS = r"""
 const vm = require("vm");
-const [html, js, steps, hosted] = JSON.parse(process.argv[1]);
+const [html, js, steps, hosted, seed] = JSON.parse(process.argv[1]);
 """ + DOM + r"""
 const doc = new El("#document");
 parse(html, doc);
-const sess = {}, posted = [];
+const sess = seed || {}, posted = [];
 El.prototype.addEventListener = function (t, f) { (this._l = this._l || {})[t] = (this._l[t] || []).concat([f]); };
 Object.defineProperty(El.prototype, "value", { get() { return this._v === undefined ? "" : this._v; }, set(v) { this._v = v; } });
 const qs = El.prototype.querySelector;
@@ -57,6 +57,8 @@ function seen() {
     nurture: $("qp-nurture").hidden ? [] : $("qp-nurture").querySelectorAll("h3,button,summary").map((e) => e.localName + ":" + e.textContent),
     work: $("qp-work").textContent,
     posted: posted.slice(),
+    zone: ($("qp-zone").children.find((o) => o.selected) || {}).value,
+    gone: JSON.parse(sess["garrick-questions"] || "{}").gone || {},
   };
 }
 const out = [seen()];
@@ -104,9 +106,9 @@ def data():
             "menu": {}}
 
 
-def run(steps, hosted=True, d=None):
+def run(steps, hosted=True, d=None, seed=None):
     html = '<span id="qp-tab-n"></span>' + qp.body(d or data())
-    done = subprocess.run(["node", "-e", HARNESS, json.dumps([html, qp.JS, steps, hosted])], capture_output=True, text=True, timeout=60)
+    done = subprocess.run(["node", "-e", HARNESS, json.dumps([html, qp.JS, steps, hosted, seed])], capture_output=True, text=True, timeout=60)
     if done.returncode:
         raise AssertionError(done.stderr)
     return json.loads(done.stdout)
@@ -270,3 +272,104 @@ class TestTwoPartyKeys(Panel):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def saved(zone=None, gone=None):
+    state = {}
+    if zone is not None:
+        state["zone"] = zone
+    if gone is not None:
+        state["gone"] = gone
+    return {"garrick-questions": json.dumps(state)}
+
+
+def one_zone_data(zone):
+    """Open questions in one zone only; the menu counts them the way the build does."""
+    d = data()
+    for key in ("Personal|", "Work|acme", "Work|birch"):
+        d["buckets"][key]["questions"] = []
+    d["knowledge"] = []
+    if zone == "Personal":
+        d["buckets"]["Personal|"]["questions"] = [q("Home: which plan?", "h")]
+    else:
+        d["buckets"]["Work|acme"]["questions"] = [q(ACME, "a1")]
+    d["menu"] = {"Personal": 1 if zone == "Personal" else 0, "Work": 1 if zone == "Work" else 0}
+    return d
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestOpensOnAZoneWithQuestions(unittest.TestCase):
+    """Draft: the panel opens on the first zone, by name, with open questions."""
+
+    def test_questions_in_one_zone_only_open_on_that_zone_and_list_them(self):
+        seen = run([], d=one_zone_data("Work"))[0]
+        self.assertEqual("Work", seen["zone"])
+        self.assertIn(ACME, json.dumps(seen["list"]))
+
+    def test_the_first_zone_by_name_with_questions_wins(self):
+        d = one_zone_data("Work")
+        d["menu"] = {"Personal": 2, "Work": 1}
+        self.assertEqual("Personal", run([], d=d)[0]["zone"])
+
+    def test_no_questions_anywhere_opens_on_the_first_zone(self):
+        d = one_zone_data("Work")
+        d["buckets"]["Work|acme"]["questions"] = []
+        d["menu"] = {"Personal": 0, "Work": 0}
+        self.assertEqual("Personal", run([], d=d)[0]["zone"])
+
+    def test_a_zone_chosen_in_the_session_is_kept_on_reload(self):
+        d = one_zone_data("Work")
+        self.assertEqual("Personal", run([], d=d, seed=saved(zone="Personal"))[0]["zone"])
+        self.assertEqual("*", run([], d=d, seed=saved(zone="*"))[0]["zone"])
+
+    def test_the_default_never_widens_a_view_across_a_wall(self):
+        seen = run([], d=one_zone_data("Work"))[0]
+        self.assertNotIn(BIRCH, json.dumps(seen["list"]))
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestDealtWithListOnlyBridgesTheRebuild(unittest.TestCase):
+    """Draft: a question that is open again shows without restarting the app."""
+
+    def built(self, at=1_000_000):
+        d = data()
+        d["built"] = at
+        return d
+
+    def listed(self, seen):
+        return json.dumps(seen["list"]) + json.dumps(seen["counts"])
+
+    def test_an_entry_older_than_the_build_is_dropped_and_the_question_shows(self):
+        seed = saved(zone="Work", gone={"Meetings/261001 - a1.md": 999_999})
+        seen = run([], d=self.built(), seed=seed)[0]
+        self.assertIn(ACME, self.listed(seen))
+        self.assertEqual({}, seen["gone"])
+
+    def test_an_entry_from_before_the_numbers_were_dated_is_dropped_too(self):
+        seed = saved(zone="Work", gone={"Meetings/261001 - a1.md": 1, "r:a1": 1})
+        seen = run([], d=self.built(), seed=seed)[0]
+        self.assertIn(ACME, self.listed(seen))
+        self.assertEqual({}, seen["gone"])
+
+    def test_right_after_a_save_before_the_rebuild_the_question_stays_hidden(self):
+        seed = saved(zone="Work", gone={"Meetings/261001 - a1.md": 1_000_001})
+        seen = run([], d=self.built(), seed=seed)[0]
+        self.assertNotIn(ACME, self.listed(seen))
+        self.assertIn("Acme: second?", self.listed(seen))
+        self.assertEqual({"Meetings/261001 - a1.md": 1_000_001}, seen["gone"])
+
+    def test_the_review_rows_follow_the_same_rule(self):
+        stale = run([("show", "nurture")], d=self.built(), seed=saved(zone="Work", gone={"r:a1": 999_999}))[1]
+        self.assertIn("where people work, 1", json.dumps(stale["nurture"]))
+        fresh = run([("show", "nurture")], d=self.built(), seed=saved(zone="Work", gone={"r:a1": 1_000_001}))[1]
+        self.assertNotIn("where people work, 1", json.dumps(fresh["nurture"]))
+
+    def test_a_dropped_entry_never_lets_a_walled_group_into_another_view(self):
+        seed = saved(zone="Work", gone={"Meetings/261001 - b1.md": 999_999})
+        seen = run([("party", "acme")], d=self.built(), seed=seed)[-1]
+        self.assertNotIn(BIRCH, self.listed(seen))
+
+    def test_the_build_stamps_its_time_and_every_save_stamps_its_own(self):
+        self.assertIn("Date.now()", qp.JS)
+        self.assertNotIn("S.gone[key(q)]=1", qp.JS)
+        self.assertNotIn("S.gone['r:'+x.key]=1", qp.JS)

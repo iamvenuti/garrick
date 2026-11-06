@@ -245,6 +245,7 @@ FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 DELIVERABLE_RE = re.compile(r"^(\d{2})(\d{2})(\d{2}) - \S")
 MEETING_NAME_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
 MAX_SCAN_BYTES = 2_000_000
+MAX_STAGED_BYTES = 50_000_000     # a staged text file is read whole up to this; above it, it is refused
 
 
 @dataclass
@@ -1418,11 +1419,13 @@ def check_context(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "context", ctx_path,
                                "%s belongs to `%s`, which is not a tag in Parties" % (person["name"], person["party"]),
                                "%s belongs to an unknown party" % person["name"]))
-    if PUBLIC in parties:
-        out.append(Finding(ERROR, "context", ctx_path,
-                           "the Parties table has a row for `public`, which is reserved: a hub names it to say anyone may "
-                           "read the project, and no wall can stand round it; take the row out",
-                           "The Parties table defines the reserved tag public"))
+    for reserved in (PUBLIC, "none"):
+        if reserved in parties:
+            out.append(Finding(ERROR, "context", ctx_path,
+                               "the Parties table has a row for `%s`, which is reserved: %s; take the row out" % (reserved,
+                                   "a hub names it to say anyone may read the project, and no wall can stand round it"
+                                   if reserved == PUBLIC else "it says a page is nobody's, so it is never a party's tag"),
+                               "The Parties table defines the reserved tag %s" % reserved))
     listed = set(ws.context["zones"])
     for zone in ws.zones:
         if listed and zone.name not in listed:
@@ -5104,10 +5107,16 @@ def party_tags(ws: Workspace, note: Path, fm: Optional[dict] = None) -> set:
     """The party tags a hub or thread note declares. In staged mode, where git
     holds another version of the note, the tags of both: the more parties a
     file belongs to, the more walls stand around its wording."""
-    tags = {strip_tag(t) for t in as_list((note_frontmatter(ws, note) if fm is None else fm).get("party"))}
+    tags = note_party_tags(note_frontmatter(ws, note) if fm is None else fm)
     if note in ws.git_view:
-        tags |= {strip_tag(t) for t in as_list(parse_frontmatter_text(ws.git_view[note]).get("party"))}
+        tags |= note_party_tags(parse_frontmatter_text(ws.git_view[note]))
     return tags
+
+
+def note_party_tags(fm: dict) -> set:
+    """The tags a note's `party:` and `parties:` name together, as garrick_lib's labels() reads them (a hub or a
+    thread note should carry `party:` alone, and is refused with a finding when it carries `parties:`)."""
+    return {strip_tag(t) for key in ("party", "parties") for t in as_list(fm.get(key))}
 
 
 def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set, str]:
@@ -5118,7 +5127,7 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
     if len(parts) > 5 and parts[3] == "Threads":
         thread = parts[4]
         note = project / "Threads" / thread / (thread + ".md")
-        tags |= {strip_tag(t) for t in as_list(note_frontmatter(ws, note).get("party"))}
+        tags |= note_party_tags(note_frontmatter(ws, note))
         where = "%s's %s thread" % (project.name, thread)
     return tags, where
 
@@ -5482,6 +5491,8 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
     reads it."""
     pfm = next((fm for folder, fm in ws.projects if folder == project), None)
     tags = party_tags(ws, project / (project.name + ".md"), pfm or {})
+    if not tags:
+        return set()        # a hub that names no party labels nothing under it: never its thread's
     parts = path.relative_to(project).parts
     if len(parts) > 2 and parts[0] == "Threads":
         tags |= party_tags(ws, project / "Threads" / parts[1] / (parts[1] + ".md"))
@@ -6307,7 +6318,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
-    if far and not in_sources:
+    if far and (not in_sources or PUBLIC in tags):      # nothing labelled is written into public, Sources/ included
         scanned = fold_format(without_party_field(text)) + "\n" + path.name
         padded = padded_words(scanned)
         for b, forms in name_forms(ws, far).items():
@@ -6517,6 +6528,11 @@ def sources_for_file(ws: Workspace, project: Path, ptags: set, path: Path, data:
                             "is a mail saved as material, but its `X-Garrick-Parties` header names `none`, `public` or "
                             "a party the Parties table lacks, so the walls cannot be checked",
                             "A file in %s is a mail with a party header no wall can read" % project.name)]
+        if decide(ptags, carried, "file", ws.context) == "confirm":
+            return [Finding(ERROR, "walls", r,
+                            "is a mail saved as material that names both sides of a wall, or a party that is always asked "
+                            "about; it is not filed until the user has answered, and a commit does not answer",
+                            "A file in %s is a mail that needs an answer first" % project.name)]
         hits = crossings(ws.context, ptags, carried)
         if hits:
             a, b = hits[0]
@@ -6711,6 +6727,11 @@ def form_findings(ws: Workspace, pages: List[Tuple[Path, Optional[str]]]) -> Lis
             out.append(Finding(ERROR, "walls", rel(ws, path),
                                "%s: %s; until it does, the walls read nothing on it as safe to use"
                                % (WALLS_VALUE, problem), "A page names a party or zone the walls do not know"))
+        elif owner is not None and path.stem == path.parent.name and fm.get("parties") is not None:
+            out.append(Finding(ERROR, "walls", rel(ws, path),
+                               "a hub or thread note says whose it is with `party:` alone; rename `parties:` to `party:` "
+                               "(a list is fine: `party: [acme, cedar]`)",
+                               "A hub or thread note carries parties: instead of party:"))
     return out
 
 
@@ -6833,7 +6854,7 @@ def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
         except (OSError, subprocess.SubprocessError):
             continue
         data = res.stdout
-        if res.returncode != 0 or len(data) > MAX_SCAN_BYTES or b"\0" in data[:8192]:
+        if res.returncode != 0 or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
             continue
         out.append((path, data.decode("utf-8", errors="replace")))
     return out
@@ -6876,7 +6897,7 @@ def git_view(ws: Workspace, committing: Path) -> Dict[Path, str]:
             if not name or Path(name).suffix.lower() not in TEXT_SUFFIXES | {".eml"}:
                 continue
             data = _git_bytes(["show", spec % name], top)
-            if data is None or len(data) > MAX_SCAN_BYTES or b"\0" in data[:8192]:
+            if data is None or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
                 continue  # deleted in git too, or not text
             out[top / name] = data.decode("utf-8", errors="replace")
     return out
@@ -7082,11 +7103,12 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
     files = [(path, text, project_of(ws, path)) for path, text in staged_texts + extra]
     files = [f for f in files if f[2] is not None]  # not inside a project: no party, so no wall to hold
     known = set(ws.context["parties"]) | {PUBLIC}
-    if PUBLIC in ws.context["parties"]:
-        out.append(Finding(ERROR, "walls", "System/context.md",
-                           "the Parties table has a row for `public`, which is reserved; take the row out before anything "
-                           "is committed, so no wall is read against it",
-                           "The Parties table defines the reserved tag public"))
+    for reserved in (PUBLIC, "none"):
+        if reserved in ws.context["parties"]:
+            out.append(Finding(ERROR, "walls", "System/context.md",
+                               "the Parties table has a row for `%s`, which is reserved; take the row out before anything "
+                               "is committed, so no wall is read against it" % reserved,
+                               "The Parties table defines the reserved tag %s" % reserved))
     unlabelled_reported: set = set()
     raw = _staged_raw(repo)
     for name in (raw[1] if raw else []):
@@ -7101,8 +7123,8 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
         elif staged_path.suffix.lower() in TEXT_SUFFIXES:
             # a file of the text suffixes that the walls cannot read is refused, not skipped (#398)
             data = _git_bytes(["show", ":" + name], raw[0])
-            if data is not None and (len(data) > MAX_SCAN_BYTES or b"\0" in data[:8192]):
-                why = "is over %d bytes" % MAX_SCAN_BYTES if len(data) > MAX_SCAN_BYTES else "holds NUL bytes (binary, or UTF-16)"
+            if data is not None and (len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]):
+                why = "is over %d bytes" % MAX_STAGED_BYTES if len(data) > MAX_STAGED_BYTES else "holds NUL bytes (binary, or UTF-16)"
                 out.append(Finding(ERROR, "walls", rel(ws, staged_path),
                                    "%s, so the walls cannot read it; save it as UTF-8 text under the size limit, or keep "
                                    "it out of the project" % why, "A file in %s cannot be read by the walls" % owner[0].name))
@@ -7157,7 +7179,7 @@ def staged_other_texts(repo: Path) -> List[Tuple[Path, str]]:
         if path.suffix.lower() in TEXT_SUFFIXES:
             continue
         data = _git_bytes(["show", ":" + name], top_path)
-        if data is None or not data or len(data) > MAX_SCAN_BYTES or b"\0" in data[:8192]:
+        if data is None or not data or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
             continue
         try:
             out.append((path, data.decode("utf-8")))
@@ -7201,7 +7223,7 @@ def recheck_after_party_change(ws: Workspace, repo: Path, staged_texts: List[Tup
                 continue
             target = top_path / name
             data = _git_bytes(["show", ":" + name], top_path)
-            if data is None or not data or len(data) > MAX_SCAN_BYTES or b"\0" in data[:8192]:
+            if data is None or not data or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
                 continue
             try:
                 out.append((target, data.decode("utf-8"), owner))

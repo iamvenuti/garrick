@@ -92,6 +92,11 @@ class LabelCases(unittest.TestCase):
         write(cls.root / "Wikis" / "Meetings" / "raw" / "260320-one-call.txt", "Words.\n")
         write(cls.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "owned.md",
               "---\ntitle: Owned\nparties: [acme]\n---\n\n# Owned\n")
+        for name, line in (("caps", "Parties: [acme]"), ("upper", "PARTY: acme"), ("quoted", '"parties": [acme]'),
+                           ("spaced", "party : acme"), ("indented", " parties: [acme]"), ("zone", "zone: Work")):
+            write(cls.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / ("k-%s.md" % name),
+                  "---\ntitle: K\n%s\n---\n\n# K\n" % line)
+        write(cls.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "tagged.md", "---\ntitle: T\ntags: [acme]\n---\n\n# T\n")
         write(cls.root / "Wikis" / "Meetings" / "wiki" / "people" / "kai-ross.md",
               "---\ntitle: Kai Ross\ntype: person\nparty: acme\n---\n\n# Kai Ross\n")
         inbox = cls.root / "Zones" / "Work" / "Inbox"
@@ -138,7 +143,12 @@ class LabelCases(unittest.TestCase):
 
     def test_knowledge_is_public_unless_it_says_otherwise(self):
         self.assertEqual(self.got("Wikis/Knowledge/wiki/concepts/resilience.md"), {"public"})
-        self.assertEqual(self.got("Wikis/Knowledge/wiki/concepts/owned.md"), {"acme"})
+        self.assertIsNone(self.got("Wikis/Knowledge/wiki/concepts/owned.md"))     # a party key: someone's, not published
+        self.assertEqual({"public"}, self.got("Wikis/Knowledge/wiki/concepts/tagged.md"))
+
+    def test_a_party_key_in_any_spelling_leaves_a_knowledge_page_without_a_label(self):
+        for name in ("caps", "upper", "quoted", "spaced", "indented", "zone"):
+            self.assertIsNone(self.got("Wikis/Knowledge/wiki/concepts/k-%s.md" % name), name)
 
     def test_mail_takes_its_domains_or_its_stamp(self):
         self.assertEqual(self.got("Zones/Work/Inbox/far.eml"), {"birch"})
@@ -168,7 +178,7 @@ class LabelCases(unittest.TestCase):
         self.assertIsNone(lib.labels(self.root, "Zones/Work/Todo.md", self.ctx))
 
     def test_the_rows_of_the_table_are_all_covered(self):
-        self.assertEqual(len(lib.wall_cases(CASES.read_text(encoding="utf-8"))["labels()"]), 26)
+        self.assertEqual(len(lib.wall_cases(CASES.read_text(encoding="utf-8"))["labels()"]), 27)
 
 
 if __name__ == "__main__":

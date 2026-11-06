@@ -605,6 +605,8 @@ def cmd_party(root, args, today):
     tag = tag_for(name, parties, zone)
     if not tag:
         raise Refusal('No tag can be made from "%s": a tag is %s. What should it be?' % (name, TAG_RULE))
+    if tag == "none":
+        raise Refusal("`none` is reserved: it says a page is nobody's, so it is never a party's tag. What should the tag be?")
     if tag == PUBLIC:
         raise Refusal("`public` is reserved: a hub names it to say anyone may read the project. It is never a party "
                       "of its own, so no row is made for it. What should the tag be?")

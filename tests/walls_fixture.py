@@ -54,6 +54,10 @@ def build(root: Path) -> Path:
     write(meetings / "raw" / "260319-orphan-call.txt", "Nobody cites this.\n")
     write(meetings / "wiki" / "sources" / "260318-unfinished.md", meeting_page(None, "[acme]", "Unfinished"))
     write(work / "Harbour" / "Threads" / "Sizing" / "Notes.md", "# Notes\n")
+    write(work / "Cedarwork" / "Cedarwork.md", project_hub("Work", "Cedarwork", "cedar", ["T"]))
+    write(work / "Cedarwork" / "Threads" / "T" / "T.md", thread_note("Cedarwork", "T", "cedar"))
+    write(work / "Cedarwork" / "Sources" / ".gitkeep")
+    write(work / "Reed" / "Sources" / ".gitkeep")
     # a hub whose type is not `project`: the hook and labels() both find it as the note named after its folder
     write(work / "Hubnote" / "Hubnote.md", project_hub("Work", "Hubnote", "acme").replace("type: project", "type: note"))
     write(work / "Hubnote" / "Threads" / "T" / "x.md", "# x\n")

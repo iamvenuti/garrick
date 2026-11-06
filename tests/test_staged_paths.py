@@ -76,9 +76,16 @@ class StagedFiles(unittest.TestCase):
         self.assertEqual(1, len(found), found)
         self.assertIn("cannot read", found[0].message)
 
-    def test_a_text_file_over_the_cap_is_refused(self):
-        self.stage("Northwind/Threads/Pricing/big.txt", b"a " * (check.MAX_SCAN_BYTES // 2 + 10))
-        self.assertEqual(1, len(self.errors("big.txt")))
+    def test_a_text_file_over_the_cap_is_refused_and_one_under_it_is_read_whole(self):
+        big = b"filler words " * 400_000 + b"Ask Theo Marsh at the end.\n"          # about 5 MB, past the old 2 MB cap
+        self.stage("Northwind/Threads/Pricing/transcript.txt", big)
+        found = self.errors("transcript.txt")
+        self.assertEqual(1, len(found), found)
+        self.assertNotIn("cannot read", found[0].message)          # it was read: the name in it is what is refused
+        with mock.patch.object(check, "MAX_STAGED_BYTES", 1000):
+            found = self.errors("transcript.txt")
+        self.assertEqual(1, len(found), found)
+        self.assertIn("cannot read", found[0].message)
 
     def test_a_binary_file_of_a_labelled_project_keeps_the_old_rule(self):
         self.stage("Northwind/Threads/Pricing/pic.png", b"\x89PNG\x00\x01\x02")

@@ -576,7 +576,7 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
         return Scope(route, None, None, None, words, set(), **kept)
     if project is not None:
         place = place_parties(ws, zone, project, thread, lib_)
-        if not place or not place <= set(ctx.get("parties", {})) | {lib_.PUBLIC}:
+        if not place or not place <= (set(ctx.get("parties", {})) - {"none"}) | {lib_.PUBLIC}:
             # Nothing can say which side of a wall its files are on: labels() found none, or a tag the table lacks.
             raise Refused("%s names no party %s, so nothing in it is read"
                           % (project, "the Parties table holds" if place else "in its hub"))
@@ -727,7 +727,7 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             if text is None:
                 continue
             fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
-            if any(fm.get(k) for k in ("parties", "party", "zone")):
+            if any(fm.get(k) for k in ("parties", "party", "zone")) or (sc.route == "knowledge" and lib_.labels(ws, path) != {lib_.PUBLIC}):
                 continue                        # a page of someone's, not published: never read as published
             consider(path, root, [], text, public=True)
     elif sc.route == "meetings":
@@ -811,7 +811,7 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
     group of parties no wall divides, the one its best record starts."""
     group, chosen, back, matched = set(held), [], False, 0
     nothing_held = not held
-    known = set(ctx.get("parties", {})) | {lib_.PUBLIC}
+    known = (set(ctx.get("parties", {})) - {"none"}) | {lib_.PUBLIC}
     for r in records:
         parties = set(r["parties"])
         if not parties <= known:

@@ -87,6 +87,8 @@ A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tes
 | d58 | ghost | far | file | deny | the same, for filing |
 | d59 | ghost | public | read | deny | the same, even for a public record |
 | d60 | near, ghost | near | read | deny | one unknown tag among known ones |
+| d61 | other | near, far | write | deny | material whose labels cross a wall inside themselves |
+| d62 | public | near, far | write | deny | the same, into a public record |
 | d48 | far | near | file | deny | the same wall for filing, the other way |
 
 ## labels()
@@ -110,7 +112,7 @@ Each row is a record in the fixture workspace; `Harbour` is a project of `far` w
 | l12 | a raw record cited by a page of `near` and a page of `far` | near, far | a raw record cited by two pages |
 | l13 | a raw record nobody cites | ? | no page, no label |
 | l14 | a Knowledge page with no `parties:` | public | Knowledge crosses every wall |
-| l15 | a Knowledge page with `parties: [near]` | near | its own parties |
+| l15 | a Knowledge page with `parties: [near]`, or a party key in another case, quoted or indented | ? | a page that carries a party key in any spelling is someone's, not published |
 | l16 | a mail in an inbox from a domain of `far` | far | a mail takes its domains |
 | l17 | a mail in an inbox from webmail only | ? | webmail never names a party |
 | l18 | a mail stamped `X-Garrick-Parties: near, far` | near, far | a mail saved as material |
@@ -121,6 +123,7 @@ Each row is a record in the fixture workspace; `Harbour` is a project of `far` w
 | l24 | a mail in an inbox with a header naming a tag the table lacks | ? | a header tag the table lacks is refused |
 | l25 | a file in a project whose hub has `type: note` and `party: near` | near | the hub is the note named after the folder, whatever its type |
 | l26 | a file in a project whose hub has `party: none` | none | `none` is a tag no table row holds: decide() denies it |
+| l27 | a Knowledge page with `tags: [near]` | public | `tags:` is not a party key |
 | l20 | a file in a project whose thread note carries a `parties:` that disagrees with its `party:` | ? | two readings, neither |
 
 ## Enforcement points
@@ -165,6 +168,13 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e38 | check | a Northwind note that embeds a file in a hidden folder of the zone | refused | a link to a file with no label: Obsidian opens none, but whoever follows the path does |
 | e39 | check | a `.md` file in Northwind that holds NUL bytes (UTF-16) | refused | a text file the walls cannot read is refused, not skipped |
 | e40 | check | a note in Harbour's folder after a case-only rename (`harbour`) that names an Acme person | refused | a project is found however its folder is spelt |
+| e41 | check | a Northwind note that links a thread file of a project whose hub names no party | refused | a no-party hub's empty tags are never filled by its thread's |
+| e42 | check | a mail stamped with both sides of a wall, saved into a third party's `Sources/` | refused | a stamp that names both sides of a wall is asked about, not committed |
+| e43 | check | a Reed (`public`) `Sources/` file that names a person of a party | refused | nothing labelled is written into public, `Sources/` included |
+| e44 | check | a thread note that carries `parties:` | refused | hubs and thread notes carry `party:` alone |
+| e45 | ask | a Knowledge page with `Parties: [acme]` read from a `birch` scope | refused | a party key in any spelling leaves a Knowledge page without a label |
+| e46 | check | any commit, while the Parties table holds a row named `none` | refused | `none` is reserved like `public` |
+| e47 | scaffold | `scaffold.py party --name None` | refused | `none` is never made a party |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
 | e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; the filter runs before the ranking;  ranking statistics computed over walled rows |

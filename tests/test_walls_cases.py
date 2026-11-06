@@ -44,6 +44,10 @@ intake = load("garrick_intake_cases", REPO / "template" / "System" / "skills" / 
 ask_scope = load("garrick_ask_scope_cases", REPO / "extras" / "status" / "ask_scope.py")
 
 
+STAMPED = (b"X-Garrick-Parties: acme birch\nFrom: Dana <dana@acmecorp.example>\nTo: Theo <theo@birchco.example>\n"
+           b"Subject: Hi\nDate: Tue, 10 Mar 2026 10:00:00 +0000\nMessage-ID: <1@x>\n\nA mail body naming both firms.\n")
+
+
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class EnforcementPoints(unittest.TestCase):
     @classmethod
@@ -130,6 +134,49 @@ class EnforcementPoints(unittest.TestCase):
         git(self.work, "add", "-A")
         found = check.run_checks(self.root, staged=self.work)
         return "refused" if any(f.severity == "error" and f.path.lower().endswith("leak.md") for f in found) else "permitted"
+
+    def staged_bytes(self, rel, data):
+        path = self.work / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        git(self.work, "add", "-A")
+        found = check.run_checks(self.root, staged=self.work)
+        return "refused" if any(f.severity == "error" and f.path.endswith(Path(rel).name) for f in found) else "permitted"
+
+    def thread_parties(self):
+        note = self.work / "Northwind" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text(encoding="utf-8").replace("party: acme", "parties: [acme]"), encoding="utf-8")
+        git(self.work, "add", "-A")
+        found = check.run_checks(self.root, staged=self.work)
+        return "refused" if any(f.severity == "error" and f.path.endswith("Pricing.md") for f in found) else "permitted"
+
+    def knowledge_party_key(self):
+        page = self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "case-key.md"
+        write(page, "---\ntitle: K\nParties: [acme]\n---\n\n# K\n")
+        self.addCleanup(lambda: page.exists() and page.unlink())
+        labels = lib.labels(self.root, page, self.ctx)
+        return "refused" if lib.decide({"birch"}, labels, "read", self.ctx) == "deny" else "permitted"
+
+    def reserved_row(self, tag):
+        context = self.root / "System" / "context.md"
+        before = context.read_text(encoding="utf-8")
+        context.write_text(before.replace("| Cedar Ltd |", "| Nobody | None | Work | `%s` | |\n| Cedar Ltd |" % tag), encoding="utf-8")
+        try:
+            write(self.work / "Northwind" / "Threads" / "Pricing" / "CaseNote.md", "# N\n\nPlain.\n")
+            git(self.work, "add", "-A")
+            found = check.run_checks(self.root, staged=self.work)
+            return "refused" if any(f.severity == "error" and f.path.endswith("context.md") for f in found) else "permitted"
+        finally:
+            context.write_text(before, encoding="utf-8")
+
+    def scaffold_none(self):
+        args = type("A", (), dict(name="None", zone="Work", what="x", also=None, walled_from=None, why=None,
+                                  check=False, spoken=None))()
+        try:
+            scaffold.cmd_party(self.root, args, "2026-11-06")
+        except scaffold.Refusal:
+            return "refused"
+        return "permitted"
 
     def binary(self, project):
         path = self.work / project / "blob.bin"
@@ -245,6 +292,14 @@ class EnforcementPoints(unittest.TestCase):
                             self.check_note("Northwind", "Pricing", "# N\n\n![[.Quay/x]]\n"))[1],
             "e39": self.utf16_note,
             "e40": self.renamed_folder,
+            "e41": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Orchard/Threads/Drafts/Note]].\n")
+            if write(self.work / "Orchard" / "Threads" / "Drafts" / "Note.md", "# n\n") else None,
+            "e42": lambda: self.staged_bytes("Cedarwork/Sources/m.eml", STAMPED),
+            "e43": lambda: self.staged(self.work / "Reed" / "Sources" / "c.md", "Dana Whitlock agreed.\n"),
+            "e44": self.thread_parties,
+            "e45": self.knowledge_party_key,
+            "e46": lambda: self.reserved_row("none"),
+            "e47": self.scaffold_none,
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),
             "e22": lambda: recall({"acme"}, {"birch"}),
@@ -317,6 +372,20 @@ class EnforcementPoints(unittest.TestCase):
             ask_scope.scope(self.root, {"route": "thread", "zone": "Work", "project": "Twice", "thread": "T",
                                         "words": ["pelican"]}, NS(places=[], parties=set()),
                             {"Work": {"Twice": {"status": "active", "threads": {"T": "active"}}}}, self.ctx, self.lib)
+
+    def test_the_status_pages_actions_read_a_page_as_labels_does(self):
+        sys.path.insert(0, str(REPO / "extras" / "status"))
+        import page_action as pa
+        lib_ = pa.prefs().lib(self.root)
+        people = self.root / "Wikis" / "Meetings" / "wiki" / "people"
+        for fm, near in (("party: acme\n", True), ("parties: [acme]\n", False), ("party: acme\nparties: [cedar]\n", False),
+                         ("party: acme\nparties: [acme]\n", False)):
+            page = write(people / "t-case.md", "---\ntitle: X\ntype: person\n%s---\n\n# X\n" % fm)
+            self.addCleanup(lambda: page.exists() and page.unlink())
+            got = lib_.labels(self.root, page, self.ctx)
+            self.assertEqual(got is not None and lib_.decide({"acme"}, got, "write", self.ctx) == "permit",
+                             near, fm)
+            self.assertEqual(near, pa.page_party_tags(lib_, self.root, page) is not None, fm)
 
     def test_walls_cases_exits_non_zero_when_no_wall_row_could_run(self):
         import io

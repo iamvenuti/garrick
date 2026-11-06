@@ -3227,8 +3227,9 @@ def page_party_tags(lib, ws: Path, path: Path) -> Optional[set]:
     # Two spellings of the party key (`party:` and `PARTY:`) can be read two ways: the page says whose it is to no one.
     if any(str(k).strip().lower() in ("party", "parties") and str(k).strip() not in ("party", "parties") for k in fm):
         return None
-    tags = {bare_tag(lib, t) for t in tags_of(fm.get("party")) + tags_of(fm.get("parties"))}
+    got = lib.labels(ws, path)          # one derivation: a page whose party: and parties: disagree reads as neither
     known = lib.load_context(ws).get("parties", {})
+    tags = set(got or ())
     return tags if tags and all(t in known for t in tags) else None
 
 
@@ -4130,6 +4131,8 @@ def owner_party(ws: Path, zone: Path, name: str) -> str:
     there is none, and System/context.md committed on its own in the
     workspace's own repository, as scaffold.py says a new party is."""
     if not name or "\n" in name or len(name) > NAME_MAX or name.startswith("-"):
+        raise Refused(your_work().OWNER_ASK)
+    if name.strip().casefold() in ("none", "public"):         # reserved tags are no party's name
         raise Refused(your_work().OWNER_ASK)
 
     def found():

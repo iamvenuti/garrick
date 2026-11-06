@@ -1283,7 +1283,7 @@ def decide(scope, labels, action: str, context: dict) -> str:
     """
     if action not in ACTIONS:
         raise ValueError("action is read, write or file, not %r" % (action,))
-    known = set(context.get("parties", {}))
+    known = set(context.get("parties", {})) - {"none", PUBLIC}      # reserved tags are never parties, row or no row
     mine = _tagset(scope)
     if scope is not None and (mine - {PUBLIC}) - known:
         return "deny"           # a scope with a tag the Parties table lacks (`none`, a ghost) is no scope at all
@@ -1307,7 +1307,7 @@ def decide(scope, labels, action: str, context: dict) -> str:
         if PUBLIC in mine:
             return "deny" if theirs - {PUBLIC} else "permit"
         theirs -= {PUBLIC}
-        return "deny" if crossings(context, mine, theirs) else "permit"
+        return "deny" if crossings(context, mine, theirs) or crossings(context, theirs) else "permit"
     # file
     if not theirs:
         return "confirm"
@@ -1422,6 +1422,22 @@ def _note_labels(path: Path) -> set:
         return set()
 
 
+_PARTY_KEY_RE = re.compile(r"(?im)^[ \t]*[\"']?[ \t]*(?:party|parties|zone)[ \t]*[\"']?[ \t]*:")
+
+
+def _party_like_key(path: Path) -> bool:
+    """Does the frontmatter of a page hold a key that reads as `party`, `parties` or `zone` in any case, quoted, with
+    a space before the colon or indented? Knowledge pages carry none; one that does is not published."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True
+    if not text.startswith("---"):
+        return False
+    block = re.split(r"(?m)^---[ \t]*$", text, maxsplit=2)
+    return bool(_PARTY_KEY_RE.search(block[1] if len(block) > 1 else text[:4000]))
+
+
 def meeting_labels(fm: dict) -> Optional[frozenset]:
     """The parties a Meetings page's frontmatter names, or None when they
     cannot all be stated: a finished page has a zone and a list of `parties:`; a
@@ -1473,6 +1489,8 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
     full = root.joinpath(*parts)
     if parts[:2] == ("Wikis", "Knowledge"):
         fm = parse_frontmatter(full) if full.suffix == ".md" and full.is_file() else {}
+        if full.suffix == ".md" and full.is_file() and _party_like_key(full):
+            return None             # a page that carries a party key in any spelling is someone's, not published
         got = _labels_of(fm)
         return None if got is None else frozenset(got or {PUBLIC})
     if parts[:3] == ("Wikis", "Meetings", "wiki"):

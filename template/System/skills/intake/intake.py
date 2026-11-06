@@ -62,6 +62,7 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     PUBLIC,
     always_asked,
+    labels,
     crossings,
     decide,
     mail_labels,
@@ -657,10 +658,10 @@ def resolve_project(root: Path, project: Optional[str]) -> Tuple[Path, str, List
     hub = parse_frontmatter(p / (p.name + ".md"))
     if hub.get("type") != "project":
         raise Refusal("%s has no project hub note, %s.md." % (_rel(root, p), p.name))
-    party = hub.get("party")
-    tags = [strip_tag(t) for t in (party if isinstance(party, list) else [party or ""]) if strip_tag(t)]
-    known = set(load_context(root).get("parties", {})) | {PUBLIC}
-    if not tags or any(t == "none" or t not in known for t in tags):
+    got = labels(root, p)                 # one derivation: the hub's and every thread's, None where they read two ways
+    tags = sorted(got or ())
+    known = (set(load_context(root).get("parties", {})) - {"none"}) | {PUBLIC}
+    if not tags or any(t not in known for t in tags):
         raise Refusal("%s has no party, so the wall cannot be checked; set its party first." % p.name)
     return p, parts[1], tags
 

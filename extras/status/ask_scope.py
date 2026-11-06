@@ -793,6 +793,15 @@ def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_R
     return chosen, back
 
 
+def admits(ctx: dict, held: Set[str], adding: Set[str], lib_) -> bool:
+    """May records labelled `adding` be given to a process that holds `held`? decide() says. A process holding
+    nothing is given the group the records set; a record with no party is a published page (public)."""
+    scope = set(held) - {lib_.PUBLIC}
+    if not scope:
+        scope = set(adding) - {lib_.PUBLIC}
+    return lib_.decide(scope, set(adding) or {lib_.PUBLIC}, "read", ctx) == "permit"
+
+
 def starts(where, ctx: dict) -> Set[str]:
     """The parties a find may start its group from, when the session holds none: a place's own labels,
     the parties of a zone or of those named, or, across every zone, all of the table's."""

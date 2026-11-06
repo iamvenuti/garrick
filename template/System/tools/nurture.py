@@ -170,6 +170,7 @@ from garrick_lib import (  # noqa: E402
     party_entities,
     strip_tag,
     PUBLIC,
+    labels,
     crossings,
     decide,
     workspace_root,
@@ -1208,6 +1209,9 @@ def parties_at(ctx: Ctx, rel: str) -> set:
         zone = ctx.root / rel
         return set().union(*(note_tags(p / (p.name + ".md"), "party") for p in zone.iterdir() if p.is_dir())) \
             if zone.is_dir() else set()
+    if parts[0] == "Zones" and len(parts) >= 3:
+        got = labels(ctx.root, rel, ctx.context)       # one derivation; None (no label) is nobody's, so across a wall
+        return set(got) if got else set()
     if parts[0] in ("Zones", "System") and len(parts) >= (3 if parts[0] == "Zones" else 2):
         project = ctx.root.joinpath(*parts[:3 if parts[0] == "Zones" else 2])
         tags = note_tags(project / (project.name + ".md"), "party")

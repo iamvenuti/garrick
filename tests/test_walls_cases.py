@@ -239,6 +239,17 @@ class EnforcementPoints(unittest.TestCase):
         self.addCleanup(lambda: dest.exists() and dest.unlink())
         return "permitted"
 
+    def nurture_from(self, source):
+        import nurture
+        ctx = nurture.Ctx(self.root)
+        return "refused" if nurture.across_wall(ctx, source, "Zones/Work/Northwind/Threads/Pricing/Notes.md") else "permitted"
+
+    def knowledge_link(self):
+        page = self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "case-link.md"
+        write(page, "---\ntitle: K\nParties: [acme]\n---\n\n# K\n")
+        self.addCleanup(lambda: page.exists() and page.unlink())
+        return self.check_note("Northwind", "Pricing", "# N\n\nSee [[case-link]].\n")
+
     def nurture_across(self):
         import nurture
         ctx = nurture.Ctx(self.root)
@@ -300,6 +311,11 @@ class EnforcementPoints(unittest.TestCase):
             "e45": self.knowledge_party_key,
             "e46": lambda: self.reserved_row("none"),
             "e47": self.scaffold_none,
+            "e48": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Dis/Threads/T/Memo]].\n"),
+            "e49": lambda: self.nurture_from("Zones/Work/Orchard/Threads/Drafts/x.md"),
+            "e50": lambda: self.filed("Dis", ["acme"]),
+            "e51": lambda: "permitted" if ask_scope.admits(self.ctx, {"acme"}, {"public"}, self.lib) else "refused",
+            "e52": self.knowledge_link,
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),
             "e22": lambda: recall({"acme"}, {"birch"}),

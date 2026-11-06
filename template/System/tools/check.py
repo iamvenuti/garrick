@@ -6255,16 +6255,16 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             far_hits, near = [], []
             for hit in hits:
                 owner = project_of(ws, hit)
-                if (owner is None or owner[0] != project) and ws.root / "Zones" in hit.parents \
-                        and (labels(ws.root, hit, ws.context, ws.label_cache) is None if owner is None else
-                             not (project_file_tags(ws, owner[0], hit)
-                                  and project_file_tags(ws, owner[0], hit) <= set(ws.context["parties"]) | {PUBLIC})):
+                if ((owner is None or owner[0] != project) and (ws.root / "Zones" in hit.parents
+                                                                 or ws.root / "Wikis" / "Knowledge" in hit.parents)
+                        and unlabelled_target(ws, owner, hit)) \
+                        or (owner is not None and owner[0] == project and notes_disagree(ws, project, hit)):
                     # a file of the zones with no label (a zone's own file, a folder of dots, a project that names no
                     # party): nothing says whose it is, so no project may link or embed it
                     if hit not in unlabelled_hits:
                         unlabelled_hits.add(hit)
                         out.append(Finding(ERROR, "walls", r,
-                                           "%s %s, a file of the zones that names no party, so nothing says whose it is"
+                                           "%s %s, a file that names no party, so nothing says whose it is"
                                            % (verb, written),
                                            "A note in %s uses a file with no label" % where))
                     continue
@@ -7148,6 +7148,34 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                 continue
         out.extend(walls_for_file(ws, project, ptags, path, text))
     return out
+
+
+def unlabelled_target(ws: Workspace, owner, hit: Path) -> bool:
+    """Does a file a link lands on have no label (garrick_lib's labels())? A file of no project: labels() says. A file
+    of a project: its tags (git-aware, as the hook reads them) are empty or unknown, or its hub or thread note
+    carries `party:` and `parties:` that disagree, which labels() reads as neither. A Knowledge page with no party
+    key is free; one with a party key has no label."""
+    if owner is None:
+        return labels(ws.root, hit, ws.context, ws.label_cache) is None
+    project = owner[0]
+    tags = project_file_tags(ws, project, hit)
+    if not tags or not tags <= set(ws.context["parties"]) | {PUBLIC}:
+        return True
+    return notes_disagree(ws, project, hit)
+
+
+def notes_disagree(ws: Workspace, project: Path, hit: Path) -> bool:
+    """Do the hub or the thread note a file of `project` is under carry `party:` and `parties:` that disagree?"""
+    notes = [project / (project.name + ".md")]
+    parts = hit.relative_to(project).parts
+    if len(parts) > 2 and parts[0] == "Threads":
+        notes.append(project / "Threads" / parts[1] / (parts[1] + ".md"))
+    for note in notes:
+        fm = note_frontmatter(ws, note)
+        if fm.get("party") is not None and fm.get("parties") is not None and \
+                {strip_tag(t) for t in as_list(fm.get("party"))} != {strip_tag(t) for t in as_list(fm.get("parties"))}:
+            return True
+    return False
 
 
 def hub_unreadable(ws: Workspace, project: Path) -> bool:

@@ -1307,6 +1307,8 @@ def decide(scope, labels, action: str, context: dict) -> str:
         if PUBLIC in mine:
             return "deny" if theirs - {PUBLIC} else "permit"
         theirs -= {PUBLIC}
+        if not theirs <= known:            # a tag the table lacks (`none`, a ghost) is material no wall can place
+            return "deny"
         return "deny" if crossings(context, mine, theirs) or crossings(context, theirs) else "permit"
     # file
     if not theirs:
@@ -1314,7 +1316,9 @@ def decide(scope, labels, action: str, context: dict) -> str:
     if scope is not None and (not mine or crossings(context, mine, theirs - {PUBLIC})):
         return "deny"
     theirs -= {PUBLIC}
-    if not theirs <= known or crossings(context, theirs) or any(always_asked(context, t) for t in theirs):
+    if not theirs <= known:
+        return "deny"
+    if crossings(context, theirs) or any(always_asked(context, t) for t in theirs):
         return "confirm"
     return "permit"
 

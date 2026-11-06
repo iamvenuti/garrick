@@ -54,6 +54,10 @@ def build(root: Path) -> Path:
     write(meetings / "raw" / "260319-orphan-call.txt", "Nobody cites this.\n")
     write(meetings / "wiki" / "sources" / "260318-unfinished.md", meeting_page(None, "[acme]", "Unfinished"))
     write(work / "Harbour" / "Threads" / "Sizing" / "Notes.md", "# Notes\n")
+    # a hub whose party: and parties: disagree: labels() reads it as neither
+    write(work / "Dis" / "Dis.md", project_hub("Work", "Dis", "acme", ["T"]).replace("party: acme", "party: acme\nparties: [cedar]"))
+    write(work / "Dis" / "Threads" / "T" / "T.md", thread_note("Dis", "T", "acme"))
+    write(work / "Dis" / "Threads" / "T" / "Memo.md", "# memo\n")
     write(work / "Cedarwork" / "Cedarwork.md", project_hub("Work", "Cedarwork", "cedar", ["T"]))
     write(work / "Cedarwork" / "Threads" / "T" / "T.md", thread_note("Cedarwork", "T", "cedar"))
     write(work / "Cedarwork" / "Sources" / ".gitkeep")

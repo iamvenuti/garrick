@@ -58,7 +58,7 @@ A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tes
 | d28 | public | public | write | permit | public material into a public record |
 | d29 | public | - | write | permit | material with no party into a public record |
 | d30 | near | public | write | permit | a public note quoted into a project |
-| d31 | near | ghost | write | permit | a tag no wall can see names no one across a wall |
+| d31 | near | ghost | write | deny | material labelled with a tag the table lacks cannot be placed |
 | d32 | near | far | file | deny | an item of a party walled from the project |
 | d33 | near | near | file | permit | an item of the project's own party |
 | d34 | near | other | file | permit | an item with no wall to the project |
@@ -70,7 +70,7 @@ A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tes
 | d40 | other | hat2 | file | confirm | the other hat is always asked about too |
 | d41 | near | - | file | confirm | an item with no label |
 | d42 | near | ? | file | confirm | an item whose labels cannot be derived |
-| d43 | near | ghost | file | confirm | a tag missing from the Parties table |
+| d43 | near | ghost | file | deny | a tag missing from the Parties table |
 | d44 | - | near | file | deny | a project with no party takes nothing |
 | d45 | near | public | file | permit | a public item |
 | d46 | near | far | frobnicate | error | an action that does not exist |
@@ -89,6 +89,8 @@ A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tes
 | d60 | near, ghost | near | read | deny | one unknown tag among known ones |
 | d61 | other | near, far | write | deny | material whose labels cross a wall inside themselves |
 | d62 | public | near, far | write | deny | the same, into a public record |
+| d63 | near | near, ghost | write | deny | one unknown tag among known ones, for a write |
+| d64 | near | near, ghost | file | deny | one unknown tag among known ones, for filing |
 | d48 | far | near | file | deny | the same wall for filing, the other way |
 
 ## labels()
@@ -175,6 +177,11 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e45 | ask | a Knowledge page with `Parties: [acme]` read from a `birch` scope | refused | a party key in any spelling leaves a Knowledge page without a label |
 | e46 | check | any commit, while the Parties table holds a row named `none` | refused | `none` is reserved like `public` |
 | e47 | scaffold | `scaffold.py party --name None` | refused | `none` is never made a party |
+| e48 | check | a Northwind note that links a file of a project whose hub has `party:` and `parties:` that disagree | refused | the unlabelled-link test uses what labels() reads |
+| e49 | nurture | a link from a thread note of a project whose hub names no party | refused | Nurture takes its parties from labels() |
+| e50 | intake | file an item into a project whose hub has `party:` and `parties:` that disagree | refused | intake takes a project's parties from labels() |
+| e51 | ask | give a session holding Acme a record labelled `public` | permitted | admission is decide(read), under which public is read by every scope |
+| e52 | check | a Northwind note that links a Knowledge page carrying `Parties:` | refused | a Knowledge page with a party key has no label |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
 | e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; the filter runs before the ranking;  ranking statistics computed over walled rows |

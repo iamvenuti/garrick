@@ -105,7 +105,19 @@ VARIANTS = {
     "person-hash": ("people", "dot#hash", "kit#hash", ".md", "party: {p}"),
     "person-pct": ("people", "pc%20t", "qc%20t", ".md", "party: {p}"),
     "person-unreadable": ("people", "ola-vance", None, ".md", "party: Birch Holdings"),
+    # Names that keep punctuation, a sigil or a brace, one plain word, and several words.
+    "entity-sigma": ("entities", "Sigma Corp.", "Tau Inc.", ".md", "party: {p}"),
+    "entity-gamma": ("entities", "Gamma (EU)", "Omega (US)", ".md", "party: {p}"),
+    "entity-delta": ("entities", "Delta+", "Epsilon+", ".md", "party: {p}"),
+    "entity-eu": ("entities", "(EU) Gamma", "(US) Omega", ".md", "party: {p}"),
+    "entity-dollar": ("entities", "$board-co", "$guild-co", ".md", "party: {p}"),
+    "person-at": ("people", "@kay-lin", "@ned-lin", ".md", "party: {p}"),
+    "person-paren": ("people", "Wes Park (Jr)", "Tom Park (Sr)", ".md", "party: {p}"),
+    "entity-plain": ("entities", "quartz", "basalt", ".md", "party: {p}"),
+    "entity-brace": ("entities", "fund-{b}", "seed-{c}", ".md", "party: {p}"),
+    "entity-spaced": ("entities", "Pine Ridge", "Oak Hollow", ".md", "party: {p}"),
 }
+TYPES = {"sources": "source", "people": "person", "entities": "entity", "decisions": "decision"}
 PARTY_NAMES = {FAR: "Birch & Co", NEAR: "Acme Corp"}
 
 
@@ -118,7 +130,7 @@ def variant_file(root: Path, kind: str, party: str):
     extra = "zone: Work\n" if folder in ("sources", "decisions") else ""
     body = DECISION_BODY if folder == "decisions" else "\n# x\n"
     return (meetings_home(root, "") / "wiki" / folder / (name + suffix),
-            "---\ntitle: %s\ntype: %s\n%s%s\n---\n%s" % (name, folder[:-1] if folder != "people" else "person", extra, line, body))
+            "---\ntitle: %s\ntype: %s\n%s%s\n---\n%s" % (name, TYPES[folder], extra, line, body))
 
 
 def build(root: Path):
@@ -268,6 +280,18 @@ for _name, _pair in WRAP_PAIRS.items():
 LONG = "a" * 5000
 
 
+def _inner_dots(t):
+    """The token with a detour in front of its name: `x/y/../../name`."""
+    head, _, name = t.rpartition("/")
+    return (head + "/" if head else "") + "x/y/../../" + name
+
+
+def _long_dots(t):
+    """The token with a long detour in front of its name, over 4,096 characters."""
+    head, _, name = t.rpartition("/")
+    return (head + "/" if head else "") + "a/" * 1100 + "../" * 1100 + name
+
+
 def _first_dash(t, ins):
     k = t.rfind("-")
     return t if k < 0 else t[:k] + ins + t[k + 1:]
@@ -296,10 +320,15 @@ WRAPPING.update({
     "prose-obs-comment": lambda t: NOTE % ("%% x %%" + t), "prose-bold-star": lambda t: NOTE % ("**" + t + "**"),
     "prose-segment-italic": lambda t: NOTE % (t.rpartition("/")[0] + "/_" + t.rpartition("/")[2] + "_"),
     "fm-key": lambda t: "---\n%s: yes\n---\n\nx\n" % t,
+    "code-middle": lambda t: NOTE % ("`x y z w v %s`" % t),
+    "code-dotdot": lambda t: NOTE % ("`%s`" % _inner_dots(t)), "link-dotdot": lambda t: NOTE % ("[x](<%s>)" % _inner_dots(t)),
+    "prose-dotdot": lambda t: NOTE % _inner_dots(t),
+    "code-long-dotdot": lambda t: NOTE % ("`%s`" % _long_dots(t)),
 })
 NEW_FORMS = ("code-long-tail", "fence-long-tail", "prose-long-tail", "fm-long-tail", "link-long-fragment", "link-long-head",
              "code-many-dotdot", "fm-dq-hex", "fm-dq-unicode", "fm-dq-fold", "fm-sq", "prose-underscore", "prose-strike",
-             "prose-mark", "prose-html-comment", "prose-obs-comment", "prose-bold-star", "prose-segment-italic", "fm-key")
+             "prose-mark", "prose-html-comment", "prose-obs-comment", "prose-bold-star", "prose-segment-italic", "fm-key",
+             "code-dotdot", "link-dotdot", "prose-dotdot", "code-long-dotdot")
 WRAPPERS = ("code", "quoted", "cat", "link", "wikilink")
 # What a wrapper can hold: these read a path of two names or more (a URL has a
 # host, prose reads no bare name), the rest any token.
@@ -326,6 +355,7 @@ NAME_FORMS = {
     "braille": lambda n: n[:3] + "\u2800" + n[3:], "cgj": lambda n: n[:3] + "\u034f" + n[3:],
     "bell": lambda n: n[:3] + "\x07" + n[3:], "tag-char": lambda n: n[:3] + "\U000e0100" + n[3:],
     "class": lambda n: "[%s]%s" % (n[0], n[1:]), "brace": lambda n: "{%s,zz}" % n,
+    "brace7": lambda n: "".join("{%s,\u0071}" % c if i < 7 else c for i, c in enumerate(n)),
 }
 
 
@@ -343,9 +373,9 @@ RENDER_WRAPPERS = ("prose-sol", "prose-num", "prose-hex", "link-num", "prose-wbr
                    "prose-zws", "prose-zwse", "link-letter", "prose-pct5c", "prose-pct2f", "code-pct5c", "prose-backslash")
 WRAPCHAR_WRAPPERS = tuple("%s-%s" % (w, n) for n in WRAP_PAIRS for w in ("code", "prose", "link"))
 SPACE_OK = ("prose", "prose-nbsp")
-PATH_ONLY += ("prose-segment-italic", "prose-long-tail", "prose-underscore", "prose-strike", "prose-mark", "prose-html-comment", "prose-obs-comment",
+PATH_ONLY += ("prose-dotdot", "prose-segment-italic", "prose-long-tail", "prose-underscore", "prose-strike", "prose-mark", "prose-html-comment", "prose-obs-comment",
               "prose-bold-star")
-NO_SPACE += ("prose-segment-italic", "prose-long-tail", "prose-underscore", "prose-strike", "prose-mark", "prose-html-comment", "prose-obs-comment",
+NO_SPACE += ("prose-dotdot", "prose-segment-italic", "prose-long-tail", "prose-underscore", "prose-strike", "prose-mark", "prose-html-comment", "prose-obs-comment",
              "prose-bold-star")
 
 
@@ -377,8 +407,13 @@ def blocks(root: Path, page: Path, variant: bool = False):
     variant (another suffix, another way to write its party) runs one block."""
     if variant:
         for depth in dict.fromkeys(few(root, page)):
-            for prefix, suffix, wrapper in itertools.product(("", "./"), ("", "/", ".md", ":3"), WRAPPERS):
+            sufs = ("", "/", ".md", ":3")
+            if variant == "entity-plain" and "/" not in depth:
+                sufs = (".md", ".markdown", ".md:3")      # one plain word names a page only with its extension
+            for prefix, suffix, wrapper in itertools.product(("", "./"), sufs, WRAPPERS):
                 yield wrapper, prefix + depth + suffix
+            if " " in depth:
+                yield "code-middle", depth
         return
     for depth in dict.fromkeys(depths(root, page)):
         for prefix, suffix, wrapper in itertools.product(PREFIXES, SUFFIXES, WRAPPERS):
@@ -395,6 +430,8 @@ def blocks(root: Path, page: Path, variant: bool = False):
                 yield wrapper, prefix + depth + suffix
         if depth in two(root, page):
             for form, suffix, wrapper in itertools.product(NAME_FORMS, ("", ".md", "/"), ("code", "cat", "link", "wikilink", "find")):
+                if form == "brace7" and " " in depth.rpartition("/")[2]:
+                    continue                   # a brace list round a single space: folded apart from its neighbours
                 yield wrapper, with_name(depth, form) + suffix
         for mark, wrapper in itertools.product(MARKS, ("code", "cat", "prose")):
             if usable(wrapper, depth):
@@ -420,7 +457,7 @@ def rows(root: Path, pages: dict, party: str):
     for (kind, grade, owner), page in sorted(pages.items()):
         if owner != party:
             continue
-        for wrapper, token in dict.fromkeys(blocks(root, page, kind in VARIANTS)):
+        for wrapper, token in dict.fromkeys(blocks(root, page, kind if kind in VARIANTS else "")):
             out.append(("%s/%s/%s: %s" % (kind, grade or "live", wrapper, token), WRAPPING[wrapper](token)))
     return out
 
@@ -581,7 +618,8 @@ class WallFormsRowsTest(unittest.TestCase):
 
     def test_a_link_to_a_bare_word_and_a_web_address_into_a_wiki_are_still_refused(self):
         for written in ("[[setup]]", "[mail](email)", "<https://x/Wikis/Meetings/wiki/people/kai-ross>",
-                        "https://x/wiki/entities/harvest-co", "`kai-*`", "`harvest-*`"):
+                        "https://x/wiki/entities/harvest-co", "`kai-*`", "`harvest-*`", "`email.md`", "`cat setup.md`", "`./status.md`",
+                        "`docker.markdown`"):
             with self.subTest(written):
                 found = self.says(written)
                 self.assertEqual(["error"], [s for s, _ in found], found)
@@ -731,3 +769,23 @@ class WallFormsRowsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SafeGlobTest(unittest.TestCase):
+    """A bracket range out of order (`[h-e]`) never stops the check and reads
+    the same on every Python: as literal brackets (3.9's `re` refuses it, 3.13
+    reads it as matching nothing)."""
+
+    def test_a_bad_bracket_range_is_read_as_literal_brackets(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "check_safe_glob", Path(__file__).resolve().parents[1] / "template/System/tools/check.py")
+        mod = importlib.util.module_from_spec(spec)
+        import sys
+        sys.modules[spec.name] = mod
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(mod)
+        self.assertEqual([], mod._safe_fnmatch(["kai-ross", "jo-lane"], "kai-[s-a]oss"))
+        self.assertEqual(["[pick-harvest]"], mod._safe_fnmatch(["[pick-harvest]", "pick-harvest"], "[pick-harvest]"))
+        self.assertEqual(["kai-ross"], mod._safe_fnmatch(["kai-ross", "jo-lane"], "kai-[r-s]oss"))
+        self.assertEqual(["kai-ross"], mod._safe_fnmatch(["kai-ross"], "kai-ross"))

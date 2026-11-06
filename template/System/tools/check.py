@@ -53,6 +53,23 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
+def _safe_fnmatch(names, pattern):
+    """fnmatch's filter, the same on every Python and never raising. A bracket
+    class whose range is out of order (`[pick-harvest]`, which is ordinary
+    bracketed text, holds `k-h`) is read as literal brackets: Python 3.9's `re`
+    refuses such a class and 3.13 reads it as matching nothing, so neither is a
+    reading to rely on. The token's literal readings are resolved elsewhere."""
+    def bad(m):
+        body = m.group(1).lstrip("!^")
+        return any(body[i - 1] > body[i + 1] for i in range(1, len(body) - 1) if body[i] == "-")
+    if any(bad(m) for m in re.finditer(r"\[([^\]]*)\]", pattern)):
+        pattern = pattern.replace("[", "\0").replace("]", "[]]").replace("\0", "[[]")
+    try:
+        return fnmatch_filter(names, pattern)
+    except re.error:
+        return [n for n in names if n == pattern]
+
+
 sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -5628,7 +5645,7 @@ _SIGILS = "@!$*#~"
 # `:3-5`, `:L3`), a section (`::Heading`), a line (`@3`) or a backup's `~`.
 _SUFFIX_RE = re.compile(r"(?:::[^/]*|:L?\d+(?:[-:]L?\d+)*:?|@\d+(?:-\d+)?|~|\^[\w-]+)$")
 _QUERY_RE = re.compile(r"\?(?=[\w.%-]*=)")
-_REPEATS = ((re.compile(r"(?:\./)+"), "./"), (re.compile(r"(?:\.\./){2,}"), "../"), (re.compile(r"(?<![:/])/{2,}"), "/"))
+_REPEATS = ((re.compile(r"(?:\./)+"), "./"), (re.compile(r"\A(?:\.\./){2,}"), "../"), (re.compile(r"(?<![:/])/{2,}"), "/"))
 _LOOKALIKE = str.maketrans({**{c: "/" for c in "⁄∕⧸╱╲／⼃"},
                             **{c: "." for c in "․‧．。܁܂"},
                             **{c: "-" for c in "‐‑‒–—―−﹘﹣－"}})
@@ -5655,12 +5672,21 @@ def _clean(text: str) -> str:
     return "".join(c for c in text if ord(c) not in _IGNORABLE and unicodedata.category(c) not in ("Cc", "Cf", "Mn", "Me"))
 
 
+_FOLD_SEPARATORS = re.compile(r"[-_\s]+")
+
+
+@lru_cache(maxsize=1 << 16)
 def fold_name(part: str) -> str:
     """A name as the index and a token both fold it: Unicode compatibility and
     case folded, invisible characters gone, lookalike slashes, dots and dashes
-    plain, and `-`, `_` and spaces one."""
-    text = _clean(unicodedata.normalize("NFKC", part)).translate(_LOOKALIKE).casefold()
-    return re.sub(r"[-_\s]+", "-", text)
+    plain, and `-`, `_` and spaces one. Printable ASCII takes a short path with
+    the same result: NFKC leaves it as it is, it holds nothing invisible, and
+    its case folds as `lower()`."""
+    if part.isascii() and part.isprintable():
+        text = part.translate(_LOOKALIKE).lower()
+    else:
+        text = _clean(unicodedata.normalize("NFKC", part)).translate(_LOOKALIKE).casefold()
+    return _FOLD_SEPARATORS.sub("-", text)
 
 
 def _wrapper(c: str) -> bool:
@@ -5705,6 +5731,21 @@ def plain_cased(raw: str) -> List[str]:
     return list(_plain(raw, False))
 
 
+def _dots(raw: str) -> str:
+    """`raw`, a path, with its `.` and `..` names settled over the whole of it, in
+    one pass: `a/b/../c` is `a/c`. A `..` with nothing before it goes."""
+    out: List[str] = []
+    for seg in raw.split("/"):
+        if seg == ".":
+            continue
+        if seg == "..":
+            if out and out[-1] not in ("", ".."):
+                out.pop()
+            continue
+        out.append(seg)
+    return "/".join(out)
+
+
 def _parts(raw: str) -> List[str]:
     """`raw` in parts of at most MAX_READ characters: itself if short; else its first
     and its last MAX_READ characters, and each stretch between `#`, `?`, `:` and
@@ -5712,11 +5753,17 @@ def _parts(raw: str) -> List[str]:
     if len(raw) <= MAX_READ:
         return [raw]
     out = [raw[:MAX_READ], raw[-MAX_READ:]]
+    settled = _dots(raw) if "/" in raw else raw        # the whole token, `.` and `..` settled, read first
+    if settled != raw:
+        out += _parts(settled) if len(settled) <= MAX_READ else [settled[:MAX_READ], settled[-MAX_READ:]]
     for piece in re.split(r"[#?:]+", raw)[:5000] + re.split(r"\s+", raw)[:5000]:
         if len(piece) > MAX_READ:
             out += [piece[:MAX_READ], piece[-MAX_READ:]]
         elif piece:
             out.append(piece)
+    segs = settled.split("/") if "/" in settled else []
+    for i in range(0, min(len(segs), 20000), 4):        # the middle of a long path: windows of eight names
+        out.append("/".join(segs[i:i + 8]))
     return list(dict.fromkeys(out))
 
 
@@ -5737,7 +5784,7 @@ def _texts(raw: str) -> List[str]:
     return out
 
 
-@lru_cache(maxsize=1 << 16)
+@lru_cache(maxsize=1 << 18)
 def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
     """Every plain form `raw`, a token as written, may mean as a path: each
     reading of it that is not certain. Its text is normalised (Unicode folded, a
@@ -5749,11 +5796,19 @@ def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
     or taken off. Each is read by _reading. Bounded: runs of `./` collapse
     first, and only the last 4096 characters are read."""
     out: List[str] = []
-    if ("#" in raw or "%" in raw) and len(raw) <= MAX_READ:         # a page's name may hold one: the literal name first
+    web = re.match(r"(?i)\s*[<(\[\"'`]*https?://", raw) is not None
+    if len(raw) <= MAX_READ and not (web and not re.search(r"(?i)/(?:wiki|raw|wikis)/", raw)):   # the name as written first: a page's may hold `#`, `%`, `(`
         literal = _trim(_strip_wrap(raw.replace("\\", "/")), False)
         parts = [x for x in literal.split("/") if x not in ("", ".")]
         if parts:
             out.append("/".join(fold_name(x) for x in parts) if fold else "/".join(parts))
+        shown = _SUFFIX_RE.sub("", _strip_wrap(raw.replace("\\", "/")).rstrip("/"))
+        shown = re.sub(r"(?i)\.(?:md|markdown)$", "", shown)
+        raw_parts = [x for x in shown.split("/") if x not in ("", ".")]
+        if raw_parts:                                                # and with nothing taken off it (`Delta+`)
+            form = "/".join(fold_name(x) for x in raw_parts) if fold else "/".join(raw_parts)
+            if form not in out:
+                out.append(form)
     for text in _texts(raw):
         stripped = _strip_wrap(text)
         modes = [(bs, star, tail, pref)
@@ -5782,6 +5837,8 @@ def _trim(head: str, keep_glob: bool) -> str:
         head = re.sub(r"['’]s$", "", head)
         if head.lower().endswith(".md"):
             head = head[:-3]
+        elif head.lower().endswith(".markdown"):
+            head = head[:-9]
         if head == before:
             break
     return head
@@ -5874,7 +5931,7 @@ def distinctive(name: str) -> bool:
     return not name.isalpha()
 
 
-def body_tokens(body: str, runs: bool) -> List[str]:
+def body_tokens(body: str, runs, first_words=frozenset()) -> List[str]:
     """The tokens one code body may hold: all of it, each quoted string, each
     word, and with `runs` each run of up to eight words that starts after a
     command, at a path or at a date (a decision's name has spaces in it). A
@@ -5885,11 +5942,13 @@ def body_tokens(body: str, runs: bool) -> List[str]:
     candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)]
     if runs:
         for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
-            words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()]
-            for i in range(len(words)):
-                if i < 4 or "/" in words[i] or (len(words[i]) == 6 and words[i].isdigit()):
-                    for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
-                        candidates.append(" ".join(words[i:j]))
+            for words in ([w.strip("\"'`()").replace("\0", " ") for w in segment.split()],
+                          [w.strip("\"'`").replace("\0", " ") for w in segment.split()]):    # and with the brackets kept
+                for i in range(len(words)):
+                    if i < 4 or "/" in words[i] or (len(words[i]) == 6 and words[i].isdigit()) or (
+                            first_words and fold_name(words[i]) in first_words):
+                        for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
+                            candidates.append(" ".join(words[i:j]))
     return [c for c in dict.fromkeys(candidates) if c]
 
 
@@ -5913,7 +5972,7 @@ def other_code_texts(text: str) -> List[Tuple[str, str]]:
     return out
 
 
-def code_names(text: str, runs: bool = False) -> List[Tuple[str, str]]:
+def code_names(text: str, runs: bool = False, first_words=frozenset()) -> List[Tuple[str, str]]:
     """(as written, token) for every token that code may hold which may name a
     Meetings page, with or without a slash: in a code span of any length, a
     code line, an indented block, `<code>`, `<pre>` and a comment. One code
@@ -5924,7 +5983,7 @@ def code_names(text: str, runs: bool = False) -> List[Tuple[str, str]]:
         if (written, body) in done:
             continue
         done.add((written, body))
-        out += [(written, c) for c in body_tokens(body, runs)]
+        out += [(written, c) for c in body_tokens(body, runs, first_words)]
     return out
 
 
@@ -6111,6 +6170,7 @@ class PageNames:
         self._tails: Optional[Dict[int, Dict[str, List[Path]]]] = None
         self._full: Optional[Dict[int, Dict[str, List[Path]]]] = None
         self.spaced = False                # does any page's name hold a space? (a decision's does)
+        self.first_words: set = set()      # the first word of each such name, folded
         self._raw_tags: Optional[Dict[Path, set]] = None
         self._entities: Optional[Dict[Path, dict]] = None
         for page in ws.meetings:
@@ -6138,15 +6198,26 @@ class PageNames:
         for at in [page] + grade_places(self.ws, page):
             have = tuple(Path(rel(self.ws, at)).parts)
             names = [have]
-            if have[-1].lower().endswith(".md"):
+            low = have[-1].lower()
+            if low.endswith(".md"):
                 names = [have[:-1] + (have[-1][:-3],)]
+            elif low.endswith(".markdown"):
+                names = [have[:-1] + (have[-1][:-9],)]
             elif "." in have[-1]:
                 names.append(have[:-1] + (have[-1].rsplit(".", 1)[0],))
             for name in names:
-                name = tuple(fold_name(x) for x in name)
-                self.by_last.setdefault(name[-1], []).append((name, page))
-                self.entries.append((name, page))
-                self.spaced = self.spaced or " " in page.name
+                # the name as written, folded; and as a token of it is read (punctuation and sigils off)
+                lasts = {fold_name(name[-1])}
+                read = _reading(_texts(name[-1])[0], True, 0, 0, 0, 0) if name[-1] else []
+                if read:
+                    lasts.add(read[0].rsplit("/", 1)[-1])
+                for last in lasts:
+                    full = tuple(fold_name(x) for x in name[:-1]) + (last,)
+                    self.by_last.setdefault(full[-1], []).append((full, page))
+                    self.entries.append((full, page))
+                if " " in page.name:
+                    self.spaced = True
+                    self.first_words.add(fold_name(page.name.split()[0]))
 
     def tags_of(self, page: Path) -> set:
         """The parties a page or record is written for; none when it is
@@ -6212,17 +6283,32 @@ class PageNames:
                         self._tails.setdefault(n, {}).setdefault("/".join(have[-n:]), []).append(page)
                     self._full.setdefault(len(have), {}).setdefault("/".join(have), []).append(page)
             patterns = [form]
-            for _ in range(3):             # a brace list, a few deep
-                patterns = [p[:m.start()] + alt + p[m.end():] for p in patterns
-                            for m in [re.search(r"\{([^{}]*)\}", p)] if m for alt in m.group(1).split(",")] or patterns
-            for pattern in patterns[:64]:
+            cut = False
+            for _ in range(12):            # the brace lists, expanded exactly while that stays small
+                more = [p[:m.start()] + alt + p[m.end():] for p in patterns
+                        for m in [re.search(r"\{([^{}]*)\}", p)] if m for alt in m.group(1).split(",")]
+                if not more:
+                    break
+                patterns = more
+                if len(patterns) > 512:
+                    cut = True
+                    break
+            if any("{" in p for p in patterns[:512]):
+                cut = True
+            if cut:                        # cut short: every brace list as a `*` instead, an over-approximation
+                wild = form
+                for _ in range(12):
+                    wild = re.sub(r"\{[^{}]*\}", "*", wild)
+                own = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", re.sub(r"[*?\[\]{},]", "", wild))
+                patterns = patterns[:512] + ([wild] if sum(c.isalpha() for c in own) >= 3 else [])
+            for pattern in patterns:
                 cut = pattern.split("/")
                 k = len(cut)
                 for n in sorted({k} | {n for n in self._full if n < k}):
                     # a page whose whole path is n names long is matched by the last n names of a longer glob
                     pool = (self._tails.get(k) if n == k else self._full.get(n)) or {}
                     want = pattern if n == k else "/".join(cut[-n:])
-                    for key in fnmatch_filter(pool, want):
+                    for key in _safe_fnmatch(pool, want):
                         found.update(dict.fromkeys(pool[key]))
         if len(self._globs) > 50000:
             self._globs.clear()
@@ -6248,20 +6334,19 @@ class PageNames:
                 tokens.append(token.split(":", 2)[2])
             min_parts, bare = 1, True
         found: Dict[Path, None] = {}
+        explicit = any(re.search(r"(?i)\.(?:md|markdown)(?:[^\w.]|$)", t) for t in tokens)   # `quartz.md` names that file
         for form in [f for t in tokens for f in plain_forms(t)]:
             want = tuple(form.split("/"))
             if len(want) < min_parts:
                 continue
+            if not (len(want) == 1 and not bare and not explicit and not distinctive(want[0])):
+                for have, page in self.by_last.get(want[-1], ()):        # the name itself first, whatever it holds
+                    if len(want) == 1 or (len(have) >= 2 and have[-2:] == want[-2:]):
+                        found[page] = None
             if _GLOBS & set(form) or "{" in form:
                 self.globs_read.add(form)
                 if len(self.globs_read) <= GLOB_FILE_MAX:
                     found.update(dict.fromkeys(self._glob(form)))
-                continue
-            if len(want) == 1 and not bare and not distinctive(want[0]):
-                continue
-            for have, page in self.by_last.get(want[-1], ()):
-                if len(want) == 1 or (len(have) >= 2 and have[-2:] == want[-2:]):
-                    found[page] = None
         return list(found)
 
 
@@ -6433,7 +6518,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     # link may be to a bare name; code, frontmatter and prose read one only if
     # it is distinctive.
     named = [(v, w, t, 1, v == "links" and _link_like(w)) for v, w, t in targets]
-    named += [("writes the path", w, t, 1, False) for w, t in code_names(text, names.spaced)]
+    named += [("writes the path", w, t, 1, False) for w, t in code_names(text, names.spaced, names.first_words)]
     shown = render(text)
     for body in dict.fromkeys([text, shown]):
         named += [("links", w, t, 1, True) for w, t in markdown_targets(body)]

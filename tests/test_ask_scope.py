@@ -334,10 +334,10 @@ class TestAnswers(AnswerCase):
         self.assertIn('<record id="r1" path="Wikis/Meetings/wiki/sources/260310-acme-kickoff.md" date="2026-03-10">', first)      # no `created`: no import date
         self.assertIn("<request>\nWhat did Dana say about the pallet quote?\n</request>", first)
         self.assertEqual(ask.ANSWER_BRIEF.read_text(), sonnet["argv"][sonnet["argv"].index("--system-prompt") + 1])
-        self.assertEqual(["Finding the records", "Reading 1 record"], steps)
+        self.assertEqual(["Finding the records", "Reading 2 records"], steps)     # the call, and Knowledge's report (#397)
         a.ask("And Dana, about the pallet price?")
         self.assertIn("<workspace unchanged/>", self.msgs(sonnet["pid"])[1])
-        self.assertIn('<record id="r2"', self.msgs(sonnet["pid"])[1])          # ids go on across the conversation
+        self.assertIn('<record id="r3"', self.msgs(sonnet["pid"])[1])          # ids go on across the conversation
 
     def test_the_answer_tier_is_its_own(self):
         os.environ["GARRICK_ASK_ANSWER_TIER"] = "opus"
@@ -682,6 +682,88 @@ class TestScopeFirst(AnswerCase):
               meeting_page("Work", None, "A call") + "\nThe pallet plan. UNFILEDMARK\n")
         self.asker().ask("What did I discuss this week?")
         self.assertNotIn("UNFILEDMARK", "\n".join(self.msgs()))
+
+
+class TestOneQuestionManyStores(AnswerCase):
+    """#397: a find reads its own place, the Meetings pages its scope admits
+    and Knowledge, and a name is searched in every form Garrick lists."""
+
+    def put(self, name, text, wiki="Meetings", sub="sources"):
+        write(self.root / "Wikis" / wiki / "wiki" / sub / name, text)
+
+    def meeting(self, name, parties, body, date="2026-11-05", title="A call"):
+        page = meeting_page("Work", parties, title).replace("date: 2026-03-10", "date: " + date)
+        self.put(name, page + "\n" + body + "\n")
+
+    def read(self, find_, order=None):
+        sc, lib = ask.scope_lib(), ask.scope_lib().lib(self.root)
+        ctx, names = lib.load_context(self.root), ask.scan(self.root)
+        where = sc.scope(self.root, dict(find_, order=order) if order else find_, sc.Mentions([]), names, ctx, lib)
+        found = sc.search(self.root, where, ctx, lib)
+        return found, sc.choose(found, set(), ctx, lib), where
+
+    def paths(self, found):
+        return [r["path"].rsplit("/", 1)[-1] for r in found]
+
+    def test_a_meeting_filed_today_is_cited_for_a_project_whose_notes_are_older(self):
+        self.meeting("261105-acme-call.md", "[acme]", "Acme agreed the pallet plan.")
+        found, _, _ = self.read({"route": "thread", "project": "Acme Review", "words": ["acme"]}, "recent")
+        self.assertIn("261105-acme-call.md", self.paths(found))
+        self.assertEqual("261105-acme-call.md", self.paths(found)[1])      # the note leads, then the newest record
+
+    def test_a_meetings_find_also_reads_the_project_and_knowledge(self):
+        found, _, _ = self.read({"route": "meetings", "project": "Acme Review", "words": ["pallet"]})
+        self.assertTrue(any("Acme Review" in r["path"] for r in found))
+        self.assertTrue(any("Knowledge" in r["path"] for r in found))
+        self.assertEqual("acme-kickoff", self.paths(found)[0].rsplit(".", 1)[0].split("260310-")[-1])   # its own place first on a tie
+
+    def test_knowledge_alone_answers_from_a_project(self):
+        self.put("shelf.md", "---\ntitle: Shelf\ntype: source\n---\n\nRackplan rules: SHELFMARK.\n", "Knowledge")
+        found, _, _ = self.read({"route": "thread", "project": "Acme Review", "words": ["rackplan"]})
+        self.assertIn("shelf.md", self.paths(found))
+
+    def test_the_state_of_play_is_given_though_the_opening_is_long(self):
+        note = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        text = thread_note("Acme Review", "Pricing", "acme", "Pricing background. " + "Filler words. " * 200)
+        write(note, text.replace("Drafting.", "Drafting. ZEBRAFACT agreed on the rate."))
+        found, _, _ = self.read({"route": "thread", "project": "Acme Review", "thread": "Pricing", "words": ["background"]})
+        self.assertEqual("Pricing.md", self.paths(found)[0])
+        self.assertIn("ZEBRAFACT", found[0]["text"])
+        self.assertLessEqual(found[0]["text"].count("Filler words."), 120)        # the words' own paragraph, cut as before
+
+    def test_a_name_is_searched_in_every_form_it_has(self):
+        self.put("acme-note.md", "---\ntitle: Note\ntype: source\n---\n\nAcme Corp raised its prices.\n", "Knowledge")
+        self.put("birch-note.md", "---\ntitle: Note\ntype: source\n---\n\nBirchen Co raised its prices.\n", "Knowledge")
+        found, _, where = self.read({"route": "knowledge", "words": ["acmecorp"]})
+        self.assertEqual(["acme-note.md"], self.paths(found))
+        self.assertIn("acme corp", where.groups[0])
+        found, _, _ = self.read({"route": "knowledge", "words": ["birch & co"]})
+        self.assertEqual(["birch-note.md"], self.paths(found))                  # an alias is a form too
+
+    def test_a_walled_meeting_changes_no_count_order_or_cut_off(self):
+        for i in range(6):
+            self.meeting("2610%02d-acme-%d.md" % (i + 1, i), "[acme]", "Acme pallet plan %d." % i, "2026-10-%02d" % (i + 1))
+        self.put("kn.md", "---\ntitle: K\ntype: source\n---\n\nPallet supply.\n", "Knowledge")
+        finds = [({"route": "thread", "project": "Acme Review", "words": ["pallet", "acme corp"]}, o) for o in (None, "recent")]
+        finds += [({"route": "meetings", "project": "Acme Review", "words": ["acmecorp"]}, o) for o in (None, "recent")]
+        before = [self.read(f, o) for f, o in finds]
+        # Pages that match the words, spelled as another form, walled from the scope: newest of all.
+        for i in range(12):
+            self.meeting("2611%02d-walled-%d.md" % (i + 1, i), "[acme, birch]",
+                         "Acme Corp pallet pricing, Dana and Theo, %d. WALLEDMARK" % i, "2026-11-%02d" % (i + 1))
+            self.meeting("2611%02d-far-%d.md" % (i + 1, i), "[birch]", "Acme Corp pallet Birch %d. WALLEDMARK" % i,
+                         "2026-11-%02d" % (i + 1))
+        after = [self.read(f, o) for f, o in finds]
+        for (f0, c0, _), (f1, c1, _) in zip(before, after):
+            self.assertEqual(f0, f1)
+            self.assertEqual(c0, c1)                      # the records, whether a wall held any back, the count
+            self.assertNotIn("WALLEDMARK", json.dumps(f1))
+        self.assertFalse(any(c[1] for _, c, _ in after))
+
+    def test_a_walled_page_matched_only_through_a_name_form_stays_out(self):
+        self.meeting("261106-both.md", "[acme, birch]", "Only the Acme Corp spelling is used here.")
+        found, _, _ = self.read({"route": "thread", "project": "Acme Review", "words": ["acmecorp"]})
+        self.assertNotIn("261106-both.md", self.paths(found))
 
 
 class TestFailsClosed(AnswerCase):
@@ -1584,15 +1666,15 @@ class TestCitations(AnswerCase):
         self.assertIn('<record id="r1" path="%s" date="2026-03-10" imported="2026-03-12">' % self.KICKOFF, sent)
 
     def test_a_citation_not_retrieved_this_turn_is_refused(self):
-        self.sonnet(["supply chain report", cites(("Supply stays tight.", ["r2", "r1", "r9", self.KICKOFF]),
+        self.sonnet(["supply chain report", cites(("Supply stays tight.", ["r3", "r2", "r1", "r9", self.KICKOFF]),
                                                   ("Dana gave a price earlier.", ["r1"]))],
                     ["pallet quote", cites(("Dana gave a price.", ["r1"]))])
         a = self.asker()
-        self.assertEqual(["r1"], [s["id"] for s in a.ask("What did Dana say about the pallet quote?")["sources"]])
+        self.assertEqual(["r1"], [s["id"] for s in a.ask("What did Dana say about the pallet quote?")["sources"]])   # r2 is the report, read but not cited
         out = a.ask("What does the supply chain report say about pallets?")
-        self.assertEqual([{"text": "Supply stays tight.", "ids": ["r2"]}, {"text": "Dana gave a price earlier.", "ids": []}],
-                         out["claims"])                                # r1 was read, but for the turn before
-        self.assertEqual(["r2"], [s["id"] for s in out["sources"]])
+        self.assertEqual([{"text": "Supply stays tight.", "ids": ["r3"]}, {"text": "Dana gave a price earlier.", "ids": []}],
+                         out["claims"])                                # r1 and r2 were read, but for the turn before
+        self.assertEqual(["r3"], [s["id"] for s in out["sources"]])
         self.assertEqual("Wikis/Knowledge/wiki/sources/supply-chain-report.md", out["sources"][0]["path"])
         self.assertNotIn(self.KICKOFF, json.dumps(out))
 
@@ -1644,9 +1726,10 @@ class TestCitations(AnswerCase):
         first, out = lines
         self.assertEqual(self.KICKOFF, first["sources"][0]["path"])
         self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
-        self.assertEqual([{"text": "Theo moved the launch to May.", "ids": ["r1"]}], out["claims"])
-        self.assertEqual([("r1", "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md")],
-                         [(s["id"], s["path"]) for s in out["sources"]])     # r1 of the new process: Birch's
+        self.assertEqual([{"text": "Theo moved the launch to May.", "ids": ["r1", "r2"]}], out["claims"])
+        self.assertEqual([("r1", "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md"),
+                          ("r2", "Wikis/Knowledge/wiki/sources/supply-chain-report.md")],
+                         [(s["id"], s["path"]) for s in out["sources"]])     # r1 and r2 of the new process: Birch's, and Knowledge's
         said = json.dumps(out, ensure_ascii=False)
         for mark in (ACME, "acme-kickoff", "Acme kick-off", "Dana", '"acme"'):
             self.assertNotIn(mark, said)
@@ -1834,7 +1917,7 @@ class TestTheNewestFirst(AnswerCase):
                 self.assertEqual(self.NEWEST, first)
                 self.assertIn("NEWESTMARK", sent)
                 self.assertNotIn("OLDESTMARK", sent)                 # eight newest, never the page that says it most
-                self.assertIn('<records matched="21" given="8" order="recent">', sent)   # twenty, and Dana's own page
+                self.assertIn('<records matched="22" given="8" order="recent">', sent)   # twenty, Dana's own page and the kick-off that says only Acme
                 self.assertEqual([self.NEWEST], [s["path"] for s in out["sources"]])
                 self.assertEqual([{"text": "The last meeting with Acme Corp was on 20 April.", "ids": ["r1"]}], out["claims"])
                 a.stop()
@@ -1845,7 +1928,7 @@ class TestTheNewestFirst(AnswerCase):
         self.asker().ask("Tell me about the meeting with Acme Corp")
         (sent,) = [m for m in self.msgs() if "<records " in m]
         self.assertIn("OLDESTMARK", sent.split("</record>")[0])     # as before: most named first
-        self.assertIn('<records matched="21" given="8">', sent)
+        self.assertIn('<records matched="22" given="8">', sent)
 
     def test_from_part_of_the_matches_no_absence_is_claimed(self):
         """The answer session says nothing happened after a date; with 21

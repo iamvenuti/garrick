@@ -114,7 +114,8 @@ from garrick_lib import (  # noqa: E402
     stamped_parties,
     strip_recipients,
     strip_tag,
-    walled,
+    crossings,
+    decide,
     work_folder,
     workspace_root,
 )
@@ -1419,7 +1420,7 @@ def check_context(ws: Workspace) -> List[Finding]:
     for tags in by_name.values():
         for i, a in enumerate(tags):
             for b in tags[i + 1:]:
-                if not walled(ws.context, a, b):
+                if not crossings(ws.context, [a], [b]):
                     name = parties[a].get("party") or a
                     out.append(Finding(WARNING, "context", ctx_path,
                                        "`%s` and `%s` are both %s, with no wall between them; add one, or the name "
@@ -2016,7 +2017,7 @@ def check_threads(ws: Workspace) -> List[Finding]:
 def wall_pair(ws: Workspace, tags_a, tags_b) -> Optional[Tuple[str, str]]:
     """The first pair, in sorted order, of a tag from each set with a wall
     between them, or None."""
-    pairs = sorted(tuple(sorted((a, b))) for a in tags_a for b in tags_b if walled(ws.context, a, b))
+    pairs = sorted(tuple(sorted(pair)) for pair in crossings(ws.context, tags_a, tags_b))
     return pairs[0] if pairs else None
 
 
@@ -3544,7 +3545,7 @@ def check_entities(ws: Workspace) -> List[Finding]:
                 out.append(Finding(WARNING, "meetings", rel(ws, page),
                                    "party `%s` is not a tag in the Parties table, so no wall can see it and no "
                                    "person page links it" % tag, "An entity page names an unknown party"))
-        hit = next(((a, b) for a in tags for b in tags if a < b and walled(ws.context, a, b)), None)
+        hit = next(iter(crossings(ws.context, tags)), None)
         if hit:
             out.append(Finding(WARNING, "meetings", rel(ws, page),
                                "`party:` names both %s and %s, which a wall keeps apart; an organisation in two roles "
@@ -3652,10 +3653,10 @@ def cited_across_walls(ws: Workspace) -> List[Finding]:
             continue
         for written, target in extract_links(text):
             hits = [m for m in resolve(ws, page, target, ws.meeting_links)
-                    for a in tags for b in as_list(ws.meetings[m].get("parties")) if walled(ws.context, a, strip_tag(b))]
+                    if crossings(ws.context, tags, [strip_tag(b) for b in as_list(ws.meetings[m].get("parties"))])]
             if hits:
                 b = next(strip_tag(t) for t in as_list(ws.meetings[hits[0]].get("parties"))
-                         if any(walled(ws.context, a, strip_tag(t)) for a in tags))
+                         if crossings(ws.context, tags, [strip_tag(t)]))
                 decided = page in ws.meeting_decisions
                 out.append(Finding(WARNING, "decisions" if decided else "questions" if question else "meetings", rel(ws, page),
                                    "cites %s, a %s with %s, but is written for %s, across a wall"
@@ -3781,7 +3782,7 @@ def organisation_wall(ws: Workspace, fm: dict, names, entity: Optional[Path]) ->
         theirs |= entity_parties(ws.context, same_name(ws, entity))
     ours = set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties")))
     every = sorted(ours | theirs | people_parties(ws.context, names))
-    return next(((a, b) for a in every for b in every if a < b and walled(ws.context, a, b)), None)
+    return next(iter(crossings(ws.context, every)), None)
 
 
 def same_name(ws: Workspace, entity: Path) -> List[dict]:
@@ -5914,7 +5915,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                                    % (meeting_noun(ws, page), page.stem),
                                    "A note in %s uses a %s before the project has a party" % (where, meeting_noun(ws, page))))
                 continue
-            hits = sorted((a, b) for a in tags for b in mtags if walled(ws.context, a, b))
+            hits = crossings(ws.context, tags, mtags)
             if hits:
                 a, b = hits[0]
                 reported |= {b, page}
@@ -5978,7 +5979,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                 if owner is None:
                     continue  # not a project's: a wiki page or System's, which the meeting check reads
                 other = owner[0]
-                pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, hit) if walled(ws.context, a, b))
+                pair = crossings(ws.context, tags, project_file_tags(ws, other, hit))
                 if pair:
                     far_hits.append((hit, other, pair[0]))
                 else:
@@ -6007,7 +6008,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                     other = project_dir_index(ws).owner.get(folder)
                     if other is None:
                         continue
-                    pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, folder / "_") if walled(ws.context, a, b))
+                    pair = crossings(ws.context, tags, project_file_tags(ws, other, folder / "_"))
                     if pair:
                         prev = far_dirs.get(other)
                         far_dirs[other] = (pair[0], names or (prev[1] if prev else False))
@@ -6021,7 +6022,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                     record(WARNING if elsewhere and not names else ERROR, verb, written,
                            ", a path that leads into a project of %s" % b, "a path into a project of %s" % party_name(ws, b),
                            a, b, other)
-    far = {t for t in ws.context["parties"] if any(walled(ws.context, a, t) for a in tags)}
+    far = {t for t in ws.context["parties"] if tags and decide(tags, {t}, "write", ws.context) == "deny"}
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
@@ -6034,7 +6035,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             hit = name_hit(scanned, forms, padded)
             if hit is None:
                 continue
-            a = sorted(t for t in tags if walled(ws.context, t, b))[0]
+            a = crossings(ws.context, tags, [b])[0][0]
             reported.add(b)
             out.append(Finding(ERROR, "walls", r,
                                "names %s%s, or one of its people; a wall stands between %s and %s"
@@ -6071,7 +6072,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
             if mfm is not None:
                 if not finished(mfm):
                     open_pages.append(o)
-                elif any(walled(ws.context, a, strip_tag(m)) for a in tags for m in as_list(mfm.get("parties"))):
+                elif crossings(ws.context, tags, [strip_tag(m) for m in as_list(mfm.get("parties"))]):
                     pages.append(o)
                 elif o in ws.meeting_questions:
                     continue  # a question restates a record, and is not one: it can show a leak, never vouch for one
@@ -6079,9 +6080,9 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                     clear = True
                     break
             elif sent or (index.project.get(o) == project and not _in_sources(project, o)
-                          and not any(walled(ws.context, a, b) for a in tags for b in index.tags.get(o, ()))):
+                          and not crossings(ws.context, tags, index.tags.get(o, ()))):
                 continue  # this project's own note, written for no party walled from this file's
-            elif any(walled(ws.context, a, b) for a in tags for b in index.tags.get(o, ())):
+            elif crossings(ws.context, tags, index.tags.get(o, ())):
                 files.append(o)
             else:
                 clear = True
@@ -6099,7 +6100,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
         if page in reported:
             continue
         mtags = [strip_tag(m) for m in as_list(ws.meetings[page].get("parties"))]
-        a, b = sorted((a, m) for a in tags for m in mtags if walled(ws.context, a, m))[0]
+        a, b = crossings(ws.context, tags, mtags)[0]
         noun = meeting_noun(ws, page)
         out.append(Finding(ERROR, "walls", r,
                            "repeats wording from %s %s, a %s with %s; a wall stands between %s and %s"
@@ -6114,7 +6115,7 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                            "A note in %s quotes an unfinished %s" % (where, noun)))
     for other in sorted(copied):
         sources = sorted(copied[other])
-        a, b = sorted((a, t) for a in tags for t in index.tags[sources[0]] if walled(ws.context, a, t))[0]
+        a, b = crossings(ws.context, tags, index.tags[sources[0]])[0]
         more = " and %d more of its files" % (len(sources) - 1) if len(sources) > 1 else ""
         out.append(Finding(ERROR, "walls", r,
                            "repeats wording from %s%s, in project %s for %s; a wall stands between %s and %s"
@@ -6205,7 +6206,7 @@ def sources_for_file(ws: Workspace, project: Path, ptags: set, path: Path, data:
             return [Finding(ERROR, "walls", r,
                             "is a mail saved as material, but the project has no party to check the walls against",
                             "A file in %s is a mail, before the project has a party" % project.name)]
-        hits = sorted((a, b) for a in ptags for b in stamped if walled(ws.context, a, b))
+        hits = crossings(ws.context, ptags, stamped)
         if hits:
             a, b = hits[0]
             return [Finding(ERROR, "walls", r,
@@ -6232,7 +6233,7 @@ def sources_for_file(ws: Workspace, project: Path, ptags: set, path: Path, data:
     hits = []
     for rec in filed:
         mtags = [strip_tag(t) for t in as_list(ws.meetings[rec.page].get("parties"))]
-        hits.append(sorted((a, b) for a in ptags for b in mtags if walled(ws.context, a, b)))
+        hits.append(crossings(ws.context, ptags, mtags))
     if all(hits):  # every mail it could have come from is on the far side of a wall
         a, b = hits[0][0]
         return [Finding(ERROR, "walls", r,

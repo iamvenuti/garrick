@@ -769,6 +769,8 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
                   "title": title.strip(), "parties": sorted(parties), "text": passage(body, looked, own=first)}
         if public:
             record["public"] = True             # published: the one record that is read with no party
+        elif parties:
+            record["scoped"] = True             # search() admitted it against its own scope: choose() may start a group from it
         found.append((rank, record))
 
     def knowledge(home: int) -> None:
@@ -922,7 +924,8 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
         # The scope is what the session holds. Only when it holds nothing at all may a find that names its
         # own place (`start`: a place's labels, a zone's parties) begin its group with the first record in it.
         scope = group - {lib_.PUBLIC}
-        if not scope and nothing_held and start is not None and (parties - {lib_.PUBLIC}) <= set(start):
+        if not scope and nothing_held and (parties - {lib_.PUBLIC}) and (
+                (start is not None and (parties - {lib_.PUBLIC}) <= set(start)) or r.get("scoped")):
             scope = parties - {lib_.PUBLIC}
         if lib_.decide(scope, labels, "read", ctx) != "permit":
             back = True

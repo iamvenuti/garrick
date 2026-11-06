@@ -869,7 +869,8 @@ class TestFolderPaths(GapCase):
 
     def test_a_slash_ended_name_of_a_meetings_page_keeps_its_verdict(self):
         """A Meetings page of any type or grade, written with a trailing slash,
-        is read as 0.56.0 read it: Demo/ names only a project note and passes."""
+        is refused across a wall, as 0.56.0 refused one by the bare-name match; Demo/ names
+        only a project note and passes. Only an entity page changed since 0.57.0."""
         meetings = self.root / "Wikis" / "Meetings"
         page = meeting_page("Work", "[birch]", "Harvest")
         write(meetings / "wiki" / "sources" / "260315-harvest.md", page)
@@ -883,7 +884,10 @@ class TestFolderPaths(GapCase):
             ("Wikis/Meetings/wiki/sources/260315-harvest/", True), ("260315-harvest/", True),
             ("wiki/sources/260315-harvest/", True), ("cat Wikis/Meetings/wiki/sources/260315-harvest/", True),
             ("theo-marsh/", True), ("wiki/people/theo-marsh/", True),
-            ("harvest-co/", False), ("wiki/entities/harvest-co/", False),  # an entity page: passed in 0.56.0 too ("260316-old-call/", True), ("dormant/wiki/sources/260316-old-call/", True),
+            # An entity page of a walled party passed in 0.56.0 and 0.57.0 (a folder is a folder, #385);
+            # it is a Meetings page, and a token that names one is refused across a wall in any form (test_wall_forms).
+            ("harvest-co/", True), ("wiki/entities/harvest-co/", True),
+            ("260316-old-call/", True), ("dormant/wiki/sources/260316-old-call/", True),
             ("260317-older-call/", True), ("archive/wiki/sources/260317-older-call/", True),
             ("Demo/", False))
         for written, refused in table:

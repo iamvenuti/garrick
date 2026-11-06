@@ -120,6 +120,7 @@ __all__ = [
     "labels",
     "meeting_labels",
     "wall_cases",
+    "mail_labels",
     "wall_roles",
     "run_wall_cases",
     "PUBLIC",
@@ -1284,6 +1285,8 @@ def decide(scope, labels, action: str, context: dict) -> str:
         raise ValueError("action is read, write or file, not %r" % (action,))
     known = set(context.get("parties", {}))
     mine = _tagset(scope)
+    if scope is not None and (mine - {PUBLIC}) - known:
+        return "deny"           # a scope with a tag the Parties table lacks (`none`, a ghost) is no scope at all
     if labels is None:
         return "deny" if action != "file" else "confirm"
     theirs = _tagset(labels)
@@ -1330,6 +1333,25 @@ def wall_cases(text: str) -> Dict[str, List[List[str]]]:
                 continue
             out.setdefault(heading, []).append(cells)
     return out
+
+
+def mail_labels(context: dict, data: bytes) -> Tuple[Optional[frozenset], bool]:
+    """(the parties a saved mail is written for, whether its header and its
+    addresses disagree). The labels are the union of its `X-Garrick-Parties`
+    header and the parties of the domains it carries; a header tag that is
+    unknown, `none` or `public` makes them None. A mail with neither has none."""
+    known = set(context.get("parties", {}))
+    header = set(stamped_parties(data))
+    if header and (header - known or header & {"none", PUBLIC}):
+        return None, True
+    domains = set()
+    mail = parse_mail_bytes(data)
+    for key in ("from", "to", "cc"):
+        for _, addr in mail.get(key, []):
+            if not is_own_address(context, addr) and not is_webmail(addr.rpartition("@")[2]):
+                domains |= set(parties_for_domain(context, addr.rpartition("@")[2]))
+    union = header | domains
+    return (frozenset(union) if union else None), bool(header and domains and header != domains)
 
 
 def wall_roles(context: dict) -> Dict[str, str]:
@@ -1439,6 +1461,15 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         return None
     if any(p in ("..", "") for p in parts):
         return None
+    if len(parts) >= 3 and parts[0] == "Zones":
+        # a folder as the disk spells it: another case or Unicode form (Finder's NFD, an ignorecase rename) is the same one
+        zone = _listed(root / "Zones", parts[1]) or parts[1]
+        project = _listed(root / "Zones" / zone, parts[2]) or parts[2]
+        rest = list(parts[3:])
+        if len(rest) >= 2 and rest[0].casefold() == "threads":
+            rest[0] = _listed(root / "Zones" / zone / project, rest[0]) or rest[0]
+            rest[1] = _listed(root / "Zones" / zone / project / rest[0], rest[1]) or rest[1]
+        parts = ("Zones", zone, project) + tuple(rest)
     full = root.joinpath(*parts)
     if parts[:2] == ("Wikis", "Knowledge"):
         fm = parse_frontmatter(full) if full.suffix == ".md" and full.is_file() else {}
@@ -1479,7 +1510,7 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         hub = ("hub", str(project))
         if hub not in cache:
             fm = parse_frontmatter(project / (project.name + ".md"))
-            cache[hub] = _labels_of(fm) if fm.get("type") == "project" else None
+            cache[hub] = _labels_of(fm)         # the note named after the folder, whatever its type, as the hook finds it
         found = cache[hub]
         if not found:
             return None
@@ -1497,17 +1528,8 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
             data = full.read_bytes()
         except OSError:
             return None
-        stamped = stamped_parties(data)
-        if stamped:
-            return frozenset(stamped)
         context = context if context is not None else load_context(root)
-        mail = parse_mail_bytes(data)
-        found = set()
-        for key in ("from", "to", "cc"):
-            for _, addr in mail.get(key, []):
-                if not is_own_address(context, addr) and not is_webmail(addr.rpartition("@")[2]):
-                    found |= set(parties_for_domain(context, addr.rpartition("@")[2]))
-        return frozenset(found) if found else None
+        return mail_labels(context, data)[0]
     return None
 
 

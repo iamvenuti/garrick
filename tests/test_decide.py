@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.dont_write_bytecode = True
 
-from fixtures import TOOLS, meeting_page, write  # noqa: E402,F401
+from fixtures import TOOLS, meeting_page, project_hub, write  # noqa: E402,F401
 
 import walls_fixture  # noqa: E402
 
@@ -98,6 +98,12 @@ class LabelCases(unittest.TestCase):
         write(inbox / "far.eml", "From: Kai <kai@birchco.example>\nTo: jo@example.invalid\nSubject: Hi\n\nHello.\n")
         write(inbox / "web.eml", "From: Kai <kai@gmail.com>\nTo: jo@example.invalid\nSubject: Hi\n\nHello.\n")
         write(inbox / "stamped.eml", "X-Garrick-Parties: acme, birch\nFrom: Kai <kai@gmail.com>\nSubject: Hi\n\nHello.\n")
+        write(inbox / "header.eml", "X-Garrick-Parties: acme\nFrom: Kai <kai@birchco.example>\nSubject: Hi\n\nHello.\n")
+        write(inbox / "pubhead.eml", "X-Garrick-Parties: public\nFrom: Kai <kai@birchco.example>\nSubject: Hi\n\nHello.\n")
+        write(inbox / "ghosthead.eml", "X-Garrick-Parties: ghost\nFrom: Kai <kai@gmail.com>\nSubject: Hi\n\nHello.\n")
+        work = cls.root / "Zones" / "Work"
+        write(work / "Nonehub" / "Nonehub.md", project_hub("Work", "Nonehub", "none"))
+        write(work / "Nonehub" / "x.md", "# x\n")
         write(cls.root / "Zones" / "Work" / "NoHub" / "x.md", "# x\n")
         cls.ctx = lib.load_context(cls.root)
 
@@ -139,6 +145,20 @@ class LabelCases(unittest.TestCase):
         self.assertIsNone(self.got("Zones/Work/Inbox/web.eml"))
         self.assertEqual(self.got("Zones/Work/Inbox/stamped.eml"), {"acme", "birch"})
 
+    def test_a_mail_is_labelled_by_its_header_and_its_addresses_together(self):
+        self.assertEqual({"acme", "birch"}, self.got("Zones/Work/Inbox/header.eml"))
+        self.assertIsNone(self.got("Zones/Work/Inbox/pubhead.eml"))
+        self.assertIsNone(self.got("Zones/Work/Inbox/ghosthead.eml"))
+
+    def test_the_hub_is_the_note_named_after_the_folder_whatever_its_type(self):
+        self.assertEqual({"acme"}, self.got("Zones/Work/Hubnote/Threads/T/x.md"))
+
+    def test_none_is_a_label_no_scope_can_read(self):
+        got = self.got("Zones/Work/Nonehub/x.md")
+        self.assertEqual({"none"}, got)
+        for scope in ({"acme"}, {"none"}, set()):
+            self.assertEqual("deny", lib.decide(scope, got, "read", self.ctx))
+
     def test_a_conversation_is_never_public(self):
         write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260321-pub.md", meeting_page("Work", "[public]", "Pub"))
         self.assertIsNone(self.got("Wikis/Meetings/wiki/sources/260321-pub.md"))
@@ -148,7 +168,7 @@ class LabelCases(unittest.TestCase):
         self.assertIsNone(lib.labels(self.root, "Zones/Work/Todo.md", self.ctx))
 
     def test_the_rows_of_the_table_are_all_covered(self):
-        self.assertEqual(len(lib.wall_cases(CASES.read_text(encoding="utf-8"))["labels()"]), 21)
+        self.assertEqual(len(lib.wall_cases(CASES.read_text(encoding="utf-8"))["labels()"]), 26)
 
 
 if __name__ == "__main__":

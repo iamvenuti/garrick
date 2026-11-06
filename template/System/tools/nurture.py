@@ -169,6 +169,7 @@ from garrick_lib import (  # noqa: E402
     parse_frontmatter_text,
     party_entities,
     strip_tag,
+    PUBLIC,
     crossings,
     decide,
     workspace_root,
@@ -726,7 +727,12 @@ def across_wall(ctx: Ctx, source: str, target: str) -> bool:
     if len(parts) < 4 or parts[0] != "Zones":
         return False
     ours, theirs = parties_at(ctx, source), parties_at(ctx, target)
-    return bool(ours and theirs) and decide(ours, theirs, "write", ctx.context) == "deny"
+    if target.split("/")[:2] == ["Wikis", "Knowledge"] and not theirs:
+        theirs = {PUBLIC}                  # published material, which crosses every wall
+    # No label, no permit: a source with no party, a target with none or one the table lacks, is across a wall.
+    if not theirs or theirs - set(ctx.context.get("parties", {})) - {PUBLIC}:
+        return True
+    return decide(ours, theirs, "write", ctx.context) != "permit"
 
 
 def landing(ctx: Ctx, target: str) -> List[str]:
@@ -1243,9 +1249,12 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
     state: Dict[Path, Optional[set]] = {}
     for hit in hits:
         rel = ctx.rel(hit.path)
-        if ours and not inside(rel, scopes):
+        if scopes and not inside(rel, scopes):
             theirs = hit_parties(ctx, hit)
-            if theirs is None or crossings(ctx.context, ours, theirs):
+            if theirs is not None and not theirs and (hit.kind in ("memory", "context")
+                                                      or rel.split("/")[:2] == ["Wikis", "Knowledge"]):
+                theirs = {PUBLIC}          # the user's own, and published material: read on every side of a wall
+            if theirs is None or decide(ours, theirs, "read", ctx.context) != "permit":
                 withheld = True
                 continue
         files = [hit.path] if hit.kind != "raw" else list(hit.pages)

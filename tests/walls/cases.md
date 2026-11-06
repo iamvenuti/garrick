@@ -82,6 +82,11 @@ A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tes
 | d53 | near | public, far | read | deny | a record labelled public and for a far party is read as the far party |
 | d54 | public | public | file | permit | a public item into a public project |
 | d55 | public | near | file | deny | nothing is filed down into a public project |
+| d56 | ghost | far | read | deny | a scope with a tag the Parties table lacks (`none` is one) is no scope |
+| d57 | ghost | far | write | deny | the same, for a write |
+| d58 | ghost | far | file | deny | the same, for filing |
+| d59 | ghost | public | read | deny | the same, even for a public record |
+| d60 | near, ghost | near | read | deny | one unknown tag among known ones |
 | d48 | far | near | file | deny | the same wall for filing, the other way |
 
 ## labels()
@@ -111,6 +116,11 @@ Each row is a record in the fixture workspace; `Harbour` is a project of `far` w
 | l18 | a mail stamped `X-Garrick-Parties: near, far` | near, far | a mail saved as material |
 | l19 | a file in a project whose hub says `party: public` | public | `public` is chosen, never inferred |
 | l21 | a Meetings page whose `parties:` names `public` | ? | `public` is a project's choice, never a conversation's |
+| l22 | a mail in an inbox with a header `X-Garrick-Parties: near` from a domain of `far` | near, far | the header and the addresses are both labels |
+| l23 | a mail in an inbox with a header naming `public` | ? | a header cannot make a mail public |
+| l24 | a mail in an inbox with a header naming a tag the table lacks | ? | a header tag the table lacks is refused |
+| l25 | a file in a project whose hub has `type: note` and `party: near` | near | the hub is the note named after the folder, whatever its type |
+| l26 | a file in a project whose hub has `party: none` | none | `none` is a tag no table row holds: decide() denies it |
 | l20 | a file in a project whose thread note carries a `parties:` that disagrees with its `party:` | ? | two readings, neither |
 
 ## Enforcement points
@@ -138,6 +148,23 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e17 | intake | file a mail from a party that is always asked about | asked | confirm is a return value |
 | e18 | intake | file a mail into Orchard | refused | a project with no party takes nothing |
 | e19 | scaffold | a thread of `far` moved into Northwind | refused | a walled thread |
+| e24 | check | Northwind's hub and thread switched to `public`, with a committed note that names an Acme person | refused | a commit that changes a hub's parties re-checks the files already in the project |
+| e25 | check | a binary file (`.bin`) in Orchard | refused | a project with no party takes any file whatever its suffix |
+| e26 | check | a `.py` file in Northwind that names a Birch & Co person | refused | any staged file that reads as text is read, whatever its suffix |
+| e27 | check | a Northwind note that links the zone's `Todo.md` | refused | a link to a file with no label |
+| e28 | check | a Northwind note that links a raw record no page cites | refused | a link to a file with no label |
+| e29 | check | a Northwind note that links a Meetings page whose `party:` and `parties:` disagree | refused | two readings, neither |
+| e30 | ask | a session holding only `public` reads a Northwind record | refused | a public scope reads only public records |
+| e31 | ask | a session holding `none` reads a Northwind record | refused | a scope with a tag the table lacks |
+| e32 | intake | file a mail whose addresses name a party the user did not give | asked | confirm is a return value: nothing is filed |
+| e33 | intake | file a Birch & Co mail stamped as Acme's into Northwind | refused | the header is not trusted over the addresses |
+| e34 | check | any commit, while the Parties table holds a row named `public` | refused | the reserved tag is never a row |
+| e35 | check | a Reed note that names a person with a zero-width space inside the name | refused | format characters are folded out before names are matched |
+| e36 | nurture | a link from a note of a project with no party | refused | an empty scope is deny |
+| e37 | check | a file in a project whose hub says `party: none` | refused | `none` is no label |
+| e38 | check | a Northwind note that embeds a file in a hidden folder of the zone | refused | a link to a file with no label: Obsidian opens none, but whoever follows the path does |
+| e39 | check | a `.md` file in Northwind that holds NUL bytes (UTF-16) | refused | a text file the walls cannot read is refused, not skipped |
+| e40 | check | a note in Harbour's folder after a case-only rename (`harbour`) that names an Acme person | refused | a project is found however its folder is spelt |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
 | e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; the filter runs before the ranking;  ranking statistics computed over walled rows |

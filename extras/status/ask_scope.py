@@ -140,8 +140,9 @@ def note_tags(note: Path, lib_) -> frozenset:
 
 
 def hub_parties(ws: Path, zone: str, project: str, lib_) -> frozenset:
-    """The `party:` of a project's hub, the tag the walls are checked against."""
-    return note_tags(Path(ws) / "Zones" / zone / project / (project + ".md"), lib_)
+    """The labels of a project's hub, the tags the walls are checked against: garrick_lib's labels(),
+    none when they cannot be derived."""
+    return frozenset(lib_.labels(ws, Path(ws) / "Zones" / zone / project / (project + ".md")) or ())
 
 
 def place_parties(ws: Path, zone: str, project: str, thread: Optional[str], lib_) -> frozenset:
@@ -574,12 +575,12 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
     if route in ("knowledge", "docs"):
         return Scope(route, None, None, None, words, set(), **kept)
     if project is not None:
-        hub = hub_parties(ws, zone, project, lib_)
-        if not hub or not hub <= set(ctx.get("parties", {})) | {lib_.PUBLIC}:
-            # Nothing can say which side of a wall its files are on.
+        place = place_parties(ws, zone, project, thread, lib_)
+        if not place or not place <= set(ctx.get("parties", {})) | {lib_.PUBLIC}:
+            # Nothing can say which side of a wall its files are on: labels() found none, or a tag the table lacks.
             raise Refused("%s names no party %s, so nothing in it is read"
-                          % (project, "the Parties table holds" if hub else "in its hub"))
-        return Scope(route, zone, project, thread, words, set(place_parties(ws, zone, project, thread, lib_)), **kept)
+                          % (project, "the Parties table holds" if place else "in its hub"))
+        return Scope(route, zone, project, thread, words, set(place), **kept)
     rows = ctx.get("parties", {})
     inside = {p for p in said.parties if zone is None or (rows.get(p, {}).get("zone") or zone) == zone}
     if inside:                                  # the parties named, those of the zone it answers in (#317)
@@ -753,14 +754,12 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             only = [folder, hub, root / "Sources"]
         else:
             note, only = hub, None
-        hub_tags, thread_tags = note_tags(hub, lib_), {}
+        cache: dict = {}
         for path in _files(lib_, root, only):
             parts = path.relative_to(root).parts
-            tags = set(hub_tags)
-            if len(parts) > 2 and parts[0] == "Threads":     # a thread's file: its party too, as check.py has it
-                if parts[1] not in thread_tags:
-                    thread_tags[parts[1]] = note_tags(root / "Threads" / parts[1] / (parts[1] + ".md"), lib_)
-                tags |= thread_tags[parts[1]]
+            tags = lib_.labels(ws, path, ctx, cache)         # its hub's and its thread's, derived in one place
+            if not tags:
+                continue                                     # no label, no permit: never read
             text = _text(ws, path, "Sources" in parts)
             if text is not None:
                 consider(path, root, sorted(tags), text, first=path == note)
@@ -786,14 +785,22 @@ def page_parties(fm: dict, ctx: dict, lib_) -> List[str]:
     return tags if tags and set(tags) <= set(ctx.get("parties", {})) else []
 
 
-def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool]:
+def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS,
+         start: Optional[Set[str]] = None) -> Tuple[List[dict], bool]:
     """The records a process that holds `held` may be given, best first, at
     most `most`, and whether a wall held any back: choose() without its count."""
-    chosen, back, _ = choose(records, held, ctx, lib_, most)
+    chosen, back, _ = choose(records, held, ctx, lib_, most, start)
     return chosen, back
 
 
-def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool, int]:
+def starts(where, ctx: dict) -> Set[str]:
+    """The parties a find may start its group from, when the session holds none: a place's own labels,
+    the parties of a zone or of those named, or, across every zone, all of the table's."""
+    return set(where.parties) or set(ctx.get("parties", {}))
+
+
+def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS,
+           start: Optional[Set[str]] = None) -> Tuple[List[dict], bool, int]:
     """The records a process that holds `held` may be given, best first, at
     most `most`; whether a wall held any back: one whose parties are walled
     from each other, from a party held already, or from one picked before
@@ -803,6 +810,7 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
     what is on the far side. A question across every zone reads within one
     group of parties no wall divides, the one its best record starts."""
     group, chosen, back, matched = set(held), [], False, 0
+    nothing_held = not held
     known = set(ctx.get("parties", {})) | {lib_.PUBLIC}
     for r in records:
         parties = set(r["parties"])
@@ -811,7 +819,11 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
         # No label, no permit: only a published page of Knowledge is read with no party. The first
         # record admitted sets the group of a question across every zone.
         labels = parties or ({lib_.PUBLIC} if r.get("public") else set())
-        scope = (group - {lib_.PUBLIC}) or parties
+        # The scope is what the session holds. Only when it holds nothing at all may a find that names its
+        # own place (`start`: a place's labels, a zone's parties) begin its group with the first record in it.
+        scope = group - {lib_.PUBLIC}
+        if not scope and nothing_held and start is not None and (parties - {lib_.PUBLIC}) <= set(start):
+            scope = parties - {lib_.PUBLIC}
         if lib_.decide(scope, labels, "read", ctx) != "permit":
             back = True
             continue

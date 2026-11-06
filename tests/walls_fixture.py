@@ -54,6 +54,11 @@ def build(root: Path) -> Path:
     write(meetings / "raw" / "260319-orphan-call.txt", "Nobody cites this.\n")
     write(meetings / "wiki" / "sources" / "260318-unfinished.md", meeting_page(None, "[acme]", "Unfinished"))
     write(work / "Harbour" / "Threads" / "Sizing" / "Notes.md", "# Notes\n")
+    # a hub whose type is not `project`: the hook and labels() both find it as the note named after its folder
+    write(work / "Hubnote" / "Hubnote.md", project_hub("Work", "Hubnote", "acme").replace("type: project", "type: note"))
+    write(work / "Hubnote" / "Threads" / "T" / "x.md", "# x\n")
+    write(work / "Northwind" / "Threads" / "Pricing" / "Deal.md",
+          "# Deal\n\nDana Whitlock of Acme Corp agreed; see [[260310-acme-kickoff]].\n")
     write(work / "Northwind" / "Threads" / "Pricing" / "Notes.md", "# Notes\n")
     # a Northwind thread written for the far side: the thread note and the hub disagree
     write(work / "Northwind" / "Threads" / "Odd" / "Odd.md", thread_note("Northwind", "Odd", "birch"))

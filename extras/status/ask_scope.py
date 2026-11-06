@@ -459,10 +459,13 @@ def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: d
     group of its own. A page is ranked by the groups it holds, not by how
     many spellings of one name it uses."""
     known: Dict[str, Set[Entry]] = {}
-    for form, _, e in entries(ws, names, ctx, lib_):
+    forms: Dict[Entry, List[str]] = {}
+    for form, capital, e in entries(ws, names, ctx, lib_):
         n = _norm(form)
         for k in (n, n.replace(" ", "")):
             known.setdefault(k, set()).add(e)
+        if not capital:                 # a first name alone is never a form to search for
+            forms.setdefault(e, []).extend(f for f in (n, n.replace(" ", "")) if f)
     out: List[List[str]] = []
     keys: List[object] = []
     for w in words:
@@ -473,6 +476,14 @@ def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: d
         else:
             keys.append(key)
             out.append([w])
+    # A name is searched in every form Garrick lists for it, with and without
+    # spaces, not only the spellings the find holds (#397).
+    for key, group in zip(keys, out):
+        if isinstance(key, frozenset):
+            for e in sorted(key, key=lambda x: (x.kind, x.label)):
+                for f in forms.get(e, []):
+                    if f not in group:
+                        group.append(f)
     return out
 
 
@@ -657,10 +668,48 @@ def _imported(fm: dict, path: Path) -> str:
     return value[:10] if isinstance(value, str) and re.match(r"\d{4}-\d{2}-\d{2}", value) else ""
 
 
-def passage(body: str, words: List[str], most: int = PASSAGE) -> str:
+_SECTION = re.compile(r"^#{1,6}\s+State of play\b.*$", re.I | re.M)
+_RESUME_HEAD = re.compile(r"^#{1,6}\s+Resume here\b.*$", re.I | re.M)
+
+
+def _block(body: str, head: "re.Pattern") -> str:
+    """The heading `head` finds and the lines under it, up to the next heading or rule."""
+    m = head.search(body)
+    if m is None:
+        return ""
+    out = [m.group(0).strip()]
+    for line in body[m.end():].split("\n")[1:]:
+        if line.startswith("#") or line.strip() == "---":
+            break
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def resume_passage(body: str, most: int = PASSAGE) -> str:
+    """A thread's own note: its Resume here block, then the opening of its
+    State of play, up to `most` characters of their own (#397). Nothing when
+    the note has neither."""
+    resume = _block(body, _RESUME_HEAD)
+    m = _SECTION.search(body)
+    play = ""
+    if m is not None:
+        rest = body[m.end():]
+        end = re.search(r"(?m)^#{1,2}\s", rest)
+        play = (rest[:end.start()] if end else rest).strip()
+        if resume:
+            play = play.replace(resume, "").strip()
+    return "\n\n".join(p for p in (resume, play) if p)[:most]
+
+
+def passage(body: str, words: List[str], most: int = PASSAGE, own: bool = False) -> str:
     """The paragraphs of a body that hold a word looked for, or its opening
-    when none do or none was asked for, cut to `most` characters."""
+    when none do or none was asked for, cut to `most` characters. A thread's
+    own note (`own`) leads with its Resume here block and the opening of its
+    State of play, up to `most` characters of their own (#397)."""
+    lead = resume_passage(body, most) if own else ""
     paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+    if lead:
+        paras = [p for p in paras if p not in lead]
     hits = [p for p in paras if any(w in p.lower() for w in words)] if words else []
     out, size = [], 0
     for p in hits or paras:
@@ -668,7 +717,7 @@ def passage(body: str, words: List[str], most: int = PASSAGE) -> str:
             break
         out.append(p[:most])
         size += len(p)
-    return "\n\n".join(out)
+    return "\n\n".join(([lead] if lead else []) + out)
 
 
 def _text(ws: Path, path: Path, sources: bool) -> Optional[str]:
@@ -703,8 +752,9 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     Nothing outside the scope is opened."""
     ws = Path(ws)
     found: List[Tuple[tuple, dict]] = []
+    looked = [f for g in sc.groups for f in g]            # every form of every name looked for (#397)
 
-    def consider(path: Path, root: Path, parties: List[str], text: str, first: bool = False) -> None:
+    def consider(path: Path, parties: List[str], text: str, home: int, first: bool = False) -> None:
         fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
         body = _body(text) if fm else text
         low = body.lower()
@@ -714,13 +764,15 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
         date, imported = _date(fm, path), _imported(fm, path)
         words = (sum(1 for h in hits if h), sum(hits))
         lead = 1 if first else 0
-        rank = (lead, date, imported) + words if sc.order == "recent" else (lead,) + words + (date,)
+        # `home` is the route's own place: it breaks a tie and nothing more.
+        rank = (lead, date, imported) + words + (home,) if sc.order == "recent" else (lead,) + words + (date, home)
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else path.stem
         found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "imported": imported,
-                             "title": title.strip(), "parties": sorted(parties), "text": passage(body, sc.words)}))
+                             "title": title.strip(), "parties": sorted(parties),
+                             "text": passage(body, looked, own=first)}))
 
-    if sc.route in ("knowledge", "docs"):
-        root = ws / ("Wikis/Knowledge/wiki" if sc.route == "knowledge" else "System/garrick-docs")
+    def knowledge(home: int) -> None:
+        root = ws / "Wikis/Knowledge/wiki"
         for path in _files(lib_, root):
             text = _text(ws, path, False)
             if text is None:
@@ -728,8 +780,9 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
             if any(fm.get(k) for k in ("parties", "party", "zone")):
                 continue                        # a page of someone's, not published: never read as published
-            consider(path, root, [], text)
-    elif sc.route == "meetings":
+            consider(path, [], text, home)
+
+    def meetings(home: int) -> None:
         root = ws / "Wikis" / "Meetings" / "wiki"
         for path in _files(lib_, root):
             text = _text(ws, path, False)
@@ -743,8 +796,16 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
                 continue
             if not sc.every and not set(parties) & sc.parties:
                 continue
-            consider(path, root, parties, text)
-    else:
+            if sc.project is not None and any_wall(ctx, parties, sc.parties, lib_):
+                continue                        # a page walled from a party of the project's own scope (#397)
+            # The wall test, before the page is matched, ranked, counted or
+            # cut: choose() itself, on this page alone and holding nothing, so
+            # that no other page can change whether it is kept (#397).
+            if not choose([{"parties": parties}], set(), ctx, lib_, 1)[0]:
+                continue
+            consider(path, parties, text, home)
+
+    def place(home: int) -> None:
         root = ws / "Zones" / sc.zone / sc.project
         hub = root / (sc.project + ".md")
         if sc.thread is not None:
@@ -763,7 +824,35 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
                 tags |= thread_tags[parts[1]]
             text = _text(ws, path, "Sources" in parts)
             if text is not None:
-                consider(path, root, sorted(tags), text, first=path == note)
+                consider(path, sorted(tags), text, home, first=sc.route == "thread" and path == note)
+
+    # Every find with words reads its own place, the Meetings pages its scope
+    # admits, and Knowledge; the route only decides which ranks first (#397).
+    if sc.route == "docs":
+        root = ws / "System/garrick-docs"
+        for path in _files(lib_, root):
+            text = _text(ws, path, False)
+            if text is None:
+                continue
+            fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
+            if any(fm.get(k) for k in ("parties", "party", "zone")):
+                continue
+            consider(path, [], text, 1)
+    elif sc.route == "knowledge":
+        knowledge(1)
+        if sc.words and (sc.parties or sc.every):
+            meetings(0)
+    elif sc.route == "meetings":
+        meetings(1)
+        if sc.words:
+            if sc.project is not None:
+                place(0)
+            knowledge(0)
+    else:
+        place(1)
+        if sc.words:
+            meetings(0)
+            knowledge(0)
     found.sort(key=lambda r: (r[0], r[1]["path"]), reverse=True)
     return [r for _, r in found]
 

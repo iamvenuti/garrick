@@ -137,7 +137,10 @@ Rules:
   conversation or a mail, "knowledge" for published material, "thread" for
   where a piece of work stands (it needs "project", and "thread" when the
   request names one), "docs" for how Garrick itself works, "actions" for
-  what the user owes or waits on (below). A meeting's actions table is what
+  what the user owes or waits on (below). Garrick reads the project's
+  notes, the Meetings pages in scope and Knowledge for any find with words,
+  whatever its route; the route only says which place ranks first, so pick
+  the likeliest one and do not worry about missing the others. A meeting's actions table is what
   was agreed at the time, not what is still open: what is open is
   "actions". "zone", "project"
   and "thread" are optional, written exactly as the list writes them, and

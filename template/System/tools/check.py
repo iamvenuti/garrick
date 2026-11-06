@@ -262,6 +262,7 @@ class Workspace:
     wiki_files: List[Path] = field(default_factory=list)  # every .md under Wikis/
     quote_index: Optional["QuoteIndex"] = None  # built on first use by the walls check
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
+    index_files: Optional[set] = None  # staged mode: the files the commit holds (git's index), by real path; None reads the disk
     page_names: Optional["PageNames"] = None  # every page of the Meetings wiki, of every kind and grade, by name, on first use
     project_links: Optional["PathIndex"] = None  # every project's files, indexed for links on first use
     project_dirs: Optional["DirIndex"] = None  # every project's folders, indexed on first use
@@ -5625,7 +5626,7 @@ _PUNCT = ".,;:"
 _SIGILS = "@!$*#~"
 # What may follow a name and is not part of it: a position or a range (`:3`,
 # `:3-5`, `:L3`), a section (`::Heading`), a line (`@3`) or a backup's `~`.
-_SUFFIX_RE = re.compile(r"(?:::[^/]*|:L?\d+(?:[-:]L?\d+)*:?|@\d+(?:-\d+)?|~)$")
+_SUFFIX_RE = re.compile(r"(?:::[^/]*|:L?\d+(?:[-:]L?\d+)*:?|@\d+(?:-\d+)?|~|\^[\w-]+)$")
 _QUERY_RE = re.compile(r"\?(?=[\w.%-]*=)")
 _REPEATS = ((re.compile(r"(?:\./)+"), "./"), (re.compile(r"(?:\.\./){2,}"), "../"), (re.compile(r"(?<![:/])/{2,}"), "/"))
 _LOOKALIKE = str.maketrans({**{c: "/" for c in "⁄∕⧸╱╲／⼃"},
@@ -5634,11 +5635,12 @@ _LOOKALIKE = str.maketrans({**{c: "/" for c in "⁄∕⧸╱╲／⼃"},
 _GLOBS = set("*?[")
 # `HEAD:` or `host:` in front of a name, but not a position after it (`kai-ross:3`, `:L3`, `:3-5`).
 _WORD_PREFIX = r"^[A-Za-z][\w.+-]*:(?!/|L?\d+(?:[-:]L?\d+)*:?$)"
-MAX_TOKEN_WORDS = 50000  # words of one long code span read; a longer span is read to here
+MAX_READ = 4096  # characters of one token read in one go; a longer one is read in bounded parts
 # Default_Ignorable_Code_Point, the ones outside the categories dropped by name, and the blank braille cell.
 _IGNORABLE = ({0x34f, 0xad, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x3164, 0xffa0, 0x2800}
               | set(range(0x180b, 0x1810)) | set(range(0xfe00, 0xfe10)) | set(range(0xe0100, 0xe01f0))
               | set(range(0x2060, 0x2070)) | set(range(0x200b, 0x2010)))
+_COMMENT_RE = re.compile(r"(?s)<!--.*?-->|%%.*?%%")
 _TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
 _WORDY = re.compile(r"[A-Za-z]")
 
@@ -5687,7 +5689,10 @@ def _unbracket(text: str) -> str:
 
 def render(text: str) -> str:
     """`text` as a reader sees it: HTML entities undone and inline tags gone."""
-    return _TAG_RE.sub("", html.unescape(text)) if ("&" in text or "<" in text) else text
+    if "&" in text or "<" in text or "%%" in text or "~~" in text or "==" in text:
+        text = _COMMENT_RE.sub("", html.unescape(text))
+        text = _TAG_RE.sub("", text).replace("~~", "").replace("==", "")
+    return text
 
 
 def plain_forms(raw: str) -> List[str]:
@@ -5700,15 +5705,28 @@ def plain_cased(raw: str) -> List[str]:
     return list(_plain(raw, False))
 
 
+def _parts(raw: str) -> List[str]:
+    """`raw` in parts of at most MAX_READ characters: itself if short; else its first
+    and its last MAX_READ characters, and each stretch between `#`, `?`, `:` and
+    white space, those too long cut the same way. No head or tail is dropped."""
+    if len(raw) <= MAX_READ:
+        return [raw]
+    out = [raw[:MAX_READ], raw[-MAX_READ:]]
+    for piece in re.split(r"[#?:]+", raw)[:5000] + re.split(r"\s+", raw)[:5000]:
+        if len(piece) > MAX_READ:
+            out += [piece[:MAX_READ], piece[-MAX_READ:]]
+        elif piece:
+            out.append(piece)
+    return list(dict.fromkeys(out))
+
+
 def _texts(raw: str) -> List[str]:
     """`raw` as the text to read: normalised, and read again with its HTML
     entities undone and its tags gone, if it holds any."""
     for pattern, plain in _REPEATS:
         raw = pattern.sub(plain, raw)
-    raw = raw[-4096:]
-    seen = [raw]
-    if "&" in raw or "<" in raw:
-        seen.append(render(raw))
+    seen = _parts(raw)
+    seen += [render(x) for x in seen if "&" in x or "<" in x or "%%" in x or "~~" in x or "==" in x]
     out = []
     for text in seen:
         text = plain_text(text)
@@ -5731,6 +5749,11 @@ def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
     or taken off. Each is read by _reading. Bounded: runs of `./` collapse
     first, and only the last 4096 characters are read."""
     out: List[str] = []
+    if ("#" in raw or "%" in raw) and len(raw) <= MAX_READ:         # a page's name may hold one: the literal name first
+        literal = _trim(_strip_wrap(raw.replace("\\", "/")), False)
+        parts = [x for x in literal.split("/") if x not in ("", ".")]
+        if parts:
+            out.append("/".join(fold_name(x) for x in parts) if fold else "/".join(parts))
     for text in _texts(raw):
         stripped = _strip_wrap(text)
         modes = [(bs, star, tail, pref)
@@ -5778,6 +5801,7 @@ def _reading(text: str, fold: bool, bs: int, star: int, tail: int, pref: int) ->
         text = re.sub(r"\\([^A-Za-z0-9])", r"\1", text)
     text = text.replace("\\", "/")
     text = _strip_wrap(text)
+    text = re.sub(r"^(?:~~|==|%%)+|(?:~~|==|%%)+$", "", text)         # strike, highlight, comment marks
     text = re.sub(r"^(\*{1,3}|_{1,3})(.+)\1$", r"\2", text)       # bold or italic
     text = _unbracket(text)
     text = re.sub(r"(?i)^(?:file|path):(?://[^/]*)?", "", text)
@@ -5813,31 +5837,55 @@ def _reading(text: str, fold: bool, bs: int, star: int, tail: int, pref: int) ->
             parts.append(part.strip())
         if web and not {p.lower() for p in parts} & {"wiki", "raw", "wikis"}:
             continue
-        form = "/".join(fold_name(p) for p in parts) if fold else "/".join(parts)
-        if form and form not in out:
-            out.append(form)
+        for shown in (parts, [_unmark(x) for x in parts]):       # `*x*` is emphasis or a glob: both
+            form = "/".join(fold_name(p) for p in shown) if fold else "/".join(shown)
+            if form and form not in out:
+                out.append(form)
     return out
 
 
+LINK_ATTRS = {"href", "src", "srcset", "data", "xlink:href", "poster", "background", "action", "cite", "longdesc"}
+
+
+def _link_like(written: str) -> bool:
+    """Is a link, as written, one a reader follows? An attribute of an HTML tag
+    that is no address (`id="status"`) is not."""
+    m = re.match(r"<[^\s>]+\s+([\w:.-]+)=", written)
+    return m is None or m.group(1).lower() in LINK_ATTRS
+
+
+def _unmark(part: str) -> str:
+    """A name without emphasis marks round it (`_kai-ross_`, `~~x~~`, `==x==`,
+    `**x**`). A `*` at one end alone is a glob's."""
+    lead = re.match(r"(?:\*+|_+|~~|==)", part)
+    trail = re.search(r"(?:\*+|_+|~~|==)$", part[lead.end():] if lead else part)
+    if lead and lead.group(0).startswith("*") and not trail:
+        lead = None
+    rest = part[lead.end():] if lead else part
+    trail = re.search(r"(?:\*+|_+|~~|==)$", rest)
+    if trail and (lead or not trail.group(0).startswith("*")):
+        rest = rest[:trail.start()]
+    return rest or part
+
+
 def distinctive(name: str) -> bool:
-    """Is a bare name distinctive enough to name a page: does it hold a digit,
-    or a separator between two runs of letters? A plain word (`status`) is
-    not."""
-    return any(c.isdigit() for c in name) or bool(re.search(r"[^\W\d_]-[^\W\d_]", name))
+    """Is a bare name distinctive enough to name a page: does it hold anything
+    but letters (a digit, a separator, a `#`)? A plain word (`status`) is not."""
+    return not name.isalpha()
 
 
 def body_tokens(body: str, runs: bool) -> List[str]:
     """The tokens one code body may hold: all of it, each quoted string, each
     word, and with `runs` each run of up to eight words that starts after a
     command, at a path or at a date (a decision's name has spaces in it). A
-    body is read to MAX_TOKEN_WORDS words however long it is."""
-    candidates = [body.strip()[-4096:]]
-    candidates += [a or b for a, b in QUOTED_RE.findall(body)[:MAX_TOKEN_WORDS]]
+    body is read whole however long it is."""
+    candidates = [body.strip()]
+    candidates += [a or b for a, b in QUOTED_RE.findall(body)]
     shell = body.replace("\\ ", "\0")
-    candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)[:MAX_TOKEN_WORDS]]
+    candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)]
     if runs:
         for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
-            words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()[:MAX_TOKEN_WORDS]]
+            words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()]
             for i in range(len(words)):
                 if i < 4 or "/" in words[i] or (len(words[i]) == 6 and words[i].isdigit()):
                     for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
@@ -5897,8 +5945,11 @@ def markdown_targets(text: str) -> List[Tuple[str, str]]:
     out = []
     for regex in (MDLINK_RE, REFDEF_RE):
         for m in regex.finditer(text):
-            found = unquote(next((g for g in m.groups() if g is not None), "").strip())
-            if found and not re.match(r"(?i)^(?:obsidian://|mailto:|tel:)", found) and (
+            plain = next((g for g in m.groups() if g is not None), "").strip()
+            if "%" in plain and not plain.startswith("#"):          # a name may hold `%`: as written too
+                out.append((m.group(0).strip(), plain))
+            found = unquote(plain)
+            if found and not found.startswith("#") and not re.match(r"(?i)^(?:obsidian://|mailto:|tel:)", found) and (
                     not re.match(r"(?i)^[a-z][a-z0-9+.-]*://", found) or re.match(r"(?i)^https?://", found)):
                 out.append((m.group(0).strip(), found))
     for m in BROKEN_DEST_RE.finditer(text):                    # a destination broken over lines
@@ -5916,6 +5967,34 @@ FM_OPEN_RE = re.compile(r"\A﻿?---[ \t]*\r?\n")
 FM_CLOSE_RE = re.compile(r"(?m)^(?:---|\.\.\.)[ \t]*$")
 FM_KEY_RE = re.compile(r"""^(?:\?\s*)?(?:"([^"]*)"|'([^']*)'|([^:#"'][^:]*?))\s*:(?:\s+(.*))?$""")
 FM_SPLIT_RE = re.compile(r"[\s,;\[\]{}()\"'|>]+")
+
+
+_YAML_ESC = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "a": "\a", "b": "\b", "e": "\x1b", "f": "\f", "v": "\v",
+             "N": "\x85", "_": "\xa0", "L": "\u2028", "P": "\u2029", " ": " ", '"': '"', "/": "/", "\\": "\\"}
+YAML_DQ_RE = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
+YAML_SQ_RE = re.compile(r"'((?:[^']|'')*)'", re.S)
+
+
+def _yaml_double(m) -> str:
+    """A double-quoted YAML scalar as YAML reads it: a line break and the white
+    space round it one space, and `\\xNN`, `\\uNNNN`, `\\UNNNNNNNN` and the
+    one-letter escapes decoded."""
+    body = re.sub(r"\\\n\s*", "", m.group(1))                  # an escaped line break joins the lines
+    body = re.sub(r"[ \t]*\n\s*", " ", body)
+
+    def esc(e):
+        t = e.group(1)
+        if len(t) > 1:
+            try:
+                return chr(int(t[1:], 16))
+            except (ValueError, OverflowError):
+                return e.group(0)
+        return _YAML_ESC.get(t, t)
+    return re.sub(r"\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)", esc, body)
+
+
+def _yaml_single(m) -> str:
+    return re.sub(r"[ \t]*\n\s*", " ", m.group(1).replace("''", "'"))
 
 
 def frontmatter_names(text: str) -> List[Tuple[str, str]]:
@@ -5942,6 +6021,14 @@ def frontmatter_names(text: str) -> List[Tuple[str, str]]:
     else:
         return []
     out: List[Tuple[str, str]] = []
+    decoded = YAML_SQ_RE.sub(_yaml_single, YAML_DQ_RE.sub(_yaml_double, block)) if ('"' in block or "'" in block) else block
+    for variant in dict.fromkeys([block, decoded]):
+        out += _frontmatter_lines(variant)
+    return list(dict.fromkeys(out))
+
+
+def _frontmatter_lines(block: str) -> List[Tuple[str, str]]:
+    out: List[Tuple[str, str]] = []
     skipping = False
     for line in block.split("\n")[:2000]:
         stripped = line.strip()
@@ -5960,6 +6047,8 @@ def frontmatter_names(text: str) -> List[Tuple[str, str]]:
                 continue
         else:
             value = re.sub(r"^(?:[-?:]\s+)+", "", stripped)
+        if key and name not in OWN_KEYS and len(name) <= 200:     # a key may be a page's name
+            out.append((name, name))
         pieces = [value] + [a or b for a, b in QUOTED_RE.findall(value)] + re.split(r"[,;{}\[\]()\"'|>]+\s*|:\s+", value) + FM_SPLIT_RE.split(value)
         out += [(p, p) for p in dict.fromkeys(x.strip() for x in pieces) if p]
     return out
@@ -6026,14 +6115,18 @@ class PageNames:
         self._entities: Optional[Dict[Path, dict]] = None
         for page in ws.meetings:
             self._add(page, None)
-        for folder in (d for f in PEOPLE_FOLDERS for d in folded_dirs(ws, f)):
-            for page in sorted(folder.rglob("*.md")):
-                if page.is_file() and not page.is_symlink():
-                    self._add(page, "person page")
-        for folder in (d for f in ENTITY_FOLDERS for d in folded_dirs(ws, f)):
-            for page in sorted(folder.rglob("*.md")):
-                if page.is_file() and not page.is_symlink():
-                    self._add(page, "entity page")
+        # Every other page of the wiki, in any grade: `.md` in any case, and `.markdown`.
+        wiki = ws.root / "Wikis" / "Meetings"
+        for here, dirs, files in os.walk(wiki):
+            at = Path(here)
+            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not (at / d).is_symlink() and d.lower() != "raw")
+            for name in sorted(files):
+                page = at / name
+                if name.startswith(".") or Path(name).suffix.lower() not in (".md", ".markdown") or page in ws.meetings \
+                        or page.is_symlink():
+                    continue
+                inside = [x.lower() for x in page.relative_to(wiki).parts[:-1]]
+                self._add(page, "person page" if "people" in inside else "entity page" if "entities" in inside else "wiki page")
         for paths in raw_records(ws).values():
             for record in paths:
                 if record not in ws.meetings:
@@ -6067,7 +6160,9 @@ class PageNames:
             elif kind == "person page":
                 fm = parse_frontmatter(page)
                 names = [str(fm.get("title") or page.stem), page.stem.replace("-", " ")]
-                tags = set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties"))) | people_parties(ws.context, names)
+                tags = page_party_tags(ws, fm) | people_parties(ws.context, names)
+            elif kind == "wiki page":
+                tags = page_party_tags(ws, parse_frontmatter(page))
             elif kind == "entity page":
                 tags = self._entity_tags(page)
             else:
@@ -6081,9 +6176,10 @@ class PageNames:
             self._entities = {e["path"]: e for e in entity_index(ws)}
         known = self._entities.get(page)
         if known is not None:
-            return set(known["parties"]) | entity_parties(ws.context, name_group(entity_index(ws), [known["rel"]]))
+            return (set(known["parties"]) | page_party_tags(ws, parse_frontmatter(page))
+                    | entity_parties(ws.context, name_group(entity_index(ws), [known["rel"]])))
         fm = parse_frontmatter(page)
-        mine = (set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties")))) - {"none"}
+        mine = page_party_tags(ws, fm) - {"none"}
         return mine | entity_parties(ws.context, [{"parties": mine, "names": [str(fm.get("title") or page.stem), page.stem]}])
 
     def _record_tags(self, record: Path) -> set:
@@ -6169,6 +6265,34 @@ class PageNames:
         return list(found)
 
 
+def page_party_tags(ws: Workspace, fm: dict) -> set:
+    """The parties a page's `party:` and `parties:` name, as the Parties table
+    knows them: a tag, a party's name in the table (`Birch & Co`), a list in
+    brackets or quoted, or `none`. A value that is there and reads as none of
+    these is every party's: the page is walled from every project."""
+    known = ws.context.get("parties", {})
+    names = {}
+    for tag, entry in known.items():
+        cell = str(entry.get("party") if isinstance(entry, dict) else entry or "")
+        names[re.sub(r"[*`]", "", cell).strip().lower()] = tag
+    out: set = set()
+    for key in ("party", "parties"):
+        if key not in fm:
+            continue
+        for item in (fm[key] if isinstance(fm[key], list) else [fm[key]]):
+            text = str(item).strip().strip("\"'").strip()
+            pieces = [x.strip().strip("\"'").strip() for x in text[1:-1].split(",")] if text.startswith("[") and text.endswith("]") else [text]
+            for piece in pieces:
+                if not piece or piece.lower() == "none":
+                    continue
+                tag = strip_tag(piece)
+                tag = tag if tag in known else names.get(piece.lower())
+                if tag is None:
+                    return set(known) or {"?"}
+                out.add(tag)
+    return out
+
+
 def page_names(ws: Workspace) -> PageNames:
     """The index of the Meetings wiki's pages by name, built once a run."""
     if ws.page_names is None:
@@ -6176,7 +6300,7 @@ def page_names(ws: Workspace) -> PageNames:
     return ws.page_names
 
 
-def own_file(note: Path, project: Path, token: str) -> bool:
+def own_file(ws: Workspace, note: Path, project: Path, token: str) -> bool:
     """Does `token` name a file of the note's own project, read from the note's
     folder, its thread's or the project's? Then it is that file, not a page of
     the Meetings wiki that shares its name."""
@@ -6189,7 +6313,8 @@ def own_file(note: Path, project: Path, token: str) -> bool:
                 try:
                     one = base / name
                     if one.is_file() and not one.is_symlink() and Path(os.path.realpath(project)) in Path(os.path.realpath(one)).parents:
-                        return True
+                        if ws.index_files is None or os.path.realpath(one).casefold() in ws.index_files:
+                            return True
                 except (OSError, ValueError):
                     continue
     return False
@@ -6224,6 +6349,18 @@ def symlink_finding(ws: Workspace, project: Path, ptags: set, path: Path) -> Opt
 
 
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
+    """Every walls finding for one project file, whose text is `text`. A path in
+    it that the system cannot read (one too long to be a name) is a finding of
+    its own, never a crash and never a pass."""
+    try:
+        return _walls_for_file(ws, project, ptags, path, text)
+    except OSError as e:
+        return [Finding(ERROR, "walls", rel(ws, path),
+                        "holds a path the system cannot read (%s), so the file cannot be checked; shorten it or take it out"
+                        % (e.strerror or type(e).__name__), "A note in %s holds a path too long to be read" % project.name)]
+
+
+def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
     if ws.meeting_links is None:
@@ -6295,12 +6432,13 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # (verb, as written, token, names at least, whether one bare name will do): a
     # link may be to a bare name; code, frontmatter and prose read one only if
     # it is distinctive.
-    named = [(v, w, t, 1, True) for v, w, t in targets]
+    named = [(v, w, t, 1, v == "links" and _link_like(w)) for v, w, t in targets]
     named += [("writes the path", w, t, 1, False) for w, t in code_names(text, names.spaced)]
     shown = render(text)
     for body in dict.fromkeys([text, shown]):
         named += [("links", w, t, 1, True) for w, t in markdown_targets(body)]
-        named += [("links", m.group(0), m.group(1), 1, True) for m in WIKILINK_ANY_RE.finditer(body)]
+        named += [("links", m.group(0), m.group(1), 1, True) for m in WIKILINK_ANY_RE.finditer(body)
+                  if not m.group(1).lstrip().startswith("#")]
         named += [("links", "<%s>" % t, t, 1, True) for t in AUTOLINK_RE.findall(body)]
         named += [("links", w, t, 1, True) for w, t in uri_targets(body)]
         named += [("writes the path", w, t, 2, False) for w, t in prose_paths(body, names.spaced)]
@@ -6309,13 +6447,13 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     for verb, written, target, parts, bare in named if names.by_last else []:
         found = list(resolve(ws, path, target, meetings)) if meetings.items and (verb, written, target) in resolved else []
         named_pages = names.named(target, parts, bare)
-        if named_pages and not found and own_file(path, project, target):
+        if named_pages and not found and own_file(ws, path, project, target):
             continue                           # it is a file of this project, not a page that shares its name
         found += sorted((p for p in named_pages if p not in found),
-                        key=lambda p: (p not in ws.meetings, ("person page", "entity page", "raw record").index(names.kinds.get(p, "raw record"))
+                        key=lambda p: (p not in ws.meetings, ("person page", "entity page", "wiki page", "raw record").index(names.kinds.get(p, "raw record"))
                                        if p not in ws.meetings else 0))
         for page in found:
-            if len(out) > last:
+            if any(f.severity == ERROR for f in out[last:]):
                 told.add(prev)
             last, prev = len(out), written
             key = (written, page)
@@ -7145,6 +7283,8 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                             "folder, or install the hook from the workspace it belongs to" % problem,
                             "A commit was made in a repository the walls cannot place")]
         out.extend(apply_git_view(ws, top_path))
+        listed = _git(["ls-files", "-z"], top_path)
+        ws.index_files = {os.path.realpath(top_path / n).casefold() for n in listed.split("\0") if n} if listed is not None else set()
         try:
             minbox_rel = minbox.relative_to(top_path).parts
         except ValueError:

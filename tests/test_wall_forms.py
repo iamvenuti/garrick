@@ -90,6 +90,37 @@ def page_files(root: Path, kind: str, grade: str, party: str, n: int):
     raise ValueError(kind)
 
 
+# Pages a review found that the index or the party reading missed: another suffix, another way to write a party, a name
+# holding `#` or `%`. Each is (folder, far name, near name, suffix, party line); a `{p}` in the line is the party's tag
+# and a `{n}` its name in the Parties table. A far page whose party cannot be read is every party's.
+VARIANTS = {
+    "source-MD": ("sources", "260416-lake", "260416-cove", ".MD", "parties: [{p}]"),
+    "source-markdown": ("sources", "260417-moor", "260417-fen", ".markdown", "parties: [{p}]"),
+    "person-MD": ("people", "pat-quill", "ben-quill", ".MD", "party: {p}"),
+    "person-markdown": ("people", "fay-cole", "gus-cole", ".markdown", "party: {p}"),
+    "entity-MD": ("entities", "dune-ltd", "peak-ltd", ".MD", "party: {p}"),
+    "decision-MD": ("decisions", "260418 - pick-fen", "260418 - pick-bog", ".MD", "parties: [{p}]"),
+    "person-display": ("people", "rae-moss", "sid-moss", ".md", "party: {n}"),
+    "person-quoted": ("people", "zed-pike", "cal-pike", ".md", 'party: "[{p}]"'),
+    "person-hash": ("people", "dot#hash", "kit#hash", ".md", "party: {p}"),
+    "person-pct": ("people", "pc%20t", "qc%20t", ".md", "party: {p}"),
+    "person-unreadable": ("people", "ola-vance", None, ".md", "party: Birch Holdings"),
+}
+PARTY_NAMES = {FAR: "Birch & Co", NEAR: "Acme Corp"}
+
+
+def variant_file(root: Path, kind: str, party: str):
+    folder, far, near, suffix, line = VARIANTS[kind]
+    name = far if party == FAR else near
+    if name is None:
+        return None
+    line = line.format(p=party, n=PARTY_NAMES[party])
+    extra = "zone: Work\n" if folder in ("sources", "decisions") else ""
+    body = DECISION_BODY if folder == "decisions" else "\n# x\n"
+    return (meetings_home(root, "") / "wiki" / folder / (name + suffix),
+            "---\ntitle: %s\ntype: %s\n%s%s\n---\n%s" % (name, folder[:-1] if folder != "people" else "person", extra, line, body))
+
+
 def build(root: Path):
     """The workspace: the base fixture, Northwind (Acme), Harbour (Birch & Co)
     and every page of every kind and grade for each party. Returns
@@ -115,6 +146,11 @@ def build(root: Path):
             write(path, text)
         if files:
             pages[(kind, grade, party)] = files[0][0]
+    for kind, party in itertools.product(VARIANTS, (FAR, NEAR)):
+        made = variant_file(root, kind, party)
+        if made:
+            write(*made)
+            pages[(kind, "", party)] = made[0]
     return pages
 
 
@@ -229,6 +265,41 @@ for _name, _pair in WRAP_PAIRS.items():
     WRAPPING["prose-" + _name] = (lambda pair: lambda t: NOTE % ("%s%s%s" % (pair[0], t, pair[1])))(_pair)
     WRAPPING["link-" + _name] = (lambda pair: lambda t: NOTE % ("[x](%s%s%s)" % (pair[0], t, pair[1])) if " " not in t
                                  else NOTE % ("[x](<%s%s%s>)" % (pair[0], t, pair[1])))(_pair)
+LONG = "a" * 5000
+
+
+def _first_dash(t, ins):
+    k = t.rfind("-")
+    return t if k < 0 else t[:k] + ins + t[k + 1:]
+
+
+def _first_letter_u(t):
+    head, _, name = t.rpartition("/")
+    k = next((i for i, c in enumerate(name) if c.isalpha()), None)
+    return t if k is None else (head + "/" if head else "") + name[:k] + "\\u%04x" % ord(name[k]) + name[k + 1:]
+
+
+WRAPPING.update({
+    "code-long-tail": lambda t: NOTE % ("`%s#%s`" % (t, LONG)),
+    "fence-long-tail": lambda t: "# Notes\n\n```\ncat %s?%s\n```\n" % (t, LONG),
+    "prose-long-tail": lambda t: NOTE % ("%s#%s" % (t, LONG)),
+    "fm-long-tail": lambda t: "---\nrelated: %s#%s\n---\n\nx\n" % (t, LONG),
+    "link-long-fragment": lambda t: NOTE % ("[x](<%s#%s>)" % (t, LONG)),
+    "link-long-head": lambda t: NOTE % ("[x](<%s/%s>)" % (LONG, t.lstrip("/"))),
+    "code-many-dotdot": lambda t: NOTE % ("`%s%s`" % ("../" * 3000, t.lstrip("/"))),
+    "fm-dq-hex": lambda t: '---\nrelated: "[[%s]]"\n---\n\nx\n' % _first_dash(t, "\\x2d"),
+    "fm-dq-unicode": lambda t: '---\nrelated: "[[%s]]"\n---\n\nx\n' % _first_letter_u(t),
+    "fm-dq-fold": lambda t: '---\nrelated: "[[%s]]"\n---\n\nx\n' % _first_dash(t, "-\n  "),
+    "fm-sq": lambda t: "---\nrelated: '[[%s]]'\n---\n\nx\n" % t,
+    "prose-underscore": lambda t: NOTE % ("_" + t + "_"), "prose-strike": lambda t: NOTE % ("~~" + t + "~~"),
+    "prose-mark": lambda t: NOTE % ("==" + t + "=="), "prose-html-comment": lambda t: NOTE % ("<!-- x -->" + t),
+    "prose-obs-comment": lambda t: NOTE % ("%% x %%" + t), "prose-bold-star": lambda t: NOTE % ("**" + t + "**"),
+    "prose-segment-italic": lambda t: NOTE % (t.rpartition("/")[0] + "/_" + t.rpartition("/")[2] + "_"),
+    "fm-key": lambda t: "---\n%s: yes\n---\n\nx\n" % t,
+})
+NEW_FORMS = ("code-long-tail", "fence-long-tail", "prose-long-tail", "fm-long-tail", "link-long-fragment", "link-long-head",
+             "code-many-dotdot", "fm-dq-hex", "fm-dq-unicode", "fm-dq-fold", "fm-sq", "prose-underscore", "prose-strike",
+             "prose-mark", "prose-html-comment", "prose-obs-comment", "prose-bold-star", "prose-segment-italic", "fm-key")
 WRAPPERS = ("code", "quoted", "cat", "link", "wikilink")
 # What a wrapper can hold: these read a path of two names or more (a URL has a
 # host, prose reads no bare name), the rest any token.
@@ -242,7 +313,7 @@ NO_SPACE = PATH_ONLY[:3] + ("prose-sol", "prose-num", "prose-hex", "prose-wbr", 
 # The factors a review added. Each block is a product of its own values against
 # every page and depth; a form found later is a new value in one of them.
 NEW_PREFIXES = ("@", "path:", "!", "$", "*", "#", "~")
-NEW_SUFFIXES = (":3-5", "@3", ":L3", "::Heading", "~", ".md:3-5", ".md::Heading", ".md~")
+NEW_SUFFIXES = (":3-5", "@3", ":L3", "::Heading", "~", ".md:3-5", ".md::Heading", ".md~", "^abc", ".md^abc")
 NEW_WRAPPERS = ("autolink-file", "autolink-file1", "autolink-https", "frontmatter", "frontmatter-list", "indented",
                 "indented-cat", "indented-refdef", "html-code", "html-pre", "html-comment", "long-span", "long-token",
                 "prose")
@@ -272,6 +343,10 @@ RENDER_WRAPPERS = ("prose-sol", "prose-num", "prose-hex", "link-num", "prose-wbr
                    "prose-zws", "prose-zwse", "link-letter", "prose-pct5c", "prose-pct2f", "code-pct5c", "prose-backslash")
 WRAPCHAR_WRAPPERS = tuple("%s-%s" % (w, n) for n in WRAP_PAIRS for w in ("code", "prose", "link"))
 SPACE_OK = ("prose", "prose-nbsp")
+PATH_ONLY += ("prose-segment-italic", "prose-long-tail", "prose-underscore", "prose-strike", "prose-mark", "prose-html-comment", "prose-obs-comment",
+              "prose-bold-star")
+NO_SPACE += ("prose-segment-italic", "prose-long-tail", "prose-underscore", "prose-strike", "prose-mark", "prose-html-comment", "prose-obs-comment",
+             "prose-bold-star")
 
 
 def usable(wrapper: str, depth: str) -> bool:
@@ -279,9 +354,11 @@ def usable(wrapper: str, depth: str) -> bool:
     no space (a path into a wiki read over several words excepted), a URL needs
     a `wiki`, `raw` or `Wikis` segment to name a page, and prose reads a path
     of two names or more."""
-    if wrapper in PATH_ONLY and "/" not in depth:
+    if (wrapper in PATH_ONLY or wrapper == "link-long-head") and "/" not in depth:
         return False
     if " " in depth and wrapper in PATH_ONLY and wrapper not in SPACE_OK:
+        return False
+    if " " in depth and wrapper in NO_SPACE:
         return False
     if wrapper == "autolink-https" and not {x.lower() for x in depth.split("/")} & {"wiki", "raw", "wikis"}:
         return False
@@ -294,14 +371,22 @@ def usable(wrapper: str, depth: str) -> bool:
     return True
 
 
-def blocks(root: Path, page: Path):
+def blocks(root: Path, page: Path, variant: bool = False):
     """(wrapper, token) for every row that names `page`: the blocks of the
-    table, each a product of its own factors against the depths."""
+    table, each a product of its own factors against the depths. A page of a
+    variant (another suffix, another way to write its party) runs one block."""
+    if variant:
+        for depth in dict.fromkeys(few(root, page)):
+            for prefix, suffix, wrapper in itertools.product(("", "./"), ("", "/", ".md", ":3"), WRAPPERS):
+                yield wrapper, prefix + depth + suffix
+        return
     for depth in dict.fromkeys(depths(root, page)):
         for prefix, suffix, wrapper in itertools.product(PREFIXES, SUFFIXES, WRAPPERS):
             yield wrapper, prefix + depth + suffix
     for depth in few(root, page):
         for prefix, suffix, wrapper in itertools.product(NEW_PREFIXES + WORD_PREFIXES, ("", "/", ".md"), ("code", "cat", "link", "wikilink")):
+            if prefix == "#" and wrapper in ("link", "wikilink"):
+                continue                       # a link that starts with `#` points into the note itself
             yield wrapper, prefix + depth + suffix
         for prefix, suffix, wrapper in itertools.product(("", "./"), NEW_SUFFIXES, WRAPPERS):
             yield wrapper, prefix + depth + suffix
@@ -324,6 +409,9 @@ def blocks(root: Path, page: Path):
             yield wrapper, depth + suffix
         for wrapper in OBS_WRAPPERS:
             yield wrapper, depth
+        for suffix, wrapper in itertools.product(("", ".md"), NEW_FORMS):
+            if usable(wrapper, depth):
+                yield wrapper, depth + suffix
 
 
 def rows(root: Path, pages: dict, party: str):
@@ -332,7 +420,7 @@ def rows(root: Path, pages: dict, party: str):
     for (kind, grade, owner), page in sorted(pages.items()):
         if owner != party:
             continue
-        for wrapper, token in dict.fromkeys(blocks(root, page)):
+        for wrapper, token in dict.fromkeys(blocks(root, page, kind in VARIANTS)):
             out.append(("%s/%s/%s: %s" % (kind, grade or "live", wrapper, token), WRAPPING[wrapper](token)))
     return out
 
@@ -370,6 +458,8 @@ class Table:
             for party in (FAR, NEAR):
                 every = 1 if full else (25 if project_name == "Harbour" else 1 if party != own else 8)
                 for i, (label, text) in enumerate(rows(self.root, self.pages, party)):
+                    if label.startswith("person-unreadable") and project_name == "Harbour":
+                        continue                       # a page whose party cannot be read is walled from every project
                     if i % every == 0:
                         out[(project_name, party, label)] = self.verdict(project_name, text)
         return out
@@ -397,7 +487,7 @@ class WallFormsTest(unittest.TestCase):
 
     def test_the_table_is_as_wide_as_its_factors(self):
         far, near = rows(self.root, self.table.pages, FAR), rows(self.root, self.table.pages, NEAR)
-        self.assertEqual(len(far), len(near))
+        self.assertEqual(len(far), len(near) + 160)       # the page whose party cannot be read has no near-side twin
         self.assertGreater(len(far), 55000)
         self.assertEqual(len(far), len({label for label, _ in far}))
         self.assertLessEqual(len(self.read("Northwind", NEAR)), len(self.read("Northwind", FAR)))
@@ -537,6 +627,53 @@ class WallFormsRowsTest(unittest.TestCase):
             os.symlink(str(work / "Northwind" / "Northwind.md"), str(thread / "own.md"))
             git(work, "add", "-A")
             self.assertEqual([], [f for f in check.run_checks(self.root, staged=work) if f.check == "walls"])
+
+    def test_anchors_plain_folder_words_and_a_root_path_name_nothing(self):
+        for written in ("[Setup](#setup)", "[[#Status]]", "[x](<#status>)", '<a id="status"></a>', '<a href="#setup">x</a>',
+                        "`setup/`", "`cd setup/`", "`rsync -a status/ backup/`", "`rm -r config/`", "`../config`",
+                        "`./setup`", "`./docker/`", "`POST /setup`", "POST /setup", "`curl /status`"):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual([], found, found)
+        for text in ("# n\n\n```\napp/\n  setup/\n  config/\n```\n", "# n\n\n- app/\n  - setup/\n  - docker/\n"):
+            with self.subTest(text):
+                self.assertEqual([], self.says_raw(text))
+        for written in ("`wiki/entities/setup/`", "[[setup]]", "`harvest-co/`"):
+            with self.subTest(written):
+                self.assertEqual(["error"], [x for x, _ in self.says(written)])
+
+    def test_a_token_naming_two_pages_is_told_by_its_worst_finding(self):
+        meetings = self.root / "Wikis" / "Meetings"
+        write(meetings / "wiki" / "sources" / "260401-twin.md", meeting_page("Personal", "[acme]", "Twin"))
+        write(meetings / "wiki" / "sources" / "260402-other.md",
+              meeting_page("Work", "[birch]", "Other").replace("people:", 'transcript: "[[raw/260401-twin.txt]]"\npeople:'))
+        write(meetings / "raw" / "260401-twin.txt", "x\n")
+        found = self.says("`260401-twin`")
+        self.assertIn("error", [x for x, _ in found], found)
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_an_own_file_that_is_not_in_the_commit_exempts_nothing(self):
+        work = self.root / "Zones" / "Work"
+        shutil.rmtree(work / ".git", ignore_errors=True)
+        git(work, "init", "-q")
+        own = work / "Northwind" / "Threads" / "Freight" / "260315-harvest.md"
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}):
+            commit_all(work, "start")
+            write(own, "# mine\n")                                  # on disk, not staged
+            write(self.note, "# Notes\n\nSee `./260315-harvest`.\n")
+            git(work, "add", str(self.note))
+            found = [f for f in check.run_checks(self.root, staged=work) if f.check == "walls"]
+            self.assertEqual(["error"], [f.severity for f in found], found)
+            git(work, "add", str(own))                               # now the commit holds it
+            self.assertEqual([], [f for f in check.run_checks(self.root, staged=work) if f.check == "walls"])
+            commit_all(work, "own file")                             # and in HEAD it stays held
+            write(self.note, "# Notes\n\nSee `./260315-harvest` again.\n")
+            git(work, "add", str(self.note))
+            self.assertEqual([], [f for f in check.run_checks(self.root, staged=work) if f.check == "walls"])
+
+    def test_a_path_too_long_for_the_system_is_a_finding_not_a_crash(self):
+        found = self.says("[x](%s/Wikis/Meetings/wiki/people/kai-ross.md)" % ("./a/.." * 1500))
+        self.assertEqual(["error"], [x for x, _ in found], found)
 
     def test_a_folder_that_only_shares_a_name_is_still_a_folder(self):
         write(self.root / "Zones" / "Work" / "Harbour" / "Notes" / "Demo.md", "# Demo\n")

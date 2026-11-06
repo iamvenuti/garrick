@@ -53,6 +53,21 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
+def _safe_fnmatch(names, pattern):
+    """fnmatch's filter, that never raises. A pattern the platform's `re`
+    cannot compile (a bracket range out of order, such as `[h-e]`, which
+    Python 3.9 refuses) is read with every bracket class as `*` instead: an
+    over-approximation, so a glob that cannot be read names more, never less."""
+    try:
+        return fnmatch_filter(names, pattern)
+    except re.error:
+        wide = re.sub(r"\[[^\]]*\]?", "*", pattern)
+        try:
+            return fnmatch_filter(names, wide)
+        except re.error:
+            return [n for n in names if n == pattern]
+
+
 sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -6353,7 +6368,7 @@ class PageNames:
                     # a page whose whole path is n names long is matched by the last n names of a longer glob
                     pool = (self._tails.get(k) if n == k else self._full.get(n)) or {}
                     want = pattern if n == k else "/".join(cut[-n:])
-                    for key in fnmatch_filter(pool, want):
+                    for key in _safe_fnmatch(pool, want):
                         found.update(dict.fromkeys(pool[key]))
         if len(self._globs) > 50000:
             self._globs.clear()

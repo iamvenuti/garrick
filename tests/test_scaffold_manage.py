@@ -488,7 +488,7 @@ class TestMove(ManageCase):
     def test_a_party_that_cannot_be_read_plainly_is_refused(self):
         hub = self.apex / "Apex.md"
         hub.write_text(hub.read_text().replace("party: acme", "party: []"))
-        self.commit("no party")
+        self.commit("no party", hook=False)    # the hook now refuses a project with no party
         self.refused("no single `party:`")
         hub.write_text(hub.read_text().replace("party: []", "party: nobody"))      # the wall hook would not let it in
         r = self.move()

@@ -343,6 +343,33 @@ def walk_files(top: Path, skip: Optional[set] = None, nested: bool = False) -> I
                 yield here / name
 
 
+def text_of(data: bytes, strict: bool = False) -> Optional[str]:
+    """A file's bytes as text, or None when they are not text. UTF-8 is the
+    rule; a file that opens with a UTF-16 or UTF-32 byte order mark (Excel's
+    Unicode text, a Windows .csv or .txt) is decoded as that. Other bytes with
+    a NUL in the first 8 KB are binary. With `strict`, UTF-8 that does not
+    decode is not text either."""
+    if data[:4] in (b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"):
+        enc = "utf-32"
+    elif data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        enc = "utf-16"
+    else:
+        enc = None
+    if enc:
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            return None
+    if b"\0" in data[:8192]:
+        return None
+    if strict:
+        try:
+            return data.decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+    return data.decode("utf-8", errors="replace")
+
+
 def read_text(path: Path) -> Optional[str]:
     """The file's text, or None when it is binary, huge or unreadable."""
     try:
@@ -351,9 +378,7 @@ def read_text(path: Path) -> Optional[str]:
         data = path.read_bytes()
     except OSError:
         return None
-    if b"\0" in data[:8192]:
-        return None
-    return data.decode("utf-8", errors="replace")
+    return text_of(data)
 
 
 class NoteCache:
@@ -7324,9 +7349,10 @@ def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
         except (OSError, subprocess.SubprocessError):
             continue
         data = res.stdout
-        if res.returncode != 0 or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
+        text = text_of(data) if res.returncode == 0 and len(data) <= MAX_STAGED_BYTES else None
+        if text is None:
             continue
-        out.append((path, data.decode("utf-8", errors="replace")))
+        out.append((path, text))
     return out
 
 
@@ -7367,9 +7393,10 @@ def git_view(ws: Workspace, committing: Path) -> Dict[Path, str]:
             if not name or Path(name).suffix.lower() not in TEXT_SUFFIXES | {".eml"}:
                 continue
             data = _git_bytes(["show", spec % name], top)
-            if data is None or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
+            text = text_of(data) if data is not None and len(data) <= MAX_STAGED_BYTES else None
+            if text is None:
                 continue  # deleted in git too, or not text
-            out[top / name] = data.decode("utf-8", errors="replace")
+            out[top / name] = text
     return out
 
 
@@ -7599,8 +7626,9 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
         elif staged_path.suffix.lower() in TEXT_SUFFIXES:
             # a file of the text suffixes that the walls cannot read is refused, not skipped (#398)
             data = _git_bytes(["show", ":" + name], raw[0])
-            if data is not None and (len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]):
-                why = "is over %d bytes" % MAX_STAGED_BYTES if len(data) > MAX_STAGED_BYTES else "holds NUL bytes (binary, or UTF-16)"
+            if data is not None and (len(data) > MAX_STAGED_BYTES or text_of(data) is None):
+                why = ("is over %d bytes" % MAX_STAGED_BYTES if len(data) > MAX_STAGED_BYTES
+                       else "holds NUL bytes and no UTF-16 byte order mark")
                 out.append(Finding(ERROR, "walls", rel(ws, staged_path),
                                    "%s, so the walls cannot read it; save it as UTF-8 text under the size limit, or keep "
                                    "it out of the project" % why, "A file in %s cannot be read by the walls" % owner[0].name))
@@ -7683,12 +7711,10 @@ def staged_other_texts(repo: Path) -> List[Tuple[Path, str]]:
         if path.suffix.lower() in TEXT_SUFFIXES:
             continue
         data = _git_bytes(["show", ":" + name], top_path)
-        if data is None or not data or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
+        text = text_of(data, strict=True) if data and len(data) <= MAX_STAGED_BYTES else None
+        if text is None:
             continue
-        try:
-            out.append((path, data.decode("utf-8")))
-        except UnicodeDecodeError:
-            continue
+        out.append((path, text))
     return out
 
 
@@ -7727,12 +7753,10 @@ def recheck_after_party_change(ws: Workspace, repo: Path, staged_texts: List[Tup
                 continue
             target = top_path / name
             data = _git_bytes(["show", ":" + name], top_path)
-            if data is None or not data or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
+            text = text_of(data, strict=True) if data and len(data) <= MAX_STAGED_BYTES else None
+            if text is None:
                 continue
-            try:
-                out.append((target, data.decode("utf-8"), owner))
-            except UnicodeDecodeError:
-                continue
+            out.append((target, text, owner))
     return out
 
 

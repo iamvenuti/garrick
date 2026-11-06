@@ -70,11 +70,24 @@ class StagedFiles(unittest.TestCase):
         path.write_bytes(data)
         git(self.work, "add", "-A")
 
-    def test_a_text_file_with_nul_bytes_is_refused(self):
-        self.stage("Northwind/Threads/Pricing/utf16.md", "Ask Theo Marsh".encode("utf-16"))
+    def test_a_text_file_with_nul_bytes_and_no_byte_order_mark_is_refused(self):
+        self.stage("Northwind/Threads/Pricing/utf16.md", "Ask Theo Marsh".encode("utf-16-le"))
         found = self.errors("utf16.md")
         self.assertEqual(1, len(found), found)
         self.assertIn("cannot read", found[0].message)
+
+    def test_a_utf16_file_with_a_byte_order_mark_is_read(self):
+        # Excel's Unicode text and a Windows .csv: read as text, not refused as unreadable
+        self.stage("Northwind/Sources/export.csv", "a,b\r\n1,2\r\n".encode("utf-16"))
+        self.assertEqual([], self.errors("export.csv"))
+        self.stage("Northwind/Threads/Pricing/utf16.md", "Ask Theo Marsh".encode("utf-16"))
+        found = self.errors("utf16.md")
+        self.assertEqual(1, len(found), found)
+        self.assertNotIn("cannot read", found[0].message)          # it was read: the name in it is what is refused
+        self.stage("Northwind/Threads/Pricing/utf32.txt", "Ask Theo Marsh".encode("utf-32"))
+        found = self.errors("utf32.txt")
+        self.assertEqual(1, len(found), found)
+        self.assertNotIn("cannot read", found[0].message)
 
     def test_a_text_file_over_the_cap_is_refused_and_one_under_it_is_read_whole(self):
         big = b"filler words " * 400_000 + b"Ask Theo Marsh at the end.\n"          # about 5 MB, past the old 2 MB cap

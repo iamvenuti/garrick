@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { bandSlot, buildIndex, endsWithQuestion, fileHref, FULL, label, launcherSettings, linkify, liveNote, lockFile, lockRunning, lockStart, lookup, MARK, markCells, newestMs, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, WRAP_LOCK_MS, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
+import { bandSlot, buildIndex, endsWithQuestion, fileHref, foldersUp, FULL, label, launcherSettings, linkify, liveNote, lockFile, lockRunning, lockStart, lookup, MARK, markCells, newestMs, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, WRAP_LOCK_MS, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -436,6 +436,15 @@ describe('paths', () => {
     expect(lookup(idx, 'readme.md', 'Zones/Work/Acme')).toBe('Zones/Work/Acme/Notes/readme.md')
   })
 
+  test('the fallback walks every folder from the session up to the root, never above it', () => {
+    expect(foldersUp('/v/Zones/Work/Acme/Threads/Review', '/v')).toEqual([
+      '/v/Zones/Work/Acme/Threads/Review', '/v/Zones/Work/Acme/Threads', '/v/Zones/Work/Acme', '/v/Zones/Work', '/v/Zones', '/v',
+    ])
+    expect(foldersUp('/v', '/v')).toEqual(['/v'])
+    expect(foldersUp('/elsewhere/x', '/v')).toEqual(['/v'])
+    expect(foldersUp('/vault2/x', '/v')).toEqual(['/v'])
+  })
+
   test('hrefs are percent-encoded', () => {
     expect(fileHref('/v/a b/#1.md')).toBe('file:///v/a%20b/%231.md')
   })
@@ -447,6 +456,46 @@ describe('paths', () => {
     expect(out).toContain('[`System/rules.md`](file:///v/System/rules.md)')
     expect(out).toContain('`claude plugin test`')
     expect(out).toContain('```\n`System/rules.md`\n```')
+  })
+})
+
+describe('a file written in the turn', () => {
+  const cwd = `${ROOT}/Zones/Work/Acme/Threads/Review`
+  const made = `${ROOT}/Zones/Work/Acme/Deliverables/261105 - Brief.md`
+  const reply = 'See `Acme/Deliverables/261105 - Brief.md`, `Work/Acme/Deliverables/261105 - Brief.md`, `Deliverables/261105 - Brief.md`, `Acme/Deliverables/none.md` and `../../../../../etc/hosts`.'
+
+  async function session($: any, on: any, listed: () => string[]) {
+    on('session.root', async () => ({ value: cwd }))
+    on('session.cwd', async () => ({ value: cwd }))
+    on('env.get', async () => ({ value: '/Users/someone' }))
+    on('fs.exists', async (_$: any, e: any) => ({ value: [`${ROOT}/System/rules.md`, made, `${ROOT}/etc/hosts`, '/etc/hosts'].includes(e.path) }))
+    on('fs.read', async () => ({ value: '' }))
+    on('process.run', async () => ({ value: { exitCode: 0, stdout: listed().join('\n'), stderr: '' } }) as any)
+    on('command.register', async () => ({ value: undefined }) as any)
+    on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd ?? cwd }) as any)
+    on('ui.render', async ($: any, e: any) => {
+      drawn = String(e.props.text)
+      const { Text } = $.ui.resolve(e)
+      return <Text>drawn</Text>
+    })
+    await $.session.start({ cwd } as any)
+  }
+  let drawn = ''
+  const render = async ($: any, text: string) => {
+    await $.ui.render({ component: 'AssistantMessage', surface: 'terminal', props: { text } } as any)
+    return drawn
+  }
+
+  test('a span relative to a folder between the session and the root becomes a link', async ($, on) => {
+    on('tool.call', async () => ({ result: '' }))
+    await session($, on, () => [`${ROOT}/System/rules.md`])
+    const out = await render($, reply)
+    for (const span of ['Acme/Deliverables/261105 - Brief.md', 'Work/Acme/Deliverables/261105 - Brief.md', 'Deliverables/261105 - Brief.md']) {
+      expect(out).toContain(`[\`${span}\`](${fileHref(made)})`)
+    }
+    expect(out).toContain('`Acme/Deliverables/none.md`')
+    expect(out).not.toContain('](file:///etc')
+    expect(out).toContain('`../../../../../etc/hosts`')
   })
 })
 

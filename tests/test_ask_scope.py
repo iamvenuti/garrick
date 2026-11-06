@@ -28,7 +28,7 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 import test_ask as base  # noqa: E402
-from fixtures import CONTEXT, meeting_page, thread_note, write  # noqa: E402
+from fixtures import CONTEXT, meeting_page, project_hub, thread_note, write  # noqa: E402
 from test_page_action import git  # noqa: E402
 
 ask = base.ask
@@ -759,6 +759,33 @@ class TestOneQuestionManyStores(AnswerCase):
             self.assertEqual(c0, c1)                      # the records, whether a wall held any back, the count
             self.assertNotIn("WALLEDMARK", json.dumps(f1))
         self.assertFalse(any(c[1] for _, c, _ in after))
+
+    def test_a_page_walled_from_one_party_of_the_scope_changes_nothing(self):
+        ctx = self.root / "System" / "context.md"
+        text = ctx.read_text()
+        text = text.replace("\n## Walls", "| Northwind | Client | Work | `northwind` | northwind.example |\n"
+                            "| Cedar | Client | Work | `cedar` | cedar.example |\n\n## Walls", 1)
+        text = text.replace("| `acme` | `birch` | Competitors, and both are clients |",
+                            "| `acme` | `birch` | Competitors, and both are clients |\n| `cedar` | `northwind` | Competitors |", 1)
+        write(ctx, text)
+        harbour = self.work / "Harbour"
+        write(harbour / "Harbour.md", project_hub("Work", "Harbour", "acme", ["Intake"]))
+        write(harbour / "Threads" / "Intake" / "Intake.md",
+              thread_note("Harbour", "Intake", "northwind", "Pallet intake runs weekly."))
+        self.meeting("261101-harbour.md", "[acme]", "Pallet delivery agreed.")
+        finds = [{"route": r, "words": ["pallet"], "zone": "Work", "project": "Harbour"} for r in ("thread", "meetings")]
+
+        def outcome(find_, order):
+            found, chosen, _ = self.read(find_, order)
+            return found, chosen
+        before = [outcome(f, o) for f in finds for o in (None, "recent")]
+        for i in range(10):
+            self.meeting("2611%02d-cedar-%d.md" % (i + 10, i), "[acme, cedar]", "pallet pallet pallet pallet CEDARMARK %d" % i,
+                         "2026-11-%02d" % (i + 10))
+        after = [outcome(f, o) for f in finds for o in (None, "recent")]
+        self.assertEqual(before, after)                  # records, order, back, matched and passages
+        self.assertTrue(any("Intake" in r["path"] for r in after[0][0]))
+        self.assertNotIn("CEDARMARK", json.dumps(after))
 
     def test_a_walled_page_matched_only_through_a_name_form_stays_out(self):
         self.meeting("261106-both.md", "[acme, birch]", "Only the Acme Corp spelling is used here.")

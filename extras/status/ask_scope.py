@@ -796,6 +796,8 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
                 continue
             if not sc.every and not set(parties) & sc.parties:
                 continue
+            if sc.project is not None and any_wall(ctx, parties, sc.parties, lib_):
+                continue                        # a page walled from a party of the project's own scope (#397)
             # The wall test, before the page is matched, ranked, counted or
             # cut: choose() itself, on this page alone and holding nothing, so
             # that no other page can change whether it is kept (#397).

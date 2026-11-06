@@ -615,7 +615,8 @@ function link(name,href){var a=el('a','',name);a.setAttribute('href',href);retur
 var S={zone:'',party:'',source:'wiki',wiki:'',age:'any',cursor:'',gone:{},typed:{}};
 try{Object.assign(S,JSON.parse(ss(SK)||'{}'))}catch(e){}
 function keep(){ss(SK,JSON.stringify(S))}
-var zones=D.zones||[];if(S.zone!=='*'&&!zones.some(function(z){return z.zone===S.zone}))S.zone=zones.length?zones[0].zone:'';
+/* no zone chosen yet: the first zone, by name, with an open question in its default view; none has one, the first zone */
+var zones=D.zones||[];if(S.zone!=='*'&&!zones.some(function(z){return z.zone===S.zone})){var fz=zones.filter(function(z){return((D.menu||{})[z.zone]||0)>0})[0]||zones[0];S.zone=fz?fz.zone:''}
 function zinfo(){return zones.filter(function(z){return z.zone===S.zone})[0]||{scopes:[]}}
 function scopes(){if(S.zone!=='*')return zinfo().scopes;var o=[];zones.forEach(function(z){z.scopes.forEach(function(s){o.push(s)})});return o}
 function scoped(){return scopes().length>0}

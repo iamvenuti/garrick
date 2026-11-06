@@ -21,11 +21,11 @@ from test_status_more import DOM  # noqa: E402
 
 HARNESS = r"""
 const vm = require("vm");
-const [html, js, steps, hosted] = JSON.parse(process.argv[1]);
+const [html, js, steps, hosted, seed] = JSON.parse(process.argv[1]);
 """ + DOM + r"""
 const doc = new El("#document");
 parse(html, doc);
-const sess = {}, posted = [];
+const sess = seed || {}, posted = [];
 El.prototype.addEventListener = function (t, f) { (this._l = this._l || {})[t] = (this._l[t] || []).concat([f]); };
 Object.defineProperty(El.prototype, "value", { get() { return this._v === undefined ? "" : this._v; }, set(v) { this._v = v; } });
 const qs = El.prototype.querySelector;
@@ -57,6 +57,8 @@ function seen() {
     nurture: $("qp-nurture").hidden ? [] : $("qp-nurture").querySelectorAll("h3,button,summary").map((e) => e.localName + ":" + e.textContent),
     work: $("qp-work").textContent,
     posted: posted.slice(),
+    zone: ($("qp-zone").children.find((o) => o.selected) || {}).value,
+    gone: JSON.parse(sess["garrick-questions"] || "{}").gone || {},
   };
 }
 const out = [seen()];
@@ -104,9 +106,9 @@ def data():
             "menu": {}}
 
 
-def run(steps, hosted=True, d=None):
+def run(steps, hosted=True, d=None, seed=None):
     html = '<span id="qp-tab-n"></span>' + qp.body(d or data())
-    done = subprocess.run(["node", "-e", HARNESS, json.dumps([html, qp.JS, steps, hosted])], capture_output=True, text=True, timeout=60)
+    done = subprocess.run(["node", "-e", HARNESS, json.dumps([html, qp.JS, steps, hosted, seed])], capture_output=True, text=True, timeout=60)
     if done.returncode:
         raise AssertionError(done.stderr)
     return json.loads(done.stdout)
@@ -270,3 +272,56 @@ class TestTwoPartyKeys(Panel):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def saved(zone=None, gone=None):
+    state = {}
+    if zone is not None:
+        state["zone"] = zone
+    if gone is not None:
+        state["gone"] = gone
+    return {"garrick-questions": json.dumps(state)}
+
+
+def one_zone_data(zone):
+    """Open questions in one zone only; the menu counts them the way the build does."""
+    d = data()
+    for key in ("Personal|", "Work|acme", "Work|birch"):
+        d["buckets"][key]["questions"] = []
+    d["knowledge"] = []
+    if zone == "Personal":
+        d["buckets"]["Personal|"]["questions"] = [q("Home: which plan?", "h")]
+    else:
+        d["buckets"]["Work|acme"]["questions"] = [q(ACME, "a1")]
+    d["menu"] = {"Personal": 1 if zone == "Personal" else 0, "Work": 1 if zone == "Work" else 0}
+    return d
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestOpensOnAZoneWithQuestions(unittest.TestCase):
+    """Draft: the panel opens on the first zone, by name, with open questions."""
+
+    def test_questions_in_one_zone_only_open_on_that_zone_and_list_them(self):
+        seen = run([], d=one_zone_data("Work"))[0]
+        self.assertEqual("Work", seen["zone"])
+        self.assertIn(ACME, json.dumps(seen["list"]))
+
+    def test_the_first_zone_by_name_with_questions_wins(self):
+        d = one_zone_data("Work")
+        d["menu"] = {"Personal": 2, "Work": 1}
+        self.assertEqual("Personal", run([], d=d)[0]["zone"])
+
+    def test_no_questions_anywhere_opens_on_the_first_zone(self):
+        d = one_zone_data("Work")
+        d["buckets"]["Work|acme"]["questions"] = []
+        d["menu"] = {"Personal": 0, "Work": 0}
+        self.assertEqual("Personal", run([], d=d)[0]["zone"])
+
+    def test_a_zone_chosen_in_the_session_is_kept_on_reload(self):
+        d = one_zone_data("Work")
+        self.assertEqual("Personal", run([], d=d, seed=saved(zone="Personal"))[0]["zone"])
+        self.assertEqual("*", run([], d=d, seed=saved(zone="*"))[0]["zone"])
+
+    def test_the_default_never_widens_a_view_across_a_wall(self):
+        seen = run([], d=one_zone_data("Work"))[0]
+        self.assertNotIn(BIRCH, json.dumps(seen["list"]))

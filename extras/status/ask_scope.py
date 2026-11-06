@@ -110,7 +110,7 @@ def _tool(ws: Path, name: str, fits):
 def lib(ws: Path):
     """garrick_lib.py: the context, the walls, the frontmatter and the live files, read as the checks read them."""
     return _tool(ws, "garrick_lib.py", lambda m: all(callable(getattr(m, f, None)) for f in
-                                                     ("load_context", "walled", "parse_frontmatter_text", "live_files")))
+                                                     ("load_context", "crossings", "decide", "labels", "meeting_labels", "parse_frontmatter_text", "live_files")))
 
 
 def extractor(ws: Path):
@@ -119,8 +119,7 @@ def extractor(ws: Path):
 
 
 def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_) -> bool:
-    those = list(those)
-    return any(lib_.walled(ctx, a, b) for a in these for b in those)
+    return bool(lib_.crossings(ctx, these, list(those)))
 
 
 # ---------------------------------------------------------------- the names in a request
@@ -147,13 +146,11 @@ def hub_parties(ws: Path, zone: str, project: str, lib_) -> frozenset:
 
 def place_parties(ws: Path, zone: str, project: str, thread: Optional[str], lib_) -> frozenset:
     """The parties a place is written for: its hub's, and a thread's own as
-    well; for a whole project, every thread's in it, live or not."""
+    well; for a whole project, every thread's in it, live or not. garrick_lib's
+    labels() derives them; a place whose labels cannot be derived has none."""
     folder = Path(ws) / "Zones" / zone / project
-    tags = set(hub_parties(ws, zone, project, lib_))
-    threads = [thread] if thread is not None else sorted(p.name for p in (folder / "Threads").glob("*/"))
-    for t in threads:
-        tags |= note_tags(folder / "Threads" / t / (t + ".md"), lib_)
-    return frozenset(tags)
+    got = lib_.labels(ws, folder if thread is None else folder / "Threads" / thread)
+    return frozenset(got or ())
 
 
 def entries(ws: Path, names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> List[Tuple[str, bool, Entry]]:
@@ -780,13 +777,9 @@ def page_parties(fm: dict, ctx: dict, lib_) -> List[str]:
     """A Meetings page's parties, or none when they cannot all be stated: a
     finished page has a zone and a list of tags (check.py's finished()); a
     person or entity page may have its `party:` alone. Every tag must be in
-    the Parties table, since walled() never matches one it does not hold."""
-    if str(fm.get("type") or "").strip().lower() in PARTY_ALONE and fm.get("parties") is None:
-        tags = _tags(fm.get("party"), lib_)
-    elif fm.get("zone") and isinstance(fm.get("parties"), list):
-        tags = _tags(fm.get("parties"), lib_)
-    else:
-        return []
+    the Parties table, since decide() denies a tag it does not hold."""
+    got = lib_.meeting_labels(fm)
+    tags = sorted(got) if got else []
     return tags if tags and set(tags) <= set(ctx.get("parties", {})) else []
 
 
@@ -812,7 +805,11 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
         parties = set(r["parties"])
         if not parties <= known:
             continue                            # a tag no wall can be checked against: never read
-        if any_wall(ctx, parties, parties | group, lib_):
+        # A record with no party is a published page of Knowledge: public. The first record
+        # admitted sets the group of a question across every zone.
+        labels = parties or {lib_.PUBLIC}
+        scope = group or parties
+        if lib_.decide(scope, labels, "read", ctx) != "permit":
             back = True
             continue
         matched += 1

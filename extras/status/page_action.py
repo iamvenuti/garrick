@@ -2207,7 +2207,7 @@ class WikiQuestion:
         self.path = path
         self.lib = prefs().lib(ws)
         if self.lib is None or not all(callable(getattr(self.lib, n, None)) for n in
-                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled")):
+                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide")):
             raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
         self.reload()
 
@@ -2267,7 +2267,7 @@ def question_parties(q: WikiQuestion, wall: str) -> list:
         raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
     if not tags or any(t not in ctx.get("parties", {}) for t in tags):
         raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
-    if any(q.lib.walled(ctx, a, b) for a in tags for b in tags):
+    if q.lib.crossings(ctx, tags):
         raise Refused(wall)
     return tags
 
@@ -2337,14 +2337,14 @@ def question_pages(q: WikiQuestion, wall: str) -> tuple:
         seen.append(tags)
         readable.append((p, tags))
     flat = [t for tags in seen for t in tags]
-    if any(q.lib.walled(ctx, a, b) for i, a in enumerate(flat) for b in flat[i + 1:]):
+    if q.lib.crossings(ctx, flat):
         raise Refused(wall)             # both sides of a wall: nothing named, nothing written
     allowed = []
     for p, tags in readable:
         # Only a page that carries the question's own parties, and no others:
         # a page written for nobody (`none`) is guarded by no wall, so the
         # answer is never written into it.
-        if not tags or not set(tags) <= set(mine) or any(q.lib.walled(ctx, a, b) for a in tags for b in mine):
+        if not tags or not set(tags) <= set(mine) or q.lib.decide(mine, tags, "write", ctx) == "deny":
             held += 1
         else:
             allowed.append(p)
@@ -2489,7 +2489,7 @@ def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> l
     tool = Path(ws) / "System" / "tools" / "wiki_lint.py"
     lib = prefs().lib(ws)
     if not tool.is_file() or lib is None or not all(callable(getattr(lib, n, None)) for n in
-                                                     ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled")):
+                                                     ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide")):
         raise Refused("this workspace's wiki_lint.py or garrick_lib.py cannot read the pages, so nothing was written")
     import importlib.util
     spec = importlib.util.spec_from_file_location("wiki_lint_for_open_sections", str(tool))
@@ -2515,7 +2515,7 @@ def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> l
         tags = [bare_tag(lib, t) for t in r["parties"]]
         if r["zone"] not in zones or any(t not in ctx.get("parties", {}) for t in tags):
             r.update(state="skipped", reason="its zone or parties are not ones this workspace knows")
-        elif any(lib.walled(ctx, a, b) for a in tags for b in tags):
+        elif lib.crossings(ctx, tags):
             r.update(state="skipped", reason=wall)
         else:
             r["parties"] = [t.strip() for t in r["parties"]]
@@ -3202,14 +3202,14 @@ class View:
             if scope not in self.parties:
                 raise Refused(wall)
             self.chosen = scope
-        elif not self.parties or any(lib.walled(self.ctx, a, b) for a in self.parties for b in self.parties):
+        elif not self.parties or lib.crossings(self.ctx, self.parties):
             raise Refused(wall)
 
     def ok(self, tags) -> bool:
         tags = set(tags or ())
         if self.unattributed or not tags or not tags <= self.parties:
             return False
-        if any(self.lib.walled(self.ctx, a, b) for a in tags for b in tags):
+        if self.lib.crossings(self.ctx, tags):
             return False
         return self.chosen is None or self.chosen in tags
 
@@ -3408,7 +3408,7 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
     wall = wall_sentence(ws)
     lib = prefs().lib(ws)
     if lib is None or not all(callable(getattr(lib, n, None)) for n in
-                              ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled",
+                              ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide",
                                "entity_names", "staged_walls_refusal")):
         raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
     view = View(ws, lib, req.get("zone"), req.get("scope"))

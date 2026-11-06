@@ -114,6 +114,13 @@ __all__ = [
     "memory_entries",
     "knowledge_schema",
     "walled",
+    "decide",
+    "crossings",
+    "always_asked",
+    "labels",
+    "meeting_labels",
+    "wall_cases",
+    "PUBLIC",
     "MEETINGS_ENTITIES",
     "tag_list",
     "party_entities",
@@ -1260,7 +1267,8 @@ def decide(scope, labels, action: str, context: dict) -> str:
            `scope`. A record with no party takes nothing. A `public` record
            takes only material with no party: for a write it is walled from
            every party.
-    file   an item labelled `labels` is filed into a project of `scope`. A
+    file   an item labelled `labels` is filed into a project of `scope`, or,
+           with `scope` None, into one not yet chosen. A
            wall between them is `deny`; an item that names both sides of a
            wall, names a party that is always asked about, or has no label
            is `confirm`: nothing proceeds on it without the user.
@@ -1293,7 +1301,7 @@ def decide(scope, labels, action: str, context: dict) -> str:
     # file
     if not theirs:
         return "confirm"
-    if not mine or crossings(context, mine - {PUBLIC}, theirs - {PUBLIC}):
+    if scope is not None and (not mine or crossings(context, mine - {PUBLIC}, theirs - {PUBLIC})):
         return "deny"
     theirs -= {PUBLIC}
     if not theirs <= known or crossings(context, theirs) or any(always_asked(context, t) for t in theirs):
@@ -1333,6 +1341,22 @@ def _note_labels(path: Path) -> set:
         return set()
 
 
+def meeting_labels(fm: dict) -> Optional[frozenset]:
+    """The parties a Meetings page's frontmatter names, or None when they
+    cannot all be stated: a finished page has a zone and a list of `parties:`; a
+    person or entity page may have its `party:` alone; `party:` and `parties:`
+    that disagree read two ways, so neither."""
+    got = _labels_of(fm)
+    if not got:
+        return None
+    kind = str(fm.get("type") or "").strip().lower()
+    if kind in ("person", "entity") and fm.get("parties") is None:
+        return frozenset(got)
+    if fm.get("zone") and isinstance(fm.get("parties"), list):
+        return frozenset(got)
+    return None
+
+
 def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
            cache: Optional[dict] = None) -> Optional[frozenset]:
     """The parties a record is written for, derived here and nowhere else, or
@@ -1350,7 +1374,6 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
     """
     root, path = Path(root), Path(path)
     cache = {} if cache is None else cache
-    context = context if context is not None else load_context(root)
     try:
         parts = (path if path.is_absolute() else root / path).relative_to(root).parts
     except ValueError:
@@ -1365,16 +1388,7 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
     if parts[:3] == ("Wikis", "Meetings", "wiki"):
         if full.suffix != ".md" or not full.is_file():
             return None
-        fm = parse_frontmatter(full)
-        got = _labels_of(fm)
-        kind = str(fm.get("type") or "").strip().lower()
-        if got is None or not got:
-            return None
-        if kind in ("person", "entity") and fm.get("parties") is None:
-            return frozenset(got)
-        if fm.get("zone") and isinstance(fm.get("parties"), list):
-            return frozenset(got)
-        return None
+        return meeting_labels(parse_frontmatter(full))
     if parts[:3] == ("Wikis", "Meetings", "raw"):
         key = ("cites", str(root))
         if key not in cache:
@@ -1427,6 +1441,7 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         stamped = stamped_parties(data)
         if stamped:
             return frozenset(stamped)
+        context = context if context is not None else load_context(root)
         mail = parse_mail_bytes(data)
         found = set()
         for key in ("from", "to", "cc"):

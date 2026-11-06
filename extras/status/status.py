@@ -5026,7 +5026,11 @@ def questions_data(ws: Path, C: Optional[dict], today: dt.date, link: "Links") -
     """The panel's data, or None: no panel. Any fault leaves the panel out
     rather than a page that shows what it could not place."""
     try:
-        return questions_mod().build(ws, C, nurture_lib(ws), today, link)
+        data = questions_mod().build(ws, C, nurture_lib(ws), today, link)
+        if data:
+            styles = zone_styles(ws)         # Settings > Zones: the colour of a group heading's zone part (#384)
+            data["zcls"] = {z["zone"]: zone_class(z["zone"], styles) for z in data.get("zones", []) if zone_class(z["zone"], styles)}
+        return data
     except Exception:
         return None
 

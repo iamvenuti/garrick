@@ -49,6 +49,8 @@ function seen() {
     counts: $("qp-counts").children.map((c) => c.textContent),
     tab: tab ? tab.textContent : null,
     list: $("qp-list").children.map((li) => [li.className, li.childNodes[0].textContent]),
+    heads: $("qp-list").children.filter((li) => li.className === "qp-gh").map((li) => li.children.map((c) => c.className + ":" + c.textContent)
+      .concat([li.childNodes.filter((n) => !n.children).map((n) => n.textContent).join("")])),
     switch: $("qp-source").children.map((b) => b.textContent + "|" + b.getAttribute("aria-pressed")),
     party: { hidden: $("qp-party-l").hidden, options: $("qp-party").children.map((o) => o.value + ":" + o.textContent) },
     zones: $("qp-zone").children.map((o) => o.value),
@@ -108,6 +110,33 @@ def run(steps, hosted=True, d=None):
     if done.returncode:
         raise AssertionError(done.stderr)
     return json.loads(done.stdout)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestZoneColourOnHeadings(unittest.TestCase):
+    def heads(self, zcls):
+        d = data()
+        d["zcls"] = zcls
+        return run([["zone", "Work"], ["party", "*"]], d=d)[-1]["heads"]
+
+    def test_a_zone_with_a_colour_has_it_on_the_zone_part_only(self):
+        heads = self.heads({"Work": " zc zc-red"})
+        self.assertEqual([["zc zc-red:Work", " \u00b7 Acme Corp (2)"], ["zc zc-red:Work", " \u00b7 Birch & Co (1)"]], heads[:2])
+
+    def test_knowledge_has_none_even_when_every_zone_has_one(self):
+        heads = self.heads({"Work": " zc zc-red", "Personal": " zc zc-blue"})
+        self.assertEqual([["Knowledge (1)"]], heads[2:])
+
+    def test_a_zone_without_a_colour_looks_as_it_did(self):
+        heads = self.heads({"Personal": " zc zc-blue"})
+        self.assertEqual([["Work \u00b7 Acme Corp (2)"], ["Work \u00b7 Birch & Co (1)"], ["Knowledge (1)"]], heads)
+        self.assertEqual([["Work \u00b7 Acme Corp (2)"], ["Work \u00b7 Birch & Co (1)"], ["Knowledge (1)"]], self.heads({}))
+
+    def test_the_counts_row_carries_the_colour_too(self):
+        d = data()
+        d["zcls"] = {"Work": " zc zc-red"}
+        got = run([["zone", "Work"], ["party", "*"]], d=d)[-1]["counts"]
+        self.assertTrue(got[0].startswith("Work \u00b7 Acme Corp"))
 
 
 @unittest.skipUnless(shutil.which("node"), "node is not installed")

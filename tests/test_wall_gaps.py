@@ -810,6 +810,125 @@ class TestSharedSurname(GapCase):
         self.assertEqual(1, len(found), found)
 
 
+class TestFolderPaths(GapCase):
+    """A token that ends in `/` names a folder and is never matched by bare
+    name to a note. Northwind is for Acme; Harbour, which holds Notes/Demo.md,
+    for Birch."""
+
+    def setUp(self):
+        super().setUp()
+        for name, party, thread in (("Northwind", "acme", "Freight"), ("Harbour", "birch", "Tender")):
+            folder = self.work / name
+            write(folder / (name + ".md"), project_hub("Work", name, party, [thread]))
+            write(folder / "Threads" / thread / (thread + ".md"), thread_note(name, thread, party))
+        write(self.work / "Harbour" / "Notes" / "Demo.md", "# Demo\n")
+        self.note = self.work / "Northwind" / "Threads" / "Freight" / "Notes.md"
+        self.where = "Zones/Work/Northwind/Threads/Freight/Notes.md"
+
+    def says(self, written):
+        write(self.note, "# Notes\n\nSee %s now.\n" % written)
+        return [(f.severity, f.message) for f in self.findings("walls") if f.path == self.where]
+
+    def test_a_folder_path_whose_last_folder_names_a_note_across_the_wall_passes(self):
+        for written in ("`~/Applications/Garrick Demo/`", "`see Demo/ now`", "`Demo/`", "`/opt/tools/Demo/`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_the_name_alone_keeps_its_verdict(self):
+        # No slash, so a code span is no path (as before); a wikilink is read by name.
+        for written in ("`Demo`", "`Demo.md`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+        found = self.says("[[Demo]]")
+        self.assertEqual(["error"], [s for s, _ in found], found)
+
+    def test_a_path_that_leads_into_the_walled_folder_and_goes_on_is_refused(self):
+        for written in ("`cat Harbour/Notes/Demo.md`", "`Harbour/Notes/Demo.md`"):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [s for s, _ in found], found)
+
+    def test_a_file_written_with_a_trailing_slash_is_still_a_file(self):
+        for written in ("`Notes/Demo.md/`", "`cat Notes/Demo.md/`", "`Tender2.md/`", "`Notes/Demo.md/:3`",
+                        "`Notes/Demo.md/?x`", "`Notes/Demo.md/#h`", "`cat Notes/Demo.md/*`",
+                        "`Deliverables/../Tender2.md/`", "`Harbour/Notes/Demo.md/`"):
+            with self.subTest(written):
+                write(self.work / "Harbour" / "Tender2.md", "# Tender2\n")
+                found = self.says(written)
+                self.assertEqual(["error"], [s for s, _ in found], found)
+
+    def test_an_extensionless_file_written_with_a_trailing_slash_is_still_a_file(self):
+        write(self.work / "Harbour" / "Notes" / "Plan", "plan\n")
+        for written in ("`Notes/Plan/`", "`cat Notes/Plan/`", "`Harbour/Notes/Plan/`", "`Plan/`", "`cat Plan/`"):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [s for s, _ in found], found)
+        for written in ("`Notes/Demo/`", "`Demo/`", "`~/Applications/Garrick Demo/`", "`Tender2/`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_slash_ended_name_of_a_meetings_page_keeps_its_verdict(self):
+        """A Meetings page of any type or grade, written with a trailing slash,
+        is read as 0.56.0 read it: Demo/ names only a project note and passes."""
+        meetings = self.root / "Wikis" / "Meetings"
+        page = meeting_page("Work", "[birch]", "Harvest")
+        write(meetings / "wiki" / "sources" / "260315-harvest.md", page)
+        write(meetings / "wiki" / "people" / "theo-marsh.md",
+              "---\ntitle: Theo Marsh\ntype: person\nzone: Work\nparty: birch\n---\n\n# Theo Marsh\n")
+        write(meetings / "wiki" / "entities" / "harvest-co.md",
+              "---\ntitle: Harvest Co\ntype: entity\nparty: birch\n---\n\n# Harvest Co\n")
+        write(meetings / "dormant" / "wiki" / "sources" / "260316-old-call.md", page)
+        write(meetings / "archive" / "wiki" / "sources" / "260317-older-call.md", page)
+        table = (
+            ("Wikis/Meetings/wiki/sources/260315-harvest/", True), ("260315-harvest/", True),
+            ("wiki/sources/260315-harvest/", True), ("cat Wikis/Meetings/wiki/sources/260315-harvest/", True),
+            ("theo-marsh/", True), ("wiki/people/theo-marsh/", True),
+            ("harvest-co/", False), ("wiki/entities/harvest-co/", False),  # an entity page: passed in 0.56.0 too ("260316-old-call/", True), ("dormant/wiki/sources/260316-old-call/", True),
+            ("260317-older-call/", True), ("archive/wiki/sources/260317-older-call/", True),
+            ("Demo/", False))
+        for written, refused in table:
+            with self.subTest(written):
+                found = self.says("`%s`" % written)
+                self.assertEqual(["error"] if refused else [], [s for s, _ in found], found)
+
+    def test_every_form_has_the_verdict_it_had_in_0_56_0(self):
+        """Only a slash-ended token whose refusal came from the bare-name match
+        of its last segment to a note, with no segment naming a project's
+        folder, may pass now. Every other verdict is the one 0.56.0 gave
+        (a folder written alone, or a path to one, passed then and passes now)."""
+        root = self.root
+        table = (
+            # Leads into Harbour and goes on, or names its folder: refused, ending in / or not.
+            ("cat Harbour/Notes/Demo/", True), ("Harbour/Notes/Demo/", True), ("Harbour/Notes/Demo.md", True),
+            ("Harbour/", True), ("Tender/", True), ("cat Tender/", True), ("Zones/Work/Harbour/Notes/Demo/", True),
+            ("%s/Zones/Work/Harbour/Notes/Demo/" % root, True),
+            ("~/%s/Zones/Work/Harbour/Notes/Demo/" % root.name, True),
+            # A path that ends at Harbour's folder is not read, as in 0.56.0.
+            ("Harbour/Notes/", False), ("cat Harbour/Notes/", False), ("Zones/Work/Harbour/Notes/", False),
+            ("%s/Zones/Work/Harbour/Notes/" % root, False), ("~/%s/Zones/Work/Harbour/Notes/" % root.name, False),
+            ("/elsewhere/Zones/Work/Harbour/Notes/", False),
+            # The bare-name match of a folder's last segment to a note: the one change.
+            ("Demo/", False), ("Notes/Demo/", False), ("see Demo/ now", False), ("~/Applications/Garrick Demo/", False))
+        for written, refused in table:
+            with self.subTest(written):
+                found = self.says("`%s`" % written)
+                self.assertEqual(["error"] if refused else [], [s for s, _ in found], found)
+
+    def test_a_folder_named_like_a_note_stays_the_documented_limit(self):
+        for written in ("`Notes/Demo/`", "`cat Notes/Demo/`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_path_into_the_workspace_is_still_a_workspace_path(self):
+        for written in ("`%s/Zones/Work/Harbour/Notes/Demo.md`" % self.root,
+                        "`cat %s/Zones/Work/Harbour/Notes/Demo.md`" % self.root,
+                        "`~/%s/Zones/Work/Harbour/Notes/Demo.md`" % self.root.name,
+                        "`/elsewhere/Zones/Work/Harbour/Notes/Demo.md`"):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [s for s, _ in found], found)
+
+
 class TestProjectLinks(GapCase):
     """A link or a path into a note of a project walled from this one is
     refused, by the commit hook and the full check alike, whether or not the

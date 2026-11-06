@@ -4,6 +4,32 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-11-06
+
+The Questions panel shows every zone and party at once, grouped so that nothing is added up across a wall, and an answer can be recorded as a decision that stands in the Meetings wiki until you change it. The lint turns *Open* sections into questions. A thread or correction made by a tool reaches the Garrick App at once. The wall check no longer refuses a folder path that only shares a name with a note, and it reads Knowledge frontmatter strictly.
+
+**Upgrading.** A Knowledge page whose frontmatter does not read plainly is now refused at commit: flow maps, anchors, tags, explicit or merged keys, escaped keys and control characters. So is a plain flow-list item holding `:`, such as a bare URL in `tags: [...]`. Quote the item (`["https://example.com", b]`) or write the list one item per line. The error names the file and the line.
+
+### Added
+
+- **Record as a decision** ([#224](https://github.com/iamvenuti/garrick/issues/224), point 5). In the Questions panel, *Record as a decision* files your words as the raw answer (with `outcome: decision`) and as a decision page in `Wikis/Meetings/wiki/decisions/`, in one save, standing as valid. The page carries the question's zone and parties and never widens them, and has four sections: *Decision*, *Assumptions*, *Options turned down* and *Revisit when*. The assistant may propose assumptions and options and flag a decision to revisit; only your save changes its status, and `check.py` warns when a commit changes it with no raw answer of that day. A Knowledge question, or one with no zone or parties, cannot be recorded as a decision. The wall check reads decision pages and their raw answers in every grade, and fading never moves a decision page.
+- **Open sections become questions** (#224, point 8). The Meetings and Knowledge lint list every line under an *Open* or *Open issues* heading and, on one yes per zone and party, turn each into a question file with the page as its origin, carrying the page's own zone and parties. A page with no zone or parties gets no question, and the lint says why. A line already asked is not proposed again, and no page is changed. The same step is `page_action.py question-open-sections`.
+- **The Questions panel has an *All* for Zone and Party** ([#384](https://github.com/iamvenuti/garrick/issues/384)). Choose it and the rows group under a heading for each zone and party, with a count on each and the zone's name in its colour from Settings. A save from *All* is one save per group, each checked on its own, so two groups with a wall between them never share a commit. No counter, tab number or menu count adds two groups: the menu row names each group with its own count. *Show* is a two-way switch with both counts on it, such as `Wiki questions 3 | Nurture findings 11`.
+
+### Changed
+
+- **A thread or correction a tool makes reaches the Garrick App without waiting on the check** ([#382](https://github.com/iamvenuti/garrick/issues/382)). The rebuild that `scaffold.py` and `correct.py` ask for now shows the check's last result whatever its age and never runs the check, so a new thread shows within seconds. The Checks card, *Needs attention* and the Checks tile still say how old the result is, and with none kept yet they say "No check result yet". A build by hand, on schedule or by the app still runs the check. The Questions panel holds back a question edited after the last check and counts it as waiting for the next one, with no text.
+- **Band: a file written in the turn links from any folder** ([#383](https://github.com/iamvenuti/garrick/issues/383)). A path in a reply that is relative to the project or the zone, not only to the session's folder or the workspace root, becomes a link even when the file was written in that turn. A path with a `..` segment stays plain.
+- **A thread moves out of or into a project whose `party:` is a list** ([#379](https://github.com/iamvenuti/garrick/issues/379)). `scaffold.py move` reads `party:` as the wall check does, and refuses with the wall sentence when any tag on one side is walled from any tag on the other. An empty value, a tag missing from the Parties table, or frontmatter that reads two ways is still refused.
+
+### Fixed
+
+- **The wall check no longer refuses a folder path because it shares a name with a note** ([#385](https://github.com/iamvenuti/garrick/issues/385)). A token that ends in `/` names a folder and is not matched by name to a note across a wall. A file written with a stray slash, a walled project's or thread's folder, and any path into the wikis or naming a Meetings page keep the verdict they had in 0.56.0.
+- **A Knowledge page's party key in another case, quoting or depth is refused** ([#388](https://github.com/iamvenuti/garrick/issues/388)). `Parties:`, `PARTY:`, `"Zone":`, a list item's key and a key nested under another all get the same error as `parties:`. Frontmatter that does not read plainly is refused (see *Upgrading*).
+- **The update's "Rebuilt Garrick.app" message carries no compiler output** ([#387](https://github.com/iamvenuti/garrick/issues/387)). It holds the place and `make-app.sh`'s own notices only; a failed build still names the compiler's last line.
+- **`Garrick.app` builds with no warning** ([#386](https://github.com/iamvenuti/garrick/issues/386)), and CI's Swift type-check now fails on any warning.
+- A Meetings question or decision that carries both `party` and `parties` is never listed or saved from, and `check.py` warns.
+
 ## [0.56.0] - 2026-11-05
 
 The wikis' open questions and Nurture's attribution findings get a panel of their own in the Garrick App, where you answer them in a minute and every save goes through the checks before anything is committed. Wrap is now the only way to save your place: it asks one question, then runs in the background, and "back" reads the record instead of a stack. The wall check reads paths in more of the forms a note can hold them in. Explore can draw the graph in 3D.
@@ -1296,7 +1322,9 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.55.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.57.0...HEAD
+[0.57.0]: https://github.com/iamvenuti/garrick/compare/v0.56.0...v0.57.0
+[0.56.0]: https://github.com/iamvenuti/garrick/compare/v0.55.0...v0.56.0
 [0.55.0]: https://github.com/iamvenuti/garrick/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/iamvenuti/garrick/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/iamvenuti/garrick/compare/v0.52.0...v0.53.0

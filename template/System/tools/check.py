@@ -97,6 +97,7 @@ from garrick_lib import (  # noqa: E402
     garrick_ignores,
     ignore_parts,
     load_context,
+    run_wall_cases,
     local_file,
     mail_attachments,
     parse_frontmatter,
@@ -7620,6 +7621,28 @@ def report_json(findings: List[Finding], root: Path) -> str:
                        "findings": [asdict(f) for f in findings]}, indent=2)
 
 
+def walls_cases(root: Path) -> int:
+    """`--walls-cases`: the decide() rows of System/tools/walls-cases.md, run
+    against this workspace's Parties and Walls tables. 0 when each row run
+    gives its expected answer, 1 when one does not, 2 when there is no table."""
+    path = root / "System" / "tools" / "walls-cases.md"
+    text = read_text(path)
+    if text is None:                    # run from a Garrick clone, on a workspace that has not been updated yet
+        path = Path(__file__).resolve().with_name("walls-cases.md")
+        text = read_text(path)
+    if text is None:
+        print("check: %s is missing, so there are no cases to run" % path.relative_to(root).as_posix(), file=sys.stderr)
+        return 2
+    ran, skipped, failed = run_wall_cases(load_context(root), text)
+    print("%d wall cases run against this workspace's Parties and Walls tables, %d failed, %d skipped."
+          % (ran, len(failed), len(skipped)))
+    for line in failed:
+        print("  failed  " + line)
+    if skipped:
+        print("  skipped " + ", ".join(skipped) + ": the tables hold no tag for that role")
+    return 1 if failed or not ran else 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Check a Garrick workspace against its rules.")
     parser.add_argument("--root", help="workspace root (default: the workspace this script sits in, else the current folder's)")
@@ -7633,6 +7656,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
                         help="install the pre-commit wall check in every zone's repository, and in each repository inside a project")
+    parser.add_argument("--walls-cases", action="store_true",
+                        help="run the table of wall cases (System/tools/walls-cases.md) against this workspace's own "
+                             "Parties and Walls tables, with its tags in place of the fixture's")
     parser.add_argument("--version", action="store_true",
                         help="say which Garrick the workspace was installed from, for a bug report")
     args = parser.parse_args(argv)
@@ -7653,6 +7679,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.install_hooks:
         return install_hooks(root)
+    if args.walls_cases:
+        return walls_cases(root)
     if args.version:
         stamp = read_version(root)
         print(" ".join(s for s in (say_version(stamp), say_changes(root, stamp)) if s))

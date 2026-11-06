@@ -120,6 +120,8 @@ __all__ = [
     "labels",
     "meeting_labels",
     "wall_cases",
+    "wall_roles",
+    "run_wall_cases",
     "PUBLIC",
     "MEETINGS_ENTITIES",
     "tag_list",
@@ -1328,6 +1330,58 @@ def wall_cases(text: str) -> Dict[str, List[List[str]]]:
                 continue
             out.setdefault(heading, []).append(cells)
     return out
+
+
+def wall_roles(context: dict) -> Dict[str, str]:
+    """The tags that stand for the roles of the wall cases (tests/walls/cases.md)
+    in a Parties and Walls table: `near` and `far`, the first pair a wall keeps
+    apart; `other`, a party walled from neither; `hat` and `hat2`, two tags of
+    one name with a wall between them; `ghost`, a tag the table lacks; `public`.
+    A role the table has no tag for is left out."""
+    parties = sorted(context.get("parties", {}))
+    roles = {"ghost": "ghost-not-in-parties", "public": PUBLIC}
+    while roles["ghost"] in parties:
+        roles["ghost"] += "-x"
+    pairs = [(a, b) for a in parties for b in parties if a < b and walled(context, a, b)]
+    twins = [(a, b) for a, b in pairs if always_asked(context, a) and always_asked(context, b)
+             and context["parties"][a].get("party") == context["parties"][b].get("party")]
+    plain = [p for p in pairs if p not in twins]
+    if plain:
+        roles["near"], roles["far"] = plain[0]
+        free = [t for t in parties if t not in (roles["near"], roles["far"]) and not always_asked(context, t)
+                and not crossings(context, [t], parties)]
+        if free:
+            roles["other"] = free[0]
+    if twins:
+        roles["hat"], roles["hat2"] = twins[0]
+    return roles
+
+
+def run_wall_cases(context: dict, text: str) -> Tuple[int, List[str], List[str]]:
+    """The decide() rows of a wall-cases file, run against a Parties and Walls
+    table with its own tags in place of the fixture's roles. Returns (rows run,
+    rows skipped because the table has no tag for a role, the rows that failed)."""
+    roles = wall_roles(context)
+    ran, skipped, failed = 0, [], []
+    for ident, scope, labels_, action, expect, source in wall_cases(text).get("decide()", []):
+        def tags(cell):
+            cell = cell.strip()
+            if cell in ("?", "*"):
+                return None
+            return set() if cell == "-" else {roles[c.strip()] for c in cell.split(",")}
+        try:
+            mine, theirs = (None if scope.strip() == "*" else tags(scope)), tags(labels_)
+        except KeyError as missing:
+            skipped.append("%s (no %s)" % (ident, missing.args[0]))
+            continue
+        ran += 1
+        try:
+            got = decide(mine, theirs, action, context)
+        except ValueError:
+            got = "error"
+        if got != expect:
+            failed.append("%s: %s on %s from %s is %s, not %s (%s)" % (ident, action, labels_, scope, got, expect, source))
+    return ran, skipped, failed
 
 
 def _labels_of(fm: dict, alone: bool = False) -> Optional[set]:

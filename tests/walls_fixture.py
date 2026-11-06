@@ -22,6 +22,16 @@ def build(root: Path) -> Path:
     """build_workspace's two projects renamed out of the way, plus the cases' own."""
     root = Path(root)
     build_workspace(root)
+    # one company under two hats, a wall between the hats: mail from either is asked about
+    context = root / "System" / "context.md"
+    text = context.read_text(encoding="utf-8")
+    text = text.replace("| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |\n",
+                        "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |\n"
+                        "| Lumen Group | Partner | Work | `lumen` | |\n| Lumen Group | Adviser to its board | Work | `lumen-adv` | |\n"
+                        "| Cedar Ltd | Supplier | Work | `cedar` | cedarltd.example |\n")
+    text = text.replace("| `acme` | `birch` | Competitors, and both are clients |\n",
+                        "| `acme` | `birch` | Competitors, and both are clients |\n| `lumen` | `lumen-adv` | Two hats, one company |\n")
+    context.write_text(text, encoding="utf-8")
     work = root / "Zones" / "Work"
     for name in ("Acme Review", "Birch Entry"):
         shutil.rmtree(work / name)

@@ -803,7 +803,7 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
     what is on the far side. A question across every zone reads within one
     group of parties no wall divides, the one its best record starts."""
     group, chosen, back, matched = set(held), [], False, 0
-    known = set(ctx.get("parties", {}))
+    known = set(ctx.get("parties", {})) | {lib_.PUBLIC}
     for r in records:
         parties = set(r["parties"])
         if not parties <= known:
@@ -811,7 +811,7 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
         # No label, no permit: only a published page of Knowledge is read with no party. The first
         # record admitted sets the group of a question across every zone.
         labels = parties or ({lib_.PUBLIC} if r.get("public") else set())
-        scope = group or parties
+        scope = (group - {lib_.PUBLIC}) or parties
         if lib_.decide(scope, labels, "read", ctx) != "permit":
             back = True
             continue

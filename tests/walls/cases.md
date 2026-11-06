@@ -133,12 +133,12 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e12 | ask | read an Orchard thread from a Northwind scope | refused | a project with no party is unlabelled |
 | e13 | ask | read a Meetings page with `party: far` and `parties: [near]` from `near` | refused | the two readings |
 | e14 | ask | read a Reed note from a `far` scope | permitted | public |
-| e15 | page | file a Harbour mail into Northwind | refused | a walled filing |
+| e15 | intake | file a Harbour item into Northwind | refused | a walled filing |
 | e16 | intake | file a mail with both sides of a wall | asked | confirm is a return value |
 | e17 | intake | file a mail from a party that is always asked about | asked | confirm is a return value |
 | e18 | intake | file a mail into Orchard | refused | a project with no party takes nothing |
-| e19 | scaffold | a thread for `far` in Northwind | refused | a walled thread |
-| e20 | recall | search from a scope with no party | Recall's: tested with decide() alone, d07 | a session that began at zone level labelled as a project |
-| e21 | recall | a mixed session read from a project with no party | Recall's: tested with decide() alone, d07 and d12 | a session of two projects labelled with the first |
-| e22 | recall | ranking over rows the scope may not read | Recall's: the filter runs before the ranking; decide() alone, d01 | ranking statistics computed over walled rows |
-| e23 | ask | a Todo line that names no party | Ask's owed(): labels are `-`, d05 | a Todo line that names no party, served across a wall |
+| e19 | scaffold | a thread of `far` moved into Northwind | refused | a walled thread |
+| e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
+| e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
+| e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; the filter runs before the ranking;  ranking statistics computed over walled rows |
+| e23 | ask | a Todo line that names no party | refused | decide() alone, d05;  a Todo line that names no party, served across a wall |

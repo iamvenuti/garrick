@@ -114,7 +114,12 @@ from garrick_lib import (  # noqa: E402
     foreign_git_env,
     garrick_ignores,
     ignore_parts,
+    labels,
     load_context,
+    mail_labels,
+    meeting_labels,
+    run_wall_cases,
+    wall_roles,
     local_file,
     mail_attachments,
     parse_frontmatter,
@@ -132,7 +137,9 @@ from garrick_lib import (  # noqa: E402
     stamped_parties,
     strip_recipients,
     strip_tag,
-    walled,
+    PUBLIC,
+    crossings,
+    decide,
     work_folder,
     workspace_root,
 )
@@ -255,6 +262,7 @@ FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 DELIVERABLE_RE = re.compile(r"^(\d{2})(\d{2})(\d{2}) - \S")
 MEETING_NAME_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
 MAX_SCAN_BYTES = 2_000_000
+MAX_STAGED_BYTES = 50_000_000     # a staged text file is read whole up to this; above it, it is refused
 
 
 @dataclass
@@ -286,6 +294,8 @@ class Workspace:
     project_files: Optional[Dict[Path, Path]] = None  # each of those files -> its project
     thread_owners: Optional[Dict[str, set]] = None  # a thread's name, lower case -> the projects that have one
     wiki_links: Optional["PathIndex"] = None  # every wiki page, indexed for links on first use
+    project_norm: Optional[tuple] = None  # (count, normalised project path -> (project, hub fields)), on first use
+    label_cache: dict = field(default_factory=dict)  # garrick_lib.labels()'s per-run cache (#398)
     vault_files: Dict[Path, Dict[str, List[str]]] = field(default_factory=dict)  # each vault's files by name, on first use
     mail_index: Optional[Dict[Tuple[str, int, str], List["MailRecord"]]] = None  # built on first use
     source_findings: Optional[List["Finding"]] = None  # the Sources/ findings, computed once
@@ -473,16 +483,20 @@ def meeting_view(ws: "Workspace", page: Path, fm: dict, text: Optional[str] = No
 WALLS_VALUE = "the walls read no party or zone they know here"
 
 
-def walls_value_problem(ws: "Workspace", fm: dict) -> str:
+def walls_value_problem(ws: "Workspace", fm: dict, project_file: bool = False, note: bool = False) -> str:
     """Which of the keys the walls read holds a value they do not know, or
     "": a `party:` or `parties:` value that is no tag in the Parties table
     nor `none`, or a `zone:` that is no zone of the workspace. Such a value
     is read as no party, which would turn the walls off where a YAML reader,
-    or the writer, meant one; so it turns them on (#330)."""
+    or the writer, meant one; so it turns them on (#330). `public` is a tag
+    only for a project's own note (`project_file`): a hub chooses it for the
+    project, and it is no party of a Meetings page."""
     for key in ("party", "parties"):
         for v in as_list(fm.get(key)):
             tag = strip_tag(str(v))
-            if tag and tag != "none" and tag not in ws.context["parties"]:
+            if note and tag == "none":      # a hub or thread note says whose it is: `none` is nobody, so no label
+                return "`%s:` names `none`, which is no party of a project" % key
+            if tag and tag != "none" and tag not in ws.context["parties"] and not (project_file and tag == PUBLIC):
                 return "`%s:` names no tag from the Parties table, nor `none`" % key
     zone = fm.get("zone")
     zones = {z.name for z in ws.zones} | set(ws.context["zones"])
@@ -1423,6 +1437,13 @@ def check_context(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "context", ctx_path,
                                "%s belongs to `%s`, which is not a tag in Parties" % (person["name"], person["party"]),
                                "%s belongs to an unknown party" % person["name"]))
+    for reserved in (PUBLIC, "none"):
+        if reserved in parties:
+            out.append(Finding(ERROR, "context", ctx_path,
+                               "the Parties table has a row for `%s`, which is reserved: %s; take the row out" % (reserved,
+                                   "a hub names it to say anyone may read the project, and no wall can stand round it"
+                                   if reserved == PUBLIC else "it says a page is nobody's, so it is never a party's tag"),
+                               "The Parties table defines the reserved tag %s" % reserved))
     listed = set(ws.context["zones"])
     for zone in ws.zones:
         if listed and zone.name not in listed:
@@ -1438,7 +1459,7 @@ def check_context(ws: Workspace) -> List[Finding]:
     for tags in by_name.values():
         for i, a in enumerate(tags):
             for b in tags[i + 1:]:
-                if not walled(ws.context, a, b):
+                if not crossings(ws.context, [a], [b]):
                     name = parties[a].get("party") or a
                     out.append(Finding(WARNING, "context", ctx_path,
                                        "`%s` and `%s` are both %s, with no wall between them; add one, or the name "
@@ -1883,12 +1904,19 @@ def check_projects(ws: Workspace) -> List[Finding]:
         threads = visible_dirs(project / "Threads")
         tags = [strip_tag(t) for t in as_list(fm.get("party"))]
         if not tags and not system:
-            out.append(Finding(WARNING, "projects", r, "no `party`; it cannot draw on the Meetings wiki until it has one",
+            out.append(Finding(ERROR, "projects", r,
+                               "no `party`; set `party:` in this hub to a tag from the Parties table. Until it does, no "
+                               "file of the project can be committed, and it cannot draw on the Meetings wiki",
                                "Project %s has no party" % project.name))
         for tag in tags:
-            if tag not in ws.context["parties"]:
+            if tag not in ws.context["parties"] and tag != PUBLIC:
                 out.append(Finding(ERROR, "projects", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Project %s names an unknown party" % project.name))
+        if PUBLIC in tags and len(tags) > 1:
+            out.append(Finding(ERROR, "projects", r,
+                               "`party` names `public` with other parties; a public project holds no party's material, "
+                               "so `public` stands alone",
+                               "Project %s mixes public with a party" % project.name))
         text = read_text(hub) or ""
         if not threads and not own_resume(text):
             out.append(Finding(WARNING, "projects", rel(ws, project),
@@ -1999,9 +2027,19 @@ def check_threads(ws: Workspace) -> List[Finding]:
                 out.append(Finding(WARNING, "threads", r, "`project` is %s but the thread sits in %s" % (link, project.name),
                                    "Thread %s points at the wrong project" % spoken))
             ttags = {strip_tag(t) for t in as_list(fm.get("party"))}
-            for tag in sorted(ttags - set(ws.context["parties"])):
+            for tag in sorted(ttags - set(ws.context["parties"]) - {PUBLIC}):
                 out.append(Finding(ERROR, "threads", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Thread %s names an unknown party" % spoken))
+            if "none" in ttags:
+                out.append(Finding(ERROR, "threads", r,
+                                   "`party` is `none`; a thread says whose it is, and `none` is nobody, so no label",
+                                   "Thread %s names no party" % spoken))
+            if (PUBLIC in ptags) != (PUBLIC in ttags) and ttags and ptags:
+                out.append(Finding(ERROR, "threads", r,
+                                   "`party` %s and the project's %s: `public` stands alone, in the hub and in every thread, "
+                                   "since nothing is written down into a public project and a public thread holds no party's "
+                                   "material" % (", ".join(sorted(ttags)), ", ".join(sorted(ptags))),
+                                   "Thread %s and its project disagree about public" % spoken))
             # A thread may hold a confidence its project does not, so it may
             # name a party the hub lacks; only a party across a wall from the
             # hub's says the thread is filed under the wrong project.
@@ -2035,7 +2073,7 @@ def check_threads(ws: Workspace) -> List[Finding]:
 def wall_pair(ws: Workspace, tags_a, tags_b) -> Optional[Tuple[str, str]]:
     """The first pair, in sorted order, of a tag from each set with a wall
     between them, or None."""
-    pairs = sorted(tuple(sorted((a, b))) for a in tags_a for b in tags_b if walled(ws.context, a, b))
+    pairs = sorted(tuple(sorted(pair)) for pair in crossings(ws.context, tags_a, tags_b))
     return pairs[0] if pairs else None
 
 
@@ -3563,7 +3601,7 @@ def check_entities(ws: Workspace) -> List[Finding]:
                 out.append(Finding(WARNING, "meetings", rel(ws, page),
                                    "party `%s` is not a tag in the Parties table, so no wall can see it and no "
                                    "person page links it" % tag, "An entity page names an unknown party"))
-        hit = next(((a, b) for a in tags for b in tags if a < b and walled(ws.context, a, b)), None)
+        hit = next(iter(crossings(ws.context, tags)), None)
         if hit:
             out.append(Finding(WARNING, "meetings", rel(ws, page),
                                "`party:` names both %s and %s, which a wall keeps apart; an organisation in two roles "
@@ -3671,10 +3709,10 @@ def cited_across_walls(ws: Workspace) -> List[Finding]:
             continue
         for written, target in extract_links(text):
             hits = [m for m in resolve(ws, page, target, ws.meeting_links)
-                    for a in tags for b in as_list(ws.meetings[m].get("parties")) if walled(ws.context, a, strip_tag(b))]
+                    if crossings(ws.context, tags, [strip_tag(b) for b in as_list(ws.meetings[m].get("parties"))])]
             if hits:
                 b = next(strip_tag(t) for t in as_list(ws.meetings[hits[0]].get("parties"))
-                         if any(walled(ws.context, a, strip_tag(t)) for a in tags))
+                         if crossings(ws.context, tags, [strip_tag(t)]))
                 decided = page in ws.meeting_decisions
                 out.append(Finding(WARNING, "decisions" if decided else "questions" if question else "meetings", rel(ws, page),
                                    "cites %s, a %s with %s, but is written for %s, across a wall"
@@ -3800,7 +3838,7 @@ def organisation_wall(ws: Workspace, fm: dict, names, entity: Optional[Path]) ->
         theirs |= entity_parties(ws.context, same_name(ws, entity))
     ours = set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties")))
     every = sorted(ours | theirs | people_parties(ws.context, names))
-    return next(((a, b) for a in every for b in every if a < b and walled(ws.context, a, b)), None)
+    return next(iter(crossings(ws.context, every)), None)
 
 
 def same_name(ws: Workspace, entity: Path) -> List[dict]:
@@ -5038,6 +5076,12 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
     return out
 
 
+def fold_format(text: str) -> str:
+    """`text` with Unicode format characters (zero-width spaces and joiners, bidi marks, soft hyphens) taken out
+    and every kind of space made a plain one, so a name cut by one still reads as the name. Initials stay a limit."""
+    return "".join(" " if unicodedata.category(c) == "Zs" else c for c in text if unicodedata.category(c) != "Cf")
+
+
 def padded_words(text: str) -> str:
     """`text` as its words, with a space either side, for names_hit."""
     return " %s " % " ".join(words(text))
@@ -5081,10 +5125,16 @@ def party_tags(ws: Workspace, note: Path, fm: Optional[dict] = None) -> set:
     """The party tags a hub or thread note declares. In staged mode, where git
     holds another version of the note, the tags of both: the more parties a
     file belongs to, the more walls stand around its wording."""
-    tags = {strip_tag(t) for t in as_list((note_frontmatter(ws, note) if fm is None else fm).get("party"))}
+    tags = note_party_tags(note_frontmatter(ws, note) if fm is None else fm)
     if note in ws.git_view:
-        tags |= {strip_tag(t) for t in as_list(parse_frontmatter_text(ws.git_view[note]).get("party"))}
+        tags |= note_party_tags(parse_frontmatter_text(ws.git_view[note]))
     return tags
+
+
+def note_party_tags(fm: dict) -> set:
+    """The tags a note's `party:` and `parties:` name together, as garrick_lib's labels() reads them (a hub or a
+    thread note should carry `party:` alone, and is refused with a finding when it carries `parties:`)."""
+    return {strip_tag(t) for key in ("party", "parties") for t in as_list(fm.get(key))}
 
 
 def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set, str]:
@@ -5095,7 +5145,7 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
     if len(parts) > 5 and parts[3] == "Threads":
         thread = parts[4]
         note = project / "Threads" / thread / (thread + ".md")
-        tags |= {strip_tag(t) for t in as_list(note_frontmatter(ws, note).get("party"))}
+        tags |= note_party_tags(note_frontmatter(ws, note))
         where = "%s's %s thread" % (project.name, thread)
     return tags, where
 
@@ -5459,6 +5509,8 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
     reads it."""
     pfm = next((fm for folder, fm in ws.projects if folder == project), None)
     tags = party_tags(ws, project / (project.name + ".md"), pfm or {})
+    if not tags:
+        return set()        # a hub that names no party labels nothing under it: never its thread's
     parts = path.relative_to(project).parts
     if len(parts) > 2 and parts[0] == "Threads":
         tags |= party_tags(ws, project / "Threads" / parts[1] / (parts[1] + ".md"))
@@ -5605,6 +5657,25 @@ def path_dests(ws: Workspace, target: str) -> List[Path]:
             if form.is_file() or form in ws.git_view:
                 found.append(form)
     return found
+
+
+def hidden_dests(ws: Workspace, source: Path, project: Path, target: str) -> List[Path]:
+    """The files in a hidden folder (`.Quay/x`) a link names by its path. Obsidian opens none, but whoever follows
+    the path does, so the walls read it: from the note's folder, the project's, its zone's and the workspace's."""
+    written = target.split("#")[0].split("|")[0].replace("\\", "/")
+    parts = [x for x in written.split("/") if x not in ("", ".")]
+    if not parts or ".." in parts or not any(x.startswith(".") for x in parts):
+        return []
+    out = []
+    for base in (source.parent, project, project.parent, ws.root, ws.root / "Zones"):
+        for name in (written.lstrip("/"), written.lstrip("/") + ".md"):
+            cand = base / name
+            try:
+                if cand.is_file() and ws.root / "Zones" in cand.parents and cand not in out:
+                    out.append(cand)
+            except OSError:
+                continue
+    return out
 
 
 def link_dests(ws: Workspace, source: Path, target: str) -> List[Path]:
@@ -6389,7 +6460,7 @@ def own_file(ws: Workspace, note: Path, project: Path, token: str) -> bool:
     """Does `token` name a file of the note's own project, read from the note's
     folder, its thread's or the project's? Then it is that file, not a page of
     the Meetings wiki that shares its name."""
-    thread = next((p for p in note.parents if p.parent.name == "Threads" and project in p.parents), None)
+    thread = next((p for p in note.parents if p.parent.name == "Threads" and norm_path(project) in map(norm_path, p.parents)), None)
     for form in plain_cased(token):
         for base in (note.parent, thread, project):
             if base is None:
@@ -6397,7 +6468,7 @@ def own_file(ws: Workspace, note: Path, project: Path, token: str) -> bool:
             for name in (form, form + ".md"):
                 try:
                     one = base / name
-                    if one.is_file() and not one.is_symlink() and Path(os.path.realpath(project)) in Path(os.path.realpath(one)).parents:
+                    if one.is_file() and not one.is_symlink() and norm_path(Path(os.path.realpath(project))) in map(norm_path, Path(os.path.realpath(one)).parents):
                         if ws.index_files is None or os.path.realpath(one).casefold() in ws.index_files:
                             return True
                 except (OSError, ValueError):
@@ -6414,17 +6485,18 @@ def symlink_finding(ws: Workspace, project: Path, ptags: set, path: Path) -> Opt
     target = Path(os.path.realpath(path))
     wiki = Path(os.path.realpath(ws.root / "Wikis" / "Meetings"))
     tags, where = file_tags(ws, project, ptags, path)
-    if target == wiki or wiki in target.parents:
+    if norm_path(target) == norm_path(wiki) or norm_path(wiki) in map(norm_path, target.parents):
         return Finding(ERROR, "walls", rel(ws, path),
                        "is a symbolic link into the Meetings wiki, which holds every party's material; link to the page "
                        "by its name instead", "A note in %s is a symbolic link into the Meetings wiki" % where)
     here = Path(os.path.realpath(project))
     for other, _ in ws.projects:
         root = Path(os.path.realpath(other))
-        if root == here or not (target == root or root in target.parents):
+        if norm_path(root) == norm_path(here) or not (norm_path(target) == norm_path(root)
+                                                      or norm_path(root) in map(norm_path, target.parents)):
             continue
-        inside = other.joinpath(*target.relative_to(root).parts) if target != root else other / "_"
-        pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, inside) if walled(ws.context, a, b))
+        inside = other.joinpath(*target.parts[len(root.parts):]) if norm_path(target) != norm_path(root) else other / "_"
+        pair = crossings(ws.context, tags, project_file_tags(ws, other, inside))
         if pair:
             a, b = pair[0]
             return Finding(ERROR, "walls", rel(ws, path),
@@ -6455,6 +6527,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     r = rel(ws, path)
     zone = project.parent.name
     reported: set = set()  # walled parties and meetings already named for this file
+    unlabelled_hits: set = set()  # linked files with no label already named
     linked = symlink_finding(ws, project, ptags, path)
     if linked is not None:
         out.append(linked)
@@ -6550,11 +6623,20 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             if page not in ws.meetings and written in told:
                 continue                       # one finding for a token: the first page it names, a record after its page
             mfm = ws.meetings.get(page)
+            synthesized = mfm is None
             if mfm is None:                    # a person page, an entity page or a raw record: its parties, in its place
                 if not names.tags_of(page):
+                    if "raw" in page.relative_to(ws.root).parts[:4] and "Meetings" in page.parts:
+                        # a raw record no page cites has no label: nobody's confidence is ever safe to assume
+                        reported.add(page)
+                        out.append(Finding(ERROR, "walls", r,
+                                           "uses %s, a raw record that no page cites, so nothing says whose it is" % page.stem,
+                                           "A note in %s uses a raw record with no label" % where))
                     continue                   # nobody's
                 mfm = {"parties": sorted(names.tags_of(page)), "zone": zone}
-            mtags = [strip_tag(t) for t in as_list(mfm.get("parties"))]
+            # labels, not `parties:` alone: a page whose `party:` and `parties:` disagree reads as neither
+            label = frozenset(strip_tag(t) for t in as_list(mfm.get("parties"))) if synthesized else meeting_labels(mfm)
+            mtags = sorted(label) if label else []
             if not mtags or not mfm.get("zone"):
                 reported.add(page)
                 noun = meeting_noun(ws, page, "meeting page")
@@ -6570,7 +6652,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                                    % (meeting_noun(ws, page), page.stem),
                                    "A note in %s uses a %s before the project has a party" % (where, meeting_noun(ws, page))))
                 continue
-            hits = sorted((a, b) for a in tags for b in mtags if walled(ws.context, a, b))
+            hits = crossings(ws.context, tags, mtags)
             if hits:
                 a, b = hits[0]
                 reported |= {b, page}
@@ -6633,13 +6715,28 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
         for verb, written, target in targets:
             code = verb != "links"
             hits = resolve(ws, path, target, index) if code else link_dests(ws, path, target)
+            if not code:
+                hits = hits + [h for h in hidden_dests(ws, path, project, target) if h not in hits]
             far_hits, near = [], []
             for hit in hits:
                 owner = project_of(ws, hit)
+                if ((owner is None or owner[0] != project) and (ws.root / "Zones" in hit.parents
+                                                                 or ws.root / "Wikis" / "Knowledge" in hit.parents)
+                        and unlabelled_target(ws, owner, hit)) \
+                        or (owner is not None and owner[0] == project and notes_disagree(ws, project, hit)):
+                    # a file of the zones with no label (a zone's own file, a folder of dots, a project that names no
+                    # party): nothing says whose it is, so no project may link or embed it
+                    if hit not in unlabelled_hits:
+                        unlabelled_hits.add(hit)
+                        out.append(Finding(ERROR, "walls", r,
+                                           "%s %s, a file that names no party, so nothing says whose it is"
+                                           % (verb, written),
+                                           "A note in %s uses a file with no label" % where))
+                    continue
                 if owner is None:
                     continue  # not a project's: a wiki page or System's, which the meeting check reads
                 other = owner[0]
-                pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, hit) if walled(ws.context, a, b))
+                pair = crossings(ws.context, tags, project_file_tags(ws, other, hit))
                 if pair:
                     far_hits.append((hit, other, pair[0]))
                 else:
@@ -6668,7 +6765,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                     other = project_dir_index(ws).owner.get(folder)
                     if other is None:
                         continue
-                    pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, folder / "_") if walled(ws.context, a, b))
+                    pair = crossings(ws.context, tags, project_file_tags(ws, other, folder / "_"))
                     if pair:
                         prev = far_dirs.get(other)
                         far_dirs[other] = (pair[0], names or (prev[1] if prev else False))
@@ -6682,12 +6779,12 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                     record(WARNING if elsewhere and not names else ERROR, verb, written,
                            ", a path that leads into a project of %s" % b, "a path into a project of %s" % party_name(ws, b),
                            a, b, other)
-    far = {t for t in ws.context["parties"] if any(walled(ws.context, a, t) for a in tags)}
+    far = {t for t in ws.context["parties"] if tags and decide(tags, {t}, "write", ws.context) == "deny"}
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
-    if far and not in_sources:
-        scanned = without_party_field(text) + "\n" + path.name
+    if far and (not in_sources or PUBLIC in tags):      # nothing labelled is written into public, Sources/ included
+        scanned = fold_format(without_party_field(text)) + "\n" + path.name
         padded = padded_words(scanned)
         for b, forms in name_forms(ws, far).items():
             if b in reported or not forms:
@@ -6695,7 +6792,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             hit = name_hit(scanned, forms, padded)
             if hit is None:
                 continue
-            a = sorted(t for t in tags if walled(ws.context, t, b))[0]
+            a = next((x for x, _ in crossings(ws.context, tags, [b])), sorted(tags)[0])    # an unknown tag walls every party
             reported.add(b)
             out.append(Finding(ERROR, "walls", r,
                                "names %s%s, or one of its people; a wall stands between %s and %s"
@@ -6732,7 +6829,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             if mfm is not None:
                 if not finished(mfm):
                     open_pages.append(o)
-                elif any(walled(ws.context, a, strip_tag(m)) for a in tags for m in as_list(mfm.get("parties"))):
+                elif crossings(ws.context, tags, [strip_tag(m) for m in as_list(mfm.get("parties"))]):
                     pages.append(o)
                 elif o in ws.meeting_questions:
                     continue  # a question restates a record, and is not one: it can show a leak, never vouch for one
@@ -6740,9 +6837,9 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                     clear = True
                     break
             elif sent or (index.project.get(o) == project and not _in_sources(project, o)
-                          and not any(walled(ws.context, a, b) for a in tags for b in index.tags.get(o, ()))):
+                          and not crossings(ws.context, tags, index.tags.get(o, ()))):
                 continue  # this project's own note, written for no party walled from this file's
-            elif any(walled(ws.context, a, b) for a in tags for b in index.tags.get(o, ())):
+            elif crossings(ws.context, tags, index.tags.get(o, ())):
                 files.append(o)
             else:
                 clear = True
@@ -6760,7 +6857,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
         if page in reported:
             continue
         mtags = [strip_tag(m) for m in as_list(ws.meetings[page].get("parties"))]
-        a, b = sorted((a, m) for a in tags for m in mtags if walled(ws.context, a, m))[0]
+        a, b = crossings(ws.context, tags, mtags)[0]
         noun = meeting_noun(ws, page)
         out.append(Finding(ERROR, "walls", r,
                            "repeats wording from %s %s, a %s with %s; a wall stands between %s and %s"
@@ -6775,7 +6872,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                            "A note in %s quotes an unfinished %s" % (where, noun)))
     for other in sorted(copied):
         sources = sorted(copied[other])
-        a, b = sorted((a, t) for a in tags for t in index.tags[sources[0]] if walled(ws.context, a, t))[0]
+        a, b = crossings(ws.context, tags, index.tags[sources[0]])[0]
         more = " and %d more of its files" % (len(sources) - 1) if len(sources) > 1 else ""
         out.append(Finding(ERROR, "walls", r,
                            "repeats wording from %s%s, in project %s for %s; a wall stands between %s and %s"
@@ -6784,11 +6881,35 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     return out
 
 
+def norm_path(path: Path) -> str:
+    """A path as one spelling: Unicode form NFC and case folded, so a folder made in NFD by Finder, a name git
+    stages in NFC and a folder renamed in case only (`core.ignorecase`) are the same project (#398)."""
+    return unicodedata.normalize("NFC", str(path)).casefold()
+
+
 def project_of(ws: Workspace, path: Path) -> Optional[Tuple[Path, dict]]:
-    for project, pfm in ws.projects:
-        if project in path.parents:
-            return project, pfm
+    """The project a path is in, found by its normalised spelling, whichever way the path was written."""
+    index = ws.project_norm
+    if index is None or index[0] != len(ws.projects):
+        index = ws.project_norm = (len(ws.projects), {norm_path(p): (p, fm) for p, fm in ws.projects})
+    for parent in path.parents:
+        hit = index[1].get(norm_path(parent))
+        if hit is not None:
+            return hit
     return None
+
+
+def canonical_path(ws: Workspace, path: Path) -> Path:
+    """`path` with the spelling of its project's folder as the disk has it, so that relative_to() and every
+    comparison on the project's files agree with a path git staged in another case or Unicode form."""
+    index = ws.project_norm
+    project_of(ws, path)
+    index = ws.project_norm
+    for parent in path.parents:
+        hit = index[1].get(norm_path(parent))
+        if hit is not None:
+            return hit[0].joinpath(*path.parts[len(parent.parts):])
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -6866,7 +6987,18 @@ def sources_for_file(ws: Workspace, project: Path, ptags: set, path: Path, data:
             return [Finding(ERROR, "walls", r,
                             "is a mail saved as material, but the project has no party to check the walls against",
                             "A file in %s is a mail, before the project has a party" % project.name)]
-        hits = sorted((a, b) for a in ptags for b in stamped if walled(ws.context, a, b))
+        carried, _ = mail_labels(ws.context, data)      # the header's tags and its addresses' parties together
+        if carried is None:
+            return [Finding(ERROR, "walls", r,
+                            "is a mail saved as material, but its `X-Garrick-Parties` header names `none`, `public` or "
+                            "a party the Parties table lacks, so the walls cannot be checked",
+                            "A file in %s is a mail with a party header no wall can read" % project.name)]
+        if decide(ptags, carried, "file", ws.context) == "confirm":
+            return [Finding(ERROR, "walls", r,
+                            "is a mail saved as material that names both sides of a wall, or a party that is always asked "
+                            "about; it is not filed until the user has answered, and a commit does not answer",
+                            "A file in %s is a mail that needs an answer first" % project.name)]
+        hits = crossings(ws.context, ptags, carried)
         if hits:
             a, b = hits[0]
             return [Finding(ERROR, "walls", r,
@@ -6893,7 +7025,7 @@ def sources_for_file(ws: Workspace, project: Path, ptags: set, path: Path, data:
     hits = []
     for rec in filed:
         mtags = [strip_tag(t) for t in as_list(ws.meetings[rec.page].get("parties"))]
-        hits.append(sorted((a, b) for a in ptags for b in mtags if walled(ws.context, a, b)))
+        hits.append(crossings(ws.context, ptags, mtags))
     if all(hits):  # every mail it could have come from is on the far side of a wall
         a, b = hits[0][0]
         return [Finding(ERROR, "walls", r,
@@ -7059,11 +7191,17 @@ def form_findings(ws: Workspace, pages: List[Tuple[Path, Optional[str]]]) -> Lis
                                % (FRONTMATTER_PLAIN, problem), "A page's frontmatter can be read two ways"))
             continue
         fm = parse_frontmatter_text(text) if text is not None else note_frontmatter(ws, path)
-        problem = walls_value_problem(ws, fm)
+        owner = project_of(ws, path)
+        problem = walls_value_problem(ws, fm, owner is not None, owner is not None and path.stem == path.parent.name)
         if problem:
             out.append(Finding(ERROR, "walls", rel(ws, path),
                                "%s: %s; until it does, the walls read nothing on it as safe to use"
                                % (WALLS_VALUE, problem), "A page names a party or zone the walls do not know"))
+        elif owner is not None and path.stem == path.parent.name and fm.get("parties") is not None:
+            out.append(Finding(ERROR, "walls", rel(ws, path),
+                               "a hub or thread note says whose it is with `party:` alone; rename `parties:` to `party:` "
+                               "(a list is fine: `party: [acme, cedar]`)",
+                               "A hub or thread note carries parties: instead of party:"))
     return out
 
 
@@ -7186,7 +7324,7 @@ def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
         except (OSError, subprocess.SubprocessError):
             continue
         data = res.stdout
-        if res.returncode != 0 or len(data) > MAX_SCAN_BYTES or b"\0" in data[:8192]:
+        if res.returncode != 0 or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
             continue
         out.append((path, data.decode("utf-8", errors="replace")))
     return out
@@ -7229,7 +7367,7 @@ def git_view(ws: Workspace, committing: Path) -> Dict[Path, str]:
             if not name or Path(name).suffix.lower() not in TEXT_SUFFIXES | {".eml"}:
                 continue
             data = _git_bytes(["show", spec % name], top)
-            if data is None or len(data) > MAX_SCAN_BYTES or b"\0" in data[:8192]:
+            if data is None or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
                 continue  # deleted in git too, or not text
             out[top / name] = data.decode("utf-8", errors="replace")
     return out
@@ -7403,7 +7541,7 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                 project, pfm = owner
                 ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
                 out.extend(sources_for_file(ws, project, ptags, top_path / name, res.stdout))
-    staged_texts = staged_files(repo) or []
+    staged_texts = [(canonical_path(ws, p), t) for p, t in (staged_files(repo) or [])]
     refused, links = staged_person_links(ws, repo)
     out.extend(refused)
     # The People and Parties tables decide which names stand for which party,
@@ -7435,15 +7573,166 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                 have.add(note)
                 forms.append((note, None))
     out.extend(form_findings(ws, forms))
-    files = [(path, text, project_of(ws, path)) for path, text in staged_texts]
+    # Any staged file that reads as text is read for the walls, whatever its suffix; a project that names no party
+    # takes no file at all, of any kind (no label, no permit).
+    extra = [(canonical_path(ws, p), t) for p, t in staged_other_texts(repo)]
+    files = [(path, text, project_of(ws, path)) for path, text in staged_texts + extra]
     files = [f for f in files if f[2] is not None]  # not inside a project: no party, so no wall to hold
+    known = set(ws.context["parties"]) | {PUBLIC}
+    for reserved in (PUBLIC, "none"):
+        if reserved in ws.context["parties"]:
+            out.append(Finding(ERROR, "walls", "System/context.md",
+                               "the Parties table has a row for `%s`, which is reserved; take the row out before anything "
+                               "is committed, so no wall is read against it" % reserved,
+                               "The Parties table defines the reserved tag %s" % reserved))
+    unlabelled_reported: set = set()
+    raw = _staged_raw(repo)
+    for name in (raw[1] if raw else []):
+        staged_path = canonical_path(ws, raw[0] / wiki_case(name))
+        owner = project_of(ws, staged_path)
+        if owner is None or in_system(ws, owner[0]):
+            continue
+        ptags = {strip_tag(t) for t in as_list(owner[1].get("party"))}
+        if not ptags or ptags - known or hub_unreadable(ws, owner[0]):
+            unlabelled_reported.add(staged_path)
+            out.append(unlabelled_finding(ws, owner[0], staged_path, ptags - known))
+        elif staged_path.suffix.lower() in TEXT_SUFFIXES:
+            # a file of the text suffixes that the walls cannot read is refused, not skipped (#398)
+            data = _git_bytes(["show", ":" + name], raw[0])
+            if data is not None and (len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]):
+                why = "is over %d bytes" % MAX_STAGED_BYTES if len(data) > MAX_STAGED_BYTES else "holds NUL bytes (binary, or UTF-16)"
+                out.append(Finding(ERROR, "walls", rel(ws, staged_path),
+                                   "%s, so the walls cannot read it; save it as UTF-8 text under the size limit, or keep "
+                                   "it out of the project" % why, "A file in %s cannot be read by the walls" % owner[0].name))
+    # A hub or thread note whose parties changed puts every file already in the project, or the thread, under the
+    # new ones: they are checked now, not only the files staged with it (#398).
+    seen = {path for path, _, _ in files}
+    for path, text, project in recheck_after_party_change(ws, repo, staged_texts):
+        if path not in seen:
+            seen.add(path)
+            files.append((path, text, project))
     # The wording check asks only after the runs of words these files hold:
     # the index is built for those alone, from the cache where it can be.
     if not ws.quick:
         quote_index(ws, set().union(*(wording(ws, path, text, False) for path, text, _ in files)))
     for path, text, (project, pfm) in files:
         ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+        if (not ptags or ptags - known or hub_unreadable(ws, project)) and not in_system(ws, project):
+            if path not in unlabelled_reported:
+                out.append(unlabelled_finding(ws, project, path, ptags - known))
+            if ptags:
+                continue
         out.extend(walls_for_file(ws, project, ptags, path, text))
+    return out
+
+
+def unlabelled_target(ws: Workspace, owner, hit: Path) -> bool:
+    """Does a file a link lands on have no label (garrick_lib's labels())? A file of no project: labels() says. A file
+    of a project: its tags (git-aware, as the hook reads them) are empty or unknown, or its hub or thread note
+    carries `party:` and `parties:` that disagree, which labels() reads as neither. A Knowledge page with no party
+    key is free; one with a party key has no label."""
+    if owner is None:
+        return labels(ws.root, hit, ws.context, ws.label_cache) is None
+    project = owner[0]
+    tags = project_file_tags(ws, project, hit)
+    if not tags or not tags <= set(ws.context["parties"]) | {PUBLIC}:
+        return True
+    return notes_disagree(ws, project, hit)
+
+
+def notes_disagree(ws: Workspace, project: Path, hit: Path) -> bool:
+    """Do the hub or the thread note a file of `project` is under carry `party:` and `parties:` that disagree?"""
+    notes = [project / (project.name + ".md")]
+    parts = hit.relative_to(project).parts
+    if len(parts) > 2 and parts[0] == "Threads":
+        notes.append(project / "Threads" / parts[1] / (parts[1] + ".md"))
+    for note in notes:
+        fm = note_frontmatter(ws, note)
+        if fm.get("party") is not None and fm.get("parties") is not None and \
+                {strip_tag(t) for t in as_list(fm.get("party"))} != {strip_tag(t) for t in as_list(fm.get("parties"))}:
+            return True
+    return False
+
+
+def hub_unreadable(ws: Workspace, project: Path) -> bool:
+    """Does the hub's `party:` and `parties:` read two ways (garrick_lib's labels())? It then labels nothing."""
+    return labels(ws.root, project / (project.name + ".md"), ws.context, ws.label_cache) is None
+
+
+def unlabelled_finding(ws: Workspace, project: Path, path: Path, unknown: set) -> Finding:
+    """No label, no permit: the hub is named as the fix."""
+    hub = rel(ws, project / (project.name + ".md"))
+    why = ("names no party the Parties table holds (%s)" % ", ".join(sorted(unknown))) if unknown else "names no party"
+    return Finding(ERROR, "walls", rel(ws, path),
+                   "is in a project whose hub %s, so the walls cannot be checked; set `party:` in %s to a tag from the "
+                   "Parties table (or `public`), then commit again" % (why, hub),
+                   "A file in %s is committed before the project has a party" % project.name)
+
+
+def staged_other_texts(repo: Path) -> List[Tuple[Path, str]]:
+    """(path, text) of each staged file the text suffixes leave out that still decodes as UTF-8 text (a script, a
+    log, a mail, a notebook, a file with no extension): what a person can read in it, the walls read. Office files
+    and PDFs do not decode, and stay unread, as docs/principles.md says."""
+    staged = _staged_raw(repo)
+    if staged is None:
+        return []
+    top_path, names = staged
+    out = []
+    for name in names:
+        path = top_path / wiki_case(name)
+        if path.suffix.lower() in TEXT_SUFFIXES:
+            continue
+        data = _git_bytes(["show", ":" + name], top_path)
+        if data is None or not data or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
+            continue
+        try:
+            out.append((path, data.decode("utf-8")))
+        except UnicodeDecodeError:
+            continue
+    return out
+
+
+def recheck_after_party_change(ws: Workspace, repo: Path, staged_texts: List[Tuple[Path, str]]):
+    """(path, text, (project, hub fields)) for every file already committed in a project, or in a thread, whose hub
+    or thread note is staged with other parties than HEAD holds."""
+    staged = _staged_raw(repo)
+    if staged is None:
+        return []
+    top_path = staged[0]
+    out = []
+    for path, text in staged_texts:
+        owner = project_of(ws, path)
+        if owner is None:
+            continue
+        project = owner[0]
+        inner = path.relative_to(project).parts
+        if len(inner) == 1 and inner[0] == project.name + ".md":
+            scope = project
+        elif len(inner) == 3 and inner[0] == "Threads" and inner[2] == inner[1] + ".md":
+            scope = project / "Threads" / inner[1]
+        else:
+            continue
+        before = _git_bytes(["show", "HEAD:" + path.relative_to(top_path).as_posix()], top_path)
+        if before is None:
+            continue
+        old = {strip_tag(t) for t in as_list(parse_frontmatter_text(before.decode("utf-8", errors="replace")).get("party"))}
+        old |= {strip_tag(t) for t in as_list(parse_frontmatter_text(before.decode("utf-8", errors="replace")).get("parties"))}
+        new = {strip_tag(t) for t in as_list(parse_frontmatter_text(text).get("party"))}
+        new |= {strip_tag(t) for t in as_list(parse_frontmatter_text(text).get("parties"))}
+        if old == new:
+            continue
+        listed = _git_bytes(["ls-files", "-z", "--", scope.relative_to(top_path).as_posix()], top_path)
+        for name in (listed.decode("utf-8", errors="replace").split("\0") if listed else []):
+            if not name:
+                continue
+            target = top_path / name
+            data = _git_bytes(["show", ":" + name], top_path)
+            if data is None or not data or len(data) > MAX_STAGED_BYTES or b"\0" in data[:8192]:
+                continue
+            try:
+                out.append((target, data.decode("utf-8"), owner))
+            except UnicodeDecodeError:
+                continue
     return out
 
 
@@ -8269,6 +8558,33 @@ def report_json(findings: List[Finding], root: Path) -> str:
                        "findings": [asdict(f) for f in findings]}, indent=2)
 
 
+def walls_cases(root: Path) -> int:
+    """`--walls-cases`: the decide() rows of System/tools/walls-cases.md, run
+    against this workspace's Parties and Walls tables. 0 when each row run
+    gives its expected answer, 1 when one does not, 2 when there is no table."""
+    path = root / "System" / "tools" / "walls-cases.md"
+    text = read_text(path)
+    if text is None:                    # run from a Garrick clone, on a workspace that has not been updated yet
+        path = Path(__file__).resolve().with_name("walls-cases.md")
+        text = read_text(path)
+    if text is None:
+        print("check: %s is missing, so there are no cases to run" % path.relative_to(root).as_posix(), file=sys.stderr)
+        return 2
+    ran, skipped, failed = run_wall_cases(load_context(root), text)
+    print("%d wall cases run against this workspace's Parties and Walls tables, %d failed, %d skipped."
+          % (ran, len(failed), len(skipped)))
+    for line in failed:
+        print("  failed  " + line)
+    for line in skipped:
+        print("  skipped " + line + ": the tables hold no tag for that role")
+    roles = wall_roles(load_context(root))
+    if "near" not in roles or "far" not in roles:
+        print("  no wall row ran: the Walls table names no pair of parties in the Parties table, so nothing was "
+              "checked about walls")
+        return 1
+    return 1 if failed or not ran else 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Check a Garrick workspace against its rules.")
     parser.add_argument("--root", help="workspace root (default: the workspace this script sits in, else the current folder's)")
@@ -8282,6 +8598,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
                         help="install the pre-commit wall check in every zone's repository, and in each repository inside a project")
+    parser.add_argument("--walls-cases", action="store_true",
+                        help="run the table of wall cases (System/tools/walls-cases.md) against this workspace's own "
+                             "Parties and Walls tables, with its tags in place of the fixture's")
     parser.add_argument("--version", action="store_true",
                         help="say which Garrick the workspace was installed from, for a bug report")
     args = parser.parse_args(argv)
@@ -8302,6 +8621,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.install_hooks:
         return install_hooks(root)
+    if args.walls_cases:
+        return walls_cases(root)
     if args.version:
         stamp = read_version(root)
         print(" ".join(s for s in (say_version(stamp), say_changes(root, stamp)) if s))

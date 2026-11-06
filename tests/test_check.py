@@ -482,10 +482,10 @@ class TestProjects(CheckCase):
         self.assertFinds("projects", "error", "`zone`")
         self.assertFinds("projects", "error", "cedar")
 
-    def test_no_party_is_a_warning(self):
+    def test_no_party_is_an_error_that_names_the_hub(self):
         write(self.acme / "Acme Review.md", project_hub("Work", "Acme Review", party=""))
-        self.assertFinds("projects", "warning", "no `party`")
-        self.assertFalse(self.findings("projects", "error"))
+        self.assertFinds("projects", "error", "no `party`")
+        self.assertFinds("projects", "error", "set `party:` in this hub")
 
     def test_no_threads(self):
         shutil.rmtree(self.acme / "Threads")

@@ -1657,11 +1657,17 @@ class TestProtocol(unittest.TestCase):
         lib = sc.lib(REPO)
         ctx = {"walls": {frozenset(("acme", "birch"))}, "parties": {"acme": {}, "birch": {}}}
         rec = lambda *p: {"parties": list(p)}  # noqa: E731
-        self.assertEqual(([rec("birch"), rec()], True), sc.pick([rec("birch"), rec("acme"), rec()], set(), ctx, lib))
+        published = {"parties": [], "public": True}
+        zone = {"acme", "birch"}                  # a zone-wide find: its first record sets the group
+        self.assertEqual(([rec("birch"), published], True), sc.pick([rec("birch"), rec("acme"), published], set(), ctx, lib, start=zone))
+        self.assertEqual(([published], True), sc.pick([rec("birch"), rec("acme"), published], set(), ctx, lib))   # no place, no start
+        self.assertEqual(([published], True), sc.pick([rec("birch"), published], {"public"}, ctx, lib, start=zone))   # holds only public
+        self.assertEqual(([rec("birch")], True), sc.pick([rec("birch"), rec()], set(), ctx, lib, start=zone))   # no label, no permit
         self.assertEqual(([rec("acme")], True), sc.pick([rec("birch"), rec("acme")], {"acme"}, ctx, lib))
-        self.assertEqual(([], True), sc.pick([rec("acme", "birch")], set(), ctx, lib))     # a page on both sides
-        self.assertEqual(([rec("acme")], False), sc.pick([rec("acme"), rec("acme")], set(), ctx, lib, most=1))
-        self.assertEqual(([rec("birch")], False), sc.pick([rec("[[acme]]"), rec("acme corp"), rec("birch")], set(), ctx, lib))
+        self.assertEqual(([], True), sc.pick([rec("acme", "birch")], set(), ctx, lib, start=zone))     # a page on both sides
+        self.assertEqual(([rec("acme")], False), sc.pick([rec("acme"), rec("acme")], set(), ctx, lib, most=1, start=zone))
+        self.assertEqual(([rec("birch")], False), sc.pick([rec("[[acme]]"), rec("acme corp"), rec("birch")], set(), ctx, lib, start=zone))
+        self.assertEqual(([], True), sc.pick([rec("acme")], {"none"}, ctx, lib, start=zone))    # a scope the table lacks
 
 
 def cites(*claims, incomplete=False):
@@ -2039,7 +2045,7 @@ class TestTheNewestFirst(AnswerCase):
         lib = sc.lib(REPO)
         ctx = {"walls": {frozenset(("acme", "birch"))}, "parties": {"acme": {}, "birch": {}}}
         rec = lambda *p: {"parties": list(p)}  # noqa: E731
-        chosen, back, matched = sc.choose([rec("acme")] * 3 + [rec("birch")] * 5, set(), ctx, lib, most=2)
+        chosen, back, matched = sc.choose([rec("acme")] * 3 + [rec("birch")] * 5, set(), ctx, lib, most=2, start={"acme", "birch"})
         self.assertEqual((2, True, 3), (len(chosen), back, matched))   # the five on the far side are not counted
 
 

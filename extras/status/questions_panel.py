@@ -139,8 +139,8 @@ def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable)
                 page = pa.page_target(q, l)
                 if page is not None:
                     ptags = pa.page_tags(q, page) if q.name == "Meetings" else []
-                    if q.name == "Knowledge" or (ptags and set(ptags) <= set(tags) and not any(
-                            q.lib.walled(q.context, a, b) for a in ptags for b in tags)):
+                    if q.name == "Knowledge" or (ptags and set(ptags) <= set(tags) and not q.lib.crossings(
+                            q.context, ptags, tags)):
                         origin = {"name": page.relative_to(q.dir).as_posix(), "href": link(page)}
     slug = pa.answer_slug(q.stem())
     answer_file = "Wikis/%s/raw/answers/%s - %s.md" % (wiki, today.strftime("%y%m%d"), slug)
@@ -417,7 +417,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
     zone with a party)."""
     pa = page_action()
     lib = pa.prefs().lib(ws)
-    need = ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled", "entity_names")
+    need = ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide", "entity_names")
     if lib is None or not all(callable(getattr(lib, n, None)) for n in need):
         return None
     try:

@@ -166,7 +166,9 @@ For app users, ask “Run the workspace check and explain any findings.” The c
 python3 System/tools/check.py
 ```
 
-Tests the workspace against every rule a machine can check:
+Tests the workspace against every rule a machine can check. `python3 System/tools/check.py --walls-cases` instead runs the table of wall cases (`System/tools/walls-cases.md`) against your own Parties and Walls tables, with your tags in place of the fixture's roles, and says which case, if any, your tables answer wrongly. A project whose hub names no `party:` is an error, and the commit hook refuses any file in it until the hub names one (`public` is a party for a project anyone may read; see [Principles](principles.md#one-decision-for-every-point)).
+
+The check covers:
 
 - a `CLAUDE.md` in or above the workspace, which stops Claude Code reading `AGENTS.md`;
 - a missing `AGENTS.md` at the root or in a wiki, and instruction files that drift: an `AGENTS.md` or `AGENTS.local.md` past its word budget, `System/rules.md` past 8,000 characters, the same sentence copied into two instruction files, or a hand-written list of skills, or of a zone's projects, that no longer matches the folder, counting Garrick's file and the local one beside it together (warnings);

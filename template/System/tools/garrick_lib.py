@@ -20,6 +20,8 @@ functions below keep their signatures:
     learned_row(lines, rows, cells, learned) -> str
     memory_folders(root, value=None) -> [Path] / memory_entries(folders) -> [Path]
     walled(context, tag_a, tag_b) -> bool
+    decide(scope, labels, action, context) -> permit | deny | confirm; crossings(context, left, right) -> [pair]
+    labels(root, path, context=None, cache=None) -> frozenset or None
     workspace_root(start=None) -> Path
     nested_repo(folder) -> bool / is_checkout(folder) -> bool
     live_files(folder) -> [Path]
@@ -112,6 +114,16 @@ __all__ = [
     "memory_entries",
     "knowledge_schema",
     "walled",
+    "decide",
+    "crossings",
+    "always_asked",
+    "labels",
+    "meeting_labels",
+    "wall_cases",
+    "mail_labels",
+    "wall_roles",
+    "run_wall_cases",
+    "PUBLIC",
     "MEETINGS_ENTITIES",
     "tag_list",
     "party_entities",
@@ -1200,6 +1212,347 @@ def walled(context: dict, tag_a: str, tag_b: str) -> bool:
     if a == b:
         return False
     return frozenset((a, b)) in context.get("walls", set())
+
+
+# ---------------------------------------------------------------------------
+# Walls: one decision for every enforcement point (#398)
+# ---------------------------------------------------------------------------
+#
+# The policy is the Parties and Walls tables of System/context.md. Every point
+# that enforces it (the pre-commit check, Ask, the status page's actions,
+# intake, Nurture, scaffold) asks decide() and holds no wall test of its own;
+# what a record's labels are, labels() says, once. A wall test that needs the
+# pair it found, to name it in a finding, asks crossings(), which decide()
+# itself is made of.
+
+PUBLIC = "public"       # a reserved tag: material anyone may read, into which nothing is written down
+ACTIONS = ("read", "write", "file")
+
+
+def _tagset(value) -> set:
+    """A scope or a set of labels as plain tags: none of them empty."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        value = [value]
+    return {t for t in (strip_tag(str(v)) for v in value) if t}
+
+
+def crossings(context: dict, left, right=None) -> List[Tuple[str, str]]:
+    """The pairs, in sorted order, with a wall between them: one tag from
+    each of `left` and `right`; with no `right`, two tags of `left` (a < b)."""
+    a = _tagset(left)
+    if right is None:
+        return sorted((x, y) for x in a for y in a if x < y and walled(context, x, y))
+    b = _tagset(right)
+    pairs = {(x, y) for x in a for y in b if walled(context, x, y)}
+    if PUBLIC in a:        # a public record is walled, for writing, from every party
+        pairs |= {(PUBLIC, y) for y in b if y in context.get("parties", {})}
+    return sorted(pairs)
+
+
+def always_asked(context: dict, tag: str) -> bool:
+    """Is a party one that shares its name with another tag (one company, two
+    hats)? Saying its name never says which, so a mail from it is asked about."""
+    parties = context.get("parties", {})
+    name = " ".join(re.findall(r"\w+", str((parties.get(tag) or {}).get("party") or "").lower()))
+    return bool(name) and any(t != tag and " ".join(re.findall(r"\w+", str(e.get("party") or "").lower())) == name
+                              for t, e in parties.items())
+
+
+def decide(scope, labels, action: str, context: dict) -> str:
+    """`permit`, `deny` or `confirm`: may `scope` use a record labelled `labels`?
+    (`public` stands alone: a project that names it takes no party's material.)
+
+    `scope` is the parties a session, a check or a project may use. `labels`
+    are the record's, or None when they cannot be derived (labels()). No label,
+    no permit: a record with none, or one that names a tag the Parties table
+    lacks, is `deny` to read and `confirm` to file.
+
+    read   the record is read by a process holding `scope`. `public` records
+           are read by every scope. A scope with no party reads only those.
+    write  `labels` is the material written into a record whose parties are
+           `scope`. A record with no party takes nothing. A `public` record
+           takes only material with no party: for a write it is walled from
+           every party.
+    file   an item labelled `labels` is filed into a project of `scope`, or,
+           with `scope` None, into one not yet chosen. A
+           wall between them is `deny`; an item that names both sides of a
+           wall, names a party that is always asked about, or has no label
+           is `confirm`: nothing proceeds on it without the user.
+    """
+    if action not in ACTIONS:
+        raise ValueError("action is read, write or file, not %r" % (action,))
+    known = set(context.get("parties", {})) - {"none", PUBLIC}      # reserved tags are never parties, row or no row
+    mine = _tagset(scope)
+    if scope is not None and (mine - {PUBLIC}) - known:
+        return "deny"           # a scope with a tag the Parties table lacks (`none`, a ghost) is no scope at all
+    if labels is None:
+        return "deny" if action != "file" else "confirm"
+    theirs = _tagset(labels)
+    if action == "read":
+        if not theirs:
+            return "deny"
+        if theirs <= {PUBLIC}:
+            return "permit"
+        theirs -= {PUBLIC}
+        mine -= {PUBLIC}
+        if not theirs <= known or not mine:
+            return "deny"
+        return "deny" if crossings(context, mine, theirs) or crossings(context, theirs) or crossings(context, mine) \
+            else "permit"
+    if action == "write":
+        if not mine:
+            return "deny"
+        if PUBLIC in mine:
+            return "deny" if theirs - {PUBLIC} else "permit"
+        theirs -= {PUBLIC}
+        if not theirs <= known:            # a tag the table lacks (`none`, a ghost) is material no wall can place
+            return "deny"
+        return "deny" if crossings(context, mine, theirs) or crossings(context, theirs) else "permit"
+    # file
+    if not theirs:
+        return "confirm"
+    if scope is not None and (not mine or crossings(context, mine, theirs - {PUBLIC})):
+        return "deny"
+    theirs -= {PUBLIC}
+    if not theirs <= known:
+        return "deny"
+    if crossings(context, theirs) or any(always_asked(context, t) for t in theirs):
+        return "confirm"
+    return "permit"
+
+
+def wall_cases(text: str) -> Dict[str, List[List[str]]]:
+    """The tables of a wall-cases file (tests/walls/cases.md): each `##`
+    heading to the rows under it, a row as its cells, header and rule left out."""
+    out: Dict[str, List[List[str]]] = {}
+    heading = ""
+    for line in text.splitlines():
+        if line.startswith("## "):
+            heading = line[3:].strip()
+        elif line.startswith("|") and heading:
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if set("".join(cells)) <= set("-: ") or cells[0] in ("Id", "Role"):
+                continue
+            out.setdefault(heading, []).append(cells)
+    return out
+
+
+def mail_labels(context: dict, data: bytes) -> Tuple[Optional[frozenset], bool]:
+    """(the parties a saved mail is written for, whether its header and its
+    addresses disagree). The labels are the union of its `X-Garrick-Parties`
+    header and the parties of the domains it carries; a header tag that is
+    unknown, `none` or `public` makes them None. A mail with neither has none."""
+    known = set(context.get("parties", {}))
+    header = set(stamped_parties(data))
+    if header and (header - known or header & {"none", PUBLIC}):
+        return None, True
+    domains = set()
+    mail = parse_mail_bytes(data)
+    for key in ("from", "to", "cc"):
+        for _, addr in mail.get(key, []):
+            if not is_own_address(context, addr) and not is_webmail(addr.rpartition("@")[2]):
+                domains |= set(parties_for_domain(context, addr.rpartition("@")[2]))
+    union = header | domains
+    return (frozenset(union) if union else None), bool(header and domains and header != domains)
+
+
+def wall_roles(context: dict) -> Dict[str, str]:
+    """The tags that stand for the roles of the wall cases (tests/walls/cases.md)
+    in a Parties and Walls table: `near` and `far`, the first pair a wall keeps
+    apart; `other`, a party walled from neither; `hat` and `hat2`, two tags of
+    one name with a wall between them; `ghost`, a tag the table lacks; `public`.
+    A role the table has no tag for is left out."""
+    parties = sorted(context.get("parties", {}))
+    roles = {"ghost": "ghost-not-in-parties", "public": PUBLIC}
+    while roles["ghost"] in parties:
+        roles["ghost"] += "-x"
+    pairs = [(a, b) for a in parties for b in parties if a < b and walled(context, a, b)]
+    twins = [(a, b) for a, b in pairs if always_asked(context, a) and always_asked(context, b)
+             and context["parties"][a].get("party") == context["parties"][b].get("party")]
+    plain = [p for p in pairs if p not in twins]
+    if plain:
+        roles["near"], roles["far"] = plain[0]
+        free = [t for t in parties if t not in (roles["near"], roles["far"]) and not always_asked(context, t)
+                and not crossings(context, [t], parties)]
+        if free:
+            roles["other"] = free[0]
+    if twins:
+        roles["hat"], roles["hat2"] = twins[0]
+    return roles
+
+
+def run_wall_cases(context: dict, text: str) -> Tuple[int, List[str], List[str]]:
+    """The decide() rows of a wall-cases file, run against a Parties and Walls
+    table with its own tags in place of the fixture's roles. Returns (rows run,
+    rows skipped because the table has no tag for a role, the rows that failed)."""
+    roles = wall_roles(context)
+    ran, skipped, failed = 0, [], []
+    for ident, scope, labels_, action, expect, source in wall_cases(text).get("decide()", []):
+        def tags(cell):
+            cell = cell.strip()
+            if cell in ("?", "*"):
+                return None
+            return set() if cell == "-" else {roles[c.strip()] for c in cell.split(",")}
+        try:
+            mine, theirs = (None if scope.strip() == "*" else tags(scope)), tags(labels_)
+        except KeyError as missing:
+            skipped.append("%s (no %s)" % (ident, missing.args[0]))
+            continue
+        ran += 1
+        try:
+            got = decide(mine, theirs, action, context)
+        except ValueError:
+            got = "error"
+        if got != expect:
+            failed.append("%s: %s on %s from %s is %s, not %s (%s)" % (ident, action, labels_, scope, got, expect, source))
+    return ran, skipped, failed
+
+
+def _labels_of(fm: dict, alone: bool = False) -> Optional[set]:
+    """The tags a frontmatter names in `party:` and `parties:`; None when both
+    are there and disagree, which reads two ways and so reads as neither."""
+    one, many = tag_list(fm.get("party")), tag_list(fm.get("parties"))
+    if fm.get("party") is not None and fm.get("parties") is not None and set(one) != set(many):
+        return None
+    return set(many or one)
+
+
+def _note_labels(path: Path) -> set:
+    try:
+        return _labels_of(parse_frontmatter(path)) or set()
+    except OSError:
+        return set()
+
+
+_PARTY_KEY_RE = re.compile(r"(?im)^[ \t]*[\"']?[ \t]*(?:party|parties|zone)[ \t]*[\"']?[ \t]*:")
+
+
+def _party_like_key(path: Path) -> bool:
+    """Does the frontmatter of a page hold a key that reads as `party`, `parties` or `zone` in any case, quoted, with
+    a space before the colon or indented? Knowledge pages carry none; one that does is not published."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True
+    if not text.startswith("---"):
+        return False
+    block = re.split(r"(?m)^---[ \t]*$", text, maxsplit=2)
+    return bool(_PARTY_KEY_RE.search(block[1] if len(block) > 1 else text[:4000]))
+
+
+def meeting_labels(fm: dict) -> Optional[frozenset]:
+    """The parties a Meetings page's frontmatter names, or None when they
+    cannot all be stated: a finished page has a zone and a list of `parties:`; a
+    person or entity page may have its `party:` alone; `party:` and `parties:`
+    that disagree read two ways, so neither."""
+    got = _labels_of(fm)
+    if not got or PUBLIC in got:          # `public` is a project's choice, never a conversation's
+        return None
+    kind = str(fm.get("type") or "").strip().lower()
+    if kind in ("person", "entity") and fm.get("parties") is None:
+        return frozenset(got)
+    if fm.get("zone") and isinstance(fm.get("parties"), list):
+        return frozenset(got)
+    return None
+
+
+def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
+           cache: Optional[dict] = None) -> Optional[frozenset]:
+    """The parties a record is written for, derived here and nowhere else, or
+    None when they cannot be derived (decide() reads None as no label).
+
+    In this order: a Knowledge page's own `parties:` (a page with none is
+    `public`, as Knowledge crosses every wall); a Meetings page's own `parties:`
+    or `party:` (a finished page has a zone; a person or entity page may have
+    its `party:` alone); a raw record's, the pages that cite it; a mail in an
+    inbox, its `X-Garrick-Parties` header or the domains it carries; a file in
+    a project, its hub's and its thread note's (a project folder, every
+    thread's; a hub that names no party gives None). A record whose `party:`
+    and `parties:` both exist and disagree reads two ways: None. Pass a dict
+    as `cache` to derive each hub, thread note and citation index once per run.
+    """
+    root, path = Path(root), Path(path)
+    cache = {} if cache is None else cache
+    try:
+        parts = (path if path.is_absolute() else root / path).relative_to(root).parts
+    except ValueError:
+        return None
+    if any(p in ("..", "") for p in parts):
+        return None
+    if len(parts) >= 3 and parts[0] == "Zones":
+        # a folder as the disk spells it: another case or Unicode form (Finder's NFD, an ignorecase rename) is the same one
+        zone = _listed(root / "Zones", parts[1]) or parts[1]
+        project = _listed(root / "Zones" / zone, parts[2]) or parts[2]
+        rest = list(parts[3:])
+        if len(rest) >= 2 and rest[0].casefold() == "threads":
+            rest[0] = _listed(root / "Zones" / zone / project, rest[0]) or rest[0]
+            rest[1] = _listed(root / "Zones" / zone / project / rest[0], rest[1]) or rest[1]
+        parts = ("Zones", zone, project) + tuple(rest)
+    full = root.joinpath(*parts)
+    if parts[:2] == ("Wikis", "Knowledge"):
+        fm = parse_frontmatter(full) if full.suffix == ".md" and full.is_file() else {}
+        if full.suffix == ".md" and full.is_file() and _party_like_key(full):
+            return None             # a page that carries a party key in any spelling is someone's, not published
+        got = _labels_of(fm)
+        return None if got is None else frozenset(got or {PUBLIC})
+    if parts[:3] == ("Wikis", "Meetings", "wiki"):
+        if full.suffix != ".md" or not full.is_file():
+            return None
+        return meeting_labels(parse_frontmatter(full))
+    if parts[:3] == ("Wikis", "Meetings", "raw"):
+        key = ("cites", str(root))
+        if key not in cache:
+            index: Dict[str, List[Path]] = {}
+            wiki = root / "Wikis" / "Meetings" / "wiki"
+            for page in sorted(wiki.rglob("*.md")) if wiki.is_dir() else []:
+                try:
+                    text = page.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                for stem in set(re.findall(r"\[\[(?:raw/)?([^\]|#]+?)(?:\.\w+)?(?:[|#][^\]]*)?\]\]", text)) | \
+                        set(re.findall(r"raw/([^\s\]|#)\"']+?)(?:\.\w+)?(?=[\s\]|#)\"']|$)", text)):
+                    index.setdefault(Path(stem).name.lower(), []).append(page)
+            cache[key] = index
+        pages = cache[key].get(full.stem.lower(), [])
+        if not pages:
+            return None
+        out: set = set()
+        for page in pages:
+            got = labels(root, page, context, cache)
+            if got is None:
+                return None
+            out |= got
+        return frozenset(out)
+    if len(parts) >= 3 and parts[0] == "Zones" and parts[2] != "Inbox" and not parts[2].startswith("."):
+        project = root / "Zones" / parts[1] / parts[2]
+        if not project.is_dir():
+            return None
+        hub = ("hub", str(project))
+        if hub not in cache:
+            fm = parse_frontmatter(project / (project.name + ".md"))
+            cache[hub] = _labels_of(fm)         # the note named after the folder, whatever its type, as the hook finds it
+        found = cache[hub]
+        if not found:
+            return None
+        out = set(found)
+        threads = [parts[4]] if len(parts) >= 5 and parts[3] == "Threads" else \
+            sorted(p.name for p in (project / "Threads").glob("*/")) if len(parts) <= 3 else []
+        for t in threads:
+            got = _labels_of(parse_frontmatter(project / "Threads" / t / (t + ".md")))
+            if got is None:
+                return None
+            out |= got
+        return frozenset(out)
+    if len(parts) >= 3 and parts[0] == "Zones" and parts[2] == "Inbox" and full.suffix.lower() == ".eml" and full.is_file():
+        try:
+            data = full.read_bytes()
+        except OSError:
+            return None
+        context = context if context is not None else load_context(root)
+        return mail_labels(context, data)[0]
+    return None
 
 
 # ---------------------------------------------------------------------------

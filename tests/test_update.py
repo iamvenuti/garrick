@@ -1150,6 +1150,22 @@ class TestWhatExtrasNeedNext(ExtrasCase):
                                       str(self.root), "--dest", str(self.base / "Applications"), "--", "--no-graph"])
         self.assertIn("Rebuilt Garrick.app: /Applications/Garrick.app.", result["then"])
 
+    def test_a_rebuild_reports_only_the_notices_make_app_writes_for_the_user(self):
+        """#387: compiler output on stderr stays out of the message; a failed rebuild keeps its last line."""
+        stub = Path(self.tmp.name) / "make-app-stub.sh"
+        stub.write_text("#!/bin/bash\n"
+                        "echo 'main.swift:7:13: warning: value was defined but never used' >&2\n"
+                        "echo '  7 |     let folder = 1' >&2\n"
+                        "echo '    |         `- note: consider a boolean test' >&2\n"
+                        "echo 'make-app: Accessibility was reset for Garrick once; allow it again when macOS asks.' >&2\n"
+                        "echo '/Applications/Garrick.app'\n")
+        done = update.make_app(["/bin/bash", str(stub)])
+        self.assertEqual((0, "/Applications/Garrick.app. Accessibility was reset for Garrick once; "
+                             "allow it again when macOS asks"), done)
+        stub.write_text("#!/bin/bash\necho 'make-app: the app did not build.' >&2\n"
+                        "echo 'main.swift:9:1: error: expected declaration' >&2\nexit 1\n")
+        self.assertEqual((1, "main.swift:9:1: error: expected declaration"), update.make_app(["/bin/bash", str(stub)]))
+
     def report_of(self, p):
         p["then"] = [what for what, _ in update.next_steps(self.root, p)]
         return update.report(p)

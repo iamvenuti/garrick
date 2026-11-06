@@ -743,7 +743,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// (GarrickShared.swift), the opener switched on in Settings and installed, checked again here.
 	func handleLink(_ url: URL) {
 		guard !checking, let link = GarrickLink.parse(url, token: linkToken) else { return }
-		guard let folder = GarrickLink.openable(link.folder, workspace: workspace.path) else {
+		guard GarrickLink.openable(link.folder, workspace: workspace.path) != nil else {
 			return toast("Garrick opens only a project or a thread from Finder. Nothing was opened.")
 		}
 		let name = link.app == "cmux" ? "cmux" : link.app.capitalized

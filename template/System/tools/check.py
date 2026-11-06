@@ -122,6 +122,7 @@ from garrick_lib import (  # noqa: E402
     TODO_ALSO_RE,
 )
 from garrick_lib import _listed  # noqa: E402  (#340)
+from garrick_lib import _frontmatter_body  # noqa: E402  (#388)
 from garrick_lib import (  # noqa: E402  (#330)
     FRONTMATTER_PLAIN, PERSON_KEYS, PERSON_PLAIN, PERSON_SHAPE, WALLS_KEYS, WIKI_GIT_REASON, frontmatter_form_problem,
     entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, org_key, organisation_link,
@@ -4867,7 +4868,7 @@ def _forms(raw: str) -> List[str]:
     return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
 
 
-def code_paths(text: str) -> List[Tuple[str, str]]:
+def code_paths(text: str, is_file: Optional[Callable[[str], bool]] = None) -> List[Tuple[str, str]]:
     """(as written, target) for every path written as code in `text`: a code
     span, or a line of a fenced block, that holds a slash (code_texts). The
     whole of the span or line is read as a path, and so is each slash-bearing
@@ -4876,7 +4877,9 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
     `Harbour/Notes.md` does and a file name may hold spaces. A trailing `:12`
     or `?x` is taken off as well as kept. Nothing resolves these as a link
     does, but a person or an assistant follows one just the same, and Nurture
-    may turn one into a link."""
+    may turn one into a link. A target that ends in `/` names a folder and is
+    left out, unless its last segment has an extension or `is_file` says a file
+    has exactly that path: matched by name it would find a note of that name."""
     out = []
     for written, body in code_texts(text):
         candidates = [body.strip().strip("\"'")]
@@ -4895,7 +4898,22 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
                 if target in seen:
                     continue
                 seen.add(target)
-                if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                target = re.sub(r"/[*?]+$", "/", target)  # `Demo.md/*`: a glob tail
+                slashed = target.endswith("/")
+                if slashed:
+                    # A folder path is never matched by name to a note (the
+                    # folder reading follows it). A last segment with an
+                    # extension is a file written with a stray slash: it is
+                    # read as the same token without it.
+                    target = target.rstrip("/")
+                    if target in seen or not (re.search(r"\.[A-Za-z0-9]{1,5}$", target)
+                                              or (is_file is not None and is_file(target))):
+                        continue  # no extension, and no file of exactly that name: a folder
+                    seen.add(target)
+                    if lexical(target) and lexical(target) not in seen:  # as _forms settles it
+                        seen.add(lexical(target))
+                        out.append((written, lexical(target)))
+                if ("/" in target or slashed) and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
                     out.append((written, target))
     return out
 
@@ -5347,7 +5365,49 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
 
     # Links, and paths written as code (code_paths), which whoever reads the
     # note follows just the same.
-    targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text)]
+    def exact_file(target: str) -> bool:
+        # A slash-ended token with no extension is a file only when a regular
+        # file has exactly that path (no `.md` added, no bare name), or when a
+        # segment of it names a project's folder (0.56.0's rule, unchanged).
+        if target.startswith(("/", "~")):
+            try:
+                if Path(os.path.expanduser(target)).is_file():
+                    return True
+            except (OSError, ValueError):
+                pass
+        parts = [x.lower() for x in target.replace("\\", "/").split("/") if x and x not in (".", "..")]
+        named = {project.name.lower() for project, _ in ws.projects}
+        for project, _ in ws.projects:
+            try:
+                named |= {e.name.lower() for e in os.scandir(project / "Threads") if e.is_dir()}
+            except OSError:
+                pass
+        if set(parts) & {"wikis", "wiki", "raw"}:
+            return True  # a path into a wiki
+        stems = {_strip_md(Path(rel(ws, f)).parts)[-1].lower() for f in ws.wiki_files
+                 if "Meetings" in Path(rel(ws, f)).parts[:3]}
+        stems |= {page.stem.lower() for page in ws.meetings}
+        if parts and parts[-1] in stems:
+            return True  # it names a Meetings page, whatever its type or grade
+        if set(parts) & named:
+            return True  # a segment names a project's or a thread's folder: read as before, never as a bare folder name
+        if not parts:
+            return False
+        if target.startswith(("/", "~")):  # read from where it reaches the workspace, as a path from outside is
+            starts = [i + 1 for i, x in enumerate(parts) if x == ws.root.name.lower()]
+            starts += [i for i, x in enumerate(parts) if x in ("zones", "wikis") and i > 0]
+            tails = [parts[i:] for i in starts if i < len(parts)]
+        else:
+            tails = [parts]
+        project_index(ws)
+        known = ws.project_files or {}
+        for f in known:
+            have = [x.lower() for x in Path(rel(ws, f)).parts]
+            if any(have[-len(t):] == t for t in tails if t and len(t) <= len(have)):
+                return True
+        return False
+
+    targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text, exact_file)]
     seen = set()
     for verb, written, target in targets if meetings.items else []:
         for page in resolve(ws, path, target, meetings):
@@ -6365,6 +6425,79 @@ def check_inbox(ws: Workspace) -> List[Finding]:
     return out
 
 
+_FM_KEY = re.compile(r"""^(\s*)((?:-\s+)*)([A-Za-z0-9_][A-Za-z0-9_ .-]*?)\s*:(?:\s+(.*))?$""")
+_FM_DQ = re.compile(r'''^"(?:[^"\\]|\\.)*"\s*(?:#.*)?$''')
+_FM_SQ = re.compile(r"""^'(?:[^']|'')*'\s*(?:#.*)?$""")
+_FM_ITEM = r"""\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s,\[\]{}:\\"'&!*?][^,\[\]{}:\\"']*)?\s*"""
+_FM_LIST = re.compile(r"^\[(?:%s(?:,%s)*)?\]\s*(?:#.*)?$" % (_FM_ITEM, _FM_ITEM))
+
+
+def _frontmatter_value_ok(value: str) -> bool:
+    """A value the allowlist reads: empty, a block scalar's opener, a quoted scalar, a one-line flow list whose
+    items are plain scalars (none holding `{ [ ] : \\`, none starting `& ! * ?`) or quoted scalars (which may
+    hold anything), or a plain scalar that does not start with a flow, anchor, tag, alias or key mark."""
+    v = value.strip()
+    if not v or v[0] in "|>":
+        return True
+    if v[0] == '"':
+        return bool(_FM_DQ.match(v))
+    if v[0] == "'":
+        return bool(_FM_SQ.match(v))
+    if v[0] == "[":
+        return bool(_FM_LIST.match(v))
+    return v[0] not in "{&!*?" and not v.startswith("<<")
+
+
+# A character some YAML readers take as a line break or cannot print: C0 and C1 controls but tab, and U+2028 and
+# U+2029. `a party: b` after one is a key to such a reader (#388).
+_FM_ODD_CHAR = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029]")
+
+
+def scan_frontmatter(text: str, names) -> tuple:
+    """Read a Knowledge page's frontmatter against an allowlist (#388): (names among `names` used as keys,
+    whether any line cannot be read plainly). A line is blank, a comment, `key: value` or `key:` with an
+    unquoted key of letters, digits, `_`, space, `.` and `-`, a block list item `- value`, or a line of a block
+    scalar (`|` or `>`) opened above; a value is a plain or quoted scalar or a one-line flow list of scalars.
+    Anything else could spell `parties` in a way a scan cannot see, so the page is refused. A key with no value
+    and nothing under it is not counted."""
+    body = _frontmatter_body(text) or []
+    found, unreadable, block = [], False, None
+    for i, line in enumerate(body):
+        if _FM_ODD_CHAR.search(line):
+            unreadable = True
+        indent = len(line) - len(line.lstrip())
+        if block is not None and (not line.strip() or indent > block):
+            continue
+        block = None
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        m = _FM_KEY.match(line)
+        if m:
+            value = (m.group(4) or "")
+            if not _frontmatter_value_ok(value):
+                unreadable = True
+            if value.strip()[:1] in ("|", ">") and value.strip():
+                block = indent
+            key = m.group(3).strip().lower()
+            if key in names:
+                plain = value.split(" #")[0].strip()
+                nested = False
+                for nxt in body[i + 1:]:
+                    if nxt.strip() and not nxt.lstrip().startswith("#"):
+                        nested = (len(nxt) - len(nxt.lstrip())) > indent or nxt.lstrip().startswith("- ")
+                        break
+                if plain not in ("", "[]", "''", '""', "null", "~") or nested:
+                    found.append(key)
+            continue
+        item = re.match(r"^\s*-\s+(.*)$", line)
+        if item and "\t" not in line[:indent] and _frontmatter_value_ok(item.group(1)):
+            if item.group(1).strip()[:1] in ("|", ">"):
+                block = indent
+            continue
+        unreadable = True
+    return found, unreadable
+
+
 def check_knowledge(ws: Workspace) -> List[Finding]:
     """Knowledge holds published material, which every side may use. A page
     carries no party and no zone, links nowhere into Meetings, and neither it
@@ -6396,6 +6529,8 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
             fm = {}
             if suffix == ".md":  # read once; a page too big to scan still has its fields read
                 fm = parse_frontmatter_text(text) if text else parse_frontmatter(path)
+                if isinstance(fm.get("type"), list):   # a stray `- [..]` line reads as a list; not a kind of page
+                    fm["type"] = str(fm["type"])
             if suffix == ".md" and fm and path.parent == sources and declared:
                 lacking = [f for f in sfields if not as_list(fm.get(f))]
                 if fm.get("type") != stype or lacking:
@@ -6414,12 +6549,22 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                                    "as other notes" % (fm.get("type"), ", ".join(sorted(known_types))),
                                    "A Knowledge page has a type the schema does not know"))
             carried = [k for k in ("party", "parties", "zone") if as_list(fm.get(k))]
+            unreadable = False
+            if suffix == ".md":
+                named, unreadable = scan_frontmatter(text, ("party", "parties", "zone"))
+                carried += [k for k in named if k not in carried]
             if carried:
+                carried.sort(key=("party", "parties", "zone").index)
                 out.append(Finding(ERROR, "knowledge", rel(ws, path),
                                    "carries %s; Knowledge holds published material, which carries nobody's confidence. "
                                    "Take the field out, or file the item in Meetings if it is a conversation"
                                    % " and ".join("`%s`" % k for k in carried),
                                    "A Knowledge page carries parties"))
+            if unreadable:
+                out.append(Finding(ERROR, "knowledge", rel(ws, path),
+                                   "frontmatter the check cannot read plainly; Knowledge carries nobody's confidence. "
+                                   "Write each key on a line of its own, unquoted and without tags, anchors or braces",
+                                   "A Knowledge page has frontmatter the check cannot read"))
             for problem in ([] if is_faded(ws, path) else bad_dates(fm)):
                 out.append(Finding(ERROR, "knowledge", rel(ws, path), problem,
                                    "A Knowledge page has a date in the wrong form"))

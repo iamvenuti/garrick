@@ -62,7 +62,8 @@ project of its zone, by the same machinery: the folder, every link to it and to
 the files inside it, its line in the hub (under the same heading), `project:`
 and `parent:`, and its rows in the project's `Deliverables/published.md`, in one
 commit that `undo` reverts. It refuses, and writes nothing, for another zone, a
-project walled from the thread's party (or a party it cannot read plainly), a
+project walled from the thread's party (a `party:` list counts every tag; one it
+cannot read plainly is refused too), a
 thread of that name already there, a project that is parked or done, and files
 of the thread that sit outside its folder. `delete` without `--confirm` only says
 what would go; with it, the folder, the hub's line and the open Todo.md lines
@@ -1057,19 +1058,37 @@ def hub_status(hub):
     return str(value).strip().lower() if isinstance(value, str) and value.strip() else "active"
 
 
-def one_party(root, note, what):
-    """The one party tag a note's `party:` names, held in System/context.md's
-    Parties table, or a Refusal. A list, an empty value or a tag nobody
-    declared is not read plainly, and a move never guesses at a wall."""
+def party_tags(root, note, what):
+    """The party tags a note's `party:` names, read as check.py reads them: one
+    tag, or a list of them, each held in System/context.md's Parties table.
+    A Refusal where the value is empty, holds a tag nobody declared, or sits
+    in frontmatter that reads two ways. A move never guesses at a wall."""
+    try:
+        text = note.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = None
+    cannot = Refusal(f"The {what} has no single `party:` that can be read, so the move could not be checked "
+                     "against the walls. Nothing was moved.")
+    if text is None or frontmatter_form_problem(text, ("party",)):
+        raise cannot
     value = parse_frontmatter(note).get("party")
-    if not isinstance(value, str) or not strip_tag(value):
-        raise Refusal(f"The {what} has no single `party:` that can be read, so the move could not be checked "
-                      "against the walls. Nothing was moved.")
-    tag = strip_tag(value)
-    if tag not in load_context(root).get("parties", {}):
+    if value is not None and not isinstance(value, (str, list)):
+        raise cannot
+    if isinstance(value, list) and not all(isinstance(v, str) for v in value):
+        raise cannot
+    tags = tag_list(value)
+    if not tags or (isinstance(value, list) and len(tags) != len(value)):
+        raise cannot
+    declared = load_context(root).get("parties", {})
+    if any(t not in declared for t in tags):
         raise Refusal(f"The {what}'s `party:` is not a tag in the Parties table of System/context.md, so the move could "
                       "not be checked against the walls. Nothing was moved.")
-    return tag
+    return tags
+
+
+def any_walled(ctx, left, right):
+    """Does a wall stand between any tag of one side and any tag of the other?"""
+    return any(walled(ctx, a, b) for a in left for b in right)
 
 
 def item_end(lines, i):
@@ -1214,7 +1233,7 @@ def md_relink(text, p_old, p_new, rel_old, rel_new, zone_dir, zone, name, unreso
     return MD_LINK.sub(one, text)
 
 
-def thread_material_walls(root, zone_dir, thread_dir, target_tag):
+def thread_material_walls(root, zone_dir, thread_dir, target_tags):
     """Defence in depth for a move (#354), beside the zone's own wall check at
     the commit: every link in the thread's notes is read for whose material it
     leads to, and a link to a Meetings page or to another project's file is
@@ -1261,7 +1280,7 @@ def thread_material_walls(root, zone_dir, thread_dir, target_tag):
                     if not got:
                         return "a meeting page the thread links has no parties, so the move could not be checked against the walls"
                     tags |= got
-            if any(walled(ctx, t, target_tag) for t in tags):
+            if any_walled(ctx, tags, target_tags):
                 return "WALL"
     return None
 
@@ -1357,12 +1376,12 @@ def cmd_move(root, args, today):
     # The walls, before anything else is read or written: a wall is the one refusal that says nothing more.
     if not hub.is_file():
         raise Refusal(f"{hub.relative_to(root)} is missing, so the thread's line in its hub could not be moved.")
-    mine, theirs = one_party(root, note, "thread"), one_party(root, target_hub, "target project")
-    source = one_party(root, hub, "project it leaves")
+    mine, theirs = party_tags(root, note, "thread"), party_tags(root, target_hub, "target project")
+    source = party_tags(root, hub, "project it leaves")
     ctx = load_context(root)
     ops = operations()
     wall = getattr(ops, "WALL_REFUSAL", None) or WALL_SENTENCE
-    if walled(ctx, mine, theirs) or walled(ctx, source, theirs):
+    if any_walled(ctx, mine, theirs) or any_walled(ctx, source, theirs):
         raise Refusal(wall)
     why = thread_material_walls(root, zone_dir, thread_dir, theirs)
     if why == "WALL":

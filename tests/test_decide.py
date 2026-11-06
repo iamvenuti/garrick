@@ -139,12 +139,16 @@ class LabelCases(unittest.TestCase):
         self.assertIsNone(self.got("Zones/Work/Inbox/web.eml"))
         self.assertEqual(self.got("Zones/Work/Inbox/stamped.eml"), {"acme", "birch"})
 
+    def test_a_conversation_is_never_public(self):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260321-pub.md", meeting_page("Work", "[public]", "Pub"))
+        self.assertIsNone(self.got("Wikis/Meetings/wiki/sources/260321-pub.md"))
+
     def test_a_path_outside_the_workspace_has_no_label(self):
         self.assertIsNone(lib.labels(self.root, "../elsewhere.md", self.ctx))
         self.assertIsNone(lib.labels(self.root, "Zones/Work/Todo.md", self.ctx))
 
     def test_the_rows_of_the_table_are_all_covered(self):
-        self.assertEqual(len(lib.wall_cases(CASES.read_text(encoding="utf-8"))["labels()"]), 20)
+        self.assertEqual(len(lib.wall_cases(CASES.read_text(encoding="utf-8"))["labels()"]), 21)
 
 
 if __name__ == "__main__":

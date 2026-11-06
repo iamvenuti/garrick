@@ -79,6 +79,9 @@ A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tes
 | d50 | * | hat | file | confirm | intake, before a project is chosen: mail from a party that is always asked about |
 | d51 | * | near | file | permit | intake, before a project is chosen: one party, no question |
 | d52 | * | - | file | confirm | intake, before a project is chosen: nothing on the mail names a party |
+| d53 | near | public, far | read | deny | a record labelled public and for a far party is read as the far party |
+| d54 | public | public | file | permit | a public item into a public project |
+| d55 | public | near | file | deny | nothing is filed down into a public project |
 | d48 | far | near | file | deny | the same wall for filing, the other way |
 
 ## labels()
@@ -107,6 +110,7 @@ Each row is a record in the fixture workspace; `Harbour` is a project of `far` w
 | l17 | a mail in an inbox from webmail only | ? | webmail never names a party |
 | l18 | a mail stamped `X-Garrick-Parties: near, far` | near, far | a mail saved as material |
 | l19 | a file in a project whose hub says `party: public` | public | `public` is chosen, never inferred |
+| l21 | a Meetings page whose `parties:` names `public` | ? | `public` is a project's choice, never a conversation's |
 | l20 | a file in a project whose thread note carries a `parties:` that disagrees with its `party:` | ? | two readings, neither |
 
 ## Enforcement points

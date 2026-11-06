@@ -114,6 +114,7 @@ from garrick_lib import (  # noqa: E402
     stamped_parties,
     strip_recipients,
     strip_tag,
+    PUBLIC,
     crossings,
     decide,
     work_folder,
@@ -455,16 +456,18 @@ def meeting_view(ws: "Workspace", page: Path, fm: dict, text: Optional[str] = No
 WALLS_VALUE = "the walls read no party or zone they know here"
 
 
-def walls_value_problem(ws: "Workspace", fm: dict) -> str:
+def walls_value_problem(ws: "Workspace", fm: dict, project_file: bool = False) -> str:
     """Which of the keys the walls read holds a value they do not know, or
     "": a `party:` or `parties:` value that is no tag in the Parties table
     nor `none`, or a `zone:` that is no zone of the workspace. Such a value
     is read as no party, which would turn the walls off where a YAML reader,
-    or the writer, meant one; so it turns them on (#330)."""
+    or the writer, meant one; so it turns them on (#330). `public` is a tag
+    only for a project's own note (`project_file`): a hub chooses it for the
+    project, and it is no party of a Meetings page."""
     for key in ("party", "parties"):
         for v in as_list(fm.get(key)):
             tag = strip_tag(str(v))
-            if tag and tag != "none" and tag not in ws.context["parties"]:
+            if tag and tag != "none" and tag not in ws.context["parties"] and not (project_file and tag == PUBLIC):
                 return "`%s:` names no tag from the Parties table, nor `none`" % key
     zone = fm.get("zone")
     zones = {z.name for z in ws.zones} | set(ws.context["zones"])
@@ -1405,6 +1408,11 @@ def check_context(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "context", ctx_path,
                                "%s belongs to `%s`, which is not a tag in Parties" % (person["name"], person["party"]),
                                "%s belongs to an unknown party" % person["name"]))
+    if PUBLIC in parties:
+        out.append(Finding(ERROR, "context", ctx_path,
+                           "the Parties table has a row for `public`, which is reserved: a hub names it to say anyone may "
+                           "read the project, and no wall can stand round it; take the row out",
+                           "The Parties table defines the reserved tag public"))
     listed = set(ws.context["zones"])
     for zone in ws.zones:
         if listed and zone.name not in listed:
@@ -1870,9 +1878,14 @@ def check_projects(ws: Workspace) -> List[Finding]:
                                "file of the project can be committed, and it cannot draw on the Meetings wiki",
                                "Project %s has no party" % project.name))
         for tag in tags:
-            if tag not in ws.context["parties"]:
+            if tag not in ws.context["parties"] and tag != PUBLIC:
                 out.append(Finding(ERROR, "projects", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Project %s names an unknown party" % project.name))
+        if PUBLIC in tags and len(tags) > 1:
+            out.append(Finding(ERROR, "projects", r,
+                               "`party` names `public` with other parties; a public project holds no party's material, "
+                               "so `public` stands alone",
+                               "Project %s mixes public with a party" % project.name))
         text = read_text(hub) or ""
         if not threads and not own_resume(text):
             out.append(Finding(WARNING, "projects", rel(ws, project),
@@ -6396,7 +6409,7 @@ def form_findings(ws: Workspace, pages: List[Tuple[Path, Optional[str]]]) -> Lis
                                % (FRONTMATTER_PLAIN, problem), "A page's frontmatter can be read two ways"))
             continue
         fm = parse_frontmatter_text(text) if text is not None else note_frontmatter(ws, path)
-        problem = walls_value_problem(ws, fm)
+        problem = walls_value_problem(ws, fm, project_of(ws, path) is not None)
         if problem:
             out.append(Finding(ERROR, "walls", rel(ws, path),
                                "%s: %s; until it does, the walls read nothing on it as safe to use"

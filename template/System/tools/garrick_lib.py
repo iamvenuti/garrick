@@ -1241,7 +1241,11 @@ def crossings(context: dict, left, right=None) -> List[Tuple[str, str]]:
     a = _tagset(left)
     if right is None:
         return sorted((x, y) for x in a for y in a if x < y and walled(context, x, y))
-    return sorted((x, y) for x in a for y in _tagset(right) if walled(context, x, y))
+    b = _tagset(right)
+    pairs = {(x, y) for x in a for y in b if walled(context, x, y)}
+    if PUBLIC in a:        # a public record is walled, for writing, from every party
+        pairs |= {(PUBLIC, y) for y in b if y in context.get("parties", {})}
+    return sorted(pairs)
 
 
 def always_asked(context: dict, tag: str) -> bool:
@@ -1255,6 +1259,7 @@ def always_asked(context: dict, tag: str) -> bool:
 
 def decide(scope, labels, action: str, context: dict) -> str:
     """`permit`, `deny` or `confirm`: may `scope` use a record labelled `labels`?
+    (`public` stands alone: a project that names it takes no party's material.)
 
     `scope` is the parties a session, a check or a project may use. `labels`
     are the record's, or None when they cannot be derived (labels()). No label,
@@ -1301,7 +1306,7 @@ def decide(scope, labels, action: str, context: dict) -> str:
     # file
     if not theirs:
         return "confirm"
-    if scope is not None and (not mine or crossings(context, mine - {PUBLIC}, theirs - {PUBLIC})):
+    if scope is not None and (not mine or crossings(context, mine, theirs - {PUBLIC})):
         return "deny"
     theirs -= {PUBLIC}
     if not theirs <= known or crossings(context, theirs) or any(always_asked(context, t) for t in theirs):
@@ -1347,7 +1352,7 @@ def meeting_labels(fm: dict) -> Optional[frozenset]:
     person or entity page may have its `party:` alone; `party:` and `parties:`
     that disagree read two ways, so neither."""
     got = _labels_of(fm)
-    if not got:
+    if not got or PUBLIC in got:          # `public` is a project's choice, never a conversation's
         return None
     kind = str(fm.get("type") or "").strip().lower()
     if kind in ("person", "entity") and fm.get("parties") is None:

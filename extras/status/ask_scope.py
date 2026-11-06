@@ -575,7 +575,7 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
         return Scope(route, None, None, None, words, set(), **kept)
     if project is not None:
         hub = hub_parties(ws, zone, project, lib_)
-        if not hub or not hub <= set(ctx.get("parties", {})):
+        if not hub or not hub <= set(ctx.get("parties", {})) | {lib_.PUBLIC}:
             # Nothing can say which side of a wall its files are on.
             raise Refused("%s names no party %s, so nothing in it is read"
                           % (project, "the Parties table holds" if hub else "in its hub"))

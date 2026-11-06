@@ -151,6 +151,7 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     table_row,
     tag_for,
+    PUBLIC,
     crossings,
     decide,
     workspace_root,
@@ -306,6 +307,8 @@ def check_party(root, party, zone=None):
     places in another zone is refused, since its material would land in a zone it was never kept in."""
     parties = load_context(root).get("parties", {})
     tag = party.strip().strip("`")
+    if tag == PUBLIC:                      # reserved: chosen, never inferred, and in no Parties row
+        return tag
     if tag not in parties:
         known = ", ".join(sorted(parties)) or "none yet"
         raise Refusal(f"{party} is not a party tag in System/context.md. The tags are {known}.")
@@ -602,6 +605,9 @@ def cmd_party(root, args, today):
     tag = tag_for(name, parties, zone)
     if not tag:
         raise Refusal('No tag can be made from "%s": a tag is %s. What should it be?' % (name, TAG_RULE))
+    if tag == PUBLIC:
+        raise Refusal("`public` is reserved: a hub names it to say anyone may read the project. It is never a party "
+                      "of its own, so no row is made for it. What should the tag be?")
     if not TAG_RE.match(tag):                     # the library offers only valid tags; belt and braces
         raise Refusal('"%s" will not work as a tag: it must be %s.' % (tag, TAG_RULE))
     other = strip_tag(args.walled_from or "")
@@ -1081,7 +1087,7 @@ def party_tags(root, note, what):
     if not tags or (isinstance(value, list) and len(tags) != len(value)):
         raise cannot
     declared = load_context(root).get("parties", {})
-    if any(t not in declared for t in tags):
+    if any(t not in declared and t != PUBLIC for t in tags):
         raise Refusal(f"The {what}'s `party:` is not a tag in the Parties table of System/context.md, so the move could "
                       "not be checked against the walls. Nothing was moved.")
     return tags

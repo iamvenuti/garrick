@@ -1865,7 +1865,9 @@ def check_projects(ws: Workspace) -> List[Finding]:
         threads = visible_dirs(project / "Threads")
         tags = [strip_tag(t) for t in as_list(fm.get("party"))]
         if not tags and not system:
-            out.append(Finding(WARNING, "projects", r, "no `party`; it cannot draw on the Meetings wiki until it has one",
+            out.append(Finding(ERROR, "projects", r,
+                               "no `party`; set `party:` in this hub to a tag from the Parties table. Until it does, no "
+                               "file of the project can be committed, and it cannot draw on the Meetings wiki",
                                "Project %s has no party" % project.name))
         for tag in tags:
             if tag not in ws.context["parties"]:
@@ -6772,6 +6774,13 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
         quote_index(ws, set().union(*(wording(ws, path, text, False) for path, text, _ in files)))
     for path, text, (project, pfm) in files:
         ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+        if not ptags and not in_system(ws, project):
+            # No label, no permit: a project that names no party is checked against nothing, so nothing in it commits.
+            hub = rel(ws, project / (project.name + ".md"))
+            out.append(Finding(ERROR, "walls", rel(ws, path),
+                               "is in a project whose hub names no party, so the walls cannot be checked; set `party:` "
+                               "in %s to a tag from the Parties table, then commit again" % hub,
+                               "A file in %s is committed before the project has a party" % project.name))
         out.extend(walls_for_file(ws, project, ptags, path, text))
     return out
 

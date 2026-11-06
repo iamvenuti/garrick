@@ -1548,7 +1548,9 @@ class TestProtocol(unittest.TestCase):
         lib = sc.lib(REPO)
         ctx = {"walls": {frozenset(("acme", "birch"))}, "parties": {"acme": {}, "birch": {}}}
         rec = lambda *p: {"parties": list(p)}  # noqa: E731
-        self.assertEqual(([rec("birch"), rec()], True), sc.pick([rec("birch"), rec("acme"), rec()], set(), ctx, lib))
+        published = {"parties": [], "public": True}
+        self.assertEqual(([rec("birch"), published], True), sc.pick([rec("birch"), rec("acme"), published], set(), ctx, lib))
+        self.assertEqual(([rec("birch")], True), sc.pick([rec("birch"), rec()], set(), ctx, lib))   # no label, no permit
         self.assertEqual(([rec("acme")], True), sc.pick([rec("birch"), rec("acme")], {"acme"}, ctx, lib))
         self.assertEqual(([], True), sc.pick([rec("acme", "birch")], set(), ctx, lib))     # a page on both sides
         self.assertEqual(([rec("acme")], False), sc.pick([rec("acme"), rec("acme")], set(), ctx, lib, most=1))

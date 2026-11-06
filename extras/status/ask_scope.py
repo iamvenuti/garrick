@@ -701,7 +701,7 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     ws = Path(ws)
     found: List[Tuple[tuple, dict]] = []
 
-    def consider(path: Path, root: Path, parties: List[str], text: str, first: bool = False) -> None:
+    def consider(path: Path, root: Path, parties: List[str], text: str, first: bool = False, public: bool = False) -> None:
         fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
         body = _body(text) if fm else text
         low = body.lower()
@@ -713,8 +713,11 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
         lead = 1 if first else 0
         rank = (lead, date, imported) + words if sc.order == "recent" else (lead,) + words + (date,)
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else path.stem
-        found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "imported": imported,
-                             "title": title.strip(), "parties": sorted(parties), "text": passage(body, sc.words)}))
+        record = {"path": path.relative_to(ws).as_posix(), "date": date, "imported": imported,
+                  "title": title.strip(), "parties": sorted(parties), "text": passage(body, sc.words)}
+        if public:
+            record["public"] = True             # published: the one record that is read with no party
+        found.append((rank, record))
 
     if sc.route in ("knowledge", "docs"):
         root = ws / ("Wikis/Knowledge/wiki" if sc.route == "knowledge" else "System/garrick-docs")
@@ -725,7 +728,7 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
             if any(fm.get(k) for k in ("parties", "party", "zone")):
                 continue                        # a page of someone's, not published: never read as published
-            consider(path, root, [], text)
+            consider(path, root, [], text, public=True)
     elif sc.route == "meetings":
         root = ws / "Wikis" / "Meetings" / "wiki"
         for path in _files(lib_, root):
@@ -805,9 +808,9 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
         parties = set(r["parties"])
         if not parties <= known:
             continue                            # a tag no wall can be checked against: never read
-        # A record with no party is a published page of Knowledge: public. The first record
-        # admitted sets the group of a question across every zone.
-        labels = parties or {lib_.PUBLIC}
+        # No label, no permit: only a published page of Knowledge is read with no party. The first
+        # record admitted sets the group of a question across every zone.
+        labels = parties or ({lib_.PUBLIC} if r.get("public") else set())
         scope = group or parties
         if lib_.decide(scope, labels, "read", ctx) != "permit":
             back = True

@@ -44,6 +44,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+from functools import lru_cache
 from array import array
 from bisect import bisect_left
 from dataclasses import asdict, dataclass, field
@@ -260,6 +261,7 @@ class Workspace:
     wiki_files: List[Path] = field(default_factory=list)  # every .md under Wikis/
     quote_index: Optional["QuoteIndex"] = None  # built on first use by the walls check
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
+    page_names: Optional["PageNames"] = None  # every page of the Meetings wiki, of every kind and grade, by name, on first use
     project_links: Optional["PathIndex"] = None  # every project's files, indexed for links on first use
     project_dirs: Optional["DirIndex"] = None  # every project's folders, indexed on first use
     project_files: Optional[Dict[Path, Path]] = None  # each of those files -> its project
@@ -1055,6 +1057,8 @@ def meeting_noun(ws: Workspace, page: Path, kind: str = "meeting") -> str:
     `kind` for a meeting page."""
     if page in ws.meeting_answers:
         return "reply"
+    if ws.page_names is not None and page in ws.page_names.kinds:
+        return ws.page_names.kinds[page]
     if page in ws.meeting_decisions:
         return "decision"
     return "question" if page in ws.meeting_questions else kind
@@ -5599,6 +5603,224 @@ def link_dests(ws: Workspace, source: Path, target: str) -> List[Path]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# The tokens that name a Meetings page
+# ---------------------------------------------------------------------------
+#
+# Forms were once matched one at a time: a slash path, a path from `./`, a bare
+# name. Each new form found a way past. Now every token, however it is written
+# and wherever (a code span, a code line, a link), goes through one function
+# that turns it into its plain form (plain_forms), and one resolver answers
+# whether the plain form names a page of the Meetings wiki (PageNames.named): by
+# its whole path, by any tail of it, or by its name alone. The index holds every
+# page of every kind (sources, people, entities, decisions, questions, answers,
+# raw records) in every grade (live, dormant/, archive/). A token that names a
+# page across a wall is refused whatever its form.
+
+_COMMAND_RE = re.compile(r"^[A-Za-z][\w.+-]*$")
+_OPTION_RE = re.compile(r"^(-[\w-]*|\d+)$")
+_WRAP = "\"'`<>()[]{} \t"
+_PUNCT = ".,;:!?"
+
+
+def plain_forms(raw: str) -> List[str]:
+    return list(_plain_forms(raw[:4096]))
+
+
+@lru_cache(maxsize=1 << 16)
+def _plain_forms(raw: str) -> Tuple[str, ...]:
+    """What `raw`, a token as written, may mean as a path in the plain form the
+    index is asked for: quotes and brackets off, `file:` off, `#heading`, `?query`
+    and `|alias` off, a leading command and its options off, every leading `./`
+    off, `//` read as `/`, a trailing `/` off, a `:line` suffix off and `.md`
+    off. The token as it stands comes back too: a page's name may hold a space
+    (a decision's). Each form is lower case, its segments joined by `/`."""
+    text = plain_text(raw).replace("\\", "/").strip(_WRAP)
+    text = re.sub(r"(?i)^file:(?://[^/]*)?", "", text)
+    for mark in ("#", "?", "|"):
+        text = text.split(mark, 1)[0]
+    text = text.strip(_WRAP)
+    if not text:
+        return ()
+    words = text.split()
+    heads = [text]
+    for i in range(1, min(len(words), 4)):
+        if _COMMAND_RE.match(words[0]) and all(_OPTION_RE.match(w) for w in words[1:i]):
+            heads.append(" ".join(words[i:]))
+    out: List[str] = []
+    for head in heads:
+        head = head.strip(_WRAP)
+        for _ in range(6):                   # until nothing more comes off
+            before = head
+            head = _without_position(head.rstrip(_PUNCT + "/" + _WRAP)).rstrip(_PUNCT + "/" + _WRAP)
+            if head.lower().endswith(".md"):
+                head = head[:-3]
+            if head == before:
+                break
+        parts: List[str] = []
+        for part in head.split("/"):
+            if part in ("", "."):
+                continue
+            if part == "..":
+                if parts:
+                    parts.pop()
+                continue
+            parts.append(part.strip())
+        form = "/".join(parts).lower()
+        if form and form not in out:
+            out.append(form)
+    return tuple(out)
+
+
+def code_names(text: str, runs: bool = False) -> List[Tuple[str, str]]:
+    """(as written, token) for every token a code span or a code line holds that
+    may name a Meetings page, with or without a slash: the whole of it, each
+    quoted string and each word. With `runs`, also each run of up to eight
+    words that starts after a command, at a path or at a date (a decision's
+    name has spaces in it). plain_forms reads each; one code text read once."""
+    out: List[Tuple[str, str]] = []
+    done = set()
+    for written, body in code_texts(text):
+        if (written, body) in done:
+            continue
+        done.add((written, body))
+        candidates = [body.strip()]
+        candidates += [a or b for a, b in QUOTED_RE.findall(body)]
+        shell = body.replace("\\ ", "\0")
+        candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)]
+        if runs:
+            for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
+                words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()]
+                for i in range(len(words)):
+                    if i < 4 or "/" in words[i] or (len(words[i]) == 6 and words[i].isdigit()):
+                        for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
+                            candidates.append(" ".join(words[i:j]))
+        out += [(written, c) for c in dict.fromkeys(candidates) if c]
+    return out
+
+
+def markdown_targets(text: str) -> List[Tuple[str, str]]:
+    """(as written, target) for every Markdown link, by reference too, as it
+    stands: a target that opens with something like a scheme (`kai-ross:3`) is
+    read as a name with a line suffix, not left as a web address, unless it is
+    one (`://`, `mailto:`)."""
+    out = []
+    for regex in (MDLINK_RE, REFDEF_RE):
+        for m in regex.finditer(text):
+            found = unquote(next((g for g in m.groups() if g is not None), "").strip())
+            if found and not re.match(r"(?i)^(?:[a-z][a-z0-9+.-]*://|mailto:|tel:)", found):
+                out.append((m.group(0).strip(), found))
+    return out
+
+
+class PageNames:
+    """Every page and record of the Meetings wiki, indexed once a run for
+    tokens that name one: by the last part of each place it stands at. A page
+    is found at its own place and at the places it stands in the other grades
+    (grade_places): a token written before it faded or woke still names it.
+    Only the names are read to build it; the parties a page is written for
+    (`tags_of`) are read when a token names it. `kinds` says what to call a
+    page that is no meeting page."""
+
+    def __init__(self, ws: Workspace):
+        self.ws = ws
+        self.kinds: Dict[Path, str] = {}
+        self.by_last: Dict[str, List[Tuple[Tuple[str, ...], Path]]] = {}
+        self._tags: Dict[Path, set] = {}
+        self.spaced = False                # does any page's name hold a space? (a decision's does)
+        self._raw_tags: Optional[Dict[Path, set]] = None
+        self._entities: Optional[Dict[Path, dict]] = None
+        for page in ws.meetings:
+            self._add(page, None)
+        for folder in (d for f in PEOPLE_FOLDERS for d in folded_dirs(ws, f)):
+            for page in sorted(folder.rglob("*.md")):
+                if page.is_file() and not page.is_symlink():
+                    self._add(page, "person page")
+        for folder in (d for f in ENTITY_FOLDERS for d in folded_dirs(ws, f)):
+            for page in sorted(folder.rglob("*.md")):
+                if page.is_file() and not page.is_symlink():
+                    self._add(page, "entity page")
+        for paths in raw_records(ws).values():
+            for record in paths:
+                if record not in ws.meetings:
+                    self._add(record, "raw record")
+
+    def _add(self, page: Path, kind: Optional[str]) -> None:
+        if kind:
+            self.kinds[page] = kind
+        for at in [page] + grade_places(self.ws, page):
+            have = tuple(x.lower() for x in Path(rel(self.ws, at)).parts)
+            names = [have]
+            if have[-1].endswith(".md"):
+                names = [have[:-1] + (have[-1][:-3],)]
+            elif "." in have[-1]:
+                names.append(have[:-1] + (have[-1].rsplit(".", 1)[0],))
+            for name in names:
+                self.by_last.setdefault(name[-1], []).append((name, page))
+                self.spaced = self.spaced or " " in name[-1]
+
+    def tags_of(self, page: Path) -> set:
+        """The parties a page or record is written for; none when it is
+        nobody's (a person with no party, an entity page named after none)."""
+        if page not in self._tags:
+            ws = self.ws
+            kind = self.kinds.get(page)
+            if kind is None:
+                fm = ws.meetings[page]
+                tags = {strip_tag(t) for t in as_list(fm.get("parties"))}
+            elif kind == "person page":
+                fm = parse_frontmatter(page)
+                names = [str(fm.get("title") or page.stem), page.stem.replace("-", " ")]
+                tags = set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties"))) | people_parties(ws.context, names)
+            elif kind == "entity page":
+                tags = self._entity_tags(page)
+            else:
+                tags = self._record_tags(page)
+            self._tags[page] = tags - {"none", ""}
+        return self._tags[page]
+
+    def _entity_tags(self, page: Path) -> set:
+        ws = self.ws
+        if self._entities is None:
+            self._entities = {e["path"]: e for e in entity_index(ws)}
+        known = self._entities.get(page)
+        if known is not None:
+            return set(known["parties"]) | entity_parties(ws.context, name_group(entity_index(ws), [known["rel"]]))
+        fm = parse_frontmatter(page)
+        mine = (set(tag_list(fm.get("party"))) | set(tag_list(fm.get("parties")))) - {"none"}
+        return mine | entity_parties(ws.context, [{"parties": mine, "names": [str(fm.get("title") or page.stem), page.stem]}])
+
+    def _record_tags(self, record: Path) -> set:
+        """A raw record is written for the parties of each meeting page that
+        claims it."""
+        if self._raw_tags is None:
+            ws = self.ws
+            self._raw_tags = {}
+            for page, fm in ws.meetings.items():
+                if page not in ws.meeting_questions:
+                    mine = {strip_tag(t) for t in as_list(fm.get("parties"))}
+                    for found in meeting_raws(ws, page, fm):
+                        self._raw_tags.setdefault(found, set()).update(mine)
+        return self._raw_tags.get(record, set())
+
+    def named(self, token: str) -> List[Path]:
+        """The pages a token names, whatever its form."""
+        found: Dict[Path, None] = {}
+        for form in plain_forms(token):
+            want = tuple(form.split("/"))
+            for have, page in self.by_last.get(want[-1], ()):
+                if have[-len(want):] == want or (len(want) > len(have) and have[0] == "wikis" and want[-len(have):] == have):
+                    found[page] = None
+        return list(found)
+
+
+def page_names(ws: Workspace) -> PageNames:
+    """The index of the Meetings wiki's pages by name, built once a run."""
+    if ws.page_names is None:
+        ws.page_names = PageNames(ws)
+    return ws.page_names
+
+
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
@@ -5656,13 +5878,26 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
 
     targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text, exact_file)]
     seen = set()
-    for verb, written, target in targets if meetings.items else []:
-        for page in resolve(ws, path, target, meetings):
+    # Every token, from a link or from code, with a slash or without, is also
+    # read by name (plain_forms, PageNames): whatever its form, one that names a
+    # page of the Meetings wiki is read against that page's parties.
+    names = page_names(ws)
+    named = [(v, w, t) for v, w, t in targets] + [("writes the path", w, t) for w, t in code_names(text)] \
+        + [("links", w, t) for w, t in markdown_targets(text)]
+    resolved = set(targets)
+    for verb, written, target in named if names.by_last else []:
+        found = list(resolve(ws, path, target, meetings)) if meetings.items and (verb, written, target) in resolved else []
+        found += [p for p in names.named(target) if p not in found]
+        for page in found:
             key = (written, page)
             if key in seen:
                 continue
             seen.add(key)
-            mfm = ws.meetings[page]
+            mfm = ws.meetings.get(page)
+            if mfm is None:                    # a person page, an entity page or a raw record: its parties, in its place
+                if not names.tags_of(page):
+                    continue                   # nobody's
+                mfm = {"parties": sorted(names.tags_of(page)), "zone": zone}
             mtags = [strip_tag(t) for t in as_list(mfm.get("parties"))]
             if not mtags or not mfm.get("zone"):
                 reported.add(page)

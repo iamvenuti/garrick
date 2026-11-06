@@ -54,18 +54,20 @@ from typing import Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
 def _safe_fnmatch(names, pattern):
-    """fnmatch's filter, that never raises. A pattern the platform's `re`
-    cannot compile (a bracket range out of order, such as `[h-e]`, which
-    Python 3.9 refuses) is read with every bracket class as `*` instead: an
-    over-approximation, so a glob that cannot be read names more, never less."""
+    """fnmatch's filter, the same on every Python and never raising. A bracket
+    class whose range is out of order (`[pick-harvest]`, which is ordinary
+    bracketed text, holds `k-h`) is read as literal brackets: Python 3.9's `re`
+    refuses such a class and 3.13 reads it as matching nothing, so neither is a
+    reading to rely on. The token's literal readings are resolved elsewhere."""
+    def bad(m):
+        body = m.group(1).lstrip("!^")
+        return any(body[i - 1] > body[i + 1] for i in range(1, len(body) - 1) if body[i] == "-")
+    if any(bad(m) for m in re.finditer(r"\[([^\]]*)\]", pattern)):
+        pattern = pattern.replace("[", "\0").replace("]", "[]]").replace("\0", "[[]")
     try:
         return fnmatch_filter(names, pattern)
     except re.error:
-        wide = re.sub(r"\[[^\]]*\]?", "*", pattern)
-        try:
-            return fnmatch_filter(names, wide)
-        except re.error:
-            return [n for n in names if n == pattern]
+        return [n for n in names if n == pattern]
 
 
 sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
@@ -5741,12 +5743,21 @@ def _clean(text: str) -> str:
     return "".join(c for c in text if ord(c) not in _IGNORABLE and unicodedata.category(c) not in ("Cc", "Cf", "Mn", "Me"))
 
 
+_FOLD_SEPARATORS = re.compile(r"[-_\s]+")
+
+
+@lru_cache(maxsize=1 << 16)
 def fold_name(part: str) -> str:
     """A name as the index and a token both fold it: Unicode compatibility and
     case folded, invisible characters gone, lookalike slashes, dots and dashes
-    plain, and `-`, `_` and spaces one."""
-    text = _clean(unicodedata.normalize("NFKC", part)).translate(_LOOKALIKE).casefold()
-    return re.sub(r"[-_\s]+", "-", text)
+    plain, and `-`, `_` and spaces one. Printable ASCII takes a short path with
+    the same result: NFKC leaves it as it is, it holds nothing invisible, and
+    its case folds as `lower()`."""
+    if part.isascii() and part.isprintable():
+        text = part.translate(_LOOKALIKE).lower()
+    else:
+        text = _clean(unicodedata.normalize("NFKC", part)).translate(_LOOKALIKE).casefold()
+    return _FOLD_SEPARATORS.sub("-", text)
 
 
 def _wrapper(c: str) -> bool:
@@ -5844,7 +5855,7 @@ def _texts(raw: str) -> List[str]:
     return out
 
 
-@lru_cache(maxsize=1 << 16)
+@lru_cache(maxsize=1 << 18)
 def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
     """Every plain form `raw`, a token as written, may mean as a path: each
     reading of it that is not certain. Its text is normalised (Unicode folded, a

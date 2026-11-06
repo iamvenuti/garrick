@@ -721,7 +721,7 @@ raw answer and nothing else, and commit nothing):
 | Answer | `question-answer --wiki Meetings --file "questions/<file>" --words "<their sentence>"` | the raw answer `raw/answers/<YYMMDD> - <slug>.md`, word for word with the question and the date, and only then `status: answered` and `answer:` on the question |
 | Later | `question-later --wiki Meetings --file "questions/<file>" --until <YYYY-MM-DD>` | `status: later` and the date |
 | Close | `question-close --wiki Meetings --file "questions/<file>"` | `status: closed` |
-| Decision | `question-decide` | nothing: not built yet, and it says so |
+| Decision | `question-decide --wiki Meetings --file "questions/<file>" --words "<their sentence>"` | in one transaction, the raw answer as for Answer, then the decision page `wiki/decisions/<YYMMDD> - <slug>.md` with `status: valid`, the question's `zone` and `parties` copied exactly, and their words under *Decision*; the question says `answered`, with `answer:` and `decision:` |
 
 Never write these by hand, and never edit a raw answer: it is the record the
 page rests on. A question that sits on both sides of a wall is refused with
@@ -744,6 +744,19 @@ questions", "work in the answers" or "work it in":
 3. Mark it: `question-done --wiki Meetings --file "questions/<file>"`.
 4. Commit the changed pages, the raw answer and the question in the Wikis
    repository, by name, in one commit. Never `git add -A`.
+
+**A decision is annotated by the assistant and settled only by the user.** The
+user's own save through *Record as a decision* is the act that settles it:
+`status: valid`, with their words under *Decision*. A decision page has four
+sections, *Decision*, *Assumptions*, *Options turned down* and *Revisit when*.
+You may fill *Assumptions* and *Options turned down* later, each line marked
+*Proposed*, and add a `revisit:` line to the frontmatter with the reason a
+revisit condition may be met. You never change `status:`, and never reword
+*Decision*: only the user marks a decision `superseded` or `withdrawn`, and a
+later page reads a settled decision as settled. When you work in an answered
+question that has a `decision:`, cite the decision page too, and leave it as
+it is. `check.py` warns when a commit changes a decision's `status:` with no
+raw answer dated that day.
 
 A question still `open`, `later` before its date, `closed` or `done` is left
 alone. Nurture lists these questions, and this is the step that works them.

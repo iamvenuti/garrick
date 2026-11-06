@@ -28,7 +28,9 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import os
 import re
+import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -131,6 +133,15 @@ def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable)
                 if f.is_file() and not f.is_symlink() and f.resolve().parent.name != "" and (q.dir / "raw").resolve() in f.resolve().parents:
                     origin = {"name": Path(name).name, "href": link(f)}
                     break
+            else:
+                # An origin that is a wiki page (a question the lint made from an Open section): shown the way a
+                # `pages:` link is, and only when that page is on the question's own side of every wall.
+                page = pa.page_target(q, l)
+                if page is not None:
+                    ptags = pa.page_tags(q, page) if q.name == "Meetings" else []
+                    if q.name == "Knowledge" or (ptags and set(ptags) <= set(tags) and not any(
+                            q.lib.walled(q.context, a, b) for a in ptags for b in tags)):
+                        origin = {"name": page.relative_to(q.dir).as_posix(), "href": link(page)}
     slug = pa.answer_slug(q.stem())
     answer_file = "Wikis/%s/raw/answers/%s - %s.md" % (wiki, today.strftime("%y%m%d"), slug)
     qpath = "Wikis/%s/%s" % (wiki, rel)
@@ -142,10 +153,56 @@ def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable)
         "due": bool(due), "shown": bool(shown), "parties": sorted(tags), "zone": str(q.fm.get("zone") or "").strip(),
         "origin": origin,
         "pages": [{"name": p.relative_to(q.dir).as_posix(), "href": link(p)} for p in pages],
-        "writes": {"answer": [answer_file, qpath], "later": [qpath], "close": [qpath]},
+        "writes": dict({"answer": [answer_file, qpath], "later": [qpath], "close": [qpath]},
+                       **({"decide": [answer_file, "Wikis/%s/wiki/decisions/%s - %s.md" % (wiki, today.strftime("%y%m%d"), slug), qpath]}
+                          if wiki == "Meetings" else {})),
         "verdict": verdict if verdict in VERDICTS else "",
         "reason": clip(q.fm.get("verdict_reason") or "", LINE_MAX) if verdict in VERDICTS else "",
     }
+
+
+DECISION_STATES = ("valid", "superseded", "withdrawn")
+
+
+def decision_files(ws: Path) -> List[str]:
+    """Each decision page of the Meetings wiki, as a path from the wiki's
+    folder, at any depth of wiki/decisions/; a link or hidden file is passed over."""
+    pa = page_action()
+    base = Path(ws) / "Wikis" / "Meetings" / Path(*pa.WIKI_DECISION_DIR)
+    out = []
+    if not base.is_dir() or base.is_symlink():
+        return out
+    for p in sorted(base.rglob("*.md")):
+        parts = p.relative_to(base).parts
+        if p.is_symlink() or not p.is_file() or pa.SKIP & set(parts) or any(x.startswith((".", "_")) for x in parts):
+            continue
+        out.append(p.relative_to(base.parent.parent).as_posix())
+    return out
+
+
+def read_decision(ws: Path, lib, rel: str, link: Callable) -> Optional[dict]:
+    """One decision page as the panel lists it, with the tags the walls place
+    it by, or None for a page whose frontmatter cannot be read plainly, that
+    is not `type: decision`, or whose zone or parties are missing (fail
+    closed: an unfinished page is placed nowhere)."""
+    path = Path(ws) / "Wikis" / "Meetings" / rel
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    pa = page_action()
+    if lib.frontmatter_form_problem(text) or pa.party_keys_two_ways(text):
+        return None
+    fm = lib.parse_frontmatter_text(text)
+    status = str(fm.get("status") or "").strip().lower()
+    zone = fm.get("zone")
+    tags = [pa.bare_tag(lib, t) for t in pa.tags_of(fm.get("parties"))]
+    if fm.get("type") != "decision" or status not in DECISION_STATES or not isinstance(zone, str) or not zone.strip() or not tags:
+        return None
+    revisit = clip(fm.get("revisit") or "", LINE_MAX)
+    return {"file": rel, "title": clip(fm.get("title") or path.stem, TITLE_MAX), "status": status,
+            "decided": str(fm.get("decided") or "")[:10], "revisit": revisit, "zone": zone.strip(),
+            "parties": sorted(tags), "href": link(path)}
 
 
 def plain_party_keys(path: Path) -> bool:
@@ -395,17 +452,36 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         if any(k.startswith(zone + "|") for k in views):
             zone_info.append(info)
     buckets: Dict[str, dict] = {k: {"questions": [], "answered": 0, "review": {"entities": [], "people": [], "read": []},
-                                    "picks": {"entities": [], "parties": []}} for k in views}
+                                    "picks": {"entities": [], "parties": []}, "decisions": [], "waiting": 0} for k in views}
     knowledge, answered_k = [], 0
     # A question whose own file carries a walls-family finding is not listed: a save would be refused.
     wall_files = {re.sub(r":\d+$", "", str(f.get("path"))) for f in (C or {}).get("findings", [])
                   if isinstance(f, dict) and pa.wallish(f.get("check"), f.get("message"))}
+    # The kept check result is only as new as its time: a question file edited after it was made has not been
+    # checked, so it is not shown but counted as waiting for the next check, per group and with no text. A result
+    # made by this build is as new as the build; no result, or one that failed, leaves every question waiting.
+    checked_at = None
+    if C and not C.get("failed"):
+        checked_at = C["at"] if isinstance(C.get("at"), (int, float)) else time.time()
+    waiting_k = 0
     for wiki in WIKIS:
         for rel in question_files(ws, wiki):
             if "Wikis/%s/%s" % (wiki, rel) in wall_files:
                 continue
             q = read_question(ws, wiki, rel, today, link)
             if q is None:
+                continue
+            try:
+                stale = checked_at is None or os.stat(Path(ws) / "Wikis" / wiki / rel).st_mtime > checked_at
+            except OSError:
+                stale = True
+            if stale:
+                if wiki == "Knowledge":
+                    waiting_k += 1
+                else:
+                    for key, view in views.items():
+                        if not key.startswith("unattributed|") and q["zone"] == view.zone and view.ok(q["parties"]):
+                            buckets[key]["waiting"] += 1
                 continue
             if wiki == "Knowledge":
                 if q["status"] == "answered":
@@ -420,6 +496,17 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
                     buckets[key]["answered"] += 1
                 elif q["shown"]:
                     buckets[key]["questions"].append(q)
+    # A decision page is placed as a question is: by its zone and parties, through the view's one test.
+    # Only a valid decision with a revisit flag is listed (the assistant flags, the user settles).
+    for rel in decision_files(ws):
+        if "Wikis/Meetings/%s" % rel in wall_files:
+            continue
+        d = read_decision(ws, lib, rel, link)
+        if d is None or d["status"] != "valid" or not d["revisit"]:
+            continue
+        for key, view in views.items():
+            if not key.startswith("unattributed|") and d["zone"] == view.zone and view.ok(d["parties"]):
+                buckets[key]["decisions"].append(d)
     for key, rows in review_rows(ws, nurture, C, lib, ctx, today, link, views).items():
         buckets[key]["review"] = rows
     for key, picks in pick_lists(ws, lib, views).items():
@@ -434,7 +521,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         per_group[info["zone"]] = [{"h": v["heading"], "n": len(buckets[v["key"]]["questions"])}
                                    for v in group_views([info]) if v["kind"] != "unattributed"]
     return {"today": today.isoformat(), "root": str(ws), "zones": zone_info, "select": selections(zone_info), "buckets": buckets, "knowledge": knowledge,
-            "knowledge_answered": answered_k, "menu": menu, "menu_groups": per_group,
+            "knowledge_answered": answered_k, "knowledge_waiting": waiting_k, "menu": menu, "menu_groups": per_group,
             "menu_knowledge": len(knowledge)}
 
 
@@ -471,7 +558,7 @@ def body(data: dict) -> str:
             '<option value="week">A week or more</option><option value="month">A month or more</option></select></label>'
             '</div>'
             '<div id="qp-wikiq"><div class="qp-cols"><ol class="qp-list" id="qp-list"></ol><div class="qp-open" id="qp-open"></div></div>'
-            '<div id="qp-verdicts"></div>'
+            '<div id="qp-verdicts"></div><div id="qp-decisions"></div>'
             '<div class="gacts" id="qp-work"></div></div>'
             '<div id="qp-nurture" hidden></div>'
             '</div><script type="application/json" id="qp-data">%s</script>' % blob)
@@ -537,7 +624,7 @@ function pkey(){var l=scopes();if(!l.length)return S.zone==='*'?'*':'';if(S.part
 if(l.some(function(s){return s.tag===S.party}))return S.party;return S.zone==='*'?'*':zinfo().default}
 /* the groups to show come from the page's own table (group_views in Python), never worked out here */
 function sel(){return(D.select||{})[S.zone+'|'+pkey()]||{views:[],sum:false}}
-var EMPTY={questions:[],answered:0,review:{entities:[],people:[],read:[]},picks:{entities:[],parties:[]}};
+var EMPTY={questions:[],answered:0,decisions:[],waiting:0,review:{entities:[],people:[],read:[]},picks:{entities:[],parties:[]}};
 function bucketOf(k){return(D.buckets||{})[k]||EMPTY}
 function qviews(){return sel().views.filter(function(v){return v.kind!=='unattributed'})}
 function uviews(){return sel().views.filter(function(v){return v.kind==='unattributed'})}
@@ -545,9 +632,9 @@ function key(q){return q.wiki+'/'+q.file}
 function age(q){return Math.floor((new Date(D.today)-new Date(q.asked||D.today))/864e5)}
 var AGE={any:0,week:7,month:30};
 /* one entry per group: its own questions and its own count. Knowledge carries no party, so it is a group of its own. */
-function groups(){var gs=qviews().map(function(v){var b=bucketOf(v.key);return{v:v,qs:b.questions.filter(function(q){return !S.gone[key(q)]}),answered:b.answered}});
+function groups(){var gs=qviews().map(function(v){var b=bucketOf(v.key);return{v:v,qs:b.questions.filter(function(q){return !S.gone[key(q)]}),answered:b.answered,decs:b.decisions||[],wait:b.waiting||0}});
 var k=(D.knowledge||[]).filter(function(q){return !S.gone[key(q)]});
-if(k.length||D.knowledge_answered)gs.push({v:{key:'knowledge',heading:'Knowledge',kind:'knowledge'},qs:k,answered:D.knowledge_answered||0});return gs}
+if(k.length||D.knowledge_answered||D.knowledge_waiting)gs.push({v:{key:'knowledge',heading:'Knowledge',kind:'knowledge'},qs:k,answered:D.knowledge_answered||0,decs:[],wait:D.knowledge_waiting||0});return gs}
 function shown(){var flat=[],gs=groups();gs.forEach(function(g){g.items=g.qs.filter(function(q){return !q.verdict&&(!S.wiki||q.wiki===S.wiki)&&age(q)>=AGE[S.age]})
 .sort(function(a,b){return(a.asked||'').localeCompare(b.asked||'')||a.file.localeCompare(b.file)});g.items.forEach(function(q){flat.push({q:q,g:g})})});return{gs:gs,flat:flat}}
 function ekey(e){return e.g.v.key+'|'+key(e.q)}
@@ -558,10 +645,10 @@ function nurtureN(){if(!sel().sum)return null;var n=0;
 uviews().forEach(function(v){n+=bucketOf(v.key).review.entities.filter(function(r){return !S.gone['r:'+r.key]}).length});
 qviews().forEach(function(v){n+=bucketOf(v.key).review.people.filter(function(r){return !S.gone['r:'+r.key]}).length});return n}
 function counts(){var c=$('qp-counts'),gs=groups();c.textContent='';
-function chips(box,qs,ans){function chip(n,t){var s=el('span','chip');s.appendChild(el('b','',String(n)));s.appendChild(document.createTextNode(t));box.appendChild(s)}
-chip(open(qs),'open');chip(qs.filter(function(q){return q.due}).length,'due today');chip(qs.filter(function(q){return q.verdict}).length,'proposed verdicts');chip(ans,'answered, not worked in')}
-if(sel().sum){var all=[],ans=0;gs.forEach(function(g){all=all.concat(g.qs);ans+=g.answered});chips(c,all,ans)}
-else gs.forEach(function(g){var row=el('div','qp-gcount');row.appendChild(head(el('strong',''),g.v));chips(row,g.qs,g.answered);c.appendChild(row)});
+function chips(box,qs,ans,decs,wait){function chip(n,t){var s=el('span','chip');s.appendChild(el('b','',String(n)));s.appendChild(document.createTextNode(t));box.appendChild(s)}
+chip(open(qs),'open');chip(qs.filter(function(q){return q.due}).length,'due today');chip(qs.filter(function(q){return q.verdict}).length,'proposed verdicts');chip(decs,'decisions to review');chip(ans,'answered, not worked in');if(wait)chip(wait,'waiting for the next check')}
+if(sel().sum){var all=[],ans=0,dn=0,wn=0;gs.forEach(function(g){all=all.concat(g.qs);ans+=g.answered;dn+=g.decs.length;wn+=g.wait});chips(c,all,ans,dn,wn)}
+else gs.forEach(function(g){var row=el('div','qp-gcount');row.appendChild(head(el('strong',''),g.v));chips(row,g.qs,g.answered,g.decs.length,g.wait);c.appendChild(row)});
 var tn=$('qp-tab-n');if(tn){var n=wikiN();tn.textContent=n===null?'':String(n)}}
 function answeredText(){var gs=groups().filter(function(g){return g.answered});if(sel().sum)return gs.reduce(function(n,g){return n+g.answered},0)+' answered, waiting to be worked in.';
 return gs.map(function(g){return g.v.heading+' '+g.answered}).join('; ')+' answered, waiting to be worked in.'}
@@ -577,7 +664,7 @@ $('qp-wikiq').hidden=S.source!=='wiki';$('qp-nurture').hidden=S.source!=='nurtur
 function act(q,said){if(!host){say('Answer this in the Garrick app: a browser cannot change anything.');return false}
 host.postMessage({act:q});say(said);return true}
 function phrase(q,how,extra){var w=(q.wiki==='Knowledge'?'the Knowledge':'the Meetings')+' question';
-return how==='answer'?'answer '+w+' “'+q.title+'” with: '+extra:how==='later'?'put off '+w+' “'+q.title+'” until '+extra:'close '+w+' “'+q.title+'”'}
+return how==='decide'?'record '+w+' “'+q.title+'” as a decision, in these words: '+extra:how==='answer'?'answer '+w+' “'+q.title+'” with: '+extra:how==='later'?'put off '+w+' “'+q.title+'” until '+extra:'close '+w+' “'+q.title+'”'}
 function copyWords(q,how,extra){var p=phrase(q,how,extra);if(window.GarrickCopy)GarrickCopy(p).then(function(){say('Copied. Paste it to your assistant.')})}
 function list(){var v=shown(),ol=$('qp-list'),es=v.flat;ol.textContent='';
 var many=v.gs.length>1;
@@ -600,15 +687,16 @@ var date=el('input');date.type='date';date.setAttribute('aria-label','Come back 
 var w=el('p','qp-writes');function writes(how){w.textContent='Saving writes: '+(q.writes[how]||[]).join(' and ')}writes('answer');box.appendChild(w);
 var acts=el('div','gacts'),ans=el('button','act primary','Answer'),lat=el('button','act','Later'),clo=el('button','act','Close'),dec=el('button','act','Record as a decision');
 [ans,lat,clo,dec].forEach(function(b){b.type='button'});
-function req(how,extra){var r={verb:'question-'+how,wiki:q.wiki,file:q.file};if(how==='answer')r.words=extra;if(how==='later')r.until=extra;return r}
+function req(how,extra){var r={verb:'question-'+how,wiki:q.wiki,file:q.file};if(how==='answer'||how==='decide')r.words=extra;if(how==='later')r.until=extra;return r}
 function go(how,extra,said){if(!host){copyWords(q,how,extra);return}
 if(act(req(how,extra),said)){S.gone[key(q)]=1;S.cursor=nextE?ekey(nextE):'';delete S.typed[key(q)];keep();counts();list()}}
 function save(){var v=ta.value.trim();if(!v){ta.focus();return}go('answer',v,'Filing your answer…')}
 ans.onclick=save;ta.onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();save()}};
 lat.onclick=function(){if(!date.value){date.focus();say('Pick the day to come back on.');return}go('later',date.value,'Putting it off…')};
 clo.onclick=function(){go('close','','Closing…')};
-dec.onclick=function(){if(host)act({verb:'question-decide',wiki:q.wiki,file:q.file},'Recording as a decision…');else say('Recording a decision is not built yet.')};
-dec.title='Not built yet: it says so and writes nothing';
+dec.onclick=function(){var v=ta.value.trim();if(!v){ta.focus();say('Say the decision in your own words first.');return}go('decide',v,'Recording the decision…')};
+if(!q.writes.decide){dec.disabled=true;dec.title='A Knowledge question has no zone and no parties for a decision to carry'}
+else{dec.title='Files your words as the raw answer and as a decision that stands as valid';dec.addEventListener('mouseover',function(){writes('decide')})}
 [ans,date,lat,clo,dec].forEach(function(b){acts.appendChild(b)});box.appendChild(acts);
 lat.addEventListener('mouseover',function(){writes('later')});clo.addEventListener('mouseover',function(){writes('close')});ans.addEventListener('mouseover',function(){writes('answer')});
 if(!host)box.appendChild(el('p','hint','In a browser this page cannot save: each button copies what to say to your assistant.'))}
@@ -624,6 +712,11 @@ r.appendChild(b);h.appendChild(r)});
 /* Accept all closes the group's own, one question at a time, each as a save from its own view */
 var every=el('button','act primary','Accept all');every.type='button';every.onclick=function(){if(!host){say('Accept them one at a time in a browser.');return}line=vs.slice();drain();all()};
 h.appendChild(every);box.appendChild(h)})}
+/* ---- decisions the assistant flagged for a second look, per group: opened in the note app, settled by hand ---- */
+function dlist(){var box=$('qp-decisions'),gs=groups().filter(function(g){return g.decs.length});box.textContent='';
+gs.forEach(function(g){var h=el('div','qp-group');h.appendChild(el('h3','',groups().length>1?'Decisions to review · '+g.v.heading:'Decisions to review'));
+g.decs.forEach(function(d){var r=el('div','qp-row');r.appendChild(d.href?link(d.title,d.href):el('span','',d.title));
+r.appendChild(el('div','',(d.decided?'Decided '+d.decided+'. ':'')+'Revisit: '+d.revisit));h.appendChild(r)});box.appendChild(h)})}
 /* ---- Work them in: the route Process the Inbox takes ---- */
 function work(){var box=$('qp-work');box.textContent='';if(!groups().some(function(g){return g.answered}))return;
 var b=el('button','act primary','Work them in');b.type='button';b.setAttribute('data-request','work through the open questions');
@@ -698,7 +791,7 @@ if(x.ok){S.gone['r:'+x.key]=1}else{r.el.classList.add('refused');var m=r.el.quer
 keep();if(res&&res.ok){var m=rows.filter(function(r){return r.el.classList.contains('refused')});if(!m.length)setTimeout(review,0)}}
 if(q&&q.verb==='question-close'&&line.length)drain();
 if(prevActed)return prevActed(q,res)};
-function all(){bar();counts();list();vlist();work();review();keep()}
+function all(){bar();counts();list();vlist();dlist();work();review();keep()}
 $('qp-zone').onchange=function(){S.zone=this.value;S.party=this.value==='*'?'*':'';S.cursor='';all()};
 $('qp-party').onchange=function(){S.party=this.value;S.cursor='';all()};
 root.querySelectorAll('#qp-source button').forEach(function(b){b.onclick=function(){S.source=b.getAttribute('data-source');all()}});

@@ -1,7 +1,6 @@
 """Answering a wiki question from the command line (#224, points 2 to 4):
-page_action.py's question-answer, question-later, question-close, the refused
-decision, and the read of what an answered question may change. The answer is
-a raw record first; a page across a wall is never changed.
+page_action.py's question-answer, question-later, question-close and the read of what an
+answered question may change. The answer is a raw record first; a page across a wall is never changed.
 
     python3 -m unittest test_wiki_answers
 """
@@ -157,10 +156,10 @@ class TestOutcomes(WikiAnswerCase):
         self.assertNotIn("later:", text)
         self.assertFalse((self.meetings / "raw" / "answers").exists())
 
-    def test_a_decision_is_refused_and_writes_nothing(self):
+    def test_a_decision_needs_words(self):
         self.ask()
         before = snapshot(self.root)
-        with self.assertRaisesRegex(pa.Refused, "Record as a decision is not built yet, so nothing was written"):
+        with self.assertRaises(pa.Refused):
             self.do("question-decide")
         self.assertEqual([], self.changed(before))
 

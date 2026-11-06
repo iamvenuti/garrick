@@ -74,13 +74,69 @@ class Panel(PanelCase):
     def data(self, C=None):
         link = status.Links(self.root)
         nurture = status.nurture_lib(self.root)
-        return qp.build(self.root, C, nurture, TODAY, link)
+        # a check this build ran (no `at`): as new as the build. C=False is no result at all.
+        return qp.build(self.root, {"findings": []} if C is None else (C or None), nurture, TODAY, link)
 
     def check(self):
         return status.check(self.root)
 
     def titles(self, bucket):
         return sorted(q["title"] for q in bucket["questions"])
+
+
+class TestOrigin(Panel):
+    def origin_of(self, name, origin):
+        write(self.meetings / "questions" / name, question("Origin: which?", extra='origin: "%s"\n' % origin))
+        commit_all(self.meetings, name)
+        for q in self.data()["buckets"]["Work|acme"]["questions"]:
+            if q["title"] == "Origin: which?":
+                return q["origin"]
+
+    def test_a_wiki_page_origin_shows_a_came_from_link_on_the_questions_own_side(self):
+        got = self.origin_of("261001 - wikiorigin.md", "[[wiki/sources/260310-acme-kickoff]]")
+        self.assertEqual("wiki/sources/260310-acme-kickoff.md", got["name"])
+        self.assertTrue(got["href"])
+
+    def test_a_raw_origin_still_shows(self):
+        self.assertEqual("260310-acme-kickoff.txt", self.origin_of("261001 - raworigin.md", "[[raw/260310-acme-kickoff]]")["name"])
+
+    def test_a_wiki_page_origin_across_the_wall_shows_nothing(self):
+        self.assertIsNone(self.origin_of("261001 - farorigin.md", "[[wiki/sources/260312-birch-kickoff]]"))
+
+
+class TestWaitingForTheNextCheck(Panel):
+    def test_a_question_edited_after_the_kept_check_is_not_shown_but_counted(self):
+        old = {"findings": [], "at": 1.0, "kept": True}                     # a kept result from long ago
+        d = self.data(old)
+        self.assertEqual([], d["buckets"]["Work|acme"]["questions"])
+        self.assertEqual(2, d["buckets"]["Work|acme"]["waiting"])             # (an open and an answered one) per group, never added across the wall
+        self.assertEqual(1, d["buckets"]["Work|birch"]["waiting"])
+        self.assertEqual([], d["knowledge"])
+        self.assertEqual(1, d["knowledge_waiting"])
+        blob = json.dumps(d["buckets"])
+        for text in (ACME, BIRCH, "volume floor"):
+            self.assertNotIn(text, blob)
+
+    def test_no_kept_result_leaves_every_question_waiting(self):
+        d = self.data(False)
+        self.assertEqual([], d["buckets"]["Work|acme"]["questions"])
+        self.assertEqual(2, d["buckets"]["Work|acme"]["waiting"])
+
+    def test_a_result_newer_than_the_files_shows_them(self):
+        import time
+        d = self.data({"findings": [], "at": time.time() + 60, "kept": True})
+        self.assertEqual([ACME], self.titles(d["buckets"]["Work|acme"]))
+        self.assertEqual(0, d["buckets"]["Work|acme"]["waiting"])
+
+    def test_a_question_edited_after_the_result_waits_while_the_others_show(self):
+        import os
+        import time
+        at = time.time() + 60
+        os.utime(self.meetings / "questions" / "261001 - birch.md", (at + 30, at + 30))
+        d = self.data({"findings": [], "at": at, "kept": True})
+        self.assertEqual([ACME], self.titles(d["buckets"]["Work|acme"]))
+        self.assertEqual([], self.titles(d["buckets"]["Work|birch"]))
+        self.assertEqual(1, d["buckets"]["Work|birch"]["waiting"])
 
 
 class TestWhatIsListed(Panel):

@@ -12,6 +12,7 @@ Every conversation you have, from every zone, in one place: calls and meetings, 
         sources/        one page per meeting, and one per mail
         people/         one page per person met
         entities/       one page per organisation, at most one per party
+        decisions/      one page per decision
         index.md        every working page, newest first
         index-dormant.md  every dormant page: its date, the day it went dormant, and why
         log.md          one line per ingest, newest first
@@ -65,7 +66,7 @@ updated: YYYY-MM-DD
 ---
 ```
 
-A mail with a Message-ID also carries it as `source-id:`; a mail or a recording already filed, by its bytes or that ID, is refused a second page. Then: what it says or asks, the wording that matters, and an actions table. Attachments stay inside the raw record and are listed on the page. One a project needs is saved into that project's `Sources/` only after this page exists, and only when the project's party is not walled from the page's parties.
+A mail with a Message-ID also carries it as `source-id:`; a mail or a recording already filed, by its bytes or that ID, is refused a second page. Then: what it says or asks, the wording that matters, and an actions table. Attachments stay in the raw record and are listed on the page; one a project needs goes into its `Sources/` only after this page exists, and only if the project's party is not walled from the page's.
 
 ## A person page
 
@@ -84,7 +85,7 @@ updated: YYYY-MM-DD
 
 Then one sentence: who they are, and which party. Nothing learned in a meeting, no status and no other key: a person page is read on both sides of every wall.
 
-`organisation:` links the entity page of where they work, whatever their party, and carries nothing else; the `meetings` skill's *Ingest a transcript*, step 4, says how it is found and when there is none.
+`organisation:` links the entity page of where they work, whatever their party; the `meetings` skill's *Ingest a transcript*, step 4, says how it is found.
 
 ## An entity page
 
@@ -92,7 +93,7 @@ Then one sentence: who they are, and which party. Nothing learned in a meeting, 
 
 ## A question
 
-When an ingest or a lint finds something only you can settle, such as who decides, which version is live, or whether a figure still holds, it writes `questions/<YYMMDD> - <slug>.md` and adds no line to the page:
+When an ingest or a lint finds something only you can settle, it writes `questions/<YYMMDD> - <slug>.md` and adds no line to the page:
 
 ```yaml
 ---
@@ -106,12 +107,16 @@ pages: ["[[wiki/sources/<YYMMDD-slug>]]"]
 ---
 ```
 
-Then the question as one bold line, why it matters, and the options, if there are any, as `- [<label>] <what the pages would then say>`. `origin` is the record that raised it; `pages` are the pages the answer would change. A question carries the zone and parties of what it is about, and the walls read it as they read a page.
+Then the question as one bold line, why it matters, and any options as `- [<label>] <what the pages would then say>`. `origin` is what raised it; `pages` are the pages the answer would change. The walls read a question as they read a page.
+
+## A decision
+
+`wiki/decisions/<YYMMDD> - <slug>.md`: `type: decision`, its question's `zone` and `parties`, four sections (Decision, Assumptions, Options turned down, Revisit when). Only the user's save sets `status:`. The `meetings` skill has the procedure.
 
 ## Rules
 
 - **`zone` and `parties` are required**, on a meeting page and a mail page alike. They are what the walls read. A page missing either is unfinished, and no project may use it until it is filled in. When the transcript or the addresses do not make them obvious, ask.
 - **Raw is the record.** Never edit a file in `raw/`. Correct the summary, not the source.
 - **Quote, do not smooth.** Where the exact words matter (a commitment, a number, a refusal), quote them from the transcript.
-- **Pages fade, and nothing is deleted.** A page leaves working memory by age, kind and use, into `dormant/` and later `archive/`, its raw record with it, and every link into it follows: `System/tools/fade.py` proposes it, and only a yes moves it. A page keeps its frontmatter wherever it goes, so its zone and parties hold there as here. `pinned: true` keeps a page working for good; `superseded:` (a link to what replaces it, or a short reason) keeps it out of working memory, and it never comes back by use. A person page never moves: what faded is listed under its `## Earlier`.
-- **One page per person**, linked from every meeting they were in. It says who they are and which party they belong to. No status, and nothing learned in any one meeting: a person page is read on both sides of every wall.
+- **Pages fade, and nothing is deleted.** A page leaves working memory by age, kind and use, into `dormant/` and later `archive/`, its raw record with it, and every link into it follows: `System/tools/fade.py` proposes it, and only a yes moves it. A page keeps its frontmatter wherever it goes. `pinned: true` keeps a page working for good; `superseded:` (a link to what replaces it, or a short reason) keeps it out of working memory, and it never comes back by use. A person page never moves: what faded is listed under its `## Earlier`.
+- **One page per person**, linked from every meeting they were in, as *A person page* says.

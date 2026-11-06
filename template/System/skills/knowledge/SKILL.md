@@ -302,6 +302,13 @@ has no parties, so every page it names may change. Knowledge holds published
 material: the answer is cited as the user's word, and nothing from a
 conversation goes in.
 
+**Who settles a decision.** *Record as a decision* belongs to the Meetings
+wiki: a decision carries a zone and parties, and Knowledge has neither, so
+`question-decide` refuses a Knowledge question and writes nothing. Where a
+Knowledge page rests on a decision page, cite it and read it as settled; never
+change its `status:`. Only the user settles a decision, as the `meetings`
+skill says.
+
 ## Lint: "lint the library", "lint knowledge"
 
 A wiki that grows by ingest drifts in ways no file check sees. On request,

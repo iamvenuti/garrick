@@ -2869,17 +2869,19 @@ STATUS_BUILDER = ("System", "status", "status.py")
 # done: page_action.py, whose app rebuilds after every reply. The tool then
 # asks for no build of its own, so one request makes one page (#243).
 CALLER_BUILDS_PAGE = "GARRICK_CALLER_BUILDS_PAGE"
-# Seconds: how old a check result a tool's rebuild may show, rather than run
-# the check again, which on a large workspace is half the build (#260). A
-# build by hand or on schedule always runs it.
-CHECK_REUSE = 600
+# What a tool's rebuild passes as --reuse-check: it shows the check's last
+# result, whatever its age, and never runs the check, which on a large
+# workspace is half the build or more (#260, #382). The page says how old the
+# result is. A build by hand, on schedule or by the app always runs it. The
+# value is the age limit an older status.py reads; the current one ignores it.
+CHECK_REUSE = float("inf")
 
 
 def status_command(root: PathLike, settle: Optional[float] = None) -> Optional[List[str]]:
     """The command that builds `root`'s status page, or None where the status
     extra is not installed. It builds with the flags the last build stored
     (--same-flags), so the page keeps the app's or the plugin's flags (#246),
-    and shows the check's last result while it is younger than CHECK_REUSE
+    and shows the check's last result, whatever its age, without running it
     (--reuse-check), where the builder knows the flag (#260). With `settle`,
     the build waits that many seconds and goes ahead only if no later one was
     asked for: a burst makes one page."""

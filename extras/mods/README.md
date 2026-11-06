@@ -44,6 +44,7 @@ In the assistant's replies, a path in backticks becomes a link, so Cmd-click ope
 
 - A span counts as a path when it has a `/` or a file extension, so `claude plugin test` stays plain. Code fences are left alone.
 - Absolute and `~/` paths link when the file exists. Anything else is matched against an index of the workspace: a full path, a partial one (`Deliverables/x.xlsx`) or a bare file name. When two files match, the one under the session's folder wins; otherwise the span stays plain, so you never get a dead link.
+- A file written in the turn is not in the index yet. The mod looks for it under the session's folder and under each folder above it, up to the workspace root and never higher, so a path written relative to the project or the zone links too. A path with `..` stays plain.
 - The index is one `find` over the workspace when the session starts and after every turn. It skips `.git`, `.obsidian`, `node_modules`, `__pycache__` and `.trash`, and `find` doesn't follow symlinks, so a cloud folder linked into the workspace is never walked.
 - Only the drawing changes. The stored reply keeps its plain text.
 

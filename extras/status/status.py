@@ -2,7 +2,7 @@
 """The status page for a Garrick workspace. An optional extra.
 
     python3 status.py [--workspace FOLDER] [--out FILE] [--open] [--no-cmux] [--no-graph]
-                      [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...] [--same-flags] [--reuse-check SECONDS]
+                      [--settle SECONDS] [--also FOLDER ...] [--moved OLD=NEW ...] [--same-flags] [--reuse-check [SECONDS]]
 
 One self-contained HTML file that answers "is anything wrong, and where was I"
 at a glance: every live thread by zone with how long since its resume point
@@ -77,10 +77,10 @@ status.flags.json, and `--same-flags` builds with those, so a page that
 scaffold.py or correct.py rebuilds looks as the app or the plugin last drew
 it (#246). It cannot be given with those flags; the last build to store wins.
 Each build keeps the check's result beside the page too, in
-status.check.json, and `--reuse-check SECONDS`, which those tools also
-pass, shows that result while it is younger than that instead of running
-the check again, saying how old it is wherever its counts show (#260, #298). A build by hand or on
-schedule runs the check. With Effort switched on, status.effort.json beside
+status.check.json, and `--reuse-check`, which those tools also
+pass, shows that result, whatever its age, and never runs the check,
+saying how old it is wherever its counts show (#260, #298, #382); with no
+result kept it says so. A build by hand, on schedule or by the app runs the check. With Effort switched on, status.effort.json beside
 the page holds what effort.py read of each transcript, so a build reads only
 the transcripts that changed since: every session's working folder and the
 paths of the files it wrote, in every zone. Both files go wherever --out
@@ -2515,10 +2515,10 @@ def effort_file(out: Path) -> Path:
     return out.with_name(out.stem + ".effort.json")
 
 
-def kept_check(store: Path, ws: Path, now: dt.datetime, reuse: float) -> Optional[dict]:
-    """The result a build kept in `store` for this workspace, when it is
-    younger than `reuse` seconds, marked `kept` and carrying `at`, when the
-    check ran; else None."""
+def kept_check(store: Path, ws: Path, now: dt.datetime) -> Optional[dict]:
+    """The result a build kept in `store` for this workspace, of whatever age,
+    marked `kept` and carrying `at`, when the check ran; None when there is
+    none, or it cannot be read (#382)."""
     try:
         data = json.loads(store.read_text(encoding="utf-8"))
         at, result = float(data["at"]), data["result"]
@@ -2526,8 +2526,8 @@ def kept_check(store: Path, ws: Path, now: dt.datetime, reuse: float) -> Optiona
         return None
     if data.get("workspace") != str(ws) or not isinstance(result, dict) or result.get("failed"):
         return None
-    if not 0 <= now.timestamp() - at < reuse:
-        return None
+    if now.timestamp() < at:
+        return None                           # from the future: not a result to trust
     return dict(result, at=at, kept=True)
 
 
@@ -2547,18 +2547,19 @@ def check(ws: Path, store: Optional[Path] = None, reuse: Optional[float] = None,
     time, and which the commit hook and a scheduled full check still make.
 
     With `store`, a result is kept there for the next build, and with `reuse`
-    as well, one kept there less than `reuse` seconds ago is shown instead of
-    running the check again: what scaffold.py's and correct.py's rebuilds ask
-    for (#260), so a thread a session made reaches the page in seconds. A
+    as well, the one kept there is shown, whatever its age, and the check is
+    never run: what scaffold.py's and correct.py's rebuilds ask for (#260,
+    #382), so a thread a session made reaches the page in seconds. The
+    builds that run the check keep it fresh. With no result kept, such a
+    build says there is none yet (`pending`) rather than claim a pass. A
     check that did not run is never kept."""
     tool = ws / "System" / "tools" / "check.py"
     if not tool.is_file():
         return None
     now = now or dt.datetime.now()
     if store is not None and reuse:
-        kept = kept_check(store, ws, now, reuse)
-        if kept is not None:
-            return kept
+        kept = kept_check(store, ws, now)
+        return kept if kept is not None else {"failed": True, "pending": True}
     try:
         quick = ["--quick"] if "--quick" in tool.read_text(encoding="utf-8") else []
     except OSError:
@@ -8157,8 +8158,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     it, Open in Claude on a thread goes through Continue's request (#180);
     without it, or unsaid, through the deep link. `page_at` is where the page
     goes (main() passes it): beside it the build keeps the check's result,
-    which a build given `reuse_check` seconds shows while it is younger than
-    that, instead of running the check again, and what the effort ledger read
+    which a build given `reuse_check` shows, whatever its age, instead of
+    running the check (#382), and what the effort ledger read
     of each transcript, so one unchanged is not read again (#260). Without it
     nothing is kept, the check always runs and every transcript is read."""
     now = now or dt.datetime.now()
@@ -8179,7 +8180,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     attn = []
     check_age = kept_said(C, now)              # a kept result's counts say how old they are, wherever they show (#298)
     of_kept = " (%s)" % (check_age[:1].lower() + check_age[1:]) if check_age else ""
-    if C and C.get("failed"):
+    if C and C.get("pending"):
+        attn.append(("warning", "No check result yet", "#checks"))
+    elif C and C.get("failed"):
         attn.append(("critical", "The check did not run", "#checks"))
     elif C and C.get("errors"):
         attn.append(("critical", "The check found %d error%s%s" % (C["errors"], "" if C["errors"] == 1 else "s", of_kept), "#checks"))
@@ -8480,6 +8483,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # ---- checks
     if C is None:
         body = '<p class="muted">No <code>System/tools/check.py</code> in this workspace.</p>'
+    elif C.get("pending"):
+        body = '<p class="muted">No check result yet. A build by hand, on schedule or by the app runs the check and keeps it.</p>'
     elif C.get("failed"):
         body = '<div class="clean">%sThe check did not run. Run <code>python3 System/tools/check.py</code> to see why.</div>' % ICON["critical"]
     else:
@@ -8489,7 +8494,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
-    checks_card = card("checks", "Checks", "did not run" if C and C.get("failed") else found, debt_block(ws, now.date()) + review_block(ws) + body)
+    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + review_block(ws) + body)
 
     # ---- open actions and inboxes
     tb = ""
@@ -8665,7 +8670,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
                          % (top, attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
     late = sum(z["late"] for z in lists)
-    trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or C.get("failed"))) or bool(L and L["refused_today"])
+    trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or (C.get("failed") and not C.get("pending")))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist">' + ('<button type="button" role="tab" data-tab="home">Home</button>' if simple else "")
             + '<button type="button" role="tab" data-tab="overview">Overview</button>%s'
             '<button type="button" role="tab" data-tab="status">Status%s</button>%s'
@@ -8867,8 +8872,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="for effort: a folder the workspace used to live in, read as the workspace (repeatable)")
     ap.add_argument("--moved", action="append", default=[], metavar="OLD=NEW",
                     help="for effort: a folder renamed or moved, its old path and its path in the workspace now (repeatable)")
-    ap.add_argument("--reuse-check", type=float, metavar="SECONDS", help="show the check's last result, kept beside the "
-                    "page, while it is younger than this, instead of running the check again: a tool's rebuild")
+    ap.add_argument("--reuse-check", type=float, nargs="?", const=float("inf"), metavar="SECONDS", help="show the check's last result, kept beside the "
+                    "page, whatever its age, and never run the check: a tool's rebuild. The value is accepted and ignored")
     ap.add_argument("--same-flags", action="store_true", help="build with the page flags the last build stored, as a tool's "
                     "rebuild does; not with --no-cmux, --no-graph, --also or --moved")
     args = ap.parse_args(argv)

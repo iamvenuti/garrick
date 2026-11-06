@@ -35,7 +35,7 @@ class ExecutorCase(base.ManageCase):
         self.assertTrue(self.builder.is_file(), "the installer puts the status page in place")
         self.lib = pa.prefs().lib(self.root)
         self.build = [sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags",
-                      "--reuse-check", "600", "--settle", "10"]
+                      "--reuse-check", "inf", "--settle", "10"]
 
     def session(self, *args, via=None):
         """page_action.py's main(), as a session runs it: the exit code, what it

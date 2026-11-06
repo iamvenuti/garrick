@@ -1314,7 +1314,7 @@ class TestThePageIsAskedFor(ManageCase):
         self.tool = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.tool)
         self.build = [sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags",
-                      "--reuse-check", "600", "--settle", "10"]
+                      "--reuse-check", "inf", "--settle", "10"]
 
     def run_it(self, *args, stdin=""):
         """scaffold.py's exit code, its stderr, and every command it started."""
@@ -1394,7 +1394,7 @@ class TestThePageIsAskedFor(ManageCase):
         """#260: a status.py from before --reuse-check would refuse the flag,
         and a build started apart would fail without a word."""
         import garrick_lib
-        self.assertEqual(600, garrick_lib.CHECK_REUSE)
+        self.assertEqual(float("inf"), garrick_lib.CHECK_REUSE)
         self.builder.write_text("# an older status page, with --same-flags and --settle\n", encoding="utf-8")
         self.assertEqual([sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags"],
                          garrick_lib.status_command(self.root))

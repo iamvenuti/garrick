@@ -1203,10 +1203,10 @@ def make_app(cmd):
         lines = (r.stdout + r.stderr).strip().splitlines()
         return r.returncode, lines[-1] if lines else ""
     # The app's place is the last line on stdout. What make-app.sh has to say (an Accessibility reset, a
-    # Finder extension that did not build) is on stderr, and follows the place as sentences of its own.
+    # Finder extension that did not build) is on stderr behind `make-app: `, and follows the place as sentences
+    # of its own. Any other stderr line is build output, which stays out of the message.
     out = r.stdout.strip().splitlines()
-    notes = [n.strip()[len("make-app: "):] if n.strip().startswith("make-app: ") else n.strip()
-             for n in r.stderr.strip().splitlines() if n.strip()]
+    notes = [n.strip()[len("make-app: "):] for n in r.stderr.splitlines() if n.strip().startswith("make-app: ")]
     notes = [n.rstrip(".:") for n in notes]
     return 0, ". ".join([out[-1] if out else ""] + notes)
 

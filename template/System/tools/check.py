@@ -4868,7 +4868,7 @@ def _forms(raw: str) -> List[str]:
     return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
 
 
-def code_paths(text: str) -> List[Tuple[str, str]]:
+def code_paths(text: str, is_file: Optional[Callable[[str], bool]] = None) -> List[Tuple[str, str]]:
     """(as written, target) for every path written as code in `text`: a code
     span, or a line of a fenced block, that holds a slash (code_texts). The
     whole of the span or line is read as a path, and so is each slash-bearing
@@ -4877,7 +4877,9 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
     `Harbour/Notes.md` does and a file name may hold spaces. A trailing `:12`
     or `?x` is taken off as well as kept. Nothing resolves these as a link
     does, but a person or an assistant follows one just the same, and Nurture
-    may turn one into a link."""
+    may turn one into a link. A target that ends in `/` names a folder and is
+    left out, unless its last segment has an extension or `is_file` says a file
+    has exactly that path: matched by name it would find a note of that name."""
     out = []
     for written, body in code_texts(text):
         candidates = [body.strip().strip("\"'")]
@@ -4896,7 +4898,22 @@ def code_paths(text: str) -> List[Tuple[str, str]]:
                 if target in seen:
                     continue
                 seen.add(target)
-                if "/" in target and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
+                target = re.sub(r"/[*?]+$", "/", target)  # `Demo.md/*`: a glob tail
+                slashed = target.endswith("/")
+                if slashed:
+                    # A folder path is never matched by name to a note (the
+                    # folder reading follows it). A last segment with an
+                    # extension is a file written with a stray slash: it is
+                    # read as the same token without it.
+                    target = target.rstrip("/")
+                    if target in seen or not (re.search(r"\.[A-Za-z0-9]{1,5}$", target)
+                                              or (is_file is not None and is_file(target))):
+                        continue  # no extension, and no file of exactly that name: a folder
+                    seen.add(target)
+                    if lexical(target) and lexical(target) not in seen:  # as _forms settles it
+                        seen.add(lexical(target))
+                        out.append((written, lexical(target)))
+                if ("/" in target or slashed) and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
                     out.append((written, target))
     return out
 
@@ -5348,7 +5365,49 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
 
     # Links, and paths written as code (code_paths), which whoever reads the
     # note follows just the same.
-    targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text)]
+    def exact_file(target: str) -> bool:
+        # A slash-ended token with no extension is a file only when a regular
+        # file has exactly that path (no `.md` added, no bare name), or when a
+        # segment of it names a project's folder (0.56.0's rule, unchanged).
+        if target.startswith(("/", "~")):
+            try:
+                if Path(os.path.expanduser(target)).is_file():
+                    return True
+            except (OSError, ValueError):
+                pass
+        parts = [x.lower() for x in target.replace("\\", "/").split("/") if x and x not in (".", "..")]
+        named = {project.name.lower() for project, _ in ws.projects}
+        for project, _ in ws.projects:
+            try:
+                named |= {e.name.lower() for e in os.scandir(project / "Threads") if e.is_dir()}
+            except OSError:
+                pass
+        if set(parts) & {"wikis", "wiki", "raw"}:
+            return True  # a path into a wiki
+        stems = {_strip_md(Path(rel(ws, f)).parts)[-1].lower() for f in ws.wiki_files
+                 if "Meetings" in Path(rel(ws, f)).parts[:3]}
+        stems |= {page.stem.lower() for page in ws.meetings}
+        if parts and parts[-1] in stems:
+            return True  # it names a Meetings page, whatever its type or grade
+        if set(parts) & named:
+            return True  # a segment names a project's or a thread's folder: read as before, never as a bare folder name
+        if not parts:
+            return False
+        if target.startswith(("/", "~")):  # read from where it reaches the workspace, as a path from outside is
+            starts = [i + 1 for i, x in enumerate(parts) if x == ws.root.name.lower()]
+            starts += [i for i, x in enumerate(parts) if x in ("zones", "wikis") and i > 0]
+            tails = [parts[i:] for i in starts if i < len(parts)]
+        else:
+            tails = [parts]
+        project_index(ws)
+        known = ws.project_files or {}
+        for f in known:
+            have = [x.lower() for x in Path(rel(ws, f)).parts]
+            if any(have[-len(t):] == t for t in tails if t and len(t) <= len(have)):
+                return True
+        return False
+
+    targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text, exact_file)]
     seen = set()
     for verb, written, target in targets if meetings.items else []:
         for page in resolve(ws, path, target, meetings):

@@ -5677,6 +5677,8 @@ def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
     for pattern, plain in _REPEATS:
         raw = pattern.sub(plain, raw)
     text = unicodedata.normalize("NFKC", plain_text(raw[-4096:])).translate(_LOOKALIKE)
+    if not text.isascii():
+        text = "".join(c for c in text if unicodedata.category(c) != "Cf")   # zero-width, joiners, bidi marks, soft hyphen
     text = re.sub(r"\\([^A-Za-z0-9])", r"\1", text).replace("\\", "/").strip(_WRAP)
     text = re.sub(r"^(\*{1,3}|_{1,3})(.+)\1$", r"\2", text)       # bold or italic
     text = _unbracket(text)

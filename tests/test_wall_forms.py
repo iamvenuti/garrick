@@ -168,6 +168,8 @@ NEW_WRAPPERS = ("autolink-file", "autolink-file1", "autolink-https", "frontmatte
 NAME_FORMS = {
     "escaped": lambda n: n.replace("-", "\\-"), "underscore": lambda n: n.replace("-", "_"),
     "spaced": lambda n: n.replace("-", " "), "star": lambda n: n[:-2] + "*", "question": lambda n: n[:3] + "?" + n[4:],
+    "zero-width": lambda n: n[:3] + "\u200b" + n[3:], "soft-hyphen": lambda n: n[:3] + "\u00ad" + n[3:],
+    "bidi": lambda n: "\u202e" + n + "\u200f", "joiner": lambda n: n[:2] + "\u200d\u2060" + n[2:],
     "class": lambda n: "[%s]%s" % (n[0], n[1:]), "brace": lambda n: "{%s,zz}" % n,
 }
 

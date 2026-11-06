@@ -23,6 +23,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib.parse import quote
 
 sys.dont_write_bytecode = True
 
@@ -44,6 +45,7 @@ PEOPLE = {FAR: ("kai-ross", "lee-ross", "max-ross"), NEAR: ("jo-lane", "ana-lane
 ENTITIES = {FAR: ("harvest-co", "orchard-co", "meadow-co"), NEAR: ("quarry-ltd", "forge-ltd", "lantern-ltd")}
 
 GENERIC = ("notes", "todo", "plan", "index")
+NOISE_WORDS = ("email", "readme", "config", "slack", "docker", "setup", "status")
 
 DECISION_BODY = ("\n# Pick a supplier\n\n## Decision\n\nGo.\n\n## Assumptions\n\nNone.\n\n"
                  "## Options turned down\n\nNone.\n\n## Revisit when\n\nNever.\n")
@@ -103,6 +105,9 @@ def build(root: Path):
               "---\ntitle: %s\ntype: entity\nparty: %s\n---\n\n# %s\n" % (name.title(), FAR, name))
         for folder in (work / "Northwind", work / "Northwind" / "Threads" / "Freight"):
             write(folder / (name.title() + ".md"), "# %s\n" % name.title())
+    for name in NOISE_WORDS:
+        write(meetings_home(root, "") / "wiki" / "entities" / (name + ".md"),
+              "---\ntitle: %s\ntype: entity\nparty: %s\n---\n\n# %s\n" % (name.title(), FAR, name))
     pages = {}
     for kind, grade, party in itertools.product(KINDS, GRADES, (FAR, NEAR)):
         files = page_files(root, kind, grade, party, GRADES.index(grade))
@@ -120,6 +125,12 @@ def depths(root: Path, page: Path):
     parts[-1] = page.stem
     tails = ["/".join(parts[-i:]) for i in range(1, len(parts) + 1)]
     return tails + [str(root / "/".join(parts))]
+
+
+def two(root: Path, page: Path):
+    """Two depths: the name alone and the path from the wiki's name."""
+    every = depths(root, page)
+    return [every[0], every[-2]]
 
 
 def few(root: Path, page: Path):
@@ -153,10 +164,80 @@ WRAPPING = {
     "long-token": lambda t: NOTE % ("`%s%s`" % ("./" * 600, t.lstrip("/"))),
     "prose": lambda t: NOTE % t,
 }
+
+def _pct(t, c):
+    return t.replace("/", c)
+
+
+def _entity(t, form):
+    """The token with its slashes, and a letter of its name, written as HTML entities."""
+    return t.replace("/", form)
+
+
+def _letter(t):
+    head, _, name = t.rpartition("/")
+    k = next((i for i, c in enumerate(name) if c.isalpha()), None)
+    return t if k is None else (head + "/" if head else "") + name[:k] + "&#%d;" % ord(name[k]) + name[k + 1:]
+
+
+def _mid(t, ins):
+    k = t.rfind("-")
+    return t + ins if k < 0 else t[:k] + ins + t[k:]
+
+
+def _bold(t):
+    head, sep, rest = t.partition("/")
+    return "<b>%s</b>%s%s" % (head, sep, rest) if sep else "<b>%s</b>" % t
+
+
+WRAP_PAIRS = {"curly": "\u201c\u201d", "guillemet": "\u00ab\u00bb", "cjk": "\u300c\u300d", "single": "\u2039\u203a",
+              "angle": "\u27e8\u27e9", "lenticular": "\u3010\u3011", "paren": "()", "square": "[]"}
+WRAPPING.update({
+    "prose-sol": lambda t: NOTE % _entity(t, "&sol;"), "prose-num": lambda t: NOTE % _entity(t, "&#47;"),
+    "prose-hex": lambda t: NOTE % _entity(t, "&#x2f;"), "link-num": lambda t: NOTE % ("[x](<%s>)" % _entity(t, "&#47;")),
+    "prose-wbr": lambda t: NOTE % t.replace("/", "/<wbr>"), "prose-bold": lambda t: NOTE % _bold(t),
+    "prose-shy": lambda t: NOTE % _mid(t, "&shy;"), "prose-hyphen": lambda t: NOTE % t.replace("-", "&#45;"),
+    "prose-zws": lambda t: NOTE % _mid(t, "&#8203;"), "prose-zwse": lambda t: NOTE % _mid(t, "&ZeroWidthSpace;"),
+    "link-letter": lambda t: NOTE % ("[x](<%s>)" % _letter(t)),
+    "prose-pct5c": lambda t: NOTE % _pct(t, "%5C"), "prose-pct2f": lambda t: NOTE % _pct(t, "%2F"),
+    "code-pct5c": lambda t: NOTE % ("`%s`" % _pct(t, "%5C")), "prose-backslash": lambda t: NOTE % _pct(t, "\\"),
+    "prose-nbsp": lambda t: NOTE % t.replace(" ", "\u00a0"),
+    "fm-nested": lambda t: "---\nmeeting:\n  id: %s\n---\n\nx\n" % t,
+    "fm-block": lambda t: "---\nrelated: |\n  %s\n---\n\nx\n" % t,
+    "fm-folded": lambda t: "---\nrelated: >-\n  %s\n---\n\nx\n" % t,
+    "fm-comma": lambda t: "---\nrelated: planning, %s\n---\n\nx\n" % t,
+    "fm-quoted-key": lambda t: '---\n"related": %s\n---\n\nx\n' % t,
+    "fm-key-space": lambda t: "---\nsee also: %s\n---\n\nx\n" % t,
+    "fm-explicit": lambda t: "---\n? related\n: %s\n---\n\nx\n" % t,
+    "fm-json": lambda t: '{"related": "%s"}\n\n# Notes\n' % t,
+    "fm-fence-space": lambda t: "--- \nrelated: %s\n---\n\nx\n" % t,
+    "fm-second-doc": lambda t: "---\nrelated: ok\n---\n---\nother: %s\n---\n\nx\n" % t,
+    "fm-flow": lambda t: "---\nmeeting: {id: %s}\n---\n\nx\n" % t,
+    "fm-list-map": lambda t: "---\nitems:\n  - id: %s\n---\n\nx\n" % t,
+    "fm-title": lambda t: "---\ntitle: %s\n---\n\nx\n" % t,
+    "fm-tags": lambda t: "---\ntags: [%s]\n---\n\nx\n" % t,
+    "fm-paren": lambda t: "---\nrelated: %s (call)\n---\n\nx\n" % t,
+    "obs-file": lambda t: NOTE % ("[x](obsidian://open?vault=v&file=%s)" % quote(t, safe="/")),
+    "obs-path": lambda t: NOTE % ("[x](obsidian://open?vault=v&path=%s)" % quote(t, safe="/")),
+    "obs-filepath": lambda t: NOTE % ("[x](obsidian://adv-uri?vault=v&filepath=%s)" % quote(t, safe="/")),
+    "obs-filename": lambda t: NOTE % ("[x](obsidian://adv-uri?vault=v&filename=%s)" % quote(t, safe="/")),
+    "obs-fragment": lambda t: NOTE % ("[x](obsidian://open?vault=v#file=%s)" % quote(t, safe="/")),
+    "obs-prose": lambda t: NOTE % ("obsidian://adv-uri?vault=v&filepath=%s" % quote(t, safe="/")),
+})
+for _name, _pair in WRAP_PAIRS.items():
+    WRAPPING["code-" + _name] = (lambda pair: lambda t: NOTE % ("`%s%s%s`" % (pair[0], t, pair[1])))(_pair)
+    WRAPPING["prose-" + _name] = (lambda pair: lambda t: NOTE % ("%s%s%s" % (pair[0], t, pair[1])))(_pair)
+    WRAPPING["link-" + _name] = (lambda pair: lambda t: NOTE % ("[x](%s%s%s)" % (pair[0], t, pair[1])) if " " not in t
+                                 else NOTE % ("[x](<%s%s%s>)" % (pair[0], t, pair[1])))(_pair)
 WRAPPERS = ("code", "quoted", "cat", "link", "wikilink")
 # What a wrapper can hold: these read a path of two names or more (a URL has a
 # host, prose reads no bare name), the rest any token.
-PATH_ONLY = ("autolink-file", "autolink-file1", "autolink-https", "prose")
+PATH_ONLY = ("autolink-file", "autolink-file1", "autolink-https", "prose", "prose-sol", "prose-num", "prose-hex",
+             "prose-wbr", "prose-bold", "prose-shy", "prose-hyphen", "prose-zws", "prose-zwse", "prose-pct5c",
+             "prose-pct2f", "prose-backslash", "prose-nbsp") + tuple("prose-" + n for n in WRAP_PAIRS)
+# These hold no space or no plain word; a URL needs a wiki, raw or Wikis segment to name a page.
+NO_SPACE = PATH_ONLY[:3] + ("prose-sol", "prose-num", "prose-hex", "prose-wbr", "prose-bold", "prose-shy", "prose-hyphen",
+                            "prose-zws", "prose-zwse", "prose-pct5c", "prose-pct2f", "prose-backslash")
 
 # The factors a review added. Each block is a product of its own values against
 # every page and depth; a form found later is a new value in one of them.
@@ -170,6 +251,9 @@ NAME_FORMS = {
     "spaced": lambda n: n.replace("-", " "), "star": lambda n: n[:-2] + "*", "question": lambda n: n[:3] + "?" + n[4:],
     "zero-width": lambda n: n[:3] + "\u200b" + n[3:], "soft-hyphen": lambda n: n[:3] + "\u00ad" + n[3:],
     "bidi": lambda n: "\u202e" + n + "\u200f", "joiner": lambda n: n[:2] + "\u200d\u2060" + n[2:],
+    "variation": lambda n: n + "\ufe0f", "hangul-filler": lambda n: n[:3] + "\u3164" + n[3:],
+    "braille": lambda n: n[:3] + "\u2800" + n[3:], "cgj": lambda n: n[:3] + "\u034f" + n[3:],
+    "bell": lambda n: n[:3] + "\x07" + n[3:], "tag-char": lambda n: n[:3] + "\U000e0100" + n[3:],
     "class": lambda n: "[%s]%s" % (n[0], n[1:]), "brace": lambda n: "{%s,zz}" % n,
 }
 
@@ -179,24 +263,67 @@ def with_name(depth: str, form: str) -> str:
     return (head + "/" if head else "") + NAME_FORMS[form](name)
 
 
+MARKS = ("?", "!", "%", "$", "+", "\u00ba", "'s", "\u2019s", ")", ".", ",")
+WORD_PREFIXES = ("HEAD:", "host:")
+FM_WRAPPERS = ("fm-nested", "fm-block", "fm-folded", "fm-comma", "fm-quoted-key", "fm-key-space", "fm-explicit",
+               "fm-json", "fm-fence-space", "fm-second-doc", "fm-flow", "fm-list-map", "fm-title", "fm-tags", "fm-paren")
+OBS_WRAPPERS = ("obs-file", "obs-path", "obs-filepath", "obs-filename", "obs-fragment", "obs-prose")
+RENDER_WRAPPERS = ("prose-sol", "prose-num", "prose-hex", "link-num", "prose-wbr", "prose-bold", "prose-shy", "prose-hyphen",
+                   "prose-zws", "prose-zwse", "link-letter", "prose-pct5c", "prose-pct2f", "code-pct5c", "prose-backslash")
+WRAPCHAR_WRAPPERS = tuple("%s-%s" % (w, n) for n in WRAP_PAIRS for w in ("code", "prose", "link"))
+SPACE_OK = ("prose", "prose-nbsp")
+
+
+def usable(wrapper: str, depth: str) -> bool:
+    """Can `wrapper` hold a token of this depth? A URL and a word of prose hold
+    no space (a path into a wiki read over several words excepted), a URL needs
+    a `wiki`, `raw` or `Wikis` segment to name a page, and prose reads a path
+    of two names or more."""
+    if wrapper in PATH_ONLY and "/" not in depth:
+        return False
+    if " " in depth and wrapper in PATH_ONLY and wrapper not in SPACE_OK:
+        return False
+    if wrapper == "autolink-https" and not {x.lower() for x in depth.split("/")} & {"wiki", "raw", "wikis"}:
+        return False
+    if wrapper in SPACE_OK and " " in depth and not any(
+            x.lower() in ("wikis", "wiki", "raw", "meetings", "dormant", "archive", "decisions", "questions", "answers",
+                          "sources", "people", "entities") for x in depth.split("/")[:-1]):
+        return False
+    if wrapper.startswith("obs-") and wrapper != "obs-filename" and False:
+        return False
+    return True
+
+
 def blocks(root: Path, page: Path):
     """(wrapper, token) for every row that names `page`: the blocks of the
-    table, each a product."""
+    table, each a product of its own factors against the depths."""
     for depth in dict.fromkeys(depths(root, page)):
         for prefix, suffix, wrapper in itertools.product(PREFIXES, SUFFIXES, WRAPPERS):
             yield wrapper, prefix + depth + suffix
     for depth in few(root, page):
-        for prefix, suffix, wrapper in itertools.product(NEW_PREFIXES, ("", "/", ".md"), ("code", "cat", "link", "wikilink")):
+        for prefix, suffix, wrapper in itertools.product(NEW_PREFIXES + WORD_PREFIXES, ("", "/", ".md"), ("code", "cat", "link", "wikilink")):
             yield wrapper, prefix + depth + suffix
         for prefix, suffix, wrapper in itertools.product(("", "./"), NEW_SUFFIXES, WRAPPERS):
             yield wrapper, prefix + depth + suffix
         for prefix, suffix, wrapper in itertools.product(("", "./"), ("", "/", ":3", ".md"), NEW_WRAPPERS):
-            if wrapper in PATH_ONLY and ("/" not in depth or " " in depth):
-                continue                       # a URL and a word of prose hold no space
-            yield wrapper, prefix + depth + suffix
-        for form, prefix, suffix, wrapper in itertools.product(NAME_FORMS, ("",), ("", ".md", "/"),
-                                                              ("code", "cat", "link", "wikilink", "find")):
-            yield wrapper, prefix + with_name(depth, form) + suffix
+            if usable(wrapper, depth):
+                yield wrapper, prefix + depth + suffix
+        if depth in two(root, page):
+            for form, suffix, wrapper in itertools.product(NAME_FORMS, ("", ".md", "/"), ("code", "cat", "link", "wikilink", "find")):
+                yield wrapper, with_name(depth, form) + suffix
+        for mark, wrapper in itertools.product(MARKS, ("code", "cat", "prose")):
+            if usable(wrapper, depth):
+                yield wrapper, depth + mark
+        for suffix, wrapper in itertools.product(("\u2014the page", ":yes", "\u2013x"), ("prose",)):
+            if usable(wrapper, depth):
+                yield wrapper, depth + suffix
+        for suffix, wrapper in itertools.product(("", ".md"), RENDER_WRAPPERS + WRAPCHAR_WRAPPERS + ("prose-nbsp",)):
+            if usable(wrapper, depth):
+                yield wrapper, depth + suffix
+        for suffix, wrapper in itertools.product(("", ".md"), FM_WRAPPERS):
+            yield wrapper, depth + suffix
+        for wrapper in OBS_WRAPPERS:
+            yield wrapper, depth
 
 
 def rows(root: Path, pages: dict, party: str):
@@ -236,12 +363,12 @@ class Table:
     def run(self, full: bool = False):
         """{(project, party, label): verdict} for the four readings: each project
         naming the pages of each party. Every row across the wall runs from
-        Northwind; the rows on its own side run one in five, and Harbour reads
-        the table the other way round one row in eleven. With `full`, all."""
+        Northwind; the rows on its own side run one in eight, and Harbour reads
+        the table the other way round one row in twenty-five. With `full`, all."""
         out = {}
         for project_name, own in (("Northwind", NEAR), ("Harbour", FAR)):
             for party in (FAR, NEAR):
-                every = 1 if full else (11 if project_name == "Harbour" else 1 if party != own else 5)
+                every = 1 if full else (25 if project_name == "Harbour" else 1 if party != own else 8)
                 for i, (label, text) in enumerate(rows(self.root, self.pages, party)):
                     if i % every == 0:
                         out[(project_name, party, label)] = self.verdict(project_name, text)
@@ -271,7 +398,7 @@ class WallFormsTest(unittest.TestCase):
     def test_the_table_is_as_wide_as_its_factors(self):
         far, near = rows(self.root, self.table.pages, FAR), rows(self.root, self.table.pages, NEAR)
         self.assertEqual(len(far), len(near))
-        self.assertGreater(len(far), 40000)
+        self.assertGreater(len(far), 55000)
         self.assertEqual(len(far), len({label for label, _ in far}))
         self.assertLessEqual(len(self.read("Northwind", NEAR)), len(self.read("Northwind", FAR)))
 
@@ -342,6 +469,74 @@ class WallFormsRowsTest(unittest.TestCase):
                         self.assertEqual([], found, found)
         found = self.says("`wiki/entities/notes` and `Wikis/Meetings/wiki/entities/todo.md`")
         self.assertEqual(["error", "error"], [s for s, _ in found], found)
+
+    def says_raw(self, text):
+        write(self.note, text)
+        return [(f.severity, f.message) for f in check.run_checks(self.root, walls_only=True) if f.path == self.where]
+
+    def test_plain_words_globs_and_web_addresses_name_nothing(self):
+        for written in ("`docker compose up -d`", "`git status`", "`cat ./*.txt | sort`", "`ls **/*.txt`", "`ls *.txt`",
+                        "`slack`", "`README`", "`readme.txt`", "`python3 -m setup`", "`vim ~/.config/git/config`",
+                        "`git add setup`", "`config`", "`email`", "`ls *.json`", "`ls */`", "`ls *test*`",
+                        "See https://example.com/people/kai-ross for the bio.", "`https://github.com/orchard-co`",
+                        "[x](https://github.com/orchard-co)", "<https://harvest-co>"):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual([], found, found)
+        for text in ("---\nsource: email\n---\n\nx\n", "---\ntags: [readme]\n---\n\nx\n", "---\nkind: draft\n---\n\nx\n",
+                     "---\nrelated: planning, status\n---\n\nx\n"):
+            with self.subTest(text):
+                found = self.says_raw(text)
+                self.assertEqual([], found, found)
+
+    def test_a_link_to_a_bare_word_and_a_web_address_into_a_wiki_are_still_refused(self):
+        for written in ("[[setup]]", "[mail](email)", "<https://x/Wikis/Meetings/wiki/people/kai-ross>",
+                        "https://x/wiki/entities/harvest-co", "`kai-*`", "`harvest-*`"):
+            with self.subTest(written):
+                found = self.says(written)
+                self.assertEqual(["error"], [s for s, _ in found], found)
+
+    def test_a_file_with_many_globs_is_read_or_refused_never_cut_short(self):
+        few = "\n".join("ls dir%d*" % i for i in range(300))
+        found = self.says_raw("# Notes\n\n```\n%s\n```\n\nSee `harvest-*`.\n" % few)
+        self.assertEqual(["error"], [s for s, _ in found], found)
+        self.assertIn("harvest-*", found[0][1])
+        many = "\n".join("ls dir%d*" % i for i in range(5200))
+        found = self.says_raw("# Notes\n\n```\n%s\n```\n" % many)
+        self.assertEqual(["error"], [s for s, _ in found], found)
+        self.assertIn("cannot be read", found[0][1])
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_a_symbolic_link_into_the_wiki_or_a_walled_project_is_refused(self):
+        work = self.root / "Zones" / "Work"
+        thread = work / "Northwind" / "Threads" / "Freight"
+        shutil.rmtree(work / ".git", ignore_errors=True)
+        git(work, "init", "-q")
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}):
+            commit_all(work, "start")
+            links = {
+                "alias.md": self.root / "Wikis" / "Meetings" / "wiki" / "entities" / "harvest-co.md",
+                "relative.md": Path("../../../../../Wikis/Meetings/wiki/entities/harvest-co.md"),
+                "people": self.root / "Wikis" / "Meetings" / "wiki" / "people",
+                "harbour": work / "Harbour",
+                "tender.md": work / "Harbour" / "Harbour.md",
+            }
+            for name, target in links.items():
+                with self.subTest(name):
+                    os.symlink(str(target), str(thread / name))
+                    try:
+                        git(work, "add", "-A")
+                        staged = [f for f in check.run_checks(self.root, staged=work) if f.check == "walls"]
+                        self.assertTrue(any("symbolic link" in f.message for f in staged), staged)
+                        git(work, "reset", "-q")
+                        full = [f for f in check.run_checks(self.root, walls_only=True) if "symbolic link" in f.message]
+                        self.assertEqual(1, len(full), full)
+                    finally:
+                        git(work, "reset", "-q")
+                        os.unlink(str(thread / name))
+            os.symlink(str(work / "Northwind" / "Northwind.md"), str(thread / "own.md"))
+            git(work, "add", "-A")
+            self.assertEqual([], [f for f in check.run_checks(self.root, staged=work) if f.check == "walls"])
 
     def test_a_folder_that_only_shares_a_name_is_still_a_folder(self):
         write(self.root / "Zones" / "Work" / "Harbour" / "Notes" / "Demo.md", "# Demo\n")

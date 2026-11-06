@@ -44,7 +44,7 @@ import subprocess
 import sys
 import time
 import unicodedata
-from fnmatch import fnmatchcase
+from fnmatch import filter as fnmatch_filter
 from functools import lru_cache
 from array import array
 from bisect import bisect_left
@@ -5622,33 +5622,72 @@ _COMMAND_RE = re.compile(r"^[A-Za-z][\w.+-]*$")
 _OPTION_RE = re.compile(r"^(-[\w-]*|\d+)$")
 _WRAP = "\"'`<>() \t"       # what may wrap a token; brackets and braces may be a glob's (see _unbracket)
 _PUNCT = ".,;:"
-_END = "\"'`<>() \t"       # what may close a token; a bracket or a brace may be part of a glob
 _SIGILS = "@!$*#~"
 # What may follow a name and is not part of it: a position or a range (`:3`,
 # `:3-5`, `:L3`), a section (`::Heading`), a line (`@3`) or a backup's `~`.
 _SUFFIX_RE = re.compile(r"(?:::[^/]*|:L?\d+(?:[-:]L?\d+)*:?|@\d+(?:-\d+)?|~)$")
 _QUERY_RE = re.compile(r"\?(?=[\w.%-]*=)")
-_REPEATS = ((re.compile(r"(?:\./)+"), "./"), (re.compile(r"(?:\.\./){2,}"), "../"), (re.compile(r"/{2,}"), "/"))
-_LOOKALIKE = str.maketrans({**{c: "/" for c in "⁄∕⧸╱╲／⼃‹›"[:7]},
+_REPEATS = ((re.compile(r"(?:\./)+"), "./"), (re.compile(r"(?:\.\./){2,}"), "../"), (re.compile(r"(?<![:/])/{2,}"), "/"))
+_LOOKALIKE = str.maketrans({**{c: "/" for c in "⁄∕⧸╱╲／⼃"},
                             **{c: "." for c in "․‧．。܁܂"},
                             **{c: "-" for c in "‐‑‒–—―−﹘﹣－"}})
 _GLOBS = set("*?[")
+# `HEAD:` or `host:` in front of a name, but not a position after it (`kai-ross:3`, `:L3`, `:3-5`).
+_WORD_PREFIX = r"^[A-Za-z][\w.+-]*:(?!/|L?\d+(?:[-:]L?\d+)*:?$)"
 MAX_TOKEN_WORDS = 50000  # words of one long code span read; a longer span is read to here
+# Default_Ignorable_Code_Point, the ones outside the categories dropped by name, and the blank braille cell.
+_IGNORABLE = ({0x34f, 0xad, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x3164, 0xffa0, 0x2800}
+              | set(range(0x180b, 0x1810)) | set(range(0xfe00, 0xfe10)) | set(range(0xe0100, 0xe01f0))
+              | set(range(0x2060, 0x2070)) | set(range(0x200b, 0x2010)))
+_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
+_WORDY = re.compile(r"[A-Za-z]")
+
+
+def _clean(text: str) -> str:
+    """`text` without what a reader does not see: control characters (a tab or
+    a line break is a space), format characters, combining marks and every
+    default-ignorable character."""
+    if text.isascii() and text.isprintable():
+        return text
+    text = text.replace("\t", " ").replace("\n", " ").replace("\r", " ")
+    return "".join(c for c in text if ord(c) not in _IGNORABLE and unicodedata.category(c) not in ("Cc", "Cf", "Mn", "Me"))
+
+
+def fold_name(part: str) -> str:
+    """A name as the index and a token both fold it: Unicode compatibility and
+    case folded, invisible characters gone, lookalike slashes, dots and dashes
+    plain, and `-`, `_` and spaces one."""
+    text = _clean(unicodedata.normalize("NFKC", part)).translate(_LOOKALIKE).casefold()
+    return re.sub(r"[-_\s]+", "-", text)
+
+
+def _wrapper(c: str) -> bool:
+    """May `c` wrap a token at either end? An ASCII quote, backtick, angle bracket
+    or parenthesis, a space, or any opening or closing punctuation (a curly
+    quote, a guillemet, a corner bracket) but a bracket or a brace, which a glob
+    may use."""
+    return c in _WRAP or (c not in "[]{}" and unicodedata.category(c) in ("Pi", "Pf", "Ps", "Pe"))
+
+
+def _strip_wrap(text: str) -> str:
+    start, end = 0, len(text)
+    while start < end and _wrapper(text[start]):
+        start += 1
+    while end > start and _wrapper(text[end - 1]):
+        end -= 1
+    return text[start:end]
 
 
 def _unbracket(text: str) -> str:
     """`text` without brackets that wrap all of it (`[[x]]`, `[x]`); `[k]ai`
     is a glob's, and stays."""
     m = re.fullmatch(r"\[+([^\[\]]*)\]+", text.strip())
-    return m.group(1).strip(_WRAP) if m else text
+    return _strip_wrap(m.group(1)) if m else text
 
 
-def fold_name(part: str) -> str:
-    """A name as the index and a token both fold it: Unicode compatibility and
-    case folded, lookalike slashes, dots and dashes plain, and `-`, `_` and
-    spaces one."""
-    text = unicodedata.normalize("NFKC", part).translate(_LOOKALIKE).casefold()
-    return re.sub(r"[-_\s]+", "-", text)
+def render(text: str) -> str:
+    """`text` as a reader sees it: HTML entities undone and inline tags gone."""
+    return _TAG_RE.sub("", html.unescape(text)) if ("&" in text or "<" in text) else text
 
 
 def plain_forms(raw: str) -> List[str]:
@@ -5661,35 +5700,99 @@ def plain_cased(raw: str) -> List[str]:
     return list(_plain(raw, False))
 
 
+def _texts(raw: str) -> List[str]:
+    """`raw` as the text to read: normalised, and read again with its HTML
+    entities undone and its tags gone, if it holds any."""
+    for pattern, plain in _REPEATS:
+        raw = pattern.sub(plain, raw)
+    raw = raw[-4096:]
+    seen = [raw]
+    if "&" in raw or "<" in raw:
+        seen.append(render(raw))
+    out = []
+    for text in seen:
+        text = plain_text(text)
+        text = re.sub(r"[ªº]+$", "", text)                 # NFKC would make them letters
+        text = _clean(unicodedata.normalize("NFKC", text)).translate(_LOOKALIKE)
+        if text not in out:
+            out.append(text)
+    return out
+
+
 @lru_cache(maxsize=1 << 16)
 def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
-    """What `raw`, a token as written, may mean as a path in the plain form the
-    index is asked for: Unicode folded (a full-width slash is a slash), quotes
-    and brackets off, `file:`, `path:` and a web address's host off, a sigil
-    (`@ ! $ * # ~`) before it off, `#heading`, `?query=` and `|alias` off, a
-    backslash before a punctuation mark dropped, a leading command and its
+    """Every plain form `raw`, a token as written, may mean as a path: each
+    reading of it that is not certain. Its text is normalised (Unicode folded, a
+    full-width slash is a slash, invisible characters gone, HTML entities
+    undone and tags dropped, a percent escape decoded); then, whichever are
+    possible, with a backslash read as `/` or dropped before a mark, with a
+    leading `*` kept as a glob or taken off, with trailing marks kept (a glob's
+    `*`, `?`) or taken off, and with a `word:` in front (`HEAD:`, `host:`) kept
+    or taken off. Each is read by _reading. Bounded: runs of `./` collapse
+    first, and only the last 4096 characters are read."""
+    out: List[str] = []
+    for text in _texts(raw):
+        stripped = _strip_wrap(text)
+        modes = [(bs, star, tail, pref)
+                 for bs in ((0, 1) if "\\" in text else (0,))
+                 for star in ((0, 1) if stripped.lstrip(_SIGILS.replace("*", "")).startswith("*") else (0,))
+                 for tail in ((0, 1) if any(c in stripped for c in "*?]}") else (0,))
+                 for pref in ((0, 1) if re.match(_WORD_PREFIX, stripped) else (0,))]
+        for mode in modes:
+            for form in _reading(text, fold, *mode):
+                if form not in out:
+                    out.append(form)
+    return tuple(out)
+
+
+def _trim(head: str, keep_glob: bool) -> str:
+    """`head` without what trails a name and is not part of it: any mark or symbol
+    (a glob's `*`, `?`, `]` and `}` kept when `keep_glob`), a position, `.md`,
+    a possessive."""
+    for _ in range(8):
+        before = head
+        end = len(head)
+        while end and (head[end - 1] in "/ \t" or (unicodedata.category(head[end - 1])[0] in "PS"
+                                                    and not (keep_glob and head[end - 1] in "*?]}"))):
+            end -= 1
+        head = _SUFFIX_RE.sub("", head[:end])
+        head = re.sub(r"['’]s$", "", head)
+        if head.lower().endswith(".md"):
+            head = head[:-3]
+        if head == before:
+            break
+    return head
+
+
+def _reading(text: str, fold: bool, bs: int, star: int, tail: int, pref: int) -> List[str]:
+    """The plain forms one reading gives: quotes and brackets off, `file:`,
+    `path:` and a web address's host off, a sigil (`@ ! $ * # ~`) before it
+    off, `#heading`, `?query=` and `|alias` off, a leading command and its
     options off, every leading `./` off, `//` read as `/`, a trailing `/` off,
     a position (`:3`, `:3-5`, `:L3`, `@3`, `::Heading`, a trailing `~`) off and
     `.md` off. The token as it stands comes back too: a page's name may hold a
     space (a decision's). With `fold`, each form is lower case and its names
-    fold (fold_name); its segments are joined by `/`. Bounded: runs of `./`
-    collapse first, and only the last 4096 characters are read."""
-    for pattern, plain in _REPEATS:
-        raw = pattern.sub(plain, raw)
-    text = unicodedata.normalize("NFKC", plain_text(raw[-4096:])).translate(_LOOKALIKE)
-    if not text.isascii():
-        text = "".join(c for c in text if unicodedata.category(c) != "Cf")   # zero-width, joiners, bidi marks, soft hyphen
-    text = re.sub(r"\\([^A-Za-z0-9])", r"\1", text).replace("\\", "/").strip(_WRAP)
+    fold (fold_name); its segments are joined by `/`. A web address names a
+    page only by a path with a `wiki`, `raw` or `Wikis` segment."""
+    if bs == 0:
+        text = re.sub(r"\\([^A-Za-z0-9])", r"\1", text)
+    text = text.replace("\\", "/")
+    text = _strip_wrap(text)
     text = re.sub(r"^(\*{1,3}|_{1,3})(.+)\1$", r"\2", text)       # bold or italic
     text = _unbracket(text)
     text = re.sub(r"(?i)^(?:file|path):(?://[^/]*)?", "", text)
-    text = re.sub(r"(?i)^[a-z][a-z0-9+.-]*://[^/]*", "", text).strip(_WRAP).lstrip(_SIGILS)
+    web = bool(re.match(r"(?i)^https?://", text))
+    text = _strip_wrap(re.sub(r"(?i)^[a-z][a-z0-9+.-]*://[^/]*", "", text))
+    sigils = _SIGILS.replace("*", "") if star else _SIGILS
+    text = text.lstrip(sigils)
+    if pref:
+        text = re.sub(_WORD_PREFIX, "", text)
     text = _QUERY_RE.split(text, 1)[0]
     for mark in ("#", "|"):
         text = text.split(mark, 1)[0]
-    text = text.strip(_WRAP)
+    text = _strip_wrap(text)
     if not text:
-        return ()
+        return []
     words = text.split()
     heads = [text]
     for i in range(1, min(len(words), 4)):
@@ -5697,15 +5800,8 @@ def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
             heads.append(" ".join(words[i:]))
     out: List[str] = []
     for head in heads:
-        head = _unbracket(head.strip(_WRAP)).lstrip(_SIGILS)
-        for _ in range(8):                   # until nothing more comes off
-            before = head
-            head = _SUFFIX_RE.sub("", head.rstrip(_PUNCT + "/" + _END))
-            head = head.rstrip(_PUNCT + "/" + _END)
-            if head.lower().endswith(".md"):
-                head = head[:-3]
-            if head == before:
-                break
+        head = _unbracket(_strip_wrap(head)).lstrip(sigils)
+        head = _trim(head, bool(tail))
         parts: List[str] = []
         for part in head.split("/"):
             if part in ("", "."):
@@ -5715,10 +5811,19 @@ def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
                     parts.pop()
                 continue
             parts.append(part.strip())
+        if web and not {p.lower() for p in parts} & {"wiki", "raw", "wikis"}:
+            continue
         form = "/".join(fold_name(p) for p in parts) if fold else "/".join(parts)
         if form and form not in out:
             out.append(form)
-    return tuple(out)
+    return out
+
+
+def distinctive(name: str) -> bool:
+    """Is a bare name distinctive enough to name a page: does it hold a digit,
+    or a separator between two runs of letters? A plain word (`status`) is
+    not."""
+    return any(c.isdigit() for c in name) or bool(re.search(r"[^\W\d_]-[^\W\d_]", name))
 
 
 def body_tokens(body: str, runs: bool) -> List[str]:
@@ -5775,59 +5880,126 @@ def code_names(text: str, runs: bool = False) -> List[Tuple[str, str]]:
     return out
 
 
-WIKILINK_ANY_RE = re.compile(r"\[\[((?:[^\[\]\n]|\[[^\[\]\n]*\])+?)\]\]")   # with a glob's [class] in it
-BROKEN_DEST_RE = re.compile(r"\]\(\s*([^()<>\n]*\n[^()<>]{0,300}?)\s*\)")
 AUTOLINK_RE = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\s]*)>")
 PROSE_WORD_RE = re.compile(r"[^\s`<>()\[\]\"'|;,{}]+")
+PROSE_START_RE = re.compile(r"(?i)(?:^|[^\w])(?:wikis|wiki|raw|meetings|dormant|archive|decisions|questions|answers|sources|people|entities)/")
 # A key of a note's own frontmatter says what the note is, not what it names.
-OWN_KEYS = {"party", "parties", "zone", "type", "status", "created", "updated", "date", "title", "pinned", "tags"}
+OWN_KEYS = {"party", "parties", "zone", "type", "status", "created", "updated", "date", "pinned"}
+WIKILINK_ANY_RE = re.compile(r"\[\[((?:[^\[\]\n]|\[[^\[\]\n]*\])+?)\]\]")   # with a glob's [class] in it
+BROKEN_DEST_RE = re.compile(r"\]\(\s*([^()<>\n]*\n[^()<>]{0,300}?)\s*\)")
 
 
 def markdown_targets(text: str) -> List[Tuple[str, str]]:
     """(as written, target) for every Markdown link, by reference too, as it
     stands: a target that opens with something like a scheme (`kai-ross:3`) is
     read as a name with a line suffix, not left as a web address, unless it is
-    one (`://`, `mailto:`)."""
+    one (`://`, `mailto:`). An `obsidian://` address is left to uri_targets."""
     out = []
     for regex in (MDLINK_RE, REFDEF_RE):
         for m in regex.finditer(text):
             found = unquote(next((g for g in m.groups() if g is not None), "").strip())
-            if found and not re.match(r"(?i)^(?:[a-z][a-z0-9+.-]*://|mailto:|tel:)", found):
+            if found and not re.match(r"(?i)^(?:obsidian://|mailto:|tel:)", found) and (
+                    not re.match(r"(?i)^[a-z][a-z0-9+.-]*://", found) or re.match(r"(?i)^https?://", found)):
                 out.append((m.group(0).strip(), found))
     for m in BROKEN_DEST_RE.finditer(text):                    # a destination broken over lines
         out.append((m.group(0).strip(), re.sub(r"\s+", "", m.group(1))))
     return out
 
 
+def uri_targets(text: str) -> List[Tuple[str, str]]:
+    """Every `obsidian://` address in the text, as it stands: named reads all
+    its query values."""
+    return [(u, u) for u in dict.fromkeys(URI_RE.findall(text))]
+
+
+FM_OPEN_RE = re.compile(r"\A﻿?---[ \t]*\r?\n")
+FM_CLOSE_RE = re.compile(r"(?m)^(?:---|\.\.\.)[ \t]*$")
+FM_KEY_RE = re.compile(r"""^(?:\?\s*)?(?:"([^"]*)"|'([^']*)'|([^:#"'][^:]*?))\s*:(?:\s+(.*))?$""")
+FM_SPLIT_RE = re.compile(r"[\s,;\[\]{}()\"'|>]+")
+
+
 def frontmatter_names(text: str) -> List[Tuple[str, str]]:
-    """(as written, value) for every plain value of a note's frontmatter, a
-    list item too, under a key that is not one of the note's own (OWN_KEYS)."""
-    out = []
-    for key, value in parse_frontmatter_text(text).items():
-        if str(key).lower() in OWN_KEYS:
+    """(as written, token) for every scalar of a note's frontmatter, at any
+    depth and in any shape (a nested map, a list, a flow map, a block scalar,
+    a quoted key, a key with a space, an explicit `?` key, JSON): the whole
+    value, each quoted string in it, and each of its words, split at `,`, `;`
+    and spaces. Only the values of the note's own keys (OWN_KEYS), at the left
+    margin, are left out."""
+    m = FM_OPEN_RE.match(text)
+    if m:
+        blocks, body = [], text[m.end():]
+        for _ in range(8):                     # a document after the first is read too
+            end = FM_CLOSE_RE.search(body)
+            blocks.append(body[:end.start()] if end else body[:20000])
+            body = body[end.end():].lstrip("\n") if end else ""
+            again = FM_OPEN_RE.match(body)
+            if not again:
+                break
+            body = body[again.end():]
+        block = "\n".join(blocks)
+    elif text.lstrip("﻿ \t\r\n").startswith("{"):
+        block = text.lstrip("﻿ \t\r\n")[:20000]
+    else:
+        return []
+    out: List[Tuple[str, str]] = []
+    skipping = False
+    for line in block.split("\n")[:2000]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
             continue
-        for item in value if isinstance(value, list) else [value]:
-            if isinstance(item, str) and item.strip():
-                out.append((item.strip(), item.strip()))
+        indent = len(line) - len(line.lstrip())
+        if skipping and (indent > 0 or stripped.startswith("-")):
+            continue
+        skipping = False
+        key = FM_KEY_RE.match(stripped)
+        if key:
+            name = (key.group(1) or key.group(2) or key.group(3) or "").strip().lower()
+            value = (key.group(4) or "").strip()
+            if indent == 0 and name in OWN_KEYS:
+                skipping = True
+                continue
+        else:
+            value = re.sub(r"^(?:[-?:]\s+)+", "", stripped)
+        pieces = [value] + [a or b for a, b in QUOTED_RE.findall(value)] + re.split(r"[,;{}\[\]()\"'|>]+\s*|:\s+", value) + FM_SPLIT_RE.split(value)
+        out += [(p, p) for p in dict.fromkeys(x.strip() for x in pieces) if p]
     return out
 
 
 def _slashy(word: str) -> bool:
     """Does a word hold a slash, in any form a path is written: `/`, a lookalike,
-    `%2F` or a backslash?"""
-    return "/" in word or "\\" in word or "%2" in word.lower() or (
-        not word.isascii() and "/" in unicodedata.normalize("NFKC", word).translate(_LOOKALIKE))
+    `%2F`, `%5C`, or a backslash?"""
+    if "/" in word or "\\" in word:
+        return True
+    if "%" in word and ("/" in unquote(word) or "\\" in unquote(word)):
+        return True
+    return not word.isascii() and "/" in unicodedata.normalize("NFKC", word).translate(_LOOKALIKE)
 
 
-def prose_paths(text: str) -> List[Tuple[str, str]]:
+def prose_paths(text: str, spaced: bool = False) -> List[Tuple[str, str]]:
     """(as written, word) for every word of the text, anywhere, that holds a
     slash: a path in plain prose. Only one that names a Meetings page by its
     whole path or by a tail of two names or more is refused (PageNames.named
-    with `min_parts`), so a bare name in prose stays unread."""
-    return [(w, w) for w in dict.fromkeys(PROSE_WORD_RE.findall(text[:1 << 22])) if _slashy(w)]
+    with `min_parts`), so a bare name in prose stays unread. With `spaced`, a
+    word that starts a path into a wiki is also read with the up to eight words
+    after it, since a decision's name has spaces in it."""
+    text = text[:1 << 22]
+    words = PROSE_WORD_RE.findall(text)
+    out = [(w, w) for w in dict.fromkeys(words) if _slashy(w)]
+    for w in dict.fromkeys(words):             # `harvest-co—the page`, `harvest-co:yes`: each side of a dash or colon
+        if _slashy(w) and re.search("[\u2013\u2014:!?]", w) and not re.match(r"(?i)[a-z][a-z0-9+.-]*://", w):
+            out += [(w, piece) for piece in re.split("[\u2013\u2014:!?]+", w) if piece and _slashy(piece)]
+    if spaced:
+        for i, word in enumerate(words):
+            if PROSE_START_RE.search(word) or PROSE_START_RE.search(unquote(word)):
+                for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS + 1) + 1):
+                    run = " ".join(words[i:j])
+                    out.append((run, run))
+                    if re.search("[\u2013\u2014:!?]", words[j - 1]):
+                        out.append((run, " ".join(words[i:j - 1] + [re.split("[\u2013\u2014:!?]+", words[j - 1])[0]])))
+    return out
 
 
-GLOB_BUDGET = 200  # distinct globs read in one file; the rest name no page
+GLOB_FILE_MAX = 5000  # distinct globs one file may hold; a file with more cannot be read
 
 
 class PageNames:
@@ -5846,7 +6018,9 @@ class PageNames:
         self.entries: List[Tuple[Tuple[str, ...], Path]] = []
         self._tags: Dict[Path, set] = {}
         self._globs: Dict[str, List[Path]] = {}
-        self.budget = GLOB_BUDGET            # globs one file may have read; walls_for_file sets it again
+        self.globs_read: set = set()         # the distinct globs this file holds; walls_for_file sets it again
+        self._tails: Optional[Dict[int, Dict[str, List[Path]]]] = None
+        self._full: Optional[Dict[int, Dict[str, List[Path]]]] = None
         self.spaced = False                # does any page's name hold a space? (a decision's does)
         self._raw_tags: Optional[Dict[Path, set]] = None
         self._entities: Optional[Dict[Path, dict]] = None
@@ -5927,45 +6101,67 @@ class PageNames:
 
     def _glob(self, form: str) -> List[Path]:
         """The pages a glob (`kai-*`, `wiki/*/x`, `kai-{ross,x}`, `[kj]ai-r?ss`)
-        matches by full path, by tail or by name, fnmatch's way. A glob with
-        fewer than three letters of its own names every page and so none."""
-        if form not in self._globs:
-            self.budget -= 1
-            if self.budget < 0:
-                return []                      # over this file's budget: not remembered
-            self._globs[form] = []
-            if sum(c.isalnum() for c in form) >= 3:
-                patterns = [form]
-                for _ in range(3):             # a brace list, a few deep
-                    patterns = [p[:m.start()] + alt + p[m.end():] for p in patterns
-                                for m in [re.search(r"\{([^{}]*)\}", p)] if m for alt in m.group(1).split(",")] or patterns
-                found = {}
-                for pattern in patterns[:64]:
-                    cut = pattern.split("/")
-                    for have, page in self.entries:
-                        m = min(len(cut), len(have))      # a glob longer than the page's path: its last names
-                        if fnmatchcase("/".join(have[-m:]), "/".join(cut[-m:])):
-                            found[page] = None
-                self._globs[form] = list(found)
+        matches by full path, by tail or by name, fnmatch's way. A glob whose
+        own letters, its wildcards and extension left out, number fewer than
+        three names every page and so none."""
+        if form in self._globs:
+            return self._globs[form]
+        literal = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", re.sub(r"[*?\[\]{},]", "", form))
+        found: Dict[Path, None] = {}
+        if sum(c.isalpha() for c in literal) >= 3:
+            if self._tails is None:
+                self._tails, self._full = {}, {}
+                for have, page in self.entries:
+                    for n in range(1, len(have) + 1):
+                        self._tails.setdefault(n, {}).setdefault("/".join(have[-n:]), []).append(page)
+                    self._full.setdefault(len(have), {}).setdefault("/".join(have), []).append(page)
+            patterns = [form]
+            for _ in range(3):             # a brace list, a few deep
+                patterns = [p[:m.start()] + alt + p[m.end():] for p in patterns
+                            for m in [re.search(r"\{([^{}]*)\}", p)] if m for alt in m.group(1).split(",")] or patterns
+            for pattern in patterns[:64]:
+                cut = pattern.split("/")
+                k = len(cut)
+                for n in sorted({k} | {n for n in self._full if n < k}):
+                    # a page whose whole path is n names long is matched by the last n names of a longer glob
+                    pool = (self._tails.get(k) if n == k else self._full.get(n)) or {}
+                    want = pattern if n == k else "/".join(cut[-n:])
+                    for key in fnmatch_filter(pool, want):
+                        found.update(dict.fromkeys(pool[key]))
+        if len(self._globs) > 50000:
+            self._globs.clear()
+        self._globs[form] = list(found)
         return self._globs[form]
 
-    def named(self, token: str, min_parts: int = 1) -> List[Path]:
+    def named(self, token: str, min_parts: int = 1, bare: bool = True) -> List[Path]:
         """The pages a token names, whatever its form: by name when it is one
         name, or when its last two names are a page's last two. With
-        `min_parts`, a token of fewer names than that names none."""
+        `min_parts`, a token of fewer names than that names none. With `bare`
+        false, one name alone names a page only if it is distinctive (see
+        distinctive): a single plain word is not read as a page's name."""
         tokens = [token]
         if token.lower().startswith("obsidian://"):
-            query = parse_qs(urlsplit(token).query)
-            tokens = [unquote(v) for k in ("file", "path") for v in query.get(k, [])]
-        elif token.startswith("obsidian:") and token.count(":") >= 2:
-            tokens = [token.split(":", 2)[2]]
+            parts = urlsplit(html.unescape(token))
+            tokens = [unquote(v) for q in (parts.query, parts.fragment) for values in parse_qs(q).values() for v in values]
+            min_parts, bare = 1, True
+        elif token.lower().startswith("obsidian:"):
+            rest = token[9:].lstrip("/")
+            query = parse_qs(urlsplit("x://x/?" + re.split("[?#]", rest, 1)[1]).query) if re.search("[?#]", rest) else {}
+            tokens = [rest] + [unquote(v) for values in query.values() for v in values]
+            if token.count(":") >= 2:
+                tokens.append(token.split(":", 2)[2])
+            min_parts, bare = 1, True
         found: Dict[Path, None] = {}
         for form in [f for t in tokens for f in plain_forms(t)]:
             want = tuple(form.split("/"))
             if len(want) < min_parts:
                 continue
             if _GLOBS & set(form) or "{" in form:
-                found.update(dict.fromkeys(self._glob(form)))
+                self.globs_read.add(form)
+                if len(self.globs_read) <= GLOB_FILE_MAX:
+                    found.update(dict.fromkeys(self._glob(form)))
+                continue
+            if len(want) == 1 and not bare and not distinctive(want[0]):
                 continue
             for have, page in self.by_last.get(want[-1], ()):
                 if len(want) == 1 or (len(have) >= 2 and have[-2:] == want[-2:]):
@@ -5991,11 +6187,40 @@ def own_file(note: Path, project: Path, token: str) -> bool:
                 continue
             for name in (form, form + ".md"):
                 try:
-                    if (base / name).is_file():
+                    one = base / name
+                    if one.is_file() and not one.is_symlink() and Path(os.path.realpath(project)) in Path(os.path.realpath(one)).parents:
                         return True
                 except (OSError, ValueError):
                     continue
     return False
+
+
+def symlink_finding(ws: Workspace, project: Path, ptags: set, path: Path) -> Optional[Finding]:
+    """A symbolic link in a project whose target is in the Meetings wiki, or in
+    another project walled from this one, file or folder: reading it reads the
+    far side, whatever the link is called. None for anything else."""
+    if not path.is_symlink():
+        return None
+    target = Path(os.path.realpath(path))
+    wiki = Path(os.path.realpath(ws.root / "Wikis" / "Meetings"))
+    tags, where = file_tags(ws, project, ptags, path)
+    if target == wiki or wiki in target.parents:
+        return Finding(ERROR, "walls", rel(ws, path),
+                       "is a symbolic link into the Meetings wiki, which holds every party's material; link to the page "
+                       "by its name instead", "A note in %s is a symbolic link into the Meetings wiki" % where)
+    here = Path(os.path.realpath(project))
+    for other, _ in ws.projects:
+        root = Path(os.path.realpath(other))
+        if root == here or not (target == root or root in target.parents):
+            continue
+        inside = other.joinpath(*target.relative_to(root).parts) if target != root else other / "_"
+        pair = sorted((a, b) for a in tags for b in project_file_tags(ws, other, inside) if walled(ws.context, a, b))
+        if pair:
+            a, b = pair[0]
+            return Finding(ERROR, "walls", rel(ws, path),
+                           "is a symbolic link into a project of %s; a wall stands between %s and %s"
+                           % (party_name(ws, b), a, b), "A note in %s is a symbolic link into a project of %s" % (where, party_name(ws, b)))
+    return None
 
 
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
@@ -6008,6 +6233,9 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     r = rel(ws, path)
     zone = project.parent.name
     reported: set = set()  # walled parties and meetings already named for this file
+    linked = symlink_finding(ws, project, ptags, path)
+    if linked is not None:
+        out.append(linked)
 
     # Links, and paths written as code (code_paths), which whoever reads the
     # note follows just the same.
@@ -6059,20 +6287,28 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # read by name (plain_forms, PageNames): whatever its form, one that names a
     # page of the Meetings wiki is read against that page's parties.
     names = page_names(ws)
-    names.budget = GLOB_BUDGET
+    names.globs_read = set()
     resolved = set(targets)
     told: set = set()                          # tokens that have a finding
     last, prev = len(out), None
-    named = [(v, w, t, 1) for v, w, t in targets]
-    named += [("writes the path", w, t, 1) for w, t in code_names(text, names.spaced)]
-    named += [("links", w, t, 1) for w, t in markdown_targets(text)]
-    named += [("links", m.group(0), m.group(1), 1) for m in WIKILINK_ANY_RE.finditer(text)]
-    named += [("links", "<%s>" % t, t, 1) for t in AUTOLINK_RE.findall(text)]
-    named += [("links", w, t, 1) for w, t in frontmatter_names(text)]
-    named += [("writes the path", w, t, 2) for w, t in prose_paths(text)]
-    for verb, written, target, parts in named if names.by_last else []:
+    seen_tokens = set()
+    # (verb, as written, token, names at least, whether one bare name will do): a
+    # link may be to a bare name; code, frontmatter and prose read one only if
+    # it is distinctive.
+    named = [(v, w, t, 1, True) for v, w, t in targets]
+    named += [("writes the path", w, t, 1, False) for w, t in code_names(text, names.spaced)]
+    shown = render(text)
+    for body in dict.fromkeys([text, shown]):
+        named += [("links", w, t, 1, True) for w, t in markdown_targets(body)]
+        named += [("links", m.group(0), m.group(1), 1, True) for m in WIKILINK_ANY_RE.finditer(body)]
+        named += [("links", "<%s>" % t, t, 1, True) for t in AUTOLINK_RE.findall(body)]
+        named += [("links", w, t, 1, True) for w, t in uri_targets(body)]
+        named += [("writes the path", w, t, 2, False) for w, t in prose_paths(body, names.spaced)]
+    named += [("links", w, t, 1, False) for w, t in frontmatter_names(text)]
+    named = [n for n in named if not (n[1:] in seen_tokens or seen_tokens.add(n[1:]))]
+    for verb, written, target, parts, bare in named if names.by_last else []:
         found = list(resolve(ws, path, target, meetings)) if meetings.items and (verb, written, target) in resolved else []
-        named_pages = names.named(target, parts)
+        named_pages = names.named(target, parts, bare)
         if named_pages and not found and own_file(path, project, target):
             continue                           # it is a file of this project, not a page that shares its name
         found += sorted((p for p in named_pages if p not in found),
@@ -6124,6 +6360,11 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                                    "uses %s %s from zone %s; cross-zone work happens only when asked"
                                    % (meeting_noun(ws, page), page.stem, mfm.get("zone")),
                                    "A note in %s uses a %s from the %s zone" % (where, meeting_noun(ws, page), mfm.get("zone"))))
+
+    if len(names.globs_read) > GLOB_FILE_MAX:
+        out.append(Finding(ERROR, "walls", r,
+                           "holds more than %d distinct globs (`*`, `?`, `[..]`), so it cannot be read; write the names "
+                           "out or take the globs out" % GLOB_FILE_MAX, "A note in %s holds too many globs to be read" % where))
 
     # Links and paths into a project's files, this one's included, whose
     # parties are walled from this file's: a thread of this project may be
@@ -6488,6 +6729,11 @@ def check_walls(ws: Workspace) -> List[Finding]:
             text = read_text(path)
             if text:
                 out.extend(walls_for_file(ws, project, ptags, path, text))
+            elif path.is_symlink() and (found := symlink_finding(ws, project, ptags, path)) is not None:
+                out.append(found)
+        for here, dirs, _ in os.walk(project):
+            out.extend(f for f in (symlink_finding(ws, project, ptags, Path(here) / d) for d in sorted(dirs)
+                                   if d not in SKIP_DIRS) if f is not None)
     out.extend(f for f in all_sources_findings(ws) if f.check == "walls")
     out.extend(person_link_finding(ws, p) for p in person_links(ws))
     out.extend(organisation_walls(ws, person_pages(ws)))
@@ -6917,6 +7163,10 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
                                    "A transcript from the Meetings inbox was about to be committed"))
                 continue
             owner = project_of(ws, top_path / name)
+            if owner is not None and (top_path / name).is_symlink() and (top_path / name).suffix.lower() not in TEXT_SUFFIXES:
+                found = symlink_finding(ws, owner[0], {strip_tag(t) for t in as_list(owner[1].get("party"))}, top_path / name)
+                if found is not None:
+                    out.append(found)
             if owner is None or not _in_sources(owner[0], top_path / name):
                 continue
             try:

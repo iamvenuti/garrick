@@ -325,3 +325,51 @@ class TestOpensOnAZoneWithQuestions(unittest.TestCase):
     def test_the_default_never_widens_a_view_across_a_wall(self):
         seen = run([], d=one_zone_data("Work"))[0]
         self.assertNotIn(BIRCH, json.dumps(seen["list"]))
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestDealtWithListOnlyBridgesTheRebuild(unittest.TestCase):
+    """Draft: a question that is open again shows without restarting the app."""
+
+    def built(self, at=1_000_000):
+        d = data()
+        d["built"] = at
+        return d
+
+    def listed(self, seen):
+        return json.dumps(seen["list"]) + json.dumps(seen["counts"])
+
+    def test_an_entry_older_than_the_build_is_dropped_and_the_question_shows(self):
+        seed = saved(zone="Work", gone={"Meetings/261001 - a1.md": 999_999})
+        seen = run([], d=self.built(), seed=seed)[0]
+        self.assertIn(ACME, self.listed(seen))
+        self.assertEqual({}, seen["gone"])
+
+    def test_an_entry_from_before_the_numbers_were_dated_is_dropped_too(self):
+        seed = saved(zone="Work", gone={"Meetings/261001 - a1.md": 1, "r:a1": 1})
+        seen = run([], d=self.built(), seed=seed)[0]
+        self.assertIn(ACME, self.listed(seen))
+        self.assertEqual({}, seen["gone"])
+
+    def test_right_after_a_save_before_the_rebuild_the_question_stays_hidden(self):
+        seed = saved(zone="Work", gone={"Meetings/261001 - a1.md": 1_000_001})
+        seen = run([], d=self.built(), seed=seed)[0]
+        self.assertNotIn(ACME, self.listed(seen))
+        self.assertIn("Acme: second?", self.listed(seen))
+        self.assertEqual({"Meetings/261001 - a1.md": 1_000_001}, seen["gone"])
+
+    def test_the_review_rows_follow_the_same_rule(self):
+        stale = run([("show", "nurture")], d=self.built(), seed=saved(zone="Work", gone={"r:a1": 999_999}))[1]
+        self.assertIn("where people work, 1", json.dumps(stale["nurture"]))
+        fresh = run([("show", "nurture")], d=self.built(), seed=saved(zone="Work", gone={"r:a1": 1_000_001}))[1]
+        self.assertNotIn("where people work, 1", json.dumps(fresh["nurture"]))
+
+    def test_a_dropped_entry_never_lets_a_walled_group_into_another_view(self):
+        seed = saved(zone="Work", gone={"Meetings/261001 - b1.md": 999_999})
+        seen = run([("party", "acme")], d=self.built(), seed=seed)[-1]
+        self.assertNotIn(BIRCH, self.listed(seen))
+
+    def test_the_build_stamps_its_time_and_every_save_stamps_its_own(self):
+        self.assertIn("Date.now()", qp.JS)
+        self.assertNotIn("S.gone[key(q)]=1", qp.JS)
+        self.assertNotIn("S.gone['r:'+x.key]=1", qp.JS)

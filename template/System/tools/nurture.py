@@ -169,7 +169,8 @@ from garrick_lib import (  # noqa: E402
     parse_frontmatter_text,
     party_entities,
     strip_tag,
-    walled,
+    crossings,
+    decide,
     workspace_root,
 )
 
@@ -509,7 +510,7 @@ def claim_wall(ctx: Ctx, item: Item) -> bool:
         if m:
             a = [t.strip() for t in m.group(1).split(",")]
             b = [t.strip() for t in m.group(2).split(",")]
-            hit = next(((x, y) for x in a for y in b if walled(ctx.context, x, y)), None)
+            hit = next(iter(crossings(ctx.context, a, b)), None)
             if hit:
                 item.wall = "%s and %s" % hit
                 item.message = ""
@@ -725,7 +726,7 @@ def across_wall(ctx: Ctx, source: str, target: str) -> bool:
     if len(parts) < 4 or parts[0] != "Zones":
         return False
     ours, theirs = parties_at(ctx, source), parties_at(ctx, target)
-    return any(walled(ctx.context, a, b) for a in ours for b in theirs)
+    return bool(ours and theirs) and decide(ours, theirs, "write", ctx.context) == "deny"
 
 
 def landing(ctx: Ctx, target: str) -> List[str]:
@@ -1244,7 +1245,7 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
         rel = ctx.rel(hit.path)
         if ours and not inside(rel, scopes):
             theirs = hit_parties(ctx, hit)
-            if theirs is None or any(walled(ctx.context, a, b) for a in ours for b in theirs):
+            if theirs is None or crossings(ctx.context, ours, theirs):
                 withheld = True
                 continue
         files = [hit.path] if hit.kind != "raw" else list(hit.pages)

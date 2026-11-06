@@ -21,7 +21,7 @@ A new wall or a new derivation rule comes with its cases, here, in the same comm
 | `ghost` | a tag the Parties table lacks | `ghost` |
 | `public` | the reserved tag | `public` |
 
-In `labels`, `-` is a record with no label, `?` one whose labels cannot be derived, and a list is a set of tags.
+In `scope`, `*` is a project not yet chosen. In `labels`, `-` is a record with no label, `?` one whose labels cannot be derived, and a list is a set of tags.
 A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tested against `decide()` alone.
 
 ## decide()
@@ -75,6 +75,10 @@ A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tes
 | d45 | near | public | file | permit | a public item |
 | d46 | near | far | frobnicate | error | an action that does not exist |
 | d47 | other | near | read | permit | a third party reads a party no wall stands round |
+| d49 | * | near, far | file | confirm | intake, before a project is chosen: a mail with both sides of a wall |
+| d50 | * | hat | file | confirm | intake, before a project is chosen: mail from a party that is always asked about |
+| d51 | * | near | file | permit | intake, before a project is chosen: one party, no question |
+| d52 | * | - | file | confirm | intake, before a project is chosen: nothing on the mail names a party |
 | d48 | far | near | file | deny | the same wall for filing, the other way |
 
 ## labels()

@@ -151,7 +151,8 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     table_row,
     tag_for,
-    walled,
+    crossings,
+    decide,
     workspace_root,
     write_if_unchanged,
     zone_todo,
@@ -1086,9 +1087,10 @@ def party_tags(root, note, what):
     return tags
 
 
-def any_walled(ctx, left, right):
-    """Does a wall stand between any tag of one side and any tag of the other?"""
-    return any(walled(ctx, a, b) for a in left for b in right)
+def wall_between(ctx, left, right):
+    """Does a wall stand between any tag of one side and any tag of the other?
+    It is a wall for a thread moved into a project of `right`: decide() says."""
+    return bool(left and right) and decide(right, left, "file", ctx) == "deny"
 
 
 def item_end(lines, i):
@@ -1280,7 +1282,7 @@ def thread_material_walls(root, zone_dir, thread_dir, target_tags):
                     if not got:
                         return "a meeting page the thread links has no parties, so the move could not be checked against the walls"
                     tags |= got
-            if any_walled(ctx, tags, target_tags):
+            if wall_between(ctx, tags, target_tags):
                 return "WALL"
     return None
 
@@ -1381,7 +1383,7 @@ def cmd_move(root, args, today):
     ctx = load_context(root)
     ops = operations()
     wall = getattr(ops, "WALL_REFUSAL", None) or WALL_SENTENCE
-    if any_walled(ctx, mine, theirs) or any_walled(ctx, source, theirs):
+    if wall_between(ctx, mine, theirs) or wall_between(ctx, source, theirs):
         raise Refusal(wall)
     why = thread_material_walls(root, zone_dir, thread_dir, theirs)
     if why == "WALL":

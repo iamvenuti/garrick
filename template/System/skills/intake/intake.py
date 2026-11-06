@@ -60,7 +60,9 @@ from garrick_lib import (  # noqa: E402
     split_domains,
     stamp_parties,
     strip_tag,
-    walled,
+    always_asked,
+    crossings,
+    decide,
     workspace_root,
     write_new,
 )
@@ -283,23 +285,26 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
         elif not own_tags:
             ask.append("There is no address on it to go by.")
     found = sorted(parties)
-    own_added = [t for t in own_tags if t not in parties and not any(walled(ctx, t, p) for p in found)
+    own_added = [t for t in own_tags if t not in parties and not crossings(ctx, [t], found)
                  and (not zone or (ctx["parties"][t].get("zone") or zone).strip() == zone)]
     parties |= set(own_added)
     parties_list = sorted(parties)
     if not parties_list and not ask:
         ask.append("Only your own addresses are on it, and they do not say whose it is.")
-    for i, a in enumerate(found):
-        for b in found[i + 1:]:
-            if walled(ctx, a, b):
-                ask.append("%s and %s are both on it, and a wall stands between them." % (_name(ctx, a), _name(ctx, b)))
+    for a, b in crossings(ctx, found):
+        ask.append("%s and %s are both on it, and a wall stands between them." % (_name(ctx, a), _name(ctx, b)))
     for tag in parties_list:
         pzone = (ctx["parties"][tag].get("zone") or "").strip()
         if zone and pzone and pzone != zone:
             ask.append("%s is a %s party, but this mail is in the %s inbox." % (_name(ctx, tag), pzone, zone))
     senders = [addr for _, addr in mail.get("from", []) if not is_own_address(ctx, addr)]
     sender_domains = [addr.rpartition("@")[2] for addr in senders]
-    return {"parties": parties_list, "ask": ask, "plus": sorted(plus), "domains": by_domain,
+    for tag in parties_list:
+        if always_asked(ctx, tag):
+            ask.append("%s is a company with two hats here, and its name never says which." % _name(ctx, tag))
+    # confirm is a return value: nothing proceeds on it without the user.
+    return {"parties": parties_list, "ask": ask, "confirm": decide(None, parties_list, "file", ctx) == "confirm" or bool(ask),
+            "plus": sorted(plus), "domains": by_domain,
             "unknown": unknown, "webmail": webmail, "own": {"tags": own_tags, "added": own_added},
             "sender_webmail": bool(sender_domains) and all(is_webmail(d) for d in sender_domains)}
 
@@ -658,7 +663,7 @@ def resolve_project(root: Path, project: Optional[str]) -> Tuple[Path, str, List
 
 
 def _check_wall(ctx: dict, project_tags: List[str], tags: List[str]) -> None:
-    if any(walled(ctx, a, b) for a in project_tags for b in tags):
+    if decide(project_tags, tags, "file", ctx) == "deny":
         raise Refusal(WALL_REFUSAL)
 
 

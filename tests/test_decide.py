@@ -36,6 +36,8 @@ def tags(cell: str):
     cell = cell.strip()
     if cell == "?":
         return None
+    if cell == "*":
+        return None
     if cell == "-":
         return set()
     return {ROLES[c.strip()] for c in cell.split(",")}

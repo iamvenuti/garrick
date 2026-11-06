@@ -772,10 +772,11 @@ if __name__ == "__main__":
 
 
 class SafeGlobTest(unittest.TestCase):
-    """A glob the platform's `re` cannot compile never stops the check
-    (Python 3.9 refuses a bracket range out of order, such as `[h-e]`)."""
+    """A bracket range out of order (`[h-e]`) never stops the check and reads
+    the same on every Python: as literal brackets (3.9's `re` refuses it, 3.13
+    reads it as matching nothing)."""
 
-    def test_a_bad_bracket_range_is_read_wider_not_raised(self):
+    def test_a_bad_bracket_range_is_read_as_literal_brackets(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
             "check_safe_glob", Path(__file__).resolve().parents[1] / "template/System/tools/check.py")
@@ -784,5 +785,7 @@ class SafeGlobTest(unittest.TestCase):
         sys.modules[spec.name] = mod
         self.addCleanup(sys.modules.pop, spec.name, None)
         spec.loader.exec_module(mod)
-        self.assertEqual(["kai-ross"], mod._safe_fnmatch(["kai-ross", "jo-lane"], "kai-[s-a]oss"))
+        self.assertEqual([], mod._safe_fnmatch(["kai-ross", "jo-lane"], "kai-[s-a]oss"))
+        self.assertEqual(["[pick-harvest]"], mod._safe_fnmatch(["[pick-harvest]", "pick-harvest"], "[pick-harvest]"))
+        self.assertEqual(["kai-ross"], mod._safe_fnmatch(["kai-ross", "jo-lane"], "kai-[r-s]oss"))
         self.assertEqual(["kai-ross"], mod._safe_fnmatch(["kai-ross"], "kai-ross"))

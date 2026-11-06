@@ -1001,17 +1001,41 @@ class TestCheckReuse(StatusCase):
         self.assertIn("The check found 2 warnings (as the check found it 4 min ago)", attention(page))
         self.assertEqual(("1<small>errors</small>2<small>warnings</small>", "As the check found it 4 min ago"), tile(page))
 
-    def test_an_old_or_missing_result_runs_the_check(self):
+    def test_a_result_of_any_age_is_shown_and_the_check_never_runs(self):
+        """#382: a rebuild a tool asks for never waits on the check, whatever
+        the age of the result; the page still says how old it is."""
         self.build()
-        self.build(reuse=600, now=self.now + dt.timedelta(minutes=11))
-        self.assertEqual(2, self.ran())
+        page = self.build(reuse=float("inf"), now=self.now + dt.timedelta(days=3))
+        self.assertEqual(1, self.ran())
+        self.assertIn("As the check found it 3 days ago", page)
+        self.assertIn(">a.md</a>: x</span>", page)
+
+    def test_a_check_that_sleeps_is_never_called_by_a_build_a_tool_asks_for(self):
+        """#382: the stub check sleeps; a build with --reuse-check never calls it,
+        at any age of the kept result or with none, and a build without the
+        flag still does."""
+        self.build()
+        (self.root / "System" / "tools" / "check.py").write_text(
+            "import json, time\nopen(%r, 'a').write('ran\\n')\ntime.sleep(1)\nprint(json.dumps({'errors': 0, 'warnings': 0, 'findings': []}))\n"
+            % str(self.runs), encoding="utf-8")
+        for age in (dt.timedelta(minutes=1), dt.timedelta(hours=2), dt.timedelta(days=30)):
+            self.build(reuse=float("inf"), now=self.now + age)
+        self.assertEqual(1, self.ran())
         self.kept.unlink()
-        page = self.build(reuse=600)
-        self.assertEqual(3, self.ran())
-        self.assertNotIn("As the check found it", page)
+        self.build(reuse=float("inf"))
         self.kept.write_text("not json", encoding="utf-8")
-        self.build(reuse=600)
-        self.assertEqual(4, self.ran())
+        self.build(reuse=float("inf"))
+        self.assertEqual(1, self.ran())
+        self.build()
+        self.assertEqual(2, self.ran())                                  # a build by hand runs it
+
+    def test_with_no_result_kept_the_page_says_so_and_claims_no_pass(self):
+        page = self.build(reuse=float("inf"))
+        self.assertEqual(0, self.ran())
+        self.assertIn("No check result yet", page)
+        self.assertNotIn("As the check found it", page)
+        self.assertNotIn("The check did not run", page)
+        self.assertFalse(self.kept.exists())                           # nothing is kept for a check that did not run
 
     def test_a_build_by_hand_or_on_schedule_runs_it_however_young(self):
         self.build()
@@ -1023,8 +1047,8 @@ class TestCheckReuse(StatusCase):
         self.build()
         kept = json.loads(self.kept.read_text(encoding="utf-8"))
         self.kept.write_text(json.dumps(dict(kept, workspace="/elsewhere")), encoding="utf-8")
-        self.build(reuse=600)
-        self.assertEqual(2, self.ran())
+        self.assertIn("No check result yet", self.build(reuse=600))
+        self.assertEqual(1, self.ran())                                # another workspace's result is not shown
         self.kept.unlink()
         with mock.patch.object(status.subprocess, "run", side_effect=OSError("no python")):
             self.assertIn("The check did not run", self.build())
@@ -1034,8 +1058,8 @@ class TestCheckReuse(StatusCase):
         with mock.patch.object(status, "build", return_value="<html></html>") as b, \
                 mock.patch.object(status, "release_ask"), \
                 mock.patch.object(status, "launchers_installed", return_value=()), contextlib.redirect_stdout(io.StringIO()):
-            status.main(["--workspace", str(self.root), "--out", str(self.out), "--same-flags", "--reuse-check", "600"])
-        self.assertEqual((600, self.out), (b.call_args.kwargs["reuse_check"], b.call_args.kwargs["page_at"]))
+            status.main(["--workspace", str(self.root), "--out", str(self.out), "--same-flags", "--reuse-check"])
+        self.assertEqual((float("inf"), self.out), (b.call_args.kwargs["reuse_check"], b.call_args.kwargs["page_at"]))
         self.page()
         self.assertFalse(self.kept.exists())
 

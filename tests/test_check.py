@@ -936,6 +936,63 @@ class TestKnowledge(CheckCase):
         write(self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "people.md", "[[dana-whitlock]]\n")
         self.assertFinds("knowledge", "error")
 
+    def knowledge_page(self, frontmatter):
+        write(self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "terms.md",
+              "---\ntype: concept\n%s---\n\nPublished text.\n" % frontmatter)
+
+    def test_a_party_key_in_any_case_or_depth_is_refused_as_the_plain_one_is(self):
+        """#388: the frontmatter's own lines are scanned, not only the parsed fields. Fail closed: a quoted key,
+        a list item's key and a block-style value count too."""
+        cases = [("Parties: [birch]\n", "`parties`"), ("PARTY: birch\n", "`party`"), ("Zone: Work\n", "`zone`"),
+                 ("source:\n  parties: [birch]\n", "`parties`"), ("source:\n  - parties: birch\n", "`parties`"),
+                 ("Parties:\n  - birch\n", "`parties`"), ("parties: [birch]\nPARTY: birch\n", "`party` and `parties`")]
+        for frontmatter, named in cases:
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertFinds("knowledge", "error", "carries %s; Knowledge holds published material" % named)
+
+    def test_flow_mappings_and_keys_written_in_other_ways_are_refused(self):
+        """#388, the wall reviews: an allowlist of lines. A key the allowlist reads is named; any other line is
+        refused as frontmatter the check cannot read plainly."""
+        forms = [
+            "{type: concept, parties: [birch]}\n", "meta: {parties: x}\n", "items:\n  - {zone: Work}\n",
+            'type: concept\n"par\\x74ies": [birch]\n', "? parties\n: [birch]\n", "!!str parties: [birch]\n",
+            "&k parties: [birch]\n", "x: &a {parties: [birch]}\n<<: *a\n", "<<: *a\n",
+            "m: [party: x]\n", "tags: [a, zone: Work]\n", "- [party: x]\n", 'm: ["party": x]\n',
+            "tags: [a, parties: [Acme]]\n", '"Parties": [birch]\n', "'zone': Work\n",
+            'm: {"\\x70arty": x}\n', 'm: ["\\x70arty": x]\n', 'm: [{"party": x}]\n', 'm: ["\\u0070arty": x]\n',
+            "m: {&a party: x}\n", "m: {!!str party: x}\n", "m: {? party : x}\n",
+            "x: {a: 1,\n  b: [1,\n  2], party: x}\n", "tags: [a, [b]]\n", "tags: [a, b\n", "tags: [&a b]\n",
+            "tags: [*a]\n", "tags: [a\\b]\n", "k: *alias\n", "k: !!str v\n", "k: &anchor v\n", "k: ? v\n",
+            "a plain line with no key\n", "t: a\u2028party: b\n", "t: a\u0085party: b\n", "t: a\u2029party: b\n",
+            "t: a\x0cparty: b\n", "t: a\x0bparty: b\n", "summary: |\n  text\u2028party: b\n"]
+        for frontmatter in forms:
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertTrue(self.findings("knowledge", "error"), frontmatter)
+        for frontmatter in ("{a: 1}\n", 'k: {"\\x70arty": x}\n', "x: {a: 1,\n  b: 2, party: x}\n", "k: *a\n"):
+            with self.subTest(unreadable=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertFinds("knowledge", "error", "frontmatter the check cannot read plainly")
+
+    def test_what_the_allowlist_reads_stays_silent(self):
+        for frontmatter in ("title: Parties to the agreement\n", 'title: "Q&A: {x}"\n', "title: 'It''s {x} & *y*'\n",
+                            "tags: [party planning]\n", "tags: [zone-a, b]\n", 'tags: ["a b", c]\n', "tags: []\n", 'sources: ["[[wiki/a]]", "b: c, d"]\n',
+                            "# a comment\n\nnote: see *this* and !that\n",
+                            "summary: |\n  Text with {party: x} and\n  parties: y and & ! * ?\n\n  more\n",
+                            "summary: >-\n  folded {zone: Work}\nnext: value\n",
+                            "meta:\n  author: Jo\n  year: 2026\n  list:\n    - one\n    - two words\n",
+                            "date: 2026-11-05T10:00:00\nurl: https://example.com/a?b=1#c\n"):
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertClean("knowledge")
+
+    def test_a_value_that_holds_the_word_stays_silent(self):
+        for frontmatter in ("title: Parties to the agreement\n", "summary: the zone and party fields\n",
+                            "tags: [parties, zone]\n", "Party:\n", "source:\n  author: Jo\n"):
+            with self.subTest(frontmatter=frontmatter):
+                self.knowledge_page(frontmatter)
+                self.assertClean("knowledge")
 
 
 def wiki_question(fields="zone: Work\nparties: [acme]\n", status="open", bold=True,

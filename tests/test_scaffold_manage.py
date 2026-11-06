@@ -11,6 +11,7 @@ import contextlib
 import datetime
 import io
 import json
+import re
 import subprocess
 import sys
 import unittest
@@ -49,9 +50,10 @@ class ManageCase(Installed):
     def git(self, *args):
         return subprocess.run(["git", *args], cwd=str(self.work), capture_output=True, text=True, env=self.env)
 
-    def commit(self, message):
+    def commit(self, message, hook=True):
         self.git("add", "-A")
-        r = self.git("commit", "-q", "-m", message)
+        # hook=False: the fixture writes what the zone's wall hook would refuse, to test the move's own check.
+        r = self.git("commit", "-q", "-m", message, *([] if hook else ["--no-verify"]))
         self.assertEqual(0, r.returncode, r.stderr + r.stdout)
 
     def scaffold(self, *args):
@@ -485,14 +487,69 @@ class TestMove(ManageCase):
 
     def test_a_party_that_cannot_be_read_plainly_is_refused(self):
         hub = self.apex / "Apex.md"
-        hub.write_text(hub.read_text().replace("party: acme", "party: [acme, acme]"))
-        self.commit("two parties")
+        hub.write_text(hub.read_text().replace("party: acme", "party: []"))
+        self.commit("no party")
         self.refused("no single `party:`")
-        hub.write_text(hub.read_text().replace("party: [acme, acme]", "party: nobody"))      # the wall hook would not let it in
+        hub.write_text(hub.read_text().replace("party: []", "party: nobody"))      # the wall hook would not let it in
         r = self.move()
         self.assertEqual(1, r.returncode)
         self.assertIn("not a tag in the Parties table", r.stderr)
         self.assertTrue(self.freight.is_file())
+
+    def set_party(self, note, value):
+        text = note.read_text()
+        self.assertRegex(text, r"(?m)^party: .*$")
+        note.write_text(re.sub(r"(?m)^party: .*$", "party: " + value, text, count=1))
+
+    def cobalt(self):
+        r = self.scaffold("--today", "2027-01-01", "party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_a_party_list_with_no_wall_moves(self):
+        self.cobalt()
+        self.set_party(self.acme / "Acme.md", "[acme, cobalt]")
+        self.set_party(self.freight, "[acme, cobalt]")
+        self.commit("lists")
+        r = self.move()
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((self.apex / "Threads" / "Freight" / "Freight.md").is_file())
+
+    def test_a_threads_own_list_is_checked_against_the_target(self):
+        self.set_party(self.freight, "[acme, birch]")
+        self.commit("thread list", hook=False)
+        self.refused_wall(to="Apex")
+
+    def test_a_source_list_walled_from_the_target_moves_nothing(self):
+        self.set_party(self.acme / "Acme.md", "[acme, birch]")
+        self.commit("source list", hook=False)
+        self.refused_wall(to="Apex")
+
+    def test_a_target_list_walled_from_the_thread_moves_nothing(self):
+        self.set_party(self.apex / "Apex.md", "[cobalt, birch]")
+        self.cobalt()
+        self.commit("target list", hook=False)
+        self.refused_wall(to="Apex")
+
+    def refused_wall(self, **kw):
+        said = self.refused(self.WALL, **kw)
+        self.assertEqual(self.WALL, said.strip())
+        self.assertNotIn("birch", said.lower())
+
+    def test_a_list_that_cannot_be_read_plainly_is_refused(self):
+        self.cobalt()
+        for value in ("[acme, nobody]", "[]", "[acme, [birch]]"):
+            self.set_party(self.freight, value)
+            self.commit("odd " + value, hook=False)
+            r = self.move()
+            self.assertEqual(1, r.returncode, value)
+            self.assertTrue("no single `party:`" in r.stderr or "not a tag in the Parties table" in r.stderr, (value, r.stderr))
+            self.assertTrue(self.freight.is_file())
+        self.set_party(self.freight, "acme")
+        self.freight.write_text(self.freight.read_text().replace("party: acme\n", "party: acme\nparty: birch\n", 1))
+        self.commit("twice", hook=False)
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("no single `party:`", r.stderr)
 
     def test_another_zone_is_refused(self):
         self.assertEqual(0, self.scaffold("party", "--name", "Home Team", "--zone", "Personal", "--what", "Family").returncode)
@@ -1257,7 +1314,7 @@ class TestThePageIsAskedFor(ManageCase):
         self.tool = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.tool)
         self.build = [sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags",
-                      "--reuse-check", "600", "--settle", "10"]
+                      "--reuse-check", "inf", "--settle", "10"]
 
     def run_it(self, *args, stdin=""):
         """scaffold.py's exit code, its stderr, and every command it started."""
@@ -1337,7 +1394,7 @@ class TestThePageIsAskedFor(ManageCase):
         """#260: a status.py from before --reuse-check would refuse the flag,
         and a build started apart would fail without a word."""
         import garrick_lib
-        self.assertEqual(600, garrick_lib.CHECK_REUSE)
+        self.assertEqual(float("inf"), garrick_lib.CHECK_REUSE)
         self.builder.write_text("# an older status page, with --same-flags and --settle\n", encoding="utf-8")
         self.assertEqual([sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags"],
                          garrick_lib.status_command(self.root))

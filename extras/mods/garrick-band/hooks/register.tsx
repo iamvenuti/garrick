@@ -431,6 +431,17 @@ export async function linkify(text: string, resolve: (span: string) => Promise<s
   return parts.join('')
 }
 
+// The session's folder and each folder above it, up to and including the root, never higher.
+// A folder outside the root has only the root.
+export function foldersUp(cwd: string, root: string): string[] {
+  if (cwd !== root && !cwd.startsWith(root + '/')) return [root]
+  const out: string[] = []
+  for (let dir = cwd; ; dir = parent(dir)) {
+    out.push(dir)
+    if (dir === root) return out
+  }
+}
+
 async function resolver($: any) {
   const cwd: string = await $.session.cwd()
   const home: string = (await $.env.get('HOME')) ?? ''
@@ -446,8 +457,9 @@ async function resolver($: any) {
     const cwdRel = cwd.startsWith(index.root + '/') ? cwd.slice(index.root.length + 1) : ''
     const rel = lookup(index, span, cwdRel)
     if (rel !== null) return `${index.root}/${rel}`
-    // Written this turn, not indexed yet.
-    for (const base of [cwd, index.root]) {
+    // Written this turn, not indexed yet: try each folder from the session's up to the root.
+    if (bare.split('/').includes('..')) return null
+    for (const base of foldersUp(cwd, index.root)) {
       if (await $.fs.exists(`${base}/${bare}`)) return `${base}/${bare}`.replace(/\/$/, '')
     }
 

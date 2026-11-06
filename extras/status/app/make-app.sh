@@ -71,7 +71,8 @@ mkdir -p "$BUNDLE/MacOS" "$BUNDLE/Resources"
 # The app is main.swift beside GarrickShared.swift, which the Finder extension is built from too.
 mkdir "$WORK/src"
 cp "$HERE/Garrick.swift" "$WORK/src/main.swift"
-xcrun swiftc "${OPT[@]}" -o "$BUNDLE/MacOS/Garrick" "$WORK/src/main.swift" "$HERE/GarrickShared.swift"
+xcrun swiftc "${OPT[@]}" -o "$BUNDLE/MacOS/Garrick" "$WORK/src/main.swift" "$HERE/GarrickShared.swift" 2>"$WORK/app.log" \
+  || { echo "make-app: the app did not build." >&2; cat "$WORK/app.log" >&2; exit 1; }
 
 # The icon is Garrick's mark from status.py, the one the page carries, on a
 # navy tile on the macOS icon grid; the app draws the menu bar's icon itself.
@@ -161,7 +162,7 @@ if xcrun swiftc "${OPT[@]}" -application-extension -parse-as-library -module-nam
     rm -rf "$BUNDLE/PlugIns"
   fi
 else
-  echo "make-app: the Finder extension did not build, so the app has no Finder menu:" >&2
+  echo "make-app: the Finder extension did not build, so the app has no Finder menu." >&2
   head -n 5 "$WORK/appex.log" >&2
   rm -rf "$BUNDLE/PlugIns"
 fi

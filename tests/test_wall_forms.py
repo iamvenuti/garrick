@@ -43,6 +43,8 @@ SLUGS = {FAR: ("harvest", "orchard", "meadow"), NEAR: ("quarry", "forge", "lante
 PEOPLE = {FAR: ("kai-ross", "lee-ross", "max-ross"), NEAR: ("jo-lane", "ana-lane", "tom-lane")}
 ENTITIES = {FAR: ("harvest-co", "orchard-co", "meadow-co"), NEAR: ("quarry-ltd", "forge-ltd", "lantern-ltd")}
 
+GENERIC = ("notes", "todo", "plan", "index")
+
 DECISION_BODY = ("\n# Pick a supplier\n\n## Decision\n\nGo.\n\n## Assumptions\n\nNone.\n\n"
                  "## Options turned down\n\nNone.\n\n## Revisit when\n\nNever.\n")
 
@@ -95,6 +97,12 @@ def build(root: Path):
     for name, party, thread in (("Northwind", NEAR, "Freight"), ("Harbour", FAR, "Tender")):
         write(work / name / (name + ".md"), project_hub("Work", name, party, [thread]))
         write(work / name / "Threads" / thread / (thread + ".md"), thread_note(name, thread, party))
+    # Far pages with a generic name, and the near project's own files of those names.
+    for name in GENERIC:
+        write(meetings_home(root, "") / "wiki" / "entities" / (name + ".md"),
+              "---\ntitle: %s\ntype: entity\nparty: %s\n---\n\n# %s\n" % (name.title(), FAR, name))
+        for folder in (work / "Northwind", work / "Northwind" / "Threads" / "Freight"):
+            write(folder / (name.title() + ".md"), "# %s\n" % name.title())
     pages = {}
     for kind, grade, party in itertools.product(KINDS, GRADES, (FAR, NEAR)):
         files = page_files(root, kind, grade, party, GRADES.index(grade))
@@ -114,16 +122,81 @@ def depths(root: Path, page: Path):
     return tails + [str(root / "/".join(parts))]
 
 
-def wrap(wrapper: str, token: str) -> str:
-    if wrapper == "code":
-        return "`%s`" % token
-    if wrapper == "quoted":
-        return "`\"%s\"`" % token
-    if wrapper == "cat":
-        return "`cat %s`" % token
-    if wrapper == "link":
-        return "[the page](<%s>)" % token if " " in token else "[the page](%s)" % token
-    return "[[%s]]" % token
+def few(root: Path, page: Path):
+    """Four depths: the name, its folder and name, the path from the wiki's
+    name, and the path from the disk's top."""
+    every = depths(root, page)
+    return list(dict.fromkeys([every[0], every[1], every[-2], every[-1]]))
+
+
+NOTE = "# Notes\n\nSee %s now.\n"
+# A wrapper puts a token in a note. The first five are the original ones.
+WRAPPING = {
+    "code": lambda t: NOTE % ("`%s`" % t),
+    "quoted": lambda t: NOTE % ("`\"%s\"`" % t),
+    "cat": lambda t: NOTE % ("`cat %s`" % t),
+    "link": lambda t: NOTE % ("[the page](<%s>)" % t if " " in t else "[the page](%s)" % t),
+    "wikilink": lambda t: NOTE % ("[[%s]]" % t),
+    "find": lambda t: NOTE % ("`find Wikis -name '%s'`" % t),
+    "autolink-file": lambda t: NOTE % ("<file:///x/%s>" % t.lstrip("/")),
+    "autolink-file1": lambda t: NOTE % ("<file:/%s>" % t.lstrip("/")),
+    "autolink-https": lambda t: NOTE % ("<https://x/%s>" % t.lstrip("/")),
+    "frontmatter": lambda t: "---\nrelated: %s\n---\n\nx\n" % t,
+    "frontmatter-list": lambda t: "---\nrelated:\n  - %s\n---\n\nx\n" % t,
+    "indented": lambda t: "# Notes\n\npara\n\n    %s\n" % t,
+    "indented-cat": lambda t: "# Notes\n\npara\n\n\tcat %s\n" % t,
+    "indented-refdef": lambda t: "# Notes\n\npara\n\n    [1]: %s\n" % t,
+    "html-code": lambda t: NOTE % ("<code>%s</code>" % t),
+    "html-pre": lambda t: "# Notes\n\n<pre>\n%s\n</pre>\n" % t,
+    "html-comment": lambda t: "# Notes\n\n<!-- %s -->\n" % t,
+    "long-span": lambda t: NOTE % ("`%s cat %s`" % ("x " * 600, t)),
+    "long-token": lambda t: NOTE % ("`%s%s`" % ("./" * 600, t.lstrip("/"))),
+    "prose": lambda t: NOTE % t,
+}
+WRAPPERS = ("code", "quoted", "cat", "link", "wikilink")
+# What a wrapper can hold: these read a path of two names or more (a URL has a
+# host, prose reads no bare name), the rest any token.
+PATH_ONLY = ("autolink-file", "autolink-file1", "autolink-https", "prose")
+
+# The factors a review added. Each block is a product of its own values against
+# every page and depth; a form found later is a new value in one of them.
+NEW_PREFIXES = ("@", "path:", "!", "$", "*", "#", "~")
+NEW_SUFFIXES = (":3-5", "@3", ":L3", "::Heading", "~", ".md:3-5", ".md::Heading", ".md~")
+NEW_WRAPPERS = ("autolink-file", "autolink-file1", "autolink-https", "frontmatter", "frontmatter-list", "indented",
+                "indented-cat", "indented-refdef", "html-code", "html-pre", "html-comment", "long-span", "long-token",
+                "prose")
+NAME_FORMS = {
+    "escaped": lambda n: n.replace("-", "\\-"), "underscore": lambda n: n.replace("-", "_"),
+    "spaced": lambda n: n.replace("-", " "), "star": lambda n: n[:-2] + "*", "question": lambda n: n[:3] + "?" + n[4:],
+    "zero-width": lambda n: n[:3] + "\u200b" + n[3:], "soft-hyphen": lambda n: n[:3] + "\u00ad" + n[3:],
+    "bidi": lambda n: "\u202e" + n + "\u200f", "joiner": lambda n: n[:2] + "\u200d\u2060" + n[2:],
+    "class": lambda n: "[%s]%s" % (n[0], n[1:]), "brace": lambda n: "{%s,zz}" % n,
+}
+
+
+def with_name(depth: str, form: str) -> str:
+    head, _, name = depth.rpartition("/")
+    return (head + "/" if head else "") + NAME_FORMS[form](name)
+
+
+def blocks(root: Path, page: Path):
+    """(wrapper, token) for every row that names `page`: the blocks of the
+    table, each a product."""
+    for depth in dict.fromkeys(depths(root, page)):
+        for prefix, suffix, wrapper in itertools.product(PREFIXES, SUFFIXES, WRAPPERS):
+            yield wrapper, prefix + depth + suffix
+    for depth in few(root, page):
+        for prefix, suffix, wrapper in itertools.product(NEW_PREFIXES, ("", "/", ".md"), ("code", "cat", "link", "wikilink")):
+            yield wrapper, prefix + depth + suffix
+        for prefix, suffix, wrapper in itertools.product(("", "./"), NEW_SUFFIXES, WRAPPERS):
+            yield wrapper, prefix + depth + suffix
+        for prefix, suffix, wrapper in itertools.product(("", "./"), ("", "/", ":3", ".md"), NEW_WRAPPERS):
+            if wrapper in PATH_ONLY and ("/" not in depth or " " in depth):
+                continue                       # a URL and a word of prose hold no space
+            yield wrapper, prefix + depth + suffix
+        for form, prefix, suffix, wrapper in itertools.product(NAME_FORMS, ("",), ("", ".md", "/"),
+                                                              ("code", "cat", "link", "wikilink", "find")):
+            yield wrapper, prefix + with_name(depth, form) + suffix
 
 
 def rows(root: Path, pages: dict, party: str):
@@ -132,11 +205,8 @@ def rows(root: Path, pages: dict, party: str):
     for (kind, grade, owner), page in sorted(pages.items()):
         if owner != party:
             continue
-        for depth in dict.fromkeys(depths(root, page)):
-            for prefix, suffix, wrapper in itertools.product(PREFIXES, SUFFIXES, WRAPPERS):
-                token = prefix + depth + suffix
-                label = "%s/%s/%s: %s" % (kind, grade or "live", wrapper, token)
-                out.append((label, "# Notes\n\nSee %s now.\n" % wrap(wrapper, token)))
+        for wrapper, token in dict.fromkeys(blocks(root, page)):
+            out.append(("%s/%s/%s: %s" % (kind, grade or "live", wrapper, token), WRAPPING[wrapper](token)))
     return out
 
 
@@ -164,13 +234,16 @@ class Table:
         return "warned" if walls else "passed"
 
     def run(self, full: bool = False):
-        """{(project, label): verdict} for the four readings: each project
-        naming the pages of each party."""
+        """{(project, party, label): verdict} for the four readings: each project
+        naming the pages of each party. Every row across the wall runs from
+        Northwind; the rows on its own side run one in five, and Harbour reads
+        the table the other way round one row in eleven. With `full`, all."""
         out = {}
         for project_name, own in (("Northwind", NEAR), ("Harbour", FAR)):
             for party in (FAR, NEAR):
+                every = 1 if full else (11 if project_name == "Harbour" else 1 if party != own else 5)
                 for i, (label, text) in enumerate(rows(self.root, self.pages, party)):
-                    if project_name == "Northwind" or full or i % 11 == 0:
+                    if i % every == 0:
                         out[(project_name, party, label)] = self.verdict(project_name, text)
         return out
 
@@ -196,10 +269,11 @@ class WallFormsTest(unittest.TestCase):
         return {k[2]: v for k, v in self.verdicts.items() if k[0] == project and k[1] == party}
 
     def test_the_table_is_as_wide_as_its_factors(self):
-        per_depth = len(PREFIXES) * len(SUFFIXES) * len(WRAPPERS)
-        self.assertEqual(150, per_depth)
-        self.assertEqual(len(self.read("Northwind", FAR)), len(self.read("Northwind", NEAR)))
-        self.assertGreater(len(self.read("Northwind", FAR)), 9000)
+        far, near = rows(self.root, self.table.pages, FAR), rows(self.root, self.table.pages, NEAR)
+        self.assertEqual(len(far), len(near))
+        self.assertGreater(len(far), 40000)
+        self.assertEqual(len(far), len({label for label, _ in far}))
+        self.assertLessEqual(len(self.read("Northwind", NEAR)), len(self.read("Northwind", FAR)))
 
     def test_every_row_across_the_wall_is_refused(self):
         for project, party in (("Northwind", FAR), ("Harbour", NEAR)):
@@ -257,6 +331,17 @@ class WallFormsRowsTest(unittest.TestCase):
         write(self.root / "Wikis" / "Meetings" / "wiki" / "people" / "sam-nobody.md",
               "---\ntitle: Sam Nobody\ntype: person\nparty: none\n---\n\n# Sam Nobody\n")
         self.assertEqual([], self.says("`wiki/people/sam-nobody/` and `sam-nobody`"))
+
+    def test_a_far_page_with_a_generic_name_leaves_the_projects_own_files_alone(self):
+        for name in ("Notes", "Todo", "Plan", "Index"):
+            for form in ("%s", "%s.md", "./%s.md", "./%s", "Northwind/%s.md", "Threads/Freight/%s.md", "../Freight/%s.md"):
+                token = form % name
+                for wrapper in ("code", "quoted", "cat", "link", "wikilink"):
+                    with self.subTest(wrapper=wrapper, token=token):
+                        found = self.says(WRAPPING[wrapper](token).split("See ", 1)[1].split(" now.")[0])
+                        self.assertEqual([], found, found)
+        found = self.says("`wiki/entities/notes` and `Wikis/Meetings/wiki/entities/todo.md`")
+        self.assertEqual(["error", "error"], [s for s, _ in found], found)
 
     def test_a_folder_that_only_shares_a_name_is_still_a_folder(self):
         write(self.root / "Zones" / "Work" / "Harbour" / "Notes" / "Demo.md", "# Demo\n")

@@ -44,6 +44,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+from fnmatch import fnmatchcase
 from functools import lru_cache
 from array import array
 from bisect import bisect_left
@@ -680,7 +681,7 @@ def tag_texts(text: str) -> List[Tuple[str, str]]:
     return [("<%s>" % m.group(1).lower(), html.unescape(m.group(2))) for m in TAG_RE.finditer(text)]
 
 
-def code_texts(text: str) -> List[Tuple[str, str]]:
+def code_texts(text: str, limit: Optional[int] = MAX_CODE_PATH) -> List[Tuple[str, str]]:
     """(as written, what it holds) for every code span in `text`, whatever the
     length of its backtick run, and every line of every fenced block, opened
     with backticks or tildes, as CommonMark reads them."""
@@ -716,7 +717,7 @@ def code_texts(text: str) -> List[Tuple[str, str]]:
                 continue  # nothing closes it: plain text
             j = same[pointer[n]]
             body = block[end:runs[j][0]]
-            if len(body) <= MAX_CODE_PATH:
+            if limit is None or len(body) <= limit:
                 body = body.replace("\n", " ")
                 if body.startswith(" ") and body.endswith(" ") and body.strip():
                     body = body[1:-1]
@@ -5636,25 +5637,72 @@ def link_dests(ws: Workspace, source: Path, target: str) -> List[Path]:
 
 _COMMAND_RE = re.compile(r"^[A-Za-z][\w.+-]*$")
 _OPTION_RE = re.compile(r"^(-[\w-]*|\d+)$")
-_WRAP = "\"'`<>()[]{} \t"
-_PUNCT = ".,;:!?"
+_WRAP = "\"'`<>() \t"       # what may wrap a token; brackets and braces may be a glob's (see _unbracket)
+_PUNCT = ".,;:"
+_END = "\"'`<>() \t"       # what may close a token; a bracket or a brace may be part of a glob
+_SIGILS = "@!$*#~"
+# What may follow a name and is not part of it: a position or a range (`:3`,
+# `:3-5`, `:L3`), a section (`::Heading`), a line (`@3`) or a backup's `~`.
+_SUFFIX_RE = re.compile(r"(?:::[^/]*|:L?\d+(?:[-:]L?\d+)*:?|@\d+(?:-\d+)?|~)$")
+_QUERY_RE = re.compile(r"\?(?=[\w.%-]*=)")
+_REPEATS = ((re.compile(r"(?:\./)+"), "./"), (re.compile(r"(?:\.\./){2,}"), "../"), (re.compile(r"/{2,}"), "/"))
+_LOOKALIKE = str.maketrans({**{c: "/" for c in "⁄∕⧸╱╲／⼃‹›"[:7]},
+                            **{c: "." for c in "․‧．。܁܂"},
+                            **{c: "-" for c in "‐‑‒–—―−﹘﹣－"}})
+_GLOBS = set("*?[")
+MAX_TOKEN_WORDS = 50000  # words of one long code span read; a longer span is read to here
+
+
+def _unbracket(text: str) -> str:
+    """`text` without brackets that wrap all of it (`[[x]]`, `[x]`); `[k]ai`
+    is a glob's, and stays."""
+    m = re.fullmatch(r"\[+([^\[\]]*)\]+", text.strip())
+    return m.group(1).strip(_WRAP) if m else text
+
+
+def fold_name(part: str) -> str:
+    """A name as the index and a token both fold it: Unicode compatibility and
+    case folded, lookalike slashes, dots and dashes plain, and `-`, `_` and
+    spaces one."""
+    text = unicodedata.normalize("NFKC", part).translate(_LOOKALIKE).casefold()
+    return re.sub(r"[-_\s]+", "-", text)
 
 
 def plain_forms(raw: str) -> List[str]:
-    return list(_plain_forms(raw[:4096]))
+    """The plain forms a token may mean (see _plain), folded to compare."""
+    return list(_plain(raw, True))
+
+
+def plain_cased(raw: str) -> List[str]:
+    """The same forms, as the token spells them, to look for a file by."""
+    return list(_plain(raw, False))
 
 
 @lru_cache(maxsize=1 << 16)
-def _plain_forms(raw: str) -> Tuple[str, ...]:
+def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
     """What `raw`, a token as written, may mean as a path in the plain form the
-    index is asked for: quotes and brackets off, `file:` off, `#heading`, `?query`
-    and `|alias` off, a leading command and its options off, every leading `./`
-    off, `//` read as `/`, a trailing `/` off, a `:line` suffix off and `.md`
-    off. The token as it stands comes back too: a page's name may hold a space
-    (a decision's). Each form is lower case, its segments joined by `/`."""
-    text = plain_text(raw).replace("\\", "/").strip(_WRAP)
-    text = re.sub(r"(?i)^file:(?://[^/]*)?", "", text)
-    for mark in ("#", "?", "|"):
+    index is asked for: Unicode folded (a full-width slash is a slash), quotes
+    and brackets off, `file:`, `path:` and a web address's host off, a sigil
+    (`@ ! $ * # ~`) before it off, `#heading`, `?query=` and `|alias` off, a
+    backslash before a punctuation mark dropped, a leading command and its
+    options off, every leading `./` off, `//` read as `/`, a trailing `/` off,
+    a position (`:3`, `:3-5`, `:L3`, `@3`, `::Heading`, a trailing `~`) off and
+    `.md` off. The token as it stands comes back too: a page's name may hold a
+    space (a decision's). With `fold`, each form is lower case and its names
+    fold (fold_name); its segments are joined by `/`. Bounded: runs of `./`
+    collapse first, and only the last 4096 characters are read."""
+    for pattern, plain in _REPEATS:
+        raw = pattern.sub(plain, raw)
+    text = unicodedata.normalize("NFKC", plain_text(raw[-4096:])).translate(_LOOKALIKE)
+    if not text.isascii():
+        text = "".join(c for c in text if unicodedata.category(c) != "Cf")   # zero-width, joiners, bidi marks, soft hyphen
+    text = re.sub(r"\\([^A-Za-z0-9])", r"\1", text).replace("\\", "/").strip(_WRAP)
+    text = re.sub(r"^(\*{1,3}|_{1,3})(.+)\1$", r"\2", text)       # bold or italic
+    text = _unbracket(text)
+    text = re.sub(r"(?i)^(?:file|path):(?://[^/]*)?", "", text)
+    text = re.sub(r"(?i)^[a-z][a-z0-9+.-]*://[^/]*", "", text).strip(_WRAP).lstrip(_SIGILS)
+    text = _QUERY_RE.split(text, 1)[0]
+    for mark in ("#", "|"):
         text = text.split(mark, 1)[0]
     text = text.strip(_WRAP)
     if not text:
@@ -5666,10 +5714,11 @@ def _plain_forms(raw: str) -> Tuple[str, ...]:
             heads.append(" ".join(words[i:]))
     out: List[str] = []
     for head in heads:
-        head = head.strip(_WRAP)
-        for _ in range(6):                   # until nothing more comes off
+        head = _unbracket(head.strip(_WRAP)).lstrip(_SIGILS)
+        for _ in range(8):                   # until nothing more comes off
             before = head
-            head = _without_position(head.rstrip(_PUNCT + "/" + _WRAP)).rstrip(_PUNCT + "/" + _WRAP)
+            head = _SUFFIX_RE.sub("", head.rstrip(_PUNCT + "/" + _END))
+            head = head.rstrip(_PUNCT + "/" + _END)
             if head.lower().endswith(".md"):
                 head = head[:-3]
             if head == before:
@@ -5683,37 +5732,72 @@ def _plain_forms(raw: str) -> Tuple[str, ...]:
                     parts.pop()
                 continue
             parts.append(part.strip())
-        form = "/".join(parts).lower()
+        form = "/".join(fold_name(p) for p in parts) if fold else "/".join(parts)
         if form and form not in out:
             out.append(form)
     return tuple(out)
 
 
+def body_tokens(body: str, runs: bool) -> List[str]:
+    """The tokens one code body may hold: all of it, each quoted string, each
+    word, and with `runs` each run of up to eight words that starts after a
+    command, at a path or at a date (a decision's name has spaces in it). A
+    body is read to MAX_TOKEN_WORDS words however long it is."""
+    candidates = [body.strip()[-4096:]]
+    candidates += [a or b for a, b in QUOTED_RE.findall(body)[:MAX_TOKEN_WORDS]]
+    shell = body.replace("\\ ", "\0")
+    candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)[:MAX_TOKEN_WORDS]]
+    if runs:
+        for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
+            words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()[:MAX_TOKEN_WORDS]]
+            for i in range(len(words)):
+                if i < 4 or "/" in words[i] or (len(words[i]) == 6 and words[i].isdigit()):
+                    for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
+                        candidates.append(" ".join(words[i:j]))
+    return [c for c in dict.fromkeys(candidates) if c]
+
+
+HTML_CODE_RE = re.compile(r"(?is)<(code|pre)\b[^>]*>(.*?)</\1\s*>|<!--(.*?)-->")
+
+
+def other_code_texts(text: str) -> List[Tuple[str, str]]:
+    """(as written, what it holds) for code a reader sees that code_texts does
+    not read: an indented code block (four spaces or a tab, each line), HTML
+    `<code>` and `<pre>` and a comment (each line)."""
+    out = []
+    for line in text.split("\n"):
+        if line[:4] == "    " or line[:1] == "\t":
+            if line.strip():
+                out.append((line.strip(), line))
+    for m in HTML_CODE_RE.finditer(text):
+        body = m.group(2) if m.group(2) is not None else m.group(3)
+        for line in (body or "").split("\n"):
+            if line.strip():
+                out.append((line.strip(), line))
+    return out
+
+
 def code_names(text: str, runs: bool = False) -> List[Tuple[str, str]]:
-    """(as written, token) for every token a code span or a code line holds that
-    may name a Meetings page, with or without a slash: the whole of it, each
-    quoted string and each word. With `runs`, also each run of up to eight
-    words that starts after a command, at a path or at a date (a decision's
-    name has spaces in it). plain_forms reads each; one code text read once."""
+    """(as written, token) for every token that code may hold which may name a
+    Meetings page, with or without a slash: in a code span of any length, a
+    code line, an indented block, `<code>`, `<pre>` and a comment. One code
+    text is read once."""
     out: List[Tuple[str, str]] = []
     done = set()
-    for written, body in code_texts(text):
+    for written, body in code_texts(text, None) + other_code_texts(text):
         if (written, body) in done:
             continue
         done.add((written, body))
-        candidates = [body.strip()]
-        candidates += [a or b for a, b in QUOTED_RE.findall(body)]
-        shell = body.replace("\\ ", "\0")
-        candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)]
-        if runs:
-            for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
-                words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()]
-                for i in range(len(words)):
-                    if i < 4 or "/" in words[i] or (len(words[i]) == 6 and words[i].isdigit()):
-                        for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
-                            candidates.append(" ".join(words[i:j]))
-        out += [(written, c) for c in dict.fromkeys(candidates) if c]
+        out += [(written, c) for c in body_tokens(body, runs)]
     return out
+
+
+WIKILINK_ANY_RE = re.compile(r"\[\[((?:[^\[\]\n]|\[[^\[\]\n]*\])+?)\]\]")   # with a glob's [class] in it
+BROKEN_DEST_RE = re.compile(r"\]\(\s*([^()<>\n]*\n[^()<>]{0,300}?)\s*\)")
+AUTOLINK_RE = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\s]*)>")
+PROSE_WORD_RE = re.compile(r"[^\s`<>()\[\]\"'|;,{}]+")
+# A key of a note's own frontmatter says what the note is, not what it names.
+OWN_KEYS = {"party", "parties", "zone", "type", "status", "created", "updated", "date", "title", "pinned", "tags"}
 
 
 def markdown_targets(text: str) -> List[Tuple[str, str]]:
@@ -5727,7 +5811,40 @@ def markdown_targets(text: str) -> List[Tuple[str, str]]:
             found = unquote(next((g for g in m.groups() if g is not None), "").strip())
             if found and not re.match(r"(?i)^(?:[a-z][a-z0-9+.-]*://|mailto:|tel:)", found):
                 out.append((m.group(0).strip(), found))
+    for m in BROKEN_DEST_RE.finditer(text):                    # a destination broken over lines
+        out.append((m.group(0).strip(), re.sub(r"\s+", "", m.group(1))))
     return out
+
+
+def frontmatter_names(text: str) -> List[Tuple[str, str]]:
+    """(as written, value) for every plain value of a note's frontmatter, a
+    list item too, under a key that is not one of the note's own (OWN_KEYS)."""
+    out = []
+    for key, value in parse_frontmatter_text(text).items():
+        if str(key).lower() in OWN_KEYS:
+            continue
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, str) and item.strip():
+                out.append((item.strip(), item.strip()))
+    return out
+
+
+def _slashy(word: str) -> bool:
+    """Does a word hold a slash, in any form a path is written: `/`, a lookalike,
+    `%2F` or a backslash?"""
+    return "/" in word or "\\" in word or "%2" in word.lower() or (
+        not word.isascii() and "/" in unicodedata.normalize("NFKC", word).translate(_LOOKALIKE))
+
+
+def prose_paths(text: str) -> List[Tuple[str, str]]:
+    """(as written, word) for every word of the text, anywhere, that holds a
+    slash: a path in plain prose. Only one that names a Meetings page by its
+    whole path or by a tail of two names or more is refused (PageNames.named
+    with `min_parts`), so a bare name in prose stays unread."""
+    return [(w, w) for w in dict.fromkeys(PROSE_WORD_RE.findall(text[:1 << 22])) if _slashy(w)]
+
+
+GLOB_BUDGET = 200  # distinct globs read in one file; the rest name no page
 
 
 class PageNames:
@@ -5737,13 +5854,16 @@ class PageNames:
     (grade_places): a token written before it faded or woke still names it.
     Only the names are read to build it; the parties a page is written for
     (`tags_of`) are read when a token names it. `kinds` says what to call a
-    page that is no meeting page."""
+    page that is no meeting page. Names fold (fold_name)."""
 
     def __init__(self, ws: Workspace):
         self.ws = ws
         self.kinds: Dict[Path, str] = {}
         self.by_last: Dict[str, List[Tuple[Tuple[str, ...], Path]]] = {}
+        self.entries: List[Tuple[Tuple[str, ...], Path]] = []
         self._tags: Dict[Path, set] = {}
+        self._globs: Dict[str, List[Path]] = {}
+        self.budget = GLOB_BUDGET            # globs one file may have read; walls_for_file sets it again
         self.spaced = False                # does any page's name hold a space? (a decision's does)
         self._raw_tags: Optional[Dict[Path, set]] = None
         self._entities: Optional[Dict[Path, dict]] = None
@@ -5766,15 +5886,17 @@ class PageNames:
         if kind:
             self.kinds[page] = kind
         for at in [page] + grade_places(self.ws, page):
-            have = tuple(x.lower() for x in Path(rel(self.ws, at)).parts)
+            have = tuple(Path(rel(self.ws, at)).parts)
             names = [have]
-            if have[-1].endswith(".md"):
+            if have[-1].lower().endswith(".md"):
                 names = [have[:-1] + (have[-1][:-3],)]
             elif "." in have[-1]:
                 names.append(have[:-1] + (have[-1].rsplit(".", 1)[0],))
             for name in names:
+                name = tuple(fold_name(x) for x in name)
                 self.by_last.setdefault(name[-1], []).append((name, page))
-                self.spaced = self.spaced or " " in name[-1]
+                self.entries.append((name, page))
+                self.spaced = self.spaced or " " in page.name
 
     def tags_of(self, page: Path) -> set:
         """The parties a page or record is written for; none when it is
@@ -5820,13 +5942,50 @@ class PageNames:
                         self._raw_tags.setdefault(found, set()).update(mine)
         return self._raw_tags.get(record, set())
 
-    def named(self, token: str) -> List[Path]:
-        """The pages a token names, whatever its form."""
+    def _glob(self, form: str) -> List[Path]:
+        """The pages a glob (`kai-*`, `wiki/*/x`, `kai-{ross,x}`, `[kj]ai-r?ss`)
+        matches by full path, by tail or by name, fnmatch's way. A glob with
+        fewer than three letters of its own names every page and so none."""
+        if form not in self._globs:
+            self.budget -= 1
+            if self.budget < 0:
+                return []                      # over this file's budget: not remembered
+            self._globs[form] = []
+            if sum(c.isalnum() for c in form) >= 3:
+                patterns = [form]
+                for _ in range(3):             # a brace list, a few deep
+                    patterns = [p[:m.start()] + alt + p[m.end():] for p in patterns
+                                for m in [re.search(r"\{([^{}]*)\}", p)] if m for alt in m.group(1).split(",")] or patterns
+                found = {}
+                for pattern in patterns[:64]:
+                    cut = pattern.split("/")
+                    for have, page in self.entries:
+                        m = min(len(cut), len(have))      # a glob longer than the page's path: its last names
+                        if fnmatchcase("/".join(have[-m:]), "/".join(cut[-m:])):
+                            found[page] = None
+                self._globs[form] = list(found)
+        return self._globs[form]
+
+    def named(self, token: str, min_parts: int = 1) -> List[Path]:
+        """The pages a token names, whatever its form: by name when it is one
+        name, or when its last two names are a page's last two. With
+        `min_parts`, a token of fewer names than that names none."""
+        tokens = [token]
+        if token.lower().startswith("obsidian://"):
+            query = parse_qs(urlsplit(token).query)
+            tokens = [unquote(v) for k in ("file", "path") for v in query.get(k, [])]
+        elif token.startswith("obsidian:") and token.count(":") >= 2:
+            tokens = [token.split(":", 2)[2]]
         found: Dict[Path, None] = {}
-        for form in plain_forms(token):
+        for form in [f for t in tokens for f in plain_forms(t)]:
             want = tuple(form.split("/"))
+            if len(want) < min_parts:
+                continue
+            if _GLOBS & set(form) or "{" in form:
+                found.update(dict.fromkeys(self._glob(form)))
+                continue
             for have, page in self.by_last.get(want[-1], ()):
-                if have[-len(want):] == want or (len(want) > len(have) and have[0] == "wikis" and want[-len(have):] == have):
+                if len(want) == 1 or (len(have) >= 2 and have[-2:] == want[-2:]):
                     found[page] = None
         return list(found)
 
@@ -5836,6 +5995,24 @@ def page_names(ws: Workspace) -> PageNames:
     if ws.page_names is None:
         ws.page_names = PageNames(ws)
     return ws.page_names
+
+
+def own_file(note: Path, project: Path, token: str) -> bool:
+    """Does `token` name a file of the note's own project, read from the note's
+    folder, its thread's or the project's? Then it is that file, not a page of
+    the Meetings wiki that shares its name."""
+    thread = next((p for p in note.parents if p.parent.name == "Threads" and project in p.parents), None)
+    for form in plain_cased(token):
+        for base in (note.parent, thread, project):
+            if base is None:
+                continue
+            for name in (form, form + ".md"):
+                try:
+                    if (base / name).is_file():
+                        return True
+                except (OSError, ValueError):
+                    continue
+    return False
 
 
 def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
@@ -5899,17 +6076,37 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
     # read by name (plain_forms, PageNames): whatever its form, one that names a
     # page of the Meetings wiki is read against that page's parties.
     names = page_names(ws)
-    named = [(v, w, t) for v, w, t in targets] + [("writes the path", w, t) for w, t in code_names(text)] \
-        + [("links", w, t) for w, t in markdown_targets(text)]
+    names.budget = GLOB_BUDGET
     resolved = set(targets)
-    for verb, written, target in named if names.by_last else []:
+    told: set = set()                          # tokens that have a finding
+    last, prev = len(out), None
+    named = [(v, w, t, 1) for v, w, t in targets]
+    named += [("writes the path", w, t, 1) for w, t in code_names(text, names.spaced)]
+    named += [("links", w, t, 1) for w, t in markdown_targets(text)]
+    named += [("links", m.group(0), m.group(1), 1) for m in WIKILINK_ANY_RE.finditer(text)]
+    named += [("links", "<%s>" % t, t, 1) for t in AUTOLINK_RE.findall(text)]
+    named += [("links", w, t, 1) for w, t in frontmatter_names(text)]
+    named += [("writes the path", w, t, 2) for w, t in prose_paths(text)]
+    for verb, written, target, parts in named if names.by_last else []:
         found = list(resolve(ws, path, target, meetings)) if meetings.items and (verb, written, target) in resolved else []
-        found += [p for p in names.named(target) if p not in found]
+        named_pages = names.named(target, parts)
+        if named_pages and not found and own_file(path, project, target):
+            continue                           # it is a file of this project, not a page that shares its name
+        found += sorted((p for p in named_pages if p not in found),
+                        key=lambda p: (p not in ws.meetings, ("person page", "entity page", "raw record").index(names.kinds.get(p, "raw record"))
+                                       if p not in ws.meetings else 0))
         for page in found:
+            if len(out) > last:
+                told.add(prev)
+            last, prev = len(out), written
             key = (written, page)
             if key in seen:
                 continue
             seen.add(key)
+            if page in reported and (verb, written, target) not in resolved:
+                continue                       # a reading of the token the older readings have told already
+            if page not in ws.meetings and written in told:
+                continue                       # one finding for a token: the first page it names, a record after its page
             mfm = ws.meetings.get(page)
             if mfm is None:                    # a person page, an entity page or a raw record: its parties, in its place
                 if not names.tags_of(page):

@@ -711,6 +711,26 @@ class TestOneQuestionManyStores(AnswerCase):
         self.assertIn("261105-acme-call.md", self.paths(found))
         self.assertEqual("261105-acme-call.md", self.paths(found)[1])      # the note leads, then the newest record
 
+    def test_a_project_named_unlike_its_party_still_finds_its_party_s_meeting(self):
+        self.meeting("261106-acme-decision.md", "[acme]", "Acme chose the second supplier.", "2026-11-06")
+        found, _, where = self.read({"route": "thread", "project": "Acme Review", "words": ["acme review"]}, "recent")
+        self.assertIn("acme", where.groups[0])                                  # the place's own party, its only project
+        self.assertIn("261106-acme-decision.md", self.paths(found))
+
+    def test_a_party_two_projects_carry_names_neither(self):
+        write(self.work / "Acme Freight" / "Acme Freight.md", project_hub("Work", "Acme Freight", "acme", ["Lanes"]))
+        write(self.work / "Acme Freight" / "Threads" / "Lanes" / "Lanes.md", thread_note("Acme Freight", "Lanes", "acme", "Lanes."))
+        self.meeting("261106-acme-decision.md", "[acme]", "Acme chose the second supplier.", "2026-11-06")
+        found, _, where = self.read({"route": "thread", "project": "Acme Review", "words": ["acme review"]}, "recent")
+        self.assertNotIn("acme", where.groups[0])
+        self.assertNotIn("261106-acme-decision.md", self.paths(found))
+
+    def test_a_walled_page_is_not_reached_through_the_place_s_party(self):
+        self.meeting("261106-both.md", "[acme, birch]", "Acme and Birch, WALLEDMARK.", "2026-11-06")
+        found, _, _ = self.read({"route": "thread", "project": "Acme Review", "words": ["acme review"]}, "recent")
+        self.assertNotIn("261106-both.md", self.paths(found))
+        self.assertNotIn("WALLEDMARK", json.dumps(found))
+
     def test_a_meetings_find_also_reads_the_project_and_knowledge(self):
         found, _, _ = self.read({"route": "meetings", "project": "Acme Review", "words": ["pallet"]})
         self.assertTrue(any("Acme Review" in r["path"] for r in found))

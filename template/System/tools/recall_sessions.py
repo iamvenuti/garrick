@@ -28,6 +28,7 @@ import datetime
 import json
 import os
 import re
+import unicodedata
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -168,6 +169,8 @@ class Session:
     started: Optional[datetime.datetime] = None
     cwds: List[str] = dataclasses.field(default_factory=list)
     turns: List[Tuple[str, str, Optional[str]]] = dataclasses.field(default_factory=list)   # (kind, text, exit)
+    probe: List[str] = dataclasses.field(default_factory=list)   # every other tool call's input, serialized; scanned for places, never rendered
+    root_only: bool = False                                       # set by `mentioned` when the session may have reached a sibling project
 
 
 REMINDER = re.compile(r"<(system-reminder|local-command-caveat|local-command-stdout|command-stdout|"
@@ -267,11 +270,19 @@ def parse_claude(path: Path) -> Session:
                     continue
                 if b.get("type") == "text":
                     add_turn(s, "assistant", str(b.get("text") or ""))
-                elif b.get("type") == "tool_use" and str(b.get("name")) == "Bash":
-                    command = str((b.get("input") or {}).get("command") or "").strip()
+                elif b.get("type") == "tool_use":
+                    command = ""
+                    if str(b.get("name")) == "Bash" and isinstance(b.get("input"), dict):
+                        command = str(b["input"].get("command") or "").strip()
                     if command:
                         s.turns.append(("command", command, None))
                         pending[str(b.get("id"))] = len(s.turns) - 1
+                    else:
+                        # Read, Edit, Write, Grep, Glob and the rest: their inputs name places too
+                        try:
+                            s.probe.append(json.dumps(b.get("input"), ensure_ascii=False))
+                        except (TypeError, ValueError):
+                            s.probe.append(str(b.get("input")))
     return s
 
 
@@ -304,6 +315,8 @@ def parse_codex(path: Path) -> Session:
                 args = {}
             command = args.get("command") if isinstance(args, dict) else None
             command = command if command else (args.get("cmd") if isinstance(args, dict) else None)
+            if not command and isinstance(args, dict):
+                s.probe.append(json.dumps(args, ensure_ascii=False))
             if isinstance(command, list):
                 command = " ".join(str(c) for c in command)
             if command:
@@ -367,7 +380,7 @@ def destination(root: Path, s: Session) -> Optional[Tuple[Path, List[str]]]:
             return None
         # A session that was open at the zone's top at any point is the zone's, not a project's:
         # it is labelled with no project, and only zone-level searches read it.
-        return folder, [] if zone_level else projects
+        return folder, [] if (zone_level or s.root_only) else projects
     folder = base / "System"
     return (folder, []) if folder.is_dir() and not folder.is_symlink() else None
 
@@ -385,6 +398,54 @@ def project_folders(base: Path) -> List[Tuple[str, str]]:
         except OSError:
             pass
     return out
+
+
+def squash(text: str) -> str:
+    """A text as one comparable spelling: escaped and URL spaces plain, NFC, case folded,
+    `-`, `_` and runs of space one space."""
+    text = unicodedata.normalize("NFC", str(text)).replace("\\ ", " ").replace("%20", " ")
+    text = text.replace("\\", "/")
+    return " ".join(re.sub(r"[-_\s]+", " ", text.casefold()).split())
+
+
+UP_ONE = re.compile(r"(?:^|[/\s\"'`=:(;|&])\.\.(?=$|[/\s\"'`;|&)])")
+GLOB_WORD = re.compile(r"[^\s\"'`;|&()<>]*[*?\[][^\s\"'`;|&()<>]*")
+
+
+def reaches_sibling(base: Path, s: Session, folders: List[Tuple[str, str]], named: bool) -> bool:
+    """True when a command or tool input could have reached a project the session
+    was not opened in without naming it: a `..` path component, or a glob that
+    can match a project's folder (it has a slash, or its fixed start is the
+    start of a project name). `named` is whether the session's text names a
+    project outside its own folders, which the labels then carry. Such a
+    session is labelled with no project."""
+    zones = set()
+    for cwd in s.cwds:
+        place = recall.locate(base, Path(cwd)) if Path(cwd).is_absolute() else None
+        if place is not None and place.zone:
+            zones.add(place.zone)
+    names = [squash(n) for z, n in folders if z in zones]
+    texts = [t for k, t, _ in s.turns if k == "command"] + list(s.probe)
+    for text in texts:
+        text = text.replace("\\ ", " ")
+        if UP_ONE.search(text) and not named:
+            return True                             # a way up that names no place it goes to
+        for word in GLOB_WORD.findall(text):
+            if "/" in word:
+                return True
+            head = squash(re.split(r"[*?\[]", word, 1)[0])
+            if head and any(n.startswith(head) for n in names):
+                return True
+    return False
+
+
+def spelled(folders: List[Tuple[str, str]], text: str, found: List[str]) -> None:
+    flat = squash(text)
+    for zone, name in folders:
+        if re.search(r"(?<!\w)%s(?!\w)" % re.escape(squash(name)), flat):
+            literal = "Zones/%s/%s" % (zone, name)
+            if literal not in found:
+                found.append(literal)
 
 
 def mentioned(base: Path, s: Session) -> Optional[List[str]]:
@@ -409,6 +470,9 @@ def mentioned(base: Path, s: Session) -> Optional[List[str]]:
             if re.search(r"(?:^|[/\s\"'`=:(])%s/" % re.escape(name), text):
                 if literal not in found:
                     found.append(literal)
+        # Any other spelling of a project's folder name: with or without a slash, any case,
+        # an escaped space, `-`, `_` or a space alike. Prose that names a project counts too.
+        spelled(folders, text, found)
         for zone, name in PATH_TOKEN.findall(rest):
             if zone not in zones or zone.startswith("<"):
                 continue
@@ -419,6 +483,15 @@ def mentioned(base: Path, s: Session) -> Optional[List[str]]:
                     found.append(literal)
             elif not target.exists():
                 return None
+    for text in s.probe:
+        spelled(folders, text, found)
+    own = set()
+    for cwd in s.cwds:
+        place = recall.locate(base, Path(cwd)) if Path(cwd).is_absolute() else None
+        if place is not None and place.zone and place.project:
+            own.add("Zones/%s/%s" % (place.zone, place.project))
+    if reaches_sibling(base, s, folders, any(f not in own for f in found)):
+        s.root_only = True
     return found
 
 

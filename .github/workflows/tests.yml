@@ -9,6 +9,9 @@ on:
 permissions:
   contents: read
 
+# A branch pull request runs only the test modules its files touch (tests/shard.py,
+# TOUCH_MAP), on the system Python, in one job. A pull request from a release-* branch,
+# and every push to main, runs the full matrix: both Pythons, four shards each.
 # A push to a pull request cancels the run it supersedes. Runs on main are never
 # cancelled: each one is the record of what main held.
 concurrency:
@@ -16,8 +19,67 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.pick.outputs.full }}
+      modules: ${{ steps.pick.outputs.modules }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          full=true
+          modules=
+          if [ "$EVENT" = pull_request ] && [ "${HEAD_REF#release-}" = "$HEAD_REF" ]; then
+            picked=$(python3 tests/shard.py --touched-from "$BASE_SHA" "$HEAD_SHA") || picked=ALL
+            if [ "$picked" != ALL ]; then
+              full=false
+              modules=$(echo "$picked" | tr '\n' ' ')
+            fi
+          fi
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "modules=$modules" >> "$GITHUB_OUTPUT"
+          echo "full=$full modules=$modules"
+
+  branch:
+    name: macOS, touched modules
+    needs: plan
+    if: needs.plan.outputs.full == 'false'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Claude Code, for the mod's checks
+        run: npm install -g @anthropic-ai/claude-code@2.1.295
+      - name: Type-check the Mac app
+        run: |
+          if xcrun --find swiftc >/dev/null 2>&1; then
+            T=$(mktemp -d)
+            cp extras/status/app/Garrick.swift "$T/main.swift"
+            xcrun swiftc -typecheck -warnings-as-errors "$T/main.swift" extras/status/app/GarrickShared.swift
+            xcrun swiftc -typecheck -warnings-as-errors -application-extension -parse-as-library -module-name GarrickFinder \
+              extras/status/app/GarrickFinder.swift extras/status/app/GarrickShared.swift
+          else
+            echo "No Swift compiler on this runner: Garrick.swift is not type-checked."
+          fi
+      - name: Run the touched modules
+        env:
+          MODULES: ${{ needs.plan.outputs.modules }}
+          GARRICK_CLEANROOM_NAMES: ${{ secrets.GARRICK_CLEANROOM_NAMES }}
+        run: /usr/bin/python3 tests/shard.py --run $MODULES --jobs 3
+
   test:
     name: macOS, Python ${{ matrix.python }}, shard ${{ matrix.shard }}
+    needs: plan
+    if: needs.plan.outputs.full == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     strategy:
@@ -67,16 +129,57 @@ jobs:
         run: $PY tests/shard.py ${{ matrix.shard }}/4 --jobs 3
 
   tests:
-    # The one result to wait for, and the one for branch protection to name: it fails if any shard did.
+    # The one result to wait for, and the one for branch protection to name: it fails if the
+    # branch job or any shard did, and passes when one of them ran and the other was skipped.
     name: Tests
-    needs: test
+    needs: [plan, branch, test]
     if: always()
     runs-on: ubuntu-latest
     steps:
-      - name: Every shard passed
+      - name: Everything that ran passed
         run: |
-          if [ "${{ needs.test.result }}" != success ]; then
-            echo "A shard did not pass: ${{ needs.test.result }}."
-            exit 1
+          plan="${{ needs.plan.result }}"; branch="${{ needs.branch.result }}"; test="${{ needs.test.result }}"
+          echo "plan=$plan branch=$branch shards=$test"
+          if [ "$plan" != success ]; then echo "The plan failed."; exit 1; fi
+          for r in "$branch" "$test"; do
+            case "$r" in success|skipped) ;; *) echo "A job did not pass: $r."; exit 1 ;; esac
+          done
+          if [ "$branch" != success ] && [ "$test" != success ]; then echo "Nothing ran."; exit 1; fi
+          echo "Everything that ran passed."
+
+  rerun:
+    # A job that got no runner ("not acquired by Runner") reruns once. A test failure never does.
+    name: Rerun a lost runner
+    needs: [branch, test]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Rerun the failed jobs when every failure is a lost runner
+        run: |
+          gh api "/repos/$REPO/actions/runs/${{ github.run_id }}/jobs?per_page=100" --jq '.jobs' > jobs.json
+          # Each failed job's message: its check-run annotations, where GitHub writes the reason.
+          for id in $(jq -r '.[] | select(.conclusion == "failure") | .id' jobs.json); do
+            gh api "/repos/$REPO/check-runs/$id/annotations" --jq '[.[].message] | join(" ")' > "msg-$id" || echo > "msg-$id"
+          done
+          python3 - <<'PY'
+          import json, glob
+          jobs = json.load(open("jobs.json"))
+          for j in jobs:
+              try:
+                  j["message"] = open(f"msg-{j['id']}").read()
+              except OSError:
+                  pass
+          json.dump(jobs, open("jobs-msg.json", "w"))
+          PY
+          if python3 tests/shard.py --should-rerun jobs-msg.json "${{ github.run_attempt }}"; then
+            gh run rerun "${{ github.run_id }}" --failed -R "$REPO"
+          else
+            echo "Not rerun: a failure is not a lost runner, or this is not the first attempt."
           fi
-          echo "Every shard passed."

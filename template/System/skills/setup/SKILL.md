@@ -81,6 +81,13 @@ mode* in the `threads` skill describes.
      this Mac, or to a session's own tab in cmux; which ones, and quiet
      hours, are the status page's Settings › Notifications: say so, and
      change nothing there.
+   - Only if the assistant is Claude Code: "Claude Code deletes its session
+     transcripts after 30 days unless told otherwise. Recall copies each
+     session to plain text every night, but only one that is still there.
+     Do you want the transcripts kept for a year?" A yes means setting
+     `cleanupPeriodDays` to `365` in `~/.claude/settings.json`: say how,
+     never change the settings for them. Codex keeps its sessions; say
+     nothing about it.
    - Only if the cmux extra is here (`System/cmux/desk.py`) and
      `System/desk.json` does not already set `agent`: which assistant a cmux
      tab starts. The probe found the `codex` command and

@@ -724,7 +724,21 @@ def passage(body: str, words: List[str], most: int = PASSAGE, own: bool = False)
     paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
     if lead:
         paras = [p for p in paras if p not in lead]
-    hits = [p for p in paras if any(w in p.lower() for w in words)] if words else []
+    hits = []
+    if words:
+        level = lambda p: len(p) - len(p.lstrip("#")) if re.match(r"#{1,6}\s", p) else 0
+        until = 0                       # a word in a heading brings the section it heads, not the heading alone
+        for i, p in enumerate(paras):
+            if i < until:
+                continue
+            if any(w in p.lower() for w in words):
+                hits.append(p)
+                lv = level(p)
+                if lv:
+                    until = i + 1
+                    while until < len(paras) and not (level(paras[until]) and level(paras[until]) <= lv):
+                        hits.append(paras[until])
+                        until += 1
     out, size = [], 0
     for p in hits or paras:
         if out and size + len(p) > most:

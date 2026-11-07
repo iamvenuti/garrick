@@ -717,6 +717,15 @@ class TestOneQuestionManyStores(AnswerCase):
         self.assertIn("acme", where.groups[0])                                  # the place's own party, its only project
         self.assertIn("261106-acme-decision.md", self.paths(found))
 
+    def test_a_word_in_a_heading_brings_its_section(self):
+        self.put("261106-acme-decision.md", meeting_page("Work", "[acme]", "A call").replace("date: 2026-03-10", "date: 2026-11-06")
+                 + "\n# Acme seal-kit decision\n\nBy phone.\n\n## Decided\n\n- HALBERDMARK is the second source.\n\n"
+                 "# Elsewhere\n\nOTHERMARK.\n")
+        found, _, _ = self.read({"route": "thread", "project": "Acme Review", "words": ["acme review"]}, "recent")
+        text = next(r["text"] for r in found if r["path"].endswith("261106-acme-decision.md"))
+        self.assertIn("HALBERDMARK", text)                # the section under the heading, its subsections too
+        self.assertNotIn("OTHERMARK", text)               # not the next section of the same level
+
     def test_a_party_two_projects_carry_names_neither(self):
         write(self.work / "Acme Freight" / "Acme Freight.md", project_hub("Work", "Acme Freight", "acme", ["Lanes"]))
         write(self.work / "Acme Freight" / "Threads" / "Lanes" / "Lanes.md", thread_note("Acme Freight", "Lanes", "acme", "Lanes."))

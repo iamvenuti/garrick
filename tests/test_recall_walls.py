@@ -93,6 +93,19 @@ class Walls(unittest.TestCase):
         for name in commands:
             self.assertEqual(self.extract_and_search(name + "wombat"), [], name)
 
+    def test_a_folder_found_at_run_time_makes_the_session_root_only(self):
+        # The confirmation pass of the 0.59.0 review: a way up with no `..`, no glob and no name.
+        commands = {
+            "dn": 'cd "$(dirname "$PWD")" && ls',
+            "py": 'python3 -c "import os; os.chdir(os.path.dirname(os.getcwd())); print(os.listdir())"',
+            "ev": "d=$(echo . .); cd ${d// /} && ls",
+            "pc": 'cd "${PWD%/*}" && ls',
+        }
+        for name, command in commands.items():
+            self.session(name, self.bash(command), "%sdirnfact finding." % name)
+        for name in commands:
+            self.assertEqual(self.extract_and_search(name + "dirnfact"), [], name)
+
     def test_other_tool_inputs_are_scanned_not_rendered(self):
         self.session("gr", [{"type": "tool_use", "id": "t1", "name": "Grep",
                              "input": {"pattern": "budget", "path": "../Birch Entry"}}], "grepwombat finding.")

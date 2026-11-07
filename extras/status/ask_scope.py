@@ -458,12 +458,19 @@ def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: d
     many spellings of one name it uses."""
     known: Dict[str, Set[Entry]] = {}
     forms: Dict[Entry, List[str]] = {}
+    party_forms: Dict[str, List[str]] = {}
+    places: Dict[str, Set[Tuple[str, str]]] = {}
     for form, capital, e in entries(ws, names, ctx, lib_):
         n = _norm(form)
         for k in (n, n.replace(" ", "")):
             known.setdefault(k, set()).add(e)
         if not capital:                 # a first name alone is never a form to search for
             forms.setdefault(e, []).extend(f for f in (n, n.replace(" ", "")) if f)
+            if e.kind == "party":
+                party_forms.setdefault(next(iter(e.parties)), []).extend(f for f in (n, n.replace(" ", "")) if f)
+        if e.kind in ("project", "thread"):
+            for tag in e.parties:
+                places.setdefault(tag, set()).add((e.zone, e.project))
     out: List[List[str]] = []
     keys: List[object] = []
     for w in words:
@@ -479,7 +486,16 @@ def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: d
     for key, group in zip(keys, out):
         if isinstance(key, frozenset):
             for e in sorted(key, key=lambda x: (x.kind, x.label)):
-                for f in forms.get(e, []):
+                more = list(forms.get(e, []))
+                # A place is also named by its party, when no other project
+                # carries that party: "Acme Review" is "Acme" to a Meetings
+                # page, which names the party, never Garrick's folder (#397).
+                # A party many projects share, as an employer's, adds nothing.
+                if e.kind in ("project", "thread"):
+                    for tag in sorted(e.parties - {lib_.PUBLIC, "none"}):
+                        if places.get(tag) == {(e.zone, e.project)}:
+                            more += party_forms.get(tag, [])
+                for f in more:
                     if f not in group:
                         group.append(f)
     return out
@@ -708,7 +724,21 @@ def passage(body: str, words: List[str], most: int = PASSAGE, own: bool = False)
     paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
     if lead:
         paras = [p for p in paras if p not in lead]
-    hits = [p for p in paras if any(w in p.lower() for w in words)] if words else []
+    hits = []
+    if words:
+        level = lambda p: len(p) - len(p.lstrip("#")) if re.match(r"#{1,6}\s", p) else 0
+        until = 0                       # a word in a heading brings the section it heads, not the heading alone
+        for i, p in enumerate(paras):
+            if i < until:
+                continue
+            if any(w in p.lower() for w in words):
+                hits.append(p)
+                lv = level(p)
+                if lv:
+                    until = i + 1
+                    while until < len(paras) and not (level(paras[until]) and level(paras[until]) <= lv):
+                        hits.append(paras[until])
+                        until += 1
     out, size = [], 0
     for p in hits or paras:
         if out and size + len(p) > most:

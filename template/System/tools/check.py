@@ -5480,6 +5480,60 @@ def _run(idx: DirIndex, text: str, start: int, end: int, here: Optional[frozense
     return reached, count, False
 
 
+# The top folders of an operating system: a path written from one leads out of the workspace, unless it passes
+# through the workspace's own folder or its Zones/ or Wikis/.
+SYSTEM_TOPS = frozenset({"users", "home", "library", "system", "applications", "volumes", "private", "tmp", "var", "etc",
+                         "opt", "usr", "mnt", "srv", "root", "network", "cores", "bin", "sbin", "dev", "proc", "run", "media"})
+# The folders a home folder holds by the operating system's own layout. `~/Harbour` could be a folder of the
+# workspace written from the home folder, so it is still read by its names; `~/Library` cannot.
+HOME_FOLDERS = frozenset({"library", "documents", "downloads", "desktop", "applications", "pictures", "music", "movies",
+                          "public", "appdata", "onedrive"})
+
+
+def _folder_key(name: str) -> str:
+    """A folder's name as the resolver reads it: case, `-`, `_` and spaces do not tell two names apart."""
+    return re.sub(r"[-_\s]+", "", name.lower())
+
+
+def _workspace_names(ws: Workspace, idx: DirIndex) -> frozenset:
+    """The names (_folder_key) of every zone, project and thread folder of the workspace, once a run."""
+    got = getattr(idx, "top_names", None)
+    if got is None:
+        names = set()
+        zones = ws.root / "Zones"
+        try:
+            names |= {_folder_key(e.name) for e in os.scandir(zones) if e.is_dir()}
+        except OSError:
+            pass
+        projects = {project for project, _ in ws.projects}
+        for folder in idx.owner:
+            if folder in projects:
+                names.add(_folder_key(folder.name))
+            elif folder.parent.name.lower() == "threads" and folder.parent.parent in projects:
+                names.add(_folder_key(folder.name))
+        for project in projects:
+            names.add(_folder_key(project.parent.name))
+        got = idx.top_names = frozenset(names)
+    return got
+
+
+def _outside_workspace(ws: Workspace, idx: DirIndex, rest: str) -> bool:
+    """Does the absolute path `rest`, which holds no mark of the workspace, lead out of it: `~/` and a folder every
+    home folder holds, or `/…` from an operating system's top folder, and only when no zone, project or thread of
+    this workspace has that name. A workspace with a project called `Home` or `Library` reads `/Home/…` and
+    `~/Library/…` by its names, as before. What is still read by names: every other first segment, and any
+    path whose first system folder is also a zone, project or thread name (any case; `-`, `_` and spaces alike).
+    A later segment is not looked at: `~/Library/<anything>` is outside the workspace whatever the segments after
+    it are called, which is the case the rule exists for."""
+    if rest.startswith("~/"):
+        first = rest[2:].split("/", 1)[0]
+        listed = first.lower() in HOME_FOLDERS or first.startswith(".")
+    else:
+        first = rest[1:].split("/", 1)[0]
+        listed = rest.startswith("/") and first.lower() in SYSTEM_TOPS
+    return listed and _folder_key(first) not in _workspace_names(ws, idx)
+
+
 def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[List[Tuple[Path, bool]]]:
     """(folder, whether the path names its project) for each project folder that a path written in `text` leads
     into and goes on past with a name. A path is read from each start in
@@ -5527,8 +5581,11 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
                 name = rest[2:].split("/", 1)[0]
                 if name == root_name:
                     tries.append((start + 2 + len(name) + 1, frozenset({ws.root}), "@"))
-            # A site-relative or home-relative path is also read by its names alone.
-            tries.append((start + (2 if rest.startswith("~/") else 1), None, ""))
+            # A site-relative or home-relative path is also read by its names alone, unless it is a path outside the
+            # workspace: one from the home folder, or from an operating system's own top folder, with no workspace
+            # folder in it. That leads out of the workspace, so a project that ends the same way is none of its business.
+            if not (not tries and _outside_workspace(ws, idx, rest)):
+                tries.append((start + (2 if rest.startswith("~/") else 1), None, ""))
         elif rest.startswith(("./", "../")):
             base, pos = source.parent, start
             while True:
@@ -6898,6 +6955,14 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     lifted: Dict[Path, int] = {}
     unfinished: Dict[Path, int] = {}
     copied: Dict[Path, set] = {}  # another project -> its files the wording came from
+    crossed_by_page: Dict[Path, bool] = {}      # whether this file's tags are walled from a page's, worked out once a file
+
+    def crossed(o: Path) -> bool:
+        got = crossed_by_page.get(o)
+        if got is None:
+            got = crossed_by_page[o] = bool(crossings(ws.context, tags, index.tags.get(o, ())))
+        return got
+
     for h in runs(transcript_text(path, text), shared_link(ws, path)):
         owners = index.owners.get(h)
         if not owners or h in index.common:
@@ -6919,9 +6984,9 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                     clear = True
                     break
             elif sent or (index.project.get(o) == project and not _in_sources(project, o)
-                          and not crossings(ws.context, tags, index.tags.get(o, ()))):
+                          and not crossed(o)):
                 continue  # this project's own note, written for no party walled from this file's
-            elif crossings(ws.context, tags, index.tags.get(o, ())):
+            elif crossed(o):
                 files.append(o)
             else:
                 clear = True
@@ -7399,31 +7464,39 @@ def staged_files(repo: Path) -> Optional[List[Tuple[Path, str]]]:
     if staged is None:
         return None
     top_path, names = staged
+    _BLOBS.clear()      # the index is read afresh by whoever asks first
     out = []
     for name in names:
         path = top_path / wiki_case(name)
         if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
-        try:
-            res = subprocess.run(["git", "show", ":" + name], cwd=str(top_path), capture_output=True, timeout=60,
-                                 env=_git_env(top_path))
-        except (OSError, subprocess.SubprocessError):
+        data = _git_bytes(["show", ":" + name], top_path)
+        if data is None:
             continue
-        data = res.stdout
-        text = text_of(data) if res.returncode == 0 and len(data) <= MAX_STAGED_BYTES else None
+        text = text_of(data) if len(data) <= MAX_STAGED_BYTES else None
         if text is None:
             continue
         out.append((path, text))
     return out
 
 
+_BLOBS: Dict[Tuple[str, Tuple[str, ...]], Optional[bytes]] = {}   # what `git show :path` printed, once a run
+
+
 def _git_bytes(args: List[str], cwd: Path) -> Optional[bytes]:
+    # A staged file is read by several checks of one run: git is asked for it once. run_checks starts each run empty.
+    keep = len(args) == 2 and args[0] == "show" and args[1].startswith(":")
+    if keep and (str(cwd), tuple(args)) in _BLOBS:
+        return _BLOBS[(str(cwd), tuple(args))]
     try:
         res = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, timeout=60,
                              env=_git_env(cwd))
     except (OSError, subprocess.SubprocessError):
         return None
-    return res.stdout if res.returncode == 0 else None
+    got = res.stdout if res.returncode == 0 else None
+    if keep:
+        _BLOBS[(str(cwd), tuple(args))] = got
+    return got
 
 
 def git_view(ws: Workspace, committing: Path) -> Dict[Path, str]:
@@ -7745,7 +7818,10 @@ def notes_disagree(ws: Workspace, project: Path, hit: Path) -> bool:
 
 def hub_unreadable(ws: Workspace, project: Path) -> bool:
     """Does the hub's `party:` and `parties:` read two ways (garrick_lib's labels())? It then labels nothing."""
-    return labels(ws.root, project / (project.name + ".md"), ws.context, ws.label_cache) is None
+    key = ("hub_unreadable", str(project))      # worked out once a run: every file of a project asks the same hub
+    if key not in ws.label_cache:
+        ws.label_cache[key] = labels(ws.root, project / (project.name + ".md"), ws.context, ws.label_cache) is None
+    return ws.label_cache[key]
 
 
 def unlabelled_finding(ws: Workspace, project: Path, path: Path, unknown: set) -> Finding:
@@ -7754,7 +7830,7 @@ def unlabelled_finding(ws: Workspace, project: Path, path: Path, unknown: set) -
     why = ("names no party the Parties table holds (%s)" % ", ".join(sorted(unknown))) if unknown else "names no party"
     return Finding(ERROR, "walls", rel(ws, path),
                    "is in a project whose hub %s, so the walls cannot be checked; set `party:` in %s to a tag from the "
-                   "Parties table (or `public`), then commit again" % (why, hub),
+                   "Parties table (or `public`)" % (why, hub),
                    "A file in %s is committed before the project has a party" % project.name)
 
 
@@ -8508,6 +8584,7 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
     reads every meeting and project file, and is most of the time a full check
     takes on a large workspace; the commit hook still runs it on what is staged."""
     _committing(Path(staged) if staged is not None else None)
+    _BLOBS.clear()
     cache = NoteCache.for_repo(Path(staged)) if staged is not None else None
     ws = discover(Path(root).resolve(), cache)
     ws.quick = quick and staged is None
@@ -8599,11 +8676,48 @@ def report_ear(findings: List[Finding]) -> str:
     return " ".join(sentences[:3])
 
 
+# What a refusal ends with: the fix for its own kind of finding, never a fix that does not apply. The first
+# phrase that a finding's message holds picks it; every one ends in "commit again", which the status page's
+# commit actions read to tell a wall's refusal from any other line (extras/status/page_action.py).
+TAKE_OUT = "Take it out and commit again; only if you mean it, git commit --no-verify."
+STAGED_FIXES = (
+    # a project with no party, or a hub that names none the table holds: the fix is the hub's, not the file's
+    (("has no party to check the walls against", "no party the Parties table holds", "whose hub names no party",
+      "before the project has a party"),
+     "Name a party in the project's hub (`party:`), then commit again."),
+    # a party changed on disk and not staged: the two must agree
+    (("on disk from the one staged", "on disk from the ones staged"),
+     "Stage that change or undo it, then commit again."),
+    # a file that names no party, nothing says whose it is: label what it belongs to, or leave it out
+    (("a file that names no party", "that no page cites"),
+     "Name a party for it, or take the mention out, and commit again."),
+    # a page not finished, or a mail not yet answered: finish it first
+    (("an unfinished", "not filed until the user has answered"),
+     "Finish or file it first, or take the mention out, and commit again."),
+    # a finding that cannot be read, or that is not a crossing: the message holds the fix
+    (("cannot be read", "cannot be checked", "cannot be placed", "cannot read it", "not checked", "symbolic link", "submodule",
+      "is reserved", "was not read", "write each key once", "rename `parties:`", "name a party or zone"),
+     "Make that change, then commit again."),
+)
+
+
+def staged_fix(message: str) -> str:
+    """The end of one refusal line: the fix that belongs to this finding."""
+    low = message.lower()
+    if "a wall stands between" not in low and "repeats wording" not in low:
+        for phrases, fix in STAGED_FIXES:
+            if any(p.lower() in low for p in phrases):
+                return fix
+        if "so the walls" in low or "the walls cannot" in low or "until it does" in low:
+            return "Make that change, then commit again."
+    return TAKE_OUT
+
+
 def report_staged(findings: List[Finding]) -> str:
     """For the pre-commit hook: one plain line per wall broken, nothing when clear."""
     return "\n".join(
-        "Commit refused: %s %s. Take it out and commit again; only if you mean it, git commit --no-verify."
-        % (f.path, f.message) for f in findings if f.severity == ERROR)
+        "Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message))
+        for f in findings if f.severity == ERROR)
 
 
 def install_hooks(root: Path) -> int:

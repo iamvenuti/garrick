@@ -12,6 +12,14 @@ runs in exactly one shard, and a new one needs no list to edit.
     python3 tests/shard.py 2/4 --jobs 3   the same, three modules at a time, each in a process
                                           of its own, as CI runs it
     python3 tests/shard.py --list 2/4     name the modules in shard 2 of 4
+    python3 tests/shard.py --touched FILE...
+                                          print the modules a pull request that changes FILE... runs, or ALL
+    python3 tests/shard.py --touched-from BASE HEAD
+                                          the same, for the files git diff BASE...HEAD names
+    python3 tests/shard.py --run MODULE... --jobs 3
+                                          run just those modules
+    python3 tests/shard.py --should-rerun JOBS.json ATTEMPT
+                                          exit 0 when the run's only failures are runners not acquired
     python3 tests/shard.py --merge-times LOG...
                                           write the times a run printed into shard-times.json
 
@@ -37,6 +45,94 @@ TIMES = HERE / "shard-times.json"
 MODULE = re.compile(r"test\w*\.py$")
 # The line a run prints for each module, and --merge-times reads back.
 TIME_LINE = re.compile(r"shard-time (\w+) (\d+(?:\.\d+)?)")
+
+
+# Which test modules a changed file runs on a branch pull request. A path ending in "/" is a
+# folder. A source file also runs the modules named for its stem: x.py runs test_x and test_x_*.
+# A changed test module runs itself. Any other changed file runs the full suite, so a file the
+# map does not know fails closed. Release pull requests and main always run the full suite.
+TOUCH_MAP = {
+    "extras/status/questions_panel.py": ["test_questions_panel", "test_questions_panel_all",
+                                         "test_panel_hardening", "test_decisions",
+                                         "test_nurture_panel_actions", "test_question_transaction"],
+    "extras/status/status.py": ["test_status", "test_status_find", "test_status_finder",
+                                "test_status_graph_3d", "test_status_graph_ignored",
+                                "test_status_more", "test_status_work"],
+    "extras/status/app/": ["test_status_finder", "test_status_graph_3d", "test_status_more"],
+    "tests/shard.py": ["test_shard"],
+    "tests/shard-times.json": ["test_shard"],
+    "docs/": ["test_docs"],
+    "template/System/skills/": ["test_skills", "test_docs"],
+}
+# Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
+FULL_ONLY = {
+    "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",
+    "test_cleanroom_worktree", "test_demo", "test_example", "test_git_env", "test_install",
+    "test_jobs", "test_onboarding", "test_public", "test_rules_map", "test_setup",
+    "test_simple_home", "test_split", "test_update",
+    "test_checkpoint", "test_cmux", "test_cmux_sidebar", "test_decide", "test_executor",
+    "test_fetch", "test_knowledge_skill", "test_lib", "test_meetings", "test_memory_canary",
+    "test_mod", "test_nested_checkout", "test_no_party", "test_obsidian", "test_open_sections",
+    "test_pathspec_commit", "test_person_employer", "test_person_organisation", "test_reading",
+    "test_staged_paths", "test_wall_cache", "test_wall_false_positives", "test_wall_forms",
+    "test_wall_gaps", "test_wall_gaps_340", "test_wall_noise", "test_walls_cases",
+    "test_walls_deterministic", "test_wiki_answers", "test_wrap",
+}
+# A change here can break anything: the full suite runs.
+ALWAYS_FULL = (".github/", "tests/fixtures.py")
+ALWAYS_FULL_NAMES = {"garrick_lib.py"}
+RUNNER_LOST = "not acquired by runner"
+
+
+def touched(files, names=None):
+    """The modules to run for the changed files, sorted; or None for the full suite."""
+    names = modules() if names is None else list(names)
+    run = set()
+    for f in files:
+        f = f.strip()
+        if not f:
+            continue
+        base = f.rsplit("/", 1)[-1]
+        if f.startswith(ALWAYS_FULL) or base in ALWAYS_FULL_NAMES:
+            return None
+        known = False
+        if f.startswith("tests/") and f.count("/") == 1 and MODULE.match(base):
+            run.add(base[:-3])
+            known = True
+        stem = base[:-3] if base.endswith(".py") else None
+        if stem and not f.startswith("tests/"):
+            for n in names:
+                if n == f"test_{stem}" or n.startswith(f"test_{stem}_"):
+                    run.add(n)
+                    known = True
+        for key, mods in TOUCH_MAP.items():
+            if f == key or (key.endswith("/") and f.startswith(key)):
+                run.update(mods)
+                known = True
+        if not known:
+            return None
+    return sorted(n for n in run if n in names)
+
+
+def changed_files(base, head):
+    out = subprocess.run(["git", "diff", "--name-only", f"{base}...{head}"], cwd=HERE.parent,
+                         stdout=subprocess.PIPE, text=True, check=True).stdout
+    return out.split("\n")
+
+
+def should_rerun(jobs, attempt):
+    """True when the run's failures are all runners that were not acquired, on the first attempt.
+
+    jobs is the "jobs" list of the API's run-jobs answer. A job counts as a runner failure when
+    its "message" says so. The workflow adds that message to each failed job from its check-run
+    annotations. A test failure is never rerun.
+    """
+    if int(attempt) != 1:
+        return False
+    failed = [j for j in jobs if j.get("conclusion") in ("failure", "timed_out", "cancelled")]
+    if not failed:
+        return False
+    return all(RUNNER_LOST in str(j.get("message", "")).lower() for j in failed)
 
 
 def modules(folder=HERE):
@@ -180,14 +276,33 @@ def main(argv=None):
     parser.add_argument("--list", action="store_true", help="name the shard's modules, run nothing")
     parser.add_argument("--jobs", type=int, default=1, metavar="N",
                         help="run N modules at a time, each in a process of its own")
+    parser.add_argument("--touched", nargs="*", metavar="FILE", help="the modules these changed files run")
+    parser.add_argument("--touched-from", nargs=2, metavar=("BASE", "HEAD"),
+                        help="the modules the files changed from BASE to HEAD run")
+    parser.add_argument("--should-rerun", nargs=2, metavar=("JOBS_JSON", "ATTEMPT"),
+                        help="exit 0 when every failed job is a runner not acquired, on attempt 1")
+    parser.add_argument("--run", nargs="+", metavar="MODULE",
+                        help="run just these modules, --jobs at a time (a branch pull request)")
     parser.add_argument("--only", nargs="+", metavar="MODULE", help=argparse.SUPPRESS)
     parser.add_argument("--merge-times", nargs="+", metavar="LOG",
                         help="read the times a run printed into shard-times.json")
     args = parser.parse_args(argv)
+    if args.touched is not None or args.touched_from:
+        files = args.touched if args.touched is not None else changed_files(*args.touched_from)
+        picked = touched(files)
+        print("ALL" if picked is None else "\n".join(picked))
+        return 0
+    if args.should_rerun:
+        jobs = json.loads(Path(args.should_rerun[0]).read_text())
+        return 0 if should_rerun(jobs, args.should_rerun[1]) else 1
     if args.merge_times:
         seen = merge_times(args.merge_times)
         print(f"{len(seen)} module times read into {TIMES.name}.")
         return 0
+    if args.run:
+        if args.jobs > 1:
+            return 0 if run_parallel(args.run, args.jobs, load_times()) else 1
+        return 0 if run(args.run) else 1
     if args.only:
         sys.path.insert(0, str(HERE))
         result = unittest.TextTestRunner().run(Timed(args.only))

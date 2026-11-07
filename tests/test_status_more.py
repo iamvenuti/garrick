@@ -1901,7 +1901,7 @@ const vm = require("vm");
 const [js, app, steps] = JSON.parse(process.argv[1]);
 const els = {}, posted = [];
 function el(id) {
-  if (!els[id]) els[id] = { id, value: "", textContent: "", hidden: true, checked: false, disabled: false, style: {}, handlers: {},
+  if (!els[id]) els[id] = { id, value: "", textContent: "", title: "", hidden: true, checked: false, disabled: false, style: {}, handlers: {},
     addEventListener(t, f) { (this.handlers[t] = this.handlers[t] || []).push(f); },
     closest() { return el(id + "-row"); }, blur() { this.fire("blur", {}); },
     fire(t, e) { (this.handlers[t] || []).forEach((f) => f(e)); } };
@@ -1916,12 +1916,16 @@ for (const [id, type, e] of steps) {
   const ev = Object.assign({ key: "", code: "", metaKey: false, ctrlKey: false, altKey: false, shiftKey: false,
                              preventDefault() {}, stopPropagation() {} }, e || {});
   if (e && "value" in e) el(id).value = e.value;
+  if (e && "checked" in e) el(id).checked = e.checked;
   el(id).fire(type, ev);
 }
 process.stdout.write(JSON.stringify({ posted, notes: { hotkey: el("menu-hotkey-note").textContent, askhotkey: el("menu-askkey-note").textContent,
                                                        dictation: el("menu-dictation-note").textContent, dictationkey: el("menu-dictkey-note").textContent },
                                      askRow: el("menu-askkey-row").style.display, ask: el("menu-askkey").value,
                                      dictRow: el("menu-dictation-row").style.display, dictKeyRow: el("menu-dictkey-row").style.display,
+                                     closeRow: el("menu-askclose-esc-row").style.display, closeEsc: el("menu-askclose-esc").checked,
+                                     closeClick: el("menu-askclose-click").checked, closeEscOff: el("menu-askclose-esc").disabled,
+                                     closeClickOff: el("menu-askclose-click").disabled, closeEscTitle: el("menu-askclose-esc").title,
                                      dictation: el("menu-dictation").value, dictkey: el("menu-dictkey").value }));
 """
 
@@ -2001,6 +2005,64 @@ class TestHotkeyFields(unittest.TestCase):
         self.assertEqual("Use ⌘, ⌃ or ⌥ with the key.", out["notes"]["dictationkey"])
         out = self.run_js(app, ("menu-dictkey", "keydown", {"key": "g", "code": "KeyG", "metaKey": True}))
         self.assertEqual("⌘G is already a hotkey of Garrick's. Pick your dictation tool's key.", out["notes"]["dictationkey"])
+
+    def test_the_last_ticked_way_to_close_the_ask_box_stays_ticked(self):
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "askclose": "escape"})
+        self.assertEqual(("", True, False), (out["closeRow"], out["closeEsc"], out["closeClick"]))
+        self.assertEqual((True, False), (out["closeEscOff"], out["closeClickOff"]))   # Escape is the last one: it cannot be unticked
+        self.assertIn("stays on", out["closeEscTitle"])
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "askclose": "escape"},
+                          ("menu-askclose-click", "change", {"checked": True}))
+        self.assertEqual([{"app": {"askclose": "both"}}], out["posted"])
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G", "askclose": "both"},
+                          ("menu-askclose-esc", "change", {"checked": False}))
+        self.assertEqual([{"app": {"askclose": "click"}}], out["posted"])
+        out = self.run_js({"hotkey": "", "askhotkey": "⌘G"})   # an app built before #411 says nothing: the row stays hidden
+        self.assertEqual("none", out["closeRow"])
+
+
+class TestAskCloseSwift(unittest.TestCase):
+    """How the Ask box closes (#411), read from Garrick.swift's source and type-checked."""
+
+    swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    def test_escape_defaults_on_and_a_click_off(self):
+        self.assertIn('let kAskClose = "askClose"', self.swift)
+        fn = self.swift[self.swift.index("func savedAskClose()"):]
+        fn = fn[:fn.index("\n}\n")]
+        self.assertIn("default: return (true, false)", fn)
+
+    def test_monitors_are_put_in_once_and_taken_out_with_the_box(self):
+        watch = self.swift[self.swift.index("func askWatchClicks()"):self.swift.index("func askClickOutside(")]
+        self.assertLess(watch.index("removeMonitor(m)"), watch.index("addGlobalMonitorForEvents"))   # removed first: no double install
+        self.assertIn("addLocalMonitorForEvents", watch)
+        self.assertIn("askPanel?.isVisible == true", watch)
+        hide = self.swift[self.swift.index("func askHide()"):self.swift.index("func askEscape()")]
+        self.assertIn("orderOut(nil)", hide)
+        self.assertIn("askWatchClicks()", hide)
+        self.assertNotIn("askPanel?.orderOut(nil) }", self.swift)   # every hide goes through askHide
+
+    def test_escape_and_a_click_follow_the_choice(self):
+        self.assertIn("override func cancelOperation(_ sender: Any?) { escape() }", self.swift)
+        self.assertIn("if savedAskClose().escape { askHide() }", self.swift)
+
+    def test_a_click_inside_or_during_dictation_does_not_hide_it(self):
+        out = self.swift[self.swift.index("func askClickOutside("):self.swift.index("func askWindowOwner(")]
+        self.assertIn("w === p", out)
+        self.assertIn("p.frame.insetBy", out)
+        self.assertIn("savedDictation() != .off && Date().timeIntervalSince(askOpenedAt)", out)
+        self.assertIn('contains("dictation")', out)
+
+    def test_it_type_checks(self):
+        if subprocess.run(["xcrun", "--find", "swiftc"], capture_output=True).returncode:
+            self.skipTest("no swiftc")
+        import tempfile
+        app = Path(status.__file__).parent / "app"
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "main.swift").write_text(self.swift, encoding="utf-8")
+            done = subprocess.run(["xcrun", "swiftc", "-typecheck", "-warnings-as-errors", str(Path(tmp) / "main.swift"), str(app / "GarrickShared.swift")],
+                                  capture_output=True, text=True, timeout=600)
+        self.assertEqual(0, done.returncode, done.stderr)
 
 
 class TestAppNotifies(unittest.TestCase):

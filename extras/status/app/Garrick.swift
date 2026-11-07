@@ -192,6 +192,16 @@ let askRefreshed = "Conversation refreshed"
 // workspace: a question about meetings or a thread is answered inside one zone, the one its names live in or
 // this one. Changing it starts a new conversation, with the divider a wall reset draws.
 let kAskZone = "askZone"
+// How the Ask box closes (#411), from Settings › Menu bar › Ask hotkey, kept in the app's own defaults: "escape"
+// (the default), "click" (a mouse-down outside the window) or "both". Never none: one way always stays on.
+let kAskClose = "askClose"
+func savedAskClose() -> (escape: Bool, click: Bool) {
+	switch defaults.string(forKey: kAskClose) {
+	case "click": return (false, true)
+	case "both": return (true, true)
+	default: return (true, false)
+	}
+}
 // Each zone's colour from Settings › Zones, cmux's sixteen names, as status.py's ZONE_COLOURS inks them: on a
 // light ground, then on a dark one. A zone's button in "Which zone?" takes its colour (#317). A test holds the two
 // tables together.
@@ -386,7 +396,8 @@ final class AskPanel: NSPanel {
 	var textSize: (Int) -> Void = { _ in }
 
 	override var canBecomeKey: Bool { true }
-	override func cancelOperation(_ sender: Any?) { orderOut(nil) }
+	var escape: () -> Void = { }   // Escape: the app hides the window, or does nothing when Escape is not a way to close it (#411)
+	override func cancelOperation(_ sender: Any?) { escape() }
 
 	override func performKeyEquivalent(with event: NSEvent) -> Bool {
 		let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.shift, .numericPad, .function, .capsLock])
@@ -693,6 +704,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var agentsBusy: Bool?                       // the last check: nil when it could not tell
 	var awakeTimer: Timer?
 	var askPanel: AskPanel?
+	var askClickGlobal: Any?          // mouse-down monitors while the box is visible and a click outside closes it (#411)
+	var askClickLocal: Any?
+	var askOpenedAt = Date.distantPast
 	var askKeeper: Timer?             // the `keep` every askKeepEvery seconds (preview ask)
 	var askKept = false               // whether this app has a background session kept, for quit to stop it
 	var askField: AskInput!
@@ -1348,6 +1362,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		return ["menubar": defaults.bool(forKey: kMenuBar), "style": savedEdge()?.rawValue ?? "icon", "login": login,
 		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? "",
 		        "askhotkey": askSpec()?["label"] as? String ?? "",
+		        "askclose": savedAskClose().escape ? (savedAskClose().click ? "both" : "escape") : "click",
 		        "askdefault": defaults.object(forKey: kAskHotkey) == nil && askSpec() != nil, "said": keySaid,
 		        "finder": finderStatus, "dictation": savedDictation().rawValue, "dictationkey": defaults.dictionary(forKey: kDictationKey)?["label"] as? String ?? ""]
 	}
@@ -1474,6 +1489,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		if let key = request["hotkey"] { setKey(kHotkey, "hotkey", key as? [String: Any]) }
 		if let key = request["askhotkey"] { setKey(kAskHotkey, "askhotkey", key as? [String: Any]) }
+		if let choice = request["askclose"] as? String { setAskClose(choice) }
 		if let mode = request["dictation"] as? String { setDictation(Dictation(rawValue: mode) ?? .off) }
 		if let key = request["dictationkey"] { setDictationKey(key as? [String: Any]) }
 		if request["finder"] as? String == "settings" { openExtensionSettings() }
@@ -2165,6 +2181,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			                 styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
 			                 backing: .buffered, defer: false)
 			p.textSize = { [weak self] step in self?.askTextStep(step) }
+			p.escape = { [weak self] in self?.askEscape() }
 			p.titleVisibility = .hidden
 			p.titlebarAppearsTransparent = true
 			p.isMovableByWindowBackground = true
@@ -2202,7 +2219,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			askField.autoresizingMask = [.width]
 			askField.textContainer?.widthTracksTextView = true
 			askField.submit = { [weak self] in self?.askSubmit(nil) }
-			askField.hide = { [weak self] in self?.askPanel?.orderOut(nil) }
+			askField.hide = { [weak self] in self?.askEscape() }
 			askField.changed = { [weak self] in self?.askFit() }
 			let input = NSScrollView()
 			input.documentView = askField
@@ -2295,8 +2312,73 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		p.makeKeyAndOrderFront(nil)
 		p.makeFirstResponder(askField)
+		if opening { askOpenedAt = Date() }
+		askWatchClicks()
 		askWarm()                       // the session starts while the request is typed
 		if opening { startDictation() }
+	}
+
+	// Closing the box (#411). Hiding keeps the exchange and a request that is running, however it is
+	// triggered; the two monitors go with it, and are put in once, never twice.
+	func askHide() {
+		askPanel?.orderOut(nil)
+		askWatchClicks()
+	}
+
+	func askEscape() {
+		if savedAskClose().escape { askHide() }
+	}
+
+	func askWatchClicks() {
+		if let m = askClickGlobal { NSEvent.removeMonitor(m) }
+		if let m = askClickLocal { NSEvent.removeMonitor(m) }
+		askClickGlobal = nil
+		askClickLocal = nil
+		guard savedAskClose().click, askPanel?.isVisible == true else { return }
+		let down: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+		// Other apps, the desktop and the menu bar. A mouse monitor needs no Accessibility permission.
+		askClickGlobal = NSEvent.addGlobalMonitorForEvents(matching: down) { [weak self] _ in
+			DispatchQueue.main.async { self?.askClickOutside(nil) }
+		}
+		// Garrick's other windows; a click in the box itself passes through untouched.
+		askClickLocal = NSEvent.addLocalMonitorForEvents(matching: down) { [weak self] event in
+			self?.askClickOutside(event)
+			return event
+		}
+	}
+
+	func askClickOutside(_ event: NSEvent?) {
+		guard let p = askPanel else { return }
+		guard p.isVisible else { return askWatchClicks() }   // closed some other way: no monitor stays
+		if let w = event?.window, w === p { return }
+		let at = NSEvent.mouseLocation
+		if p.frame.insetBy(dx: -4, dy: -4).contains(at) { return }   // its edges and title bar are inside; a drag to resize or move starts there
+		// Dictation: the box ignores clicks while it waits for dictation after opening, and a click on the
+		// dictation tool's own window (macOS Dictation's indicator, or a tool with Dictation in its name).
+		if savedDictation() != .off && Date().timeIntervalSince(askOpenedAt) < 3 { return }
+		if savedDictation() != .off, let owner = askWindowOwner(at)?.lowercased(), owner.contains("dictation") { return }
+		askHide()
+	}
+
+	// The app that owns the topmost window at a point on screen, from the window list.
+	func askWindowOwner(_ at: NSPoint) -> String? {
+		guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]],
+		      let top = NSScreen.screens.first?.frame.maxY else { return nil }
+		let point = CGPoint(x: at.x, y: top - at.y)
+		for w in list {
+			guard let b = w[kCGWindowBounds as String] as? [String: CGFloat],
+			      CGRect(x: b["X"] ?? 0, y: b["Y"] ?? 0, width: b["Width"] ?? 0, height: b["Height"] ?? 0).contains(point) else { continue }
+			return w[kCGWindowOwnerName as String] as? String
+		}
+		return nil
+	}
+
+	// A choice from Settings: kept, and the monitors follow it at once.
+	func setAskClose(_ choice: String) {
+		guard ["escape", "click", "both"].contains(choice) else { return }
+		defaults.set(choice, forKey: kAskClose)
+		askWatchClicks()
+		toast(choice == "escape" ? "The Ask box closes with Escape." : choice == "click" ? "The Ask box closes with a click outside it." : "The Ask box closes with Escape or a click outside it.")
 	}
 
 	// Preparing: the session may be starting. Said only when it takes a moment, so a warm
@@ -2437,7 +2519,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				self.askReset()
 			}
 			self.askRender()
-			if ranAway { self.askPanel?.orderOut(nil) }
+			if ranAway { self.askHide() }
 		}
 		askRender()
 	}

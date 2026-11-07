@@ -384,6 +384,20 @@ class Conversation:
             return False
         return any(not self.crosses(s.tags, lib, ctx) for s in scopes)
 
+    def placeable(self, zone: str, project: str, thread: Optional[str]) -> Tuple[bool, bool]:
+        """(whether the conversation may name this place, whether a wall is why). Fails closed: a place whose hub names
+        no party, a party the table lacks, or a thread whose own party cannot be placed is not one the conversation may
+        name, and it is answered as a place that is not there. Only a wall that holds it back is noted as one."""
+        sc, lib, ctx, _ = self.world()
+        known = set(ctx.get("parties", {}))
+        hub = set(sc.hub_parties(self.ws, zone, project, lib))
+        parties = set(sc.place_parties(self.ws, zone, project, thread, lib))
+        if not hub or not hub <= known or not parties or not parties <= known:
+            return False, False
+        if not sc.admits(ctx, self.held(), parties, lib):
+            return False, True
+        return True, False
+
     def one_place(self, place: str, names):
         """The one place a name stands for, or (None, a message that names only candidates the conversation may hold)."""
         found, why = self.resolve(place, names)
@@ -393,9 +407,17 @@ class Conversation:
         # left the answer is the words for a place that does not exist, so a name on the far side cannot be told
         # from one that is not there. The wall is noted (held_back) for the user's answer, never for the session.
         sc, lib, ctx, _ = self.world()
-        fair = [f for f in found if (self.zone_fits(f[0], lib, ctx) if f[1] is None else
-                                     sc.admits(ctx, self.held(), sc.place_parties(self.ws, f[0], f[1], f[2], lib), lib))]
-        if len(fair) < len(found):
+        fair, walled = [], False
+        for f in found:
+            if f[1] is None:
+                ok = self.zone_fits(f[0], lib, ctx)
+                walled = walled or not ok
+            else:
+                ok, w = self.placeable(f[0], f[1], f[2])
+                walled = walled or w
+            if ok:
+                fair.append(f)
+        if walled:
             self.held_back += 1
             self.save()
         if not fair:
@@ -859,21 +881,32 @@ class Conversation:
         if isinstance(zn, str) and isinstance(pj, str) and pj in names.get(zn, {}):
             # Before anything else about the place is said: a project on the far side of a wall looks like one that
             # is not there, whatever else the action gets wrong (its thread, its app).
-            if not sc.admits(ctx, self.held(), set(sc.place_parties(self.ws, zn, pj, None, lib)), lib):
-                self.held_back += 1
-                self.save()
+            ok, walled = self.placeable(zn, pj, None)
+            if not ok:
+                if walled:
+                    self.held_back += 1
+                    self.save()
                 return "Refused: no project %r in %s." % (pj, zn)
+            th = act.get("thread")
+            if isinstance(th, str) and th in names[zn][pj]["threads"] and not self.placeable(zn, pj, th)[0]:
+                # A thread that cannot be placed is a thread that is not there: the proposal sees it removed.
+                names = {z: {p: (dict(r, threads={t: st for t, st in r["threads"].items() if t != th})
+                                 if (z, p) == (zn, pj) else r) for p, r in ps.items()} for z, ps in names.items()}
         try:
             ask.proposal(act, names, self.ws)
         except ask.Bad as e:
             return "Refused: %s." % e
         if act.get("project"):
             parties = sc.place_parties(self.ws, act["zone"], act["project"], act.get("thread"), lib)
-            if not sc.admits(ctx, self.held(), set(parties), lib):
-                # A place on the far side of a wall looks like one that is not there: the same words as proposal() uses.
-                self.held_back += 1
-                self.save()
-                return "Refused: no project %r in %s." % (act["project"], act["zone"])
+            if act["project"] in names.get(act["zone"], {}):
+                ok, walled = self.placeable(act["zone"], act["project"], act.get("thread"))
+                if not ok:
+                    # A place on the far side of a wall, or one that cannot be placed, looks like one that is not
+                    # there: the same words as proposal() uses.
+                    if walled:
+                        self.held_back += 1
+                        self.save()
+                    return "Refused: no project %r in %s." % (act["project"], act["zone"])
             if not self.admit(set(parties)):
                 return STOPPED
         elif act.get("verb") == "todo-add":

@@ -665,6 +665,58 @@ class TestAFarSidePlaceLooksAbsent(ToolCase):
         self.assertNotIn("No such place", text)
 
 
+class TestAPlaceThatCannotBePlacedLooksAbsent(ToolCase):
+    """A hub that names no party, and a Birch thread inside it, answer as a place that is not there (fail closed)."""
+
+    def setUp(self):
+        super().setUp()
+        work = self.root / "Zones" / "Work"
+        scoped.write(work / "Harbour" / "Harbour.md", scoped.project_hub("Work", "Harbour", None))
+        scoped.write(work / "Harbour" / "Threads" / "T" / "T.md", scoped.thread_note("Harbour", "T", "birch", "harbourfact wombat"))
+
+    def ask(self, name, args):
+        return self.conv(told={"acme"}).call(name, args)
+
+    def test_each_place_tool_answers_like_a_missing_place(self):
+        for place in ("Harbour", "Harbour/T", "Harbour/Nope"):
+            for name, args in (("thread_state", {"place": place}),
+                               ("search", {"words": "wombat", "place": place}),
+                               ("search", {"words": "wombat", "place": place, "kind": "threads"})):
+                got = self.ask(name, args)
+                self.assertEqual(self.ask(name, dict(args, place="Zzz")), got, (name, place))
+                self.assertEqual(tools.NO_PLACE, got[0], (name, place))
+                self.assertFalse(self.out()["wall"])
+
+    def test_places_does_not_list_the_hub_without_a_party(self):
+        text, _ = self.ask("places", {})
+        self.assertNotIn("Harbour", text)
+
+    def test_propose_writes_nothing_and_refuses_as_for_a_missing_one(self):
+        for extra in ({}, {"thread": "T"}):
+            a = self.ask("propose", {"action": dict({"verb": "open", "zone": "Work", "project": "Harbour"}, **extra)})
+            b = self.ask("propose", {"action": dict({"verb": "open", "zone": "Work", "project": "Zzz"}, **extra)})
+            self.assertEqual(a[0].replace("Harbour", "X"), b[0].replace("Zzz", "X"))
+            self.assertTrue(a[0].startswith("Refused: no project"))
+        for verb in ("park", "wake"):
+            self.assertTrue(self.ask("propose", {"action": {"verb": verb, "zone": "Work", "project": "Harbour"}})[0].startswith("Refused"))
+        self.assertFalse((self.state / "proposals.jsonl").exists())
+
+    def test_a_project_holding_a_walled_thread_is_a_missing_one(self):
+        scoped.write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Odd" / "Odd.md",
+                     scoped.thread_note("Acme Review", "Odd", "birch", "oddfact"))
+        for place in ("Acme Review", "Acme Review/Odd"):
+            self.assertEqual(self.ask("thread_state", {"place": "Zzz"}), self.ask("thread_state", {"place": place}), place)
+        act = {"verb": "open", "zone": "Work", "project": "Acme Review", "thread": "Odd"}
+        a = self.ask("propose", {"action": act})
+        self.assertTrue(a[0].startswith("Refused: no project"))
+        self.assertFalse((self.state / "proposals.jsonl").exists())
+
+    def test_a_labelled_own_side_place_still_works(self):
+        self.assertNotIn("No such place", self.ask("thread_state", {"place": "Acme Review/Pricing"})[0])
+        self.assertTrue(self.ask("propose", {"action": {"verb": "open", "zone": "Work", "project": "Acme Review",
+                                                        "thread": "Pricing"}})[0].startswith("Proposed"))
+
+
 class TestTodoProposals(ToolCase):
     def add(self, c, **kw):
         return c.call("propose", {"action": dict({"verb": "todo-add", "zone": "Work", "text": "Call Dana"}, **kw)})[0]

@@ -554,14 +554,14 @@ class TestKeptChoices(unittest.TestCase):
         return (self.root / "System" / "garrick-settings.json").stat().st_mtime
 
     def test_saved_and_read_back_with_the_rest_of_the_file_kept(self):
-        write(self.root / "System" / "garrick-settings.json", json.dumps({"release-notice": True}))
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"release-repository": "birch-co/garrick"}))
         lib.save_preferences(self.root, {"zones": {"Work": {"color": "Teal", "icon": "briefcase"}}})
         lib.save_preferences(self.root, {"launchers": {"note": True, "cmux": False}, "default": "note"})
         self.assertEqual({"zones": {"Work": {"color": "Teal", "icon": "briefcase"}},
                           "launchers": {"note": True, "cmux": False}, "default": "note"},
                          lib.preferences(self.root))
-        self.assertTrue(self.settings()["release-notice"])      # a setting of its own is left alone
-        self.assertTrue(lib.release_notice_on(self.root))
+        self.assertEqual("birch-co/garrick", self.settings()["release-repository"])      # a setting of its own is left alone
+        self.assertEqual("birch-co/garrick", lib.release_repository(self.root))
 
     def test_nothing_saved_is_no_choice_and_an_unknown_key_is_refused(self):
         self.assertEqual({}, lib.preferences(self.root))

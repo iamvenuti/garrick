@@ -88,6 +88,80 @@ class EveryModuleOnce(unittest.TestCase):
                     shard.main([bad])
 
 
+class Touched(unittest.TestCase):
+    """A branch pull request runs the modules its files touch; anything unknown runs all."""
+
+    def test_every_module_is_reachable_from_the_map_or_the_full_suite_rule(self):
+        names = shard.modules()
+        stems = {p.stem for p in shard.HERE.parent.rglob("*.py")
+                 if "tests" not in p.relative_to(shard.HERE.parent).parts and ".git" not in p.parts}
+        reached = set(shard.FULL_ONLY)
+        for mods in shard.TOUCH_MAP.values():
+            reached.update(mods)
+        for n in names:
+            if any(n == f"test_{s}" or n.startswith(f"test_{s}_") for s in stems):
+                reached.add(n)
+        self.assertEqual([n for n in names if n not in reached], [],
+                         "add the module to TOUCH_MAP, or to FULL_ONLY if only the full suite should run it")
+        listed = set(shard.FULL_ONLY)
+        for mods in shard.TOUCH_MAP.values():
+            listed.update(mods)
+        self.assertEqual(sorted(listed - set(names)), [], "the map names a module that is not there")
+
+    def test_the_questions_panel_alone_runs_its_mapped_modules(self):
+        got = shard.touched(["extras/status/questions_panel.py"])
+        self.assertIn("test_questions_panel", got)
+        self.assertIn("test_questions_panel_all", got)
+        self.assertLess(len(got), len(shard.modules()) // 2)
+
+    def test_these_run_the_full_suite(self):
+        for path in (".github/workflows/tests.yml", "tests/fixtures.py",
+                     "template/System/tools/garrick_lib.py", "no/such/file.txt"):
+            self.assertIsNone(shard.touched([path]), path)
+        self.assertIsNone(shard.touched(["extras/status/questions_panel.py", "unknown.bin"]))
+
+    def test_a_changed_test_module_runs_itself(self):
+        self.assertEqual(shard.touched(["tests/test_shard.py"]), ["test_shard"])
+
+    def test_a_source_file_runs_the_modules_named_for_it(self):
+        self.assertIn("test_check", shard.touched(["template/System/tools/check.py"]))
+
+    def test_the_workflow_plans_by_branch_name(self):
+        text = WORKFLOW.read_text()
+        self.assertIn('"${HEAD_REF#release-}"', text)
+        self.assertIn("name: Tests", text)
+        self.assertIn("--should-rerun", text)
+
+
+class Rerun(unittest.TestCase):
+    LOST = "The job was not acquired by Runner of type hosted even after multiple attempts"
+
+    def job(self, conclusion, message=""):
+        return {"id": 1, "conclusion": conclusion, "message": message}
+
+    def test_only_lost_runners_rerun(self):
+        jobs = [self.job("success"), self.job("failure", self.LOST), self.job("failure", self.LOST)]
+        self.assertTrue(shard.should_rerun(jobs, 1))
+
+    def test_a_test_failure_among_them_stops_it(self):
+        jobs = [self.job("failure", self.LOST), self.job("failure", "Process completed with exit code 1.")]
+        self.assertFalse(shard.should_rerun(jobs, 1))
+
+    def test_a_second_attempt_never_reruns(self):
+        self.assertFalse(shard.should_rerun([self.job("failure", self.LOST)], 2))
+
+    def test_no_failed_job_reruns_nothing(self):
+        self.assertFalse(shard.should_rerun([self.job("success")], 1))
+
+    def test_the_command_line_answers_by_exit_code(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp)
+        f = tmp / "jobs.json"
+        f.write_text('[{"conclusion": "failure", "message": "%s"}]' % self.LOST)
+        self.assertEqual(shard.main(["--should-rerun", str(f), "1"]), 0)
+        self.assertEqual(shard.main(["--should-rerun", str(f), "2"]), 1)
+
+
 class Parallel(unittest.TestCase):
     """CI runs a shard with --jobs: a failure in any module must fail the shard."""
 

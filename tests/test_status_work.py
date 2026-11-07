@@ -589,7 +589,7 @@ class TestWorkOnThePage(StatusCase):
         # Stop, how far a copy or a move has got, and a work's own file opened (#189) take no zone's lock either,
         # nor what Settings › Memory would do (#108), which only reads, nor a note read or opened from Explore (#206).
         unzoned = {"run", "settings", "check-name", "ask-desktop", "example", "discover",
-                   "files-stop", "files-progress", "work-file", "memory-preview", "note-read", "note-open"}
+                   "files-stop", "files-progress", "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update"}
         # A wiki question's verbs (#224) act on one wiki under that wiki's own lock, in no zone's repository.
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
         # The Questions panel's Nurture answers (#224) act on the wikis and zones their rows name, under their own lock.
@@ -615,13 +615,13 @@ class TestWorkHosts(unittest.TestCase):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn("window.GarrickReads=true;", swift)
         self.assertIn("injectionTime: .atDocumentStart", swift)               # before the page's own scripts
-        self.assertIn('["operations", "files-progress", "memory-preview", "note-read"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
+        self.assertIn('["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
         self.assertIn("window.GarrickReadsMemory=true;", swift)
         self.assertIn("window.GarrickReadsNotes=true;", swift)                # Explore's Preview (#206)
         plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
         self.assertIn('"dom-ready"', plugin)
         self.assertIn('window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()', plugin)
-        self.assertIn('["operations", "files-progress", "memory-preview", "note-read"].includes(request.verb)', plugin)
+        self.assertIn('["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].includes(request.verb)', plugin)
         self.assertIn("window.GarrickReadsMemory=true;", plugin)
         self.assertIn("window.GarrickReadsNotes=true;", plugin)
 

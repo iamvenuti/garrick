@@ -3,6 +3,7 @@
 
     python3 System/tools/release.py latest              the newest release, asking GitHub at most once a day
     python3 System/tools/release.py latest --now        ask now, however recently it asked
+    python3 System/tools/release.py latest --json       what the kept answer says, as a program reads it
     python3 System/tools/release.py update              download the newest release and say what an update would change
     python3 System/tools/release.py update --apply      ... and make the changes
     python3 System/tools/release.py update --tag v0.16.0 --apply --only System/tools/check.py
@@ -10,8 +11,13 @@
 
 The release notice is off until System/garrick-settings.json says
 {"release-notice": true}. Then the status page runs `latest --background` as
-it builds: it asks GitHub at most once a day, in a process of its own, and the
-page shows the answer from the next build on. Run by hand, both commands ask
+it builds, and the nightly job runs it when it is due: it asks GitHub once a
+day, or every seven days when "release-notice-every" says 7, in a process of
+its own, and the page shows the answer from the next build on. A newer
+release is also sent once as the `release` notice (notifications.py), the tag
+last notified being kept in the same cache. No scheduled run calls `update`:
+only a click on Settings > About Garrick > Check for updates, or a request to
+the assistant, runs downloaded code. Run by hand, both commands ask
 whatever the setting says: typing them is the request.
 
 What goes over the wire. `latest` sends one HTTPS GET to
@@ -59,6 +65,7 @@ sys.path.insert(0, str(HERE))
 from garrick_lib import (  # noqa: E402
     CHANGELOG_COPY,
     RELEASE_CACHE,
+    newer_release,
     release_asked_lately,
     release_due,
     release_key,
@@ -162,7 +169,7 @@ def ask(root: Path, now: Optional[datetime.datetime] = None) -> dict:
     now = now or datetime.datetime.now()
     repo = release_repository(root)
     old = read_cache(root)
-    cache = {k: v for k, v in old.items() if k in ("latest", "url", "published")} if old.get("repository") == repo else {}
+    cache = {k: v for k, v in old.items() if k in ("latest", "url", "published", "notified")} if old.get("repository") == repo else {}
     cache.update({"repository": repo, "asked": now.isoformat(timespec="seconds")})
     write_cache(root, dict(cache, failed="still asking"))
     try:
@@ -175,6 +182,50 @@ def ask(root: Path, now: Optional[datetime.datetime] = None) -> dict:
         cache["failed"] = str(getattr(exc, "reason", None) or exc)[:200]
     write_cache(root, cache)
     return cache
+
+
+def state(root: Path) -> dict:
+    """What the kept answer says, for a program: the release the workspace
+    runs, the newest one, and whether the newest is newer by semantic
+    comparison. `update` is true only when both read as versions and the
+    running one is older: a build that is not older, or one that cannot be
+    parsed, is never updated, so a click on a clone or a build from main
+    changes nothing. `failed` is why the last question got no answer."""
+    cache = read_cache(root)
+    current = workspace_release(root)
+    tag = str(cache.get("latest") or "") if cache.get("repository") == release_repository(root) else ""
+    have, want = release_key(current), release_key(tag)
+    older = bool(have and want and have < want)
+    out = {"running": current, "latest": tag.lstrip("v"), "tag": tag, "url": str(cache.get("url") or ""),
+           "asked": str(cache.get("asked") or ""), "failed": str(cache.get("failed") or ""),
+           "newer": older, "update": older and not cache.get("failed")}
+    if not out["failed"] and not want:
+        out["failed"] = "no answer from GitHub yet"
+    if out["tag"] and not have:
+        out["why"] = "this workspace does not record which release it runs"
+    elif want and have and not older:
+        out["why"] = "Garrick %s is the newest release, and this workspace runs %s" % (out["latest"], current)
+    return out
+
+
+def notify_newer(root: Path) -> bool:
+    """Send the `release` notice for the newest release, once: the tag last
+    notified is kept in the cache, so the same release does not notify again.
+    Quiet hours hold it (notifications.py). It tells; it never updates.
+    Whether one was sent, or held."""
+    new = newer_release(root)
+    cache = read_cache(root)
+    if not new or cache.get("notified") == new["tag"]:
+        return False
+    try:
+        import notifications
+        runs = ("; this workspace runs %s" % new["current"]) if new["current"] else ""
+        sent = notifications.send("release", "A newer Garrick is out", "Garrick %s is out%s" % (new["version"], runs), root=root)
+    except Exception:
+        return False
+    if sent:
+        write_cache(root, dict(read_cache(root), notified=new["tag"]))
+    return bool(sent)
 
 
 # --------------------------------------------------------------------------- the download
@@ -298,7 +349,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     lt = sub.add_parser("latest", help="the newest release, asking GitHub at most once a day")
     lt.add_argument("--now", action="store_true", help="ask now, however recently it asked")
     lt.add_argument("--background", action="store_true",
-                    help="for the status page: only with the release notice switched on and due, and silent")
+                    help="for the status page and the nightly job: only with the release notice switched on and "
+                         "due, and silent; a newer release is sent once as a notice, and never applied")
+    lt.add_argument("--json", action="store_true", help="the kept answer and the comparison, as JSON")
     up = sub.add_parser("update", help="download a release and run its update on this workspace")
     up.add_argument("--tag", default="", help="the release, such as v0.16.0 (default: the newest)")
     up.add_argument("--apply", action="store_true", help="make the changes; without it, only say what they would be")
@@ -317,9 +370,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         if args.background:
             if release_due(root):
                 ask(root)
+                notify_newer(root)
             return 0
         if args.now or not release_asked_lately(root):
             ask(root)
+        if args.json:
+            print(json.dumps(state(root)))
+            return 0
         print(say_latest(root))
         return 0
     if args.command == "update":

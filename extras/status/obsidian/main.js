@@ -619,7 +619,7 @@ module.exports = class GarrickStatusPlugin extends Plugin {
 	// to the page, with no toast and no rebuild, or asking would rebuild the
 	// page it asks from.
 	reading(request) {
-		return !!request && ["operations", "files-progress", "memory-preview", "note-read"].includes(request.verb);
+		return !!request && ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].includes(request.verb);
 	}
 
 	// What changes nothing the page shows is not followed by a rebuild, which

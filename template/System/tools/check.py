@@ -51,7 +51,20 @@ from bisect import bisect_left
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import parse_qs, unquote
+from urllib.parse import urlsplit as _urlsplit
+
+
+def urlsplit(url: str):
+    """urllib's urlsplit, that never raises on a note's text. An address whose
+    host part holds `[` or `]` (`obsidian://[open?file=…`) is not a valid IPv6
+    host, and urllib raises ValueError on it, which stopped the whole check.
+    Such an address is read with its brackets percent-encoded, so its query
+    still names what it names (parse_qs decodes them back)."""
+    try:
+        return _urlsplit(url)
+    except ValueError:
+        return _urlsplit(url.replace("[", "%5B").replace("]", "%5D"))
 
 def _safe_fnmatch(names, pattern):
     """fnmatch's filter, the same on every Python and never raising. A bracket

@@ -4219,8 +4219,7 @@ def release_controls(on: bool, every: int) -> str:
             '<div class="setrelbox" id="rel-detail" hidden></div>'
             '<p class="setrelrow"><label><input type="checkbox" id="rel-on"%s> <span>Check for a newer Garrick</span></label> '
             '<select id="rel-every" aria-label="How often"%s>%s%s</select></p>'
-            '<p class="hint">Off by default: it is the only call Garrick makes on its own. Checking tells you, in a notice and '
-            'in Needs attention, and never updates. Only the button updates.</p></div>'
+            '</div>'
             % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
 
 
@@ -4243,7 +4242,8 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
             '<div class="setlinks">%s</div></section>'
             % (set_head("About Garrick", "about"), help_text("about", 'These open GitHub in your browser. Nothing is sent '
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
-               'asks GitHub for the newest release when you press it, and updates when there is a newer one.'),
+               'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
+               'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and in Needs attention, and never updates.'),
                E(version), release_controls(*release_choice(ws)) if ws is not None else "", rows))
 
 
@@ -7367,7 +7367,7 @@ var prev=window.GarrickActed;window.GarrickActed=function(q,out){
 if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){put((out&&out.say)||'Could not ask GitHub. Nothing was changed.');done();return}
 if(r.state==='newer'){put('Updating from '+r.running+' to '+r.latest+'\u2026 this takes a minute.');host.postMessage({act:{verb:'release-update'}});return}
 put(r.line+at(r));done();return}
-if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update did not run. Nothing was changed.');done();return}
+if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update could not start. Nothing was changed.');done();return}
 put(u.line);show(u);done();return}
 if(prev)return prev(q,out)};
 window.GarrickRelease={changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};

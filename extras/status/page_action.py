@@ -80,6 +80,15 @@ zone's repository, as the skills would:
                 System/tools/fade.py keeps; saving moves no page.
                 {"desk-agent": "codex"}, which assistant a cmux tab starts,
                 written by the cmux extra's desk.py into System/desk.json
+    release-check  Settings › About Garrick's Check for updates (#410):
+                release.py latest --now, the click being the consent for that
+                one request; says what it found and whether this workspace
+                may be updated. It changes no workspace file but the kept answer
+    release-update  the update to the release the check found, after it:
+                release.py update --tag <that release> --apply, and only when
+                the running version is older than it by semantic comparison;
+                a build that is not older, or that cannot be read, is refused
+                with the reason. The report comes back as counts and lists
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -272,7 +281,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
-         "work-file", "memory-preview", "note-read", "note-open",
+         "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
          "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
@@ -292,6 +301,8 @@ GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source
 GRAPH_FOUND = re.compile(r"[^\W_][\w -]{0,59}")
 # Settings › Home: which the page opens on. Its words are status.py's HOMES too.
 HOMES = ("simple", "full")
+# Settings › About Garrick: how often, in days, the check for a newer Garrick runs (garrick_lib's RELEASE_CADENCES).
+RELEASE_CADENCES = (1, 7)
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones", "graph",
@@ -1318,6 +1329,119 @@ def memory_preview(ws: Path, req: dict) -> dict:
     return {"say": "Counted", "counts": counts, "preview": preview}
 
 
+# ---- Settings › About Garrick: Check for updates (#410) -----------------------------
+# The only network this file reaches is release.py's own: `latest --now` for the
+# question and `update --apply` for the update, both started by a click. The
+# update is applied only when the running release is older than the newest by
+# semantic comparison (release.py's state()), and a failed or partial answer
+# never starts it. Nothing scheduled calls `update`.
+RELEASE_ASK_TIMEOUT = 60
+RELEASE_UPDATE_TIMEOUT = 900          # a download, then the update's own check and a commit in each repository
+
+
+def release_run(ws: Path, *args, timeout: float):
+    tool = ws / "System" / "tools" / "release.py"
+    if not tool.is_file():
+        raise Refused("System/tools/release.py is missing; update Garrick")
+    try:
+        return subprocess.run([sys.executable, str(tool), "--root", str(ws), *args], capture_output=True, text=True,
+                              timeout=timeout, stdin=subprocess.DEVNULL, cwd=str(ws))
+    except subprocess.TimeoutExpired:
+        raise Refused("release.py was still running after %s and was stopped" % how_long(timeout))
+
+
+def release_state(ws: Path, *args) -> dict:
+    r = release_run(ws, "latest", *args, "--json", timeout=RELEASE_ASK_TIMEOUT)
+    try:
+        found = json.loads(r.stdout)
+    except ValueError:
+        raise Refused("release.py did not answer; update Garrick" if r.stderr else "release.py did not answer")
+    if not isinstance(found, dict):
+        raise Refused("release.py did not answer")
+    return found
+
+
+def release_words(state: dict) -> dict:
+    """The reply for a question: the line under the button, and the facts."""
+    out = {"state": "failed", "running": state.get("running", ""), "latest": state.get("latest", ""),
+           "asked": state.get("asked", "")}
+    if state.get("failed"):
+        out["line"] = "Could not ask GitHub (%s). Nothing was changed." % str(state["failed"]).rstrip(".")
+    elif state.get("newer"):
+        out.update(state="newer", line="Garrick %s is out; this workspace runs %s." % (state["latest"], state["running"]))
+    elif state.get("why"):
+        out.update(state="current" if state.get("running") else "unknown", line="%s." % state["why"])
+    else:
+        out["line"] = "Could not tell which release is newest. Nothing was changed."
+    return out
+
+
+def release_check(ws: Path) -> dict:
+    """Check for updates: ask GitHub now, on this click, and say what it found."""
+    state = release_state(ws, "--now")
+    out = release_words(state)
+    return {"say": out["line"], "release": out}
+
+
+def release_notes_url(state: dict) -> str:
+    url = str(state.get("url") or "")
+    return url if url.startswith("https://github.com/") else ""
+
+
+def release_update(ws: Path) -> dict:
+    """The update itself, after a check found a newer release: read what it
+    would change, then make the changes, and report in the update's own
+    terms. Refuses, with the reason, unless the running release is older."""
+    state = release_state(ws)
+    if not state.get("update"):
+        out = release_words(state)
+        if state.get("tag") and not state.get("newer") and not state.get("failed") and not state.get("why"):
+            out["line"] = "Garrick %s is the newest release, and this workspace runs %s. Nothing was changed." % (
+                state.get("latest"), state.get("running") or "an unrecorded release")
+        else:
+            out["line"] += " Nothing was updated."
+        return {"say": out["line"], "release": dict(out, state="refused" if out["state"] == "newer" else out["state"])}
+    tag = str(state["tag"])
+    plan = release_run(ws, "update", "--tag", tag, "--json", timeout=RELEASE_UPDATE_TIMEOUT)
+    try:
+        planned = json.loads(plan.stdout) if plan.returncode == 0 else None
+    except ValueError:
+        planned = None
+    if not isinstance(planned, dict):
+        why = (plan.stderr or plan.stdout).strip().splitlines()
+        line = "The update did not start: %s" % (why[-1].rstrip(".") + "." if why else "release.py gave no report.")
+        return {"say": line, "release": {"state": "failed", "line": line + " Nothing was changed.",
+                                         "running": state["running"], "latest": state["latest"]}}
+    split = [str(x) for x in (planned.get("actions") or {}).get("split") or []]
+    r = release_run(ws, "update", "--tag", tag, "--apply", "--json", timeout=RELEASE_UPDATE_TIMEOUT)
+    try:
+        result = json.loads(r.stdout)
+    except ValueError:
+        result = None
+    if not isinstance(result, dict):
+        why = (r.stderr or r.stdout).strip().splitlines()
+        line = "The update stopped: %s" % (why[-1].rstrip(".") + "." if why else "release.py gave no report.")
+        return {"say": line, "release": {"state": "stopped", "line": line, "running": state["running"],
+                                         "latest": state["latest"], "split": split}}
+    done = result.get("done") if isinstance(result.get("done"), dict) else {}
+    names = lambda kind: [str(x) for x in done.get(kind) or []]
+    skipped = [[str(a), str(b)] for a, b in (x for x in result.get("skipped") or [] if isinstance(x, (list, tuple)) and len(x) == 2)]
+    problems = [str(x) for x in result.get("problems") or []]
+    out = {"running": state["running"], "latest": state["latest"], "url": release_notes_url(state),
+           "replaced": len(names("replace")) + len(names("restore")), "added": len(names("add")), "new": names("merge"),
+           "split": split, "skipped": skipped, "then": [str(x) for x in result.get("then") or []],
+           "problems": problems, "commits": [str(x) for x in result.get("commits") or []]}
+    if problems or result.get("unstamped"):
+        out["state"] = "stopped"
+        out["line"] = ("The update stopped: the check found errors in the files it wrote, so the version stamp is not moved. "
+                       "git revert of the update commit in each repository undoes it." if problems else
+                       "The update stopped: %s. Run it again to record the version." % str(result.get("unstamped")).rstrip("."))
+    else:
+        out["state"] = "updated"
+        out["line"] = "Updated to %s from %s." % (state["latest"], state["running"])
+    return {"say": out["line"], "release": out}
+
+
 def save_settings(ws: Path, req: dict) -> str:
     """Settings, kept in one file so every viewer of the page agrees, and the
     cmux desk with them: {"launchers": {"note": true, "cmux": false, …},
@@ -1333,11 +1457,21 @@ def save_settings(ws: Path, req: dict) -> str:
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
-    if not {"launchers", "zones", "graph", "notifications", "while-you-wait", "home", "memory", "desk-agent"} & set(req):
+    if not {"launchers", "zones", "graph", "notifications", "while-you-wait", "home", "memory", "desk-agent",
+            "release-notice", "release-notice-every"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
         raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), req["desk-agent"]))
     new = {}
+    if "release-notice" in req:
+        if not isinstance(req["release-notice"], bool):
+            raise Refused("the check for a newer Garrick is on or off")
+        new["release-notice"] = req["release-notice"]
+    if "release-notice-every" in req:
+        days = req["release-notice-every"]
+        if not (isinstance(days, int) and not isinstance(days, bool) and days in RELEASE_CADENCES):
+            raise Refused("the check for a newer Garrick runs every %s days" % " or ".join(str(d) for d in RELEASE_CADENCES))
+        new["release-notice-every"] = days
     if "home" in req:
         if req["home"] not in HOMES:
             raise Refused("no home called %r; it is %s" % (req["home"], " or ".join(HOMES)))
@@ -5094,6 +5228,10 @@ def act(ws: Path, req, today=None, now=None):
         return save_settings(ws, req)
     if req["verb"] == "memory-preview":
         return memory_preview(ws, req)
+    if req["verb"] == "release-check":
+        return release_check(ws)
+    if req["verb"] == "release-update":
+        return release_update(ws)
     if req["verb"] == "note-read":
         return note_read(ws, req)
     if req["verb"] == "note-open":

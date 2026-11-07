@@ -104,6 +104,28 @@ def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[s
     return out
 
 
+RELEASE_TOOL = ("System", "tools", "release.py")
+RELEASE_LIMIT = 90         # seconds for the question to GitHub
+
+
+def release_check(ws: Path) -> Optional[int]:
+    """Before the steps: `release.py latest --background`, which asks GitHub
+    only when the release notice is switched on and due (a day, or the seven
+    days `release-notice-every` holds) and sends the `release` notice once
+    for a newer release. It tells and never updates: nothing scheduled calls
+    `release.py update`. None when the tool is not there; a failure is
+    silent, as the question always was."""
+    tool = ws.joinpath(*RELEASE_TOOL)
+    if not tool.is_file():
+        return None
+    try:
+        return subprocess.run([sys.executable, str(tool), "--root", str(ws), "latest", "--background"], cwd=str(ws),
+                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=RELEASE_LIMIT).returncode
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def stop_group(proc: subprocess.Popen) -> None:
     """SIGTERM to the step's whole process group, then SIGKILL to whatever of
     it is left: a step's children, such as git, never outlive it."""
@@ -225,6 +247,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 def run_steps(ws: Path, args: argparse.Namespace) -> int:
     done: List[dict] = []
+    release_check(ws)
     for step, cmd, why in steps(ws, args):
         if cmd is None:
             print("nightly: %s skipped: %s" % (step, why))

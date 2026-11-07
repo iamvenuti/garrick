@@ -220,3 +220,34 @@ class MergeTimes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WallChecksAndGate(unittest.TestCase):
+    """The release review's two findings on the CI rules (0.59.0)."""
+
+    def test_a_change_to_the_wall_check_runs_the_wall_modules(self):
+        names = shard.modules()
+        got = shard.touched(["template/System/tools/check.py"], names)
+        for m in ("test_wall_forms", "test_walls_cases", "test_wall_gaps", "test_staged_paths"):
+            if m in names:
+                self.assertIn(m, got)
+
+    def test_the_walls_cases_table_runs_its_test(self):
+        if "test_walls_cases" in shard.modules():
+            self.assertIn("test_walls_cases", shard.touched(["tests/walls/cases.md"]))
+
+    def test_a_failed_gate_does_not_stop_the_rerun_of_a_lost_runner(self):
+        jobs = [{"name": "macOS, Python 3.13, shard 2", "conclusion": "failure",
+                 "message": "The job was not acquired by Runner of type hosted even after multiple attempts"},
+                {"name": "Tests", "conclusion": "failure", "message": "Process completed with exit code 1."},
+                {"name": "Plan", "conclusion": "success", "message": ""}]
+        self.assertTrue(shard.should_rerun(jobs, 1))
+
+    def test_a_test_failure_beside_the_gate_is_still_never_rerun(self):
+        jobs = [{"name": "macOS, Python 3.13, shard 2", "conclusion": "failure", "message": "Process completed with exit code 1."},
+                {"name": "Tests", "conclusion": "failure", "message": "Process completed with exit code 1."}]
+        self.assertFalse(shard.should_rerun(jobs, 1))
+
+    def test_only_the_gate_failing_is_no_reason_to_rerun(self):
+        self.assertFalse(shard.should_rerun([{"name": "Tests", "conclusion": "failure", "message": "x"}], 1))
+

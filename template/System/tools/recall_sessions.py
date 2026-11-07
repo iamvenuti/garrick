@@ -409,6 +409,13 @@ def squash(text: str) -> str:
 
 
 UP_ONE = re.compile(r"(?:^|[/\s\"'`=:(;|&])\.\.(?=$|[/\s\"'`;|&)])")
+# A command whose folder Recall cannot read plainly: a substitution, a variable, or a
+# call that finds or changes the folder at run time (`cd "$(dirname "$PWD")"`,
+# `os.chdir(...)`, `cd ${d}`). Such a session could have gone anywhere, so it is
+# labelled with no project, whatever it names (0.59.0 release review).
+OPAQUE = re.compile(r"\$|`|\bdirname\b|\brealpath\b|\breadlink\b|\bpushd\b|\bpopd\b|\beval\b"
+                    r"|\bchdir\b|\bgetcwd\b|os\.path|pathlib|\bchr\s*\(|\\x2e|\\056"
+                    r"|\b(?:python3?|node|perl|ruby|osascript|bash|sh|zsh)\s+-[a-z]*[ce]\b", re.I)
 GLOB_WORD = re.compile(r"[^\s\"'`;|&()<>]*[*?\[][^\s\"'`;|&()<>]*")
 
 
@@ -426,6 +433,9 @@ def reaches_sibling(base: Path, s: Session, folders: List[Tuple[str, str]], name
             zones.add(place.zone)
     names = [squash(n) for z, n in folders if z in zones]
     texts = [t for k, t, _ in s.turns if k == "command"] + list(s.probe)
+    for text in (t for k, t, _ in s.turns if k == "command"):
+        if OPAQUE.search(text):
+            return True                             # a folder found at run time: it could be any
     for text in texts:
         text = text.replace("\\ ", " ")
         if UP_ONE.search(text) and not named:

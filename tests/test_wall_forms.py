@@ -629,7 +629,8 @@ class WallFormsRowsTest(unittest.TestCase):
         found = self.says_raw("# Notes\n\n```\n%s\n```\n\nSee `harvest-*`.\n" % few)
         self.assertEqual(["error"], [s for s, _ in found], found)
         self.assertIn("harvest-*", found[0][1])
-        many = "\n".join("ls dir%d*" % i for i in range(5200))
+        # Globs that can match no page are not counted (#422); these name a page's stretch, so each one counts.
+        many = "\n".join("ls *harvest*%d" % i for i in range(5200))
         found = self.says_raw("# Notes\n\n```\n%s\n```\n" % many)
         self.assertEqual(["error"], [s for s, _ in found], found)
         self.assertIn("cannot be read", found[0][1])

@@ -5402,6 +5402,9 @@ SPACES = {ord(c): " " for c in "\u00a0\u202f\u3000\u1680\u180e"} | {c: " " for c
 # project's name, one means the note's own project, whether or not that
 # project has made it yet.
 LAYOUT_FOLDERS = ("deliverables", "sources", "threads", "notes")
+# The folders an assistant's harness keeps in any project (`.claude/settings.json`, `.agents/skills`). Written
+# relative, first, they too mean the note's own project, whoever else holds one (#423).
+HARNESS_FOLDERS = (".claude", ".agents", ".codex")
 DIR_NAME_MAX = 255  # the longest a file name can be
 
 
@@ -5613,6 +5616,9 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
                         names = bool(ctx) or count >= len(folder.relative_to(project).parts) + 1
                         if not names and folder.parent == project and folder.name.lower() in LAYOUT_FOLDERS:
                             continue  # `Deliverables/…` from any project: its own folder, made or not yet
+                        if not names and folder.relative_to(project).parts[:1] and \
+                                folder.relative_to(project).parts[0].lower() in HARNESS_FOLDERS:
+                            continue  # `.claude/…` from any project: its own, made or not yet (#423)
                         if not names and folder in idx.hidden:
                             continue  # a copy or a build git ignores: a path that only ends the same way does not lead into it
                         group.append((folder, names))
@@ -5639,6 +5645,18 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
 # Paths every project holds by Garrick's own layout: written by themselves they
 # name no project, whoever else holds one.
 SHARED_PROJECT_PATHS = ("deliverables/published",)
+
+
+def harness_path(target: str, hit: Path, project: Path) -> bool:
+    """Is `target`, written relative, a path under a harness folder every project may hold (`.claude/…`), and
+    `hit` that folder's file in `project`? Then it names no project. A `..` anywhere, a path from the top or the
+    note, or a project's name before the folder leaves it a path into that project."""
+    written = target.split(":", 2)[2] if target.startswith("obsidian:") else target
+    if written.startswith(("/", "./", "../", "~")) or ".." in written.replace("\\", "/").split("/"):
+        return False
+    parts = [x.lower() for x in written.replace("\\", "/").split("/") if x]
+    rel = [x.lower() for x in hit.relative_to(project).parts]
+    return bool(parts) and parts[0] in HARNESS_FOLDERS and rel[:1] == parts[:1]
 
 
 def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
@@ -6367,6 +6385,7 @@ class PageNames:
         self._globs: Dict[str, List[Path]] = {}
         self.globs_read: set = set()         # the distinct globs this file holds; walls_for_file sets it again
         self._tails: Optional[Dict[int, Dict[str, List[Path]]]] = None
+        self._haystack: Optional[str] = None
         self._full: Optional[Dict[int, Dict[str, List[Path]]]] = None
         self.spaced = False                # does any page's name hold a space? (a decision's does)
         self.first_words: set = set()      # the first word of each such name, folded
@@ -6465,6 +6484,22 @@ class PageNames:
                         self._raw_tags.setdefault(found, set()).update(mine)
         return self._raw_tags.get(record, set())
 
+    def _may_match(self, form: str) -> bool:
+        """Can the glob `form` match any page? False only when it surely cannot: the longest literal stretch of its
+        last name, which every reading of it must match (a longer glob is matched by its last names), is in no
+        page's path. A glob with a brace list or an odd class is never ruled out. Only the globs that can match
+        count towards GLOB_FILE_MAX, so a file of code, full of `*` and `[`, is not refused for them."""
+        last = form.rsplit("/", 1)[-1]
+        if "{" in form or re.search(r"\[[!^]?\]", last):
+            return True
+        stretches = re.split(r"[*?]", re.sub(r"\[[^\]]*\]", "*", last))
+        chunk = max(stretches, key=len).lower()
+        if not chunk:
+            return True
+        if self._haystack is None:
+            self._haystack = "\n".join("/".join(have) for have, _ in self.entries).lower()
+        return chunk in self._haystack
+
     def _glob(self, form: str) -> List[Path]:
         """The pages a glob (`kai-*`, `wiki/*/x`, `kai-{ross,x}`, `[kj]ai-r?ss`)
         matches by full path, by tail or by name, fnmatch's way. A glob whose
@@ -6547,6 +6582,8 @@ class PageNames:
                 # stylesheet or a script is code, and it does not count towards the limit.
                 if sum(c.isalpha() for c in re.sub(r"\.[A-Za-z0-9]{1,5}$", "", re.sub(r"[*?\[\]{},]", "", form))) < 3:
                     continue
+                if not self._may_match(form):
+                    continue                   # a run of words from code that holds a `*` or a `[`: it names no page (#422)
                 self.globs_read.add(form)
                 if len(self.globs_read) <= GLOB_FILE_MAX:
                     found.update(dict.fromkeys(self._glob(form)))
@@ -6877,6 +6914,8 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                 if owner is None:
                     continue  # not a project's: a wiki page or System's, which the meeting check reads
                 other = owner[0]
+                if harness_path(target, hit, other):
+                    continue  # `.claude/settings.json` from any project: its own folder, made or not yet
                 pair = crossings(ws.context, tags, project_file_tags(ws, other, hit))
                 if pair:
                     far_hits.append((hit, other, pair[0]))

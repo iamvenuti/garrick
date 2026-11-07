@@ -1237,6 +1237,21 @@ class TestFormsRead(GapCase):
                 self.assertEqual(["error"], [f.severity for f in found], found)
                 self.assertTrue(found[0].message.endswith(self.TAIL), found[0].message)
 
+    def test_a_harness_folder_is_the_notes_own_project_s(self):
+        for folder in (".claude", ".agents", ".codex"):
+            write(self.work / "Harbour" / folder / "settings.json", "{}\n")
+            write(self.work / "Harbour" / folder / "skills" / "plan" / "SKILL.md", "# Plan\n")
+        for folder in (".claude", ".agents", ".codex"):
+            for written in ("`%s/settings.json`" % folder, "`%s/skills`" % folder, "`%s/skills/plan/SKILL.md`" % folder,
+                            "`cat %s/settings.json`" % folder, "[the file](%s/settings.json)" % folder,
+                            "[[%s/skills/plan/SKILL]]" % folder, "`.CLAUDE/settings.json`"):
+                with self.subTest(written):
+                    self.assertEqual([], self.says(written))
+            # The walled project's folder before it, or a detour, leaves it a path into that project.
+            self.assertEqual([("error", "writes the path `Harbour/%s/settings.json`, a file of birch; a wall stands "
+                               "between acme and birch" % folder)], self.says("`Harbour/%s/settings.json`" % folder))
+            self.refused("`%s/../Harbour/Threads/Tender/Tender.md`" % folder)
+
     def test_a_token_that_lands_nowhere_stays_silent(self):
         for written in ("`cat nowhere/at/all.md`", "`grep -r rate src/ docs/ | sort`", "`python3 System/tools/check.py --root .`",
                         "`curl https://example.com/Harbour/Threads/Tender/Tender.md`",

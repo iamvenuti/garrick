@@ -727,5 +727,32 @@ class TestWhichFormIsNamed(PersonPartyCase):
         self.assertIsNone(check.name_hit("nobody of that name", forms))
 
 
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class TestCheckPyCommitsItself(WallCase):
+    """#422: a joined run of words is read as a literal name, never as a glob,
+    so a commit of check.py itself is not refused for holding too many globs."""
+
+    def test_a_commit_of_check_py_passes_the_hook(self):
+        _copy_tools(self.root)
+        zone = self.root / "Zones" / "Work"
+        _real_repo(zone)
+        # The tool's own source, kept in a project; it is full of globs, and of runs of words that hold one.
+        write(self.acme / "Code" / "template" / "System" / "tools" / "check.py",
+              (TOOLS / "check.py").read_text(encoding="utf-8").replace("Birch", "Other").replace("birch", "other"))
+        git(zone, "add", "-A")
+        res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
+        self.assertEqual((0, ""), (res.returncode, res.stderr))
+
+    def test_a_glob_that_can_match_no_page_is_not_counted(self):
+        names = check.PageNames(check.discover(self.root))
+        for word in ("zzqx one*", "a zzqx b ?", "cat x[0] zzqx"):
+            names.named(word, 1, False)
+        self.assertEqual(set(), names.globs_read)
+        have = next(h[-1] for h, _ in names.entries if h[-1][:4].isalpha())                # a glob one token long that can match a page is read as before
+        names.named(have[:4] + "*", 1, False)
+        names.named("x " + have[:4] + "*", 1, False)           # one that cannot, because of its first word, is not
+        self.assertEqual({have[:4] + "*"}, names.globs_read)
+
+
 if __name__ == "__main__":
     unittest.main()

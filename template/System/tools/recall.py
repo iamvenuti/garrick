@@ -901,6 +901,8 @@ class Refresher:
             pages = [row[0]] if row else []
         else:
             cites = self.cache.get(("cites", str(self.root))) or {}
+            if self.stem_count(Path(rel).stem.lower()) != 1:
+                return None                         # the citing index knows a record by its stem alone: a stem two files share has no one owner
             pages = sorted({r for r in (_rel(self.root, p) for p in cites.get(Path(rel).stem.lower(), [])) if r})
         if not pages:
             return None
@@ -911,6 +913,24 @@ class Refresher:
                 return None
             first = first or (page,) + tuple(row)
         return first
+
+    def stem_count(self, stem: str) -> int:
+        counts = self.cache.get(("rawstems", str(self.root)))
+        if counts is None:
+            counts = {}
+            base = self.root / "Wikis"
+            try:
+                for wiki in base.iterdir():
+                    raw = wiki / "raw"
+                    if raw.is_dir() and not raw.is_symlink():
+                        for dirpath, dirs, files in os.walk(str(raw)):
+                            for f in files:
+                                key = Path(f).stem.lower()
+                                counts[key] = counts.get(key, 0) + 1
+            except OSError:
+                pass
+            self.cache[("rawstems", str(self.root))] = counts
+        return counts.get(stem, 0)
 
     def raw_derived(self, rel: str, path: Path) -> Optional[str]:
         held = self.labelled(rel)
@@ -1490,8 +1510,11 @@ def cwd_project(root: Path) -> Optional[Path]:
     if marker:
         try:
             home = Path(marker).resolve()
-            if locate(root, home) is None or not (home == here or home in here.parents):
+            held = locate(root, home)
+            if held is None or not (home == here or home in here.parents):
                 return NOWHERE
+            if held.zone and not held.project:
+                return NOWHERE                  # opened at a zone's top: no project's scope, whatever folder it moves to
         except OSError:
             return NOWHERE
     if place.zone:

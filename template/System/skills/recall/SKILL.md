@@ -2,7 +2,7 @@
 name: recall
 description: >
   Search the notes, the wikis and past sessions by keyword, ranked, with the
-  walls already applied. Use when the user says "what did we decide about X",
+  walls built into what it searches. Use when the user says "what did we decide about X",
   "when did we fix Y", "find where we talked about Z", "search my notes for
   X", "search past sessions for X", or asks about earlier work that the
   routing in AGENTS.md does not already send to a wiki or a thread note.
@@ -26,49 +26,61 @@ Use Recall for what those routes do not answer: *when did we fix that error*,
 
 ## Search
 
-Run it from the folder the session was opened in. The tool takes that folder
-as the project, and finds the workspace above it. From a project folder the
+Run it from the folder the session was opened in. The tool takes the scope of
+that folder, and finds the workspace above it. From a project folder the
 tool is three levels up (`../../../System/tools/recall.py`); from a thread
-folder, five; from a zone folder, two. The installer allows `search` and
-`stats` at those depths, so they run without a question. Never change folder
-first (no `cd` to the root, then the tool): from the workspace root or
+folder, five; from a zone folder, two. The installer allows `search`, `read`
+and `stats` at those depths, so they run without a question. Never change
+folder first (no `cd` to the root, then the tool): from the workspace root or
 `System/` the tool reads as a root session, which may read every zone. The
-tool's scope comes only from the folder the process really runs in, with
-symlinks followed, and never from an argument. Where the environment names the
-folder the session was opened in (Claude Code sets `CLAUDE_PROJECT_DIR`; Codex
-sets nothing the tool reads), the scope is the narrower of that folder and the
-current one, and a current folder outside the session's folder searches
-nothing. A folder outside the workspace given by `--root` searches nothing.
+scope comes only from the folder the process really runs in, with symlinks
+followed, or from `GARRICK_RECALL_SCOPE` where the session was started with
+one; never from an argument that names a folder. Where the environment names
+the folder the session was opened in (Claude Code sets `CLAUDE_PROJECT_DIR`;
+Codex sets nothing the tool reads), the scope is the narrower of that folder
+and the current one, and a current folder outside the session's folder
+searches nothing. A folder outside the workspace given by `--root` searches
+nothing.
 
 ```sh
 python3 ../../../System/tools/recall.py search "invoice export retry"
 python3 ../../../System/tools/recall.py search "pricing" --after 2026-06-01 --limit 5
 python3 ../../../System/tools/recall.py search "retry flag" --sessions
+python3 ../../../System/tools/recall.py read "Meetings:Wikis/Meetings/wiki/sources/260310-kickoff.md"
 ```
 
 - `--sessions` adds the sessions extracted for this zone. A session opened at
   the workspace root or in `System/` can read every zone's.
 - `--wiki Meetings` or `--wiki Knowledge` searches that wiki alone (with `--sessions`, the sessions too, and no notes).
-- `--zone Z` adds another zone. Do it only when the user asks for work across
-  zones, and only for that request.
+- `--zone Z` narrows to one zone's notes. A session of a zone can name its own
+  zone and no other; a search never reaches past the session's scope. For work
+  across zones, the user opens a session at the workspace root.
 - `--archived` adds archived pages after the rest. Use it only when the user
   asks to look in the archive. Pages that are dormant join by themselves, when
   the working ones fall short, and the answer says "from older notes".
-- There is no `--project`: the scope is the folder, never a choice.
-- `stats` lists the indexes and how many files you may read in each.
+- `read ID` prints a file by the `id` of a result, only if it is in your scope.
+  An id that is not there prints nothing, whether it is unknown or behind a wall.
+- `--scope S` may name the session's own scope and no other (a session at the
+  root may name any). There is no `--project`: the scope is never a folder you choose.
+- `stats` shows your scope's index and how many files it holds.
+- A word that is a party, a person or a heard alias in `System/context.md` is
+  searched in every spelling, with and without spaces; a near misspelling of a
+  word the notes have is found too.
 
 ## Where the session was opened
 
 Only the workspace root and `System/` read as a root session. A session opened
-in a zone folder or below it reads that zone as a zone-level or project session.
-A session opened anywhere else (inside `Wikis/`, in `Zones/` itself, outside
-the workspace) has no place the walls can be checked against, so the tool
-searches nothing and says so. Open the session in a project, or at the root.
+in a project or a thread of a project reads the scope of that project's hub. A
+zone's top level, a project whose hub names no party, and a place no zone owns
+(inside `Wikis/`, `Zones/` itself, outside the workspace) hold no scope the
+walls can be checked against, so the tool searches nothing and says so. Open
+the session in a project with a party, or at the root.
 
 A `party:` or `parties:` that holds anything but tags from the Parties table
-(`birch, acme`, `acme and birch`) cannot be placed: a Meetings page like that is
-left out, and a project whose hub is like that is treated as having no party. A
-Knowledge page that names a zone or a party follows the Meetings rule.
+(`birch, acme`, `acme and birch`) cannot be placed: a Meetings page like that
+is in no scope, and a project whose hub is like that holds no scope. A
+Knowledge page that names a zone or a party is not published and is in no
+zone scope.
 
 ## A result is a pointer
 
@@ -79,9 +91,9 @@ read what superseded it.
 
 ## The walls
 
-The tool drops every row that is walled from the project's party, a Meetings
-page without its zone or its parties, and another zone's rows, **before** it
-ranks anything. The count in the header is what you may read, nothing more.
+The tool searches an index that holds only the rows your scope may read: a
+walled row is not in the file. The count in the header is what you may read,
+nothing more.
 Do not work around it: never grep a wiki or `.sessions/` folder to find what a
 search did not return. If the user asks why something is missing, say
 that a result list holds only what this project may read, and name nothing

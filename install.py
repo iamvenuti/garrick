@@ -116,7 +116,7 @@ ALLOWED_TOOLS = (
 # allowed, at each of those depths and at the root; `build` and `extract`
 # write indexes and sessions, and ask.
 RECALL_TOOL = "System/tools/recall.py"
-RECALL_WORDS = ("search", "stats")
+RECALL_WORDS = ("search", "stats", "read")
 RECALL_DEPTHS = (0, 2, 3, 4, 5)
 # git's words that only look at history, or save it on this Mac.
 ALLOWED_GIT = ("status", "diff", "log", "add", "commit")

@@ -1491,6 +1491,8 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
             rest[1] = _listed(root / "Zones" / zone / project / rest[0], rest[1]) or rest[1]
         parts = ("Zones", zone, project) + tuple(rest)
     full = root.joinpath(*parts)
+    if len(parts) > 3 and parts[0] == "Wikis" and parts[2] in ("dormant", "archive"):
+        parts = parts[:2] + parts[3:]       # a faded page or record is labelled as the working one it was
     if parts[:2] == ("Wikis", "Knowledge"):
         fm = parse_frontmatter(full) if full.suffix == ".md" and full.is_file() else {}
         if full.suffix == ".md" and full.is_file() and _party_like_key(full):
@@ -1505,8 +1507,11 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         key = ("cites", str(root))
         if key not in cache:
             index: Dict[str, List[Path]] = {}
-            wiki = root / "Wikis" / "Meetings" / "wiki"
-            for page in sorted(wiki.rglob("*.md")) if wiki.is_dir() else []:
+            pages = []
+            for grade in ("", "dormant", "archive"):
+                wiki = root / "Wikis" / "Meetings" / grade / "wiki"
+                pages += sorted(wiki.rglob("*.md")) if wiki.is_dir() else []
+            for page in pages:
                 try:
                     text = page.read_text(encoding="utf-8", errors="replace")
                 except OSError:

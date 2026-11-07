@@ -95,6 +95,10 @@ class Base(unittest.TestCase):
             os.chdir(here)
         return code, out.getvalue(), err.getvalue()
 
+    def indexes(self):
+        return sorted(p for p in self.root.rglob(".recall.sqlite*")
+                      if not p.name.endswith(("-journal", "-wal", "-shm")) and ".new-" not in p.name)
+
     def find(self, words, project=ACME, **kw):
         return recall.search(words, project=project, root=self.root, **kw)
 
@@ -147,15 +151,24 @@ class WallTest(Base):
         self.assertEqual(0, code)
         self.assertEqual("0 results for 'wombatplan wombat'", out.strip())
         _, out, _ = self.cli(self.root / ACME, "stats")
-        self.assertNotIn("Meetings: 4", out)
-        self.assertIn("Meetings: 2 files", out)          # the Acme page and its raw record
+        self.assertEqual(1, len(out.strip().splitlines()))           # one scope, one index
+        self.assertTrue(out.startswith("work/acme: "), out)
 
     def test_stats_counts_only_what_the_project_may_read(self):
-        rows = {r["index"]: r["files"] for r in recall.stats(ACME, self.root)}
-        self.assertEqual(2, rows["Meetings"])
-        self.assertEqual(1, {r["index"]: r["files"] for r in recall.stats(BIRCH, self.root)}["Meetings"])
-        root_rows = {r["index"]: r["files"] for r in recall.stats(None, self.root)}
-        self.assertEqual(3, root_rows["Meetings"])
+        acme = recall.stats(ACME, self.root)
+        birch = recall.stats(BIRCH, self.root)
+        root = recall.stats(None, self.root)
+        self.assertEqual(["work/acme"], [r["index"] for r in acme])
+        self.assertEqual(["work/birch"], [r["index"] for r in birch])
+        self.assertEqual(["root"], [r["index"] for r in root])
+        # the count is the index file's own: a walled file is not in it to be counted
+        for rows, path in ((acme, self.root / "Zones/Work/.recall.sqlite-acme"),
+                           (birch, self.root / "Zones/Work/.recall.sqlite-birch")):
+            con = sqlite3.connect(str(path))
+            self.assertEqual(rows[0]["files"], con.execute("SELECT COUNT(DISTINCT path) FROM docs").fetchone()[0])
+            con.close()
+        self.assertGreater(root[0]["files"], acme[0]["files"])
+        self.assertGreater(root[0]["files"], birch[0]["files"])
 
     def test_a_meetings_page_without_its_zone_or_parties_is_never_returned(self):
         for project in (ACME, BIRCH, None):
@@ -167,20 +180,25 @@ class WallTest(Base):
         write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260315-home.md",
               meeting_page("Personal", "[acme]", "Home call").replace("Decisions.", "Decisions: capybaraplan."))
         self.assertEqual([], self.find("capybaraplan"))
-        self.assertEqual(1, len(self.find("capybaraplan", zone="Personal")))
+        self.assertEqual([], self.find("capybaraplan", zone="Personal"))            # a scope never reaches past its zone
+        self.assertEqual(1, len(self.find("capybaraplan", None, zone="Personal")))  # the root holds no party
 
     def test_a_project_with_no_party_sees_no_meetings(self):
         write(self.root / "Zones/Work/Loose/Loose.md", fixtures.project_hub("Work", "Loose", ""))
         write(self.root / "Zones/Work/Loose/Notes.md", "# Notes\n\nquokkaplan notes\n")
-        found = self.paths("quokkaplan", "Zones/Work/Loose")
-        self.assertEqual(["Zones/Work/Loose/Notes.md"], found)
+        # a project whose hub names no party holds no scope: it reads nothing, not even its own notes
+        self.assertEqual([], self.paths("quokkaplan", "Zones/Work/Loose"))
+        self.assertEqual([], self.paths("notes", "Zones/Work/Loose"))
+        self.assertIsNone(recall.scope_for_project(self.root, garrick_lib.load_context(self.root), "Zones/Work/Loose"))
 
     def test_cross_zone_search_applies_the_walls_too(self):
         write(self.root / "Zones/Personal/Home/Home.md", fixtures.project_hub("Personal", "Home", "birch"))
         write(self.root / "Zones/Personal/Home/Notes.md", "# Notes\n\nflamingoplan\n")
         self.assertEqual([], self.find("flamingoplan"))
-        self.assertEqual([], self.find("flamingoplan", zone="Personal"))              # Acme and Birch are walled
-        self.assertEqual(["Zones/Personal/Home/Notes.md"], self.paths("flamingoplan", BIRCH, zone="Personal"))
+        self.assertEqual([], self.find("flamingoplan", zone="Personal"))              # a scope never reaches past its zone
+        self.assertEqual([], self.find("flamingoplan", BIRCH, zone="Personal"))
+        self.assertEqual([], self.paths("flamingoplan", "Zones/Personal/Home"))       # birch is no party of Personal
+        self.assertEqual(["Zones/Personal/Home/Notes.md"], self.paths("flamingoplan", None, zone="Personal"))
 
     def test_knowledge_is_not_filtered(self):
         for project in (ACME, BIRCH):
@@ -188,8 +206,9 @@ class WallTest(Base):
                              self.paths("supply", project, wiki="Knowledge"))
 
     def test_the_walls_are_the_ones_the_commit_hook_reads(self):
-        self.assertIs(garrick_lib.walled, recall.walled)
-        self.assertIs(garrick_lib.load_context, recall.load_context)
+        self.assertIs(garrick_lib.decide, recall.decide)
+        self.assertIs(garrick_lib.labels, recall.labels)
+        self.assertFalse(hasattr(recall, "walled"))          # no wall test of its own
 
 
 class IndexTest(Base):
@@ -200,8 +219,8 @@ class IndexTest(Base):
     def test_deleting_every_index_and_building_gives_the_same_results(self):
         before = self.snapshot()
         self.assertTrue(before)
-        indexes = list(self.root.rglob(recall.INDEX_NAME))
-        self.assertGreaterEqual(len(indexes), 4)
+        indexes = self.indexes()
+        self.assertEqual(3, len(indexes))                # root, and the two sides of Work
         for p in indexes:
             p.unlink()
         recall.build(self.root)
@@ -211,9 +230,11 @@ class IndexTest(Base):
 
     def test_an_index_sits_inside_its_zone_and_wiki(self):
         self.find("quokkaplan")
-        self.assertTrue((self.root / "Zones" / "Work" / recall.INDEX_NAME).is_file())
-        self.assertTrue((self.root / "Wikis" / "Meetings" / recall.INDEX_NAME).is_file())
+        self.find("quokkaplan", None)
+        self.assertTrue((self.root / "Zones" / "Work" / (recall.INDEX_NAME + "-acme")).is_file())
+        self.assertTrue((self.root / "System" / recall.INDEX_NAME).is_file())
         self.assertFalse((self.root / recall.INDEX_NAME).exists())
+        self.assertFalse((self.root / "Wikis" / "Meetings" / recall.INDEX_NAME).exists())     # the wikis keep none
 
     def test_a_changed_file_is_picked_up_and_a_deleted_one_forgotten(self):
         self.assertEqual([], self.paths("narwhalplan"))
@@ -246,7 +267,7 @@ class IndexTest(Base):
     def test_an_index_in_a_synced_folder_is_kept_in_memory(self):
         with mock.patch.object(recall, "synced", return_value=True):
             self.assertTrue(self.find("quokkaplan"))
-        self.assertFalse((self.root / "Wikis" / "Meetings" / recall.INDEX_NAME).exists())
+        self.assertEqual([], self.indexes())
 
     def test_accents_fold_and_there_is_no_stemming(self):
         write(self.root / ACME / "Cafe.md", "# Cafe\n\nUn p\u00e2t\u00e9 et des cr\u00eapes\n")
@@ -458,7 +479,8 @@ class SessionTest(Base):
         self.session(str(self.root / "Zones" / "Work"), text="topsecret zoneword", sid="z")
         self.extract()
         self.assertEqual([], self.find("zoneword", ACME, sessions=True))
-        self.assertTrue(self.find("zoneword", "Zones/Work", sessions=True))
+        self.assertEqual([], self.find("zoneword", "Zones/Work", sessions=True))     # a zone's top holds no scope
+        self.assertTrue(self.find("zoneword", None, sessions=True))                  # only the root reads it
 
     def test_codex_sessions_are_read_too(self):
         write_jsonl(self.codex / "2026" / "09" / "01" / "rollout-x.jsonl", [
@@ -526,10 +548,14 @@ class ReviewFixesTest(Base):
                   meeting_page("Work", form, "Bad %d" % n).replace("Decisions.", "Decisions: badpartyword%d." % n))
             for project in (ACME, BIRCH, None):
                 self.assertEqual([], self.find("badpartyword%d" % n, project), (form, project))
-        for n, form in enumerate(["[Acme, ACME]", "[`acme`]", "acme"]):
+        for n, form in enumerate(["[Acme, ACME]", "[`acme`]"]):
             write(self.root / "Wikis/Meetings/wiki/sources" / ("26042%d-ok.md" % n),
                   meeting_page("Work", form, "Ok %d" % n).replace("Decisions.", "Decisions: okpartyword%d." % n))
             self.assertEqual(1, len(self.find("okpartyword%d" % n)), form)
+        # a bare string where a list belongs cannot be read plainly: labels() has none for it
+        write(self.root / "Wikis/Meetings/wiki/sources/260422-ok.md",
+              meeting_page("Work", "acme", "Ok 2").replace("Decisions.", "Decisions: okpartyword2."))
+        self.assertEqual([], self.find("okpartyword2"))
         write(self.root / "Wikis/Meetings/wiki/sources/260430-block.md",
               meeting_page("Work", "\n  - Acme", "Block").replace("Decisions.", "Decisions: blockword."))
         self.assertEqual(1, len(self.find("blockword")))
@@ -543,7 +569,8 @@ class ReviewFixesTest(Base):
         hub.write_text(hub.read_text().replace("party: birch", "party: acme, birch"))
         note = self.root / BIRCH / "Threads" / "Market Sizing" / "Market Sizing.md"
         note.write_text(note.read_text().replace("party: birch", "party: acme, birch"))
-        self.assertEqual([BIRCH + "/Notes.md"], self.paths("birchnotesword", BIRCH))
+        # a hub that names no listed party holds no scope: nothing in it is read, by it or by anyone
+        self.assertEqual([], self.paths("birchnotesword", BIRCH))
         self.assertEqual([], self.paths("birchnotesword", ACME))
         self.assertEqual([], self.paths("quokkaplan", BIRCH))
         self.assertEqual([], self.paths("acmenotesword", BIRCH))
@@ -595,14 +622,14 @@ class ReviewFixesTest(Base):
         write(self.root / "Wikis/Knowledge/raw/o.txt", "kbirchrawword\n")
         self.assertEqual([], self.find("kbirchword", ACME))
         self.assertEqual([], self.find("kbirchrawword", ACME))
-        self.assertEqual(1, len(self.find("kbirchword", BIRCH)))
-        self.assertEqual(1, len(self.find("kbirchrawword", BIRCH)))
-        self.assertEqual(1, len(self.find("kacmeword", ACME)))
-        self.assertEqual([], self.find("kacmeword", BIRCH))
-        self.assertEqual([], self.find("kpartyonlyword", None))
-        self.assertEqual([], self.find("kzoneonlyword", None))
+        # labels() reads a Knowledge page with a party or zone key as someone's, not published:
+        # it is in no scope's index, the root's included
+        for project in (ACME, BIRCH, None):
+            for word in ("kbirchword", "kbirchrawword", "kacmeword", "kpartyonlyword", "kzoneonlyword"):
+                self.assertEqual([], self.find(word, project), (word, project))
         self.assertEqual(1, len(self.find("kplainword", ACME)))
-        self.assertEqual(1, len(self.find("kbirchword", None)))
+        self.assertEqual(1, len(self.find("kplainword", BIRCH)))
+        self.assertEqual(1, len(self.find("kplainword", None)))
 
     # -- 6: an edit that keeps the size and the time still counts --------------
 
@@ -619,9 +646,12 @@ class ReviewFixesTest(Base):
 
     # -- 8: a file at the zone's top is the zone's, not a project --------------
 
-    def test_a_zone_level_search_finds_its_own_todo(self):
+    def test_a_zone_level_search_finds_nothing_of_the_zones_top(self):
         write(self.root / "Zones/Work/Todo.md", "# Todo\n\nzonetodoword\n")
-        self.assertEqual(["Zones/Work/Todo.md"], self.paths("zonetodoword", "Zones/Work"))
+        # a zone's Todo.md mixes the parties of its projects and has no label: no scope reads it
+        self.assertEqual([], self.paths("zonetodoword", "Zones/Work"))
+        self.assertEqual([], self.paths("zonetodoword", ACME))
+        self.assertEqual([], self.paths("zonetodoword", None))
         self.assertEqual("", recall.locate(self.root, self.root / "Zones/Work/Todo.md").project)
         self.assertEqual("Acme Review", recall.locate(self.root, self.root / ACME).project)
 
@@ -641,7 +671,7 @@ class ReviewFixesTest(Base):
 
     def test_an_index_in_use_is_not_deleted_and_files_are_private(self):
         self.find("quokkaplan")
-        path = self.root / "Wikis/Meetings" / recall.INDEX_NAME
+        path = self.root / "Zones/Work" / (recall.INDEX_NAME + "-acme")
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
         path.unlink()
         path.write_bytes(b"")                      # another process has just created it
@@ -687,7 +717,7 @@ class ReviewSessionFixesTest(Base):
         self.assertNotIn("project:", text)
         self.assertEqual([], self.find("zonelevelword", ACME, sessions=True))
         self.assertEqual([], self.find("zonelevelword", BIRCH, sessions=True))
-        self.assertEqual(1, len(self.find("zonelevelword", "Zones/Work", sessions=True)))
+        self.assertEqual([], self.find("zonelevelword", "Zones/Work", sessions=True))
         self.assertEqual(1, len(self.find("zonelevelword", None, sessions=True)))
 
     def test_a_crafted_session_id_cannot_forge_a_header(self):
@@ -742,11 +772,11 @@ class RawClaimantsTest(Base):
 
     def test_the_result_does_not_depend_on_the_order_the_index_was_built(self):
         first = self.seen()
-        for index in self.root.rglob(recall.INDEX_NAME):
+        for index in self.indexes():
             index.unlink()
         self.acme.rename(self.acme.with_name("250101-acme-followup.md"))     # read first now
         self.assertEqual(first, self.seen())
-        for index in self.root.rglob(recall.INDEX_NAME):
+        for index in self.indexes():
             index.unlink()
         self.assertEqual(first, self.seen())
 
@@ -855,51 +885,6 @@ class CommandLineScopeTest(Base):
         _, out, _ = self.cli(self.root / ACME, "stats")
         self.assertNotIn("Meetings: 4", out)
         self.assertNotIn("Meetings:", self.cli(self.tmp, "stats")[1])
-
-
-class AdmitTest(Base):
-    """`admit` narrows a root-scope search before ranking, so walled rows
-    change neither the order nor the scores."""
-
-    def add_meetings(self, birch_notes):
-        meetings = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
-        write(meetings / "260401-a1.md", meeting_page("Work", "[acme]", "A one").replace(
-            "Decisions.", "Decisions: quokkax quokkax quokkax filler filler filler filler."))
-        write(meetings / "260402-a2.md", meeting_page("Work", "[acme]", "A two").replace(
-            "Decisions.", "Decisions: quokkax numbatx numbatx."))
-        for n in range(birch_notes):
-            write(meetings / ("2604%02d-b%d.md" % (10 + n, n)), meeting_page("Work", "[birch]", "B %d" % n).replace(
-                "Decisions.", "Decisions: numbatx."))
-
-    def run_search(self, **kw):
-        return [(r.path, r.score) for r in recall.search("quokkax numbatx", project=None, root=self.root,
-                                                          wiki="Meetings", **kw)]
-
-    def test_a_walled_row_changes_nothing_when_the_caller_admits_its_own_side(self):
-        side = lambda row: row.kind != "meetings" or "birch" not in row.parties      # noqa: E731
-        self.add_meetings(0)
-        base = self.run_search(admit=side)
-        self.assertTrue(base)
-        unfiltered = self.run_search()
-        self.add_meetings(12)
-        self.assertEqual(base, self.run_search(admit=side))
-        self.assertNotEqual(unfiltered, self.run_search())          # without admit the statistics move
-
-    def test_admit_only_narrows_and_fails_closed(self):
-        self.add_meetings(0)
-        self.assertEqual([], self.run_search(admit=lambda row: False))
-        def boom(row):
-            raise RuntimeError("x")
-        self.assertEqual([], self.run_search(admit=boom))
-        # a project's wall still holds when admit says yes to everything
-        self.assertEqual([], [r for r in recall.search("wombatplan", project=ACME, root=self.root,
-                                                       admit=lambda row: True)])
-
-    def test_the_policy_row_carries_kind_zones_project_and_parties(self):
-        seen = []
-        recall.search("quokkaplan", project=None, root=self.root, admit=lambda row: seen.append(row) or True)
-        self.assertTrue(any(r.kind == "meetings" and r.parties == ("acme",) and r.zones == ("work",) for r in seen))
-        self.assertTrue(any(r.kind == "zone" and r.project for r in seen))
 
 
 class MaskMoreTest(unittest.TestCase):
@@ -1015,7 +1000,7 @@ class IgnoreGuardTest(Base):
     def test_an_ignored_zone_gets_its_index(self):
         zone = self.zone_repo(True)
         self.assertTrue(self.find("quokkaplan"))
-        self.assertTrue((zone / recall.INDEX_NAME).is_file())
+        self.assertTrue((zone / (recall.INDEX_NAME + "-acme")).is_file())
 
     def test_no_ignore_line_means_no_session_file(self):
         zone = self.zone_repo(False)
@@ -1047,11 +1032,11 @@ class CheckTest(Base):
         write(zone / ".gitignore", garrick_lib.RECALL_IGNORES)        # the index is only written where it is ignored
         write(zone / ".sessions" / "260901 - s.md", "x")
         self.find("quokkaplan")
-        self.assertTrue((zone / recall.INDEX_NAME).is_file())
+        self.assertTrue((zone / (recall.INDEX_NAME + "-acme")).is_file())
         (zone / ".gitignore").unlink()
         commit_all(zone)                                              # no ignore file: everything is staged
         found = self.recall_findings()
-        self.assertEqual({"Zones/Work/.sessions/260901 - s.md", "Zones/Work/.recall.sqlite"}, {f.path for f in found})
+        self.assertEqual({"Zones/Work/.sessions/260901 - s.md", "Zones/Work/.recall.sqlite-acme"}, {f.path for f in found})
         self.assertEqual({"error"}, {f.severity for f in found})
 
     def test_an_ignored_index_is_clean(self):
@@ -1063,6 +1048,275 @@ class CheckTest(Base):
         self.find("quokkaplan")
         commit_all(zone)
         self.assertEqual([], self.recall_findings())
+
+
+class ScopeIndexTest(Base):
+    """The wall at the store (#341, #358, #398): for each scope a session can
+    hold, one index holding admitted rows only. A walled row is not in the
+    file, so nothing it could shape is there to be shaped."""
+
+    def db(self, name):
+        return sqlite3.connect(str(self.root / name))
+
+    def test_one_scope_index_per_zone_with_no_wall_and_one_per_side_otherwise(self):
+        ctx = garrick_lib.load_context(self.root)
+        scopes = recall.scopes_of(self.root, ctx)
+        self.assertEqual(["root", "personal", "work/acme", "work/birch"], [sc.key for sc in scopes])
+        self.assertEqual(1, len([sc for sc in scopes if sc.zone == "Personal"]))     # no wall inside it
+        self.assertEqual(2, len([sc for sc in scopes if sc.zone == "Work"]))         # acme | birch
+        recall.build(self.root)
+        self.assertEqual(sorted(sc.file(self.root) for sc in scopes), self.indexes())
+        # a wall added inside Personal splits it in two; a zone with no wall stays one
+        context = self.root / "System" / "context.md"
+        text = context.read_text(encoding="utf-8")
+        text = text.replace("| Acme Corp |", "| Lumen Ltd | Own venture | Personal | `lumen` | lumen.example |\n"
+                            "| Acme Corp |", 1)
+        text = text.replace("| Birch & Co |", "| Fern Ltd | Own venture | Personal | `fern` | fern.example |\n"
+                            "| Birch & Co |", 1)
+        context.write_text(text, encoding="utf-8")
+        self.assertEqual(["root", "personal", "work/acme", "work/birch"],
+                         [sc.key for sc in recall.scopes_of(self.root, garrick_lib.load_context(self.root))])
+        text = context.read_text(encoding="utf-8")
+        walls = text.index("## Walls")
+        row = text.index("\n|", text.index("|---", walls))
+        context.write_text(text[:row] + "\n| `lumen` | `fern` | Two hats |" + text[row:], encoding="utf-8")
+        keys = [sc.key for sc in recall.scopes_of(self.root, garrick_lib.load_context(self.root))]
+        self.assertEqual(["root", "personal/fern", "personal/lumen", "work/acme", "work/birch"], keys)
+
+    def test_a_walled_row_is_not_in_the_index_file_at_all(self):
+        write(self.root / ACME / "A.md", "# A\n\nacmeonlyword here\n")
+        write(self.root / BIRCH / "B.md", "# B\n\nbirchonlyword here\n")
+        self.find("acmeonlyword")
+        self.find("birchonlyword", BIRCH)
+        for name, mine, theirs in (("Zones/Work/.recall.sqlite-acme", "acme", "birch"),
+                                   ("Zones/Work/.recall.sqlite-birch", "birch", "acme")):
+            con = self.db(name)
+            paths = [r[0] for r in con.execute("SELECT DISTINCT path FROM docs")]
+            self.assertTrue(paths, name)
+            for table in ("docs", "files", "fts", "fts_tri"):
+                columns = {"docs": "path || body || title", "files": "path", "fts": "body", "fts_tri": "body"}[table]
+                self.assertEqual(0, con.execute("SELECT COUNT(*) FROM %s WHERE %s LIKE ?" % (table, columns),
+                                                ("%" + theirs + "onlyword%",)).fetchone()[0], (name, table))
+            self.assertFalse([p for p in paths if theirs in p.lower() and "kickoff" not in p.lower() or
+                              ("birch entry" if theirs == "birch" else "acme review") in p.lower()], paths)
+            con.close()
+            data = (self.root / name).read_bytes()
+            self.assertNotIn((theirs + "onlyword").encode(), data)
+            self.assertNotIn(b"wombat" if theirs == "birch" else b"quokka", data)
+
+    def test_a_row_that_leaves_a_scope_leaves_no_bytes_of_it_in_the_file(self):
+        write(self.root / BIRCH / "B.md", "# B\n\nleavingmarkerword here\n")
+        self.assertTrue(self.find("leavingmarkerword", BIRCH))
+        path = self.root / "Zones/Work/.recall.sqlite-birch"
+        self.assertIn(b"leavingmarkerword", path.read_bytes())
+        # the hub moves to the other side: the birch scope no longer admits the project
+        for f in (self.root / BIRCH / "Birch Entry.md", self.root / BIRCH / "Threads/Market Sizing/Market Sizing.md"):
+            f.write_text(f.read_text().replace("party: birch", "party: acme"))
+        self.assertEqual([], self.find("leavingmarkerword", None, scope="work/birch"))
+        self.assertNotIn(b"leavingmarkerword", path.read_bytes())
+        self.assertTrue(self.find("leavingmarkerword", BIRCH))           # it is in the acme scope now
+        self.assertIn(b"leavingmarkerword", (self.root / "Zones/Work/.recall.sqlite-acme").read_bytes())
+
+    def test_read_checks_the_id_is_in_the_scope_index_and_a_walled_id_is_an_unknown_one(self):
+        mine = self.find("quokkaplan")[0]
+        theirs = self.find("wombatplan", None)[0]
+        self.assertIn("quokkaplan", recall.read(mine.id, project=ACME, root=self.root))
+        self.assertIn("wombatplan", recall.read(theirs.id, project=BIRCH, root=self.root))
+        unknown = recall.read("Meetings:Wikis/Meetings/wiki/sources/260399-nothing.md", project=ACME, root=self.root)
+        walled = recall.read(theirs.id, project=ACME, root=self.root)
+        self.assertIsNone(unknown)
+        self.assertIsNone(walled)
+        # a real file that is no row in the index is as unknown as a walled one
+        self.assertIsNone(recall.read("Work:Zones/Work/Acme Review/Acme Review.md.bak", project=ACME, root=self.root))
+        self.assertIsNone(recall.read("Work:../../etc/hosts", project=ACME, root=self.root))
+        self.assertIsNone(recall.read(mine.id, project="Zones/Work", root=self.root))     # no scope
+        # the command line says the same of both
+        a = self.cli(self.root / ACME, "read", theirs.id)
+        b = self.cli(self.root / ACME, "read", "Meetings:Wikis/Meetings/wiki/sources/260399-nothing.md")
+        self.assertEqual((1, ""), a[:2])
+        self.assertEqual((1, ""), b[:2])
+        self.assertEqual(a[2].replace(theirs.id, "X"), b[2].replace("Meetings:Wikis/Meetings/wiki/sources/260399-nothing.md", "X"))
+
+    def test_adding_a_walled_row_changes_no_result_count_rank_or_snippet(self):
+        write(self.root / ACME / "A.md", "# A\n\nalpha beta filler words go here today\n")
+        write(self.root / ACME / "B.md", "# B\n\nbeta filler words go here today and quokkaplan\n")
+
+        def snapshot():
+            out = []
+            for words in ("alpha beta", "quokkaplan renewal", "beta filler", "renewal bands", "gammaword"):
+                for kw in ({}, {"sessions": True}, {"wiki": "Meetings"}, {"limit": 1}, {"after": "2026-03-01"}):
+                    out.append((words, sorted(kw), [dataclasses.asdict(r) for r in self.find(words, ACME, **kw)]))
+            out.append(self.cli(self.root / ACME, "search", "alpha beta")[1])
+            out.append(self.cli(self.root / ACME, "stats")[1])
+            return out
+
+        before = snapshot()
+        for n in range(8):
+            write(self.root / BIRCH / ("W%d.md" % n), "# W\n\nalpha beta alpha quokkaplan renewal bands gammaword %d\n" % n)
+            write(self.root / "Wikis/Meetings/wiki/sources" / ("2603%02d-w.md" % (20 + n)),
+                  meeting_page("Work", "[birch]", "W%d" % n).replace("Decisions.", "Decisions: gammaword quokkaplan alpha"))
+        write(self.root / "System/.sessions/260901 - x.md", "# x\n\nalpha beta quokkaplan\n")
+        self.assertEqual(before, snapshot())
+        self.assertTrue(self.find("gammaword", BIRCH))                 # the other side does see them
+
+    def test_two_sides_of_one_zone_never_share_a_file(self):
+        self.find("quokkaplan")
+        self.find("wombatplan", BIRCH)
+        acme, birch = (self.root / "Zones/Work/.recall.sqlite-acme"), (self.root / "Zones/Work/.recall.sqlite-birch")
+        self.assertNotEqual(acme, birch)
+        for table, word in (("docs", "wombat"), ("docs", "quokka")):
+            pass
+        self.assertEqual(0, self.db("Zones/Work/.recall.sqlite-acme").execute(
+            "SELECT COUNT(*) FROM docs WHERE body LIKE '%wombat%'").fetchone()[0])
+        self.assertEqual(0, self.db("Zones/Work/.recall.sqlite-birch").execute(
+            "SELECT COUNT(*) FROM docs WHERE body LIKE '%quokka%'").fetchone()[0])
+
+    # -- the four rounds of findings, as cases that are impossible by construction ------------------
+
+    def test_round_1_statistics_of_walled_rows_cannot_move_an_admitted_rank(self):
+        """The ranking took its counts over walled rows. Now the index holds none."""
+        write(self.root / ACME / "A.md", "# A\n\nalpha filler words go here today\n")
+        write(self.root / ACME / "B.md", "# B\n\nbeta filler words go here today\n")
+        before = [(r.path, r.score) for r in self.find("alpha beta")]
+        for n in range(6):
+            write(self.root / BIRCH / ("W%d.md" % n), "# W\n\nalpha secret stuff %d\n" % n)
+        self.assertEqual(before, [(r.path, r.score) for r in self.find("alpha beta")])
+        self.assertEqual(0, self.db("Zones/Work/.recall.sqlite-acme").execute(
+            "SELECT COUNT(*) FROM docs WHERE path LIKE '%Birch%'").fetchone()[0])
+
+    def test_round_2_the_command_line_cannot_choose_its_scope(self):
+        """`--project System` searched as the root. The command takes a scope, and only the session's own."""
+        acme = self.root / ACME
+        for flag in ("System", BIRCH, str(self.root)):
+            code, out, _ = self.cli(acme, "search", "wombatplan", "--project", flag)
+            self.assertNotEqual(0, code)
+            self.assertEqual("", out)
+        for scope in ("root", "work/birch", "personal", "nowhere"):
+            code, out, err = self.cli(acme, "search", "wombatplan", "--scope", scope)
+            self.assertTrue(out.startswith("0 results"), (scope, out))
+        self.assertTrue(self.cli(acme, "search", "quokkaplan", "--scope", "work/acme")[1].startswith("1 result"))
+        # the root may name any scope; that is narrowing, not widening
+        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work/birch")[1].startswith("1 result"))
+        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work/acme")[1].startswith("0 results"))
+        # and the API holds the same line
+        self.assertEqual([], self.find("wombatplan", ACME, scope="work/birch"))
+        self.assertEqual([], self.find("wombatplan", ACME, scope="root"))
+
+    def test_round_3_a_folder_cannot_move_a_session_into_the_root_scope(self):
+        """A link to the root, changed into, searched as the root. A session started with its scope keeps it."""
+        link = self.tmp / "rootlink"
+        os.symlink(str(self.root), str(link))
+        env = {recall.SCOPE_ENV: "work/acme"}
+        for folder in (self.root, self.root / "System", link):
+            out = self.cli(folder, "search", "wombatplan", env=env)[1]
+            self.assertTrue(out.startswith("0 results"), (folder, out))
+            self.assertTrue(self.cli(folder, "search", "quokkaplan", env=env)[1].startswith("1 result"), folder)
+            self.assertIn("work/acme: ", self.cli(folder, "stats", env=env)[1])
+        # it may not name another scope either
+        code, out, err = self.cli(self.root, "search", "wombatplan", "--scope", "work/birch", env=env)
+        self.assertTrue(out.startswith("0 results"), out)
+        self.assertIn("may not name another", err)
+        # an unknown pin reads nothing
+        self.assertTrue(self.cli(self.root, "search", "quokkaplan", env={recall.SCOPE_ENV: "nowhere"})[1].startswith("0 results"))
+
+    def test_round_4_a_session_that_worked_in_two_projects_across_a_wall_is_nobodys_but_the_roots(self):
+        """A session of a no-party project and a walled one was labelled with the first. Now it has the labels of all."""
+        sessions = self.root / "Zones/Work/.sessions"
+        header = "---\nsession: s9\ntitle: mixed\nproject:\n%s---\n\n# mixed\n\nmixedsessionword said\n"
+        write(sessions / "260901 - mixed.md", header % "".join("  - %s\n" % p for p in (ACME, BIRCH)))
+        write(self.root / "Zones/Work/Loose/Loose.md", fixtures.project_hub("Work", "Loose", ""))
+        write(sessions / "260902 - loose.md", header % "".join("  - %s\n" % p for p in ("Zones/Work/Loose", BIRCH)))
+        write(sessions / "260903 - gone.md", header % "".join("  - %s\n" % p for p in (ACME, "Zones/Work/Deleted")))
+        for project in (ACME, BIRCH, "Zones/Work/Loose"):
+            self.assertEqual([], self.find("mixedsessionword", project, sessions=True), project)
+        # the root holds no party, so it reads the one session it can place; a no-party project's and a
+        # deleted one's cannot be placed by anyone
+        self.assertEqual(["Zones/Work/.sessions/260901 - mixed.md"],
+                         [r.path for r in self.find("mixedsessionword", None, sessions=True)])
+        # one side alone is readable from its side
+        write(sessions / "260904 - acme.md", header % "  - %s\n" % ACME)
+        self.assertEqual(1, len(self.find("mixedsessionword", ACME, sessions=True)))
+        self.assertEqual([], self.find("mixedsessionword", BIRCH, sessions=True))
+        con = self.db("Zones/Work/.recall.sqlite-birch")
+        self.assertEqual(0, con.execute("SELECT COUNT(*) FROM docs WHERE src = 'session'").fetchone()[0])
+
+    def test_round_5_rows_the_walls_cannot_place_are_in_no_index_but_the_roots_for_a_known_tag(self):
+        """An unlisted tag, a conversation without a zone, a Knowledge page with a party: used nowhere."""
+        meetings = self.root / "Wikis/Meetings/wiki/sources"
+        write(meetings / "260330-ghost.md", meeting_page("Work", "[ghost]", "Ghost").replace("Decisions.", "Decisions: ghostword."))
+        write(meetings / "260331-mixed.md", meeting_page("Work", "[acme, birch]", "Mixed").replace("Decisions.", "Decisions: crossword."))
+        for project in (ACME, BIRCH, None):
+            self.assertEqual([], self.find("ghostword", project), project)
+        for project in (ACME, BIRCH):
+            self.assertEqual([], self.find("crossword", project), project)       # a row across the wall: on neither side
+        self.assertEqual(1, len(self.find("crossword", None)))                    # the root holds no party
+        for path in self.indexes():
+            con = sqlite3.connect(str(path))
+            self.assertEqual(0, con.execute("SELECT COUNT(*) FROM docs WHERE body LIKE '%ghostword%'").fetchone()[0], path)
+            if path.name != ".recall.sqlite":
+                self.assertEqual(0, con.execute("SELECT COUNT(*) FROM docs WHERE body LIKE '%crossword%'").fetchone()[0], path)
+            con.close()
+
+
+class NamesAndSpellingTest(Base):
+    """Names are expanded before the query; a trigram table catches a near miss."""
+
+    def test_a_name_is_searched_in_every_spelling_with_and_without_spaces(self):
+        write(self.root / ACME / "Joined.md", "# Joined\n\nrenewal with acmecorp signed\n")
+        write(self.root / ACME / "Spaced.md", "# Spaced\n\nrenewal with Acme Corp signed\n")
+        for query in ("acme corp", "acmecorp", "Acme  Corp renewal"):
+            found = {Path(r.path).name for r in self.find(query)}
+            self.assertTrue({"Joined.md", "Spaced.md"} <= found, (query, found))
+
+    def test_a_heard_alias_finds_the_name_it_means(self):
+        write(self.root / BIRCH / "Names.md", "# Names\n\nthe call with Birch & Co went well, birch and co agreed\n")
+        self.assertIn(BIRCH + "/Names.md", self.paths("birchen co", BIRCH))
+
+    def test_a_near_misspelling_is_found_through_the_trigram_table(self):
+        self.assertTrue(recall.trigram_available())
+        self.assertEqual("Wikis/Meetings/wiki/sources/260310-acme-kickoff.md", self.find("quokaplan")[0].path)
+        con = sqlite3.connect(str(self.root / "Zones/Work/.recall.sqlite-acme"))
+        self.assertTrue(con.execute("SELECT 1 FROM sqlite_master WHERE name = 'fts_tri'").fetchone())
+        self.assertIn("trigram", con.execute("SELECT sql FROM sqlite_master WHERE name = 'fts_tri'").fetchone()[0])
+        con.close()
+        # a near miss never reaches across the wall: the other side's word is not in this index
+        self.assertEqual([], self.find("wombaatplan"))
+
+    def test_without_the_trigram_tokenizer_it_falls_back_and_does_not_crash(self):
+        with mock.patch.object(recall, "trigram_available", return_value=False):
+            self.assertEqual([], self.find("quokaplan"))
+            self.assertTrue(self.find("quokkaplan"))
+            con = sqlite3.connect(str(self.root / "Zones/Work/.recall.sqlite-acme"))
+            self.assertIsNone(con.execute("SELECT 1 FROM sqlite_master WHERE name = 'fts_tri'").fetchone())
+            con.close()
+        self.assertTrue(self.find("quokaplan"))             # and back again: the index is made again with it
+
+    def test_a_changed_wall_makes_the_index_again(self):
+        self.assertTrue(self.find("quokkaplan"))
+        context = self.root / "System" / "context.md"
+        text = context.read_text(encoding="utf-8")
+        walls = text.index("## Walls")
+        row = text.index("\n|", text.index("|---", walls))
+        # a wall between acme and a party that now holds the Acme page's other label
+        self.assertIn("acme", text)
+        stamp = recall.policy_stamp(garrick_lib.load_context(self.root), recall.scopes_of(
+            self.root, garrick_lib.load_context(self.root))[2])
+        context.write_text(text[:row] + "\n| `acme` | `personal` | Test |" + text[row:], encoding="utf-8")
+        ctx = garrick_lib.load_context(self.root)
+        self.assertNotEqual(stamp, recall.policy_stamp(ctx, recall.scopes_of(self.root, ctx)[2]))
+        self.assertTrue(self.find("quokkaplan"))
+
+
+class NoWallTestOfItsOwnTest(unittest.TestCase):
+    def test_recall_holds_no_wall_test_of_its_own(self):
+        import re
+        for name in ("recall.py", "recall_sessions.py"):
+            text = (Path(fixtures.__file__).resolve().parent.parent / "template" / "System" / "tools" / name).read_text()
+            self.assertIsNone(re.search(r"\bwalled\(", text), name)
+        text = (Path(fixtures.__file__).resolve().parent.parent / "template" / "System" / "tools" / "recall.py").read_text()
+        self.assertIn("decide(", text)
+        self.assertNotIn("allowed_pids", text)
+        self.assertNotIn("admit=", text)
 
 
 if __name__ == "__main__":

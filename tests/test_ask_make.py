@@ -463,7 +463,7 @@ class TestMakingThem(MakeCase):
         self.assertEqual(("open", "park", "wake", "todo-add", "new-project", "new-thread"), ask.VERBS)
 
     def test_the_brief_tells_the_session_about_both(self):
-        brief = (REPO / "extras" / "status" / "ask-brief.md").read_text(encoding="utf-8")
+        brief = (REPO / "extras" / "status" / "ask-command-brief.md").read_text(encoding="utf-8")
         for needle in ('{"verb": "new-thread", "zone": Z, "project": P, "name": N}',
                        '{"verb": "new-project", "zone": Z, "name": N, "party": "<tag>"'):
             self.assertIn(needle, brief)
@@ -475,7 +475,7 @@ class TestTheBriefSpeaksAsGarrick(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.brief = " ".join((REPO / "extras" / "status" / "ask-brief.md").read_text(encoding="utf-8").split())
+        cls.brief = " ".join((REPO / "extras" / "status" / "ask-command-brief.md").read_text(encoding="utf-8").split())
 
     def test_it_no_longer_claims_to_have_no_reach_into_notes(self):
         self.assertNotIn("You never read or write a note", self.brief)

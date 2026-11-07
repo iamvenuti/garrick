@@ -94,10 +94,15 @@ class FalsePositiveTest(unittest.TestCase):
                "    [data-preset=\"blueprint\"][data-theme=\"dark\"] { color: red }\n    * { margin: 0 }\n</style>\n")
         self.assertEqual([], self.says(css, suffix=".html"))
 
+    def pages(self, n):
+        for i in range(n):
+            write(self.meet / "entities" / ("zeta-%d.md" % i), "---\ntitle: z\ntype: entity\nparty: acme\n---\n\n# z\n")
+
     def test_normal_css_and_script_do_not_count_as_globs(self):
         css = "<style>\n" + "".join("a%d { x: y }\n* { margin: 0 } [i%d] {}\n" % (i, i) for i in range(6000)) + "</style>\n"
         self.assertEqual([], self.says(css, suffix=".html"))
-        many = "\n".join("ls dir%d*" % i for i in range(5200))
+        self.pages(5200)       # the globs below can match a page each: only globs that can are counted (#422)
+        many = "\n".join("ls zeta-%d*" % i for i in range(5200))
         found = self.says("# Notes\n\n```\n%s\n```\n" % many)
         self.assertTrue(any("cannot be read" in m for m in self.refused(found)), found)
 
@@ -152,7 +157,8 @@ class FalsePositiveTest(unittest.TestCase):
                 self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), (glob, suffix, found))
         found = self.says_file("# c\nGLOB = 'people/%s'\n" % "*", ".py")
         self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), found)
-        many = "".join("p = 'dir%d/sub*'\n" % i for i in range(5200))
+        self.pages(5200)       # path-shaped globs that reach a page each; ones that reach none are not counted (#422)
+        many = "".join("p = 'entities/zeta-%d*'\n" % i for i in range(5200))
         found = self.says_file(many, ".py")
         self.assertTrue(any("cannot be read" in m for m in self.refused(found)), found)
 

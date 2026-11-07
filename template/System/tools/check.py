@@ -5570,6 +5570,8 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
         word = window.split(None, 1)[0] if window.strip() else ""
         if "/".join(_strip_md(tuple(x.lower() for x in word.split("/") if x and x != "."))) in SHARED_PROJECT_PATHS:
             continue  # every project holds this one: the file reading says how
+        if harness_path(ws, source, word) and text[max(0, start - 1):start] not in tuple("=:&?#%"):
+            continue  # `.claude/…` from any project: its own, wherever a tail of it would land (#423)
         tries: List[Tuple[int, Optional[frozenset], str]] = []
         rest = window
         if head.startswith("file:"):
@@ -5616,9 +5618,6 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
                         names = bool(ctx) or count >= len(folder.relative_to(project).parts) + 1
                         if not names and folder.parent == project and folder.name.lower() in LAYOUT_FOLDERS:
                             continue  # `Deliverables/…` from any project: its own folder, made or not yet
-                        if not names and folder.relative_to(project).parts[:1] and \
-                                folder.relative_to(project).parts[0].lower() in HARNESS_FOLDERS:
-                            continue  # `.claude/…` from any project: its own, made or not yet (#423)
                         if not names and folder in idx.hidden:
                             continue  # a copy or a build git ignores: a path that only ends the same way does not lead into it
                         group.append((folder, names))
@@ -5647,16 +5646,42 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
 SHARED_PROJECT_PATHS = ("deliverables/published",)
 
 
-def harness_path(target: str, hit: Path, project: Path) -> bool:
-    """Is `target`, written relative, a path under a harness folder every project may hold (`.claude/…`), and
-    `hit` that folder's file in `project`? Then it names no project. A `..` anywhere, a path from the top or the
-    note, or a project's name before the folder leaves it a path into that project."""
-    written = target.split(":", 2)[2] if target.startswith("obsidian:") else target
-    if written.startswith(("/", "./", "../", "~")) or ".." in written.replace("\\", "/").split("/"):
+# What a path under a harness folder may name without naming a subject: the files and folders the harness itself defines.
+HARNESS_VOCABULARY = frozenset({"settings.json", "settings.local.json", "skills", "agents", "commands", "hooks",
+                                "config.toml", "agents.md", "claude.md", "skill.md", "\u2026"})
+
+
+def harness_path(ws: Workspace, source: Path, target: str) -> bool:
+    """Is `target`, written in the note `source`, a relative path whose first name is a folder every project may
+    hold (`.claude/settings.json`, `.agents/skills`), with no `..` in it, and does it mean the note's own? It does
+    when every name after the folder is the harness's own vocabulary (HARNESS_VOCABULARY), or when the note's
+    project, or the repository the note sits in, has that same path. Any other (`.claude/skills/<a subject>/…`) is
+    read as before: a name that is a walled project's is refused. A project's name before the folder, `./`, `../`,
+    `/`, `~`, a leading `\\` and any address leave it a path into that project (#423)."""
+    if re.match(r"(?i)^[a-z][a-z0-9+.-]*:", target) or target.startswith("\\"):
+        return False                  # an address (`obsidian:`, `file:`) is read from a vault or the disk, not the note
+    written = unquote(target).replace("\\", "/")
+    if written.startswith(("/", "./", "../", "~")):
         return False
-    parts = [x.lower() for x in written.replace("\\", "/").split("/") if x]
-    rel = [x.lower() for x in hit.relative_to(project).parts]
-    return bool(parts) and parts[0] in HARNESS_FOLDERS and rel[:1] == parts[:1]
+    parts = [x for x in written.split("/") if x]
+    if not parts or parts[0].lower() not in HARNESS_FOLDERS or any(x in ("..", ".") for x in parts) or "%" in written:
+        return False
+    if all(x.lower() in HARNESS_VOCABULARY for x in parts[1:]):
+        return True
+    owner = project_of(ws, source)
+    if owner is None:
+        return False
+    project = owner[0]
+    bases = [project]
+    for up in source.parents:
+        if up == project or project not in up.parents:
+            break
+        if (up / ".git").exists():
+            bases.append(up)
+            break
+    stem = re.sub(r"(?i)\.md$", "", "/".join(parts))
+    return any((base / "/".join(parts)).exists() or (base / stem).exists() or (base / (stem + ".md")).exists()
+               for base in bases)
 
 
 def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
@@ -6385,7 +6410,9 @@ class PageNames:
         self._globs: Dict[str, List[Path]] = {}
         self.globs_read: set = set()         # the distinct globs this file holds; walls_for_file sets it again
         self._tails: Optional[Dict[int, Dict[str, List[Path]]]] = None
-        self._haystack: Optional[str] = None
+        self._trigrams: Optional[Dict[str, set]] = None
+        self._paths: List[str] = []
+        self._budget = GLOB_FILE_MAX
         self._full: Optional[Dict[int, Dict[str, List[Path]]]] = None
         self.spaced = False                # does any page's name hold a space? (a decision's does)
         self.first_words: set = set()      # the first word of each such name, folded
@@ -6485,20 +6512,78 @@ class PageNames:
         return self._raw_tags.get(record, set())
 
     def _may_match(self, form: str) -> bool:
-        """Can the glob `form` match any page? False only when it surely cannot: the longest literal stretch of its
-        last name, which every reading of it must match (a longer glob is matched by its last names), is in no
-        page's path. A glob with a brace list or an odd class is never ruled out. Only the globs that can match
-        count towards GLOB_FILE_MAX, so a file of code, full of `*` and `[`, is not refused for them."""
-        last = form.rsplit("/", 1)[-1]
-        if "{" in form or re.search(r"\[[!^]?\]", last):
-            return True
-        stretches = re.split(r"[*?]", re.sub(r"\[[^\]]*\]", "*", last))
-        chunk = max(stretches, key=len).lower()
-        if not chunk:
-            return True
-        if self._haystack is None:
-            self._haystack = "\n".join("/".join(have) for have, _ in self.entries).lower()
-        return chunk in self._haystack
+        """Does the glob `form` match a page? Only a glob that does counts towards GLOB_FILE_MAX, so a file of code,
+        full of `*` and `[`, is not refused for them. Every literal stretch of its last name (three letters or more)
+        must lie in the path of one page, which a trigram index of the paths tests at once; what survives is matched
+        for real (_glob). A glob whose stretches cannot rule it out, or whose class may span names (`entities[/]harvest-co`),
+        is matched for real."""
+        if "{" in form and ("[" in form or "]" in form):
+            return self._matches(form)
+        # A brace list is read as a `*`, which is at least as wide. A bracket class that can match a `/` (it holds one,
+        # spans one in a range, or is negated) spans names and keeps the glob; any other class matches one character.
+        # A `[` never closed and a `]` outside a class are plain characters.
+        flat = original = form
+        while "{" in flat:
+            wider = re.sub(r"\{[^{}]*\}", "*", flat)
+            if wider == flat:
+                break
+            flat = wider
+        form, flat, i = flat, "", 0
+        while i < len(form):
+            if form[i] != "[":
+                flat += form[i]
+                i += 1
+                continue
+            j = i + 1
+            if form[j:j + 1] in ("!", "^"):
+                j += 1
+            if form[j:j + 1] == "]":
+                j += 1
+            end = form.find("]", j)
+            if end < 0:
+                flat += form[i:]
+                break
+            body = form[i + 1:end]
+            if body[:1] in ("!", "^") or "/" in body or any(
+                    body[k] == "-" and body[k - 1] <= "/" <= body[k + 1] for k in range(1, len(body) - 1)):
+                return self._matches(original)
+            flat += "?"
+            i = end + 1
+        last = flat.rsplit("/", 1)[-1]
+        stretches = [t.lower() for t in re.split(r"[*?]", last) if len(t) >= 3]
+        if not stretches:
+            return self._matches(original)
+        if self._trigrams is None:
+            self._paths = ["/".join(have).lower() for have, _ in self.entries]
+            self._trigrams = {}
+            for i, path in enumerate(self._paths):
+                for k in {path[j:j + 3] for j in range(len(path) - 2)}:
+                    self._trigrams.setdefault(k, set()).add(i)
+        lists = []
+        for stretch in stretches:
+            for k in {stretch[j:j + 3] for j in range(len(stretch) - 2)}:
+                found = self._trigrams.get(k)
+                if not found:
+                    return False
+                lists.append(found)
+        lists.sort(key=len)
+        near = set(lists[0])
+        for more in lists[1:]:
+            near &= more
+            if not near:
+                return False
+        if not any(all(t in self._paths[i] for t in stretches) for i in near):
+            return False
+        return self._matches(original)
+
+    def _matches(self, form: str) -> bool:
+        """Does the glob match a page, matched for real? Each such matching of a glob not yet matched is paid from a
+        budget of GLOB_FILE_MAX, the work the limit has always allowed; past it a glob counts without being matched."""
+        if form in self._globs or self._budget > 0:
+            if form not in self._globs:
+                self._budget -= 1
+            return bool(self._glob(form))
+        return True
 
     def _glob(self, form: str) -> List[Path]:
         """The pages a glob (`kai-*`, `wiki/*/x`, `kai-{ross,x}`, `[kj]ai-r?ss`)
@@ -6891,6 +6976,8 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                 out[earlier] = found
 
         for verb, written, target in targets:
+            if harness_path(ws, path, target):
+                continue  # `.claude/settings.json` from any project: its own, made or not yet (#423)
             code = verb != "links"
             hits = resolve(ws, path, target, index) if code else link_dests(ws, path, target)
             if not code:
@@ -6914,8 +7001,6 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                 if owner is None:
                     continue  # not a project's: a wiki page or System's, which the meeting check reads
                 other = owner[0]
-                if harness_path(target, hit, other):
-                    continue  # `.claude/settings.json` from any project: its own folder, made or not yet
                 pair = crossings(ws.context, tags, project_file_tags(ws, other, hit))
                 if pair:
                     far_hits.append((hit, other, pair[0]))

@@ -351,6 +351,12 @@ def destination(root: Path, s: Session) -> Optional[Tuple[Path, List[str]]]:
                 projects.append(rel)
     if len(places) != 1:
         return None
+    found = mentioned(base, s)
+    if found is None:
+        return None                                 # a workspace path that names no place: the session is dropped
+    for rel in found:
+        if rel not in projects:
+            projects.append(rel)
     zone = places.pop()
     if zone:
         folder = base / "Zones" / zone
@@ -366,6 +372,56 @@ def destination(root: Path, s: Session) -> Optional[Tuple[Path, List[str]]]:
     return (folder, []) if folder.is_dir() and not folder.is_symlink() else None
 
 
+PATH_TOKEN = re.compile(r"Zones/([^/\s\"'`;|&()<>{}$*\\]+)/([^/\s\"'`;|&()<>{}$*\\]+)")
+
+
+def project_folders(base: Path) -> List[Tuple[str, str]]:
+    out = []
+    for zone in recall.zone_names(base):
+        try:
+            for p in sorted((base / "Zones" / zone).iterdir()):
+                if p.is_dir() and not p.name.startswith(".") and not p.is_symlink() and p.name != "Inbox":
+                    out.append((zone, p.name))
+        except OSError:
+            pass
+    return out
+
+
+def mentioned(base: Path, s: Session) -> Optional[List[str]]:
+    """Every project a session's text points at by path: `Zones/<zone>/<project>`
+    in a command or a turn, or `<project>/` as a path component (a relative path
+    such as `../Other/Threads/T/x.md` read without changing folder). Each is
+    added to the session's projects, so a transcript that quotes another
+    project's file is labelled with it as well. A `Zones/<zone>/<name>` path in a
+    zone of the workspace that is neither a folder nor a file there cannot be
+    placed, and the session is dropped (None)."""
+    folders = project_folders(base)
+    zones = {z for z, _ in folders} | set(recall.zone_names(base))
+    found: List[str] = []
+    for _kind, text, _status in s.turns:
+        rest = text
+        for zone, name in sorted(folders, key=lambda f: -len(f[1])):
+            literal = "Zones/%s/%s" % (zone, name)
+            if literal in rest:
+                if literal not in found:
+                    found.append(literal)
+                rest = rest.replace(literal, " ")
+            if re.search(r"(?:^|[/\s\"'`=:(])%s/" % re.escape(name), text):
+                if literal not in found:
+                    found.append(literal)
+        for zone, name in PATH_TOKEN.findall(rest):
+            if zone not in zones or zone.startswith("<"):
+                continue
+            target = base / "Zones" / zone / name
+            if target.is_dir():
+                literal = "Zones/%s/%s" % (zone, name)
+                if literal not in found:
+                    found.append(literal)
+            elif not target.exists():
+                return None
+    return found
+
+
 def header_value(value) -> str:
     """One line, no control characters, nothing that could close or forge a
     frontmatter field: whatever a transcript supplies goes through here."""
@@ -373,17 +429,21 @@ def header_value(value) -> str:
     return " ".join(text.replace("\\", "/").replace('"', "'").split())
 
 
+def clean_name(value) -> str:
+    """A folder name for the header: control characters out, the rest as it is
+    (the header holds it as JSON, so `#`, `:` and quotes are safe)."""
+    return "".join(" " if (c.isspace() or ord(c) < 32 or ord(c) == 127) else c for c in str(value)).strip()
+
+
 def render(s: Session, projects: List[str], size: int, mtime: int) -> str:
     first = next((t for k, t, _ in s.turns if k == "user"), "")
     title = header_value(mask_to(first, TITLE_CHARS * 8))[:TITLE_CHARS]
     date = (s.started or datetime.datetime.now()).date().isoformat()
     head = ["---", 'title: "%s"' % title, "type: session", "harness: %s" % header_value(s.harness),
-            "session: %s" % safe_id(s.id),
+            "session: %s" % safe_id(s.id), "format: 2",
             "date: %s" % date]
-    if len(projects) == 1:
-        head.append("project: %s" % header_value(projects[0]))
-    elif projects:
-        head += ["project:"] + ["  - %s" % header_value(p) for p in projects]
+    if projects:
+        head.append("project: %s" % json.dumps([clean_name(p) for p in projects]))
     head += ["source_size: %d" % size, "source_mtime: %d" % mtime, "---", ""]
     out = []
     for kind, text, status in s.turns:
@@ -429,14 +489,19 @@ def write_session(root: Path, source: Path, s: Session) -> Optional[Path]:
     old = existing(folder, sid) if folder.is_dir() else None
     if old is not None:
         head = old.read_text(encoding="utf-8", errors="replace")[:600]
-        if "source_size: %d\n" % st.st_size in head and "source_mtime: %d\n" % st.st_mtime_ns in head:
+        if "source_size: %d\n" % st.st_size in head and "source_mtime: %d\n" % st.st_mtime_ns in head \
+                and "format: 2\n" in head:
             return None
+    text = render(s, projects, st.st_size, st.st_mtime_ns)
+    if recall.session_projects(text) != [clean_name(p) for p in projects] or \
+            any(clean_name(p) != p for p in projects):
+        return None                                 # what is written would not read back as the same projects
     folder.mkdir(mode=0o700, exist_ok=True)
     target = old or folder / ("%s - %s.md" % (yymmdd(s), sid))
     tmp = folder / (".tmp-%d" % os.getpid())
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(render(s, projects, st.st_size, st.st_mtime_ns))
+        fh.write(text)
     try:
         os.chmod(str(tmp), 0o600)
     except OSError:

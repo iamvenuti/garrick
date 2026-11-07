@@ -22,7 +22,8 @@ The scopes: `root` (a session opened at the workspace root or in System/, which
 holds no party), a zone with no wall inside it (one index for the zone), and a
 zone with a wall inside it (one index for each side). The index of a zone scope
 is a cache beside the zone (`Zones/<Zone>/.recall.sqlite`, and
-`.recall.sqlite-<side>` for each side); the root's is `System/.recall.sqlite`.
+`.recall.sqlite-<side>` for each side). The root scope has no file: it is made in
+memory, since a file of every zone's rows could be opened by any session.
 Deleting every index loses nothing; `build` makes them again, and a search
 brings its own scope's index up to date first, admitting or dropping each
 changed file through `decide()`. An index never sits in a cloud-synced folder,
@@ -30,8 +31,13 @@ because sync corrupts an open SQLite file; one that would is kept in memory.
 
 A session's tools open only its scope's index. The command line takes a scope,
 never a folder: with none it uses the scope of the folder the session was opened
-in (or the one in `GARRICK_RECALL_SCOPE`, which a folder cannot change), and a
-scope it names may only be that one (a root session may name any).
+in, and a scope it names may only be that one (a root session may name any).
+`GARRICK_RECALL_SCOPE` can only narrow a root session, never widen another.
+The root scope comes only from `CLAUDE_PROJECT_DIR` naming the root: a bare
+working folder at the root or in `System/` is refused. No root index is kept on
+disk (it would hold every zone's rows where any session could open it): the root
+scope is made in memory. This is a wall for what Recall returns, not for a
+session that can read files itself.
 `read(id)` answers only for an id that is in the scope index, and answers an
 unknown id and a walled one the same way.
 
@@ -431,8 +437,8 @@ class Index:
 
     def _open(self) -> sqlite3.Connection:
         folder = self.path.parent
-        if not folder.is_dir():
-            return self._memory()
+        if not folder.is_dir() or self.scope.kind == "root":
+            return self._memory()       # the root scope holds every zone's rows: never a file on disk
         if synced(folder) or not safe_to_write(self.path):
             return self._memory()
         try:
@@ -608,6 +614,20 @@ def iso(d: Optional[datetime.date]) -> str:
 def stamp(path: Path) -> Tuple[int, int]:
     st = path.stat()
     return st.st_mtime_ns, st.st_size
+
+
+def session_projects(head: str) -> Optional[List[str]]:
+    """The projects a session's header names: its `project:` line is a one-line
+    JSON list of strings (a name may hold `#`, `:` or a quote). None when the
+    line is there and is anything else. No line is no project."""
+    m = re.search(r"(?m)^project:[ \t]*(.*)$", head.split("\n---", 2)[0] if head.startswith("---") else "")
+    if not m:
+        return []
+    try:
+        value = json.loads(m.group(1))
+    except ValueError:
+        return None
+    return value if isinstance(value, list) and all(isinstance(v, str) and v for v in value) else None
 
 
 def zone_entries(root: Path, zone: str) -> Iterable[Tuple[str, Path]]:
@@ -805,9 +825,11 @@ class Refresher:
             return None, {}
         fm = parse_frontmatter_text(head)
         zone = (locate(self.root, path) or Place("", "", "")).zone
-        given = fm.get("project") if isinstance(fm.get("project"), list) else [fm.get("project")]
+        given = session_projects(head)
+        if given is None:
+            return None, fm                         # a project line that does not read back plainly
         out: set = set()
-        for g in [g for g in given if g]:
+        for g in given:
             place = locate(self.root, str(g))
             if place is None or not place.project or place.zone != zone:
                 return None, fm
@@ -1209,6 +1231,7 @@ def open_scope(root: Path, scope: Scope, ctx: dict, fts: bool, tri: bool) -> Opt
     folder = scope.file(root).parent
     if not folder.is_dir():
         return None
+    purge_orphans(root, ctx)
     idx = Index(root, scope, fts, tri, ctx)
     try:
         Refresher(idx).run()
@@ -1216,6 +1239,29 @@ def open_scope(root: Path, scope: Scope, ctx: dict, fts: bool, tri: bool) -> Opt
         idx.close()
         return None
     return idx
+
+
+def purge_orphans(root: Path, ctx: dict) -> None:
+    """Remove every index file that is not a current scope's: a zone-wide file
+    from before a wall appeared, the root's file of an older version. Such a
+    file holds rows its scope would no longer admit."""
+    live = {str(sc.file(root)) for sc in scopes_of(root, ctx) if sc.kind != "root"}
+    folders = [root / "System"] + [root / "Zones" / z for z in zone_names(root)]
+    for folder in folders:
+        try:
+            names = os.listdir(str(folder))
+        except OSError:
+            continue
+        for name in names:
+            if not name.startswith(INDEX_NAME) or ".new-" in name:
+                continue
+            base_name = re.sub(r"-(journal|wal|shm)$", "", name)
+            if str(folder / base_name) in live:
+                continue
+            try:
+                os.remove(str(folder / name))
+            except OSError:
+                pass
 
 
 def reach_of(root: Path) -> str:
@@ -1389,10 +1435,11 @@ def build(root: Optional[PathLike] = None, rebuild: bool = False) -> List[str]:
     Says which were built, and counts nothing."""
     base = (Path(root) if root is not None else workspace_root()).resolve()
     ctx = load_context(base)
+    purge_orphans(base, ctx)
     fts, tri = fts5_available(), trigram_available()
     done = []
     for sc in scopes_of(base, ctx):
-        if not sc.file(base).parent.is_dir():
+        if sc.kind == "root" or not sc.file(base).parent.is_dir():
             continue
         idx = Index(base, sc, fts, tri, ctx)
         try:
@@ -1450,8 +1497,12 @@ def cwd_project(root: Path) -> Optional[Path]:
     if place.zone:
         return here
     # The root or System/. Only a folder really at the root or inside System/.
+    # The root scope is a root session's by the harness's own record (the marker names the root)
+    # and by nothing else: a bare working folder at the root or in System/ is refused.
     rel = here.relative_to(root).parts
-    return None if (not rel or rel[0] == "System") else NOWHERE
+    if marker and (not rel or rel[0] == "System"):
+        return None
+    return NOWHERE
 
 
 def cli_scope(root: Path, asked: Optional[str]) -> Tuple[Optional[Scope], Optional[str]]:
@@ -1459,13 +1510,17 @@ def cli_scope(root: Path, asked: Optional[str]) -> Tuple[Optional[Scope], Option
     folder the session was opened in (cwd_project). A scope named with
     --scope may only be that one; a session at the root may name any."""
     ctx = load_context(root)
+    project = cwd_project(root)
+    mine = scope_for_project(root, ctx, project) if project != NOWHERE else None
     pinned = os.environ.get(SCOPE_ENV, "").strip()
-    if pinned:
-        # The session was started with its scope: no folder it moves to changes it.
-        mine = scope_named(root, ctx, pinned)
-    else:
-        project = cwd_project(root)
-        mine = scope_for_project(root, ctx, project) if project != NOWHERE else None
+    if pinned and mine is not None:
+        # An environment variable a session can set only narrows: from the root scope to another,
+        # never from a scope to a different one.
+        want = scope_named(root, ctx, pinned)
+        if want is None or (mine.kind != "root" and want != mine):
+            mine = None
+        else:
+            mine = want
     if mine is None:
         return None, ("This folder is not a place Recall reads from, so nothing was searched. Open the session in a "
                       "project whose hub names a party, or at the workspace root.")

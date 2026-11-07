@@ -95,6 +95,11 @@ class Base(unittest.TestCase):
             os.chdir(here)
         return code, out.getvalue(), err.getvalue()
 
+    @property
+    def at_root(self):
+        """The environment of a session the harness opened at the root."""
+        return {"CLAUDE_PROJECT_DIR": str(self.root)}
+
     def indexes(self):
         return sorted(p for p in self.root.rglob(".recall.sqlite*")
                       if not p.name.endswith(("-journal", "-wal", "-shm")) and ".new-" not in p.name)
@@ -220,7 +225,7 @@ class IndexTest(Base):
         before = self.snapshot()
         self.assertTrue(before)
         indexes = self.indexes()
-        self.assertEqual(3, len(indexes))                # root, and the two sides of Work
+        self.assertEqual(2, len(indexes))                # the two sides of Work; the root has none
         for p in indexes:
             p.unlink()
         recall.build(self.root)
@@ -232,7 +237,7 @@ class IndexTest(Base):
         self.find("quokkaplan")
         self.find("quokkaplan", None)
         self.assertTrue((self.root / "Zones" / "Work" / (recall.INDEX_NAME + "-acme")).is_file())
-        self.assertTrue((self.root / "System" / recall.INDEX_NAME).is_file())
+        self.assertFalse((self.root / "System" / recall.INDEX_NAME).exists())     # the root scope has no file
         self.assertFalse((self.root / recall.INDEX_NAME).exists())
         self.assertFalse((self.root / "Wikis" / "Meetings" / recall.INDEX_NAME).exists())     # the wikis keep none
 
@@ -599,7 +604,9 @@ class ReviewFixesTest(Base):
             self.assertEqual(recall.NOWHERE, recall.cwd_project(self.root))
             for place in (".", "System"):
                 os.chdir(str(self.root / place))
-                self.assertIsNone(recall.cwd_project(self.root), place)
+                self.assertEqual(recall.NOWHERE, recall.cwd_project(self.root), place)      # a bare folder is no root session
+                with mock.patch.dict(os.environ, self.at_root):
+                    self.assertIsNone(recall.cwd_project(self.root), place)
             os.chdir(str(self.root / "Wikis/Meetings"))
             err, out = io.StringIO(), io.StringIO()
             with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -728,7 +735,7 @@ class ReviewSessionFixesTest(Base):
         self.assertEqual(1, len(files))
         head = files[0].read_text().split("\n---", 2)[0]
         self.assertEqual(1, head.count("project:"))
-        self.assertIn("project: " + ACME, head)
+        self.assertIn('project: ["%s"]' % ACME, head)
         self.assertEqual([], self.find("forgeword", BIRCH, sessions=True))
         s = recall_sessions.Session("a\rb c: d\nproject: q", "claude-code", turns=[("user", "t\nproject: z", None)])
         head = recall_sessions.render(s, ["Zones/Work/P\nx"], 1, 1).split("\n---", 2)[0].splitlines()
@@ -815,7 +822,8 @@ class CommandLineScopeTest(Base):
             self.assertNotEqual(0, code, flag)
             self.assertNotIn("wombatplan", out)
             self.assertNotEqual(0, self.cli(acme, "stats", "--project", flag)[0], flag)
-        self.assertTrue(self.cli(self.root, "search", "pelicanword", "--sessions")[1].startswith("1 result"))
+        self.assertTrue(self.cli(self.root, "search", "pelicanword", "--sessions", env=self.at_root)[1].startswith("1 result"))
+        self.assertTrue(self.cli(self.root, "search", "pelicanword", "--sessions")[1].startswith("0 results"))   # no marker, no root
         code, out, _ = self.cli(acme, "search", "pelicanword", "--sessions")
         self.assertTrue(out.startswith("0 results"), out)
         self.assertEqual("0 results", self.cli(acme, "search", "wombatplan", "--zone", "Work", "--sessions")[1][:9])
@@ -1065,7 +1073,8 @@ class ScopeIndexTest(Base):
         self.assertEqual(1, len([sc for sc in scopes if sc.zone == "Personal"]))     # no wall inside it
         self.assertEqual(2, len([sc for sc in scopes if sc.zone == "Work"]))         # acme | birch
         recall.build(self.root)
-        self.assertEqual(sorted(sc.file(self.root) for sc in scopes), self.indexes())
+        self.assertEqual(sorted(sc.file(self.root) for sc in scopes if sc.kind != "root"), self.indexes())
+        self.assertFalse((self.root / "System" / recall.INDEX_NAME).exists())     # the root scope is made in memory
         # a wall added inside Personal splits it in two; a zone with no wall stays one
         context = self.root / "System" / "context.md"
         text = context.read_text(encoding="utf-8")
@@ -1196,37 +1205,46 @@ class ScopeIndexTest(Base):
             self.assertTrue(out.startswith("0 results"), (scope, out))
         self.assertTrue(self.cli(acme, "search", "quokkaplan", "--scope", "work/acme")[1].startswith("1 result"))
         # the root may name any scope; that is narrowing, not widening
-        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work/birch")[1].startswith("1 result"))
-        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work/acme")[1].startswith("0 results"))
+        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work/birch", env=self.at_root)[1].startswith("1 result"))
+        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work/acme", env=self.at_root)[1].startswith("0 results"))
         # and the API holds the same line
         self.assertEqual([], self.find("wombatplan", ACME, scope="work/birch"))
         self.assertEqual([], self.find("wombatplan", ACME, scope="root"))
 
-    def test_round_3_a_folder_cannot_move_a_session_into_the_root_scope(self):
-        """A link to the root, changed into, searched as the root. A session started with its scope keeps it."""
+    def test_round_3_a_folder_or_a_variable_cannot_move_a_session_into_another_scope(self):
+        """A link to the root, changed into, searched as the root; a session choosing its scope through the environment."""
         link = self.tmp / "rootlink"
         os.symlink(str(self.root), str(link))
-        env = {recall.SCOPE_ENV: "work/acme"}
         for folder in (self.root, self.root / "System", link):
-            out = self.cli(folder, "search", "wombatplan", env=env)[1]
-            self.assertTrue(out.startswith("0 results"), (folder, out))
-            self.assertTrue(self.cli(folder, "search", "quokkaplan", env=env)[1].startswith("1 result"), folder)
-            self.assertIn("work/acme: ", self.cli(folder, "stats", env=env)[1])
-        # it may not name another scope either
-        code, out, err = self.cli(self.root, "search", "wombatplan", "--scope", "work/birch", env=env)
-        self.assertTrue(out.startswith("0 results"), out)
-        self.assertIn("may not name another", err)
-        # an unknown pin reads nothing
-        self.assertTrue(self.cli(self.root, "search", "quokkaplan", env={recall.SCOPE_ENV: "nowhere"})[1].startswith("0 results"))
+            for word in ("wombatplan", "quokkaplan"):
+                self.assertTrue(self.cli(folder, "search", word)[1].startswith("0 results"), folder)   # no marker, no root
+            for env in ({recall.SCOPE_ENV: "work/acme"}, {recall.SCOPE_ENV: "root"}):
+                self.assertTrue(self.cli(folder, "search", "quokkaplan", env=env)[1].startswith("0 results"), (folder, env))
+        # a marker naming the root is the harness's record of a root session; the variable then only narrows
+        env = dict(self.at_root, **{recall.SCOPE_ENV: "work/acme"})
+        self.assertTrue(self.cli(self.root, "search", "quokkaplan", env=env)[1].startswith("1 result"))
+        self.assertTrue(self.cli(self.root, "search", "wombatplan", env=env)[1].startswith("0 results"))
+        # an Acme session cannot choose Birch or the root by the variable, by the marker or by moving
+        acme = self.root / ACME
+        for pin in ("work/birch", "root"):
+            out = self.cli(acme, "search", "wombatplan", env={recall.SCOPE_ENV: pin})
+            self.assertTrue(out[1].startswith("0 results"), pin)
+            self.assertIn("nothing was searched", out[2])
+        self.assertTrue(self.cli(acme, "search", "wombatplan", env=self.at_root)[1].startswith("0 results"))      # narrower of the two
+        self.assertTrue(self.cli(self.root, "search", "wombatplan", env={"CLAUDE_PROJECT_DIR": str(acme)})[1].startswith("0 results"))
+        # no root index is kept on disk, where any session could open it
+        self.cli(self.root, "search", "quokkaplan", env=self.at_root)
+        self.assertFalse((self.root / "System" / recall.INDEX_NAME).exists())
+        self.assertNotIn(b"wombat", b"".join(p.read_bytes() for p in self.indexes() if p.name.endswith("acme")))
 
     def test_round_4_a_session_that_worked_in_two_projects_across_a_wall_is_nobodys_but_the_roots(self):
         """A session of a no-party project and a walled one was labelled with the first. Now it has the labels of all."""
         sessions = self.root / "Zones/Work/.sessions"
-        header = "---\nsession: s9\ntitle: mixed\nproject:\n%s---\n\n# mixed\n\nmixedsessionword said\n"
-        write(sessions / "260901 - mixed.md", header % "".join("  - %s\n" % p for p in (ACME, BIRCH)))
+        header = "---\nsession: s9\ntitle: mixed\nproject: %s\n---\n\n# mixed\n\nmixedsessionword said\n"
+        write(sessions / "260901 - mixed.md", header % json.dumps([ACME, BIRCH]))
         write(self.root / "Zones/Work/Loose/Loose.md", fixtures.project_hub("Work", "Loose", ""))
-        write(sessions / "260902 - loose.md", header % "".join("  - %s\n" % p for p in ("Zones/Work/Loose", BIRCH)))
-        write(sessions / "260903 - gone.md", header % "".join("  - %s\n" % p for p in (ACME, "Zones/Work/Deleted")))
+        write(sessions / "260902 - loose.md", header % json.dumps(["Zones/Work/Loose", BIRCH]))
+        write(sessions / "260903 - gone.md", header % json.dumps([ACME, "Zones/Work/Deleted"]))
         for project in (ACME, BIRCH, "Zones/Work/Loose"):
             self.assertEqual([], self.find("mixedsessionword", project, sessions=True), project)
         # the root holds no party, so it reads the one session it can place; a no-party project's and a
@@ -1234,7 +1252,7 @@ class ScopeIndexTest(Base):
         self.assertEqual(["Zones/Work/.sessions/260901 - mixed.md"],
                          [r.path for r in self.find("mixedsessionword", None, sessions=True)])
         # one side alone is readable from its side
-        write(sessions / "260904 - acme.md", header % "  - %s\n" % ACME)
+        write(sessions / "260904 - acme.md", header % json.dumps([ACME]))
         self.assertEqual(1, len(self.find("mixedsessionword", ACME, sessions=True)))
         self.assertEqual([], self.find("mixedsessionword", BIRCH, sessions=True))
         con = self.db("Zones/Work/.recall.sqlite-birch")
@@ -1256,6 +1274,113 @@ class ScopeIndexTest(Base):
             if path.name != ".recall.sqlite":
                 self.assertEqual(0, con.execute("SELECT COUNT(*) FROM docs WHERE body LIKE '%crossword%'").fetchone()[0], path)
             con.close()
+
+
+class WallReviewTest(Base):
+    """The wall review of the rebuilt Recall: four findings, each a test."""
+
+    def hub(self, name, party):
+        write(self.root / "Zones/Work" / name / (name + ".md"), fixtures.project_hub("Work", name, party, ["T"]))
+        write(self.root / "Zones/Work" / name / "Threads/T/T.md", thread_note(name, "T", party))
+        return "Zones/Work/" + name
+
+    def extract_one(self, cwd, turns, sid="w1"):
+        claude = self.tmp / "claude" / "p"
+        claude.mkdir(parents=True, exist_ok=True)
+        recs = [claude_line("assistant", str(cwd), [{"type": "tool_use", "id": "t%d" % n, "name": "Bash",
+                                                      "input": {"command": content}}], sid) if kind == "command"
+                else claude_line(kind, str(cwd), content, sid) for n, (kind, content) in enumerate(turns)]
+        write_jsonl(claude / (sid + ".jsonl"), recs)
+        return recall_sessions.extract_all(self.root, str(self.tmp / "claude"), str(self.tmp / "none"))
+
+    def sessions(self):
+        return sorted((self.root / "Zones/Work/.sessions").glob("*.md")) if (self.root / "Zones/Work/.sessions").is_dir() else []
+
+    # F1: a session chooses its own scope
+    def test_f1_no_variable_folder_or_file_gives_a_session_a_wider_scope(self):
+        acme = self.root / ACME
+        for env in ({recall.SCOPE_ENV: "work/birch"}, {recall.SCOPE_ENV: "root"}, {"CLAUDE_PROJECT_DIR": str(acme), recall.SCOPE_ENV: "root"}):
+            self.assertTrue(self.cli(acme, "search", "wombatplan", env=env)[1].startswith("0 results"), env)
+        # a bare working folder at the root or a zone is never the root scope
+        for folder in (self.root, self.root / "Zones" / "Work", self.root / "System"):
+            self.assertTrue(self.cli(folder, "search", "wombatplan")[1].startswith("0 results"), folder)
+            self.assertTrue(self.cli(folder, "search", "quokkaplan")[1].startswith("0 results"), folder)
+        # the root scope is never a file
+        self.cli(self.root, "search", "wombatplan", env={"CLAUDE_PROJECT_DIR": str(self.root)})
+        self.assertFalse((self.root / "System" / recall.INDEX_NAME).exists())
+        self.assertEqual([], [p for p in self.indexes() if p.parent.name == "System"])
+        for p in self.indexes():
+            self.assertNotIn(b"quokka" if p.name.endswith("birch") else b"wombat", p.read_bytes())
+
+    # F2: a name with " #"
+    def test_f2_a_project_name_with_a_hash_is_read_back_whole(self):
+        self.hub("Anvil", "acme")
+        birch = self.hub("Anvil #2", "birch")
+        self.extract_one(self.root / birch, [("user", "birch pricing floor narwhalsecret")])
+        text = self.sessions()[0].read_text()
+        self.assertIn('project: ["Zones/Work/Anvil #2"]', text)
+        self.assertEqual([], self.find("narwhalsecret", "Zones/Work/Anvil", sessions=True))
+        self.assertEqual(1, len(self.find("narwhalsecret", birch, sessions=True)))
+        self.assertEqual(["Zones/Work/Anvil #2"], recall.session_projects(text))
+        # a project line that does not read back plainly labels nothing
+        for bad in ("project: Zones/Work/Anvil #2", "project: [Zones/Work/Anvil]", "project: 5"):
+            self.assertIsNone(recall.session_projects("---\n%s\n---\n" % bad), bad)
+        # a name that would not survive the header is dropped, not written
+        odd = self.hub("Odd\tName", "birch") if False else None
+        s = recall_sessions.Session("z", "claude-code", cwds=[str(self.root / birch)], turns=[("user", "hello", None)])
+        with mock.patch.object(recall_sessions, "clean_name", side_effect=lambda v: str(v) + "x"):
+            self.assertIsNone(recall_sessions.write_session(self.root, self.tmp / "none.jsonl" if False else write_jsonl(self.tmp / "n.jsonl", [{}]), s))
+
+    # F3: paths read without changing folder
+    def test_f3_a_session_that_reads_another_projects_file_is_labelled_with_both(self):
+        a, b = self.hub("Anvil", "acme"), self.hub("Harbour2", "birch")
+        write(self.root / b / "Threads/T/Secret.md", "# Secret\n\nfloor price.\n")
+        self.extract_one(self.root / a, [
+            ("user", "compare with the harbour file"),
+            ("command", "cat ../Harbour2/Threads/T/Secret.md"),
+            ("assistant", "The file says quokkafloor.")])
+        text = self.sessions()[0].read_text()
+        self.assertEqual(["Zones/Work/Anvil", "Zones/Work/Harbour2"], recall.session_projects(text))
+        for project in (a, b):
+            self.assertEqual([], self.find("quokkafloor", project, sessions=True), project)
+        self.assertEqual(1, len(self.find("quokkafloor", None, sessions=True)))
+
+    def test_f3_an_absolute_or_spaced_path_in_a_turn_counts_and_an_unplaceable_one_drops_the_session(self):
+        a = self.hub("Anvil", "acme")
+        self.extract_one(self.root / a, [("user", "see %s/Acme Review/Notes.md please wordone" % (self.root / "Zones/Work"))], "s1")
+        self.assertEqual(["Zones/Work/Anvil", "Zones/Work/Acme Review"], recall.session_projects(self.sessions()[0].read_text()))
+        self.extract_one(self.root / a, [("user", "open Zones/Work/Ghost/Threads/x.md wordtwo")], "s2")
+        self.assertEqual(1, len(self.sessions()))                         # the second was dropped
+        self.extract_one(self.root / a, [("user", "the pattern Zones/<Zone>/<Project> and Zones/Work/Todo.md wordthree")], "s3")
+        self.assertEqual(2, len(self.sessions()))                         # a placeholder and a zone-top file are not paths to a place
+
+    # F4: stale files
+    def test_f4_a_file_that_is_no_scopes_is_removed_and_a_flipped_party_leaves_no_rows(self):
+        write(self.root / BIRCH / "Threads/Market Sizing/Secret.md", "# S\n\nzebrafinch here\n")
+        self.assertTrue(self.find("zebrafinch", BIRCH))
+        context = self.root / "System" / "context.md"
+        original = context.read_text(encoding="utf-8")
+        wall = "| `acme` | `birch` |"
+        line = next(l for l in original.splitlines() if l.startswith(wall))
+        context.write_text(original.replace(line + "\n", ""), encoding="utf-8")
+        self.assertTrue(self.find("zebrafinch", ACME))                    # no wall: one zone-wide file
+        self.assertTrue((self.root / "Zones/Work" / recall.INDEX_NAME).is_file())
+        context.write_text(original, encoding="utf-8")
+        self.find("quokkaplan")                                           # the wall is back
+        self.assertFalse((self.root / "Zones/Work" / recall.INDEX_NAME).exists())
+        self.assertEqual([], [p.name for p in self.indexes() if b"zebrafinch" in p.read_bytes() and p.name.endswith("acme")])
+        # a project flips side: build makes the file the row left again
+        hub = self.root / BIRCH / "Birch Entry.md"
+        thread = self.root / BIRCH / "Threads/Market Sizing/Market Sizing.md"
+        for f in (hub, thread):
+            f.write_text(f.read_text().replace("party: birch", "party: acme"))
+        recall.build(self.root)
+        self.assertNotIn(b"zebrafinch", (self.root / "Zones/Work" / (recall.INDEX_NAME + "-birch")).read_bytes())
+        # an old root file is removed by the next build
+        stale = self.root / "System" / recall.INDEX_NAME
+        stale.write_bytes(b"x")
+        recall.build(self.root)
+        self.assertFalse(stale.exists())
 
 
 class NamesAndSpellingTest(Base):

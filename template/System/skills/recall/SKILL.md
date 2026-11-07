@@ -31,11 +31,13 @@ that folder, and finds the workspace above it. From a project folder the
 tool is three levels up (`../../../System/tools/recall.py`); from a thread
 folder, five; from a zone folder, two. The installer allows `search`, `read`
 and `stats` at those depths, so they run without a question. Never change
-folder first (no `cd` to the root, then the tool): from the workspace root or
-`System/` the tool reads as a root session, which may read every zone. The
-scope comes only from the folder the process really runs in, with symlinks
-followed, or from `GARRICK_RECALL_SCOPE` where the session was started with
-one; never from an argument that names a folder. Where the environment names
+folder first (no `cd` to the root, then the tool). The scope comes only from
+the folder the process really runs in, with symlinks followed; never from an
+argument that names a folder. A bare working folder at the root or in `System/`
+is refused: the root scope, which may read every zone, is for a session the
+harness opened at the root (`CLAUDE_PROJECT_DIR` names the root). This is a
+wall for what Recall returns, not for your own reads: a session that can run a
+shell can open files directly, and the user has to trust it not to. Where the environment names
 the folder the session was opened in (Claude Code sets `CLAUDE_PROJECT_DIR`;
 Codex sets nothing the tool reads), the scope is the narrower of that folder
 and the current one, and a current folder outside the session's folder

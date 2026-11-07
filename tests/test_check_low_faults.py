@@ -67,6 +67,25 @@ class OutsidePathTest(Base):
             found = self.says("Put the script in `%s`.\n" % written)
             self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), (written, found))
 
+    def test_a_project_named_like_a_system_folder_is_still_a_project(self):
+        """The release review's way past the wall: `/Home/…` and `~/Library/…` are paths into a project of that name."""
+        for name in ("Home", "Media", "Library", "Documents"):
+            write(self.work / name / (name + ".md"), project_hub("Work", name, "acme"))
+            write(self.work / name / "Deliverables" / "260301 - Plan.md", "# plan\n")
+        for name, written in (("Home", "/Home/Deliverables/260301 - Plan.md"), ("Home", "/home/Deliverables/260301 - Plan.md"),
+                              ("Media", "/Media/Deliverables/260301 - Plan.md"), ("Library", "~/Library/Deliverables/260301 - Plan.md"),
+                              ("Library", "/Library/Deliverables/260301 - Plan.md"),
+                              ("Documents", "~/Documents/Deliverables/260301 - Plan.md")):
+            found = self.says("See `%s`.\n" % written)
+            self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), (written, found))
+
+    def test_a_system_folder_named_by_a_thread_is_read_by_its_names(self):
+        write(self.work / "Harbour" / "Harbour.md", project_hub("Work", "Harbour", "acme", ["Users"]))
+        write(self.work / "Harbour" / "Threads" / "Users" / "Users.md", thread_note("Harbour", "Users", "acme"))
+        write(self.work / "Harbour" / "Threads" / "Users" / "Notes.md", "x\n")
+        found = self.says("See `/Users/Notes.md`.\n")
+        self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), found)
+
 
 class RefusalTrailerTest(Base):
     """2. Each refusal ends with the fix of its own kind."""

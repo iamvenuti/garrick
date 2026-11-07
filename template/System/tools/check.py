@@ -5492,14 +5492,48 @@ HOME_FOLDERS = frozenset({"library", "documents", "downloads", "desktop", "appli
                           "public", "appdata", "onedrive"})
 
 
-def _outside_workspace(rest: str) -> bool:
+def _folder_key(name: str) -> str:
+    """A folder's name as the resolver reads it: case, `-`, `_` and spaces do not tell two names apart."""
+    return re.sub(r"[-_\s]+", "", name.lower())
+
+
+def _workspace_names(ws: Workspace, idx: DirIndex) -> frozenset:
+    """The names (_folder_key) of every zone, project and thread folder of the workspace, once a run."""
+    got = getattr(idx, "top_names", None)
+    if got is None:
+        names = set()
+        zones = ws.root / "Zones"
+        try:
+            names |= {_folder_key(e.name) for e in os.scandir(zones) if e.is_dir()}
+        except OSError:
+            pass
+        projects = {project for project, _ in ws.projects}
+        for folder in idx.owner:
+            if folder in projects:
+                names.add(_folder_key(folder.name))
+            elif folder.parent.name.lower() == "threads" and folder.parent.parent in projects:
+                names.add(_folder_key(folder.name))
+        for project in projects:
+            names.add(_folder_key(project.parent.name))
+        got = idx.top_names = frozenset(names)
+    return got
+
+
+def _outside_workspace(ws: Workspace, idx: DirIndex, rest: str) -> bool:
     """Does the absolute path `rest`, which holds no mark of the workspace, lead out of it: `~/` and a folder every
-    home folder holds, or `/…` from an operating system's top folder. A name the system does not own
-    (`~/Harbour/…`, a site-relative `/Harbour/…`) could be either, so it is read by its names as before."""
+    home folder holds, or `/…` from an operating system's top folder, and only when no zone, project or thread of
+    this workspace has that name. A workspace with a project called `Home` or `Library` reads `/Home/…` and
+    `~/Library/…` by its names, as before. What is still read by names: every other first segment, and any
+    path whose first system folder is also a zone, project or thread name (any case; `-`, `_` and spaces alike).
+    A later segment is not looked at: `~/Library/<anything>` is outside the workspace whatever the segments after
+    it are called, which is the case the rule exists for."""
     if rest.startswith("~/"):
-        first = rest[2:].split("/", 1)[0].lower()
-        return first in HOME_FOLDERS or first.startswith(".")
-    return rest.startswith("/") and rest[1:].split("/", 1)[0].lower() in SYSTEM_TOPS
+        first = rest[2:].split("/", 1)[0]
+        listed = first.lower() in HOME_FOLDERS or first.startswith(".")
+    else:
+        first = rest[1:].split("/", 1)[0]
+        listed = rest.startswith("/") and first.lower() in SYSTEM_TOPS
+    return listed and _folder_key(first) not in _workspace_names(ws, idx)
 
 
 def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[List[Tuple[Path, bool]]]:
@@ -5552,7 +5586,7 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
             # A site-relative or home-relative path is also read by its names alone, unless it is a path outside the
             # workspace: one from the home folder, or from an operating system's own top folder, with no workspace
             # folder in it. That leads out of the workspace, so a project that ends the same way is none of its business.
-            if not (not tries and _outside_workspace(rest)):
+            if not (not tries and _outside_workspace(ws, idx, rest)):
                 tries.append((start + (2 if rest.startswith("~/") else 1), None, ""))
         elif rest.startswith(("./", "../")):
             base, pos = source.parent, start

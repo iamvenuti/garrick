@@ -403,10 +403,11 @@ class SessionTest(Base):
         self.assertIn("export-tool --retry", text)
         for left_out in ("TOOLOUTPUTWORD", "memoryindexword", "hosts"):
             self.assertNotIn(left_out, text)
-        self.assertEqual(["Zones/Work/.sessions/260901 - s1.md"], self.paths("invoicexport", sessions=True))
+        self.assertEqual(["Zones/Work/.sessions/260901 - s1.md"], self.paths("invoicexport", None, sessions=True))
+        self.assertEqual([], self.paths("invoicexport", ACME, sessions=True))   # Work has a wall inside: root only
         self.assertEqual([], self.paths("invoicexport"))                      # sessions only when asked
-        self.assertEqual([], self.paths("memoryindexword", sessions=True))
-        self.assertIn("exit 2", self.find("retry", sessions=True)[0].snippet + text)
+        self.assertEqual([], self.paths("memoryindexword", None, sessions=True))
+        self.assertIn("exit 2", self.find("retry", None, sessions=True)[0].snippet + text)
 
     def test_a_session_is_extracted_again_only_when_it_has_grown(self):
         src = self.session(self.work)
@@ -429,7 +430,12 @@ class SessionTest(Base):
         self.assertTrue(everything)
         for secret in (secret_a, secret_b):
             self.assertNotIn(secret, everything)
-        self.assertNotIn(secret_a, self.find("key", sessions=True)[0].snippet)
+        # a past session has no project: it is read from the root only
+        self.assertEqual([], self.find("key", ACME, sessions=True))
+        found = self.find("key", None, sessions=True)
+        self.assertTrue(found)
+        for secret in (secret_a, secret_b):
+            self.assertNotIn(secret, found[0].snippet)
 
     def test_a_session_opened_in_one_zone_never_lands_in_another(self):
         self.session(self.work, sid="a")
@@ -476,8 +482,8 @@ class SessionTest(Base):
     def test_a_session_of_one_party_is_walled_from_the_other(self):
         self.session(self.work, text="narwhal acmeonly", sid="a")
         self.extract()
-        self.assertTrue(self.find("acmeonly", ACME, sessions=True))
-        self.assertEqual([], self.find("acmeonly", BIRCH, sessions=True))
+        self.assertEqual([], self.find("acmeonly", ACME, sessions=True))      # no project reads a past session
+        self.assertEqual([], self.find("acmeonly", BIRCH, sessions=True))     # so the other side of the wall cannot either
         self.assertTrue(self.find("acmeonly", None, sessions=True))
 
     def test_a_session_opened_at_a_zones_top_is_read_only_there(self):
@@ -669,7 +675,7 @@ class ReviewFixesTest(Base):
         write(self.root / "Wikis/Knowledge/wiki/sources/k.md", "---\ntitle: K\n---\n\n# K\n\nsharedtermword\n")
         write_jsonl(self.tmp / "claude/p/s1.jsonl", [claude_line("user", str(self.root / ACME), "sharedtermword said")])
         recall_sessions.extract_all(self.root, str(self.tmp / "claude"), str(self.tmp / "none"))
-        both = self.paths("sharedtermword", wiki="Knowledge", sessions=True)
+        both = self.paths("sharedtermword", None, wiki="Knowledge", sessions=True)
         self.assertEqual(2, len(both))
         self.assertNotIn(ACME + "/Plain.md", both)
         self.assertEqual(["Wikis/Knowledge/wiki/sources/k.md"], self.paths("sharedtermword", wiki="Knowledge"))
@@ -734,9 +740,11 @@ class ReviewSessionFixesTest(Base):
         files = list((self.root / "Zones/Work/.sessions").glob("*.md"))
         self.assertEqual(1, len(files))
         head = files[0].read_text().split("\n---", 2)[0]
-        self.assertEqual(1, head.count("project:"))
-        self.assertIn('project: ["%s"]' % ACME, head)
+        self.assertEqual(0, head.count("project:"))                       # a past session names no project, and the id forged none
+        self.assertNotIn(BIRCH, head)
         self.assertEqual([], self.find("forgeword", BIRCH, sessions=True))
+        self.assertEqual([], self.find("forgeword", ACME, sessions=True))
+        self.assertEqual(1, len(self.find("forgeword", None, sessions=True)))
         s = recall_sessions.Session("a\rb c: d\nproject: q", "claude-code", turns=[("user", "t\nproject: z", None)])
         head = recall_sessions.render(s, ["Zones/Work/P\nx"], 1, 1).split("\n---", 2)[0].splitlines()
         self.assertEqual(1, len([l for l in head if l.startswith("project:")]))
@@ -1251,9 +1259,9 @@ class ScopeIndexTest(Base):
         # deleted one's cannot be placed by anyone
         self.assertEqual(["Zones/Work/.sessions/260901 - mixed.md"],
                          [r.path for r in self.find("mixedsessionword", None, sessions=True)])
-        # one side alone is readable from its side
+        # one side alone is not readable from its side either: a past session is the root's only (0.59.0)
         write(sessions / "260904 - acme.md", header % json.dumps([ACME]))
-        self.assertEqual(1, len(self.find("mixedsessionword", ACME, sessions=True)))
+        self.assertEqual([], self.find("mixedsessionword", ACME, sessions=True))
         self.assertEqual([], self.find("mixedsessionword", BIRCH, sessions=True))
         con = self.db("Zones/Work/.recall.sqlite-birch")
         self.assertEqual(0, con.execute("SELECT COUNT(*) FROM docs WHERE src = 'session'").fetchone()[0])
@@ -1318,21 +1326,21 @@ class WallReviewTest(Base):
         birch = self.hub("Anvil #2", "birch")
         self.extract_one(self.root / birch, [("user", "birch pricing floor narwhalsecret")])
         text = self.sessions()[0].read_text()
-        self.assertIn('project: ["Zones/Work/Anvil #2"]', text)
+        self.assertNotIn("project:", text.split("\n---", 2)[0])            # a past session names no project
         self.assertEqual([], self.find("narwhalsecret", "Zones/Work/Anvil", sessions=True))
-        self.assertEqual(1, len(self.find("narwhalsecret", birch, sessions=True)))
-        self.assertEqual(["Zones/Work/Anvil #2"], recall.session_projects(text))
+        self.assertEqual([], self.find("narwhalsecret", birch, sessions=True))
+        self.assertEqual(1, len(self.find("narwhalsecret", None, sessions=True)))
+        # a name with a `#` still reads back whole from a header that carries it
+        probe = recall_sessions.Session("h", "claude-code", turns=[("user", "t", None)])
+        written = recall_sessions.render(probe, ["Zones/Work/Anvil #2"], 1, 1)
+        self.assertIn('project: ["Zones/Work/Anvil #2"]', written)
+        self.assertEqual(["Zones/Work/Anvil #2"], recall.session_projects(written))
         # a project line that does not read back plainly labels nothing
         for bad in ("project: Zones/Work/Anvil #2", "project: [Zones/Work/Anvil]", "project: 5"):
             self.assertIsNone(recall.session_projects("---\n%s\n---\n" % bad), bad)
-        # a name that would not survive the header is dropped, not written
-        odd = self.hub("Odd\tName", "birch") if False else None
-        s = recall_sessions.Session("z", "claude-code", cwds=[str(self.root / birch)], turns=[("user", "hello", None)])
-        with mock.patch.object(recall_sessions, "clean_name", side_effect=lambda v: str(v) + "x"):
-            self.assertIsNone(recall_sessions.write_session(self.root, self.tmp / "none.jsonl" if False else write_jsonl(self.tmp / "n.jsonl", [{}]), s))
 
     # F3: paths read without changing folder
-    def test_f3_a_session_that_reads_another_projects_file_is_labelled_with_both(self):
+    def test_f3_a_session_that_reads_another_projects_file_is_labelled_with_no_project(self):
         a, b = self.hub("Anvil", "acme"), self.hub("Harbour2", "birch")
         write(self.root / b / "Threads/T/Secret.md", "# Secret\n\nfloor price.\n")
         self.extract_one(self.root / a, [
@@ -1340,7 +1348,7 @@ class WallReviewTest(Base):
             ("command", "cat ../Harbour2/Threads/T/Secret.md"),
             ("assistant", "The file says quokkafloor.")])
         text = self.sessions()[0].read_text()
-        self.assertEqual(["Zones/Work/Anvil", "Zones/Work/Harbour2"], recall.session_projects(text))
+        self.assertEqual([], recall.session_projects(text))              # no project label, whatever it read
         for project in (a, b):
             self.assertEqual([], self.find("quokkafloor", project, sessions=True), project)
         self.assertEqual(1, len(self.find("quokkafloor", None, sessions=True)))
@@ -1348,7 +1356,10 @@ class WallReviewTest(Base):
     def test_f3_an_absolute_or_spaced_path_in_a_turn_counts_and_an_unplaceable_one_drops_the_session(self):
         a = self.hub("Anvil", "acme")
         self.extract_one(self.root / a, [("user", "see %s/Acme Review/Notes.md please wordone" % (self.root / "Zones/Work"))], "s1")
-        self.assertEqual(["Zones/Work/Anvil", "Zones/Work/Acme Review"], recall.session_projects(self.sessions()[0].read_text()))
+        self.assertEqual([], recall.session_projects(self.sessions()[0].read_text()))
+        self.assertEqual([], self.find("wordone", a, sessions=True))
+        self.assertEqual([], self.find("wordone", "Zones/Work/Acme Review", sessions=True))
+        self.assertEqual(1, len(self.find("wordone", None, sessions=True)))
         self.extract_one(self.root / a, [("user", "open Zones/Work/Ghost/Threads/x.md wordtwo")], "s2")
         self.assertEqual(1, len(self.sessions()))                         # the second was dropped
         self.extract_one(self.root / a, [("user", "the pattern Zones/<Zone>/<Project> and Zones/Work/Todo.md wordthree")], "s3")

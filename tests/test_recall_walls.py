@@ -117,9 +117,38 @@ class Walls(unittest.TestCase):
         self.session("up", self.bash("cd .. && ls"), "upwombat finding.")
         self.assertEqual(self.extract_and_search("upwombat"), [])
 
-    def test_a_session_that_stays_in_its_project_is_still_found(self):
+    def test_a_session_is_read_from_the_root_only_in_a_zone_with_a_wall_inside(self):
         self.session("own", self.bash("cat Threads/Pricing/Pricing.md"), "ownwombat finding.")
-        self.assertEqual(len(self.extract_and_search("ownwombat")), 1)
+        self.assertEqual(self.extract_and_search("ownwombat"), [])        # not from its own project
+        for project in (ACME, BIRCH):
+            self.assertEqual([], [h.path for h in recall.search("ownwombat", project=project, root=self.root, sessions=True)])
+        found = [h.path for h in recall.search("ownwombat", project=None, root=self.root, sessions=True)]
+        self.assertEqual(1, len(found))                                   # from the root it is found
+
+    def test_a_session_is_read_from_the_root_only_in_a_zone_with_no_wall_inside_too(self):
+        context = self.root / "System" / "context.md"
+        wall = "| `acme` | `birch` |"
+        text = context.read_text(encoding="utf-8")
+        line = next(l for l in text.splitlines() if l.startswith(wall))
+        context.write_text(text.replace(line + "\n", ""), encoding="utf-8")
+        self.session("own", self.bash("cat Threads/Pricing/Pricing.md"), "ownwombat finding.")
+        self.assertEqual(self.extract_and_search("ownwombat"), [])        # no zone or project scope reads a session
+        found = [h.path for h in recall.search("ownwombat", project=None, root=self.root, sessions=True)]
+        self.assertEqual(1, len(found))
+
+    def test_an_old_project_header_is_not_trusted(self):
+        # A session file written by an earlier extractor, naming its project in the header.
+        self.session("old", self.bash("ls"), "oldwombat finding.")
+        self.assertEqual(self.extract_and_search("oldwombat"), [])       # extracted from the test's own folders
+        patched = 0
+        for f in self.root.rglob(".sessions/*.md"):
+            text = f.read_text(encoding="utf-8")
+            if "oldwombat" in text and "project:" not in text:
+                f.write_text(text.replace("---\n", "---\nproject: [\"Zones/Work/Acme Review\"]\n", 1), encoding="utf-8")
+                patched += 1
+        self.assertEqual(1, patched)
+        for project in (ACME, BIRCH):
+            self.assertEqual([], [h.path for h in recall.search("oldwombat", project=project, root=self.root, sessions=True)])
 
     # -- F2 ---------------------------------------------------------------
 

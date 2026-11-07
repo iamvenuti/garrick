@@ -4,6 +4,54 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.58.1] - 2026-11-07
+
+A fix for the wall check in 0.58.0. It read some things as pointers to a Meetings page that were not, and refused commits that had nothing wrong with them. Nothing it refused before is let through: a path or a link to a Meetings page, written in any form, is read as in 0.58.0.
+
+### Fixed
+
+- **A project kept in `System/` is no longer checked as a project with no party.** `System/` is not a zone and has no wall hook, and a project there has no party. 0.58.0 reported every Meetings name in it as written for a project with nothing to check against. A project in `System/` that names a party is still checked, and a zone's project with no party still commits nothing.
+- **Markup and data are not read as paths.** In `.html`, `.htm` and `.json` files an indented line is layout, not an indented code block, so a stylesheet's comment or attribute selector, or a JSON string holding a person's name with other words, is no longer taken for a path or a glob. An attribute that is no address and holds no name (`data-edge-to="x"` on an SVG element) is no longer read as a link; a page's own name in one, such as `title="kai-ross"`, is still read. `*`, `?:` and `[attr]` with fewer than three letters of their own count towards no glob limit, so normal CSS and script no longer make a file "hold more than 5000 globs". A path or a link written in these files, such as an `href` or a JSON string that is a path to a page, is read and refused across a wall as before.
+- **Bold round a folder name is not a glob.** `**Sources/**` was read as the glob `Sources/**` and matched every page of the Meetings wiki. Only stars round a name that ends with `/` are read as bold: `**sources/2603**` and `wiki/sources/2603*` are still globs, and refused across a wall.
+- **A spaced name in a frontmatter value is a name, not a pointer to a person's page.** `audience: Owen Pike, Dana Whitlock` read as `owen-pike` and `dana-whitlock`, and a person known on both sides of a wall was refused. A page's name written with its own hyphens (`kai-ross`), a path and a link are still read.
+- **A path that only ends like a file in an ignored copy does not lead into it.** A copy of the repository, a worktree or a build kept in a project, and left out by the zone's `.gitignore`, made a tail of a path in another project's note (`System/rules.md`, `entities/some-page.md`) match a file inside it, and refused the note as a path into a walled project. A file or folder git ignores is now matched by a path only when the path reaches the project's folder (`Harbour/Private/terms.md`, or from `Zones/`); a link to it, and a path from the note's own folder, are read as before.
+- **Ordinary code is readable.** `*`, `?:`, `[0]` and a regular expression in a file of code or markup count towards the 5000-glob limit only when they hold at least three letters of their own; a glob with fewer names no page and was never matched. `wiki/sources/2603*`, `people/*`, `kai-*` and `dana*` are still refused in every kind of file.
+
+## [0.58.0] - 2026-11-07
+
+The walls are one decision. The commit hook, Ask, the Questions panel, intake, Nurture and `scaffold.py` all ask one `decide()` with a record's parties derived in one place, and a record with no label is never permitted. The wall check reads a pointer to a Meetings page whatever its form. Ask reads the project, Meetings and Knowledge for every question and leads with a thread's resume point. Explore leaves out what git ignores.
+
+**Upgrading.** After the update, a project whose hub names no `party:`, or names `none` or a tag the Parties table lacks, cannot be committed until it does; `check.py` lists each such hub. Name the party in the hub's frontmatter, or `public` for material anyone may read. A hub or thread note carries `party:` only (a list is fine), never `parties:`. A note that names a Meetings page of a party walled from its project's, in any form, is now refused at commit, and so is a link to a file that has no label (a zone-root file, a hidden folder, a file of a project with no party). In a labelled project the hook now reads every staged file that is text, whatever its suffix: UTF-8, or UTF-16 and UTF-32 with a byte order mark, as Excel's Unicode text and many Windows exports are. A text file it cannot read (NUL bytes with no byte order mark) or over 50 MB is refused; save it as UTF-8, or keep it out of the project. A thread note that says `party: none` is refused, like a hub.
+
+### Security
+
+- **The wall check reads a pointer to a Meetings page whatever its form** ([#404](https://github.com/iamvenuti/garrick/pull/404)). Several ways of writing a path or a name to a Meetings page across a wall were let through in 0.57.0 and earlier. One normaliser now turns every token of a note, in code, prose, links and frontmatter, into each of its plausible readings, and one resolver matches each reading against an index of every Meetings page (sources, people, entities, decisions, questions, answers and raw records, live, dormant or archived) by path, by any tail of it or by name. A generated table of forms tests it, and none of the forms 0.57.0 refused is let through. The limits it still does not read are in `docs/principles.md`.
+- **A project with no party is no longer checked against nothing** ([#398](https://github.com/iamvenuti/garrick/issues/398)). Its files were tested for no names or quoted wording and could be read and linked from any project. It now commits nothing until its hub names a party.
+
+### Added
+
+- **One decision for every wall** ([#398](https://github.com/iamvenuti/garrick/issues/398)). Every enforcement point asks one `decide()`, which answers `permit`, `deny` or `confirm`, with a record's parties derived in one place by `labels()`. No label, no permit. `tests/walls/cases.md` is the table of cases, and `check.py --walls-cases` runs it against your own Parties and Walls tables.
+- **A `public` label** (#398). A hub may name `public` as its party. Every scope reads it, and nothing labelled is written into it: a named person, quoted wording or a meeting link from any party is refused there, `Sources/` included. `public` and `none` are reserved and cannot be a row of the Parties table.
+- **Intake asks rather than guesses** (#398). A mail with both sides of a wall on it, and mail from a party that shares its name with another, return `confirm`, and nothing is filed until you answer.
+
+### Changed
+
+- **Ask reads the project, Meetings and Knowledge for every question** ([#397](https://github.com/iamvenuti/garrick/issues/397)). A find with words searches the place it names, the Meetings pages its scope admits and the Knowledge wiki, and the route only decides which ranks first. "What's the latest on Acme?" now cites a meeting filed today even when the project's notes are older. A Meetings page is read for a project's find only if none of its parties is walled from any party of the project or its threads, and it is dropped before it is matched, ranked, counted or cut.
+- **A thread's own note leads with its resume point** (#397). Ask gives its Resume here block and the opening of its State of play, up to 1,500 characters, before any paragraph picked by words.
+- **A name is searched in every form Garrick lists for it** (#397). A word that settles to a party, person, project or thread also matches the other spellings in the Parties, People and Aliases tables, with and without spaces. A project or thread is also searched by its party's names when no other project carries that party, so "the latest on Acme Review" finds the meeting pages that say "Acme". A word found in a heading brings the section under it, not the heading alone.
+- **A project with no `party:` commits nothing** (#398). The hook refuses any file in it and names the hub as the fix; `check.py` reports the hub as an error, not a warning. A zone's own files (`Todo.md`, `AGENTS.md`) and its `Inbox/` are not affected.
+- **A change of a project's party re-checks the whole project** under the new party (#398).
+- **Ask reads a record with no party only when it is a published Knowledge page**, and a page whose `party:` and `parties:` disagree is read as neither (#398).
+- **CI cancels a pull request run that a newer push supersedes.** Runs on `main` always finish.
+
+### Fixed
+
+- **Explore no longer draws folders a zone's `.gitignore` leaves out** ([#399](https://github.com/iamvenuti/garrick/issues/399)), such as a project's `Repo/` and `Repo-*/` worktrees, nor folders that are git repositories of their own. Their notes no longer appear as extra projects, and the graph's count drops by them. One `git check-ignore` runs per zone per build.
+- **The Questions panel opens on a zone that has questions.** With no zone chosen yet, it opens on the first zone, by name, with an open question, not on an empty one.
+- **A question that is open again shows again.** The panel hides a question only until the rebuild after your save. A *Later* whose day has come, a save that was rolled back, and a Nurture row put right by hand show again without quitting the Garrick App.
+- **A project folder in decomposed Unicode, or renamed only in case, is found as its project** by the wall check.
+- **`test_example` no longer fails now and then on a git lock file** held for a moment during the archive-and-restore snapshot.
+
 ## [0.57.0] - 2026-11-06
 
 The Questions panel shows every zone and party at once, grouped so that nothing is added up across a wall, and an answer can be recorded as a decision that stands in the Meetings wiki until you change it. The lint turns *Open* sections into questions. A thread or correction made by a tool reaches the Garrick App at once. The wall check no longer refuses a folder path that only shares a name with a note, and it reads Knowledge frontmatter strictly.

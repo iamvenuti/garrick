@@ -789,3 +789,20 @@ class SafeGlobTest(unittest.TestCase):
         self.assertEqual(["[pick-harvest]"], mod._safe_fnmatch(["[pick-harvest]", "pick-harvest"], "[pick-harvest]"))
         self.assertEqual(["kai-ross"], mod._safe_fnmatch(["kai-ross", "jo-lane"], "kai-[r-s]oss"))
         self.assertEqual(["kai-ross"], mod._safe_fnmatch(["kai-ross"], "kai-ross"))
+
+
+class BracketHostTest(unittest.TestCase):
+    """An address with a bracket in its host part (`obsidian://[open?file=…`)
+    never stops the check, and its query is still read."""
+
+    def test_a_bracket_in_the_host_is_read_not_raised(self):
+        import importlib.util, sys
+        spec = importlib.util.spec_from_file_location(
+            "check_bracket_host", Path(__file__).resolve().parents[1] / "template/System/tools/check.py")
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = mod
+        self.addCleanup(sys.modules.pop, spec.name, None)
+        spec.loader.exec_module(mod)
+        links = mod.extract_links("See obsidian://[open?vault=v&file=wiki/people/kai-ross here.")
+        self.assertIn("wiki/people/kai-ross", " ".join(t for _, t in links))
+        self.assertEqual(("/y", "a=1"), (mod.urlsplit("http://[x/y?a=1").path, mod.urlsplit("http://[x/y?a=1").query))

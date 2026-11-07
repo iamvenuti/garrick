@@ -2759,20 +2759,23 @@ def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
     if in_zone and len(depth) == 2 and depth[1] == "Threads":
         return True                                           # a thread
     return name.casefold() not in SKIP_DIRS
-def git_ignored(root: Path, folders: List[str]) -> set:
-    """Which of `folders` (paths relative to the zone `root`) the zone's own git
-    ignores, from one `git check-ignore --stdin` over all of them (#399). A zone
-    that is not a repository of its own, or a Mac with no git, ignores nothing."""
-    if not folders or not (root / ".git").exists():
+def git_ignored(root: Path) -> set:
+    """The folders (paths relative to the zone `root`) that the zone's own git
+    ignores, from one `git ls-files` over the zone (#399), asked for before the
+    walk so that an ignored folder is never entered. A path git cannot encode
+    as text (a name that is not valid UTF-8) is read back as the walk reads it,
+    with surrogateescape. A zone that is not a repository of its own, or a Mac
+    with no git, ignores nothing."""
+    if not (root / ".git").exists():
         return set()
     try:
-        done = subprocess.run(["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
-                              input="".join(f + "/\0" for f in folders), capture_output=True, text=True, timeout=60)
+        done = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+                              capture_output=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return set()
-    if done.returncode not in (0, 1):
+    if done.returncode != 0:
         return set()
-    return {x.rstrip("/") for x in done.stdout.split("\0") if x}
+    return {os.fsdecode(x).rstrip("/") for x in done.stdout.split(b"\0") if x.endswith(b"/")}
 
 
 # What a note is, in the order the legend shows them. Colours are fixed so a
@@ -2923,17 +2926,13 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             vaults[vault] = vault_filters(vault)
         filters = vaults[vault] if vault is not None else []
         found_in = []                                 # (folder, files), in walk order
+        # What the zone's git ignores is known before the walk, so an ignored folder is never entered.
+        left_out = git_ignored(root) if in_zone else set()
         for folder, dirs, files in os.walk(root):
             # A folder that tops a repository of its own (a `.git` folder, or the file a worktree has) is not walked.
-            dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone) and not (Path(folder) / d / ".git").exists())
+            dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone) and not (Path(folder) / d / ".git").exists()
+                             and Path(folder, d).relative_to(root).as_posix() not in left_out)
             found_in.append((folder, files))
-        if in_zone:
-            left_out = git_ignored(root, [Path(f).relative_to(root).as_posix() for f, _ in found_in if f != str(root)])
-            if left_out:
-                def kept(folder: str) -> bool:
-                    rel = Path(folder).relative_to(root)
-                    return not any(a.as_posix() in left_out for a in [rel, *rel.parents] if a.parts)
-                found_in = [(f, fs) for f, fs in found_in if kept(f)]
         for folder, files in found_in:
             for f in sorted(files):
                 if not f.endswith(".md") or f == "AGENTS.md" or f.startswith((".", "_")):

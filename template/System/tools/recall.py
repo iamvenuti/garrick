@@ -769,6 +769,14 @@ class Refresher:
             return all(strip_tag(t) in self.known or strip_tag(t) == "public" for t in held)   # a tag no table lists is nobody's
         return decide(set(self.scope.tags), set(held), "read", self.ctx) == "permit"
 
+    def admit_session(self, held: Optional[frozenset]) -> bool:
+        """A past session is read from the root scope only (0.59.0 release review):
+        what it read is known only from what it typed, and a command can reach another
+        project in more ways than any reading of it can name. A `project:` line an older
+        extractor wrote is not trusted either. A line that does not read back (None) is
+        nobody's, the root's included."""
+        return held is not None and self.scope.kind == "root" and self.admit(held)
+
     def labelled(self, rel: str) -> Optional[frozenset]:
         parts = rel.split("/")
         if len(parts) >= 5 and parts[0] == "Zones" and not parts[2].startswith("."):
@@ -841,7 +849,7 @@ class Refresher:
 
     def session_derived(self, rel: str, path: Path) -> Optional[str]:
         held, _ = self.session_labels(path, rel)
-        if not self.admit(held):
+        if not self.admit_session(held):
             return None
         return json.dumps([sorted(held), fingerprint(path)])
 
@@ -850,7 +858,7 @@ class Refresher:
         if text is None:
             return False
         held, fm = self.session_labels(path, rel)
-        if not self.admit(held):
+        if not self.admit_session(held):
             return False
         zone = (locate(self.root, path) or Place("", "", "")).zone
         title = str(fm.get("title") or "") or path.stem

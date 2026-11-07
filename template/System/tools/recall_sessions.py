@@ -378,9 +378,15 @@ def destination(root: Path, s: Session) -> Optional[Tuple[Path, List[str]]]:
         names = [z for z in recall.zone_names(base)]
         if zone not in names:
             return None
-        # A session that was open at the zone's top at any point is the zone's, not a project's:
-        # it is labelled with no project, and only zone-level searches read it.
-        return folder, [] if (zone_level or s.root_only) else projects
+        # A past session is never a project's (0.59.0 release review). What a session read is
+        # known only from what it typed, and a command can reach another project in more ways
+        # than any reading of it can name (an absolute path, `~`, a bare `cd`, `env -C`,
+        # `git -C`, a folder found at run time). So every session is labelled with no project:
+        # a zone with no wall inside reads it from its one index, and a zone with a wall inside
+        # reads it from the root only. `projects`, `mentioned()` and `reaches_sibling()` still
+        # run, so a session that names a path no place holds is still dropped.
+        del zone_level, projects
+        return folder, []
     folder = base / "System"
     return (folder, []) if folder.is_dir() and not folder.is_symlink() else None
 

@@ -51,8 +51,9 @@ python3 ../../../System/tools/recall.py search "retry flag" --sessions
 python3 ../../../System/tools/recall.py read "Meetings:Wikis/Meetings/wiki/sources/260310-kickoff.md"
 ```
 
-- `--sessions` adds the sessions extracted for this zone. A session opened at
-  the workspace root or in `System/` can read every zone's.
+- `--sessions` adds past sessions, and only in a session opened at the
+  workspace root or in `System/`, which reads every zone's. From a zone or a
+  project it adds nothing: what a past session read cannot be known for sure.
 - `--wiki Meetings` or `--wiki Knowledge` searches that wiki alone (with `--sessions`, the sessions too, and no notes).
 - `--zone Z` narrows to one zone's notes. A session of a zone can name its own
   zone and no other; a search never reaches past the session's scope. For work

@@ -591,6 +591,7 @@ CSS = r"""
 .qp-group{margin:0 0 18px}.qp-group h3{margin:0 0 8px;font:600 16px/1.3 var(--display)}
 .qp-row{display:grid;grid-template-columns:minmax(160px,1fr) minmax(220px,2fr) auto;gap:8px 14px;align-items:start;padding:10px 0;border-top:1px solid var(--line);font-size:13px}
 .qp-row.refused{background:color-mix(in srgb,var(--critical) 8%,transparent)}
+#qp-open .qp-say{color:var(--critical);margin:6px 0 0}
 .qp-row .qp-first{color:var(--muted);display:block;margin-top:2px}.qp-row .qp-say{grid-column:1/-1;color:var(--critical)}
 .qp-row .qp-choice{display:flex;flex-wrap:wrap;gap:4px 10px}.qp-row .qp-choice label{display:flex;align-items:center;gap:4px;white-space:nowrap}
 .qp-row .qp-extra{grid-column:2/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
@@ -632,6 +633,9 @@ function bucketOf(k){return(D.buckets||{})[k]||EMPTY}
 function qviews(){return sel().views.filter(function(v){return v.kind!=='unattributed'})}
 function uviews(){return sel().views.filter(function(v){return v.kind==='unattributed'})}
 function key(q){return q.wiki+'/'+q.file}
+/* the day after the build's today, in local time: the page's own today is the build's, a day with no clock in it */
+function tomorrow(){var p=String(D.today||'').split('-').map(Number);if(p.length<3||p.some(isNaN))return'';var d=new Date(Date.UTC(p[0],p[1]-1,p[2]+1));return d.toISOString().slice(0,10)}
+var REFUSED={};
 function age(q){return Math.floor((new Date(D.today)-new Date(q.asked||D.today))/864e5)}
 var AGE={any:0,week:7,month:30};
 /* one entry per group: its own questions and its own count. Knowledge carries no party, so it is a group of its own. */
@@ -686,7 +690,8 @@ if(q.pages.length){ls.appendChild(el('span','','Would change'));q.pages.forEach(
 box.appendChild(ls);
 var ta=el('textarea');ta.setAttribute('aria-label','Your answer, in your own words');ta.placeholder='Your answer, in your own words. Return saves and moves on.';
 ta.value=S.typed[key(q)]||'';ta.oninput=function(){S.typed[key(q)]=ta.value;keep()};box.appendChild(ta);
-var date=el('input');date.type='date';date.setAttribute('aria-label','Come back on');
+var date=el('input');date.type='date';date.setAttribute('aria-label','Come back on');date.min=tomorrow();date.setAttribute('min',tomorrow());
+var msg=el('p','qp-say');msg.hidden=!REFUSED[key(q)];msg.textContent=REFUSED[key(q)]||'';
 var w=el('p','qp-writes');function writes(how){w.textContent='Saving writes: '+(q.writes[how]||[]).join(' and ')}writes('answer');box.appendChild(w);
 var acts=el('div','gacts'),ans=el('button','act primary','Answer'),lat=el('button','act','Later'),clo=el('button','act','Close'),dec=el('button','act','Record as a decision');
 [ans,lat,clo,dec].forEach(function(b){b.type='button'});
@@ -695,12 +700,15 @@ function go(how,extra,said){if(!host){copyWords(q,how,extra);return}
 if(act(req(how,extra),said)){S.gone[key(q)]=Date.now();S.cursor=nextE?ekey(nextE):'';delete S.typed[key(q)];keep();counts();list()}}
 function save(){var v=ta.value.trim();if(!v){ta.focus();return}go('answer',v,'Filing your answer…')}
 ans.onclick=save;ta.onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();save()}};
-lat.onclick=function(){if(!date.value){date.focus();say('Pick the day to come back on.');return}go('later',date.value,'Putting it off…')};
+function warn(t){msg.textContent=t;msg.hidden=false;say(t)}
+lat.onclick=function(){if(!date.value){date.focus();warn('Pick the day to come back on.');return}
+if(date.value<=D.today){date.focus();warn('Pick a day after today.');return}
+delete REFUSED[key(q)];msg.hidden=true;go('later',date.value,'Putting it off…')};
 clo.onclick=function(){go('close','','Closing…')};
 dec.onclick=function(){var v=ta.value.trim();if(!v){ta.focus();say('Say the decision in your own words first.');return}go('decide',v,'Recording the decision…')};
 if(!q.writes.decide){dec.disabled=true;dec.title='A Knowledge question has no zone and no parties for a decision to carry'}
 else{dec.title='Files your words as the raw answer and as a decision that stands as valid';dec.addEventListener('mouseover',function(){writes('decide')})}
-[ans,date,lat,clo,dec].forEach(function(b){acts.appendChild(b)});box.appendChild(acts);
+[ans,date,lat,clo,dec].forEach(function(b){acts.appendChild(b)});box.appendChild(acts);box.appendChild(msg);
 lat.addEventListener('mouseover',function(){writes('later')});clo.addEventListener('mouseover',function(){writes('close')});ans.addEventListener('mouseover',function(){writes('answer')});
 if(!host)box.appendChild(el('p','hint','In a browser this page cannot save: each button copies what to say to your assistant.'))}
 /* ---- proposed verdicts, one by one or all at once, each a close ---- */
@@ -792,6 +800,8 @@ var prevActed=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&(q.verb==='nurture-save'||q.verb==='nurture-save-all')){(res&&res.rows||[]).forEach(function(x){var r=rows.filter(function(y){return y.key===x.key})[0];if(!r)return;
 if(x.ok){S.gone['r:'+x.key]=Date.now()}else{r.el.classList.add('refused');var m=r.el.querySelector('.qp-say');if(!m){m=el('div','qp-say');r.el.appendChild(m)}m.textContent=x.say}});
 keep();if(res&&res.ok){var m=rows.filter(function(r){return r.el.classList.contains('refused')});if(!m.length)setTimeout(review,0)}}
+if(q&&/^question-/.test(q.verb)&&q.wiki&&q.file&&res&&!res.ok){var qk=q.wiki+'/'+q.file;delete S.gone[qk];REFUSED[qk]=res.say||'That did not work.';
+var at=shown().flat.filter(function(e){return key(e.q)===qk})[0];if(at)S.cursor=ekey(at);keep();counts();list()}
 if(q&&q.verb==='question-close'&&line.length)drain();
 if(prevActed)return prevActed(q,res)};
 function all(){bar();counts();list();vlist();dlist();work();review();keep()}

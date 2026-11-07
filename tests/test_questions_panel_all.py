@@ -28,6 +28,7 @@ parse(html, doc);
 const sess = seed || {}, posted = [];
 El.prototype.addEventListener = function (t, f) { (this._l = this._l || {})[t] = (this._l[t] || []).concat([f]); };
 Object.defineProperty(El.prototype, "value", { get() { return this._v === undefined ? "" : this._v; }, set(v) { this._v = v; } });
+El.prototype.focus = function () {};
 const qs = El.prototype.querySelector;
 El.prototype.querySelector = function (s) {
   if (s === "input[type=radio]:checked") return this.querySelectorAll("input").find((i) => i.type === "radio" && i.checked) || null;
@@ -59,6 +60,8 @@ function seen() {
     posted: posted.slice(),
     zone: ($("qp-zone").children.find((o) => o.selected) || {}).value,
     gone: JSON.parse(sess["garrick-questions"] || "{}").gone || {},
+    dateMin: (() => { const d = $("qp-open").querySelectorAll("input").find((i) => i.type === "date"); return d ? d.min : null; })(),
+    said: $("qp-open").querySelectorAll(".qp-say").filter((e) => !e.hidden).map((e) => e.textContent),
   };
 }
 const out = [seen()];
@@ -67,6 +70,10 @@ for (const [what, a] of steps) {
   if (what === "zone") { z.value = a; z.onchange.call(z); }
   if (what === "party") { p.value = a; p.onchange.call(p); }
   if (what === "show") $("qp-source").children.find((b) => b.getAttribute("data-source") === a).onclick();
+  if (what === "later") { /* a day in the field, then the button */
+    const o = $("qp-open"), d = o.querySelectorAll("input").find((i) => i.type === "date"); d.value = a;
+    o.querySelectorAll("button").find((b) => b.textContent === "Later").onclick(); }
+  if (what === "acted") ctx.GarrickActed(a[0], a[1]);
   if (what === "saveAll") $("qp-nurture").querySelectorAll("button").filter((b) => b.textContent === a)[0].onclick();
   if (what === "pickAnother") { /* every row answered "another page", which is a save */
     $("qp-nurture").querySelectorAll("input").filter((i) => i.type === "radio" && i.value === "another").forEach((i) => { i.checked = true; });
@@ -373,3 +380,44 @@ class TestDealtWithListOnlyBridgesTheRebuild(unittest.TestCase):
         self.assertIn("Date.now()", qp.JS)
         self.assertNotIn("S.gone[key(q)]=1", qp.JS)
         self.assertNotIn("S.gone['r:'+x.key]=1", qp.JS)
+
+
+@unittest.skipUnless(shutil.which("node"), "node is not installed")
+class TestLaterField(unittest.TestCase):
+    """The Later field takes a day after today only, and a refused request says why."""
+
+    def test_the_field_starts_the_day_after_the_builds_today(self):
+        self.assertEqual("2026-11-06", run([], seed=saved(zone="Work"))[0]["dateMin"])
+
+    def test_the_day_after_a_month_end_is_the_first_of_the_next(self):
+        d = data()
+        d["today"] = "2026-11-30"
+        self.assertEqual("2026-12-01", run([], d=d, seed=saved(zone="Work"))[0]["dateMin"])
+
+    def test_later_with_today_sends_nothing_and_says_why(self):
+        for day in ("2026-11-05", "2026-10-01"):
+            seen = run([("later", day)], seed=saved(zone="Work"))[-1]
+            self.assertEqual([], seen["posted"])
+            self.assertEqual(["Pick a day after today."], seen["said"])
+
+    def test_later_with_tomorrow_is_sent(self):
+        seen = run([("later", "2026-11-06")], seed=saved(zone="Work"))[-1]
+        self.assertEqual("question-later", seen["posted"][0]["verb"])
+        self.assertEqual("2026-11-06", seen["posted"][0]["until"])
+
+    def test_a_refused_request_shows_its_reason_and_the_question_comes_back(self):
+        steps = [("later", "2026-11-06")]
+        first = run(steps, seed=saved(zone="Work"))[-1]
+        req = first["posted"][0]
+        self.assertNotIn(ACME, json.dumps(first["list"]))
+        seen = run(steps + [("acted", [req, {"ok": False, "say": "not a later day: '2026-11-06'"}])], seed=saved(zone="Work"))[-1]
+        self.assertIn(ACME, json.dumps(seen["list"]))
+        self.assertEqual({}, seen["gone"])
+        self.assertEqual(["not a later day: '2026-11-06'"], seen["said"])
+
+    def test_a_request_that_worked_shows_no_refusal(self):
+        steps = [("later", "2026-11-06")]
+        req = run(steps, seed=saved(zone="Work"))[-1]["posted"][0]
+        seen = run(steps + [("acted", [req, {"ok": True, "say": "Done"}])], seed=saved(zone="Work"))[-1]
+        self.assertEqual([], seen["said"])
+        self.assertNotIn(ACME, json.dumps(seen["list"]))

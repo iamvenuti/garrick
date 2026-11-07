@@ -141,7 +141,7 @@ class TestOutcomes(WikiAnswerCase):
     def test_later_needs_a_day_to_come(self):
         self.ask()
         before = snapshot(self.root)
-        for until in (None, "", "tomorrow", "2026-10-05", "2026-09-01", 5):
+        for until in (None, "", "tomorrow", "2026-10-05", "2026-09-01", TODAY.isoformat(), 5):
             with self.assertRaises(pa.Refused, msg=until):
                 self.do("question-later", **({} if until is None else {"until": until}))
         self.assertEqual([], self.changed(before))

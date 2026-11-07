@@ -2444,6 +2444,10 @@ function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.check
 if(style){style.closest('.launcher-row').style.display='style' in a?'':'none';style.value=a.style||'icon';style.disabled=!a.menubar}
 if(ask){ask.closest('.launcher-row').style.display='askhotkey' in a?'':'none';ask.value=a.askhotkey||''}
 var said=a.said||{};note('hotkey',said.hotkey);note('askhotkey',said.askhotkey||(a.askdefault?NOTE.askhotkey+'. ⌘G until you set another':''));
+/* how the Ask box closes (#411): the last ticked box cannot be unticked, and says why */
+var ce=document.getElementById('menu-askclose-esc'),cc=document.getElementById('menu-askclose-click');
+if(ce&&cc){var cm=a.askclose||'escape',WHY='At least one way to close the Ask box stays on';ce.closest('.launcher-row').style.display='askclose' in a?'':'none';
+ce.checked=cm!=='click';cc.checked=cm!=='escape';ce.disabled=cm==='escape';cc.disabled=cm==='click';ce.title=ce.disabled?WHY:'';cc.title=cc.disabled?WHY:''}
 /* an app built before #35 says no dictation, and both its rows stay hidden */
 if(dict){var m=a.dictation||'off',dn=document.getElementById('menu-dictation-note');dict.closest('.launcher-row').style.display='dictation' in a?'':'none';
 dict.value=m;if(dn)dn.textContent=said.dictation||DICT[m]||DICT.key;
@@ -2459,6 +2463,9 @@ function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
 show.addEventListener('change',function(e){tell(e,{menubar:show.checked})});
 if(style)style.addEventListener('change',function(e){tell(e,{style:style.value})});
 if(dict)dict.addEventListener('change',function(e){tell(e,{dictation:dict.value})});
+function closeWith(e){var ce=document.getElementById('menu-askclose-esc'),cc=document.getElementById('menu-askclose-click');
+if(!ce.checked&&!cc.checked){(e.target||ce).checked=true;return}tell(e,{askclose:ce.checked&&cc.checked?'both':ce.checked?'escape':'click'})}
+['menu-askclose-esc','menu-askclose-click'].forEach(function(id){var c=document.getElementById(id);if(c)c.addEventListener('change',closeWith)});
 var finb=document.getElementById('menu-finder');if(finb)finb.addEventListener('click',function(e){tell(e,{finder:'settings'})});
 login.addEventListener('change',function(e){tell(e,{login:login.checked})});
 var MOD=[['ctrlKey','⌃','ctrl'],['altKey','⌥','alt'],['shiftKey','⇧','shift'],['metaKey','⌘','cmd']];
@@ -2759,20 +2766,23 @@ def walked(root: Path, folder: str, name: str, in_zone: bool) -> bool:
     if in_zone and len(depth) == 2 and depth[1] == "Threads":
         return True                                           # a thread
     return name.casefold() not in SKIP_DIRS
-def git_ignored(root: Path, folders: List[str]) -> set:
-    """Which of `folders` (paths relative to the zone `root`) the zone's own git
-    ignores, from one `git check-ignore --stdin` over all of them (#399). A zone
-    that is not a repository of its own, or a Mac with no git, ignores nothing."""
-    if not folders or not (root / ".git").exists():
+def git_ignored(root: Path) -> set:
+    """The folders (paths relative to the zone `root`) that the zone's own git
+    ignores, from one `git ls-files` over the zone (#399), asked for before the
+    walk so that an ignored folder is never entered. A path git cannot encode
+    as text (a name that is not valid UTF-8) is read back as the walk reads it,
+    with surrogateescape. A zone that is not a repository of its own, or a Mac
+    with no git, ignores nothing."""
+    if not (root / ".git").exists():
         return set()
     try:
-        done = subprocess.run(["git", "-C", str(root), "check-ignore", "--stdin", "-z"],
-                              input="".join(f + "/\0" for f in folders), capture_output=True, text=True, timeout=60)
+        done = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"],
+                              capture_output=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return set()
-    if done.returncode not in (0, 1):
+    if done.returncode != 0:
         return set()
-    return {x.rstrip("/") for x in done.stdout.split("\0") if x}
+    return {os.fsdecode(x).rstrip("/") for x in done.stdout.split(b"\0") if x.endswith(b"/")}
 
 
 # What a note is, in the order the legend shows them. Colours are fixed so a
@@ -2923,17 +2933,13 @@ def graph(ws: Path, T: Dict[str, dict], link: "Links", now: dt.datetime, cmux: b
             vaults[vault] = vault_filters(vault)
         filters = vaults[vault] if vault is not None else []
         found_in = []                                 # (folder, files), in walk order
+        # What the zone's git ignores is known before the walk, so an ignored folder is never entered.
+        left_out = git_ignored(root) if in_zone else set()
         for folder, dirs, files in os.walk(root):
             # A folder that tops a repository of its own (a `.git` folder, or the file a worktree has) is not walked.
-            dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone) and not (Path(folder) / d / ".git").exists())
+            dirs[:] = sorted(d for d in dirs if walked(root, folder, d, in_zone) and not (Path(folder) / d / ".git").exists()
+                             and Path(folder, d).relative_to(root).as_posix() not in left_out)
             found_in.append((folder, files))
-        if in_zone:
-            left_out = git_ignored(root, [Path(f).relative_to(root).as_posix() for f, _ in found_in if f != str(root)])
-            if left_out:
-                def kept(folder: str) -> bool:
-                    rel = Path(folder).relative_to(root)
-                    return not any(a.as_posix() in left_out for a in [rel, *rel.parents] if a.parts)
-                found_in = [(f, fs) for f, fs in found_in if kept(f)]
         for folder, files in found_in:
             for f in sorted(files):
                 if not f.endswith(".md") or f == "AGENTS.md" or f.startswith((".", "_")):
@@ -4128,6 +4134,10 @@ def menu_settings() -> str:
             'Opens the Ask box from any app, with the preview ask on</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-askkey" readonly placeholder="None" aria-label="Ask hotkey">'
             '<button class="act" type="button" id="menu-askkey-clear">Clear</button></span></div>'
+            '<div class="launcher-row" style="display:none"><span class="launcher-choice"><span>Close the Ask box with'
+            '<small id="menu-askclose-note">One way always stays on</small></span></span>'
+            '<span class="askclose"><label><input type="checkbox" id="menu-askclose-esc"> Escape</label> '
+            '<label><input type="checkbox" id="menu-askclose-click"> A click outside it</label></span></div>'
             '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-dictation"><span>Then start dictation'
             '<small id="menu-dictation-note">Once the Ask box opens, start dictation in it too</small></span></label>'
             '<select id="menu-dictation" class="menu-style"><option value="off">Off</option><option value="macos">macOS Dictation</option>'
@@ -4194,24 +4204,57 @@ def release_number(ws: Path) -> str:
     return "Garrick %s" % number if number else installed_version(ws)
 
 
-def about_garrick(version: str) -> str:
+def release_choice(ws: Optional[Path]) -> Tuple[bool, int]:
+    """(whether the check for a newer Garrick is on, its cadence in days),
+    from the settings file through the workspace's own garrick_lib. Off and
+    daily where it cannot be read."""
+    lib = workspace_lib(ws)
+    on, every = getattr(lib, "release_notice_on", None), getattr(lib, "release_every", None)
+    try:
+        return (bool(on(ws)) if callable(on) else False,
+                7 if callable(every) and every(ws).days == 7 else 1)
+    except Exception:
+        return False, 1
+
+
+def release_controls(on: bool, every: int) -> str:
+    """Settings › About Garrick's Check for updates button and its switch
+    (#410), in the app only. The button asks GitHub now, which is the
+    click's consent; the switch and its cadence are saved when Settings
+    closes, with the rest, as `release-notice` and `release-notice-every`.
+    RELEASE_JS fills the line and the report."""
+    option = lambda days, label: '<option value="%d"%s>%s</option>' % (days, " selected" if every == days else "", label)
+    return ('<div class="setrel apponly" id="release-settings"><p class="setrelrow"><button type="button" class="act" '
+            'id="rel-check">Check for updates</button><span class="hint" id="rel-line" role="status"></span></p>'
+            '<div class="setrelbox" id="rel-detail" hidden></div>'
+            '<p class="setrelrow"><label><input type="checkbox" id="rel-on"%s> <span>Check for a newer Garrick</span></label> '
+            '<select id="rel-every" aria-label="How often"%s>%s%s</select></p>'
+            '</div>'
+            % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
+
+
+def about_garrick(version: str, ws: Optional[Path] = None) -> str:
     """Settings › About Garrick (#227): the release this is, and three links
     to Garrick's GitHub page, opened in the browser, where nothing is sent
     until you submit it yourself: the bug form, with the version filled in;
     an idea; and the release notes. A way past the wall check is reported
     privately, as SECURITY.md says, and the bug form points there. The page
-    never calls out: a newer release is asked for at build, only with the
-    release notice switched on, by System/tools/release.py (release_ask)."""
+    never calls out: a newer release is asked for at build and by the nightly
+    job, only with the release notice switched on, by System/tools/release.py
+    (release_ask), and by the Check for updates button, on a click."""
     invented = "Use invented names (Acme, Birch), never a real client's."
     links = [("Report a bug", "/issues/new?" + urllib.parse.urlencode({"template": "bug.yml", "garrick": version}), invented),
              ("Suggest a change", "/discussions/new?category=ideas", invented),
              ("Release notes", "/releases", "")]
     rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"%s><b>%s</b></a>'
                    % (E(PROJECT + path), ' title="%s"' % E(tip) if tip else "", E(label)) for label, path, tip in links)
-    return ('<section class="setsec" id="about-settings">%s%s<p class="setver" id="garrick-version">%s</p>'
+    return ('<section class="setsec" id="about-settings">%s%s<p class="setver" id="garrick-version">%s</p>%s'
             '<div class="setlinks">%s</div></section>'
             % (set_head("About Garrick", "about"), help_text("about", 'These open GitHub in your browser. Nothing is sent '
-               'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s.'), E(version), rows))
+               'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
+               'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
+               'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and in Needs attention, and never updates.'),
+               E(version), release_controls(*release_choice(ws)) if ws is not None else "", rows))
 
 
 # Each row of Opening a thread carries the icon its way carries on Explore's
@@ -4369,7 +4412,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
                       wait_settings(ws)],
              "tell": [notify_settings(ws, CMUXLIB.is_file())],
              "keep": [memory_settings(ws, link)],
-             "about": [about_garrick(release_number(ws)), preview_section(preview_flags(ws))]}
+             "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
     groups = [(key, title, [h for h in filed[key] if h]) for key, title in SET_GROUPS]
     main = "".join('<div class="setgroup" role="group" aria-labelledby="sg-%s"><p class="setgrp" id="sg-%s">%s</p>%s</div>'
                    % (key, key, E(title), "".join(secs)) for key, title, secs in groups if secs)
@@ -4648,7 +4691,7 @@ def notify_lib(ws: Path):
 
 def notify_settings(ws: Path, desk: bool = False) -> str:
     """Settings › Notifications (#110, #227): notices go to this Mac and
-    nowhere else, so the section is the four notices you can be told of,
+    nowhere else, so the section is the five notices you can be told of,
     each on or off, the minutes a long task takes, and quiet hours, with
     what they do in one sentence. A session in cmux gets its notice on its
     own tab, with no switch for it. In the app only: what is chosen goes to
@@ -4672,7 +4715,7 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
     rule = "At night only &#8220;a session needs me&#8221;%s get%s through." % ((" and the desk", "") if desk else ("", "s"))
     help_html = ('A notice names the zone or thread and what happened, never what a note or a meeting says. In cmux it lands on '
                  'the session&#39;s own tab. &#8220;A session needs me&#8221; and &#8220;a long task finishes&#8221; need hooks in '
-                 'Claude Code or Codex: ask your assistant to set up notifications. With all four off, Garrick sends nothing. '
+                 'Claude Code or Codex: ask your assistant to set up notifications. With all five off, Garrick sends nothing. '
                  'A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way. '
                  'Saved in <code>%s</code> when you close Settings.' % E(prefs().FILE))
     return ('<section class="setsec apponly" id="notify-settings">%s%s<div class="nsimple"><div class="nsrow">'
@@ -6708,8 +6751,11 @@ dialog.settings .sethelp{margin:2px 0 6px}
 .setfoot{margin-top:30px}dialog.settings .setsec:focus{outline:none}.setrule{padding-top:10px;border-top:1px solid var(--line)}
 dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hiddencards .gacts{margin:4px 0 0}.setfoot .hiddencards{margin:0 0 10px}
 .setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:5px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
+.setrel{margin:8px 0}.setrelrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:6px 0}.setrelrow .hint{margin:0}
+.setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
+.setrelbox a{color:var(--accent)}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
-/* Settings › Notifications: the four notices, the minutes a long task takes, and quiet hours */
+/* Settings › Notifications: the five notices, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
 #notify-settings .nsimple{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px;font-size:13px}
 #notify-settings .nsrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
@@ -6929,11 +6975,12 @@ var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Not
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
 /* What Settings has to save, as one request: the apps, the zones, the graph's colours, the notifications, While you wait,
    Memory, each only when it changed. null when there is nothing. */
-function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed());
-if(!(lpChanged||zChanged||gChanged||daChanged||n||w||m))return null;
+function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed()),R=window.GarrickRelease,rl=!!(R&&R.changed());
+if(!(lpChanged||zChanged||gChanged||daChanged||n||w||m||rl))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(gChanged)q.graph=greq();if(n)q.notifications=N.request();
 if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}
 if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}
+if(rl){var rq=R.request();q['release-notice']=rq.on;q['release-notice-every']=rq.every;R.saved()}
 lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
 if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)sdShut()});
@@ -7033,7 +7080,7 @@ window.ThreadRows={bind:bindRow,chev:chev,close:tClose};
 """
 
 
-# Settings › Notifications (#110, #227), in the app: the four boxes, the
+# Settings › Notifications (#110, #227), in the app: the five boxes, the
 # minutes and quiet hours read into the shape notifications.py keeps, sent
 # with what else Settings changed when it closes (JS's sdReq), where
 # page_action.py checks them through notifications.py's clean().
@@ -7296,6 +7343,47 @@ window.GarrickCatchUp={open:open,phrase:phrase};
 })();
 """
 # ---- end of Catch up ------------------------------------------------------------------
+
+
+# ---- Settings › About Garrick: Check for updates (#410) ----------------------------
+# The button asks page_action.py's `release-check`, which asks GitHub now: the click
+# is the consent for that one request. A newer release is applied at once, through
+# `release-update`, with a progress line while it runs; page_action.py refuses it
+# unless the running release is older. The report is drawn from the reply's
+# counts and lists with textContent, in the words the update itself uses. The
+# switch and the cadence are read back by sdReq when Settings closes.
+RELEASE_JS = r"""
+(function(){var sec=document.getElementById('release-settings');if(!sec)return;
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick,btn=document.getElementById('rel-check'),
+line=document.getElementById('rel-line'),box=document.getElementById('rel-detail'),on=document.getElementById('rel-on'),every=document.getElementById('rel-every'),
+changed=false,busy=false;
+function put(t){line.textContent=t}
+function at(r){var d=r&&r.asked?new Date(r.asked):null;return d&&!isNaN(d)?' Asked at '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'.':''}
+function add(tag,text,into){var e=document.createElement(tag);e.textContent=text;(into||box).appendChild(e);return e}
+function items(head,list,said){if(!list||!list.length)return;add('p',head);var ul=add('ul','');list.forEach(function(x){add('li',said?said(x):x,ul)})}
+function show(r){box.textContent='';box.hidden=true;if(!r||r.state!=='updated'&&r.state!=='stopped')return;box.hidden=false;
+var p=add('p',r.line||'');if(r.url){p.appendChild(document.createTextNode(' '));var a=document.createElement('a');a.href=r.url;a.target='_blank';a.rel='noopener';a.textContent='Release notes';p.appendChild(a)}
+if(r.state==='updated')add('p',(r.replaced||0)+' file'+(r.replaced===1?'':'s')+' replaced, '+(r.added||0)+' added.');
+items('Written as .new beside the file you changed. Merge each, then remove the .new.',r.new,function(x){return x+'.new'});
+if((r.new&&r.new.length)||(r.split&&r.split.length))add('p','Say \u201cmerge the update\u201d to your assistant.');
+items('Instruction files you changed, left as they are (Split):',r.split);
+items('Skipped:',r.skipped,function(x){return x[0]+': '+x[1]});
+items('Left for you:',r.then);items('The check found:',r.problems)}
+function done(){busy=false;btn.disabled=false}
+btn.onclick=function(){if(busy)return;if(!host){put('Only the Garrick app can ask GitHub.');return}busy=true;btn.disabled=true;box.hidden=true;put('Asking GitHub\u2026');
+host.postMessage({act:{verb:'release-check'}})};
+sec.addEventListener('change',function(e){if(e.target===on||e.target===every){changed=true;every.disabled=!on.checked}});
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){put((out&&out.say)||'Could not ask GitHub. Nothing was changed.');done();return}
+if(r.state==='newer'){put('Updating from '+r.running+' to '+r.latest+'\u2026 this takes a minute.');host.postMessage({act:{verb:'release-update'}});return}
+put(r.line+at(r));done();return}
+if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update could not start. Nothing was changed.');done();return}
+put(u.line);show(u);done();return}
+if(prev)return prev(q,out)};
+window.GarrickRelease={changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};
+})();
+"""
+# ---- end of Settings › About Garrick: Check for updates ------------------------------
 
 
 # ---- Settings › Memory (#108) -----------------------------------------------------
@@ -8750,7 +8838,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

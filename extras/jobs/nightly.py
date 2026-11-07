@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A scheduled job: Garrick's one nightly run, four steps in order (#276).
+"""A scheduled job: Garrick's one nightly run, five steps in order (#276).
 
     python3 nightly.py --workspace /Users/<you>/Garrick [--scope Zones/Work]... [--digest]
                        [--also FOLDER]... [--moved OLD=NEW]...
@@ -11,12 +11,17 @@
    `--moved` passed on, so the Effort view keeps the days Claude Code's
    transcripts lose after 30. Skipped when the status page extra is not
    there.
-3. **nightly.local**: the workspace's own nightly checks,
+3. **recall**: `System/tools/recall.py nightly`: write the sessions Claude
+   Code and Codex kept since the last run to the gitignored `.sessions/`
+   folders (Claude Code deletes its transcripts after 30 days by default),
+   then bring Recall's search indexes up to date (#341). Skipped when the
+   tool is not there.
+4. **nightly.local**: the workspace's own nightly checks,
    `System/jobs/nightly.local`, run in the workspace when the file exists
    and is executable. Garrick never ships or changes it. Without it the
    step is skipped, and that is no fault.
-4. **status**: `System/status/status.py --same-flags`, so the page shows
-   what the first three found, with the flags the Mac app or the Obsidian
+5. **status**: `System/status/status.py --same-flags`, so the page shows
+   what the first four found, with the flags the Mac app or the Obsidian
    plugin last gave it. It runs its own quick check (check.py --quick), as
    every rebuild does, so the page shows the state after the fixes.
    Skipped when the status page extra is not there.
@@ -67,7 +72,7 @@ NURTURE = HERE / "nurture_sweep.py"
 STATUS = HERE.parent / "status"            # System/status beside System/jobs, as extras/status is beside extras/jobs
 LOCAL = ("System", "jobs", "nightly.local")
 # Seconds each step may take; their sum stays under the plist's --timeout 3600.
-LIMITS = {"nurture": 1800, "effort": 600, "nightly.local": 600, "status": 480}
+LIMITS = {"nurture": 1500, "effort": 600, "recall": 300, "nightly.local": 600, "status": 480}
 TAIL = 10
 EXIT_TIMEOUT = 124
 EXIT_FAILED = 1
@@ -82,7 +87,7 @@ _deferred: List[int] = []
 
 
 def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[str]], str]]:
-    """(step, command, why it is skipped) for the four steps, in order. A
+    """(step, command, why it is skipped) for the five steps, in order. A
     step with no command is skipped."""
     nurture = [sys.executable, str(NURTURE), "--workspace", str(ws)]
     for scope in args.scope:
@@ -97,11 +102,35 @@ def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[s
     local = ws.joinpath(*LOCAL)
     out = [("nurture", nurture, ""),
            ("effort", effort, "") if (STATUS / "effort.py").is_file() else ("effort", None, "no System/status/effort.py"),
+           ("recall", [sys.executable, str(ws / "System" / "tools" / "recall.py"), "--root", str(ws), "nightly"], "")
+           if (ws / "System" / "tools" / "recall.py").is_file() else ("recall", None, "no System/tools/recall.py"),
            ("nightly.local", [str(local)], "") if local.is_file() and os.access(str(local), os.X_OK)
            else ("nightly.local", None, NOT_EXECUTABLE % local if local.is_file() else "none"),
            ("status", [sys.executable, str(STATUS / "status.py"), "--workspace", str(ws), "--same-flags"], "")
            if (STATUS / "status.py").is_file() else ("status", None, "no System/status/status.py")]
     return out
+
+
+RELEASE_TOOL = ("System", "tools", "release.py")
+RELEASE_LIMIT = 90         # seconds for the question to GitHub
+
+
+def release_check(ws: Path) -> Optional[int]:
+    """Before the steps: `release.py latest --background`, which asks GitHub
+    only when the release notice is switched on and due (a day, or the seven
+    days `release-notice-every` holds) and sends the `release` notice once
+    for a newer release. It tells and never updates: nothing scheduled calls
+    `release.py update`. None when the tool is not there; a failure is
+    silent, as the question always was."""
+    tool = ws.joinpath(*RELEASE_TOOL)
+    if not tool.is_file():
+        return None
+    try:
+        return subprocess.run([sys.executable, str(tool), "--root", str(ws), "latest", "--background"], cwd=str(ws),
+                              stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                              timeout=RELEASE_LIMIT).returncode
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def stop_group(proc: subprocess.Popen) -> None:
@@ -225,6 +254,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 def run_steps(ws: Path, args: argparse.Namespace) -> int:
     done: List[dict] = []
+    release_check(ws)
     for step, cmd, why in steps(ws, args):
         if cmd is None:
             print("nightly: %s skipped: %s" % (step, why))

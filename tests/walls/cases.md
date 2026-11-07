@@ -184,5 +184,5 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e52 | check | a Northwind note that links a Knowledge page carrying `Parties:` | refused | a Knowledge page with a party key has no label |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
-| e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; the filter runs before the ranking;  ranking statistics computed over walled rows |
+| e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; a row decide() does not admit is not in the scope index, so it ranks nothing;  ranking statistics computed over walled rows |
 | e23 | ask | a Todo line that names no party | refused | decide() alone, d05;  a Todo line that names no party, served across a wall |

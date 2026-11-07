@@ -1,0 +1,171 @@
+"""Six faults of the wall check and the status page, found by the 0.58.0 review and the refusal of a
+merge (0.59.0).
+
+    cd tests && python3 -m unittest test_check_low_faults
+
+Every name is invented; Acme Corp and Birch & Co have a wall between them.
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+
+import subprocess  # noqa: E402
+from unittest import mock  # noqa: E402
+
+from fixtures import GIT_ENV, HAVE_GIT, build_workspace, commit_all, git, git_init, project_hub, thread_note, write  # noqa: E402
+
+import check  # noqa: E402
+
+WALL_MESSAGE = "a wall stands between"
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        self.work = self.root / "Zones" / "Work"
+        self.note = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Notes.md"
+
+    def says(self, text, note=None):
+        note = note or self.note
+        write(note, text)
+        where = str(note.relative_to(self.root))
+        return [(f.severity, f.message) for f in check.run_checks(self.root, walls_only=True) if f.path == where]
+
+    def refused(self, found):
+        return [m for s, m in found if s == "error"]
+
+
+class OutsidePathTest(Base):
+    """1. A path outside the workspace is read as a path into it."""
+
+    def setUp(self):
+        super().setUp()
+        # An Acme project that holds folders named like the parts of a folder in a user's Library.
+        write(self.work / "Harbour" / "Harbour.md", project_hub("Work", "Harbour", "acme"))
+        write(self.work / "Harbour" / "Library" / "Application Scripts" / "com.apple.mail" / "x.scpt", "x\n")
+        write(self.work / "Harbour" / "Deliverables" / "260301 - Plan.md", "# plan\n")
+
+    def test_a_path_under_the_home_folder_that_ends_like_a_project_folder_is_not_a_path_into_it(self):
+        for written in ("~/Library/Application Scripts/com.apple.mail/x.scpt",
+                        "/Users/jo/Library/Application Scripts/com.apple.mail/x.scpt"):
+            found = self.says("Put the script in `%s`.\n" % written)
+            self.assertEqual([], self.refused(found), (written, found))
+
+    def test_the_same_tail_written_inside_the_workspace_is_still_refused(self):
+        for written in ("Library/Application Scripts/com.apple.mail/x.scpt",
+                        "Zones/Work/Harbour/Library/Application Scripts/com.apple.mail/x.scpt",
+                        "~/Workspace/Zones/Work/Harbour/Library/Application Scripts/com.apple.mail/x.scpt"):
+            found = self.says("Put the script in `%s`.\n" % written)
+            self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), (written, found))
+
+    def test_a_project_named_like_a_system_folder_is_still_a_project(self):
+        """The release review's way past the wall: `/Home/…` and `~/Library/…` are paths into a project of that name."""
+        for name in ("Home", "Media", "Library", "Documents"):
+            write(self.work / name / (name + ".md"), project_hub("Work", name, "acme"))
+            write(self.work / name / "Deliverables" / "260301 - Plan.md", "# plan\n")
+        for name, written in (("Home", "/Home/Deliverables/260301 - Plan.md"), ("Home", "/home/Deliverables/260301 - Plan.md"),
+                              ("Media", "/Media/Deliverables/260301 - Plan.md"), ("Library", "~/Library/Deliverables/260301 - Plan.md"),
+                              ("Library", "/Library/Deliverables/260301 - Plan.md"),
+                              ("Documents", "~/Documents/Deliverables/260301 - Plan.md")):
+            found = self.says("See `%s`.\n" % written)
+            self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), (written, found))
+
+    def test_a_system_folder_named_by_a_thread_is_read_by_its_names(self):
+        write(self.work / "Harbour" / "Harbour.md", project_hub("Work", "Harbour", "acme", ["Users"]))
+        write(self.work / "Harbour" / "Threads" / "Users" / "Users.md", thread_note("Harbour", "Users", "acme"))
+        write(self.work / "Harbour" / "Threads" / "Users" / "Notes.md", "x\n")
+        found = self.says("See `/Users/Notes.md`.\n")
+        self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), found)
+
+
+class RefusalTrailerTest(Base):
+    """2. Each refusal ends with the fix of its own kind."""
+
+    def line(self, text, note=None):
+        note = note or self.note
+        write(note, text)
+        where = str(note.relative_to(self.root))
+        found = [f for f in check.run_checks(self.root, walls_only=True) if f.path == where]
+        return check.report_staged(found)
+
+    def test_a_wall_crossing_ends_with_take_it_out(self):
+        out = self.line("See `Wikis/Meetings/wiki/sources/260310-acme-kickoff.md`.\n")
+        self.assertIn("Commit refused: ", out)
+        self.assertTrue(out.endswith("Take it out and commit again; only if you mean it, git commit --no-verify."), out)
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_a_project_with_no_party_ends_with_naming_one_in_its_hub(self):
+        git_init(self.work)
+        write(self.work / "Orphan" / "Orphan.md", project_hub("Work", "Orphan", ""))
+        write(self.work / "Orphan" / "Threads" / "T" / "T.md", thread_note("Orphan", "T", ""))
+        write(self.work / "Orphan" / "Threads" / "T" / "Notes.md", "Some notes.\n")
+        git(self.work, "add", "-A")
+        out = check.report_staged(check.run_checks(self.root, walls_only=True, staged=self.work))
+        self.assertIn("Commit refused: Zones/Work/Orphan/Threads/T/Notes.md ", out)
+        for line in out.splitlines():
+            self.assertTrue(line.endswith("Name a party in the project's hub (`party:`), then commit again."), line)
+            self.assertNotIn("Take it out", line)
+            self.assertNotIn("--no-verify", line)
+            self.assertEqual(1, line.count("commit again"))      # the message does not say it a second time
+
+    def test_each_kind_has_a_fix_that_says_commit_again(self):
+        kinds = {
+            "names Acme Corp, or one of its people; a wall stands between birch and acme": "Take it out",
+            "uses x, but the project has no party to check the walls against": "Name a party",
+            "names a different party on disk from the one staged; stage that change or undo it": "Stage that change",
+            "uses x, an unfinished source (no zone or parties)": "Finish or file it",
+            "uses x, a raw record that no page cites, so nothing says whose it is": "Name a party for it",
+            "holds a path the system cannot read (Too long), so the file cannot be checked; shorten it": "Make that change",
+        }
+        for message, start in kinds.items():
+            fix = check.staged_fix(message)
+            self.assertTrue(fix.startswith(start), (message, fix))
+            self.assertIn("commit again", fix)
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class StagedRunTest(Base):
+    """3. A commit check asks git for each staged file once, and for a hub once."""
+
+    def test_each_staged_file_is_read_from_git_once(self):
+        git_init(self.work)
+        write(self.work / "Northwind" / "Northwind.md", project_hub("Work", "Northwind", "acme", ["T0"]))
+        write(self.work / "Northwind" / "Threads" / "T0" / "T0.md", thread_note("Northwind", "T0", "acme"))
+        commit_all(self.work, "base")
+        for i in range(6):
+            write(self.work / "Northwind" / "Threads" / "T0" / ("Note %d.md" % i), "# Note %d\n\nFreight rates.\n" % i)
+        git(self.work, "add", "-A")
+        shown, real = [], subprocess.run
+
+        def watching(cmd, *a, **kw):
+            if list(cmd[:2]) == ["git", "show"]:
+                shown.append(cmd[2])
+            return real(cmd, *a, **kw)
+
+        with mock.patch.object(check.subprocess, "run", watching):
+            found = check.run_checks(self.root, walls_only=True, staged=self.work)
+        self.assertEqual([], [f for f in found if f.severity == "error"])
+        self.assertEqual(6, len(shown), shown)
+        self.assertEqual(len(shown), len(set(shown)))
+
+    def test_a_hub_that_reads_two_ways_is_asked_once_for_all_its_files(self):
+        write(self.work / "Northwind" / "Northwind.md", project_hub("Work", "Northwind", "acme"))
+        ws = check.discover(self.root)
+        with mock.patch.object(check, "labels", wraps=check.labels) as asked:
+            first = check.hub_unreadable(ws, self.work / "Northwind")
+            for _ in range(5):
+                self.assertEqual(first, check.hub_unreadable(ws, self.work / "Northwind"))
+        self.assertEqual(1, asked.call_count)
+
+
+if __name__ == "__main__":
+    unittest.main()

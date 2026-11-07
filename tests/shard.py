@@ -63,6 +63,7 @@ TOUCH_MAP = {
     "tests/shard-times.json": ["test_shard"],
     "docs/": ["test_docs"],
     "template/System/skills/": ["test_skills", "test_docs"],
+    "tests/walls/": ["test_wall_form_files"],
 }
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {

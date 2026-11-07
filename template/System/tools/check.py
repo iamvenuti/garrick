@@ -201,6 +201,7 @@ CHECKS = [
     ("knowledge", "Knowledge wiki"),
     ("raw", "Raw records"),
     ("generated", "Generated files"),
+    ("recall", "Recall indexes and sessions"),
     ("preferences", "Kept choices"),
     ("review", "Review record"),
     ("updates", "Updates to merge"),
@@ -236,6 +237,7 @@ EAR_GROUP = {
     "knowledge": "{n} Knowledge pages carry parties or meeting material",
     "raw": "{n} raw records were changed",
     "generated": "{n} generated files could end up in the workspace history",
+    "recall": "{n} search index or session files could end up in the workspace history",
     "preferences": "{n} of the choices you keep are not in the workspace history",
     "review": "the review record has {n} entries outside its fixed form",
 }
@@ -8379,6 +8381,38 @@ def check_generated(ws: Workspace) -> List[Finding]:
     return out
 
 
+RECALL_FILE_RE = re.compile(r"(?:^|/)(?:\.recall\.sqlite[^/]*|\.sessions/.*)$")
+
+
+def check_recall(ws: Workspace) -> List[Finding]:
+    """Recall's search indexes (`.recall.sqlite*`) are a cache, and the
+    sessions it extracts (`.sessions/`) are private to this Mac (#341). Neither
+    may be staged or committed in any repository of the workspace: the root's,
+    a zone's, or the wikis'."""
+    out = []
+    repos = [ws.root] + list(ws.zones)
+    wikis = ws.root / "Wikis"
+    repos += [wikis] + (sorted(p for p in wikis.iterdir() if p.is_dir()) if wikis.is_dir() else [])
+    for repo in repos:
+        if not (repo / ".git").exists():
+            continue
+        try:
+            r = subprocess.run(["git", "-C", str(repo), "ls-files", "-z"], capture_output=True, text=True, timeout=60,
+                               env=_git_env(repo))
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if r.returncode != 0:
+            continue
+        for name in r.stdout.split("\0"):
+            if name and RECALL_FILE_RE.search(name):
+                path = (repo / name).relative_to(ws.root).as_posix() if repo != ws.root else name
+                out.append(Finding(ERROR, "recall", path,
+                                   "a search index or an extracted session is staged or committed; run `git rm --cached` "
+                                   "on it and let the .gitignore keep it out",
+                                   "A Recall index or session file is in the workspace history"))
+    return out
+
+
 def check_preferences(ws: Workspace) -> List[Finding]:
     """The choices made once and kept -- each zone's colour and icon, and how
     a thread opens -- are saved in the settings file, which is committed with
@@ -8538,7 +8572,7 @@ ALL_CHECKS = [
     check_hooks,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
-    check_raw, check_generated, check_preferences, check_review, check_updates,
+    check_raw, check_generated, check_recall, check_preferences, check_review, check_updates,
 ]
 
 

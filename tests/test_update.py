@@ -1618,6 +1618,98 @@ def has_tag(tag):
     return r.returncode == 0
 
 
+class TestCheckOnlyWhatWasWritten(ExtrasCase):
+    """#412: an update asks the workspace's check about the files it wrote, not
+    about the whole workspace, and starts no more than one whole run."""
+
+    def project(self):
+        subprocess.run([sys.executable, str(self.root / "System/tools/scaffold.py"), "project", "--zone", "Work",
+                        "--name", "Acme Review", "--party", "acme", "--thread", "Intake"],
+                       capture_output=True, text=True, env=self.env, cwd=self.root, check=True)
+        self.commit(self.root / "Zones" / "Work", "project")
+
+    def whole(self):
+        r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root), "--json"],
+                           capture_output=True, text=True, env=self.env)
+        return [f for f in json.loads(r.stdout)["findings"] if f["severity"] == "error"]
+
+    def scoped(self, paths):
+        r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root), "--json",
+                            "--paths", *paths], capture_output=True, text=True, env=self.env)
+        return [f for f in json.loads(r.stdout)["findings"] if f["severity"] == "error"]
+
+    def test_it_is_given_the_written_paths_and_never_starts_a_whole_run(self):
+        calls = []
+        real = subprocess.run
+
+        def spy(cmd, *a, **kw):
+            calls.append(list(cmd))
+            return real(cmd, *a, **kw)
+        paths = ["System/tools/scaffold.py", "System/rules.md"]
+        with mock.patch.object(update.subprocess, "run", spy):
+            self.assertEqual([], update.check_errors(self.root, paths))
+        self.assertEqual(1, len(calls))
+        self.assertIn("--paths", calls[0])
+        self.assertEqual(sorted(paths), calls[0][calls[0].index("--paths") + 1:])
+
+    def test_a_check_that_predates_paths_runs_whole_and_still_answers(self):
+        tool = self.root / "System/tools/check.py"
+        tool.write_text("import json\nprint(json.dumps({'findings': []}))\n")      # a check.py from before the flag
+        seen = []
+        real = subprocess.run
+        with mock.patch.object(update.subprocess, "run", lambda cmd, *a, **kw: seen.append(list(cmd)) or real(cmd, *a, **kw)):
+            self.assertEqual([], update.check_errors(self.root, ["System/rules.md"]))
+        self.assertNotIn("--paths", seen[0])
+
+    def test_the_errors_it_reports_for_a_file_are_those_of_a_whole_run(self):
+        self.project()
+        bad = {"System/skills/threads/SKILL.md": "\nUnfilled {{ZONE}} left here.\n",
+               "Zones/Work/Acme Review/Threads/Intake/note.md": "# Note\n\nTalked with Birch & Co about pricing.\n"}
+        for path, extra in bad.items():
+            with (self.root / path).open("a" if (self.root / path).exists() else "w") as f:
+                f.write(extra)
+        whole = {(f["path"], f["message"]) for f in self.whole() if f["path"] in bad}
+        scoped = {(f["path"], f["message"]) for f in self.scoped(sorted(bad))}
+        self.assertEqual(set(bad), {p for p, _ in whole}, whole)        # the fixture holds both defects, wall included
+        self.assertEqual(whole, scoped)
+        self.assertEqual([], self.scoped(["System/rules.md"]))          # a clean file is clean
+
+    def test_an_update_starts_one_whole_check_at_most(self):
+        self.install_extra("status")
+        self.as_if_older("System/rules.md", "# older rules\n")
+        self.as_if_older("System/status/status.py", "# an older status page\n")
+        (self.root / update.PAGE).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / update.PAGE).write_text("<p>old</p>\n")
+        starts = []
+        real = subprocess.run
+
+        def spy(cmd, *a, **kw):
+            if any(str(c).endswith("check.py") for c in cmd) and "--staged" not in cmd and "--paths" not in cmd:
+                starts.append(list(cmd))
+            return real(cmd, *a, **kw)
+        with mock.patch.object(subprocess, "run", spy):
+            result = update.apply(self.root, self.plan())
+        self.assertTrue(result["stamped"], result)
+        self.assertLessEqual(len(starts), 1, starts)
+
+    def test_an_error_in_a_written_file_still_stops_the_update(self):
+        self.as_if_older("System/skills/threads/SKILL.md", "# older\n")
+        before = self.stamp()
+        with mock.patch.object(update, "stamp") as stamp, \
+                mock.patch.object(update, "check_errors", wraps=update.check_errors) as check:
+            real_shipped = update.shipped
+            with mock.patch.object(update, "shipped", lambda *a, **kw: {
+                    k: ((v[0].replace(b"---", b"{{ZONE}}", 1), v[1]) if k == "System/skills/threads/SKILL.md" else v)
+                    for k, v in real_shipped(*a, **kw).items()}):
+                result = update.apply(self.root, update.plan(self.root))
+        self.assertIn("System/skills/threads/SKILL.md", check.call_args[0][1])
+        self.assertTrue(result["problems"], result)
+        self.assertTrue(any("{{ZONE}}" in x for x in result["problems"]), result["problems"])
+        self.assertFalse(result["stamped"])
+        stamp.assert_not_called()
+        self.assertEqual(before, self.stamp())
+
+
 class TestReleases(unittest.TestCase):
     def test_tags_sort_as_versions(self):
         tags = ["v0.10.0", "v0.7.0", "v0.7.0-rc10", "v0.7.0-rc2", "v0.6.1", "vnext"]

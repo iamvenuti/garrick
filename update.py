@@ -780,13 +780,23 @@ def path_in_repo(root, path):
 
 
 def check_errors(root, paths):
-    """Errors the workspace's own check now finds in the files just written."""
+    """Errors the workspace's own check now finds in the files just written.
+    Only those files are checked (`check.py --paths`), not the whole workspace,
+    which on a large one is most of an update's time (#412). A workspace whose
+    check.py predates `--paths`, or one that cannot be run, falls back to the
+    whole check, as before: the answer is never left out."""
     if not paths:
         return []
     tool = root / "System" / "tools" / "check.py"
     try:
-        r = subprocess.run([sys.executable, str(tool), "--root", str(root), "--json"],
-                           capture_output=True, text=True, timeout=600)
+        scoped = "--paths" in tool.read_text(encoding="utf-8")
+    except OSError:
+        scoped = False
+    cmd = [sys.executable, str(tool), "--root", str(root), "--json"]
+    if scoped:
+        cmd += ["--paths"] + sorted(paths)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         findings = json.loads(r.stdout).get("findings", [])
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         return ["the check could not run: %s" % exc]

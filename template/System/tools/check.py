@@ -3,6 +3,7 @@
 
     python3 System/tools/check.py [--root PATH] [--ear] [--json] [--quick]
     python3 System/tools/check.py --staged --walls-only      (the pre-commit hook)
+    python3 System/tools/check.py --paths FILE [FILE ...]    (only these files' findings; what an update runs)
     python3 System/tools/check.py --install-hooks
     python3 System/tools/check.py --version                  (which Garrick, for a bug report, and whether a
                                                               newer one is out, as GitHub last said; never asks)
@@ -1022,7 +1023,10 @@ def setting_zones(ws: Workspace, key: str) -> List[Path]:
 # Discovery
 # ---------------------------------------------------------------------------
 
-def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
+def discover(root: Path, cache: Optional[NoteCache] = None, light: bool = False) -> Workspace:
+    """The workspace as the checks read it. `light` stops after the zones, the
+    projects and the settings: the wiki pages and the meetings are not indexed,
+    for a run over named paths that needs neither (run_path_checks, #412)."""
     ws = Workspace(root=root, context=load_context(root), cache=cache)
     ws.settings, ws.settings_problems = load_settings(root)
     ws.zones = visible_dirs(root / "Zones")
@@ -1034,6 +1038,8 @@ def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
         fm = note_frontmatter(ws, folder / (folder.name + ".md"))
         if fm.get("type") == "project":
             ws.projects.append((folder, fm))
+    if light:
+        return ws
     wikis = root / "Wikis"
     if wikis.is_dir():
         for path in walk_files(wikis):
@@ -1383,13 +1389,19 @@ def split_findings(ws: Workspace, texts: Dict[Path, str]) -> List[Finding]:
     return out
 
 
-def check_placeholders(ws: Workspace) -> List[Finding]:
+def check_placeholders(ws: Workspace, only: Optional[List[Path]] = None) -> List[Finding]:
     """Installer placeholders left unfilled, in a file's name or its text.
     Files git ignores are not the install's: a package's own templates may
     hold the same marks. Nor is a Garrick checkout kept in a project, whose
-    templates hold them by design (set_apart)."""
+    templates hold them by design (set_apart). With `only`, those files and
+    no others, left out by the same rules."""
     out = []
-    for path in walk_files(ws.root, set_apart(ws)):
+    apart = set_apart(ws)
+    if only is None:
+        files = walk_files(ws.root, apart)
+    else:
+        files = [f for f in only if f.is_file() and f not in apart and not (apart & set(f.parents))]
+    for path in files:
         if is_template_path(ws, path) or is_generated(ws, path):
             continue
         if rel(ws, path) == "/".join(VERSION_STAMP):
@@ -8640,6 +8652,11 @@ def check_updates(ws: Workspace) -> List[Finding]:
     return out
 
 
+# The checks a run over named paths makes whole, because each reads a handful of
+# fixed files and walks no notes (run_path_checks).
+PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
+
+
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
     check_hooks,
@@ -8673,6 +8690,67 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
                 name = check.__name__.replace("check_", "", 1)
                 findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
                                         "A check stopped before it finished"))
+    order = {c: i for i, (c, _) in enumerate(CHECKS)}
+    findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
+    return findings
+
+
+def run_path_checks(root: Path, paths: List[str]) -> List[Finding]:
+    """The findings a whole run reports for the named files (root-relative), and
+    no others, without reading the rest of the workspace (#412): what an update
+    asks of the files it wrote.
+
+    It makes four kinds of check. The placeholders check, on those files alone.
+    The instructions, settings, context and skills checks, whole, since each
+    reads a few fixed files and walks no notes. The walls check, per file
+    (walls_for_file and form_findings, the readings of the full run), for a
+    file in a project or in a wiki; only then are the wiki pages and the
+    meetings indexed. A path under a zone or a wiki that is not a zone's
+    instruction file is read as a project file would be, never passed over.
+
+    It does not run what only a whole run can see: a finding that rests on the
+    notes round a file (links, meetings, people, knowledge, raw records, inboxes,
+    the history), nor check_claude_md and check_updates, which look for files
+    that an update does not write. A caller that needs those runs the whole check."""
+    _BLOBS.clear()
+    root = Path(root).resolve()
+    ws = discover(root, None, light=True)
+    wanted = {Path(p).as_posix() for p in paths}
+    files = [root / p for p in sorted(wanted)]
+    findings: List[Finding] = []
+    for check in PATH_CHECKS:
+        try:
+            findings.extend(check(ws))
+        except Exception as e:
+            name = check.__name__.replace("check_", "", 1)
+            findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
+                                    "A check stopped before it finished"))
+    try:
+        findings.extend(check_placeholders(ws, files))
+    except Exception as e:
+        findings.append(Finding(ERROR, "placeholders", "", "the check stopped: %s: %s" % (type(e).__name__, e),
+                                "A check stopped before it finished"))
+    wikis = root / "Wikis"
+    areas = [wikis] + list(ws.zones)
+    reads = [f for f in files if f.is_file() and not f.is_symlink() and any(a in f.parents for a in areas)
+             and (f.name != "AGENTS.md" or project_of(ws, f) is not None or wikis in f.parents)]
+    if reads:
+        try:
+            ws = discover(root, None)            # the walls read the meetings and the wiki pages
+            for f in reads:
+                owner = project_of(ws, f)
+                if owner is None or f.suffix.lower() not in TEXT_SUFFIXES:
+                    continue
+                text = read_text(f)
+                project, pfm = owner
+                ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+                if text and not (in_system(ws, project) and not ptags):
+                    findings.extend(walls_for_file(ws, project, ptags, f, text))
+            findings.extend(form_findings(ws, [(f, None) for f in reads if f.suffix.lower() == ".md"]))
+        except Exception as e:
+            findings.append(Finding(ERROR, "walls", "", "the check stopped: %s: %s" % (type(e).__name__, e),
+                                    "A check stopped before it finished"))
+    findings = [f for f in findings if f.path in wanted or not f.path]
     order = {c: i for i, (c, _) in enumerate(CHECKS)}
     findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
     return findings
@@ -8866,6 +8944,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--walls-only", action="store_true", help="run the walls check alone")
     parser.add_argument("--quick", action="store_true",
                         help="leave out the comparison of wording with the meetings, the slow part on a large workspace")
+    parser.add_argument("--paths", nargs="+", metavar="PATH",
+                        help="report only the findings for these files (relative to the root), reading no more of "
+                             "the workspace than they need; what an update asks of the files it wrote")
     parser.add_argument("--staged", action="store_true",
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
@@ -8902,7 +8983,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if newer:
             print(newer)
         return 0
-    findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
+    if args.paths:
+        findings = run_path_checks(root, args.paths)
+    else:
+        findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
     if args.staged and not (args.json or args.ear):
         text = report_staged(findings)
         if text:

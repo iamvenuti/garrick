@@ -2444,6 +2444,10 @@ function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.check
 if(style){style.closest('.launcher-row').style.display='style' in a?'':'none';style.value=a.style||'icon';style.disabled=!a.menubar}
 if(ask){ask.closest('.launcher-row').style.display='askhotkey' in a?'':'none';ask.value=a.askhotkey||''}
 var said=a.said||{};note('hotkey',said.hotkey);note('askhotkey',said.askhotkey||(a.askdefault?NOTE.askhotkey+'. ⌘G until you set another':''));
+/* how the Ask box closes (#411): the last ticked box cannot be unticked, and says why */
+var ce=document.getElementById('menu-askclose-esc'),cc=document.getElementById('menu-askclose-click');
+if(ce&&cc){var cm=a.askclose||'escape',WHY='At least one way to close the Ask box stays on';ce.closest('.launcher-row').style.display='askclose' in a?'':'none';
+ce.checked=cm!=='click';cc.checked=cm!=='escape';ce.disabled=cm==='escape';cc.disabled=cm==='click';ce.title=ce.disabled?WHY:'';cc.title=cc.disabled?WHY:''}
 /* an app built before #35 says no dictation, and both its rows stay hidden */
 if(dict){var m=a.dictation||'off',dn=document.getElementById('menu-dictation-note');dict.closest('.launcher-row').style.display='dictation' in a?'':'none';
 dict.value=m;if(dn)dn.textContent=said.dictation||DICT[m]||DICT.key;
@@ -2459,6 +2463,9 @@ function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
 show.addEventListener('change',function(e){tell(e,{menubar:show.checked})});
 if(style)style.addEventListener('change',function(e){tell(e,{style:style.value})});
 if(dict)dict.addEventListener('change',function(e){tell(e,{dictation:dict.value})});
+function closeWith(e){var ce=document.getElementById('menu-askclose-esc'),cc=document.getElementById('menu-askclose-click');
+if(!ce.checked&&!cc.checked){(e.target||ce).checked=true;return}tell(e,{askclose:ce.checked&&cc.checked?'both':ce.checked?'escape':'click'})}
+['menu-askclose-esc','menu-askclose-click'].forEach(function(id){var c=document.getElementById(id);if(c)c.addEventListener('change',closeWith)});
 var finb=document.getElementById('menu-finder');if(finb)finb.addEventListener('click',function(e){tell(e,{finder:'settings'})});
 login.addEventListener('change',function(e){tell(e,{login:login.checked})});
 var MOD=[['ctrlKey','⌃','ctrl'],['altKey','⌥','alt'],['shiftKey','⇧','shift'],['metaKey','⌘','cmd']];
@@ -4128,6 +4135,10 @@ def menu_settings() -> str:
             'Opens the Ask box from any app, with the preview ask on</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-askkey" readonly placeholder="None" aria-label="Ask hotkey">'
             '<button class="act" type="button" id="menu-askkey-clear">Clear</button></span></div>'
+            '<div class="launcher-row" style="display:none"><span class="launcher-choice"><span>Close the Ask box with'
+            '<small id="menu-askclose-note">One way always stays on</small></span></span>'
+            '<span class="askclose"><label><input type="checkbox" id="menu-askclose-esc"> Escape</label> '
+            '<label><input type="checkbox" id="menu-askclose-click"> A click outside it</label></span></div>'
             '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-dictation"><span>Then start dictation'
             '<small id="menu-dictation-note">Once the Ask box opens, start dictation in it too</small></span></label>'
             '<select id="menu-dictation" class="menu-style"><option value="off">Off</option><option value="macos">macOS Dictation</option>'

@@ -3174,13 +3174,18 @@ def say_changes(root: PathLike, stamp: dict) -> str:
 
 # What the workspace's settings hold, SETTINGS above: choices that stay, unlike
 # the preview flags in System/garrick-flags.json, which a release drops.
-# {"release-notice": true} lets the status page ask GitHub, at most once a day,
-# whether a newer Garrick is out. Off unless the file says true: it is the only
+# {"release-notice": true} lets the status page and the nightly job ask GitHub,
+# at most once a day (every seven with "release-notice-every": 7), whether a newer Garrick is out. Off unless the file says true: it is the only
 # call Garrick makes on its own. "release-repository" names another repository
 # to ask, for a fork, as owner/name. "allowed-commands" lists the allow rules
 # the installer wrote into the assistant's own settings, so an update can
 # replace its own and leave the ones the user added.
 RELEASE_NOTICE = "release-notice"
+# How often the notice asks, in days: 1 or 7 (Settings offers Daily and Weekly).
+# A missing or unreadable key means one day, so a workspace without it asks as
+# it always did.
+RELEASE_NOTICE_EVERY = "release-notice-every"
+RELEASE_CADENCES = (1, 7)
 RELEASE_REPOSITORY = "iamvenuti/garrick"
 # What the last question to GitHub found, written by System/tools/release.py.
 # In the folder for files a tool rebuilds, so it is never committed.
@@ -3265,6 +3270,15 @@ def release_notice_on(root: PathLike) -> bool:
     return read_settings(root).get(RELEASE_NOTICE) is True
 
 
+def release_every(root: PathLike) -> datetime.timedelta:
+    """How long the release notice waits between questions: the days
+    `release-notice-every` holds when they are 1 or 7, else one day."""
+    days = read_settings(root).get(RELEASE_NOTICE_EVERY)
+    if isinstance(days, int) and not isinstance(days, bool) and days in RELEASE_CADENCES:
+        return datetime.timedelta(days=days)
+    return RELEASE_EVERY
+
+
 def allowed_commands(root: PathLike) -> List[str]:
     """The allow rules the installer wrote into the assistant's own settings,
     as it recorded them, or [] where the workspace has none. The rules
@@ -3317,8 +3331,11 @@ def release_repository(root: PathLike) -> str:
 # System/tools/briefing.py reads and checks; Settings no longer offers it
 # (#226), so it is set by hand, and a workspace that set it keeps it;
 # "graph" is Settings › Graph colours, the colour of each kind of note the
-# status page's Explore draws (#291).
-PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home", "memory", "catch-up", "graph")
+# status page's Explore draws (#291); "release-notice" and
+# "release-notice-every" are Settings › About Garrick's switch and its cadence
+# (#410), which release.py reads.
+PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home", "memory", "catch-up", "graph",
+               "release-notice", "release-notice-every")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
 
@@ -3440,8 +3457,10 @@ def read_release_cache(root: PathLike) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def release_asked_lately(root: PathLike, now: Optional[datetime.datetime] = None) -> bool:
-    """Whether GitHub was asked about this repository's releases in the last day."""
+def release_asked_lately(root: PathLike, now: Optional[datetime.datetime] = None,
+                         every: Optional[datetime.timedelta] = None) -> bool:
+    """Whether GitHub was asked about this repository's releases within
+    `every`, the last day unless said."""
     cache = read_release_cache(root)
     if cache.get("repository") != release_repository(root):
         return False
@@ -3449,13 +3468,14 @@ def release_asked_lately(root: PathLike, now: Optional[datetime.datetime] = None
         asked = datetime.datetime.fromisoformat(str(cache.get("asked")))
     except ValueError:
         return False
-    return datetime.timedelta(0) <= (now or datetime.datetime.now()) - asked < RELEASE_EVERY
+    return datetime.timedelta(0) <= (now or datetime.datetime.now()) - asked < (every or RELEASE_EVERY)
 
 
 def release_due(root: PathLike, now: Optional[datetime.datetime] = None) -> bool:
     """Whether the release notice should ask GitHub again: switched on, and
-    not asked in the last day."""
-    return release_notice_on(root) and not release_asked_lately(root, now)
+    not asked within its cadence (a day, or the seven `release-notice-every`
+    holds)."""
+    return release_notice_on(root) and not release_asked_lately(root, now, release_every(root))
 
 
 def newer_release(root: PathLike) -> Optional[dict]:

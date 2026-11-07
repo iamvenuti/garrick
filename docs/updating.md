@@ -28,13 +28,27 @@ A workspace from before `release.py` has to take that way once.
 
 ## Being told a newer Garrick is out
 
-Off until you switch it on, because it is the only call Garrick makes on its own. The `setup` skill offers it once; to switch it on yourself, write this in `System/garrick-settings.json` and commit it:
+Off until you switch it on, because it is the only call Garrick makes on its own. The easiest way is *Settings* in the [Garrick App](extras/status-page.md#settings): under *About Garrick*, tick *Check for a newer Garrick* and choose *Daily* or *Weekly*. That writes two keys to `System/garrick-settings.json`; you can write them yourself and commit the file:
 
 ```json
-{"release-notice": true}
+{"release-notice": true, "release-notice-every": 7}
 ```
 
-Then each time the [Garrick App](extras/status-page.md) is built, it checks when GitHub was last asked. Once a day at most, it starts `release.py latest` in a process of its own and builds the page without waiting for it. When the answer names a newer release, *Needs attention* says so from the next build on: "Garrick 0.16.0 is out; this workspace runs 0.15.2", with the command that updates, and the line links to that release's notes. `python3 System/tools/check.py --version` adds the same line. Neither asks GitHub itself: they read the last answer, kept in `System/generated/garrick-release.json`, which is never committed. Without the Garrick App, run `python3 System/tools/release.py latest` when you want to know; it asks at most once a day, or now with `--now`.
+`release-notice-every` is the days between checks, 1 or 7. A file without it means one day, so a workspace that switched the notice on before this key existed sees no change. The `setup` skill also offers the notice once.
+
+Then the check runs when it is due, from two places. Each time the [Garrick App](extras/status-page.md) is built it starts `release.py latest --background` in a process of its own and builds the page without waiting for it, and the nightly job of the [scheduled jobs](extras/scheduled-jobs.md) extra runs the same command, so a Mac where the app is not opened that week still checks. Either asks GitHub only when the last question is older than the cadence. When the answer names a newer release, *Needs attention* says so from the next build on: "Garrick 0.16.0 is out; this workspace runs 0.15.2", with the command that updates, and the line links to that release's notes. The Mac also shows one notification, "Garrick 0.16.0 is out; this workspace runs 0.15.2", if *a newer Garrick is out* is ticked under *Notifications*. It is sent once for each release: the tag last notified is kept with the answer, so the same release does not notify again next week. Quiet hours hold it until the morning. `python3 System/tools/check.py --version` adds the same line. Neither asks GitHub itself: they read the last answer, kept in `System/generated/garrick-release.json`, which is never committed. Without the Garrick App, run `python3 System/tools/release.py latest` when you want to know; it asks at most once a day, or now with `--now`.
+
+**A scheduled check never updates.** It runs with nobody to ask, and an update runs downloaded code that can change the files every later session reads as instructions. So the check tells you, and only you update: with *Check for updates* in *Settings*, or by asking your assistant, or with `release.py update`.
+
+### Check for updates
+
+*Settings*, *About Garrick*, has a *Check for updates* button beside the release number. A click is your consent for one request: it asks GitHub now (`release.py latest --now`), whether or not the notice is on.
+
+- **Nothing newer.** The line under the button says "Garrick 0.58.0 is the newest release, and this workspace runs 0.58.0", and when it asked. Nothing is changed.
+- **A newer release.** The button applies it at once (`release.py update --apply`), with a progress line while it runs. Then the section shows the result in the words of the update report: "Updated to 0.59.0 from 0.58.0" with a link to that release's notes, how many files were replaced and added, each file written as `.new` and each instruction file under *Split* with "Say 'merge the update' to your assistant", each file skipped because it has changes not committed, and the pieces the update does not change because they run from a copy outside the workspace.
+- **The question fails**, because you are offline, rate-limited or without certificates: one line says why, nothing turns red, and the update never starts on a failed or partial answer.
+- **The update stops on an error**, because the workspace check finds one in the files it wrote: the version stamp is not moved, and the section says that `git revert` of the update commit in each repository undoes it.
+- **A workspace that is not older than the newest release is never updated by the button.** The comparison is by version number, not by text. A workspace built from a clone or from `main` after its release, or one whose release cannot be read from `System/garrick-changelog.md`, counts as not older, and the line says what it runs and what the newest release is.
 
 What goes over the wire is one HTTPS request: a GET to `api.github.com/repos/iamvenuti/garrick/releases/latest`, with a User-Agent header that says `Garrick/` and the release your workspace runs, such as `Garrick/0.15.2`. Nothing about your workspace is sent: no file, name, path or setting. GitHub sees the request come from your address, as it does any web page you open. If the request fails, because you are offline or GitHub is slow, nothing shows and nothing turns red; it asks again the next day.
 

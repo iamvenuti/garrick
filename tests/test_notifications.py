@@ -86,9 +86,11 @@ class Case(unittest.TestCase):
 class TestSettings(Case):
     def test_defaults(self):
         cfg = n.settings(self.ws)
-        self.assertEqual({"tell": {"needs-you": True, "finished": True, "todo-summary": True, "job-failed": True},
+        self.assertEqual({"tell": {"needs-you": True, "finished": True, "todo-summary": True, "job-failed": True,
+                                    "release": True},
                           "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}}, cfg)
-        self.assertEqual(["needs-you", "finished", "todo-summary", "job-failed"], list(n.TELL_NAMES))
+        self.assertEqual(["needs-you", "finished", "todo-summary", "job-failed", "release"], list(n.TELL_NAMES))
+        self.assertEqual("hold", n.QUIET["release"])                       # a newer Garrick waits for the morning
         self.assertEqual({"needs-you": "send", "finished": "drop", "desk": "send"},
                          {k: v for k, v in n.QUIET.items() if v != "hold"})
 
@@ -101,11 +103,12 @@ class TestSettings(Case):
         self.assertFalse({"test", "token", "find-chat"} & set(ops.DECLARED["settings"].fields))
 
     def test_clean_keeps_what_the_page_sends(self):
-        given = {"tell": {"needs-you": True, "finished": False, "todo-summary": True, "job-failed": False},
+        given = {"tell": {"needs-you": True, "finished": False, "todo-summary": True, "job-failed": False,
+                          "release": True},
                  "after": 5, "quiet": {"on": True, "from": "21:30", "to": "06:45"}}
         self.assertEqual(given, n.clean(given))
         self.assertEqual(n.normal(given), n.normal(n.clean(given)))
-        self.assertEqual({"needs-you": True, "finished": True, "todo-summary": True, "job-failed": True},
+        self.assertEqual({"needs-you": True, "finished": True, "todo-summary": True, "job-failed": True, "release": True},
                          n.clean({})["tell"])
 
     def test_clean_refuses(self):
@@ -133,9 +136,11 @@ class TestSettings(Case):
                           "todo-summary": {"to": ["telegram"]}, "job-failed": {"to": ["mac", "command"]}},
                "quiet": {"on": False, "from": "23:00", "to": "06:00"},
                "zones": {"Personal": {"to": ["telegram"], "chat": "777"}}}
-        self.assertEqual({"tell": {"needs-you": True, "finished": False, "todo-summary": False, "job-failed": True},
+        self.assertEqual({"tell": {"needs-you": True, "finished": False, "todo-summary": False, "job-failed": True,
+                                    "release": True},
                           "after": 7, "quiet": {"on": False, "from": "23:00", "to": "06:00"}}, n.normal(old))
-        self.assertEqual({"needs-you": False, "finished": False, "todo-summary": False, "job-failed": False},
+        self.assertEqual({"needs-you": False, "finished": False, "todo-summary": False, "job-failed": False,
+                          "release": False},
                          n.normal(dict(old, channels={"mac": False}))["tell"])        # this Mac switched off: every notice off
         self.assertEqual(n.settings(self.ws)["tell"], n.normal({"events": {}})["tell"])
         self.save(old)
@@ -446,7 +451,8 @@ class TestPageAndSettings(Case):
         return html[start:html.index("</section>", start)]
 
     def page_request(self, **more):
-        return dict({"tell": {"needs-you": True, "finished": False, "todo-summary": True, "job-failed": True},
+        return dict({"tell": {"needs-you": True, "finished": False, "todo-summary": True, "job-failed": True,
+                              "release": True},
                      "after": 4, "quiet": {"on": True, "from": "22:30", "to": "07:00"}}, **more)
 
     def test_saved_with_the_other_settings_then_shown(self):
@@ -475,18 +481,18 @@ class TestPageAndSettings(Case):
             self.pa.save_settings(self.ws, {"verb": "settings", "test": "mac"})
         self.assertEqual([], self.run_.calls)
 
-    def test_four_choices_and_quiet_hours_and_nothing_else(self):
+    def test_five_choices_and_quiet_hours_and_nothing_else(self):
         sec = self.section()
         for words in ("Notices appear on this Mac.", "Tell me when", "a session needs me", "a long task finishes",
-                      "the morning Todo summary is ready", "a scheduled job fails", "Quiet from"):
+                      "the morning Todo summary is ready", "a scheduled job fails", "a newer Garrick is out", "Quiet from"):
             self.assertIn(words, sec)
         self.assertIn('a long task finishes, <span class="nsafter">after <input type="number" id="n-after"', sec)
         self.assertIn('<p class="hint nsrule">At night only &#8220;a session needs me&#8221; and the desk get through.</p>', sec)
-        self.assertIn("With all four off, Garrick sends nothing.", sec)                      # behind the "?"
+        self.assertIn("With all five off, Garrick sends nothing.", sec)                      # behind the "?"
         for gone in ("Telegram", "My phone", "More options", "data-nch", "n-chat", "A command of your own", "data-nzto",
                      "Send to", "Send a test", "custom", "data-naway", "nover"):
             self.assertNotIn(gone, sec)
-        self.assertEqual(4, sec.count('data-nt="'))
+        self.assertEqual(5, sec.count('data-nt="'))
 
     def test_the_jobs_that_override_are_not_a_line_of_state(self):
         agents = self.base / "LaunchAgents"

@@ -308,8 +308,9 @@ WIKILINK = re.compile(r"\[\[([^\]|]*)(?:\|([^\]]*))?\]\]")
 # One line of what the zone's wall check prints when it refuses a commit:
 # check.py's report_staged(), as the pre-commit hook runs it. WALL_IN finds
 # it inside a longer line, as scaffold.py folds git's output into its refusal.
-WALL_LINE = re.compile(r"^Commit refused: .+\. Take it out and commit again\b")
-WALL_IN = re.compile(r"(?:^|\s)Commit refused: .+?\. Take it out and commit again\b")
+# Each ends with the fix for its kind of finding, and every fix says "commit again".
+WALL_LINE = re.compile(r"^Commit refused: .+\. [^.\n]*\bcommit again\b")
+WALL_IN = re.compile(r"(?:^|\s)Commit refused: .+?\. [^.\n]*\bcommit again\b")
 REKEY_HOURS = 1
 # Seconds: how long one git command may take, then a commit's whole share
 # (add, commit and its hooks), then how long a request waits for another on

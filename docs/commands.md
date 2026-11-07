@@ -254,7 +254,7 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 
 The check reports a settings file that does not read, a key it does not know, a zone it names that does not exist, and a memory folder that is not there.
 
-The walls part also runs before every commit. The installer puts a git hook in each zone and in `Wikis/` that runs `check.py --staged --walls-only` on the files being committed, as they are staged, and refuses the commit with one line naming the file and the wall. Take the material out and commit again. The first commit in a zone reads every meeting and project file, which on a large workspace takes a while; the hook keeps what it read in the zone's `.git` folder, so after that it reads only what is being committed and what changed since. `git commit --no-verify` skips the check; it exists for the rare deliberate case, and your assistant is told never to use it unless you ask.
+The walls part also runs before every commit. The installer puts a git hook in each zone and in `Wikis/` that runs `check.py --staged --walls-only` on the files being committed, as they are staged, and refuses the commit with one line naming the file and the wall, and ending with the fix for that kind of refusal: usually take the material out and commit again, but naming a party in the project's hub when that is what is missing. The first commit in a zone reads every meeting and project file, which on a large workspace takes a while; the hook keeps what it read in the zone's `.git` folder, so after that it reads only what is being committed and what changed since. `git commit --no-verify` skips the check; it exists for the rare deliberate case, and your assistant is told never to use it unless you ask.
 
 ## Nurturing the context
 

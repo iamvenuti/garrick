@@ -4,6 +4,19 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.58.1] - 2026-11-07
+
+A fix for the wall check in 0.58.0. It read some things as pointers to a Meetings page that were not, and refused commits that had nothing wrong with them. Nothing it refused before is let through: a path or a link to a Meetings page, written in any form, is read as in 0.58.0.
+
+### Fixed
+
+- **A project kept in `System/` is no longer checked as a project with no party.** `System/` is not a zone and has no wall hook, and a project there has no party. 0.58.0 reported every Meetings name in it as written for a project with nothing to check against. A project in `System/` that names a party is still checked, and a zone's project with no party still commits nothing.
+- **Markup and data are not read as paths.** In `.html`, `.htm` and `.json` files an indented line is layout, not an indented code block, so a stylesheet's comment or attribute selector, or a JSON string holding a person's name with other words, is no longer taken for a path or a glob. An attribute that is no address and holds no name (`data-edge-to="x"` on an SVG element) is no longer read as a link; a page's own name in one, such as `title="kai-ross"`, is still read. `*`, `?:` and `[attr]` with fewer than three letters of their own count towards no glob limit, so normal CSS and script no longer make a file "hold more than 5000 globs". A path or a link written in these files, such as an `href` or a JSON string that is a path to a page, is read and refused across a wall as before.
+- **Bold round a folder name is not a glob.** `**Sources/**` was read as the glob `Sources/**` and matched every page of the Meetings wiki. Only stars round a name that ends with `/` are read as bold: `**sources/2603**` and `wiki/sources/2603*` are still globs, and refused across a wall.
+- **A spaced name in a frontmatter value is a name, not a pointer to a person's page.** `audience: Owen Pike, Dana Whitlock` read as `owen-pike` and `dana-whitlock`, and a person known on both sides of a wall was refused. A page's name written with its own hyphens (`kai-ross`), a path and a link are still read.
+- **A path that only ends like a file in an ignored copy does not lead into it.** A copy of the repository, a worktree or a build kept in a project, and left out by the zone's `.gitignore`, made a tail of a path in another project's note (`System/rules.md`, `entities/some-page.md`) match a file inside it, and refused the note as a path into a walled project. A file or folder git ignores is now matched by a path only when the path reaches the project's folder (`Harbour/Private/terms.md`, or from `Zones/`); a link to it, and a path from the note's own folder, are read as before.
+- **Ordinary code is readable.** `*`, `?:`, `[0]` and a regular expression in a file of code or markup count towards the 5000-glob limit only when they hold at least three letters of their own; a glob with fewer names no page and was never matched. `wiki/sources/2603*`, `people/*`, `kai-*` and `dana*` are still refused in every kind of file.
+
 ## [0.58.0] - 2026-11-07
 
 The walls are one decision. The commit hook, Ask, the Questions panel, intake, Nurture and `scaffold.py` all ask one `decide()` with a record's parties derived in one place, and a record with no label is never permitted. The wall check reads a pointer to a Meetings page whatever its form. Ask reads the project, Meetings and Knowledge for every question and leads with a thread's resume point. Explore leaves out what git ignores.

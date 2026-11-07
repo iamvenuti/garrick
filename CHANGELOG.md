@@ -4,6 +4,14 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.59.1] - 2026-11-08
+
+### Fixed
+
+- **A commit of `check.py` itself is no longer refused for holding too many globs** ([#422](https://github.com/iamvenuti/garrick/issues/422)). A glob counts toward the 5,000 limit only when it matches a page, so source code full of `*` and `[` passes. A glob that matches a page is read and counted as before, and a file with more than 5,000 of them is still refused.
+- **A path under `.claude/`, `.agents/` or `.codex/` is read as the note's own project's** ([#423](https://github.com/iamvenuti/garrick/issues/423)). It is exempt only when every name after that folder is a generic one (`settings.json`, `skills`, `SKILL.md` and the like), or when the note's own project holds that same path, with no symbolic link on the way. A path that names a walled project's folder first, or a file only a walled project holds, is still refused.
+- **An update checks only the files it wrote** ([#412](https://github.com/iamvenuti/garrick/issues/412)). `update.py` runs `check.py --paths` over the files it wrote, in place of a whole-workspace check, so an update starts one whole check, the page rebuild's. An error in a written file still stops the update and leaves the version stamp where it was. A workspace whose `check.py` has no `--paths` gets the whole check, as before.
+
 ## [0.59.0] - 2026-11-07
 
 This release ships what was built on 0.58.0's single wall decision. Recall searches your notes, both wikis and your past sessions from a local index that holds, for each scope, only what that scope may read. Ask can run as one session with read tools Garrick checks, behind a flag. Settings checks for a newer Garrick when you ask and, if you switch it on, every day or week. The release tooling gains a verdict diff for the wall check and a CI that runs only what a change touches.

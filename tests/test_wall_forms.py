@@ -629,8 +629,11 @@ class WallFormsRowsTest(unittest.TestCase):
         found = self.says_raw("# Notes\n\n```\n%s\n```\n\nSee `harvest-*`.\n" % few)
         self.assertEqual(["error"], [s for s, _ in found], found)
         self.assertIn("harvest-*", found[0][1])
-        # Globs that can match no page are not counted (#422); these name a page's stretch, so each one counts.
-        many = "\n".join("ls *harvest*%d" % i for i in range(5200))
+        # Only globs that can match a page are counted (#422): each of these reaches one.
+        for i in range(5200):
+            write(self.root / "Wikis" / "Meetings" / "wiki" / "entities" / ("zeta-%d.md" % i),
+                  "---\ntitle: z\ntype: entity\nparty: acme\n---\n\n# z\n")
+        many = "\n".join("ls zeta-%d*" % i for i in range(5200))
         found = self.says_raw("# Notes\n\n```\n%s\n```\n" % many)
         self.assertEqual(["error"], [s for s, _ in found], found)
         self.assertIn("cannot be read", found[0][1])

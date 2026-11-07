@@ -16,6 +16,7 @@ import json
 import shutil
 import subprocess
 import sys
+import time
 import unittest
 
 from fixtures import HAVE_GIT, TOOLS, git, meeting_page, write
@@ -729,6 +730,7 @@ class TestWhichFormIsNamed(PersonPartyCase):
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class TestCheckPyCommitsItself(WallCase):
+    maxDiff = None
     """#422: a joined run of words is read as a literal name, never as a glob,
     so a commit of check.py itself is not refused for holding too many globs."""
 
@@ -742,6 +744,33 @@ class TestCheckPyCommitsItself(WallCase):
         git(zone, "add", "-A")
         res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
         self.assertEqual((0, ""), (res.returncode, res.stderr))
+
+    def test_a_commit_of_check_py_passes_with_thousands_of_pages(self):
+        """The glob count holds on a wiki of a real size: short stretches such as `test` or `name` are in the path
+        of some page, so a stretch alone rules out nothing."""
+        words = ("test", "name", "settings", "demo", "plan", "notes", "review", "status", "config", "budget", "md",
+                 "orchard", "harbour", "quarry", "meadow", "forge", "lantern", "ledger", "pilot", "survey")
+        first = ("ana", "ben", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kit", "lee", "max", "ned", "ola")
+        wiki = self.root / "Wikis" / "Meetings" / "wiki"
+        for i in range(3200):
+            word, other = words[i % len(words)], words[(i * 7 + 3) % len(words)]
+            person = "%s-%s%d" % (first[i % len(first)], words[(i // 3) % len(words)], i)
+            page = {"people": "%s.md" % person, "entities": "%s-%s-%d.md" % (word, other, i),
+                    "sources": "26%02d%02d-%s-%s-%d.md" % (1 + i % 12, 1 + i % 28, word, other, i)}[("people", "entities", "sources")[i % 3]]
+            kind = ("people", "entities", "sources")[i % 3]
+            write(wiki / kind / page, "---\ntitle: %s\ntype: %s\nparty: acme\n---\n\n# x\n" % (page[:-3], kind[:-1]))
+        for i in range(60):
+            write(self.acme / "Threads" / "Market Sizing" / ("Note %d.md" % i), "# Note\n\nSee `settings` and `test-*`.\n")
+        _copy_tools(self.root)
+        zone = self.root / "Zones" / "Work"
+        _real_repo(zone)
+        write(self.acme / "Code" / "template" / "System" / "tools" / "check.py",
+              (TOOLS / "check.py").read_text(encoding="utf-8").replace("Birch", "Other").replace("birch", "other"))
+        git(zone, "add", "-A")
+        started = time.time()
+        res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
+        print("check.py commit on 3200 pages: %.1f s" % (time.time() - started), file=sys.stderr)
+        self.assertEqual((0, ""), (res.returncode, res.stderr.split("check.py commit on")[0].strip()))
 
     def test_a_glob_that_can_match_no_page_is_not_counted(self):
         names = check.PageNames(check.discover(self.root))

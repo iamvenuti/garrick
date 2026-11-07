@@ -5680,8 +5680,25 @@ def harness_path(ws: Workspace, source: Path, target: str) -> bool:
             bases.append(up)
             break
     stem = re.sub(r"(?i)\.md$", "", "/".join(parts))
-    return any((base / "/".join(parts)).exists() or (base / stem).exists() or (base / (stem + ".md")).exists()
-               for base in bases)
+    return any(_held_by(base, rel) for base in bases for rel in ("/".join(parts), stem, stem + ".md"))
+
+
+def _held_by(base: Path, rel: str) -> bool:
+    """Is `rel` a file or folder of `base` itself: there, with no symbolic link on the way, and with its real path
+    inside the real path of `base`? A link that leads into another project is that project's, not `base`'s."""
+    here = base
+    try:
+        for name in rel.split("/"):
+            here = here / name
+            if here.is_symlink():
+                return False
+        if not here.exists():
+            return False
+        real = Path(os.path.realpath(here))
+        top = Path(os.path.realpath(base))
+        return real == top or top in real.parents
+    except (OSError, ValueError):
+        return False
 
 
 def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:

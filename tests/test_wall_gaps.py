@@ -1280,6 +1280,20 @@ class TestFormsRead(GapCase):
             with self.subTest(written):
                 self.assertEqual(["error"], self.errors(written))
 
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_a_link_into_the_walled_project_is_not_the_notes_own_path(self):
+        self.harbour_harness()
+        northwind = self.work / "Northwind"
+        (northwind / ".claude").mkdir()
+        os.symlink(str(self.work / "Harbour" / ".claude" / "skills"), str(northwind / ".claude" / "skills"))
+        subject = "`.claude/skills/harvest-co-onboarding/SKILL.md`"
+        for written in (subject, "`.CLAUDE/skills/Harvest-Co-Onboarding/SKILL.md`", "[x](.claude/skills/harvest-co-onboarding/SKILL.md)"):
+            with self.subTest(written):
+                self.assertEqual(["error"], self.errors(written))
+        (northwind / ".claude" / "skills").unlink()           # the file really is Northwind's
+        write(northwind / ".claude" / "skills" / "harvest-co-onboarding" / "SKILL.md", "# onboarding\n")
+        self.assertEqual([], self.says(subject))
+
     def test_a_leading_backslash_is_no_harness_path(self):
         self.harbour_harness()
         self.assertEqual(["error"], self.errors("`\\.claude/notes/plan.md`"))

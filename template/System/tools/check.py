@@ -240,6 +240,9 @@ EAR_GROUP = {
     "review": "the review record has {n} entries outside its fixed form",
 }
 
+# Files of markup or data: their indentation is layout, not an indented code block, and a bare name in a string or a
+# stylesheet is a name, not a path (a path written in one is still read).
+MARKUP_SUFFIXES = {".html", ".htm", ".json"}
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
 PLACEHOLDER_RE = re.compile(r"\{\{[A-Z][A-Z0-9_]*\}\}")
 COMMIT_RE = re.compile(r"[0-9a-fA-F]{7,40}")
@@ -721,6 +724,8 @@ def extract_links(text: str) -> List[Tuple[str, str]]:
             key = attr.group(1).lower()
             found = next((g for g in attr.groups()[1:] if g is not None), "")
             value = html.unescape(found).strip().strip("\"'` ")
+            if key not in LINK_ATTRS and len(re.sub(r"[^A-Za-z]", "", value)) < 3 and "/" not in value and "\\" not in value:
+                continue                   # `data-edge-to="x"`, `[0]`: an attribute that is no address and holds no name
             values = [value]
             if key == "srcset":
                 # A list: each URL, then an optional descriptor. A name may hold
@@ -836,6 +841,7 @@ class PathIndex:
                 if have:
                     self.by_last.setdefault(have[-1], []).append((have, c))
         self._exact: Optional[Dict[Path, List[Tuple[int, Path]]]] = None
+        self.reach: Dict[Path, int] = {}  # a file matched by its tail only by a tail this long (project_index)
 
     def exact(self) -> Dict[Path, List[Tuple[int, Path]]]:
         """Resolved path -> (position, file); built on the first exact link."""
@@ -879,7 +885,8 @@ def resolve(ws: Workspace, source: Path, target: str, candidates) -> List[Path]:
     for want in tries:
         want = tuple(x.lower() for x in want)
         hits = list(dict.fromkeys(c for have, c in index.by_last.get(want[-1], [])
-                                  if len(have) >= len(want) and have[-len(want):] == want))
+                                  if len(have) >= len(want) and have[-len(want):] == want
+                                  and len(want) >= index.reach.get(c, 0)))
         if hits:
             return hits
     return _anchored_hits(ws, index, target)
@@ -5279,20 +5286,29 @@ def code_paths(text: str, is_file: Optional[Callable[[str], bool]] = None) -> Li
 def project_index(ws: Workspace) -> "PathIndex":
     """Every file of every project, indexed for links once a run, with the
     project each belongs to. What git ignores counts: a link into a walled
-    project lands there whether or not git keeps the file. A Garrick checkout
-    kept in a project does not: it is Garrick's shipped files, not the
-    project's notes (set_apart). In staged mode, a file deleted from disk but
-    still in git counts too."""
+    project lands there whether or not git keeps the file. But a path to an
+    ignored file matches it by its tail only when the tail reaches the
+    project's folder: a copy, a worktree or a build kept in a project holds
+    files such as `System/rules.md`, and a path in another note that only ends
+    the same way does not point into it. A Garrick checkout kept in a project
+    does not count: it is Garrick's shipped files, not the project's notes
+    (set_apart). In staged mode, a file deleted from disk but still in git
+    counts too."""
     if ws.project_links is None:
         owner: Dict[Path, Path] = {}
         skip = set(checkouts(ws))
+        hidden = ignored(ws)
+        reach: Dict[Path, int] = {}
         for project, _ in ws.projects:
             for path in walk_files(project, skip, nested=True):
                 owner.setdefault(path, project)
+                if hidden and (path in hidden or any(up in hidden for up in path.parents)):
+                    reach[path] = len(path.relative_to(project.parent).parts)   # the project's folder and on (#399)
             for path in sorted(p for p in ws.git_view if project in p.parents and not p.exists()):
                 owner.setdefault(path, project)
         ws.project_files = owner
         ws.project_links = PathIndex(ws, owner)
+        ws.project_links.reach = reach
     return ws.project_links
 
 
@@ -5310,6 +5326,7 @@ class DirIndex:
     owner: Dict[Path, Optional[Path]] = field(default_factory=dict)
     memo: Dict[tuple, frozenset] = field(default_factory=dict)
     links: Dict[str, List[Tuple[Path, Path]]] = field(default_factory=dict)  # a symlinked folder's lower-cased name -> (its parent, the folder it leads to)
+    hidden: set = field(default_factory=set)  # folders git ignores: a path reaches one only when it names the project (#399)
 
     def add(self, folder: Path, project: Optional[Path]) -> None:
         if folder in self.owner:
@@ -5328,6 +5345,7 @@ def project_dir_index(ws: Workspace) -> DirIndex:
     if ws.project_dirs is None:
         idx = DirIndex()
         skip = set(checkouts(ws))
+        ignores = ignored(ws)
         for apart in skip:  # named, so a path into one ends there; never entered
             idx.names.setdefault(apart.parent, set()).add(apart.name.lower())
         pending_links: List[Tuple[Path, str]] = []
@@ -5346,6 +5364,8 @@ def project_dir_index(ws: Workspace) -> DirIndex:
                 pending_links += [(here, d) for d in dirnames if (here / d).is_symlink() and here / d not in skip]
                 dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and here / d not in skip)
                 idx.add(here, project)
+                if ignores and (here in ignores or here.parent in idx.hidden):
+                    idx.hidden.add(here)
             for path in ws.git_view:
                 if project in path.parents:
                     for above in path.parents:
@@ -5534,6 +5554,8 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
                         names = bool(ctx) or count >= len(folder.relative_to(project).parts) + 1
                         if not names and folder.parent == project and folder.name.lower() in LAYOUT_FOLDERS:
                             continue  # `Deliverables/…` from any project: its own folder, made or not yet
+                        if not names and folder in idx.hidden:
+                            continue  # a copy or a build git ignores: a path that only ends the same way does not lead into it
                         group.append((folder, names))
         if group:
             found.append(group)
@@ -5893,6 +5915,11 @@ def _texts(raw: str) -> List[str]:
     return out
 
 
+# Bold round a folder's name. Two or three stars, a name that starts with a letter or digit and holds no glob
+# character, and the same stars again. a pattern that starts with `**/`, and `*.md`, are globs and stay so.
+EMPHASIS_RE = re.compile(r"(\*{2,3})([A-Za-z0-9][^*?\[\]{}]*/)\1")
+
+
 @lru_cache(maxsize=1 << 18)
 def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
     """Every plain form `raw`, a token as written, may mean as a path: each
@@ -5907,11 +5934,14 @@ def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
     out: List[str] = []
     web = re.match(r"(?i)\s*[<(\[\"'`]*https?://", raw) is not None
     if len(raw) <= MAX_READ and not (web and not re.search(r"(?i)/(?:wiki|raw|wikis)/", raw)):   # the name as written first: a page's may hold `#`, `%`, `(`
-        literal = _trim(_strip_wrap(raw.replace("\\", "/")), False)
+        said = _strip_wrap(raw.replace("\\", "/"))
+        bold = EMPHASIS_RE.fullmatch(said)
+        said = bold.group(2) if bold else said        # bold round a folder's name is emphasis, not a glob
+        literal = _trim(said, False)
         parts = [x for x in literal.split("/") if x not in ("", ".")]
         if parts:
             out.append("/".join(fold_name(x) for x in parts) if fold else "/".join(parts))
-        shown = _SUFFIX_RE.sub("", _strip_wrap(raw.replace("\\", "/")).rstrip("/"))
+        shown = _SUFFIX_RE.sub("", said.rstrip("/"))
         shown = re.sub(r"(?i)\.(?:md|markdown)$", "", shown)
         raw_parts = [x for x in shown.split("/") if x not in ("", ".")]
         if raw_parts:                                                # and with nothing taken off it (`Delta+`)
@@ -6064,12 +6094,12 @@ def body_tokens(body: str, runs, first_words=frozenset()) -> List[str]:
 HTML_CODE_RE = re.compile(r"(?is)<(code|pre)\b[^>]*>(.*?)</\1\s*>|<!--(.*?)-->")
 
 
-def other_code_texts(text: str) -> List[Tuple[str, str]]:
+def other_code_texts(text: str, indented: bool = True) -> List[Tuple[str, str]]:
     """(as written, what it holds) for code a reader sees that code_texts does
     not read: an indented code block (four spaces or a tab, each line), HTML
     `<code>` and `<pre>` and a comment (each line)."""
     out = []
-    for line in text.split("\n"):
+    for line in text.split("\n") if indented else ():
         if line[:4] == "    " or line[:1] == "\t":
             if line.strip():
                 out.append((line.strip(), line))
@@ -6081,14 +6111,15 @@ def other_code_texts(text: str) -> List[Tuple[str, str]]:
     return out
 
 
-def code_names(text: str, runs: bool = False, first_words=frozenset()) -> List[Tuple[str, str]]:
+def code_names(text: str, runs: bool = False, first_words=frozenset(), indented: bool = True) -> List[Tuple[str, str]]:
     """(as written, token) for every token that code may hold which may name a
     Meetings page, with or without a slash: in a code span of any length, a
     code line, an indented block, `<code>`, `<pre>` and a comment. One code
-    text is read once."""
+    text is read once. With `indented` false (a file of markup or data, which
+    has no indented code block) an indented line is not code."""
     out: List[Tuple[str, str]] = []
     done = set()
-    for written, body in code_texts(text, None) + other_code_texts(text):
+    for written, body in code_texts(text, None) + other_code_texts(text, indented):
         if (written, body) in done:
             continue
         done.add((written, body))
@@ -6453,6 +6484,10 @@ class PageNames:
                     if len(want) == 1 or (len(have) >= 2 and have[-2:] == want[-2:]):
                         found[page] = None
             if _GLOBS & set(form) or "{" in form:
+                # A glob with fewer than three letters of its own names no page (see _glob): `*`, `?:` or `[0]` in a
+                # stylesheet or a script is code, and it does not count towards the limit.
+                if sum(c.isalpha() for c in re.sub(r"\.[A-Za-z0-9]{1,5}$", "", re.sub(r"[*?\[\]{},]", "", form))) < 3:
+                    continue
                 self.globs_read.add(form)
                 if len(self.globs_read) <= GLOB_FILE_MAX:
                     found.update(dict.fromkeys(self._glob(form)))
@@ -6629,7 +6664,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     # link may be to a bare name; code, frontmatter and prose read one only if
     # it is distinctive.
     named = [(v, w, t, 1, v == "links" and _link_like(w)) for v, w, t in targets]
-    named += [("writes the path", w, t, 1, False) for w, t in code_names(text, names.spaced, names.first_words)]
+    named += [("writes the path", w, t, 1, False) for w, t in code_names(text, names.spaced, names.first_words, path.suffix.lower() not in MARKUP_SUFFIXES)]
     shown = render(text)
     for body in dict.fromkeys([text, shown]):
         named += [("links", w, t, 1, True) for w, t in markdown_targets(body)]
@@ -6638,11 +6673,20 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
         named += [("links", "<%s>" % t, t, 1, True) for t in AUTOLINK_RE.findall(body)]
         named += [("links", w, t, 1, True) for w, t in uri_targets(body)]
         named += [("writes the path", w, t, 2, False) for w, t in prose_paths(body, names.spaced)]
+    before = {n[1:] for n in named}
     named += [("links", w, t, 1, False) for w, t in frontmatter_names(text)]
     named = [n for n in named if not (n[1:] in seen_tokens or seen_tokens.add(n[1:]))]
+    # A spaced display name in a frontmatter value (`Dana Whitlock`) is a name, not a pointer to a person's page: names are
+    # tested by the People rule, and a person known on both sides of a wall has no side to take. Its reading with the
+    # spaces joined by hyphens only happens to equal a slug. A token written with the slug's own hyphens, a path and a
+    # link are read as before, and so is a slug a line fold has split (`kai- ross`).
+    fm_bare = {n[1:] for n in named if n[1:] not in before and not re.search(r"[/\\]", n[2]) and re.search(r"\s", n[2])
+               and not re.search(r"[-_\u2010-\u2015]\s|\s[-_\u2010-\u2015]", n[2])}
     for verb, written, target, parts, bare in named if names.by_last else []:
         found = list(resolve(ws, path, target, meetings)) if meetings.items and (verb, written, target) in resolved else []
         named_pages = names.named(target, parts, bare)
+        if (written, target, parts, bare) in fm_bare:
+            named_pages = [p for p in named_pages if names.kinds.get(p) != "person page"]
         if named_pages and not found and own_file(ws, path, project, target):
             continue                           # it is a file of this project, not a page that shares its name
         found += sorted((p for p in named_pages if p not in found),
@@ -7090,6 +7134,8 @@ def all_sources_findings(ws: Workspace) -> List[Finding]:
         out: List[Finding] = []
         for project, pfm in ws.projects:
             ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+            if in_system(ws, project) and not ptags:
+                continue                   # System/ is no zone: a project there has no party, and no hook guards it
             for path in walk_files(project / "Sources", set_apart(ws)):
                 try:
                     if not _in_sources(project, path) or path.stat().st_size > MAX_SOURCE_BYTES:
@@ -7116,6 +7162,8 @@ def check_walls(ws: Workspace) -> List[Finding]:
     out = []
     for project, pfm in ws.projects:
         ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+        if in_system(ws, project) and not ptags:
+            continue                       # System/ is no zone: a project there has no party, and no hook guards it
         for path in walk_files(project, set_apart(ws)):
             if path.suffix.lower() not in TEXT_SUFFIXES:
                 continue

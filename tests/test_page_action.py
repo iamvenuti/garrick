@@ -1099,6 +1099,19 @@ class TestJournal(ActionCase):
             "answer": {"verb": "answer", "zone": "Work", "file": asked, "label": "500 pallets"},
             "later": {"verb": "later", "zone": "Work", "file": asked}})
 
+    def test_every_kind_of_refusal_line_is_read_as_the_walls_line(self):
+        """0.59.0: a refusal ends with the fix of its own kind; the page reads each of them as the wall check's line."""
+        import check
+        for message in ("names Acme Corp, or one of its people; a wall stands between birch and acme",
+                        "uses x, but the project has no party to check the walls against",
+                        "names a different party on disk from the one staged; stage that change",
+                        "uses x, an unfinished source (no zone or parties)",
+                        "holds a path the system cannot read (Too long), so the file cannot be checked; shorten it"):
+            line = "Commit refused: Zones/Work/Birch Entry/Notes.md %s. %s" % (message, check.staged_fix(message))
+            self.assertTrue(pa.WALL_LINE.match(line), line)
+            self.assertTrue(pa.WALL_IN.search("git said: " + line), line)
+        self.assertFalse(pa.WALL_LINE.match("Commit refused: the wall check is missing (x). Put it back, or commit with --no-verify if you mean to skip it."))
+
     def test_a_commit_the_wall_check_refuses_ends_on_the_rules_sentence_alone_for_every_verb(self):
         """#172: the hook prints what the zone's wall check prints, a line
         WALL_LINE recognises, naming the note and the far side's party. Every

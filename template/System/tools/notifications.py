@@ -13,14 +13,14 @@ cmux desk, and the session hooks. Notices go to this Mac and nowhere else
 kept under `notifications` in System/garrick-settings.json, committed with
 the workspace:
 
-    {"tell": {"needs-you": true, "finished": true, "todo-summary": true, "job-failed": true},
+    {"tell": {"needs-you": true, "finished": true, "todo-summary": true, "job-failed": true, "release": true},
      "after": 2,
      "quiet": {"on": true, "from": "22:00", "to": "07:00"}}
 
-**Events** (EVENTS) are what happened. Settings offers four of them (TELL),
+**Events** (EVENTS) are what happened. Settings offers five of them (TELL),
 each on or off, and the minutes a turn must run before Finished is sent.
-Job idle and the Desk (FOLLOW) are sent whenever any of the four is on, so
-four boxes left empty mean no notice at all; Todo refreshed is never sent.
+Job idle and the Desk (FOLLOW) are sent whenever any of the five is on, so
+five boxes left empty mean no notice at all; Todo refreshed is never sent.
 
 A notice from a session running in cmux lands on that session's own tab,
 through cmux's own notification; anything else, or a cmux that will not
@@ -95,18 +95,20 @@ EVENTS = (
     ("job-failed", "Job failed or recovered", "A scheduled job fails or works again, and a line a job sends of its own"),
     ("job-idle", "Job idle", "A job has run cleanly but done nothing for days"),
     ("desk", "Desk", "The cmux desk starting the day or shutting down"),
+    ("release", "A newer Garrick is out", "The release check found a newer Garrick; sent once for each release"),
 )
 EVENT_NAMES = tuple(e[0] for e in EVENTS)
 LABELS = {e[0]: e[1] for e in EVENTS}
 SESSION_EVENTS = ("needs-you", "finished")       # from a session: cmux takes the Mac's place
 # What Settings offers, in its order and its words: each event on or off.
 TELL = (("needs-you", "a session needs me"), ("finished", "a long task finishes"),
-        ("todo-summary", "the morning Todo summary is ready"), ("job-failed", "a scheduled job fails"))
+        ("todo-summary", "the morning Todo summary is ready"), ("job-failed", "a scheduled job fails"),
+        ("release", "a newer Garrick is out"))
 TELL_NAMES = tuple(e for e, _ in TELL)
 FOLLOW = ("job-idle", "desk")                    # sent while any of TELL is on
 QUIET_CHOICES = ("send", "hold", "drop")
 QUIET = {"needs-you": "send", "finished": "drop", "todo-refreshed": "hold", "todo-summary": "hold",
-         "job-failed": "hold", "job-idle": "hold", "desk": "send"}
+         "job-failed": "hold", "job-idle": "hold", "desk": "send", "release": "hold"}
 # job.py's kinds, as GARRICK_NOTIFY_KIND has always carried them, and the event each is.
 KINDS = {"failed": "job-failed", "recovered": "job-failed", "message": "job-failed", "idle": "job-idle",
          "digest": "todo-summary", "refreshed": "todo-refreshed"}

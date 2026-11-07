@@ -307,7 +307,7 @@ SHAPES = {
     "onTick: verb": {"todo-done": (), "todo-undo": ()},
     "request: 'settings'": {"settings": ()},             # PANEL_JS GarrickPrefs.request()
     "window.TaddSend: 'todo-add'": {"todo-add": ()},     # JS: the Todo list's + button
-    "sdReq: 'settings'": {"settings": ("memory",)},      # JS: what Settings closes with, zones and notifications alone,
+    "sdReq: 'settings'": {"settings": ("memory", "release-notice", "release-notice-every")},      # JS: what Settings closes with, zones and notifications alone,
                                                          # Memory's form assigned to it (#108)
     # --- 3. data-act built by desk() and by JSON.stringify(q) -------------
     "deskReq: v": {"open": (), "close": ()},             # PANEL_JS, through desk(o,v)
@@ -334,6 +334,9 @@ SHAPES = {
     "vreq: 'work-file'": {"work-file": ("to",)},
     # MEMORY_JS (#108): what Settings › Memory's unsaved values would do, which only reads
     "ask: 'memory-preview'": {"memory-preview": ()},
+    # RELEASE_JS (#410): Settings › About Garrick's Check for updates, and the update it starts when a newer release is found
+    "btn.onclick: 'release-check'": {"release-check": ()},
+    "window.GarrickActed: 'release-update'": {"release-update": ()},
     # NOTE_JS (#206): a note read for Explore's Preview, which only reads, and opened in its own app
     "read: 'note-read'": {"note-read": ()},
     "openIn: 'note-open'": {"note-open": ()},
@@ -361,6 +364,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'", "renameReq: 'suggestion'", "ownReq: 'answer'"},
            "WHERE_JS": {"poll: 'files-progress'", "vreq: 'files-stop'", "vreq: 'work-file'"},
            "MEMORY_JS": {"ask: 'memory-preview'"},
+           "RELEASE_JS": {"btn.onclick: 'release-check'", "window.GarrickActed: 'release-update'"},
            "NOTE_JS": {"read: 'note-read'", "openIn: 'note-open'"}}
 
 

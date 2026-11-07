@@ -50,8 +50,10 @@ Standard library only, Python 3.9 or later.
 from __future__ import annotations
 
 import collections
+import hashlib
 import importlib.util
 import re
+import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -94,15 +96,23 @@ def _tool(ws: Path, name: str, fits):
                     HERE.parent.parent / "template" / "System" / "tools" / name):
             if not src.is_file():
                 continue
+            # A module is put in sys.modules before it runs: a dataclass with
+            # `from __future__ import annotations` looks its own module up by
+            # name (Python 3.11), and fails without it. The name is the file's
+            # own, so two copies of one file never meet.
+            name_ = "garrick_ask_%s_%s" % (src.stem, hashlib.sha1(str(src.resolve()).encode("utf-8")).hexdigest()[:8])
             try:
-                spec = importlib.util.spec_from_file_location("garrick_ask_" + src.stem, str(src))
+                spec = importlib.util.spec_from_file_location(name_, str(src))
                 mod = importlib.util.module_from_spec(spec)
+                sys.modules[name_] = mod
                 spec.loader.exec_module(mod)
             except Exception:
+                sys.modules.pop(name_, None)
                 continue
             if fits(mod):
                 found = mod
                 break
+            sys.modules.pop(name_, None)
         _TOOLS[key] = found
     return _TOOLS[key]
 

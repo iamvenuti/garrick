@@ -1603,7 +1603,8 @@ class NightlyTest(FakeAssistants):
         with mock.patch.object(nightly, "STATUS", self.tmp / "none"):
             self.assertEqual(0, self.run_nightly())
         self.assertEqual(["nurture"], self.ran())
-        self.assertEqual({"effort", "nightly.local", "status"}, {k for k, s in self.steps().items() if s.get("skipped")})
+        self.assertEqual({"effort", "recall", "nightly.local", "status"},
+                         {k for k, s in self.steps().items() if s.get("skipped")})
 
     def test_the_heartbeat_says_which_step_failed(self):
         script = self.tmp / "fake_nightly.py"

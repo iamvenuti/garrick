@@ -23,7 +23,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `extras/` | Optional tools outside core: the mail fetcher, scheduled jobs, and the status page with its Mac app. None is installed except the status page, which the installer puts in place for the simple home; `EXTRAS` in `install.py` says where each goes in a workspace |
 | `docs/` | The user documentation. `docs/extras/` covers the extras |
 | `presentation/` | The introduction deck, one HTML file |
-| `tests/` | `python3 -m unittest discover -s tests`. CI runs it in four shards per Python; `python3 tests/shard.py 2/4 --jobs 3` runs one as CI does, by the times in `tests/shard-times.json` |
+| `tests/` | `python3 -m unittest discover -s tests`. CI runs it in four shards per Python on `main` and on `release-*` pull requests, and only the modules a branch pull request touches (`TOUCH_MAP` in `tests/shard.py`) on the system Python; `python3 tests/shard.py 2/4 --jobs 3` runs one as CI does, by the times in `tests/shard-times.json` |
 
 ## Placeholders
 
@@ -35,6 +35,8 @@ Never leave a third kind. A file no script can finish and the user cannot recogn
 ## Releasing
 
 With the notes for the new version written in `CHANGELOG.md` and the work on `main`, review what the release carries before you tag it: `git diff v<last>..main`, read for correctness and for any way past the wall check. A release adds code nobody has read as a whole, and 0.45.0 shipped a way past the wall check that a review of the next two releases found. A finding goes to an issue, or, when it is a way past the wall check, to a private advisory as `SECURITY.md` says, and is fixed before the tag.
+
+A change to how the wall check reads a token is released only when `python3 tests/wall_diff.py <last tag>` shows no row going from refused to passed. That diff is the gate for the token reading: no round of review can reach a fixed edge. A form the last release also lets through is a factor for the next release, not a blocker. CI runs it on a pull request that changes `check.py` or `garrick_lib.py` (`.github/workflows/wall-diff.yml`), and `tests/walls/forms/` keeps the reviewers' cases.
 
 Then, from a clone:
 

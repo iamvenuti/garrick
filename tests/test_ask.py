@@ -1459,10 +1459,15 @@ class TestTheAskWindow(unittest.TestCase):
 
     def test_escape_hides_the_window_and_keeps_the_exchange(self):
         panel = self.between("final class AskPanel: NSPanel {", "\n}\n")
-        self.assertIn("override func cancelOperation(_ sender: Any?) { orderOut(nil) }", panel)
+        # Escape goes through askEscape, which hides only when Escape is a way to close the box (#411),
+        # and hiding is always orderOut, never close, so the exchange stays.
+        self.assertIn("override func cancelOperation(_ sender: Any?) { escape() }", panel)
         typed = self.between("final class AskInput: NSTextView {", "\n}\n")
         self.assertIn("if sel == #selector(cancelOperation(_:)) || sel == #selector(complete(_:)) { return hide() }", typed)
-        self.assertIn("askField.hide = { [weak self] in self?.askPanel?.orderOut(nil) }", self.body("showAsk"))
+        self.assertIn("askField.hide = { [weak self] in self?.askEscape() }", self.body("showAsk"))
+        self.assertIn("p.escape = { [weak self] in self?.askEscape() }", self.swift)
+        self.assertIn("if savedAskClose().escape { askHide() }", self.body("askEscape"))
+        self.assertIn("askPanel?.orderOut(nil)", self.body("askHide"))
         self.assertNotIn("askPanel?.close()", self.swift)
 
     def test_only_new_conversation_and_quit_clear_the_exchange(self):

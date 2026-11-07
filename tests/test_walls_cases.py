@@ -427,7 +427,7 @@ class EnforcementPoints(unittest.TestCase):
         self.assertTrue(any(line.startswith("d01") for line in failed), failed)
 
     def test_no_enforcement_point_holds_a_wall_test_of_its_own(self):
-        """walled() is garrick_lib's, under decide() and crossings(). Recall is not on main, and moves over with it."""
+        """walled() is garrick_lib's, under decide() and crossings(). Recall asks decide() and labels() too, and holds none."""
         import re
         own = []
         for top in ("template", "extras"):

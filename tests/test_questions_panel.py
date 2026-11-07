@@ -167,8 +167,9 @@ class TestWhatIsListed(Panel):
 
     def test_the_counts_are_the_default_buckets_and_never_add_the_far_side(self):
         d = self.data()
-        self.assertEqual({"Work": 1 + 1}, d["menu"])               # Acme's question, and Knowledge's, which no wall divides
-        self.assertEqual({"z": {"Work": 2}, "g": {"Work": [{"h": "Work \u00b7 Acme Corp", "n": 1}, {"h": "Work \u00b7 Birch & Co", "n": 1},
+        self.assertEqual({"Work": 1}, d["menu"])                   # Acme's question; Knowledge's has no zone and is counted once, apart
+        self.assertEqual(1, d["menu_knowledge"])
+        self.assertEqual({"z": {"Work": 1}, "g": {"Work": [{"h": "Work \u00b7 Acme Corp", "n": 1}, {"h": "Work \u00b7 Birch & Co", "n": 1},
                                                             {"h": "Work \u00b7 Cedar Ltd", "n": 0}]}, "k": 1}, qp.counts_of(d))
         self.assertEqual(1, d["buckets"]["Work|acme"]["answered"])
         self.assertEqual(0, d["buckets"]["Work|birch"]["answered"])
@@ -394,7 +395,7 @@ class TestThePage(Panel):
         self.assertIn('data-tab="questions"', html)
         self.assertIn('id="tab-questions"', html)
         self.assertIn("window.GarrickQuestions", html)
-        self.assertIn('"z": {"Work": 2}', html.replace('"z":{"Work":2}', '"z": {"Work": 2}'))
+        self.assertIn('"z": {"Work": 1}', html.replace('"z":{"Work":1}', '"z": {"Work": 1}'))
 
     def test_no_panel_where_the_walls_cannot_be_read(self):
         with mock.patch.object(qp, "build", side_effect=RuntimeError("x")):

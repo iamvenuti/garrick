@@ -67,6 +67,7 @@ for (const [what, a] of steps) {
   if (what === "zone") { z.value = a; z.onchange.call(z); }
   if (what === "party") { p.value = a; p.onchange.call(p); }
   if (what === "show") $("qp-source").children.find((b) => b.getAttribute("data-source") === a).onclick();
+  if (what === "answer") { const t = $("qp-open").querySelectorAll("textarea")[0]; t.value = a; t.oninput(); t.onkeydown({ key: "Enter", shiftKey: false, isComposing: false, preventDefault() {} }); }
   if (what === "saveAll") $("qp-nurture").querySelectorAll("button").filter((b) => b.textContent === a)[0].onclick();
   if (what === "pickAnother") { /* every row answered "another page", which is a save */
     $("qp-nurture").querySelectorAll("input").filter((i) => i.type === "radio" && i.value === "another").forEach((i) => { i.checked = true; });
@@ -370,6 +371,17 @@ class TestDealtWithListOnlyBridgesTheRebuild(unittest.TestCase):
         self.assertNotIn(BIRCH, self.listed(seen))
 
     def test_the_build_stamps_its_time_and_every_save_stamps_its_own(self):
-        self.assertIn("Date.now()", qp.JS)
+        self.assertNotIn("Date.now()", qp.JS)           # the browser's clock decides nothing
         self.assertNotIn("S.gone[key(q)]=1", qp.JS)
         self.assertNotIn("S.gone['r:'+x.key]=1", qp.JS)
+
+    def test_a_save_is_stamped_with_the_build_so_a_clock_apart_from_the_servers_cannot_misjudge_it(self):
+        ahead = 9_999_999_999_999                        # the build's clock is far ahead of this browser's
+        d = self.built(ahead)
+        got = run([["zone", "Work"], ["party", "acme"], ["answer", "Done."]], d=d)[-1]
+        self.assertTrue(got["gone"])
+        self.assertTrue(all(t >= ahead for t in got["gone"].values()), got["gone"])
+        again = run([], d=d, seed=saved(zone="Work", gone=got["gone"]))[0]       # reloaded before the rebuild: still bridged
+        self.assertEqual(got["gone"], again["gone"])
+        rebuilt = run([], d=self.built(ahead + 1), seed=saved(zone="Work", gone=got["gone"]))[0]
+        self.assertEqual({}, rebuilt["gone"])            # the next build drops it, as the data decides

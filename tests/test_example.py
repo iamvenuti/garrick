@@ -75,10 +75,15 @@ def git(root, *args):
 
 def tree(folder):
     """{path: sha256} of every file under a folder, .git included: what moving
-    a folder away and back has to leave exactly as it was."""
+    a folder away and back has to leave exactly as it was. Git's lock files are
+    left out: a git process started by the build (gc, a status refresh) holds one
+    for a moment, and whether the snapshot sees it is timing, not the move."""
     out = {}
     folder = Path(folder)
     for path in sorted(folder.rglob("*")):
+        rel = path.relative_to(folder)
+        if path.name.endswith(".lock") and ".git" in rel.parts[:-1]:
+            continue
         if path.is_symlink():
             out[path.relative_to(folder).as_posix()] = "link:" + os.readlink(str(path))
         elif path.is_file():

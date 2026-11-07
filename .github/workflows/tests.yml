@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# A push to a pull request cancels the run it supersedes. Runs on main are never
+# cancelled: each one is the record of what main held.
+concurrency:
+  group: tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: macOS, Python ${{ matrix.python }}, shard ${{ matrix.shard }}

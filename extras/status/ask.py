@@ -1501,7 +1501,8 @@ class Asker:
                 return self.refilled(first, request[asked:], named, names, reset), reset
         if zoned is not None:                       # the sessions now answer in this zone, and the window follows
             self.zone = self.last_zone = zoned
-        records, back, matched = sc.choose(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
+        records, back, matched = sc.choose(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib,
+                                              start=sc.starts(where, self.ctx))
         if not records and not self.passages:       # nothing to read, and nothing read before it
             out = reply(self.wall() if back else NOTHING_FOUND, "answer")
             out.update(claims=[], sources=[], after=[out["say"]], incomplete=False)
@@ -1701,7 +1702,7 @@ class Asker:
         lib = scope_lib().lib(self.ws)
         held = self.holding()
         adding = set(parties) | {p for r in passages for p in r["parties"]}
-        if scope_lib().any_wall(self.ctx, adding, adding | held, lib):
+        if not scope_lib().admits(self.ctx, held, adding, lib):
             raise Bad("a wall stands between these records and what the session holds, so none was read")
         self.seen |= adding
         given = len(passages)

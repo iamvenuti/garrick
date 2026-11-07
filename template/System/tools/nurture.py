@@ -169,7 +169,10 @@ from garrick_lib import (  # noqa: E402
     parse_frontmatter_text,
     party_entities,
     strip_tag,
-    walled,
+    PUBLIC,
+    labels,
+    crossings,
+    decide,
     workspace_root,
 )
 
@@ -509,7 +512,7 @@ def claim_wall(ctx: Ctx, item: Item) -> bool:
         if m:
             a = [t.strip() for t in m.group(1).split(",")]
             b = [t.strip() for t in m.group(2).split(",")]
-            hit = next(((x, y) for x in a for y in b if walled(ctx.context, x, y)), None)
+            hit = next(iter(crossings(ctx.context, a, b)), None)
             if hit:
                 item.wall = "%s and %s" % hit
                 item.message = ""
@@ -725,7 +728,12 @@ def across_wall(ctx: Ctx, source: str, target: str) -> bool:
     if len(parts) < 4 or parts[0] != "Zones":
         return False
     ours, theirs = parties_at(ctx, source), parties_at(ctx, target)
-    return any(walled(ctx.context, a, b) for a in ours for b in theirs)
+    if target.split("/")[:2] == ["Wikis", "Knowledge"] and not theirs:
+        theirs = {PUBLIC}                  # published material, which crosses every wall
+    # No label, no permit: a source with no party, a target with none or one the table lacks, is across a wall.
+    if not theirs or theirs - set(ctx.context.get("parties", {})) - {PUBLIC}:
+        return True
+    return decide(ours, theirs, "write", ctx.context) != "permit"
 
 
 def landing(ctx: Ctx, target: str) -> List[str]:
@@ -1201,6 +1209,9 @@ def parties_at(ctx: Ctx, rel: str) -> set:
         zone = ctx.root / rel
         return set().union(*(note_tags(p / (p.name + ".md"), "party") for p in zone.iterdir() if p.is_dir())) \
             if zone.is_dir() else set()
+    if parts[0] == "Zones" and len(parts) >= 3:
+        got = labels(ctx.root, rel, ctx.context)       # one derivation; None (no label) is nobody's, so across a wall
+        return set(got) if got else set()
     if parts[0] in ("Zones", "System") and len(parts) >= (3 if parts[0] == "Zones" else 2):
         project = ctx.root.joinpath(*parts[:3 if parts[0] == "Zones" else 2])
         tags = note_tags(project / (project.name + ".md"), "party")
@@ -1242,9 +1253,12 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
     state: Dict[Path, Optional[set]] = {}
     for hit in hits:
         rel = ctx.rel(hit.path)
-        if ours and not inside(rel, scopes):
+        if scopes and not inside(rel, scopes):
             theirs = hit_parties(ctx, hit)
-            if theirs is None or any(walled(ctx.context, a, b) for a in ours for b in theirs):
+            if theirs is not None and not theirs and (hit.kind in ("memory", "context")
+                                                      or rel.split("/")[:2] == ["Wikis", "Knowledge"]):
+                theirs = {PUBLIC}          # the user's own, and published material: read on every side of a wall
+            if theirs is None or decide(ours, theirs, "read", ctx.context) != "permit":
                 withheld = True
                 continue
         files = [hit.path] if hit.kind != "raw" else list(hit.pages)

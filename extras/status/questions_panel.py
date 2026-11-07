@@ -139,8 +139,8 @@ def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable)
                 page = pa.page_target(q, l)
                 if page is not None:
                     ptags = pa.page_tags(q, page) if q.name == "Meetings" else []
-                    if q.name == "Knowledge" or (ptags and set(ptags) <= set(tags) and not any(
-                            q.lib.walled(q.context, a, b) for a in ptags for b in tags)):
+                    if q.name == "Knowledge" or (ptags and set(ptags) <= set(tags) and not q.lib.crossings(
+                            q.context, ptags, tags)):
                         origin = {"name": page.relative_to(q.dir).as_posix(), "href": link(page)}
     slug = pa.answer_slug(q.stem())
     answer_file = "Wikis/%s/raw/answers/%s - %s.md" % (wiki, today.strftime("%y%m%d"), slug)
@@ -417,7 +417,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
     zone with a party)."""
     pa = page_action()
     lib = pa.prefs().lib(ws)
-    need = ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled", "entity_names")
+    need = ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide", "entity_names")
     if lib is None or not all(callable(getattr(lib, n, None)) for n in need):
         return None
     try:
@@ -522,7 +522,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
                                    for v in group_views([info]) if v["kind"] != "unattributed"]
     return {"today": today.isoformat(), "root": str(ws), "zones": zone_info, "select": selections(zone_info), "buckets": buckets, "knowledge": knowledge,
             "knowledge_answered": answered_k, "knowledge_waiting": waiting_k, "menu": menu, "menu_groups": per_group,
-            "menu_knowledge": len(knowledge)}
+            "menu_knowledge": len(knowledge), "built": int(time.time() * 1000)}
 
 
 def counts_of(data: dict) -> dict:
@@ -615,7 +615,10 @@ function link(name,href){var a=el('a','',name);a.setAttribute('href',href);retur
 var S={zone:'',party:'',source:'wiki',wiki:'',age:'any',cursor:'',gone:{},typed:{}};
 try{Object.assign(S,JSON.parse(ss(SK)||'{}'))}catch(e){}
 function keep(){ss(SK,JSON.stringify(S))}
-var zones=D.zones||[];if(S.zone!=='*'&&!zones.some(function(z){return z.zone===S.zone}))S.zone=zones.length?zones[0].zone:'';
+/* S.gone only bridges the moment between a save and the rebuild after it: each entry holds its save time, and an entry older than this page's build is dropped, so the data decides what shows */
+(function(){var b=D.built||0,ch=false;Object.keys(S.gone).forEach(function(k){if(!(S.gone[k]>b)){delete S.gone[k];ch=true}});if(ch)keep()})();
+/* no zone chosen yet: the first zone, by name, with an open question in its default view; none has one, the first zone */
+var zones=D.zones||[];if(S.zone!=='*'&&!zones.some(function(z){return z.zone===S.zone})){var fz=zones.filter(function(z){return((D.menu||{})[z.zone]||0)>0})[0]||zones[0];S.zone=fz?fz.zone:''}
 function zinfo(){return zones.filter(function(z){return z.zone===S.zone})[0]||{scopes:[]}}
 function scopes(){if(S.zone!=='*')return zinfo().scopes;var o=[];zones.forEach(function(z){z.scopes.forEach(function(s){o.push(s)})});return o}
 function scoped(){return scopes().length>0}
@@ -689,7 +692,7 @@ var acts=el('div','gacts'),ans=el('button','act primary','Answer'),lat=el('butto
 [ans,lat,clo,dec].forEach(function(b){b.type='button'});
 function req(how,extra){var r={verb:'question-'+how,wiki:q.wiki,file:q.file};if(how==='answer'||how==='decide')r.words=extra;if(how==='later')r.until=extra;return r}
 function go(how,extra,said){if(!host){copyWords(q,how,extra);return}
-if(act(req(how,extra),said)){S.gone[key(q)]=1;S.cursor=nextE?ekey(nextE):'';delete S.typed[key(q)];keep();counts();list()}}
+if(act(req(how,extra),said)){S.gone[key(q)]=Date.now();S.cursor=nextE?ekey(nextE):'';delete S.typed[key(q)];keep();counts();list()}}
 function save(){var v=ta.value.trim();if(!v){ta.focus();return}go('answer',v,'Filing your answer…')}
 ans.onclick=save;ta.onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();save()}};
 lat.onclick=function(){if(!date.value){date.focus();say('Pick the day to come back on.');return}go('later',date.value,'Putting it off…')};
@@ -702,7 +705,7 @@ lat.addEventListener('mouseover',function(){writes('later')});clo.addEventListen
 if(!host)box.appendChild(el('p','hint','In a browser this page cannot save: each button copies what to say to your assistant.'))}
 /* ---- proposed verdicts, one by one or all at once, each a close ---- */
 var line=[];
-function drain(){var q=line.shift();if(!q)return;if(S.gone[key(q)])return drain();S.gone[key(q)]=1;keep();act({verb:'question-close',wiki:q.wiki,file:q.file},'Closing…')}
+function drain(){var q=line.shift();if(!q)return;if(S.gone[key(q)])return drain();S.gone[key(q)]=Date.now();keep();act({verb:'question-close',wiki:q.wiki,file:q.file},'Closing…')}
 function vlist(){var box=$('qp-verdicts'),gs=groups().filter(function(g){return g.qs.some(function(q){return q.verdict})});box.textContent='';
 gs.forEach(function(g){var vs=g.qs.filter(function(q){return q.verdict});
 var h=el('div','qp-group');h.appendChild(el('h3','',groups().length>1?'Proposed verdicts · '+g.v.heading:'Proposed verdicts'));
@@ -787,7 +790,7 @@ var web=el('button','act qp-webonly','Review in the chat');web.type='button';web
 foot.appendChild(web);box.appendChild(foot)}
 var prevActed=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&(q.verb==='nurture-save'||q.verb==='nurture-save-all')){(res&&res.rows||[]).forEach(function(x){var r=rows.filter(function(y){return y.key===x.key})[0];if(!r)return;
-if(x.ok){S.gone['r:'+x.key]=1}else{r.el.classList.add('refused');var m=r.el.querySelector('.qp-say');if(!m){m=el('div','qp-say');r.el.appendChild(m)}m.textContent=x.say}});
+if(x.ok){S.gone['r:'+x.key]=Date.now()}else{r.el.classList.add('refused');var m=r.el.querySelector('.qp-say');if(!m){m=el('div','qp-say');r.el.appendChild(m)}m.textContent=x.say}});
 keep();if(res&&res.ok){var m=rows.filter(function(r){return r.el.classList.contains('refused')});if(!m.length)setTimeout(review,0)}}
 if(q&&q.verb==='question-close'&&line.length)drain();
 if(prevActed)return prevActed(q,res)};

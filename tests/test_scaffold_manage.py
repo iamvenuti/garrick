@@ -11,6 +11,7 @@ import contextlib
 import datetime
 import io
 import json
+import re
 import subprocess
 import sys
 import unittest
@@ -49,9 +50,10 @@ class ManageCase(Installed):
     def git(self, *args):
         return subprocess.run(["git", *args], cwd=str(self.work), capture_output=True, text=True, env=self.env)
 
-    def commit(self, message):
+    def commit(self, message, hook=True):
         self.git("add", "-A")
-        r = self.git("commit", "-q", "-m", message)
+        # hook=False: the fixture writes what the zone's wall hook would refuse, to test the move's own check.
+        r = self.git("commit", "-q", "-m", message, *([] if hook else ["--no-verify"]))
         self.assertEqual(0, r.returncode, r.stderr + r.stdout)
 
     def scaffold(self, *args):
@@ -485,14 +487,69 @@ class TestMove(ManageCase):
 
     def test_a_party_that_cannot_be_read_plainly_is_refused(self):
         hub = self.apex / "Apex.md"
-        hub.write_text(hub.read_text().replace("party: acme", "party: [acme, acme]"))
-        self.commit("two parties")
+        hub.write_text(hub.read_text().replace("party: acme", "party: []"))
+        self.commit("no party", hook=False)    # the hook now refuses a project with no party
         self.refused("no single `party:`")
-        hub.write_text(hub.read_text().replace("party: [acme, acme]", "party: nobody"))      # the wall hook would not let it in
+        hub.write_text(hub.read_text().replace("party: []", "party: nobody"))      # the wall hook would not let it in
         r = self.move()
         self.assertEqual(1, r.returncode)
         self.assertIn("not a tag in the Parties table", r.stderr)
         self.assertTrue(self.freight.is_file())
+
+    def set_party(self, note, value):
+        text = note.read_text()
+        self.assertRegex(text, r"(?m)^party: .*$")
+        note.write_text(re.sub(r"(?m)^party: .*$", "party: " + value, text, count=1))
+
+    def cobalt(self):
+        r = self.scaffold("--today", "2027-01-01", "party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
+        self.assertEqual(0, r.returncode, r.stderr)
+
+    def test_a_party_list_with_no_wall_moves(self):
+        self.cobalt()
+        self.set_party(self.acme / "Acme.md", "[acme, cobalt]")
+        self.set_party(self.freight, "[acme, cobalt]")
+        self.commit("lists")
+        r = self.move()
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((self.apex / "Threads" / "Freight" / "Freight.md").is_file())
+
+    def test_a_threads_own_list_is_checked_against_the_target(self):
+        self.set_party(self.freight, "[acme, birch]")
+        self.commit("thread list", hook=False)
+        self.refused_wall(to="Apex")
+
+    def test_a_source_list_walled_from_the_target_moves_nothing(self):
+        self.set_party(self.acme / "Acme.md", "[acme, birch]")
+        self.commit("source list", hook=False)
+        self.refused_wall(to="Apex")
+
+    def test_a_target_list_walled_from_the_thread_moves_nothing(self):
+        self.set_party(self.apex / "Apex.md", "[cobalt, birch]")
+        self.cobalt()
+        self.commit("target list", hook=False)
+        self.refused_wall(to="Apex")
+
+    def refused_wall(self, **kw):
+        said = self.refused(self.WALL, **kw)
+        self.assertEqual(self.WALL, said.strip())
+        self.assertNotIn("birch", said.lower())
+
+    def test_a_list_that_cannot_be_read_plainly_is_refused(self):
+        self.cobalt()
+        for value in ("[acme, nobody]", "[]", "[acme, [birch]]"):
+            self.set_party(self.freight, value)
+            self.commit("odd " + value, hook=False)
+            r = self.move()
+            self.assertEqual(1, r.returncode, value)
+            self.assertTrue("no single `party:`" in r.stderr or "not a tag in the Parties table" in r.stderr, (value, r.stderr))
+            self.assertTrue(self.freight.is_file())
+        self.set_party(self.freight, "acme")
+        self.freight.write_text(self.freight.read_text().replace("party: acme\n", "party: acme\nparty: birch\n", 1))
+        self.commit("twice", hook=False)
+        r = self.move()
+        self.assertEqual(1, r.returncode)
+        self.assertIn("no single `party:`", r.stderr)
 
     def test_another_zone_is_refused(self):
         self.assertEqual(0, self.scaffold("party", "--name", "Home Team", "--zone", "Personal", "--what", "Family").returncode)
@@ -627,23 +684,13 @@ class TestMove(ManageCase):
         self.assertIn("[p](../../../Acme/Threads/Pricing/Pricing.md)", moved)
         self.assertIn("[h](../../../Acme/Acme.md)", moved)
 
-    def stack_files(self):
-        stack = self.root / "System" / "generated" / "interrupted.json"
-        stack.parent.mkdir(parents=True, exist_ok=True)
-        stack.write_text(json.dumps({"stack": [{"zone": "Work", "project": "Acme", "thread": "Freight",
-                                                "file": "Acme/Threads/Freight/Freight.md", "at": "2027-01-01T10:00:00"}]}))
-        return stack, self.root / "System" / "generated" / "moved.json"
-
-    def test_scaffold_alone_moves_the_stack_and_the_effort_record_and_undo_puts_them_back(self):
-        stack, moved = self.stack_files()
+    def test_scaffold_alone_moves_the_effort_record_and_undo_puts_it_back(self):
+        moved = self.root / "System" / "generated" / "moved.json"
         self.assertEqual(0, self.move().returncode)
-        e = json.loads(stack.read_text())["stack"][0]
-        self.assertEqual(("Apex", "Apex/Threads/Freight/Freight.md"), (e["project"], e["file"]))
         self.assertEqual({"Zones/Work/Acme/Threads/Freight": "Zones/Work/Apex/Threads/Freight"}, json.loads(moved.read_text()))
+        self.assertFalse((self.root / "System" / "generated" / "interrupted.json").exists())
         commit = self.git("rev-parse", "--short", "HEAD").stdout.strip()
         self.assertEqual(0, self.scaffold("undo", "--zone", "Work", "--commit", commit).returncode)
-        e = json.loads(stack.read_text())["stack"][0]
-        self.assertEqual(("Acme", "Acme/Threads/Freight/Freight.md"), (e["project"], e["file"]))
         self.assertNotIn("Zones/Work/Acme/Threads/Freight", json.loads(moved.read_text()))
 
     def test_undo_knows_a_move_by_its_trailer_not_its_subject(self):
@@ -1059,33 +1106,15 @@ class TestFromThePage(ManageCase):
             self.assertNotIn(self.wall(), str(said.exception), req)
         self.assertTrue((self.work / "Acme" / "Threads" / "Renewal" / "Renewal.md").is_file())    # made, left for the user
 
-    def test_the_interruption_stack_follows_a_rename_and_a_delete(self):
-        """Interrupted (#32) on the template's own thread note: the rows filled,
-        the rest left as scaffolded; a rename moves the entry, a deletion
-        drops it, and the stack file is never committed anywhere."""
-        for thread in ("Pricing", "Freight"):
-            self.act(verb="interrupt", zone="Work", project="Acme", thread=thread, where="Mid-sheet",
-                     next="Fill in row 14", keep="The rate is a guess")
-        note = self.work / "Acme" / "Threads" / "Pricing" / "Pricing.md"
-        text = note.read_text()
-        self.assertRegex(text, r"### Resume here\n\n\*\*Interrupted \d\d:\d\d, \d{1,2} [A-Z][a-z]+ \d{4}\.\*\* Mid-sheet\n\n\| \| \|\n")
-        self.assertIn("| Next action | Fill in row 14 |\n| Keep in mind | The rate is a guess |\n| Waiting on | <who, or nobody> |", text)
-        self.assertEqual("", self.git("status", "--porcelain").stdout)
+    def test_a_rename_and_a_delete_keep_no_stack_file(self):
+        """There is no interruption stack (#367): the record of where a thread
+        stood is its note, and a rename or a deletion writes nothing else."""
         self.act(verb="rename", zone="Work", project="Acme", thread="Pricing", to="Renewal")
-        stack = lambda: [(e["project"], e["thread"], e["file"]) for e in self.act(verb="stack")["stack"]]
-        self.assertEqual([("Acme", "Freight", "Acme/Threads/Freight/Freight.md"),
-                          ("Acme", "Renewal", "Acme/Threads/Renewal/Renewal.md")], stack())
         self.act(verb="rename", zone="Work", project="Acme", to="Apex")
-        self.assertEqual([("Apex", "Freight", "Apex/Threads/Freight/Freight.md"),
-                          ("Apex", "Renewal", "Apex/Threads/Renewal/Renewal.md")], stack())
-        self.act(verb="delete", zone="Work", project="Apex", thread="Freight")         # a dry run drops nothing
-        self.assertEqual(2, len(stack()))
         self.act(verb="delete", zone="Work", project="Apex", thread="Freight", confirm="Freight")
-        self.assertEqual("Back to Apex, Renewal.", self.act(verb="back")["say"].split(" Interrupted")[0])
-        self.assertTrue((self.root / "System" / "generated" / "interrupted.json").is_file())
-        root = subprocess.run(["git", "status", "--porcelain", "--untracked-files=all"], cwd=str(self.root),
-                              capture_output=True, text=True, env=self.env).stdout
-        self.assertNotIn("interrupted.json", root)
+        self.assertFalse((self.root / "System" / "generated" / "interrupted.json").exists())
+        with self.assertRaises(pa.Refused):
+            self.act(verb="stack")
 
 
 class TestARenameFromThePageFinishes(ManageCase):
@@ -1242,7 +1271,7 @@ class TestParkBothWays(ManageCase):
 
     def test_the_two_dated_entry_copies_agree_where_a_note_has_an_anchor(self):
         """scaffold.py's dated_entry writes rename's entry and now park's;
-        page_action.py keeps its own for `interrupt`. The two already read a
+        page_action.py keeps its own for `answer`. The two already read a
         note with no anchor differently, so park asks for the page's reading
         of that one, and the other difference is pinned here rather than
         left to be found by a note."""
@@ -1285,7 +1314,7 @@ class TestThePageIsAskedFor(ManageCase):
         self.tool = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(self.tool)
         self.build = [sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags",
-                      "--reuse-check", "600", "--settle", "10"]
+                      "--reuse-check", "inf", "--settle", "10"]
 
     def run_it(self, *args, stdin=""):
         """scaffold.py's exit code, its stderr, and every command it started."""
@@ -1365,7 +1394,7 @@ class TestThePageIsAskedFor(ManageCase):
         """#260: a status.py from before --reuse-check would refuse the flag,
         and a build started apart would fail without a word."""
         import garrick_lib
-        self.assertEqual(600, garrick_lib.CHECK_REUSE)
+        self.assertEqual(float("inf"), garrick_lib.CHECK_REUSE)
         self.builder.write_text("# an older status page, with --same-flags and --settle\n", encoding="utf-8")
         self.assertEqual([sys.executable, str(self.builder), "--workspace", str(self.root), "--same-flags"],
                          garrick_lib.status_command(self.root))

@@ -790,7 +790,13 @@ class TestMailAsMaterial(MailCase):
         found = [f for f in check.run_checks(self.root) if f.check in ("sources", "walls")]
         self.assertEqual([("walls", "error")], [(f.check, f.severity) for f in found])
         self.assertNotIn("Tilbury", check.report_text(found, self.root))
+        # A header is not trusted over the addresses: a mail from an Acme domain stamped as Birch's is still across the wall.
         (birch / "forecast.eml").write_bytes(lib.stamp_parties(self.data, ["birch"]))
+        self.assertEqual(["error"], [f.severity for f in check.run_checks(self.root) if f.check in ("sources", "walls")])
+        (birch / "forecast.eml").unlink()
+        acme = self.work / "Acme Review" / "Sources"
+        acme.mkdir(parents=True, exist_ok=True)
+        (acme / "forecast.eml").write_bytes(lib.stamp_parties(self.data, ["acme"]))
         self.assertEqual([], [f for f in check.run_checks(self.root) if f.check in ("sources", "walls")])
 
 

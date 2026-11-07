@@ -64,7 +64,7 @@ def hub(status: str = "active") -> str:
     return "---\ntype: project\nstatus: %s\nparty: acme\n---\n# Hub\n" % status
 
 
-def workspace(root: Path, stack: bool = True) -> Path:
+def workspace(root: Path) -> Path:
     write(root / "System" / "rules.md", "# Rules\n")
     for tool in ("next_up.py", "garrick_lib.py"):
         write(root / "System" / "tools" / tool, (REPO / "template" / "System" / "tools" / tool).read_text(encoding="utf-8"))
@@ -88,12 +88,15 @@ def workspace(root: Path, stack: bool = True) -> Path:
     write(home / "Garden" / "Garden.md", hub())
     write(home / "Garden" / "Threads" / "Garden" / "Garden.md", thread())
     write(root / "Wikis" / "Meetings" / "wiki" / "meetings" / "2026-10-01 Acme kick-off.md", "# Kick-off\n")
-    if stack:
-        write(root / "System" / "status" / "page_action.py", "# the status extra\n")
-    write(root / "System" / "generated" / "interrupted.json", json.dumps({"stack": [
-        {"zone": "Work", "project": "Acme", "thread": "Renewal", "file": "Acme/Threads/Renewal/Renewal.md", "at": "2026-10-14T10:40"},
-        {"zone": "Work", "project": "Acme", "thread": "Pricing", "file": "Acme/Threads/Pricing/Pricing.md", "at": "2026-10-14T09:15"},
-    ]}))
+    # The record of where a thread stood is its note's modification time (#367): two were written
+    # today, the later one at 10:40, and every other note is older.
+    def stamp(note: Path, when: dt.datetime) -> None:
+        os.utime(note, (when.timestamp(), when.timestamp()))
+    for note in root.glob("Zones/*/*/Threads/*/*.md"):
+        stamp(note, dt.datetime(2026, 10, 1, 12, 0))
+    stamp(work / "Acme" / "Threads" / "Renewal" / "Renewal.md", dt.datetime(2026, 10, 14, 10, 40))
+    stamp(work / "Acme" / "Threads" / "Pricing" / "Pricing.md", dt.datetime(2026, 10, 14, 9, 15))
+    stamp(work / "Acme" / "Threads" / "Rebate" / "Rebate.md", dt.datetime(2026, 10, 14, 11, 30))     # parked: never offered
     return root
 
 
@@ -120,14 +123,36 @@ class NextUpTest(unittest.TestCase):
     def test_the_rules_rank_in_their_order(self):
         sources = [p["source"] for p in self.picks()]
         self.assertEqual(sources, sorted(sources, key=nu.SOURCES.index))
-        self.assertEqual(sources[0], "stack")
+        self.assertEqual(sources[0], "back")
         self.assertEqual(set(sources), set(nu.SOURCES))
 
-    def test_the_top_of_the_stack_comes_first_and_alone(self):
-        stack = [p for p in self.picks() if p["source"] == "stack"]
-        self.assertEqual(len(stack), 1)
-        self.assertEqual(stack[0]["say"], "Back to Renewal, on hold since 10:40")
-        self.assertEqual(stack[0]["note"], "Zones/Work/Acme/Threads/Renewal/Renewal.md")
+    def test_the_thread_left_most_recently_comes_first_and_alone(self):
+        back = [p for p in self.picks() if p["source"] == "back"]
+        self.assertEqual(len(back), 1)
+        self.assertEqual(back[0]["say"], "Back to Renewal, left at 10:40")
+        self.assertEqual(back[0]["note"], "Zones/Work/Acme/Threads/Renewal/Renewal.md")
+
+    def test_the_thread_in_focus_is_left_out_and_the_next_one_offered(self):
+        back = [p for p in self.picks(exclude="Zones/Work/Acme/Threads/Renewal") if p["source"] == "back"]
+        self.assertEqual([p["say"] for p in back], ["Back to Pricing, left at 09:15"])
+
+    def test_a_finished_or_parked_thread_is_never_the_one_to_go_back_to(self):
+        done = self.root / "Zones" / "Work" / "Acme" / "Threads" / "Renewal" / "Renewal.md"
+        done.write_text(done.read_text().replace("status: active", "status: done"), encoding="utf-8")
+        when = dt.datetime(2026, 10, 14, 10, 40).timestamp()
+        os.utime(done, (when, when))
+        back = [p for p in self.picks() if p["source"] == "back"]
+        self.assertEqual([p["say"] for p in back], ["Back to Pricing, left at 09:15"])     # not Renewal, not the parked Rebate
+
+    def test_a_note_written_before_today_is_not_offered(self):
+        for note in self.root.glob("Zones/*/*/Threads/*/*.md"):
+            os.utime(note, (dt.datetime(2026, 10, 13, 18, 0).timestamp(),) * 2)
+        self.assertNotIn("back", [p["source"] for p in self.picks()])
+
+    def test_a_setting_saved_before_the_stack_went_still_reads(self):
+        settings(self.root, sources=["stack", "inbox"])
+        self.assertEqual(nu.settings(self.root)["sources"], ["back", "inbox"])
+        self.assertEqual(nu.clean({"sources": ["due", "stack"]})["sources"], ["due", "back"])
 
     def test_due_lines_quickest_first_then_the_latest(self):
         due = [p["say"] for p in self.picks() if p["source"] == "due"]
@@ -176,7 +201,7 @@ class NextUpTest(unittest.TestCase):
     def test_never_the_running_thread(self):
         excluded = self.picks(exclude="Zones/Work/Acme/Threads/Renewal/Renewal.md")
         self.assertFalse([p for p in excluded if p["thread"] == "Renewal"], [p["say"] for p in excluded])
-        self.assertEqual(excluded[0]["say"], "Back to Pricing, on hold since 09:15")      # the next one held
+        self.assertEqual(excluded[0]["say"], "Back to Pricing, left at 09:15")      # the next one left
         self.assertTrue([p for p in excluded if p["thread"] == "Pricing"])
 
     def test_a_project_excludes_every_thread_in_it(self):
@@ -199,13 +224,6 @@ class NextUpTest(unittest.TestCase):
     def test_same_zone_without_a_zone_is_every_zone(self):
         settings(self.root, **{"same-zone": True})
         self.assertIn("Personal", {p["zone"] for p in self.picks()})
-
-    # ---- the stack needs the status extra ----
-
-    def test_no_stack_without_the_status_extra(self):
-        (self.root / "System" / "status" / "page_action.py").unlink()
-        self.assertNotIn("stack", [p["source"] for p in self.picks()])
-        self.assertEqual(self.picks()[0]["source"], "due")
 
     # ---- settings ----
 

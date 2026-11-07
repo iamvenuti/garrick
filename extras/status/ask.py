@@ -119,7 +119,7 @@ turn goes to it (Asker.converse()), with no command session first; a plain
 conversation's state in a folder inside the session's sealed home: what it
 admitted and handed out, and a latch a wall sets. After each turn Garrick reads
 that state: a latched wall stops both sessions, starts them again, and the
-reply is the rules' sentence alone (Asker.walled()). A proposal from a
+reply is the rules' sentence alone (Asker.wall_stop()). A proposal from a
 conversation that has read a record is offered as a button (Asker.offered()),
 never run; one from a conversation that has read none runs through carry_out(),
 as a command always has. With the flag off, or with Codex, everything below
@@ -1643,7 +1643,8 @@ class Asker:
                 return self.refilled(first, request[asked:], named, names, reset), reset
         if zoned is not None:                       # the sessions now answer in this zone, and the window follows
             self.zone = self.last_zone = zoned
-        records, back, matched = sc.choose(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
+        records, back, matched = sc.choose(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib,
+                                              start=sc.starts(where, self.ctx))
         if not records and not self.passages:       # nothing to read, and nothing read before it
             out = reply(self.wall() if back else NOTHING_FOUND, "answer")
             out.update(claims=[], sources=[], after=[out["say"]], incomplete=False)
@@ -1731,7 +1732,7 @@ class Asker:
                  window: Optional[str]) -> dict:
         """Every turn of the conversation, to one session that reads with Garrick's tools (ask_tools.py). Garrick
         checks each result before the session sees it; a result that crossed a wall latched the server, and the
-        session is stopped and the rules' sentence said, with nothing the turn said or proposed (walled()). A
+        session is stopped and the rules' sentence said, with nothing the turn said or proposed (wall_stop()). A
         plain "open X" or "park X" goes to the small tier's session instead, which holds no conversation."""
         here = window or self.zone or self.last_zone
         quick = earlier is None and self.plain(request, named)
@@ -1777,10 +1778,12 @@ class Asker:
                 self.refreshed.discard("command")
             state = sess.state()
             props = sess.proposed()
+            if not state.get("wall") and self.crossing(set(state.get("seen") or []) | set(sess.told)):
+                state["wall"] = True            # what was admitted and what was named hold a wall between them
             if state.get("wall"):
                 bill(turns)
                 turns = []
-                return self.walled()
+                return self.wall_stop()
             out = self.reply_from(sess, text, usage, state, props, names, here)
         except Stopped:
             self.stop()
@@ -1789,7 +1792,14 @@ class Asker:
             bill(turns)
         return out
 
-    def walled(self) -> dict:
+    def crossing(self, held: set) -> bool:
+        """Whether a wall stands between any two of the parties a conversation holds (admitted or named)."""
+        lib = scope_lib().lib(self.ws)
+        ctx = lib.load_context(self.ws)
+        held = {lib.strip_tag(t) for t in held} - {lib.PUBLIC}
+        return bool(held and lib.crossings(ctx, held))
+
+    def wall_stop(self) -> dict:
         """A wall stopped the conversation: both sessions are stopped and everything they held cleared, the session
         started again, and the reply is the rules' sentence word for word and nothing else, with no text the turn
         produced and no proposal (#358). The reply carries `"reset": "wall"`."""
@@ -2026,7 +2036,7 @@ class Asker:
         lib = scope_lib().lib(self.ws)
         held = self.holding()
         adding = set(parties) | {p for r in passages for p in r["parties"]}
-        if not scope_lib().admits(self.ctx, adding, held, lib):
+        if not scope_lib().admits(self.ctx, held, adding, lib):
             raise Bad("a wall stands between these records and what the session holds, so none was read")
         self.seen |= adding
         given = len(passages)

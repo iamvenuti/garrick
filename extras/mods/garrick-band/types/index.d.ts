@@ -16,6 +16,9 @@ export type Note = {
   threads: Thread[]
 }
 
+// What the band's one slot offers (see bandSlot in hooks/register.tsx): null is nothing.
+export type Slot = 'wrap' | 'resume' | 'wrapping' | null
+
 export type Thread = {
   title: string
   rel: string
@@ -53,6 +56,7 @@ export type Wait = {
 declare module 'claude-code' {
   interface PluginState {
     // used: how full the context window is, a whole percentage, or null while the API has no figure.
-    'garrick-band': { note: Note | null; isHidden: boolean; used: number | null; wait: Wait | null }
+    // slot: what the band's one slot offers; 'unknown' until the band has looked once.
+    'garrick-band': { note: Note | null; isHidden: boolean; used: number | null; wait: Wait | null; slot: Slot | 'unknown' }
   }
 }

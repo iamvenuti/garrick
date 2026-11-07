@@ -585,14 +585,15 @@ class TestWorkOnThePage(StatusCase):
         self.assertLess(longest, status.ACTION_LOST)
 
     def test_the_zone_verbs_are_the_ones_page_action_locks(self):
-        # back, stack and unstack touch only the interruption stack, never a zone's git.
         # Ask something and the example's links act on no one zone (#175).
         # Stop, how far a copy or a move has got, and a work's own file opened (#189) take no zone's lock either,
         # nor what Settings › Memory would do (#108), which only reads, nor a note read or opened from Explore (#206).
-        unzoned = {"run", "settings", "check-name", "back", "stack", "unstack", "ask-desktop", "example", "discover",
+        unzoned = {"run", "settings", "check-name", "ask-desktop", "example", "discover",
                    "files-stop", "files-progress", "work-file", "memory-preview", "note-read", "note-open"}
         # A wiki question's verbs (#224) act on one wiki under that wiki's own lock, in no zone's repository.
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
+        # The Questions panel's Nurture answers (#224) act on the wikis and zones their rows name, under their own lock.
+        unzoned |= {v for v in page_action.VERBS if v.startswith("nurture-")}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

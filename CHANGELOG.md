@@ -4,6 +4,75 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.57.0] - 2026-11-06
+
+The Questions panel shows every zone and party at once, grouped so that nothing is added up across a wall, and an answer can be recorded as a decision that stands in the Meetings wiki until you change it. The lint turns *Open* sections into questions. A thread or correction made by a tool reaches the Garrick App at once. The wall check no longer refuses a folder path that only shares a name with a note, and it reads Knowledge frontmatter strictly.
+
+**Upgrading.** A Knowledge page whose frontmatter does not read plainly is now refused at commit: flow maps, anchors, tags, explicit or merged keys, escaped keys and control characters. So is a plain flow-list item holding `:`, such as a bare URL in `tags: [...]`. Quote the item (`["https://example.com", b]`) or write the list one item per line. The error names the file and the line.
+
+### Added
+
+- **Record as a decision** ([#224](https://github.com/iamvenuti/garrick/issues/224), point 5). In the Questions panel, *Record as a decision* files your words as the raw answer (with `outcome: decision`) and as a decision page in `Wikis/Meetings/wiki/decisions/`, in one save, standing as valid. The page carries the question's zone and parties and never widens them, and has four sections: *Decision*, *Assumptions*, *Options turned down* and *Revisit when*. The assistant may propose assumptions and options and flag a decision to revisit; only your save changes its status, and `check.py` warns when a commit changes it with no raw answer of that day. A Knowledge question, or one with no zone or parties, cannot be recorded as a decision. The wall check reads decision pages and their raw answers in every grade, and fading never moves a decision page.
+- **Open sections become questions** (#224, point 8). The Meetings and Knowledge lint list every line under an *Open* or *Open issues* heading and, on one yes per zone and party, turn each into a question file with the page as its origin, carrying the page's own zone and parties. A page with no zone or parties gets no question, and the lint says why. A line already asked is not proposed again, and no page is changed. The same step is `page_action.py question-open-sections`.
+- **The Questions panel has an *All* for Zone and Party** ([#384](https://github.com/iamvenuti/garrick/issues/384)). Choose it and the rows group under a heading for each zone and party, with a count on each and the zone's name in its colour from Settings. A save from *All* is one save per group, each checked on its own, so two groups with a wall between them never share a commit. No counter, tab number or menu count adds two groups: the menu row names each group with its own count. *Show* is a two-way switch with both counts on it, such as `Wiki questions 3 | Nurture findings 11`.
+
+### Changed
+
+- **A thread or correction a tool makes reaches the Garrick App without waiting on the check** ([#382](https://github.com/iamvenuti/garrick/issues/382)). The rebuild that `scaffold.py` and `correct.py` ask for now shows the check's last result whatever its age and never runs the check, so a new thread shows within seconds. The Checks card, *Needs attention* and the Checks tile still say how old the result is, and with none kept yet they say "No check result yet". A build by hand, on schedule or by the app still runs the check. The Questions panel holds back a question edited after the last check and counts it as waiting for the next one, with no text.
+- **Band: a file written in the turn links from any folder** ([#383](https://github.com/iamvenuti/garrick/issues/383)). A path in a reply that is relative to the project or the zone, not only to the session's folder or the workspace root, becomes a link even when the file was written in that turn. A path with a `..` segment stays plain.
+- **A thread moves out of or into a project whose `party:` is a list** ([#379](https://github.com/iamvenuti/garrick/issues/379)). `scaffold.py move` reads `party:` as the wall check does, and refuses with the wall sentence when any tag on one side is walled from any tag on the other. An empty value, a tag missing from the Parties table, or frontmatter that reads two ways is still refused.
+
+### Fixed
+
+- **The wall check no longer refuses a folder path because it shares a name with a note** ([#385](https://github.com/iamvenuti/garrick/issues/385)). A token that ends in `/` names a folder and is not matched by name to a note across a wall. A file written with a stray slash, a walled project's or thread's folder, and any path into the wikis or naming a Meetings page keep the verdict they had in 0.56.0.
+- **A Knowledge page's party key in another case, quoting or depth is refused** ([#388](https://github.com/iamvenuti/garrick/issues/388)). `Parties:`, `PARTY:`, `"Zone":`, a list item's key and a key nested under another all get the same error as `parties:`. Frontmatter that does not read plainly is refused (see *Upgrading*).
+- **The update's "Rebuilt Garrick.app" message carries no compiler output** ([#387](https://github.com/iamvenuti/garrick/issues/387)). It holds the place and `make-app.sh`'s own notices only; a failed build still names the compiler's last line.
+- **`Garrick.app` builds with no warning** ([#386](https://github.com/iamvenuti/garrick/issues/386)), and CI's Swift type-check now fails on any warning.
+- A Meetings question or decision that carries both `party` and `parties` is never listed or saved from, and `check.py` warns.
+
+## [0.56.0] - 2026-11-05
+
+The wikis' open questions and Nurture's attribution findings get a panel of their own in the Garrick App, where you answer them in a minute and every save goes through the checks before anything is committed. Wrap is now the only way to save your place: it asks one question, then runs in the background, and "back" reads the record instead of a stack. The wall check reads paths in more of the forms a note can hold them in. Explore can draw the graph in 3D.
+
+**Upgrading.** The update removes `System/generated/interrupted.json`: the interruption stack is gone, and "back" opens the live thread whose note you wrote last. "Hold this" and "I'm being interrupted" still work; they run the wrap. Notes that the wall check let through before may now be refused at commit, where a path in a code line, a link or an HTML attribute leads into a project across a wall; the refusal names the file and the line.
+
+### Added
+
+- **The Questions panel** ([#224](https://github.com/iamvenuti/garrick/issues/224), point 9). A *Questions* tab in the Garrick App lists the wikis' open questions and Nurture's attribution findings, one zone at a time, and one party at a time in a zone whose parties a wall divides. It has counters (open, due today, proposed verdicts, answered but not worked in), filters for wiki, party and age, one question open at a time with Return to save and move on, proposed verdicts accepted one by one or all at once, and *Work them in*, which hands "work through the open questions" to your assistant by the route *Process the Inbox* takes. The panel calls no model. In a browser it shows the questions and copies what to say. *Needs you* stays in the simple home. A *Questions* row with the open count sits under *Catch Up* in File, and in the menu bar's menu and the edge panel; the count is never added up across a wall.
+- **The Nurture review page.** One row per finding with the proposal already chosen: *Yes*, *No*, *Another page* (a picker of entity pages by title and alias, or of the zone's party tags and `none`), *Edit* (corrects a value in the Meetings pages of the view you are in; say "correct X to Y" in a session for the rest) and *Later*. One *Save N answers* writes the page in one transaction and one commit per repository. A row whose answer would cross a wall is put back with the rules' sentence while the other rows go through. A wall finding is never listed, and a page that carries one cannot be changed from the panel.
+- `nurture-answer`, `nurture-organisation`, `nurture-correct` and `nurture-save` in `page_action.py`. They run the same code as `nurture.py answered`, `organisation` and `correct`, so the chat and the panel write an answer the same way and record it in the day's Nurture report, which the guided review reads.
+- **Explore draws the graph in 3D** ([#372](https://github.com/iamvenuti/garrick/issues/372)). A *3D* button in the graph bar, beside *Rotate* and *Fit*. 2D stays the default, and the choice is kept in the window. The page draws it itself, in perspective, with no library, so it still loads nothing from the network. Dragging empty space turns the graph, shift-drag moves it, near notes cover far ones, and far notes, links and names are smaller and fainter. With reduced motion on, the view stays still until you drag it.
+
+### Changed
+
+- **One Wrap, and "back" reads the record** ([#367](https://github.com/iamvenuti/garrick/issues/367)). "I'm being interrupted", "hold this" and "hold X" run the same wrap as "wrap it". It asks one line first, "Anything only in your head?" (Enter skips it; the answer goes into *Keep in mind*), then runs in the background where the assistant can, so you can leave at once. A background wrap is briefed with the thread's party and the walls against it, and checks the walls before it writes. "Back" and "where was I" open the live thread whose note was written most recently; finished and parked threads are never the answer, and "back to X" opens X. The `interrupt`, `back`, `stack` and `unstack` verbs of `page_action.py` are removed. *While you wait*'s first source is now the thread left most recently today.
+- **The Garrick band has one slot that follows the record.** *Wrap* shows when there has been work since the thread note was last written, *Resume* once it is current, and nothing on a finished or parked thread. The band decides from the note's modification time and the time the session's last turn began, with no model call. A running wrap shows as "Wrapping…" and cannot be started twice; its lock, `System/generated/wrap-<note>.lock` (from the new `System/tools/wrap_lock.py`), counts as gone after ten minutes.
+- **The wall check reads paths in more forms.** In a code span or a fenced line it reads each path, not only the whole line: after a command, quoted, with escaped spaces, with a `:12` position or a `?query`. A path that leads into a walled project's folder and goes on is read as going there, whether or not the whole path names a file, so names with shell separators, unusual spaces, `%20` or globs are read too. Links and HTML attributes are read without their `?query` and `#fragment` and with entities decoded, on any tag and any attribute (`src`, `srcset`, `data`, `href`, `poster` and the rest). `file:///…/Zones/…` addresses, a `..` in the middle of a path and folder symlinks are read where they lead, and code paths into a repository kept in a project are checked like any other. `Deliverables/published.md` with no project named is a warning. The limits still not read are in `docs/principles.md`: a path in plain prose, a path to a folder, a code span wrapped across a line, an indented code block, and, after a command, a name with shell separators or more than eight words in a layout folder written without its project.
+- **Every write that changes wiki pages is one transaction** (#224, point 6). `check.py`, in full, and each wiki's lint run before and after. If the write brings any finding that was not there before, or a wall finding on a page it wrote, or a check cannot run, every file goes back as it was and nothing is committed. The wiki-question actions (`question-answer`, `-later`, `-close`, `-done`) go through it too and still commit nothing; the work-in step commits.
+- The `nurture` skill: an attribution finding can be answered in the Questions panel; it never becomes a thread's *Needs you* question.
+
+### Fixed
+
+- **desk closes a workspace's last tab** ([#376](https://github.com/iamvenuti/garrick/issues/376)). cmux refuses to close the last surface of a workspace, so Close wrapped and left the tab open. desk now closes the workspace instead, when the tab is idle, alone in the workspace's only pane, its own assistant is the only foreground process, and cmux says it is the last surface. Anything else keeps cmux's message, which names what runs.
+- **`check.py` no longer warns about Garrick's own `rules.md` where the cmux extra is installed** ([#375](https://github.com/iamvenuti/garrick/issues/375)). `desk` has its own sentence in *Voice*, so no paragraph names three skills. A new test installs with every extra and runs the check.
+
+## [0.55.0] - 2026-11-05
+
+`System/rules.md` is less than half its old size, so every session loads less with every request; the procedures it held now live in the skills that run them. desk closes a tab again under cmux 0.65, and the Finder menu's items open what they name.
+
+**Upgrading.** The update replaces `System/rules.md` and brings the `threads`, `intake` and `nurture` skills with it, and `desk` where the cmux extra is in. If one of those skills waits on a merge, `rules.md` is held back until it is merged, and the update says so.
+
+### Changed
+
+- **`System/rules.md` is less than half its old size** ([#366](https://github.com/iamvenuti/garrick/issues/366)). It goes from about 17,700 characters to under 7,900. It is loaded into every session on every request. The procedures that only one kind of request needs now live in the skill that runs them: the spoken thread commands, the checkpoint, parked projects and the interruption stack in `threads`, the Ways in procedure in `intake`, the fade words in `nurture`, the tab commands in `desk`. `rules.md` keeps Autonomy, Zones and walls, Secrets, Talking to me, the rules that guard against loss, and a pointer to each skill. The wall sentence, the *Talking to me* heading and its bullets, and the ear rule are unchanged, word for word.
+- `check.py` warns when `System/rules.md` passes 8,000 characters (#366).
+- An update that replaces `rules.md` now brings the skills it points to in the same step, and holds `rules.md` back while one of them waits on a merge (#366).
+
+### Fixed
+
+- **desk closes a tab again under cmux 0.65** ([#373](https://github.com/iamvenuti/garrick/issues/373)). cmux 0.65 asks for confirmation before it closes a tab whose assistant still runs, so Close on the band, "close X" and "close the X tab" wrapped and then left the tab open. desk now answers that question with `--force`, once, and only for a tab it found idle whose terminal's foreground, read just before, is the tab's own assistant and nothing else. A tab with a background job, a dev server or a `!` command running stays open, and desk names what runs there so you can close it by hand. Older cmux closes without the flag, as before.
+- **The Finder menu's items open what they name** ([#346](https://github.com/iamvenuti/garrick/issues/346)). Finder copies an extension's menu into its own process and drops what each item carries, so *Open in cmux*, *Open in Claude* and *Open in Codex* did nothing. The choice now travels in the item's tag, which Finder keeps.
+
 ## [0.54.0] - 2026-11-04
 
 Right-click a project or thread folder in Finder to open it in cmux, Claude or Codex, and a rebuild of Garrick.app keeps its Accessibility grant. A wiki question can also be answered in your own words from the command line, and the answer is kept as a raw record before anything else changes; working it into the wiki's pages is a step of its own, behind the walls. Ask stops saying it cannot read notes, and an issue number on a Todo line stays text.
@@ -1253,7 +1322,10 @@ First public release.
 - A demo workspace built by `examples/demo/build.py`: an invented advisor, four weeks in.
 - Documentation, the extras (tools that pair with Garrick but are not part of it), and a fifteen-slide introduction.
 
-[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.54.0...HEAD
+[Unreleased]: https://github.com/iamvenuti/garrick/compare/v0.57.0...HEAD
+[0.57.0]: https://github.com/iamvenuti/garrick/compare/v0.56.0...v0.57.0
+[0.56.0]: https://github.com/iamvenuti/garrick/compare/v0.55.0...v0.56.0
+[0.55.0]: https://github.com/iamvenuti/garrick/compare/v0.54.0...v0.55.0
 [0.54.0]: https://github.com/iamvenuti/garrick/compare/v0.53.0...v0.54.0
 [0.53.0]: https://github.com/iamvenuti/garrick/compare/v0.52.0...v0.53.0
 [0.52.0]: https://github.com/iamvenuti/garrick/compare/v0.51.0...v0.52.0

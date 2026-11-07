@@ -13,7 +13,7 @@ options in place of JSON, and reads the sentence it prints:
     python3 System/status/page_action.py park --zone Work --project Acme --thread Pricing
 
 So one action has one executor, whoever asks: the stale check, the zone lock,
-the commit with the wall check, the interruption stack, the record, and, as
+the commit with the wall check, the record, and, as
 the last step of an action that changed what the page shows, one request for
 the page (ask_for_page).
 Each verb changes one thing, and the ones that change a note commit it in the
@@ -57,22 +57,6 @@ zone's repository, as the skills would:
                 These six run System/tools/scaffold.py and nothing else, so
                 the page, the voice command and the script make the same
                 folders, notes and commits.
-    interrupt   a thread's place saved when something cuts in: {"zone", "project",
-                "thread"} or {"zone", "file"}, with "where", "next", and "keep"
-                and "by" if given; written into its Resume here block as a
-                wrap would, committed, then pushed on the interruption stack.
-                An unwrapped checkpoint under that block is rebased onto the
-                block just written, so a hold does not leave it stale
-    back        the top of the stack taken off, or the thread named taken out;
-                the note is only read: the reply adds its "path" and its three
-                lines, "where", "next" and "keep", and "checkpoint" where one
-                is waiting. An empty stack says so and
-                offers the most recent live thread, as "offer"
-    stack       what is on it, top first, as "stack"; it changes nothing
-    unstack     a thread, or all of a project, taken off it without reading
-                it back: {"zone", "project", "thread"?}, for a wrap, park,
-                finish or deletion done by the assistant. Park, rename and
-                delete here keep the stack in step themselves
     settings    which ways to open a thread the page offers, and which one
                 clicking a thread's name runs: {"launchers": ["note", "cmux"],
                 "default": "cmux"}, with "preview" for whether Explore's cards
@@ -114,8 +98,21 @@ zone's repository, as the skills would:
                 see question-work), and nothing is committed
     question-later   a wiki question put off to a day: {"wiki", "file", "until"}
     question-close   a wiki question with nothing to work in: {"wiki", "file"}
-    question-decide  Record as a decision is not built yet (#224, point 5):
-                refused, and nothing is written
+    question-open-sections  the lines under a page's *Open* or *Open issues*
+                heading as questions (#224, point 8): {"wiki", "confirm"?,
+                "pages"?}. Without confirm: read only, the lines that would
+                become a question file and the pages that cannot, with why.
+                With "confirm": true: one question file per line, the page as
+                origin and pages, its zone and parties copied exactly (a
+                Knowledge question has neither). No page is changed
+    question-decide  Record as a decision (#224, point 5): {"wiki", "file", "words"}.
+                One transaction writes the words as the raw answer, word for
+                word, then the decision page Wikis/Meetings/wiki/decisions/
+                <YYMMDD> - <slug>.md with status: valid, the same zone and
+                parties as the question, and the words under Decision; the
+                question then says answered and points at both. Meetings
+                only: a question with no zone or parties is refused. The
+                status of a decision is never changed by any other verb
     question-work    read only: the pages an answered question may change, and
                 the record to cite. A page walled from the question's parties
                 is left out and the wall sentence said; a question whose
@@ -172,7 +169,7 @@ not in a toast. A batch that saved says "Saved 3". Any action whose commit the
 zone's wall check refused, from a click or the ask box, ends on the rule's own
 sentence, operations.py's WALL_REFUSAL, word for word, and says nothing of
 what the check found (#107, #172): a tick, a date, a new line, park and wake,
-an interruption, an answer, a new project or thread, a rename or a deletion.
+an answer, a new project or thread, a rename or a deletion.
 Every helper that commits takes that sentence as `wall`, with no default, so a
 verb added later cannot forget it. A refusal for any other reason still says
 why.
@@ -239,8 +236,7 @@ nothing else a request carries reaches the log. The host hands the request
 and the reply to the page (window.GarrickActed), which moves a parked or woken
 row at once; the app does the same for each action the ask box ran. The line
 ends with who asked, `page`, `ask` or `session`, and so does the record. The
-reply is one line of JSON: {"ok": true|false, "say": "…"}, and for back and
-stack what they read; an action that asked for the page also says "built":
+reply is one line of JSON: {"ok": true|false, "say": "…"}; an action that asked for the page also says "built":
 true, and then the host does not rebuild a second time. Standard library only.
 """
 
@@ -273,10 +269,11 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-thread", "check-name", "rename", "move", "delete", "undo",
-         "interrupt", "back", "stack", "unstack", "answer", "later", "question-answer", "question-later",
-         "question-close", "question-decide", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
+         "answer", "later", "question-answer", "question-later",
+         "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
-         "work-file", "memory-preview", "note-read", "note-open")
+         "work-file", "memory-preview", "note-read", "note-open",
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -291,7 +288,7 @@ ZONE_COLOURS = ("Red", "Crimson", "Orange", "Amber", "Olive", "Green", "Teal", "
 # starting with an underscore nor longer than its FOUND_KIND_MAX. This request cannot see the pages, so it holds
 # a found kind to that shape; a kind no page has is never drawn.
 GRAPH_OFF = ("Red", "Crimson", "Amber")
-GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity")
+GRAPH_KINDS = ("project", "thread", "note", "meeting", "mail", "person", "source", "concept", "entity", "decision")
 GRAPH_FOUND = re.compile(r"[^\W_][\w -]{0,59}")
 # Settings › Home: which the page opens on. Its words are status.py's HOMES too.
 HOMES = ("simple", "full")
@@ -342,6 +339,12 @@ CURRENT = None
 
 class Refused(Exception):
     pass
+
+
+class KeepRecord(Refused):
+    """A refusal that leaves what was filed where it is: the user's own words
+    are evidence, so a transaction does not take them away when the question
+    that cites them could not be updated."""
 
 
 def ops_lib(ws: Optional[Path] = None):
@@ -913,8 +916,6 @@ def park(ws: Path, req: dict, today: dt.date) -> str:
         said = scaffold(ws, "--today", today.isoformat(), req["verb"], "--zone", zone.name, "--project", parts[0],
                         *(["--thread", parts[2]] if is_thread else []))
         commit(zone, note, before, "%s: %s" % (name, status if status == "parked" else "woken"), wall=wall_refusal(ws))
-        if status == "parked":      # a parked thread, or every thread of a parked project, leaves the stack
-            drop_from_stack(ws, zone.name, "/".join(parts) if is_thread else parts[0])
         return said
 
 
@@ -928,7 +929,7 @@ def dated_entry(body: str, today: dt.date, said: str) -> str:
     """The body with a dated entry added, newest first: below the Resume here
     block's rule, or, with no block, under ## State of play. Neither: as it
     was. Park's copy of this moved into System/tools/scaffold.py, whose own
-    one it joined; this stays for `interrupt`, which no tool writes.
+    one it joined; this stays for `answer`, which no tool writes.
     tests/test_scaffold_manage.py holds the two to the same text wherever a
     note has a block to write under, and names where they differ."""
     entry = "**%d %s %d.** %s" % (today.day, MONTHS[today.month - 1], today.year, said)
@@ -944,102 +945,8 @@ def dated_entry(body: str, today: dt.date, said: str) -> str:
     return body
 
 
-# ---- interrupted and back: the stack of threads left mid-thought ----------------
-# "I'm being interrupted" writes the thread's place into its Resume here block
-# and commits it, as a wrap would, then puts the thread on top of a stack;
-# "back" takes it off again. The stack is System/generated/interrupted.json,
-# never committed: it spans zones, and the thread notes hold everything in it
-# but the order, {"stack": [{"zone", "project", "thread", "file", "at"}, …]},
-# top first, `file` from the zone's folder, `thread` null for a project that
-# is its own single thread. Wrapping, parking, finishing or deleting a thread
-# takes it off; renaming one moves its entry with it.
-STACK_FILE = ("System", "generated", "interrupted.json")
 ANSWER_MAX = 400
-BY_MAX = 120
 ROW_RE = r"(?m)^\|\s*%s\s*\|.*$"
-
-
-def stack_path(ws: Path) -> Path:
-    return ws.joinpath(*STACK_FILE)
-
-
-def stack_lock():
-    """One change to the stack at a time. Taken after a zone's lock, never before."""
-    return held("interrupted.lock", busy="the interruption stack is busy")
-
-
-def load_stack(ws: Path, prune: bool = True) -> list:
-    """The entries whose note is still there, top first; every entry, with
-    `prune` off, for a rename to move. A missing or unreadable file is an
-    empty stack: losing it loses the order, not the notes."""
-    try:
-        data = json.loads(stack_path(ws).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    entries = data.get("stack") if isinstance(data, dict) else None
-    out = []
-    for e in entries if isinstance(entries, list) else []:
-        if not (isinstance(e, dict) and all(isinstance(e.get(k), str) for k in ("zone", "project", "file"))):
-            continue
-        if prune:
-            try:
-                live_note(zone_dir(ws, e["zone"]), e["file"])
-            except Refused:
-                continue
-        if not any((e["zone"], e["file"]) == (o["zone"], o["file"]) for o in out):
-            out.append(e)
-    return out
-
-
-def stacked_note(ws: Path, e: dict) -> Path:
-    return (ws / "Zones" / e["zone"] / e["file"]).resolve()
-
-
-def save_stack(ws: Path, entries: list) -> None:
-    path = stack_path(ws)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".interrupted-", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps({"stack": entries}, indent=1, ensure_ascii=False) + "\n")
-        os.replace(tmp, str(path))
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-
-
-def restack(ws: Path, change, prune: bool = True) -> list:
-    """Apply `change`, a function from the entries to the new entries, under
-    the stack's lock; the entries it left out. Saved only when the file
-    changes, which also clears out an entry whose note has gone."""
-    with stack_lock():
-        saved = load_stack(ws, prune=False)
-        before = load_stack(ws) if prune else saved
-        after = change(list(before))
-        if after != saved:
-            save_stack(ws, after)
-    return [e for e in before if e not in after]
-
-
-def drop_from_stack(ws: Path, zone: str, prefix: str) -> list:
-    """Every entry for a note at or under `prefix`, a note or a project's
-    folder from the zone: a thread parked or deleted, or all of a project."""
-    under = lambda e: e["zone"] == zone and (e["file"] == prefix or e["file"].startswith(prefix.rstrip("/") + "/"))
-    return restack(ws, lambda entries: [e for e in entries if not under(e)])
-
-
-def rename_in_stack(ws: Path, zone: str, project: str, thread: Optional[str], to: str) -> None:
-    """A renamed project or thread keeps its place on the stack, under its new name."""
-    def moved(e):
-        if e["zone"] != zone or e.get("project") != project:
-            return e
-        if thread is None:
-            rest = e["file"].split("/", 1)[1]
-            return dict(e, project=to, file="%s/%s" % (to, to + ".md" if rest == project + ".md" else rest))
-        if e.get("thread") != thread:
-            return e
-        return dict(e, thread=to, file="%s/Threads/%s/%s.md" % (project, to, to))
-    restack(ws, lambda entries: [moved(e) for e in entries], prune=False)     # the old paths are gone by now
 
 
 def resume_note(ws: Path, req: dict) -> tuple:
@@ -1061,11 +968,6 @@ def resume_note(ws: Path, req: dict) -> tuple:
     if is_hub and any((zone / parts[0] / "Threads").glob("*/*.md")):
         raise Refused("%s has threads; name the one" % parts[0])
     return zone, note, parts, ("%s, %s" % (parts[0], parts[2]) if is_thread else parts[0])
-
-
-def entry_for(zone: Path, parts: tuple, when: dt.datetime) -> dict:
-    return {"zone": zone.name, "project": parts[0], "thread": parts[2] if len(parts) == 4 else None,
-            "file": "/".join(parts), "at": when.strftime("%Y-%m-%dT%H:%M")}
 
 
 def answer(req: dict, key: str, required: bool = True, most: int = ANSWER_MAX) -> Optional[str]:
@@ -1099,148 +1001,6 @@ def resume_block(body: str):
     return head.end(), end.start() if end else len(body)
 
 
-def saved_lines(note: Path) -> dict:
-    """The three lines an interruption saves, read back from the note: where it
-    stands, the next action and what to keep in mind, each None when missing."""
-    try:
-        body = note.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return {"where": None, "next": None, "keep": None}
-    span = resume_block(body)
-    block = body[span[0]:span[1]] if span else ""
-    lead = []
-    for line in block.splitlines():
-        if line.strip().startswith("|") or (lead and not line.strip()):
-            break
-        if line.strip():
-            lead.append(line.strip())
-
-    def row(name):
-        m = re.search(r"(?m)^\|\s*%s\s*\|(.*)\|\s*$" % name, block)
-        return m.group(1).strip().replace("\\|", "|") if m else None
-    return {"where": " ".join(lead).replace("**", "") or None, "next": row("Next action"), "keep": row("Keep in mind")}
-
-
-def checkpoint_lib(ws: Path):
-    """garrick_lib.py, found as prefs.py finds it: the checkpoint primitives,
-    so this file reads and writes the block exactly as scaffold.py does and
-    keeps no second reading of its own. None where the workspace has no copy
-    with them in it, which is every release before them."""
-    found = prefs()
-    lib = found.lib(ws) if found is not None and callable(getattr(found, "lib", None)) else None
-    return lib if lib is not None and callable(getattr(lib, "rebase_checkpoint", None)) else None
-
-
-def rebased(ws: Path, text: str) -> Optional[str]:
-    """`text` with its unwrapped checkpoint written against the Resume here
-    block that is in it now: the same items at the same time, a new base and
-    the key that follows. The interrupt is the one Garrick writer that
-    rewrites Resume here without folding the checkpoint, because it has to
-    take thirty seconds, so without this every hold would make the checkpoint
-    stale. None where there is nothing valid to rebase; best effort, as the
-    record is, and a failure never stops the hold."""
-    lib = checkpoint_lib(ws)
-    if lib is None:
-        return None
-    try:
-        base = lib.resume_hash(text)
-        return lib.rebase_checkpoint(text, base) if base else None
-    except Exception:
-        return None
-
-
-def waiting_checkpoint(ws: Path, note: Path) -> Optional[str]:
-    """The time an unwrapped checkpoint in `note` was written, as it is said:
-    what Back adds a clause for. None where there is none, or where the block
-    cannot be read: an invalid one is never resumed from, the check reports it,
-    and Back does not mention it. No content of the block is read here."""
-    lib = checkpoint_lib(ws)
-    if lib is None:
-        return None
-    try:
-        block = lib.read_checkpoint(note.read_text(encoding="utf-8"))
-        if block is None or not block["valid"]:
-            return None
-        return lib.said_time(block["at"]).split(" on ")[0]
-    except Exception:
-        return None
-
-
-def interrupt(ws: Path, req: dict, now: dt.datetime) -> str:
-    """"I'm being interrupted": the three answers written into the Resume here
-    block as a wrap would, committed in the zone, then the thread on top of the
-    stack, moved there if it was already on it. {"zone", "project", "thread"}
-    or {"zone", "file"}, with "where" and "next", and "keep" and "by" if given."""
-    zone, note, parts, name = resume_note(ws, req)
-    where, step = answer(req, "where"), answer(req, "next")
-    keep, by = answer(req, "keep", required=False), answer(req, "by", required=False, most=BY_MAX)
-    with zone_lock(zone):
-        interrupt_note(ws, zone, note, parts, name, where, step, keep, by, now)
-        entry = entry_for(zone, parts, now)
-        restack(ws, lambda entries: [entry] + [e for e in entries if stacked_note(ws, e) != note.resolve()])
-        held_now = len(load_stack(ws))
-    return "Held %s at %s%s" % (name, now.strftime("%H:%M"), "" if held_now == 1 else "; %d on the stack" % held_now)
-
-
-def interrupt_note(ws: Path, zone: Path, note: Path, parts: tuple, name: str, where: str, step: str,
-                   keep: Optional[str], by: Optional[str], now: dt.datetime) -> None:
-    """The edit and its commit, under the zone's lock. Where it stands becomes
-    the stamped answer; Next action and Keep in mind take theirs, a Keep in
-    mind skipped is left as it was, or says nothing where there was none.
-    The other rows stay. `status:` stays active: an interruption is no park.
-    An unwrapped checkpoint under the block is rebased onto what this wrote,
-    its items untouched, so a hold never makes one stale."""
-    before = note.read_bytes()
-    try:
-        text = before.decode("utf-8")
-    except UnicodeDecodeError:
-        raise Refused("the note is not UTF-8 text")
-    m = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
-    if not m:
-        raise Refused("the note has no frontmatter")
-    fm = m.group(1)
-    status = re.search(r"(?m)^status:\s*(\S+)", fm)
-    status = status.group(1).lower() if status else "active"
-    hub = zone / parts[0] / (parts[0] + ".md")
-    parked_project = len(parts) == 4 and hub.is_file() and re.search(
-        r"(?m)^status:\s*parked\s*$", hub.read_text(encoding="utf-8", errors="replace").split("\n---", 2)[0])
-    if status == "done":
-        raise Refused("%s is finished" % name)
-    if status == "parked" or parked_project:
-        raise Refused("%s is parked; wake it first" % name)
-    fm = re.sub(r"(?m)^updated:.*$", "updated: " + now.date().isoformat(), fm) if re.search(r"(?m)^updated:", fm) \
-        else fm + "\nupdated: " + now.date().isoformat()
-    body = text[m.end():]
-    span = resume_block(body)
-    if not span:
-        raise Refused("%s has no Resume here block to write in; wrap it instead" % name)
-    lines = body[span[0]:span[1]].split("\n")
-    stamp = "**Interrupted %s, %d %s %d.** %s" % (now.strftime("%H:%M"), now.day, MONTHS[now.month - 1], now.year, where)
-    first = next((i for i, x in enumerate(lines) if x.strip()), None)
-    if first is None or lines[first].lstrip().startswith("|"):
-        at = 0 if first is None else first
-        lines[at:at] = ["", stamp, ""] if at == 0 else [stamp, ""]
-    else:
-        last = first
-        while last + 1 < len(lines) and lines[last + 1].strip() and not lines[last + 1].lstrip().startswith("|"):
-            last += 1
-        lines[first:last + 1] = [stamp]
-    rows = [i for i, x in enumerate(lines) if x.lstrip().startswith("|")]
-    if not rows:            # a block with no table yet: the two rows, under an empty header
-        at = lines.index(stamp) + 1
-        lines[at:at] = ["", "| | |", "|---|---|"]
-        rows = [at + 1, at + 2]
-    set_row(lines, rows, "Next action", step, after=None)
-    rows = [i for i, x in enumerate(lines) if x.lstrip().startswith("|")]
-    if keep is not None or not any(re.match(ROW_RE % "Keep in mind", lines[i]) for i in rows):
-        set_row(lines, rows, "Keep in mind", keep or "nothing", after="Next action")
-    body = body[:span[0]] + "\n".join(lines) + body[span[1]:]
-    body = dated_entry(body, now.date(), "Interrupted at %s%s." % (now.strftime("%H:%M"), ", by " + by if by else ""))
-    written = "---\n%s\n---\n%s" % (fm, body)
-    note.write_text(rebased(ws, written) or written, encoding="utf-8")
-    commit(zone, note, before, ("%s: interrupted%s" % (name, ", by " + by if by else ""))[:200], wall=wall_refusal(ws))
-
-
 def set_row(lines: list, rows: list, name: str, value: str, after: Optional[str]) -> None:
     """A row of the block's table set to `value`; a missing one goes in after
     the row named `after`, or at the table's end."""
@@ -1251,122 +1011,6 @@ def set_row(lines: list, rows: list, name: str, value: str, after: Optional[str]
             return
     prior = next((i for i in rows if after and re.match(ROW_RE % re.escape(after), lines[i])), rows[-1])
     lines.insert(prior + 1, row)
-
-
-def back(ws: Path, req: dict) -> dict:
-    """"Back": the top of the stack taken off, or, with a thread named, that
-    one taken out from wherever it is, the others left in order. The note is
-    read, never written: the reply carries its three lines and its path, for
-    the caller to open it and read them back, with one clause more where an
-    unwrapped checkpoint is waiting (`checkpoint`, the time it was written).
-    An empty stack says so, and offers the live thread updated most
-    recently."""
-    named = req.get("file") is not None or req.get("project") is not None
-    if named:
-        zone, note, parts, name = resume_note(ws, req)
-    taken = []
-
-    def take(entries):
-        if not entries:
-            return entries
-        at = 0 if not named else next((i for i, e in enumerate(entries) if stacked_note(ws, e) == note.resolve()), None)
-        if at is None:
-            return entries
-        taken.append(entries[at])
-        return entries[:at] + entries[at + 1:]
-    restack(ws, take)
-    if not taken:
-        if named:
-            raise Refused("%s is not on the stack; open it instead" % name)
-        latest = latest_thread(ws)
-        if latest is None:
-            return {"say": "Nothing is on the stack, and no thread is live.", "empty": True}
-        return {"say": "Nothing is on the stack. The most recent live thread is %s." % latest["name"], "empty": True,
-                "offer": latest}
-    e = taken[0]
-    name = e["project"] if not e.get("thread") else "%s, %s" % (e["project"], e["thread"])
-    note = stacked_note(ws, e)
-    lines = saved_lines(note)
-    said = ["Back to %s." % name]
-    if lines["where"]:
-        said.append(sentence(lines["where"]))
-    if lines["next"]:
-        said.append(sentence("Next: " + lines["next"]))
-    if lines["keep"] and lines["keep"].lower().rstrip(". ") not in ("nothing", "none"):
-        said.append(sentence("Keep in mind: " + lines["keep"]))
-    at = waiting_checkpoint(ws, note)
-    if at:
-        said.append("There's also an unwrapped checkpoint from %s." % at)
-    out = dict(e, path=("Zones/%s/%s" % (e["zone"], e["file"])), name=name, left=len(load_stack(ws)),
-               checkpoint=at, **lines)
-    out["say"] = " ".join(said)
-    out["logged"] = said[0]         # the log names the thread; what was saved stays in the note
-    return out
-
-
-def sentence(text: str) -> str:
-    return text if text.endswith((".", "!", "?")) else text + "."
-
-
-def show_stack(ws: Path) -> dict:
-    """What is on the stack, top first, each entry with its path and the next
-    action its note saved. Read only: close for the day lists it and leaves it."""
-    entries = load_stack(ws)
-    out = []
-    for e in entries:
-        name = e["project"] if not e.get("thread") else "%s, %s" % (e["project"], e["thread"])
-        out.append(dict(e, name=name, path="Zones/%s/%s" % (e["zone"], e["file"]),
-                        next=saved_lines(stacked_note(ws, e))["next"]))
-    if not out:
-        return {"say": "Nothing is on the stack.", "stack": []}
-    return {"say": "%d on the stack: %s." % (len(out), "; ".join(e["name"] for e in out)), "stack": out}
-
-
-def unstack(ws: Path, req: dict) -> str:
-    """A thread off the stack without reading it back: what a wrap, a park,
-    a finish or a deletion done by the assistant runs. {"zone", "project",
-    "thread"?}: with no thread, every thread of the project. The names need
-    not lead anywhere any more, so a thread already deleted can still go.
-    Not there is no fault."""
-    zone = zone_dir(ws, req.get("zone"))
-    names = [req.get("project")] + ([req["thread"]] if req.get("thread") not in (None, "", "-") else [])
-    if any(not isinstance(n, str) or not n or n.startswith((".", "_")) or "/" in n or n in ("..", "Threads")
-           for n in names):
-        raise Refused("not a project or thread")
-    gone = drop_from_stack(ws, zone.name, "%s/Threads/%s" % tuple(names) if len(names) == 2 else names[0])
-    name = ", ".join(names)
-    return ("%s is off the stack" if gone else "%s was not on the stack") % name
-
-
-def latest_thread(ws: Path) -> Optional[dict]:
-    """The live thread updated most recently, as "what's open" orders them:
-    `updated:`, then the note's last change. A project with no threads is its
-    own; a parked project holds every thread in it parked."""
-    best = None
-    for zone in sorted((ws / "Zones").iterdir()) if (ws / "Zones").is_dir() else []:
-        if not zone.is_dir() or zone.name.startswith((".", "_")):
-            continue
-        for project in sorted(zone.iterdir()):
-            hub = project / (project.name + ".md")
-            if project.name.startswith((".", "_")) or project.name in SKIP or project.name == "Inbox" or not hub.is_file():
-                continue
-            hub_fm = front(hub)
-            if hub_fm.get("status") in ("done", "parked"):
-                continue
-            notes = [t / (t.name + ".md") for t in sorted((project / "Threads").glob("*"))
-                     if not t.name.startswith((".", "_")) and (t / (t.name + ".md")).is_file()]
-            for note in notes or [hub]:
-                fm = hub_fm if note == hub else front(note)
-                if fm.get("status") in ("done", "parked"):
-                    continue
-                key = (fm.get("updated", ""), note.stat().st_mtime)
-                if best is None or key > best[0]:
-                    thread = note.stem if note != hub else None
-                    best = (key, {"zone": zone.name, "project": project.name, "thread": thread,
-                                  "file": note.relative_to(zone).as_posix(),
-                                  "path": note.relative_to(ws).as_posix(),
-                                  "name": project.name if thread is None else "%s, %s" % (project.name, thread)})
-    return best[1] if best else None
 
 
 def front(note: Path) -> dict:
@@ -1382,7 +1026,6 @@ def front(note: Path) -> dict:
         if found:
             out[key] = found.group(1).lower() if key == "status" else found.group(1)
     return out
-# ---- end of interrupted and back ------------------------------------------------
 
 
 def job_label(name, folder: Path = None):
@@ -2100,8 +1743,6 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     confirm = field(req, "confirm", required=False)
     said = scaffold(ws, "delete", *which, *(["--confirm", confirm] if confirm else []))
     if confirm:
-        project = field(req, "project")
-        drop_from_stack(ws, z, "%s/Threads/%s" % (project, thread) if thread else project)
         # One line, with the commit the page's Undo reverts; scaffold.py's undo command and memory hint are
         # for a terminal, and Undo on the page is the way back here.
         found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
@@ -2131,8 +1772,7 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     by name in the workspace's own repository, unless that file held other
     changes not committed, which are never filed under this commit (#183);
     the move is kept for the effort history (effort.py's moved.json), so the
-    page's Time and Cost follow the new name; and its place on the
-    interruption stack follows it. One line, and the zone's commit for Undo."""
+    page's Time and Cost follow the new name. One line, and the zone's commit for Undo."""
     old = thread or project
     context = ws / "System" / "context.md"
     root_repo = (ws / ".git").exists()
@@ -2141,7 +1781,6 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
     said = scaffold(ws, "rename", *which, "--to", to)
     code, head = git(zone, "rev-parse", "--short", "HEAD")
     made = head.strip() if code == 0 else ""
-    rename_in_stack(ws, zone.name, project, thread, to)
     rel_old = "Zones/%s/%s" % (zone.name, project + ("/Threads/" + thread if thread else ""))
     rel_new = "Zones/%s/%s" % (zone.name, project + "/Threads/" + to if thread else to)
     note = ""
@@ -2166,8 +1805,8 @@ def renamed_here(ws: Path, zone: Path, project: str, thread: Optional[str], to: 
 
 def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: list) -> dict:
     """A move from the page, a button or a session, finished here as a rename
-    is: scaffold.py moves the thread and commits in the zone, and its place on
-    the interruption stack and the effort history follow it there. One line, and
+    is: scaffold.py moves the thread and commits in the zone, and the effort
+    history follows it there. One line, and
     the zone's commit for Undo. The assistant's memory pointer and a desk tab
     are not Garrick's to write, so the reply says that they still name the old
     path."""
@@ -2177,7 +1816,7 @@ def moved_here(ws: Path, zone: Path, project: str, thread: str, to: str, which: 
     name = thread
     if (zone / to).is_dir():                                  # to, as the folder is spelled
         to = next((c.name for c in zone.iterdir() if c.name.lower() == to.lower()), to)
-    # The interruption stack and the effort history follow the thread inside scaffold.py, which also puts them
+    # The effort history follows the thread inside scaffold.py, which also puts it
     # back when the move is undone; the memory pointer and a desk tab are not Garrick's to write.
     note = " A memory pointer or an open desk tab for it still names %s." % project
     left = next((l for l in said.splitlines() if l.startswith("Markdown links left as they are")), "")
@@ -2520,7 +2159,11 @@ WIKI_QUESTION_DIR = "questions"
 WIKI_ANSWER_DIR = ("raw", "answers")
 WORDS_MAX = 4000
 BOLD_LINE = re.compile(r"(?m)^\s*\*\*(.+)\*\*\s*$")
-NO_DECISION = "Record as a decision is not built yet, so nothing was written. Answer it, put it off or close it instead"
+WIKI_DECISION_DIR = ("wiki", "decisions")
+DECISION_SECTIONS = ("Decision", "Assumptions", "Options turned down", "Revisit when")
+NO_DECISION = ("a Knowledge question has no zone and no parties for a decision to carry, so nothing was written. "
+               "Answer it, put it off or close it instead")
+NOT_SET = "Not set yet. The assistant may propose some, each marked *Proposed*; you settle what stays."
 
 
 def wall_sentence(ws: Path) -> str:
@@ -2564,7 +2207,7 @@ class WikiQuestion:
         self.path = path
         self.lib = prefs().lib(ws)
         if self.lib is None or not all(callable(getattr(self.lib, n, None)) for n in
-                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "walled")):
+                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide")):
             raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
         self.reload()
 
@@ -2593,12 +2236,28 @@ class WikiQuestion:
         return self.path.stem
 
 
+def party_keys_two_ways(text: str) -> bool:
+    """Whether a page spells its party keys so a reader could take them two
+    ways: `party:` beside `parties:`, or either in capitals. The walls read
+    `parties:` alone on a Meetings question or decision, so such a page is
+    placed nowhere and nothing is saved from it (fail closed)."""
+    m = re.match(r"---\n(.*?)\n---", text or "", re.S)
+    if not m:
+        return False
+    keys = [k for k in re.findall(r"(?m)^([A-Za-z_][\w-]*)\s*:", m.group(1)) if k.lower() in ("party", "parties")]
+    return bool(keys) and (len({k.lower() for k in keys}) > 1 or any(k != k.lower() for k in keys))
+
+
 def question_parties(q: WikiQuestion, wall: str) -> list:
     """The question's own parties, checked: a Meetings question names its zone
     and parties, every one a tag the workspace knows, and no two walled from
     each other. A Knowledge question names neither. Anything else is refused."""
     ctx = q.context
     zone = q.fm.get("zone")
+    # Both spellings of the party key, or one in another case, read two ways: the question says whose it is to no one.
+    keys = [k for k in q.fm if str(k).strip().lower() in ("party", "parties")]
+    if any(k != "parties" for k in keys):
+        raise Refused("that question's frontmatter cannot be read plainly, so nothing was written")
     tags = q.parties()
     if q.name == "Knowledge":
         if zone not in (None, "") or tags:
@@ -2608,7 +2267,7 @@ def question_parties(q: WikiQuestion, wall: str) -> list:
         raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
     if not tags or any(t not in ctx.get("parties", {}) for t in tags):
         raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
-    if any(q.lib.walled(ctx, a, b) for a in tags for b in tags):
+    if q.lib.crossings(ctx, tags):
         raise Refused(wall)
     return tags
 
@@ -2678,14 +2337,14 @@ def question_pages(q: WikiQuestion, wall: str) -> tuple:
         seen.append(tags)
         readable.append((p, tags))
     flat = [t for tags in seen for t in tags]
-    if any(q.lib.walled(ctx, a, b) for i, a in enumerate(flat) for b in flat[i + 1:]):
+    if q.lib.crossings(ctx, flat):
         raise Refused(wall)             # both sides of a wall: nothing named, nothing written
     allowed = []
     for p, tags in readable:
         # Only a page that carries the question's own parties, and no others:
         # a page written for nobody (`none`) is guarded by no wall, so the
         # answer is never written into it.
-        if not tags or not set(tags) <= set(mine) or any(q.lib.walled(ctx, a, b) for a in tags for b in mine):
+        if not tags or not set(tags) <= set(mine) or q.lib.decide(mine, tags, "write", ctx) == "deny":
             held += 1
         else:
             allowed.append(p)
@@ -2707,8 +2366,10 @@ def fence_for(words: str) -> str:
     return "`" * max(3, longest + 1)
 
 
-def raw_answer_text(q: WikiQuestion, words: str, today: dt.date, tags: list) -> str:
+def raw_answer_text(q: WikiQuestion, words: str, today: dt.date, tags: list, outcome: str = "") -> str:
     where = ["type: answer", "answered: %s" % today.isoformat()]
+    if outcome:
+        where.append("outcome: %s" % outcome)       # `decision`: the record check.py asks for before a decision's status moves
     if q.name == "Meetings":
         where += ["zone: %s" % str(q.fm.get("zone")).strip(), "parties: [%s]" % ", ".join(tags)]
     where.append("question: %s" % quoted("[[%s]]" % q.path.relative_to(q.dir).with_suffix("").as_posix()))
@@ -2734,21 +2395,58 @@ def write_new(path: Path, text: str) -> None:
         raise
 
 
-def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list) -> Path:
+def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list, outcome: str = "") -> Path:
     folder = q.dir.joinpath(*WIKI_ANSWER_DIR)
+    tx_dirs(folder)
     folder.mkdir(parents=True, exist_ok=True)
     if folder.resolve() != folder or q.dir not in folder.parents:
         raise Refused("raw/answers is not a plain folder of this wiki, so nothing was written")
-    body = raw_answer_text(q, words, today, tags)
+    body = raw_answer_text(q, words, today, tags, outcome)
     base = "%s - %s" % (today.strftime("%y%m%d"), answer_slug(q.stem()))
     for n in range(1, 10):
         path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
         try:
             write_new(path, body)
+            tx_made(path)
             return path
         except FileExistsError:
             continue
     raise Refused("nine answers to this question are already filed today, so nothing was written")
+
+
+def decision_text(q: WikiQuestion, words: str, today: dt.date, tags: list, record: str) -> str:
+    """The decision page: its question's zone and parties copied exactly,
+    status valid (the user's own save is the act that settles it), and the
+    user's words under Decision, fenced so nothing in them can open a section."""
+    title = q.bold.strip("*").strip()
+    where = ["type: decision", "title: %s" % quoted(title), "status: valid", "decided: %s" % today.isoformat(),
+             "zone: %s" % str(q.fm.get("zone")).strip(), "parties: [%s]" % ", ".join(tags),
+             "source: %s" % quoted("[[%s]]" % record),
+             "question: %s" % quoted(q.path.relative_to(q.dir).with_suffix("").as_posix()),
+             "created: %s" % today.isoformat(), "updated: %s" % today.isoformat()]
+    fence = fence_for(words)
+    return ("---\n%s\n---\n\n# %s\n\n## Decision\n\n%s\n%s\n%s\n\n## Assumptions\n\n%s\n\n"
+            "## Options turned down\n\n%s\n\n## Revisit when\n\n%s\n"
+            % ("\n".join(where), title, fence, words, fence, NOT_SET, NOT_SET, NOT_SET))
+
+
+def file_decision(q: WikiQuestion, today: dt.date, words: str, tags: list, record: str) -> Path:
+    folder = q.dir.joinpath(*WIKI_DECISION_DIR)
+    tx_dirs(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    if folder.resolve() != folder or q.dir not in folder.parents:
+        raise Refused("wiki/decisions is not a plain folder of this wiki, so nothing was written")
+    body = decision_text(q, words, today, tags, record)
+    base = "%s - %s" % (today.strftime("%y%m%d"), answer_slug(q.stem()))
+    for n in range(1, 10):
+        path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
+        try:
+            write_new(path, body)
+            tx_made(path)
+            return path
+        except FileExistsError:
+            continue
+    raise Refused("nine decisions on this question are already filed today, so nothing was written")
 
 
 def wiki_words(req: dict) -> str:
@@ -2762,13 +2460,149 @@ def wiki_words(req: dict) -> str:
 
 
 def write_question(path: Path, text: str) -> None:
+    tx_watch(path)
     path.write_text(text, encoding="utf-8")
+
+
+def open_section_slug(title: str, line: str) -> str:
+    words = re.findall(r"[a-z0-9]+", ("%s %s" % (title, line)).lower())
+    slug = "-".join(words)[:60].strip("-")
+    return slug or "open-line"
+
+
+def open_section_text(row: dict, today: dt.date, meetings: bool) -> str:
+    where = ["type: question", "asked: %s" % today.isoformat(), "status: open"]
+    if meetings:
+        where += ["zone: %s" % row["zone"], "parties: [%s]" % ", ".join(row["parties"])]
+    link = quoted("[[%s]]" % row["page"])
+    where += ["origin: %s" % link, "pages: [%s]" % link]
+    return ("---\n%s\n---\n\n**%s**\n\nThe page lists this under Open, and nothing on the page has changed. "
+            "Answer it, put it off or close it; the page changes only once the answer is worked in.\n"
+            % ("\n".join(where), row["bold"]))
+
+
+def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> list:
+    """The open-section rows of a wiki, as wiki_lint.py reads them, each
+    proposal checked the way a question's own fields are: a zone the workspace
+    has, parties it knows, none two sides of a wall. A row that fails is
+    skipped with the reason, and nothing about the other side is named."""
+    tool = Path(ws) / "System" / "tools" / "wiki_lint.py"
+    lib = prefs().lib(ws)
+    if not tool.is_file() or lib is None or not all(callable(getattr(lib, n, None)) for n in
+                                                     ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide")):
+        raise Refused("this workspace's wiki_lint.py or garrick_lib.py cannot read the pages, so nothing was written")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("wiki_lint_for_open_sections", str(tool))
+    mod = importlib.util.module_from_spec(spec)
+    saved = list(sys.path)
+    try:
+        sys.path.insert(0, str(tool.parent))
+        spec.loader.exec_module(mod)
+    except Exception:
+        raise Refused("this workspace's wiki_lint.py cannot be read, so nothing was written")
+    finally:
+        sys.path[:] = saved
+    if not callable(getattr(mod, "open_sections", None)):
+        raise Refused("this workspace's wiki_lint.py does not list open sections, so nothing was written")
+    rows = mod.open_sections(Path(ws) / "Wikis" / wiki)
+    if only is not None:
+        rows = [r for r in rows if r["page"] in only]
+    ctx = lib.load_context(ws)
+    zones = {z.name for z in (Path(ws) / "Zones").iterdir() if z.is_dir()}
+    for r in rows:
+        if r["state"] != "propose" or wiki != "Meetings":
+            continue
+        tags = [bare_tag(lib, t) for t in r["parties"]]
+        if r["zone"] not in zones or any(t not in ctx.get("parties", {}) for t in tags):
+            r.update(state="skipped", reason="its zone or parties are not ones this workspace knows")
+        elif lib.crossings(ctx, tags):
+            r.update(state="skipped", reason=wall)
+        else:
+            r["parties"] = [t.strip() for t in r["parties"]]
+    return rows
+
+
+def open_sections_act(ws: Path, req: dict, today: dt.date) -> str:
+    wiki = req.get("wiki")
+    if wiki not in WIKI_NAMES:
+        raise Refused("no wiki called %s; the wikis with questions are %s" % (wiki, " and ".join(WIKI_NAMES)))
+    if not (Path(ws) / "Wikis" / wiki / "wiki").is_dir():
+        raise Refused("no wiki called %s" % wiki)
+    only = req.get("pages")
+    if isinstance(only, str):                   # typed in a terminal: --pages "a,b"
+        only = [x.strip() for x in only.split(",") if x.strip()]
+    if only is not None and not (isinstance(only, list) and all(isinstance(x, str) for x in only)):
+        raise Refused("pages is a list of page names")
+    confirm = req.get("confirm")
+    if confirm == "true":                       # typed in a terminal: --confirm true
+        confirm = True
+    if confirm not in (None, False, True):
+        raise Refused("confirm is true or left out")
+    wall = wall_sentence(ws)
+    meetings = wiki == "Meetings"
+
+    def group_of(r):
+        return (r["zone"], tuple(sorted(r["parties"])))
+
+    def say(rows):
+        todo = [r for r in rows if r["state"] == "propose"]
+        groups = sorted({group_of(r) for r in todo})
+        lines = ["%d open line%s would become a question, in %d group%s. Ask once per group, never for two together."
+                 % (len(todo), "" if len(todo) == 1 else "s", len(groups), "" if len(groups) == 1 else "s")]
+        for g in groups:
+            lines.append("Group%s:" % (" (%s, %s)" % (g[0], ", ".join(g[1])) if meetings else ""))
+            lines += ["  %s: %s" % (r["page"], r["line"]) for r in todo if group_of(r) == g]
+        done = sum(r["state"] == "converted" for r in rows)
+        if done:
+            lines.append("%d already asked." % done)
+        for r in rows:
+            if r["state"] == "skipped" and r["reason"] != wall:
+                lines.append("No question for %s: %s." % (r["page"], r["reason"]))
+        if any(r["state"] == "skipped" and r["reason"] == wall for r in rows):
+            lines.append(wall)
+        return lines
+    if confirm is not True:
+        return "\n".join(say(open_section_rows(ws, wiki, wall, only)))
+    with held("question-%s.lock" % wiki, busy="another question in %s is still being written" % wiki):
+        rows = [r for r in open_section_rows(ws, wiki, wall, only) if r["state"] == "propose"]
+        if not rows:
+            return "Nothing to write. No open line is waiting for a question"
+        if len({group_of(r) for r in rows}) > 1:
+            raise Refused("those lines belong to more than one zone and party group, so nothing was written. "
+                          "Confirm one group at a time, naming its pages")
+        folder = Path(ws) / "Wikis" / wiki / WIKI_QUESTION_DIR
+        used = set()
+
+        def write_all(w):
+            tx_dirs(folder)
+            folder.mkdir(parents=True, exist_ok=True)
+            if folder.resolve() != folder or folder.parent.parent != Path(ws).resolve() / "Wikis":
+                raise Refused("questions is not a plain folder of this wiki, so nothing was written")
+            made = 0
+            for r in rows:
+                if r["bold"] in used:
+                    continue
+                used.add(r["bold"])
+                base = "%s - %s" % (today.strftime("%y%m%d"), open_section_slug(r["title"], r["line"]))
+                for n in range(1, 100):
+                    path = folder / ("%s.md" % base if n == 1 else "%s-%d.md" % (base, n))
+                    try:
+                        write_new(path, open_section_text(r, today, meetings))
+                    except FileExistsError:
+                        continue
+                    tx_made(path)
+                    made += 1
+                    break
+                else:
+                    raise Refused("too many questions with one name today, so nothing was written")
+            return "%d question%s written in %s/questions. No page was changed" % (made, "" if made == 1 else "s", wiki)
+        return transaction(ws, write_all)
 
 
 def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
     verb = req["verb"]
-    if verb == "question-decide":
-        raise Refused(NO_DECISION)
+    if verb == "question-open-sections":
+        return open_sections_act(ws, req, today)
     wall = wall_sentence(ws)
     q = WikiQuestion(ws, req)
     if verb in ("question-work", "question-done"):
@@ -2779,9 +2613,34 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
             raise Refused("that question is %s, not open" % (q.status or "unreadable"))
         tags = question_parties(q, wall)
         question_pages(q, wall)         # a question across a wall is refused before anything is written
+        if verb == "question-decide":
+            if q.name != "Meetings" or not tags:
+                raise Refused(NO_DECISION)
+            if party_keys_two_ways(q.text):
+                raise Refused("that question names its parties two ways, so nothing was written")
+            # the zone must own the parties: the panel's own test, with its wording
+            if not View(ws, q.lib, str(q.fm.get("zone")).strip(), tags[0]).ok(tags):
+                raise Refused(wall)
+            words = wiki_words(req)
+            set_front(q.text, {"status": "answered"})
+
+            def decide(w):
+                # Both files or neither: a failure anywhere puts every file back, the raw answer too.
+                record = file_raw_answer(q, today, words, tags, "decision")
+                stem = record.relative_to(q.dir).with_suffix("").as_posix()
+                page = file_decision(q, today, words, tags, stem)
+                decided = page.relative_to(q.dir).with_suffix("").as_posix()
+                write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
+                                                          "answered": today.isoformat(), "decision": quoted("[[%s]]" % decided)},
+                                                 drop=("later",)))
+                return ("Recorded as a decision. Your words are filed as %s and the decision as %s. "
+                        "The pages change when you say work them in" % (stem, decided))
+            return transaction(ws, decide)
         if verb == "question-close":
-            write_question(q.path, set_front(q.text, {"status": "closed", "closed": today.isoformat()}, drop=("later",)))
-            return "Closed. Nothing was worked in"
+            def close(w):
+                write_question(q.path, set_front(q.text, {"status": "closed", "closed": today.isoformat()}, drop=("later",)))
+                return "Closed. Nothing was worked in"
+            return transaction(ws, close)
         if verb == "question-later":
             until = req.get("until")
             try:
@@ -2790,20 +2649,26 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
                 day = None
             if day is None or day <= today:
                 raise Refused("not a later day: %r" % (until,))
-            write_question(q.path, set_front(q.text, {"status": "later", "later": day.isoformat()}))
-            return "Put off until %s %d %s. It is hidden until then" % (day.strftime("%A"), day.day, MONTHS[day.month - 1])
+
+            def put_off_until(w):
+                write_question(q.path, set_front(q.text, {"status": "later", "later": day.isoformat()}))
+                return "Put off until %s %d %s. It is hidden until then" % (day.strftime("%A"), day.day, MONTHS[day.month - 1])
+            return transaction(ws, put_off_until)
         words = wiki_words(req)
         # A question that cannot be rewritten stops here, with nothing written.
         set_front(q.text, {"status": "answered"})
-        path = file_raw_answer(q, today, words, tags)
-        stem = path.relative_to(q.dir).with_suffix("").as_posix()
-        try:
-            write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
-                                                      "answered": today.isoformat()}, drop=("later",)))
-        except Exception as e:
-            raise Refused("the answer is filed as %s, but the question could not be updated (%s: %s); "
-                          "the record stays" % (stem, type(e).__name__, e))
-        return "Noted. Your words are filed as %s. The pages change when you say work them in" % stem
+
+        def file_answer(w):
+            path = file_raw_answer(q, today, words, tags)
+            stem = path.relative_to(q.dir).with_suffix("").as_posix()
+            try:
+                write_question(q.path, set_front(q.text, {"status": "answered", "answer": quoted("[[%s]]" % stem),
+                                                          "answered": today.isoformat()}, drop=("later",)))
+            except Exception as e:
+                raise KeepRecord("the answer is filed as %s, but the question could not be updated (%s: %s); "
+                                 "the record stays" % (stem, type(e).__name__, e))
+            return "Noted. Your words are filed as %s. The pages change when you say work them in" % stem
+        return transaction(ws, file_answer)
 
 
 def own_record(q: WikiQuestion, wall: str) -> str:
@@ -2860,8 +2725,8 @@ def wiki_work(ws: Path, q: WikiQuestion, req: dict, today: dt.date, wall: str) -
             q.reload()
             if q.status != "answered":
                 raise Refused("that question is %s, not answered" % (q.status or "unreadable"))
-            write_question(q.path, set_front(q.text, {"status": "done", "done": today.isoformat()}))
-        return "Done. The question is worked in"
+            return transaction(ws, lambda w: write_question(q.path, set_front(q.text, {"status": "done", "done": today.isoformat()}))
+                               or "Done. The question is worked in")
     lines = ["Cite [[%s]]." % record]
     lines += ["Change %s" % p.relative_to(q.dir).as_posix() for p in pages] or ["No page may be changed."]
     if missing:
@@ -2906,6 +2771,980 @@ def commit_all(zone: Path, notes: list, message: str, *, wall: Optional[str]) ->
     if wall and WALL_LINE.match(why):
         raise Refused(wall)
     raise Refused("not committed, so nothing changed: %s" % why)
+
+
+# ---- One transaction for every write that changes pages (#224, point 6) ------------------
+# A write that changes wiki pages runs inside transaction(): the files are
+# written, check.py and each wiki's lint are counted before and after, and if
+# any count is worse every file goes back as it was, byte for byte, a file the
+# write made removed. Otherwise, where the action commits, the files are
+# committed once per repository. The wiki-question actions write and commit
+# nothing themselves (the work-in step commits), so they pass no `commit`; the
+# Nurture review page's save commits. The measuring is `check_counts`, a name
+# the tests replace.
+TX = None
+CHECK_TIMEOUT = 270     # two runs and a commit fit inside the page's ACTION_LOST (a test pins the sum); a run that takes longer writes nothing
+
+
+class Writes:
+    """The files a transaction has written, and what each held before: the
+    bytes, or None for a file that was not there."""
+
+    def __init__(self):
+        self.before = {}            # Path -> bytes or None
+        self.made_dirs = []         # folders the transaction made, outermost first
+        self.tag = None             # the row being written, so a file knows whose it is
+        self.owners = {}            # Path -> the tags that wrote it
+
+    def watch(self, path) -> None:
+        path = Path(path)
+        if self.tag is not None:
+            self.owners.setdefault(path, set()).add(self.tag)
+        if path in self.before:
+            return
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise Refused("%s is not a plain file, so nothing was written" % path.name)
+        self.before[path] = path.read_bytes() if path.exists() else None
+
+    def made(self, path) -> None:
+        if self.tag is not None:
+            self.owners.setdefault(Path(path), set()).add(self.tag)
+        self.before.setdefault(Path(path), None)
+
+    def dirs(self, folder) -> None:
+        missing = []
+        d = Path(folder)
+        while not d.exists() and d.parent != d:
+            missing.append(d)
+            d = d.parent
+        for m in reversed(missing):
+            if m not in self.made_dirs:
+                self.made_dirs.append(m)
+
+    def write(self, path, text: str) -> None:
+        path = Path(path)
+        self.watch(path)
+        self.dirs(path.parent)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    def changed(self) -> list:
+        out = []
+        for p, was in self.before.items():
+            now = p.read_bytes() if p.is_file() else None
+            if now != was:
+                out.append(p)
+        return out
+
+    def undo(self, paths=None) -> None:
+        """Put the given files (all, by default) back as they were."""
+        for p in list(self.before) if paths is None else [Path(x) for x in paths]:
+            if p not in self.before:
+                continue
+            was = self.before[p]
+            try:
+                if was is None:
+                    if p.exists():
+                        p.unlink()
+                else:
+                    p.write_bytes(was)
+            except OSError:
+                pass
+
+    def restore(self) -> None:
+        self.undo()
+        for d in reversed(self.made_dirs):
+            try:
+                d.rmdir()               # only if empty: it was made here
+            except OSError:
+                pass
+
+
+def tx_watch(path) -> None:
+    if TX is not None:
+        TX.watch(path)
+
+
+def tx_made(path) -> None:
+    if TX is not None:
+        TX.made(path)
+
+
+def tx_dirs(folder) -> None:
+    if TX is not None:
+        TX.dirs(folder)
+
+
+# A finding of the walls family, by its check or its words: a page naming, linking or quoting across a wall,
+# repeating a meeting's wording, or two parties a wall divides. Any severity. The words are nurture.py's
+# (claim_wall), kept here because the transaction reads findings without loading it.
+WALLISH = re.compile(r"across a wall|wall stands between|which a wall keeps apart|a wall keeps|eight or more words|"
+                     r"names both \S+ and \S+|a Meetings page|from zone \S+|filed in zone \S+", re.I)
+
+
+def wallish(check, message) -> bool:
+    return str(check) == "walls" or bool(WALLISH.search(str(message or "")))
+
+
+def check_counts(ws: Path) -> Optional[dict]:
+    """What the workspace's checks count now: check.py's errors and warnings,
+    and each wiki's orphans and missing links. None when a check cannot run
+    or its answer cannot be read: a write is then not made, since nothing can
+    say it did no harm."""
+    tools = Path(ws) / "System" / "tools"
+    out = {}
+
+    def run(*args):
+        script = tools / args[0]
+        if not script.is_file():
+            return None
+        try:
+            r = subprocess.run([sys.executable, str(script), "--root", str(ws)] + list(args[1:]), capture_output=True, text=True,
+                               timeout=CHECK_TIMEOUT, stdin=subprocess.DEVNULL, cwd=str(ws))
+            data = json.loads(r.stdout)
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return None
+        return data if isinstance(data, dict) else None
+    # The whole check, wording included: a sentence copied from the far side is read only in a full run.
+    found = run("check.py", "--json")
+    if found is None or not isinstance(found.get("findings"), list):
+        return None
+    for f in found["findings"]:
+        if isinstance(f, dict):
+            key = "check:%s" % (f.get("severity") or "warning")
+            out.setdefault(key, set()).add((str(f.get("check")), re.sub(r":\d+$", "", str(f.get("path"))), str(f.get("message"))))
+    for wiki in WIKI_NAMES:
+        if not (Path(ws) / "Wikis" / wiki / "wiki").is_dir():
+            continue
+        lint = run("wiki_lint.py", "--wiki", wiki, "--json")
+        if lint is None:
+            return None
+        out["lint:%s:orphans" % wiki] = {("orphan", "Wikis/%s/%s.md" % (wiki, o), "") for o in lint.get("orphans") or []}
+        out["lint:%s:missing" % wiki] = {("missing", "Wikis/%s/%s.md" % (wiki, p), str(m.get("target")))
+                                         for m in lint.get("missing") or [] if isinstance(m, dict) for p in m.get("linked_from") or []}
+    return out
+
+
+def worse_counts(before: dict, after: dict) -> list:
+    """What got worse between two readings. A reading holds, for each check, the
+    findings it made (check, path, message), or a number where a caller only
+    counts. A finding present after and not before is worse, even when another
+    was fixed in the same write: one fix never pays for a new problem. Only
+    names and numbers are said, never a path or a message."""
+    names = {"check:error": "errors", "check:warning": "warnings"}
+    out = []
+    for key in sorted(set(before) | set(after)):
+        was, now = before.get(key, set()), after.get(key, set())
+        what = names.get(key) or key.replace("lint:", "").replace(":", " ")
+        if isinstance(was, int) or isinstance(now, int):
+            if (now if isinstance(now, int) else len(now)) > (was if isinstance(was, int) else len(was)):
+                out.append("%s %d to %d" % (what, was if isinstance(was, int) else len(was), now if isinstance(now, int) else len(now)))
+        elif now - was:
+            out.append("%s: %d new" % (what, len(now - was)))
+    return out
+
+
+def repo_of_path(ws: Path, path: Path) -> Optional[Path]:
+    """The nearest folder above `path`, inside the workspace, with a .git of its own."""
+    d = path.parent
+    top = Path(ws).resolve()
+    while True:
+        if os.path.lexists(str(d / ".git")):
+            return d
+        if d == top or top not in d.parents:
+            return None
+        d = d.parent
+
+
+def stage(repo: Path, rels: list) -> tuple:
+    return git(repo, "add", "-A", "--", *rels)
+
+
+def unstage(repo: Path, rels: list) -> None:
+    git(repo, "reset", "-q", "--", *rels, timeout=10)
+
+
+def walls_on_staged(ws: Path, repo: Path, rels: list) -> str:
+    """The walls check on what is staged in `repo`, as the commit hook runs it
+    (garrick_lib.staged_walls_refusal), "" when it passes. A repository with no
+    hook (Wikis/ has none) is checked all the same. Without that function in
+    this workspace's garrick_lib, a refusal: nothing can say the change is fine."""
+    lib = prefs().lib(ws)
+    fn = getattr(lib, "staged_walls_refusal", None)
+    if not callable(fn):
+        return "this workspace's garrick_lib.py cannot run the walls check on a staged change"
+    try:
+        return fn(ws, repo, rels) or ""
+    except Exception as e:
+        return "the walls check could not run (%s)" % type(e).__name__
+
+
+def refusal_kind(said: str) -> str:
+    """wall, form or foreign, from the words of staged_walls_refusal."""
+    if "another session has staged" in said:
+        return "foreign"
+    if "for a page's form" in said:
+        return "form"
+    return "wall"
+
+
+def commit_groups(ws: Path, w: Writes, message_for, *, wall: Optional[str]) -> dict:
+    """Commit what `w` changed, once per repository, each after the walls check
+    on it staged. Returns {"commits": {repo: sha}, "refused": {repo: why},
+    "uncommitted": [rel]}; the files of a repository whose commit is refused
+    are put back. Before any commit, every repository is asked whether it can
+    commit at all, and one that cannot refuses the lot: nothing is committed
+    in one and not another for a reason that was known. `wall` is the rules'
+    sentence, which a refusal by the wall check ends on."""
+    done = {"commits": {}, "refused": {}, "uncommitted": []}
+    groups = {}
+    top = Path(ws).resolve()
+    for p in w.changed():
+        repo = repo_of_path(ws, p)
+        if repo is None:
+            done["uncommitted"].append(str(p.relative_to(top)) if top in p.parents else p.name)
+        else:
+            groups.setdefault(repo, []).append(p)
+    for repo in sorted(groups):
+        problem = commit_refusal(repo) if repo.parent.name == "Zones" else None
+        if problem:
+            raise Refused("%s, so nothing was committed and nothing was written" % problem)
+    for repo, files in sorted(groups.items()):
+        rels = sorted(str(f.relative_to(repo)) for f in files)
+        label = str(repo.relative_to(top)) if repo != top else "."
+        code, why = stage(repo, rels)
+        if code == 0:
+            said = walls_on_staged(ws, repo, rels)
+            if said:
+                code, why = 1, said
+        if code == 0:
+            code, why = committing(repo, rels, message_for(label, rels))
+        if code == 0:
+            done["commits"][label] = git(repo, "rev-parse", "--short", "HEAD")[1].strip()
+            continue
+        unstage(repo, rels)
+        w.undo(files)
+        if wall and (WALL_LINE.match(why or "") or "walls check refused" in (why or "")):
+            why = wall
+        done["refused"][label] = why
+    return done
+
+
+def new_findings(before: dict, now: dict) -> list:
+    """(reading, finding) for each finding present now and not before."""
+    out = []
+    for key, found in now.items():
+        if isinstance(found, set):
+            was = before.get(key, set())
+            out += [(key, f) for f in sorted(found - (was if isinstance(was, set) else set()))]
+    return out
+
+
+def walls_on_written(now: dict, written: set) -> list:
+    """Every walls-family finding now on a file the transaction wrote, whatever
+    the reading before held: a finding's identity stays equal while what it
+    reports grows (more words repeated, one more cite), so none is let through."""
+    return [(key, f) for key, found in now.items() if isinstance(found, set)
+            for f in sorted(found) if wallish(f[0], f[2]) and f[1] in written]
+
+
+def transaction(ws: Path, change, *, commit=None, after=None, triage=None):
+    """Run change(w) and what it wrote either holds or is undone.
+
+    `change(w)` writes through `w` (or the tx_* hooks) and returns the action's
+    result; `w.before_counts` is the reading taken before. check_counts() runs
+    before and after: a check that cannot run puts every file back and
+    refuses. So does a finding that is new, and so does any walls-family
+    finding on a file written, whatever the reading before held. With a
+    `triage(w, new, walls)`, those are first attributed by path to the rows
+    that wrote the files and the rows put back; the check then runs once more,
+    and only what no row accounts for refuses the lot. With `commit`, a
+    function (repository, paths) -> message, the changed files are then
+    committed once per repository; `after(result, done)` then returns the
+    action's final result. Without `commit` nothing is staged or committed."""
+    global TX
+    if TX is not None:
+        raise Refused("a transaction is already open")
+    before = check_counts(ws)
+    if before is None:
+        raise Refused("the workspace's checks (check.py and the wiki lint) cannot run, so nothing was written")
+    w = Writes()
+    w.before_counts = before
+    TX = w
+    top = Path(ws).resolve()
+    try:
+        try:
+            result = change(w)
+        except KeepRecord:
+            raise
+        except BaseException:
+            w.restore()
+            raise
+
+        def reading():
+            now = check_counts(ws)
+            if now is None:
+                w.restore()
+                raise Refused("the workspace's checks (check.py and the wiki lint) could not run afterwards, so nothing was written")
+            written = {str(p.relative_to(top)) for p in w.changed() if top in p.parents}
+            return now, worse_counts(before, now), new_findings(before, now), walls_on_written(now, written)
+        now, bad, new, walls = reading()
+        if (bad or walls) and triage is not None:
+            try:
+                triage(w, new, walls)
+            except BaseException:
+                w.restore()
+                raise
+            now, bad, new, walls = reading()
+        if walls:
+            w.restore()
+            raise Refused(wall_sentence(ws))
+        if bad:
+            w.restore()
+            raise Refused("a check got worse (%s), so every file is back as it was and nothing was committed. "
+                          "If something else changed in the workspace meanwhile, that can cause it: try again" % "; ".join(bad))
+        if commit is None:
+            return result
+        try:
+            done = commit_groups(ws, w, commit, wall=wall_refusal(ws))
+        except BaseException as e:
+            w.restore()
+            if isinstance(e, Refused):
+                raise
+            raise Refused("the commit could not be made (%s), so every file is back as it was" % type(e).__name__)
+        return after(result, done) if after else result
+    finally:
+        TX = None
+
+
+# ---- Nurture's answers, from the Questions panel (#224, point 9) --------------------------
+# nurture-answer (an entity page's party), nurture-organisation (where a person
+# works) and nurture-correct (a value written wrong) call the same code as
+# `nurture.py answered`, `organisation` and `correct`, so the chat and the panel
+# write the same way and record in the day's Nurture report. nurture-save is the
+# review page's Save: its rows go through one transaction, the walls check runs
+# on what is staged and a row it refuses is put back and named while the rest
+# go on, and the files are committed once per repository. Every row is read
+# again from the page it names: nothing a row carries is trusted, and its text
+# is data, never a command or a path to open.
+NURTURE_VERBS = ("nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all")
+NURTURE_LATER = ("System", "generated", "nurture", "later.json")
+NURTURE_ROWS_MAX = 200
+NURTURE_WORD_MAX = 200
+NURTURE_ROW_KEYS = ("do", "key", "path", "choice", "pick", "until", "edit")
+NURTURE_DO = ("answer", "organisation", "correct")
+NURTURE_CHOICES = ("yes", "no", "another", "later")
+UNATTRIBUTED = "unattributed"           # the view of entity pages that do not say whose they are
+KEY_RE = re.compile(r"[0-9a-f]{12}")
+_NURTURE_MOD = {}
+
+
+@contextlib.contextmanager
+def nurture_tools(ws: Path):
+    """The workspace's own nurture.py, loaded with its System/tools/ on the
+    path for as long as the block runs, and its context for today. Nothing
+    beside this extra: what it counts is that workspace's pages."""
+    key = Path(ws)
+    src = key / "System" / "tools" / "nurture.py"
+    if not src.is_file():
+        raise Refused("System/tools/nurture.py is missing; update Garrick")
+    with tools_path(key):
+        if key not in _NURTURE_MOD:
+            try:
+                spec = importlib.util.spec_from_file_location("garrick_page_nurture", str(src))
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules["garrick_page_nurture"] = mod
+                spec.loader.exec_module(mod)
+            except Exception as e:
+                raise Refused("System/tools/nurture.py cannot be loaded (%s); update Garrick" % type(e).__name__)
+            if not all(callable(getattr(mod, n, None)) for n in ("organisation_item", "party_item", "record_answer",
+                                                                  "run_correction", "record_correction", "Ctx")):
+                raise Refused("this workspace's nurture.py is too old for the Questions panel; update Garrick")
+            _NURTURE_MOD[key] = mod
+        yield _NURTURE_MOD[key]
+
+
+class RowRefused(Exception):
+    """One row put back, with the words the row says."""
+
+
+def zone_names(ws: Path) -> set:
+    folder = Path(ws) / "Zones"
+    return {z.name for z in folder.iterdir() if z.is_dir()} if folder.is_dir() else set()
+
+
+class View:
+    """The near side of the walls for what the Questions panel shows: the zone
+    shown, and the party chosen in it. `ok(tags)` is the one test, for what the
+    panel lists, counts and offers and for what a save may write: every tag
+    belongs to the zone, no two are walled from each other, and, with a party
+    chosen, it is among them and none is walled from it. The view of entity
+    pages that do not say whose they are (`zone` is UNATTRIBUTED) names, as
+    `scope`, the zone whose parties may be given to them. Fail closed: an
+    unknown zone or party, or a zone whose own parties a wall divides with no
+    party chosen, is refused with the rules' sentence."""
+
+    def __init__(self, ws: Path, lib, zone, scope):
+        wall = wall_sentence(ws)
+        self.lib, self.ctx = lib, lib.load_context(ws)
+        zones = zone_names(ws)
+        self.unattributed = zone == UNATTRIBUTED and zone not in zones
+        home = str(scope).strip() if self.unattributed and scope else zone
+        scope = bare_tag(lib, str(scope)) if scope not in (None, "") and not self.unattributed else None
+        if not isinstance(home, str) or home not in zones:
+            raise Refused(wall)
+        self.zone = home
+        self.parties = {t for t, p in (self.ctx.get("parties") or {}).items() if str(p.get("zone") or "").strip() == home}
+        self.chosen = None
+        if self.unattributed:
+            return
+        if scope is not None:
+            if scope not in self.parties:
+                raise Refused(wall)
+            self.chosen = scope
+        elif not self.parties or lib.crossings(self.ctx, self.parties):
+            raise Refused(wall)
+
+    def ok(self, tags) -> bool:
+        tags = set(tags or ())
+        if self.unattributed or not tags or not tags <= self.parties:
+            return False
+        if self.lib.crossings(self.ctx, tags):
+            return False
+        return self.chosen is None or self.chosen in tags
+
+
+def page_party_tags(lib, ws: Path, path: Path) -> Optional[set]:
+    """The party tags a Meetings page names, `party:` and `parties:`; None when
+    it cannot be read plainly or names none (treated as walled)."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    if lib.frontmatter_form_problem(text):
+        return None
+    fm = lib.parse_frontmatter_text(text)
+    # Two spellings of the party key (`party:` and `PARTY:`) can be read two ways: the page says whose it is to no one.
+    if any(str(k).strip().lower() in ("party", "parties") and str(k).strip() not in ("party", "parties") for k in fm):
+        return None
+    got = lib.labels(ws, path)          # one derivation: a page whose party: and parties: disagree reads as neither
+    known = lib.load_context(ws).get("parties", {})
+    tags = set(got or ())
+    return tags if tags and all(t in known for t in tags) else None
+
+
+def near_side(lib, ws: Path, view: "View", path: Path) -> bool:
+    return view.ok(page_party_tags(lib, ws, path))
+
+
+def meetings_page(ws: Path, rel, folder: str) -> Path:
+    """A page of the Meetings wiki's wiki/<folder>/, by its path from the
+    workspace's top; anything else, a link, or a path out of the folder, is
+    refused."""
+    if not isinstance(rel, str) or not rel.endswith(".md") or rel.startswith(("/", "~")) or "\0" in rel or len(rel) > 400:
+        raise RowRefused("not a page of the Meetings wiki")
+    base = (Path(ws) / "Wikis" / "Meetings" / "wiki" / folder).resolve()
+    raw = Path(ws) / rel
+    path = raw.resolve()
+    if base not in path.parents or raw.is_symlink() or not path.is_file() or SKIP & set(path.relative_to(base).parts):
+        raise RowRefused("that page is not in wiki/%s/ any more" % folder)
+    # On a disk that ignores case a path can be spelled two ways and git knows one: only the spelling on disk is taken.
+    here = Path(ws).resolve()
+    for part in path.relative_to(here).parts:
+        if part not in os.listdir(str(here)):
+            raise RowRefused("that page is not in wiki/%s/ any more" % folder)
+        here = here / part
+    return path
+
+
+def clean_in_repo(ws: Path, path: Path) -> None:
+    """Refuse a page whose repository cannot be found, or that has changes not
+    committed or is not committed at all: a commit of it would carry somebody
+    else's work."""
+    repo = repo_of_path(ws, path)
+    if repo is None:
+        raise RowRefused("no repository holds that page, so it could not be undone")
+    code, said = git(repo, "status", "--porcelain", "--untracked-files=all", "--", str(path.relative_to(repo)))
+    if code != 0 or said.strip():
+        raise RowRefused("that page has changes not committed, or is not committed at all")
+
+
+def clean_rows(req: dict) -> list:
+    rows = req.get("rows")
+    if not isinstance(rows, list) or not rows:
+        raise Refused("there is nothing to save")
+    if len(rows) > NURTURE_ROWS_MAX:
+        raise Refused("at most %d answers are saved at once" % NURTURE_ROWS_MAX)
+    out = []
+    for r in rows:
+        if not isinstance(r, dict) or set(r) - set(NURTURE_ROW_KEYS):
+            raise Refused("an answer carries a field the review page does not send, so nothing was written")
+        if r.get("do") not in NURTURE_DO or r.get("choice", "yes") not in NURTURE_CHOICES:
+            raise Refused("an answer is not one the review page sends, so nothing was written")
+        for k in ("key", "path", "pick", "until"):
+            v = r.get(k)
+            if v is not None and (not isinstance(v, str) or len(v) > 400 or "\0" in v or (k == "pick" and len(v) > NURTURE_WORD_MAX)):
+                raise Refused("an answer carries a value the review page does not send, so nothing was written")
+        if r.get("key") is not None and not KEY_RE.fullmatch(r["key"]):
+            raise Refused("an answer names a finding by a key the review page does not make, so nothing was written")
+        edit = r.get("edit")
+        if edit is not None:
+            if isinstance(edit, dict) and isinstance(edit.get("old"), str) and len(edit["old"].strip()) < 3:
+                raise Refused("the value to correct needs at least three characters, so nothing was written")
+            if not isinstance(edit, dict) or set(edit) - {"old", "new"} or not all(
+                    isinstance(edit.get(k), str) and 0 < len(edit[k]) <= NURTURE_WORD_MAX
+                    and not any(ord(c) < 32 or c == "\x7f" for c in edit[k]) for k in ("old", "new")):
+                raise Refused("a correction carries more than the two values, so nothing was written")
+        out.append(dict(r, choice=r.get("choice", "yes")))
+    return out
+
+
+def later_path(ws: Path) -> Path:
+    return Path(ws).joinpath(*NURTURE_LATER)
+
+
+def read_later(ws: Path) -> dict:
+    """Rows put off: {key: {"until": day, "path": page}}. A key is bound to the
+    page it was put off for, so a forged key cannot hide another finding."""
+    try:
+        data = json.loads(later_path(ws).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if KEY_RE.fullmatch(str(k)) and isinstance(v, dict)
+            and isinstance(v.get("until"), str) and isinstance(v.get("path"), str)}
+
+
+def save_later(ws: Path, put: dict, drop: set) -> None:
+    """Rows put off until a date, and rows that were answered: a small file the
+    tools own, beside the day's report, never committed."""
+    data = read_later(ws)
+    if not put and not (drop & set(data)):
+        return
+    for k in drop:
+        data.pop(k, None)
+    data.update(put)
+    target = later_path(ws)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=1, sort_keys=True) + "\n")
+        os.replace(tmp, str(target))
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def put_back(w: Writes, rows: list, bad: dict, say_wall: str, refuse) -> None:
+    """Put back the rows in `bad` ({tag: kind}) and any row that shares a real
+    file with one, until no more do, and say each: the rules' sentence for a
+    wall, else what the kind is. What is put back is worked out after the
+    sharing is settled, so a row said not to be written has all its files back."""
+    while True:
+        back = set()
+        for tag in bad:
+            back |= {p for p, o in w.owners.items() if tag in o}
+        more = {tag for tag, row in rows if tag not in bad and any(tag in o for p, o in w.owners.items() if p in back)}
+        if not more:
+            break
+        for tag in more:
+            bad[tag] = "wall"
+    w.undo(back)
+    for tag, kind in bad.items():
+        refuse(tag, say_wall if kind == "wall" else
+               "the walls check could not read this page's form, so nothing was written for it" if kind == "form" else
+               "a check found something new on this page, so nothing was written for it" if kind == "new" else
+               "another session has files staged in that repository, so nothing was written for it")
+
+
+def walls_gate(ws: Path, w: Writes, rows: list, say_wall: str, refuse) -> None:
+    """The walls check on what the rows wrote, staged, per repository. When it
+    refuses, each row is checked on its own files, the rows it refuses are put
+    back (and any row that shares a file with one), and the rest are checked
+    again. `rows` are (tag, the row); `refuse(tag, why)` records a row put
+    back. A refusal no row accounts for refuses the lot."""
+    def check(files) -> str:
+        groups = {}
+        for p in files:
+            repo = repo_of_path(ws, p)
+            if repo is None:
+                continue
+            groups.setdefault(repo, []).append(str(p.relative_to(repo)))
+        for repo, rels in groups.items():
+            stage(repo, rels)
+            try:
+                said = walls_on_staged(ws, repo, rels)
+            finally:
+                unstage(repo, rels)
+            if said:
+                return said
+        return ""
+    changed = set(w.changed())
+    said = check(changed)
+    if not said:
+        return
+    bad = {}
+    for tag, row in rows:
+        mine = [p for p, o in w.owners.items() if tag in o and p in changed]
+        one = check(mine) if mine else ""
+        if one:
+            bad[tag] = refusal_kind(one)
+    if not bad:
+        raise Refused(say_wall if refusal_kind(said) == "wall" else
+                      "the walls check could not pass the change as a whole (%s), so nothing was written" % refusal_kind(said))
+    put_back(w, rows, bad, say_wall, refuse)
+    left = set(w.changed())
+    again = check(left) if left else ""
+    if again:
+        raise Refused(say_wall if refusal_kind(again) == "wall" else
+                      "the walls check could not pass what was left, so nothing was written")
+
+
+def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool = False):
+    """Save rows (see clean_rows) as one transaction. Returns the reply, or,
+    for a single verb, its sentence."""
+    wall = wall_sentence(ws)
+    lib = prefs().lib(ws)
+    if lib is None or not all(callable(getattr(lib, n, None)) for n in
+                              ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide",
+                               "entity_names", "staged_walls_refusal")):
+        raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
+    view = View(ws, lib, req.get("zone"), req.get("scope"))
+    headless = os.environ.get("GARRICK_HEADLESS", "").strip() not in ("", "0")
+    results = {}                    # index -> {"key", "ok", "say"}
+    plan = []                       # (index, row, how, item, asked, extra)
+
+    def refuse(i, why):
+        r = rows[i]
+        results[i] = {"key": r.get("key"), "ok": False, "say": why}
+        plan[:] = [entry for entry in plan if entry[0] != i]
+
+    with held("nurture-answers.lock", busy="another answer is still being saved"), nurture_tools(ws) as N:
+        ctx = N.Ctx(Path(ws).resolve(), headless=headless, today=today)
+
+        def open_walls(w):
+            """The pages that carry a walls-family finding already: not writable from the panel."""
+            before = getattr(w, "before_counts", None) or {}
+            return {f[1] for found in before.values() if isinstance(found, set) for f in found if wallish(f[0], f[2])}
+
+        def one(i, row, w):
+            """Write one row's change; a RowRefused leaves nothing of it."""
+            path_rel = row.get("path")
+            if row["choice"] in ("no", "later"):
+                if row["do"] == "answer":
+                    page = meetings_page(ws, path_rel, "entities")
+                    if not view.unattributed:
+                        raise RowRefused(wall)
+                else:
+                    page = meetings_page(ws, path_rel, "people")
+                    if view.unattributed or not near_side(lib, ws, view, page):
+                        raise RowRefused(wall)
+                if row.get("edit") and row["do"] != "answer":
+                    run_edit(i, row, page, w)
+                if row["choice"] == "later":
+                    try:
+                        day = dt.date.fromisoformat(row.get("until") or "")
+                    except ValueError:
+                        raise RowRefused("not a later day: %r" % (row.get("until"),))
+                    if day <= today:
+                        raise RowRefused("not a later day: %r" % (row.get("until"),))
+                    if not isinstance(row.get("key"), str):
+                        raise RowRefused("a row put off is named by its key")
+                    plan.append((i, row, "later", None, "", {"until": day.isoformat(), "path": ctx.rel(page)}))
+                    return
+                plan.append((i, row, "no", None, ctx.rel(page), ""))
+                return
+            do = row["do"]
+            folder = "entities" if do == "answer" else "people"
+            if do == "correct":
+                if not row.get("edit"):
+                    raise RowRefused("say the old value and the new one")
+                page = meetings_page(ws, path_rel, "people") if "/people/" in "/" + str(path_rel) else meetings_page(ws, path_rel, "entities")
+            else:
+                page = meetings_page(ws, path_rel, folder)
+            if do == "answer":
+                if not view.unattributed:
+                    raise RowRefused(wall)          # an entity page is asked about in the unattributed view only
+                tag = bare_tag(lib, str(row.get("pick") or "").strip())
+                if tag != "none" and tag not in view.parties:
+                    raise RowRefused(wall)          # only the parties of the zone chosen are offered
+            else:
+                if view.unattributed or not near_side(lib, ws, view, page):
+                    raise RowRefused(wall)
+            if do != "correct":
+                if ctx.rel(page) in open_walls(w):
+                    raise RowRefused(wall)          # a page with a wall finding open is read-only here
+                clean_in_repo(ws, page)
+            edit = row.get("edit")
+            if edit and do != "correct":
+                run_edit(i, row, page, w)
+            if do == "correct":
+                run_edit(i, row, page, w)
+                return
+            try:
+                if do == "answer":
+                    if row["choice"] != "another":
+                        raise RowRefused("say whose it is: a party, or none")
+                    item, asked = N.party_item(ctx, ctx.rel(page), row.get("pick") or "")
+                    answer = item.fix["party"]
+                else:
+                    pick = row.get("pick") or "" if row["choice"] == "another" else ""
+                    if row["choice"] == "another" and not pick.strip():
+                        raise RowRefused("name the entity page")
+                    item, asked = N.organisation_item(ctx, ctx.rel(page), pick)
+                    answer = "yes" if not pick else "another page: %s" % pick
+                    target = re.fullmatch(r"\[\[wiki/entities/([^\]|#]+)\]\]", item.fix["link"])
+                    entity = ctx.root.joinpath("Wikis", "Meetings", "wiki", "entities", (target.group(1) if target else "") + ".md")
+                    if not target or not near_side(lib, ws, view, entity):
+                        raise RowRefused(wall)
+            except N.Refusal as e:
+                # A page picked by name that cannot be used is said as a wall, whatever stopped it: a typed or
+                # forged name must not tell a page that is not there from one on the far side.
+                raise RowRefused(wall if (do == "organisation" and row["choice"] == "another") else str(e))
+            w.tag = i
+            N.OPS[item.fix["op"]](ctx, item, ShimJournal(w))
+            plan.append((i, row, do, item, asked, answer))
+
+        def run_edit(i, row, page, w):
+            if view.unattributed or not near_side(lib, ws, view, page) or ctx.rel(page) in open_walls(w):
+                raise RowRefused(wall)
+            edit = row["edit"]
+            w.tag = i
+            index = ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md"
+
+            def only(hit) -> bool:
+                """A correction in the panel reaches Meetings wiki pages on the near side of the view, and nothing
+                else: not a zone's notes, a memory, a page with no readable party or another party's page."""
+                pages = [hit.path] if hit.kind == "wiki" else list(hit.pages) if hit.kind == "raw" else []
+                base = (ctx.root / "Wikis" / "Meetings" / "wiki").resolve()
+                # A decision page is settled by the user's own save (#224, point 5): no correction rewrites its
+                # `question:`, `status:`, `zone:` or `parties:`, so it is left out whole.
+                settled = base / "decisions"
+                return bool(pages) and all(base in Path(x).resolve().parents and settled not in Path(x).resolve().parents
+                                           and near_side(lib, ws, view, Path(x)) for x in pages)
+            try:
+                out = N.run_correction(ctx, [ctx.rel(page)], edit["old"], edit["new"], True, "", [], ctx.rel(page),
+                                       commit=False, watch=w.watch, only=only, rebuild=False)
+            except ValueError as e:
+                raise RowRefused(str(e))
+            plan.append((i, row, "correct", out, "", edit))
+
+        def rebuild_index(w):
+            """The Meetings index, once, from the pages that remain: it belongs to no row, so a row put back
+            never leaves it describing pages it did not write."""
+            index = ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md"
+            w.tag = None
+            if not any(e[2] == "correct" and e[3].get("done") and e[3]["done"].changed for e in plan):
+                if index in w.before:
+                    w.undo([index])
+                return
+            ingest = ctx.root.joinpath(*N.correct.INGEST)
+            if not ingest.is_file():
+                raise Refused("the Meetings index cannot be rebuilt (the meetings skill's ingest.py is missing), so nothing was written")
+            w.watch(index)
+            try:
+                r = subprocess.run([sys.executable, str(ingest), "--root", str(ctx.root), "index"], capture_output=True, text=True,
+                                   stdin=subprocess.DEVNULL, timeout=CHECK_TIMEOUT)
+            except subprocess.SubprocessError:
+                raise Refused("the Meetings index took too long to rebuild, so nothing was written")
+            if r.returncode != 0:
+                w.undo([index])
+                raise Refused("the Meetings index could not be rebuilt, so nothing was written")
+
+        def triage(w, new, walls):
+            """Findings the write made, or walls-family findings on a file it wrote, put on the rows that wrote
+            those files by path: the rows are put back with their own reply, and the rest go on."""
+            root = Path(ws).resolve()
+            hit = {f[1] for _k, f in new} | {f[1] for _k, f in walls}
+            wallish_paths = {f[1] for _k, f in walls} | {f[1] for _k, f in new if wallish(f[0], f[2])}
+            bad = {}
+            for e in plan:
+                if e[2] not in NURTURE_DO:
+                    continue
+                mine = {str(p.relative_to(root)) for p, o in w.owners.items() if e[0] in o and root in p.parents}
+                if mine & hit:
+                    bad[e[0]] = "wall" if mine & wallish_paths else "new"
+            if bad:
+                put_back(w, [(e[0], e[1]) for e in plan if e[2] in NURTURE_DO], bad, wall, refuse)
+                rebuild_index(w)
+
+        def change(w):
+            for i, row in enumerate(rows):
+                w.tag = i
+                try:
+                    one(i, row, w)
+                except RowRefused as e:
+                    refuse(i, str(e))
+                except N.Held as e:
+                    refuse(i, "held: %s" % e)
+            w.tag = None
+            walls_gate(ws, w, [(e[0], e[1]) for e in plan if e[2] in NURTURE_DO], wall, refuse)
+            rebuild_index(w)
+            return None
+
+        def message(label, rels):
+            repo = Path(ws).resolve() / label if label != "." else Path(ws).resolve()
+            counts = {}
+            for e in plan:
+                if e[2] in NURTURE_DO and any(e[0] in o and repo_of_path(ws, p) == repo for p, o in TX.owners.items()):
+                    counts[e[2]] = counts.get(e[2], 0) + 1
+            words = {"answer": ("entity party", "entity parties"), "organisation": ("organisation link", "organisation links"),
+                     "correct": ("correction", "corrections")}
+            return "%s: context nurtured by hand; %s" % (
+                label.split("/", 1)[-1] if label != "." else "Workspace",
+                ", ".join("%d %s" % (n, words[k][0 if n == 1 else 1]) for k, n in sorted(counts.items())))
+
+        def finish(result, done):
+            refused_repos = done["refused"]
+            put, answered_keys = {}, set()
+            for e in list(plan):
+                i, row, how, item, asked, extra = e
+                if how in ("no", "later"):
+                    if how == "later":
+                        put[row["key"]] = extra
+                    said = "Left as it is" if how == "no" else "Put off until %s" % extra["until"]
+                    before = results.get(i)
+                    one_outcome = before["say"] if before and before["ok"] and how == "no" else \
+                        "%s; %s" % (before["say"], said.lower()) if before and before["ok"] else said
+                    results[i] = {"key": row.get("key"), "ok": True, "say": one_outcome}
+                    continue
+                files = [p for p, o in TX.owners.items() if i in o] if TX else []
+                repos = {repo_of_path(ws, p) for p in files}
+                failed = [r for r in repos if r is not None and (str(r.relative_to(Path(ws).resolve())) if r != Path(ws).resolve() else ".") in refused_repos]
+                if failed:
+                    names = {str(r.relative_to(Path(ws).resolve())) if r != Path(ws).resolve() else "." for r in repos if r is not None}
+                    kept = sorted(n for n in names if n in done["commits"])
+                    results[i] = {"key": row.get("key"), "ok": False,
+                                  "say": ("committed in %s, not committed elsewhere and put back there" % ", ".join(kept)) if kept
+                                  else "not committed, so nothing changed"}
+                    continue
+                if how == "correct":
+                    out = item
+                    said = "Corrected %s to %s" % (extra["old"], extra["new"]) if out.get("done") and out["done"].changed else \
+                        "Nothing live held the old value"
+                    results[i] = {"key": row.get("key"), "ok": True, "say": said}
+                    continue
+                results[i] = {"key": row.get("key"), "ok": True,
+                              "say": ("Whose it is: %s" % extra) if how == "answer" else "Where they work: written"}
+                answered_keys.add(row.get("key"))
+            # the day's report: the same lines the chat path writes
+            for e in plan:
+                i, row, how, item, asked, extra = e
+                if how == "no" and results.get(i, {}).get("ok"):
+                    N.record_answer(ctx, asked, "Is the proposed answer right?", "no", settled=False)
+                    continue
+                if not results.get(i, {}).get("ok") or how in ("no", "later"):
+                    continue
+                if how == "correct":
+                    class Done:
+                        pass
+                    d = Done()
+                    app = item.get("done")
+                    d.commits = [(r, s) for r, s in done["commits"].items()]
+                    d.changed = list(app.changed) if app else []
+                    d.superseded = list(app.superseded) if app else []
+                    d.uncommitted = [(p, "in no repository, so changed and not committed") for p in done["uncommitted"]]
+                    d.refused = list(done["refused"].items())
+                    rec = N.read_record(ctx)
+                    N.record_correction(ctx, rec, item["item"], extra["old"], extra["new"], "", d)
+                    N.write_report(ctx, rec)
+                elif how == "answer":
+                    N.record_answer(ctx, item.path, asked, extra)
+                else:
+                    N.organisation_answered(ctx, item, asked, "" if extra == "yes" else extra.split(": ", 1)[-1])
+            save_later(ws, put, {k for k in answered_keys if k})
+            return results
+
+        if not any(True for _ in rows):
+            raise Refused("there is nothing to save")
+        out = transaction(ws, change, commit=message, after=finish, triage=triage)
+    saved = sum(1 for r in out.values() if r["ok"] and not r["say"].startswith(("Left as it is", "Put off")))
+    later = sum(1 for r in out.values() if r["ok"] and r["say"].startswith("Put off"))
+    held_back = [r for r in out.values() if not r["ok"]]
+    if single:
+        only = out[0]
+        if not only["ok"]:
+            raise Refused(only["say"])
+        return only["say"]
+    say = "Saved %d answer%s" % (saved, "" if saved == 1 else "s")
+    if later:
+        say += ", put off %d" % later
+    if held_back:
+        say += ". %d row%s put back, named below" % (len(held_back), " was" if len(held_back) == 1 else "s were")
+    return {"say": say, "rows": [dict(out[i], index=i) for i in sorted(out)]}
+
+
+NURTURE_GROUPS_MAX = 20
+
+
+def nurture_save_all(ws: Path, req: dict, today: dt.date):
+    """A save from the panel's *All* view (#384). `groups` is a list of
+    {"zone", "scope", "rows"}, one for each view the rows were shown in. Each
+    group is saved as it would be from its own view: its own View, its own
+    transaction, its own check and its own commit, through nurture_save. Two
+    groups are never one transaction, so a wall between them cannot be
+    crossed by saving together. A group that is refused as a whole (its view
+    refused, the checks cannot run) is named and the others go on; the walls
+    still hold in each. The reply is nurture_save's, with the rows of every
+    group and the say of each."""
+    groups = req.get("groups")
+    if not isinstance(groups, list) or not groups:
+        raise Refused("there is nothing to save")
+    if len(groups) > NURTURE_GROUPS_MAX:
+        raise Refused("at most %d groups are saved at once" % NURTURE_GROUPS_MAX)
+    clean = []
+    for g in groups:
+        if not isinstance(g, dict) or set(g) - {"zone", "scope", "rows"}:
+            raise Refused("a group carries a field the review page does not send, so nothing was written")
+        for k in ("zone", "scope"):
+            if g.get(k) is not None and (not isinstance(g[k], str) or len(g[k]) > 200 or "\0" in g[k]):
+                raise Refused("a group carries a value the review page does not send, so nothing was written")
+        clean.append((g.get("zone"), g.get("scope"), clean_rows(g)))
+    rows, said, results = [], [], []
+    for gi, (zone, scope, mine) in enumerate(clean):
+        try:
+            reply = nurture_save(ws, {"zone": zone, "scope": scope}, mine, today)
+            ok, whole = True, False
+        except Refused as e:
+            whole = True
+            reply = {"say": str(e), "rows": [{"key": r.get("key"), "ok": False, "say": str(e), "index": i} for i, r in enumerate(mine)]}
+            ok = False
+        rows.extend(dict(r, group=gi) for r in reply["rows"])
+        said.append(reply["say"])
+        results.append({"zone": zone, "scope": scope, "ok": ok and all(r["ok"] for r in reply["rows"]), "say": reply["say"],
+                        "refused": whole})
+    return {"say": " | ".join(said), "rows": rows, "groups": results}
+
+
+class ShimJournal:
+    """What nurture's fixes write through, in place of its Journal: the
+    transaction's Writes, which put every file back."""
+
+    def __init__(self, w):
+        self.w = w
+
+    def write(self, path, text):
+        self.w.write(path, text)
+
+
+def nurture_act(ws: Path, req: dict, today: dt.date):
+    verb = req["verb"]
+    if verb == "nurture-save":
+        return nurture_save(ws, req, clean_rows(req), today)
+    if verb == "nurture-save-all":
+        return nurture_save_all(ws, req, today)
+    if verb == "nurture-answer":
+        row = {"do": "answer", "path": req.get("path"), "choice": "another", "pick": req.get("party")}
+    elif verb == "nurture-organisation":
+        row = {"do": "organisation", "path": req.get("path"), "choice": "another" if req.get("entity") else "yes",
+               "pick": req.get("entity") or None}
+    else:
+        row = {"do": "correct", "path": req.get("path"), "choice": "yes",
+               "edit": {"old": req.get("old"), "new": req.get("new")}}
+    return nurture_save(ws, req, clean_rows({"rows": [{k: v for k, v in row.items() if v is not None}]}), today, single=True)
 
 
 def managed_places() -> Optional[list]:
@@ -3292,6 +4131,8 @@ def owner_party(ws: Path, zone: Path, name: str) -> str:
     there is none, and System/context.md committed on its own in the
     workspace's own repository, as scaffold.py says a new party is."""
     if not name or "\n" in name or len(name) > NAME_MAX or name.startswith("-"):
+        raise Refused(your_work().OWNER_ASK)
+    if name.strip().casefold() in ("none", "public"):         # reserved tags are no party's name
         raise Refused(your_work().OWNER_ASK)
 
     def found():
@@ -4238,8 +5079,8 @@ def fix_finding(ws: Path, req: dict) -> str:
 
 
 def act(ws: Path, req, today=None, now=None):
-    """Carry out one request, or raise Refused. What to say, or, for back
-    and stack, a reply whose "say" comes with what the caller reads back."""
+    """Carry out one request, or raise Refused. What to say, or a reply whose
+    "say" comes with what the caller reads back."""
     if not isinstance(req, dict) or req.get("verb") not in VERBS + CMUX_VERBS:
         raise Refused("unknown action")
     refuse_undeclared(ws, req)      # before anything reads the request's own fields
@@ -4258,15 +5099,6 @@ def act(ws: Path, req, today=None, now=None):
         return note_open(ws, req)
     if req["verb"] in ("park", "wake"):
         return park(ws, req, today or dt.date.today())
-    if req["verb"] == "interrupt":
-        now = now or dt.datetime.now().replace(second=0, microsecond=0)
-        return interrupt(ws, req, dt.datetime.combine(today, now.time()) if today else now)
-    if req["verb"] == "back":
-        return back(ws, req)
-    if req["verb"] == "stack":
-        return show_stack(ws)
-    if req["verb"] == "unstack":
-        return unstack(ws, req)
     if req["verb"] == "todo-add":
         return todo_add(ws, req)
     if req["verb"] == "answer":
@@ -4275,6 +5107,8 @@ def act(ws: Path, req, today=None, now=None):
         return put_off(ws, req, today or dt.date.today())
     if req["verb"].startswith("question-"):
         return wiki_question_act(ws, req, today or dt.date.today())
+    if req["verb"].startswith("nurture-"):
+        return nurture_act(ws, req, today or dt.date.today())
     if req["verb"] == "continue":
         return continue_work(ws, req, now)
     if req["verb"] == "ask-desktop":
@@ -4310,7 +5144,7 @@ def act(ws: Path, req, today=None, now=None):
 # ask box or a session changes that the page shows. Every other verb leaves the
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
-               "rename", "move", "delete", "undo", "interrupt", "back", "unstack")
+               "rename", "move", "delete", "undo")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
 
@@ -4345,7 +5179,7 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
     `via` names the caller, one of CALLERS: it goes into the record.
 
     An action that changed something the page shows ends with the page
-    request (ask_for_page), once, after the commit and the stack change, and
+    request (ask_for_page), once, after the commit, and
     the reply says `"built": true`. Only that: a refusal, a repeat joined or
     answered, a read, a verb this does not build for, and a page that could
     not be asked for all leave the key out, and the caller rebuilds as it
@@ -4408,7 +5242,7 @@ def start_record(ops, req: dict, via: str):
 
 # The command-line form for a session (#344): a verb and the fields it takes as
 # options, no JSON. Each builds the request a button sends, so everything after
-# it is the same code: the stale check, the commit and its wall check, the stack,
+# it is the same code: the stale check, the commit and its wall check,
 # the record, the page request. The line a Todo verb names is given in words
 # (`--line`), and resolved here to the key the page would send.
 CLI_FIELDS = {
@@ -4417,10 +5251,11 @@ CLI_FIELDS = {
     "new-thread": ("zone", "project", "name", "spoken"),
     "rename": ("zone", "project", "thread", "to"), "move": ("zone", "project", "thread", "to"),
     "delete": ("zone", "project", "thread", "confirm"),
-    "undo": ("zone", "commit"), "unstack": ("zone", "project", "thread"),
+    "undo": ("zone", "commit"),
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
-    "question-close": ("wiki", "file"), "question-decide": ("wiki", "file"),
+    "question-close": ("wiki", "file"), "question-decide": ("wiki", "file", "words"),
+    "question-open-sections": ("wiki", "confirm", "pages"),
     "question-work": ("wiki", "file"), "question-done": ("wiki", "file"),
     "todo-done": ("zone", "line", "file"), "todo-undo": ("zone", "line", "file"),
     "todo-date": ("zone", "line", "file", "date"),
@@ -4476,7 +5311,7 @@ def command_parser() -> argparse.ArgumentParser:
                                                   "with a verb, page with JSON)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
-                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until"):
+                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages"):
         ap.add_argument("--" + name)
     return ap
 

@@ -25,7 +25,7 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 import fixtures  # noqa: E402
-from fixtures import build_workspace, project_hub, thread_note, write  # noqa: E402
+from fixtures import build_workspace, thread_note, write  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "extras" / "status" / "page_action.py"
@@ -639,11 +639,11 @@ class TestWaitSettings(ActionCase):
     def test_saved_checked_and_beside_the_rest(self):
         self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
         said = self.act(verb="settings", **{"while-you-wait": {"on": False, "threshold": 90, "same-zone": True,
-                                                                 "sources": ["due", "stack"], "parked-days": 60}})
+                                                                 "sources": ["due", "back"], "parked-days": 60}})
         self.assertEqual("Settings saved", said)
         saved = json.loads(self.path().read_text())
         self.assertEqual("cmux", saved["default"])                                   # the rest stays
-        self.assertEqual({"on": False, "threshold": 90, "same-zone": True, "sources": ["due", "stack"],
+        self.assertEqual({"on": False, "threshold": 90, "same-zone": True, "sources": ["due", "back"],
                           "parked-days": 60, "wrap-days": 14}, saved["while-you-wait"])
 
     def test_refused_with_the_reason(self):
@@ -1081,7 +1081,7 @@ class TestJournal(ActionCase):
     def committing_requests(self):
         """One request of every verb page_action.py commits through commit() or
         commit_all(), with the state each needs committed first: the six the
-        record keeps, and an interruption, an answer and a put-off question.
+        record keeps, and an answer and a put-off question.
         The manage verbs commit through scaffold.py, and are held to the same in
         test_scaffold_manage.py, against an installed workspace's own check."""
         self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Send the revised"))
@@ -1096,8 +1096,6 @@ class TestJournal(ActionCase):
             "wake": {"verb": "wake", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"},
             "todo-undo": {"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "key": ticked},
             "park": {"verb": "park", "zone": "Work", "project": "Birch Entry"},
-            "interrupt": {"verb": "interrupt", "zone": "Work", "project": "Birch Entry", "thread": "Market Sizing",
-                          "where": "Halfway through the volumes", "next": "Fill in row 14"},
             "answer": {"verb": "answer", "zone": "Work", "file": asked, "label": "500 pallets"},
             "later": {"verb": "later", "zone": "Work", "file": asked}})
 
@@ -1109,7 +1107,7 @@ class TestJournal(ActionCase):
         import test_operations as t
         wall = t.ops.WALL_REFUSAL
         requests = self.committing_requests()
-        self.assertEqual({"park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add", "interrupt", "answer",
+        self.assertEqual({"park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add", "answer",
                           "later"}, set(requests))
         line = self.wall_line("Birch Entry/Threads/Market Sizing/Market Sizing.md",
                               "names Acme Corp (`acme`), or one of its people; a wall stands between birch and acme")
@@ -1568,313 +1566,22 @@ class TestTogether(ActionCase):
         self.assertEqual(60, len(pa.rekeys("Personal", "Todo.md")))
 
 
-FULL_BLOCK = """### Resume here
+class TestNoStack(ActionCase):
+    """There is no interruption stack (#367): the verbs that kept it are gone,
+    and nothing in the executor writes System/generated/interrupted.json."""
 
-**Where it stands, 1 March 2026.** The first draft is out;
-Dana has it.
+    def test_the_stack_verbs_are_not_verbs(self):
+        for verb in ("interrupt", "back", "stack", "unstack"):
+            self.assertNotIn(verb, pa.VERBS)
+            with self.assertRaises(pa.Refused) as ctx:
+                pa.act(self.root, {"verb": verb, "zone": "Work", "project": "Acme Review", "thread": "Pricing"},
+                       today=TODAY)
+            self.assertEqual("unknown action", str(ctx.exception))
 
-| | |
-|---|---|
-| Live artifact | `Deliverables/260301 - Pricing memo.md` |
-| Rebuild with | by hand |
-| Next action | Wait for Dana's volumes |
-| Keep in mind | The tier-two rate is a guess |
-| Waiting on | Dana |
-| Deadline | none |
-"""
-
-
-class TestCheckpointAndTheStack(ActionCase):
-    """A hold rewrites Resume here without folding the checkpoint, because it
-    has to take thirty seconds, so it rebases the block instead: the same items
-    at the same time, against the block it just wrote. Back says one clause
-    more when one is waiting."""
-
-    AT = dt.datetime(2026, 10, 13, 14, 32)
-
-    def setUp(self):
-        super().setUp()
-        self.lib = pa.checkpoint_lib(self.root)
-        self.assertIsNotNone(self.lib, "the workspace's garrick_lib should carry the checkpoint primitives")
-
-    def put(self, **kw):
-        write(self.thread, fixtures.checkpoint(self.thread.read_text(), **kw))
-        git(self.work, "commit", "-qam", "a checkpoint")
-        return self.block()
-
-    def block(self):
-        return self.lib.read_checkpoint(self.thread.read_text())
-
-    def marked(self, text):
-        """The block from one marker to the other, and nothing around it."""
-        start, end = self.lib.checkpoint_span(text)
-        return text[start:end]
-
-    def stale(self):
-        text = self.thread.read_text()
-        return self.lib.read_checkpoint(text)["base"] != self.lib.resume_hash(text)
-
-    def hold(self, **answers):
-        answers.setdefault("where", "Halfway through the tier-two volumes")
-        answers.setdefault("next", "Fill in row 14 of the volume sheet")
-        return pa.act(self.root, dict(verb="interrupt", zone="Work", project="Acme Review",
-                                      thread="Pricing", **answers), now=self.AT)
-
-    def test_a_hold_rebases_the_checkpoint_instead_of_leaving_it_stale(self):
-        before = self.put()
-        self.assertTrue(before["valid"])
-        self.hold()
-        after = self.block()
-        self.assertTrue(after["valid"], after["why"])
-        self.assertEqual(before["at"], after["at"])                         # the same time it covers
-        self.assertEqual([i["line"] for i in before["items"]], [i["line"] for i in after["items"]])
-        self.assertNotEqual(before["base"], after["base"])                  # against the block just written
-        self.assertEqual(self.lib.resume_hash(self.thread.read_text()), after["base"])
-        self.assertFalse(self.stale())
-        self.assertIn("Interrupted 14:32", self.thread.read_text())
-        self.assertEqual(("Acme Review, Pricing: interrupted", ""), self.last_commit())
-
-    def test_the_hold_writes_the_rows_and_the_entry_around_it(self):
-        self.put()
-        self.hold(keep="Owen wants the lower rate")
-        text = self.thread.read_text()
-        self.assertLess(text.index("### Resume here"), text.index("### Checkpoint"))
-        self.assertIn("| Next action | Fill in row 14 of the volume sheet |", text)
-        self.assertIn("**13 October 2026.** Interrupted at 14:32.", text)   # below the rule, not in the block
-        self.assertLess(text.index("<!-- /garrick-checkpoint -->"), text.index("**13 October 2026.**"))
-        self.assertEqual(1, text.count("### Checkpoint"))
-
-    def test_a_block_edited_by_hand_is_left_exactly_as_it_is(self):
-        self.put()
-        write(self.thread, self.thread.read_text().replace("dropping tier three", "dropping tier two"))
-        git(self.work, "commit", "-qam", "a hand edit")
-        before = self.thread.read_text()
-        self.hold()
-        after = self.thread.read_text()
-        self.assertEqual(self.marked(before), self.marked(after))
-        self.assertFalse(self.block()["valid"])                             # reported, never rewritten
-
-    def test_a_thread_with_no_checkpoint_is_held_as_it_always_was(self):
-        self.assertEqual("Held Acme Review, Pricing at 14:32", self.hold())
-        self.assertIsNone(self.block())
-
-    def test_back_says_one_clause_more_when_a_checkpoint_is_waiting(self):
-        self.put()
-        self.hold(keep="Owen wants the lower rate")
-        said = pa.act(self.root, {"verb": "back"}, today=TODAY)
-        self.assertTrue(said["say"].endswith("There's also an unwrapped checkpoint from 14:32."), said["say"])
-        self.assertEqual("14:32", said["checkpoint"])
-        self.assertIn("Keep in mind: Owen wants the lower rate.", said["say"])
-
-    def test_back_says_nothing_of_one_that_cannot_be_read_and_nothing_at_all_without_one(self):
-        self.hold()
-        said = pa.act(self.root, {"verb": "back"}, today=TODAY)
-        self.assertNotIn("checkpoint", said["say"])
-        self.assertIsNone(said["checkpoint"])
-        self.put()
-        write(self.thread, self.thread.read_text().replace("dropping tier three", "dropping tier two"))
-        self.hold()
-        said = pa.act(self.root, {"verb": "back"}, today=TODAY)
-        self.assertNotIn("checkpoint", said["say"])                         # never resumed from, so never offered
-        self.assertIsNone(said["checkpoint"])
-
-    def test_back_never_writes_the_note(self):
-        self.put()
-        self.hold()
-        before = self.thread.read_bytes()
-        pa.act(self.root, {"verb": "back"}, today=TODAY)
-        self.assertEqual(before, self.thread.read_bytes())
-
-    def test_without_the_library_the_hold_still_goes_through(self):
-        self.put()
-        with mock.patch.object(pa, "checkpoint_lib", lambda ws: None):
-            self.assertEqual("Held Acme Review, Pricing at 14:32", self.hold())
-            said = pa.act(self.root, {"verb": "back"}, today=TODAY)
-        self.assertNotIn("checkpoint", said["say"])
-        self.assertIn("Interrupted 14:32", self.thread.read_text())
-        self.assertTrue(self.stale())        # the resume point moved and nothing rebased the block
-
-
-class TestInterrupted(ActionCase):
-    """Interrupted and Back (#32): the place saved in the note and committed,
-    the order kept in an uncommitted stack, last in, first out."""
-
-    AT = dt.datetime(2026, 10, 13, 14, 32)
-
-    def setUp(self):
-        super().setUp()
-        self.sizing = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
-        write(self.sizing, self.sizing.read_text() + "\n---\n\n**1 March 2026.** Started.\n")
-        git(self.work, "commit", "-qam", "rule")
-
-    def stack_file(self):
-        return self.root / "System" / "generated" / "interrupted.json"
-
-    def stacked(self):
-        return [e.get("thread") or e["project"] for e in json.loads(self.stack_file().read_text())["stack"]]
-
-    def hold(self, thread="Pricing", project="Acme Review", at=None, **answers):
-        answers.setdefault("where", "Halfway through the tier-two volumes")
-        answers.setdefault("next", "Fill in row 14 of the volume sheet")
-        return pa.act(self.root, dict(verb="interrupt", zone="Work", project=project, thread=thread, **answers),
-                      now=at or self.AT)
-
-    def test_interrupt_writes_the_place_and_commits(self):
-        text = self.thread.read_text().replace("### Resume here\n\n**Where it stands, 1 March 2026.** Drafting.\n", FULL_BLOCK)
-        write(self.thread, text)
-        git(self.work, "commit", "-qam", "a full block")
-        self.assertEqual("Held Acme Review, Pricing at 14:32",
-                         self.hold(keep="Dana | Owen disagree on the rate", by="a call from Birch"))
-        text = self.thread.read_text()
-        self.assertIn("### Resume here\n\n**Interrupted 14:32, 13 October 2026.** Halfway through the tier-two volumes\n\n"
-                      "| | |\n", text)
-        self.assertNotIn("Where it stands", text)                          # one resume point, overwritten
-        self.assertIn("| Next action | Fill in row 14 of the volume sheet |\n", text)
-        self.assertIn("| Keep in mind | Dana \\| Owen disagree on the rate |\n", text)
-        for kept in ("| Live artifact | `Deliverables/260301 - Pricing memo.md` |", "| Waiting on | Dana |", "| Deadline | none |"):
-            self.assertIn(kept, text)
-        self.assertIn("<Dated entries, newest first. Never edit an old one.>\n\n"
-                      "**13 October 2026.** Interrupted at 14:32, by a call from Birch.\n\n**1 March 2026.** Started.", text)
-        self.assertIn("\nstatus: active\n", text)
-        self.assertIn("\nupdated: 2026-10-13\n", text)
-        self.assertEqual(("Acme Review, Pricing: interrupted, by a call from Birch", ""), self.last_commit())
-        self.assertEqual(["Pricing"], self.stacked())
-        self.assertEqual({"where": "Interrupted 14:32, 13 October 2026. Halfway through the tier-two volumes",
-                          "next": "Fill in row 14 of the volume sheet", "keep": "Dana | Owen disagree on the rate"},
-                         pa.saved_lines(self.thread))
-
-    def test_a_skipped_keep_in_mind_is_left_or_says_nothing(self):
-        self.hold()                                                         # the fixture's block has no table yet
-        text = self.thread.read_text()
-        self.assertIn("**Interrupted 14:32, 13 October 2026.** Halfway through the tier-two volumes\n\n| | |\n|---|---|\n"
-                      "| Next action | Fill in row 14 of the volume sheet |\n| Keep in mind | nothing |\n\n---\n", text)
-        write(self.thread, self.thread.read_text().replace("| Keep in mind | nothing |", "| Keep in mind | the rate |"))
-        git(self.work, "commit", "-qam", "kept")
-        self.hold(where="Back on the volumes", keep="")
-        self.assertIn("| Keep in mind | the rate |", self.thread.read_text())
-        self.assertEqual(1, self.thread.read_text().count("**Interrupted"))
-
-    def test_held_again_moves_to_the_top_once(self):
-        self.hold()
-        self.assertEqual("Held Birch Entry, Market Sizing at 15:00; 2 on the stack",
-                         self.hold("Market Sizing", "Birch Entry", at=dt.datetime(2026, 10, 13, 15, 0)))
-        self.hold(at=dt.datetime(2026, 10, 13, 15, 10))
-        self.assertEqual(["Pricing", "Market Sizing"], self.stacked())
-        self.assertEqual("2026-10-13T15:10", json.loads(self.stack_file().read_text())["stack"][0]["at"])
-
-    def test_back_is_last_in_first_out_and_reads_the_lines_back(self):
-        self.hold(keep="Owen wants the lower rate")
-        self.hold("Market Sizing", "Birch Entry", where="Counting the shops", next="Call the council")
-        before = self.last_commit()
-        said = self.act(verb="back")
-        self.assertEqual("Back to Birch Entry, Market Sizing. Interrupted 14:32, 13 October 2026. Counting the shops. "
-                         "Next: Call the council.", said["say"])             # a Keep in mind of nothing goes unsaid
-        self.assertEqual(("Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md", "Call the council", 1),
-                         (said["path"], said["next"], said["left"]))
-        said = self.act(verb="back")
-        self.assertEqual("Acme Review, Pricing", said["name"])
-        self.assertTrue(said["say"].endswith("Next: Fill in row 14 of the volume sheet. Keep in mind: Owen wants the lower rate."))
-        self.assertEqual(before, self.last_commit())                        # back writes no note
-        self.assertEqual([], self.stacked())
-
-    def test_back_to_a_thread_takes_it_out_of_the_middle(self):
-        for thread, project in (("Pricing", "Acme Review"), ("Market Sizing", "Birch Entry")):
-            self.hold(thread, project)
-        write(self.work / "Acme Review" / "Threads" / "Rates" / "Rates.md", thread_note("Acme Review", "Rates"))
-        self.hold("Rates")
-        said = self.act(verb="back", zone="Work", project="Birch Entry", thread="Market Sizing")
-        self.assertEqual("Birch Entry, Market Sizing", said["name"])
-        self.assertEqual(["Rates", "Pricing"], self.stacked())
-        with self.assertRaisesRegex(pa.Refused, "Birch Entry, Market Sizing is not on the stack; open it instead"):
-            self.act(verb="back", zone="Work", project="Birch Entry", thread="Market Sizing")
-
-    def test_an_empty_stack_says_so_and_offers_the_latest_thread(self):
-        write(self.sizing, self.sizing.read_text().replace("updated: 2026-03-01", "updated: 2026-10-01"))
-        said = self.act(verb="back")
-        self.assertEqual("Nothing is on the stack. The most recent live thread is Birch Entry, Market Sizing.", said["say"])
-        self.assertEqual(("Work", "Birch Entry", "Market Sizing"), (said["offer"]["zone"], said["offer"]["project"],
-                                                                    said["offer"]["thread"]))
-        self.assertEqual({"say": "Nothing is on the stack.", "stack": []}, self.act(verb="stack"))
-
-    def test_a_missing_or_broken_stack_is_empty(self):
-        for broken in ("", "not json", "[1, 2]", '{"stack": 7}', '{"stack": [{"zone": "Work", "file": "Gone/Gone.md"}, 3]}'):
-            write(self.stack_file(), broken)
-            self.assertTrue(self.act(verb="back")["empty"], broken)
-            self.assertEqual([], self.act(verb="stack")["stack"], broken)
-        self.hold()
-        self.assertEqual(["Pricing"], self.stacked())
-
-    def test_the_stack_lists_and_close_for_the_day_leaves_it(self):
-        self.hold()
-        self.hold("Market Sizing", "Birch Entry", next="Call the council")
-        listed = self.act(verb="stack")
-        self.assertEqual("2 on the stack: Birch Entry, Market Sizing; Acme Review, Pricing.", listed["say"])
-        self.assertEqual(["Call the council", "Fill in row 14 of the volume sheet"], [e["next"] for e in listed["stack"]])
-        self.assertEqual(["Market Sizing", "Pricing"], self.stacked())      # listing changes nothing
-
-    def test_park_and_unstack_take_it_off(self):
-        self.hold()
-        self.hold("Market Sizing", "Birch Entry")
-        self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md")
-        self.assertEqual(["Market Sizing"], self.stacked())
-        self.act(verb="park", zone="Work", project="Birch Entry")            # a parked project takes its threads
-        self.assertEqual([], self.stacked())
-        self.act(verb="wake", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md")
-        self.hold()
-        self.assertEqual("Acme Review, Pricing is off the stack",
-                         self.act(verb="unstack", zone="Work", project="Acme Review", thread="Pricing"))
-        self.assertEqual("Acme Review, Pricing was not on the stack",
-                         self.act(verb="unstack", zone="Work", project="Acme Review", thread="Pricing"))
-        self.hold()
-        self.assertEqual("Acme Review is off the stack", self.act(verb="unstack", zone="Work", project="Acme Review"))
-        for bad in ({"project": "../Personal"}, {"project": "Acme Review", "thread": "a/b"}, {"zone": "Nope", "project": "X"}):
-            with self.assertRaises(pa.Refused, msg=bad):
-                pa.act(self.root, dict({"verb": "unstack", "zone": "Work"}, **bad))
-
-    def test_a_note_gone_by_hand_leaves_the_stack(self):
-        self.hold()
-        self.hold("Market Sizing", "Birch Entry")
-        shutil.rmtree(self.sizing.parent)                                  # deleted outside the page
-        self.assertEqual(["Acme Review, Pricing"], [e["name"] for e in self.act(verb="stack")["stack"]])
-        self.assertEqual("Acme Review, Pricing", self.act(verb="back")["name"])
-        self.assertEqual([], self.stacked())                                # and gone from the file at the next change
-
-    def test_refusals_change_nothing(self):
-        before = self.thread.read_bytes()
-        for req in ({"where": ""}, {"next": None}, {"where": 7}, {"where": "x" * 401}, {"by": "x" * 121},
-                    {"thread": "Nope"}, {"thread": None}):
-            with self.assertRaises(pa.Refused, msg=req):
-                self.hold(**req)
-        self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md")
-        with self.assertRaisesRegex(pa.Refused, "Acme Review, Pricing is parked; wake it first"):
-            self.hold()
-        write(self.sizing, thread_note("Birch Entry", "Market Sizing", status="done"))
-        with self.assertRaisesRegex(pa.Refused, "is finished"):
-            self.hold("Market Sizing", "Birch Entry")
-        self.assertFalse(self.stack_file().exists())
-        self.assertIn(b"**Where it stands, 1 March 2026.** Drafting.", before)
-
-    def test_a_refused_commit_leaves_the_stack_alone(self):
-        personal = self.root / "Zones" / "Personal"                       # the fixture's stand-in repository: every commit fails
-        write(personal / "House" / "House.md", project_hub("Personal", "House", "", ["Roof"]))
-        note = write(personal / "House" / "Threads" / "Roof" / "Roof.md", thread_note("House", "Roof"))
-        before = note.read_bytes()
-        with self.assertRaisesRegex(pa.Refused, "not committed, so nothing changed"):
-            pa.act(self.root, {"verb": "interrupt", "zone": "Personal", "project": "House", "thread": "Roof",
-                               "where": "On the gutters", "next": "Ring the roofer"}, now=self.AT)
-        self.assertEqual(before, note.read_bytes())
-        self.assertFalse(self.stack_file().exists())
-
-    def test_the_reply_carries_the_lines_as_json(self):
-        self.hold()
-        done = subprocess.run([sys.executable, str(SCRIPT), "--workspace", str(self.root)], input='{"verb": "back"}',
-                              capture_output=True, text=True)
-        reply = json.loads(done.stdout)
-        self.assertEqual((True, "Fill in row 14 of the volume sheet", "Acme Review/Threads/Pricing/Pricing.md"),
-                         (reply["ok"], reply["next"], reply["file"]))
-        self.assertTrue(reply["say"].startswith("Back to Acme Review, Pricing."))
-        log = (self.jobs / "page-actions.log").read_text()
-        self.assertNotIn("Fill in row 14", log)                              # the answers stay out of the log
+    def test_park_and_wake_write_no_stack_file(self):
+        self.act(verb="park", zone="Work", project="Acme Review", thread="Pricing")
+        self.act(verb="wake", zone="Work", project="Acme Review", thread="Pricing")
+        self.assertEqual([], sorted((self.root / "System" / "generated").glob("interrupted*")))
 
 
 class TestScript(ActionCase):

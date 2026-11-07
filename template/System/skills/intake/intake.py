@@ -60,7 +60,12 @@ from garrick_lib import (  # noqa: E402
     split_domains,
     stamp_parties,
     strip_tag,
-    walled,
+    PUBLIC,
+    always_asked,
+    labels,
+    crossings,
+    decide,
+    mail_labels,
     workspace_root,
     write_new,
 )
@@ -252,17 +257,17 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
         local, _, domain = addr.rpartition("@")
         if "+" in local:
             tag = strip_tag(local.split("+", 1)[1])
-            if tag in ctx["parties"] and tag not in plus:
+            if tag in ctx["parties"] and tag != PUBLIC and tag not in plus:
                 plus.append(tag)
         if is_own_address(ctx, addr):
             if not is_webmail(domain):
-                own_tags += [t for t in parties_for_domain(ctx, domain) if t not in own_tags]
+                own_tags += [t for t in parties_for_domain(ctx, domain) if t not in own_tags and t != PUBLIC]
             continue
         if is_webmail(domain):
             if domain not in webmail:
                 webmail.append(domain)
             continue
-        tags = parties_for_domain(ctx, domain)
+        tags = [t for t in parties_for_domain(ctx, domain) if t != PUBLIC]   # `public` is no party of a row
         if tags:
             by_domain[domain] = tags
         elif domain and domain not in unknown:
@@ -283,23 +288,26 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
         elif not own_tags:
             ask.append("There is no address on it to go by.")
     found = sorted(parties)
-    own_added = [t for t in own_tags if t not in parties and not any(walled(ctx, t, p) for p in found)
+    own_added = [t for t in own_tags if t not in parties and not crossings(ctx, [t], found)
                  and (not zone or (ctx["parties"][t].get("zone") or zone).strip() == zone)]
     parties |= set(own_added)
     parties_list = sorted(parties)
     if not parties_list and not ask:
         ask.append("Only your own addresses are on it, and they do not say whose it is.")
-    for i, a in enumerate(found):
-        for b in found[i + 1:]:
-            if walled(ctx, a, b):
-                ask.append("%s and %s are both on it, and a wall stands between them." % (_name(ctx, a), _name(ctx, b)))
+    for a, b in crossings(ctx, found):
+        ask.append("%s and %s are both on it, and a wall stands between them." % (_name(ctx, a), _name(ctx, b)))
     for tag in parties_list:
         pzone = (ctx["parties"][tag].get("zone") or "").strip()
         if zone and pzone and pzone != zone:
             ask.append("%s is a %s party, but this mail is in the %s inbox." % (_name(ctx, tag), pzone, zone))
     senders = [addr for _, addr in mail.get("from", []) if not is_own_address(ctx, addr)]
     sender_domains = [addr.rpartition("@")[2] for addr in senders]
-    return {"parties": parties_list, "ask": ask, "plus": sorted(plus), "domains": by_domain,
+    for tag in parties_list:
+        if always_asked(ctx, tag):
+            ask.append("%s is a company with two hats here, and its name never says which." % _name(ctx, tag))
+    # confirm is a return value: nothing proceeds on it without the user.
+    return {"parties": parties_list, "ask": ask, "confirm": decide(None, parties_list, "file", ctx) == "confirm" or bool(ask),
+            "plus": sorted(plus), "domains": by_domain,
             "unknown": unknown, "webmail": webmail, "own": {"tags": own_tags, "added": own_added},
             "sender_webmail": bool(sender_domains) and all(is_webmail(d) for d in sender_domains)}
 
@@ -650,16 +658,28 @@ def resolve_project(root: Path, project: Optional[str]) -> Tuple[Path, str, List
     hub = parse_frontmatter(p / (p.name + ".md"))
     if hub.get("type") != "project":
         raise Refusal("%s has no project hub note, %s.md." % (_rel(root, p), p.name))
-    party = hub.get("party")
-    tags = [strip_tag(t) for t in (party if isinstance(party, list) else [party or ""]) if strip_tag(t)]
-    if not tags:
+    got = labels(root, p)                 # one derivation: the hub's and every thread's, None where they read two ways
+    tags = sorted(got or ())
+    known = (set(load_context(root).get("parties", {})) - {"none"}) | {PUBLIC}
+    if not tags or any(t not in known for t in tags):
         raise Refusal("%s has no party, so the wall cannot be checked; set its party first." % p.name)
     return p, parts[1], tags
 
 
-def _check_wall(ctx: dict, project_tags: List[str], tags: List[str]) -> None:
-    if any(walled(ctx, a, b) for a in project_tags for b in tags):
+class Confirm(Refusal):
+    """decide() said `confirm`: nothing is filed. The question goes back to the caller, who shows it to the user;
+    the filing goes on only when the user has answered (`confirmed`)."""
+
+
+def _check_wall(ctx: dict, project_tags: List[str], tags: List[str], confirmed: bool = False,
+                why: str = "") -> None:
+    verdict = decide(project_tags, tags, "file", ctx)
+    if verdict == "deny":
         raise Refusal(WALL_REFUSAL)
+    if verdict == "confirm" and not confirmed:
+        raise Confirm("Needs your answer first: %s Nothing was filed. Ask the user, then file again with --confirmed."
+                      % (why or "it names both sides of a wall, a party that is always asked about, or a party the "
+                               "table lacks."))
 
 
 def _safe_name(name: str) -> str:
@@ -671,7 +691,7 @@ def _safe_name(name: str) -> str:
 
 
 def file_to_project(root: Path, path: Path, project: Optional[str], parties: List[str], name: str = "",
-                    as_material: bool = False) -> Path:
+                    as_material: bool = False, confirmed: bool = False) -> Path:
     """Move a dropped file from a zone's Inbox into the named project's `Sources/`.
 
     The destination is only ever the one given. Refuses without a project, a
@@ -705,7 +725,19 @@ def file_to_project(root: Path, path: Path, project: Optional[str], parties: Lis
                       "first if that is where it belongs." % (path.name, zone, folder.name, pzone, pzone))
     ctx = load_context(root)
     tags = _known_tags(ctx, parties, "A file for a project")
-    _check_wall(ctx, ptags, tags)
+    why = ""
+    if kind == "mail" and path.suffix.lower() == ".eml":
+        # a mail is written for the parties its addresses carry as well as those the user names: they are labels too
+        carried, _ = mail_labels(ctx, path.read_bytes())
+        if carried is None:
+            raise Confirm("Needs your answer first: the mail carries a party header that no table row can read. "
+                          "Nothing was filed.")
+        if carried and set(carried) != set(tags):
+            tags = sorted(set(tags) | set(carried))
+            if not confirmed:
+                raise Confirm("Needs your answer first: the mail's addresses name %s, not only the parties you gave. "
+                              "Nothing was filed." % ", ".join(sorted(carried)))
+    _check_wall(ctx, ptags, tags, confirmed, why)
     dest = folder / "Sources" / _safe_name(name or path.name)
     with filing(root):
         landing(root, folder, dest)
@@ -887,6 +919,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     t.add_argument("--project", required=True, help="Zones/<Zone>/<Project>")
     t.add_argument("--parties", required=True, help="comma-separated tags: whose material this is")
     t.add_argument("--name", default="", help="file name in Sources/ (default: as dropped)")
+    t.add_argument("--confirmed", action="store_true",
+                   help="the user has answered the question a `Needs your answer first` refusal asked; never pass it unasked")
     t.add_argument("--as-material", action="store_true",
                    help="a mail the user said is material, not a conversation: save the mail itself")
     x = sub.add_parser("extract-attachment", help="save a filed mail's attachment into a project's Sources/")
@@ -929,7 +963,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("%s\t%s\t%s" % (slug, rel(dest), rel(page)))
         elif args.command == "file-to-project":
             print(rel(file_to_project(root, Path(args.file), args.project, _tags(args.parties), args.name,
-                                      args.as_material)))
+                                      args.as_material, args.confirmed)))
         elif args.command == "extract-attachment":
             how, dest = extract_attachment(root, args.mail, args.project, args.name, args.index, args.save_as)
             print("%s\t%s" % (how, rel(dest)))

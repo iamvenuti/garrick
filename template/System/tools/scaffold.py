@@ -62,7 +62,8 @@ project of its zone, by the same machinery: the folder, every link to it and to
 the files inside it, its line in the hub (under the same heading), `project:`
 and `parent:`, and its rows in the project's `Deliverables/published.md`, in one
 commit that `undo` reverts. It refuses, and writes nothing, for another zone, a
-project walled from the thread's party (or a party it cannot read plainly), a
+project walled from the thread's party (a `party:` list counts every tag; one it
+cannot read plainly is refused too), a
 thread of that name already there, a project that is parked or done, and files
 of the thread that sit outside its folder. `delete` without `--confirm` only says
 what would go; with it, the folder, the hub's line and the open Todo.md lines
@@ -150,7 +151,9 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     table_row,
     tag_for,
-    walled,
+    PUBLIC,
+    crossings,
+    decide,
     workspace_root,
     write_if_unchanged,
     zone_todo,
@@ -304,6 +307,8 @@ def check_party(root, party, zone=None):
     places in another zone is refused, since its material would land in a zone it was never kept in."""
     parties = load_context(root).get("parties", {})
     tag = party.strip().strip("`")
+    if tag == PUBLIC:                      # reserved: chosen, never inferred, and in no Parties row
+        return tag
     if tag not in parties:
         known = ", ".join(sorted(parties)) or "none yet"
         raise Refusal(f"{party} is not a party tag in System/context.md. The tags are {known}.")
@@ -600,6 +605,11 @@ def cmd_party(root, args, today):
     tag = tag_for(name, parties, zone)
     if not tag:
         raise Refusal('No tag can be made from "%s": a tag is %s. What should it be?' % (name, TAG_RULE))
+    if tag == "none":
+        raise Refusal("`none` is reserved: it says a page is nobody's, so it is never a party's tag. What should the tag be?")
+    if tag == PUBLIC:
+        raise Refusal("`public` is reserved: a hub names it to say anyone may read the project. It is never a party "
+                      "of its own, so no row is made for it. What should the tag be?")
     if not TAG_RE.match(tag):                     # the library offers only valid tags; belt and braces
         raise Refusal('"%s" will not work as a tag: it must be %s.' % (tag, TAG_RULE))
     other = strip_tag(args.walled_from or "")
@@ -843,7 +853,7 @@ def dated_entry(text, line, today, append=True):
     block's rule, as the threads skill writes one. A note with no block of
     either kind takes it at the end, unless `append` is off, when the note is
     left as it is: that is what park did while its own copy of this lived in
-    page_action.py, which keeps one for `interrupt`."""
+    page_action.py, which keeps one for `answer`."""
     d = datetime.date.fromisoformat(today)
     entry = f"**{d.day} {MONTHS[d.month - 1]} {d.year}.** {line}"
     resume = text.find("### Resume here")
@@ -1057,19 +1067,38 @@ def hub_status(hub):
     return str(value).strip().lower() if isinstance(value, str) and value.strip() else "active"
 
 
-def one_party(root, note, what):
-    """The one party tag a note's `party:` names, held in System/context.md's
-    Parties table, or a Refusal. A list, an empty value or a tag nobody
-    declared is not read plainly, and a move never guesses at a wall."""
+def party_tags(root, note, what):
+    """The party tags a note's `party:` names, read as check.py reads them: one
+    tag, or a list of them, each held in System/context.md's Parties table.
+    A Refusal where the value is empty, holds a tag nobody declared, or sits
+    in frontmatter that reads two ways. A move never guesses at a wall."""
+    try:
+        text = note.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        text = None
+    cannot = Refusal(f"The {what} has no single `party:` that can be read, so the move could not be checked "
+                     "against the walls. Nothing was moved.")
+    if text is None or frontmatter_form_problem(text, ("party",)):
+        raise cannot
     value = parse_frontmatter(note).get("party")
-    if not isinstance(value, str) or not strip_tag(value):
-        raise Refusal(f"The {what} has no single `party:` that can be read, so the move could not be checked "
-                      "against the walls. Nothing was moved.")
-    tag = strip_tag(value)
-    if tag not in load_context(root).get("parties", {}):
+    if value is not None and not isinstance(value, (str, list)):
+        raise cannot
+    if isinstance(value, list) and not all(isinstance(v, str) for v in value):
+        raise cannot
+    tags = tag_list(value)
+    if not tags or (isinstance(value, list) and len(tags) != len(value)):
+        raise cannot
+    declared = load_context(root).get("parties", {})
+    if any(t not in declared and t != PUBLIC for t in tags):
         raise Refusal(f"The {what}'s `party:` is not a tag in the Parties table of System/context.md, so the move could "
                       "not be checked against the walls. Nothing was moved.")
-    return tag
+    return tags
+
+
+def wall_between(ctx, left, right):
+    """Does a wall stand between any tag of one side and any tag of the other?
+    It is a wall for a thread moved into a project of `right`: decide() says."""
+    return bool(left and right) and decide(right, left, "file", ctx) == "deny"
 
 
 def item_end(lines, i):
@@ -1214,7 +1243,7 @@ def md_relink(text, p_old, p_new, rel_old, rel_new, zone_dir, zone, name, unreso
     return MD_LINK.sub(one, text)
 
 
-def thread_material_walls(root, zone_dir, thread_dir, target_tag):
+def thread_material_walls(root, zone_dir, thread_dir, target_tags):
     """Defence in depth for a move (#354), beside the zone's own wall check at
     the commit: every link in the thread's notes is read for whose material it
     leads to, and a link to a Meetings page or to another project's file is
@@ -1261,42 +1290,26 @@ def thread_material_walls(root, zone_dir, thread_dir, target_tag):
                     if not got:
                         return "a meeting page the thread links has no parties, so the move could not be checked against the walls"
                     tags |= got
-            if any(walled(ctx, t, target_tag) for t in tags):
+            if wall_between(ctx, tags, target_tags):
                 return "WALL"
     return None
 
 
-STATE_STACK = ("System", "generated", "interrupted.json")
 STATE_MOVED = ("System", "generated", "moved.json")
 
 
 def write_json_atomic(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name("." + path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False, sort_keys="stack" not in data) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(str(tmp), str(path))
 
 
 def move_state(root, zone, name, was, now):
     """What a thread's move changes outside the zone, where this script owns
-    it: its place on the interruption stack and the effort history's record of
-    the move (System/generated, never committed). `was` and `now` are the
-    thread's folder from the zone's top. Best effort: a file that is not
-    there or cannot be read is left alone."""
-    project, to = was.split("/")[0], now.split("/")[0]
-    path = root.joinpath(*STATE_STACK)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        entries = data["stack"]
-        changed = False
-        for e in entries:
-            if isinstance(e, dict) and e.get("zone") == zone and e.get("project") == project and e.get("thread") == name:
-                e["project"], e["file"] = to, f"{now}/{name}.md"
-                changed = True
-        if changed:
-            write_json_atomic(path, data)
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
+    it: the effort history's record of the move (System/generated, never
+    committed). `was` and `now` are the thread's folder from the zone's top.
+    Best effort: a file that is not there or cannot be read is left alone."""
     path = root.joinpath(*STATE_MOVED)
     old, new = f"Zones/{zone}/{was}", f"Zones/{zone}/{now}"
     try:
@@ -1373,12 +1386,12 @@ def cmd_move(root, args, today):
     # The walls, before anything else is read or written: a wall is the one refusal that says nothing more.
     if not hub.is_file():
         raise Refusal(f"{hub.relative_to(root)} is missing, so the thread's line in its hub could not be moved.")
-    mine, theirs = one_party(root, note, "thread"), one_party(root, target_hub, "target project")
-    source = one_party(root, hub, "project it leaves")
+    mine, theirs = party_tags(root, note, "thread"), party_tags(root, target_hub, "target project")
+    source = party_tags(root, hub, "project it leaves")
     ctx = load_context(root)
     ops = operations()
     wall = getattr(ops, "WALL_REFUSAL", None) or WALL_SENTENCE
-    if walled(ctx, mine, theirs) or walled(ctx, source, theirs):
+    if wall_between(ctx, mine, theirs) or wall_between(ctx, source, theirs):
         raise Refusal(wall)
     why = thread_material_walls(root, zone_dir, thread_dir, theirs)
     if why == "WALL":
@@ -1504,7 +1517,7 @@ def cmd_move(root, args, today):
     if unresolved:
         said.append("Markdown links left as they are, because they could not be resolved plainly: "
                     + ", ".join(f"{n} ({l})" for n, l in unresolved[:5]) + (f" and {len(unresolved) - 5} more" if len(unresolved) > 5 else "") + ".")
-    said.append("Its place on the interruption stack and the status page's effort history follow it. If your assistant "
+    said.append("The status page's effort history follows it. If your assistant "
                 f"keeps a memory pointer to it, or a cmux tab is open on it, point them at {rel_new}/{name}.md.")
     return "\n".join(said)
 

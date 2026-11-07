@@ -72,7 +72,7 @@ Claude does the work underneath. Codex works too, in its app or a terminal, with
 **The rules** are plain files the assistant reads first. They say what goes where and who never mixes:
 
 - `AGENTS.md` at the root is the entry point. It sends the assistant to `System/rules.md` and `System/context.md`, and routes each question by its subject. Each zone, `Wikis/` and each wiki has its own `AGENTS.md`, which adds what holds only there.
-- `System/rules.md` says how the assistant behaves: what it may do without asking, the walls, the ways in, threads, voice and files. It is Garrick's, as shipped.
+- `System/rules.md` says how the assistant behaves: what it may do without asking, the walls, what lands in an inbox first, the resume point, how it answers and which files it never edits. It is Garrick's, as shipped, and it stays under 8,000 characters because every session loads it: the procedures live in the skills (`intake`, `threads`, `desk`, `nurture`), which load only when they run.
 - `System/context.md` says who you are and who you deal with: zones, parties, walls, people and aliases. It is yours.
 - `System/rules.local.md`, and an `AGENTS.local.md` beside any `AGENTS.md`, hold your own rules and routing.
 
@@ -84,7 +84,7 @@ Where two say different things, the local file wins over the Garrick file beside
 
 | Skill | What it does | Started by |
 |---|---|---|
-| `threads` | Opens, wraps, holds, parks, finishes, renames and creates threads, catches you up on what changed, and adds zones | "open X", "wrap it", "close for the day", "I'm being interrupted", "back", "park X", "what's open", "what's next", "catch me up", "new project X for Acme" |
+| `threads` | Opens, wraps, parks, finishes, renames and creates threads, catches you up on what changed, and adds zones | "open X", "wrap it", "close for the day", "I'm being interrupted", "back", "park X", "what's open", "what's next", "catch me up", "new project X for Acme" |
 | `intake` | Sorts the inboxes, one item at a time, by the Ways in rules | "process the inbox", "file my mail", "file this" |
 | `meetings` | Files a conversation as a Meetings page, and briefs for a meeting | "file this transcript", "log this call", "prep me for X" |
 | `knowledge` | Freezes published material into the Knowledge wiki, and answers from it | "read this", "add this to knowledge", "what does my library say about X" |
@@ -140,7 +140,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 
 ### A working day
 
-You press Continue on the Garrick App's home, or open a session in your app or terminal and say "open Acme pricing". The assistant reads the thread's Resume here block and answers in two sentences: where it stands, and the next action. You work, and what the session writes is committed in the zone's repository, where the wall check runs on every commit. If something cuts in, "I'm being interrupted" saves your place in the block and puts the thread on the interruption stack, and "back" brings it back. At the end, "wrap it" rewrites the Resume here block so it describes now, adds a dated entry below it, puts open actions in the zone's `Todo.md` and commits. "Close for the day" does that for every thread touched today. The next session, in either assistant, starts from that block.
+You press Continue on the Garrick App's home, or open a session in your app or terminal and say "open Acme pricing". The assistant reads the thread's Resume here block and answers in two sentences: where it stands, and the next action. You work, and what the session writes is committed in the zone's repository, where the wall check runs on every commit. If something cuts in, or at the end, "wrap it" (or "I'm being interrupted") asks one line, "Anything only in your head?", then rewrites the Resume here block so it describes now, adds a dated entry below it, puts open actions in the zone's `Todo.md` and commits. "Close for the day" does that for every thread touched today. The next session, in either assistant, starts from that block.
 
 ### The walls
 

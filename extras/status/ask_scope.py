@@ -120,7 +120,7 @@ def _tool(ws: Path, name: str, fits):
 def lib(ws: Path):
     """garrick_lib.py: the context, the walls, the frontmatter and the live files, read as the checks read them."""
     return _tool(ws, "garrick_lib.py", lambda m: all(callable(getattr(m, f, None)) for f in
-                                                     ("load_context", "walled", "parse_frontmatter_text", "live_files")))
+                                                     ("load_context", "crossings", "decide", "labels", "meeting_labels", "parse_frontmatter_text", "live_files")))
 
 
 def extractor(ws: Path):
@@ -129,8 +129,7 @@ def extractor(ws: Path):
 
 
 def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_) -> bool:
-    those = list(those)
-    return any(lib_.walled(ctx, a, b) for a in these for b in those)
+    return bool(lib_.crossings(ctx, these, list(those)))
 
 
 # ---------------------------------------------------------------- the names in a request
@@ -139,15 +138,6 @@ def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_) -> boo
 # One thing a name can stand for. `parties` is a frozenset of tags; a place
 # (a project or a thread) has its zone and project, and a thread its name.
 Entry = collections.namedtuple("Entry", "kind label parties zone project thread")
-
-
-def admits(ctx: dict, adding: Iterable[str], held: Iterable[str], lib_) -> bool:
-    """Whether records of these parties may join a conversation that holds
-    `held` (#358): no wall between any of them, or between one of them and a
-    party held. The one test every record passes before a session is given
-    it, in Asker.admit() and in each tool of ask_tools.py."""
-    adding = set(adding)
-    return not any_wall(ctx, adding, adding | set(held), lib_)
 
 
 def _norm(text: str) -> str:
@@ -160,19 +150,18 @@ def note_tags(note: Path, lib_) -> frozenset:
 
 
 def hub_parties(ws: Path, zone: str, project: str, lib_) -> frozenset:
-    """The `party:` of a project's hub, the tag the walls are checked against."""
-    return note_tags(Path(ws) / "Zones" / zone / project / (project + ".md"), lib_)
+    """The labels of a project's hub, the tags the walls are checked against: garrick_lib's labels(),
+    none when they cannot be derived."""
+    return frozenset(lib_.labels(ws, Path(ws) / "Zones" / zone / project / (project + ".md")) or ())
 
 
 def place_parties(ws: Path, zone: str, project: str, thread: Optional[str], lib_) -> frozenset:
     """The parties a place is written for: its hub's, and a thread's own as
-    well; for a whole project, every thread's in it, live or not."""
+    well; for a whole project, every thread's in it, live or not. garrick_lib's
+    labels() derives them; a place whose labels cannot be derived has none."""
     folder = Path(ws) / "Zones" / zone / project
-    tags = set(hub_parties(ws, zone, project, lib_))
-    threads = [thread] if thread is not None else sorted(p.name for p in (folder / "Threads").glob("*/"))
-    for t in threads:
-        tags |= note_tags(folder / "Threads" / t / (t + ".md"), lib_)
-    return frozenset(tags)
+    got = lib_.labels(ws, folder if thread is None else folder / "Threads" / thread)
+    return frozenset(got or ())
 
 
 def entries(ws: Path, names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> List[Tuple[str, bool, Entry]]:
@@ -478,10 +467,13 @@ def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: d
     group of its own. A page is ranked by the groups it holds, not by how
     many spellings of one name it uses."""
     known: Dict[str, Set[Entry]] = {}
-    for form, _, e in entries(ws, names, ctx, lib_):
+    forms: Dict[Entry, List[str]] = {}
+    for form, capital, e in entries(ws, names, ctx, lib_):
         n = _norm(form)
         for k in (n, n.replace(" ", "")):
             known.setdefault(k, set()).add(e)
+        if not capital:                 # a first name alone is never a form to search for
+            forms.setdefault(e, []).extend(f for f in (n, n.replace(" ", "")) if f)
     out: List[List[str]] = []
     keys: List[object] = []
     for w in words:
@@ -492,6 +484,14 @@ def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: d
         else:
             keys.append(key)
             out.append([w])
+    # A name is searched in every form Garrick lists for it, with and without
+    # spaces, not only the spellings the find holds (#397).
+    for key, group in zip(keys, out):
+        if isinstance(key, frozenset):
+            for e in sorted(key, key=lambda x: (x.kind, x.label)):
+                for f in forms.get(e, []):
+                    if f not in group:
+                        group.append(f)
     return out
 
 
@@ -596,12 +596,12 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
     if route in ("knowledge", "docs"):
         return Scope(route, None, None, None, words, set(), **kept)
     if project is not None:
-        hub = hub_parties(ws, zone, project, lib_)
-        if not hub or not hub <= set(ctx.get("parties", {})):
-            # Nothing can say which side of a wall its files are on.
+        place = place_parties(ws, zone, project, thread, lib_)
+        if not place or not place <= (set(ctx.get("parties", {})) - {"none"}) | {lib_.PUBLIC}:
+            # Nothing can say which side of a wall its files are on: labels() found none, or a tag the table lacks.
             raise Refused("%s names no party %s, so nothing in it is read"
-                          % (project, "the Parties table holds" if hub else "in its hub"))
-        return Scope(route, zone, project, thread, words, set(place_parties(ws, zone, project, thread, lib_)), **kept)
+                          % (project, "the Parties table holds" if place else "in its hub"))
+        return Scope(route, zone, project, thread, words, set(place), **kept)
     rows = ctx.get("parties", {})
     inside = {p for p in said.parties if zone is None or (rows.get(p, {}).get("zone") or zone) == zone}
     if inside:                                  # the parties named, those of the zone it answers in (#317)
@@ -676,10 +676,48 @@ def _imported(fm: dict, path: Path) -> str:
     return value[:10] if isinstance(value, str) and re.match(r"\d{4}-\d{2}-\d{2}", value) else ""
 
 
-def passage(body: str, words: List[str], most: int = PASSAGE) -> str:
+_SECTION = re.compile(r"^#{1,6}\s+State of play\b.*$", re.I | re.M)
+_RESUME_HEAD = re.compile(r"^#{1,6}\s+Resume here\b.*$", re.I | re.M)
+
+
+def _block(body: str, head: "re.Pattern") -> str:
+    """The heading `head` finds and the lines under it, up to the next heading or rule."""
+    m = head.search(body)
+    if m is None:
+        return ""
+    out = [m.group(0).strip()]
+    for line in body[m.end():].split("\n")[1:]:
+        if line.startswith("#") or line.strip() == "---":
+            break
+        out.append(line)
+    return "\n".join(out).strip()
+
+
+def resume_passage(body: str, most: int = PASSAGE) -> str:
+    """A thread's own note: its Resume here block, then the opening of its
+    State of play, up to `most` characters of their own (#397). Nothing when
+    the note has neither."""
+    resume = _block(body, _RESUME_HEAD)
+    m = _SECTION.search(body)
+    play = ""
+    if m is not None:
+        rest = body[m.end():]
+        end = re.search(r"(?m)^#{1,2}\s", rest)
+        play = (rest[:end.start()] if end else rest).strip()
+        if resume:
+            play = play.replace(resume, "").strip()
+    return "\n\n".join(p for p in (resume, play) if p)[:most]
+
+
+def passage(body: str, words: List[str], most: int = PASSAGE, own: bool = False) -> str:
     """The paragraphs of a body that hold a word looked for, or its opening
-    when none do or none was asked for, cut to `most` characters."""
+    when none do or none was asked for, cut to `most` characters. A thread's
+    own note (`own`) leads with its Resume here block and the opening of its
+    State of play, up to `most` characters of their own (#397)."""
+    lead = resume_passage(body, most) if own else ""
     paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+    if lead:
+        paras = [p for p in paras if p not in lead]
     hits = [p for p in paras if any(w in p.lower() for w in words)] if words else []
     out, size = [], 0
     for p in hits or paras:
@@ -687,7 +725,7 @@ def passage(body: str, words: List[str], most: int = PASSAGE) -> str:
             break
         out.append(p[:most])
         size += len(p)
-    return "\n\n".join(out)
+    return "\n\n".join(([lead] if lead else []) + out)
 
 
 def _text(ws: Path, path: Path, sources: bool) -> Optional[str]:
@@ -722,8 +760,9 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     Nothing outside the scope is opened."""
     ws = Path(ws)
     found: List[Tuple[tuple, dict]] = []
+    looked = [f for g in sc.groups for f in g]            # every form of every name looked for (#397)
 
-    def consider(path: Path, root: Path, parties: List[str], text: str, first: bool = False) -> None:
+    def consider(path: Path, parties: List[str], text: str, home: int, first: bool = False, public: bool = False) -> None:
         fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
         body = _body(text) if fm else text
         low = body.lower()
@@ -733,22 +772,29 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
         date, imported = _date(fm, path), _imported(fm, path)
         words = (sum(1 for h in hits if h), sum(hits))
         lead = 1 if first else 0
-        rank = (lead, date, imported) + words if sc.order == "recent" else (lead,) + words + (date,)
+        # `home` is the route's own place: it breaks a tie and nothing more.
+        rank = (lead, date, imported) + words + (home,) if sc.order == "recent" else (lead,) + words + (date, home)
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else path.stem
-        found.append((rank, {"path": path.relative_to(ws).as_posix(), "date": date, "imported": imported,
-                             "title": title.strip(), "parties": sorted(parties), "text": passage(body, sc.words)}))
+        record = {"path": path.relative_to(ws).as_posix(), "date": date, "imported": imported,
+                  "title": title.strip(), "parties": sorted(parties), "text": passage(body, looked, own=first)}
+        if public:
+            record["public"] = True             # published: the one record that is read with no party
+        elif parties:
+            record["scoped"] = True             # search() admitted it against its own scope: choose() may start a group from it
+        found.append((rank, record))
 
-    if sc.route in ("knowledge", "docs"):
-        root = ws / ("Wikis/Knowledge/wiki" if sc.route == "knowledge" else "System/garrick-docs")
+    def knowledge(home: int) -> None:
+        root = ws / "Wikis/Knowledge/wiki"
         for path in _files(lib_, root):
             text = _text(ws, path, False)
             if text is None:
                 continue
             fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
-            if any(fm.get(k) for k in ("parties", "party", "zone")):
+            if any(fm.get(k) for k in ("parties", "party", "zone")) or lib_.labels(ws, path) != {lib_.PUBLIC}:
                 continue                        # a page of someone's, not published: never read as published
-            consider(path, root, [], text)
-    elif sc.route == "meetings":
+            consider(path, [], text, home, public=True)
+
+    def meetings(home: int) -> None:
         root = ws / "Wikis" / "Meetings" / "wiki"
         for path in _files(lib_, root):
             text = _text(ws, path, False)
@@ -762,8 +808,19 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
                 continue
             if not sc.every and not set(parties) & sc.parties:
                 continue
-            consider(path, root, parties, text)
-    else:
+            if sc.project is not None and (
+                    any_wall(ctx, parties, sc.parties, lib_)
+                    or any(lib_.decide({p}, set(parties), "read", ctx) != "permit" for p in sc.parties - {lib_.PUBLIC})
+                    or (lib_.PUBLIC in sc.parties and not sc.parties - {lib_.PUBLIC})):
+                continue                        # a page decide() does not admit against every party of the project's scope (#397)
+            # The wall test, before the page is matched, ranked, counted or
+            # cut: choose() itself, on this page alone and holding nothing, so
+            # that no other page can change whether it is kept (#397).
+            if not choose([{"parties": parties}], set(), ctx, lib_, 1, start=set(parties))[0]:
+                continue
+            consider(path, parties, text, home)
+
+    def place(home: int) -> None:
         root = ws / "Zones" / sc.zone / sc.project
         hub = root / (sc.project + ".md")
         if sc.thread is not None:
@@ -772,17 +829,43 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             only = [folder, hub, root / "Sources"]
         else:
             note, only = hub, None
-        hub_tags, thread_tags = note_tags(hub, lib_), {}
+        cache: dict = {}
         for path in _files(lib_, root, only):
             parts = path.relative_to(root).parts
-            tags = set(hub_tags)
-            if len(parts) > 2 and parts[0] == "Threads":     # a thread's file: its party too, as check.py has it
-                if parts[1] not in thread_tags:
-                    thread_tags[parts[1]] = note_tags(root / "Threads" / parts[1] / (parts[1] + ".md"), lib_)
-                tags |= thread_tags[parts[1]]
+            tags = lib_.labels(ws, path, ctx, cache)         # its hub's and its thread's, derived in one place
+            if not tags:
+                continue                                     # no label, no permit: never read
             text = _text(ws, path, "Sources" in parts)
             if text is not None:
-                consider(path, root, sorted(tags), text, first=path == note)
+                consider(path, sorted(tags), text, home, first=sc.route == "thread" and path == note)
+
+    # Every find with words reads its own place, the Meetings pages its scope
+    # admits, and Knowledge; the route only decides which ranks first (#397).
+    if sc.route == "docs":
+        root = ws / "System/garrick-docs"
+        for path in _files(lib_, root):
+            text = _text(ws, path, False)
+            if text is None:
+                continue
+            fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
+            if any(fm.get(k) for k in ("parties", "party", "zone")):
+                continue
+            consider(path, [], text, 1, public=True)
+    elif sc.route == "knowledge":
+        knowledge(1)
+        if sc.words and (sc.parties or sc.every):
+            meetings(0)
+    elif sc.route == "meetings":
+        meetings(1)
+        if sc.words:
+            if sc.project is not None:
+                place(0)
+            knowledge(0)
+    else:
+        place(1)
+        if sc.words:
+            meetings(0)
+            knowledge(0)
     found.sort(key=lambda r: (r[0], r[1]["path"]), reverse=True)
     return [r for _, r in found]
 
@@ -799,24 +882,37 @@ def page_parties(fm: dict, ctx: dict, lib_) -> List[str]:
     """A Meetings page's parties, or none when they cannot all be stated: a
     finished page has a zone and a list of tags (check.py's finished()); a
     person or entity page may have its `party:` alone. Every tag must be in
-    the Parties table, since walled() never matches one it does not hold."""
-    if str(fm.get("type") or "").strip().lower() in PARTY_ALONE and fm.get("parties") is None:
-        tags = _tags(fm.get("party"), lib_)
-    elif fm.get("zone") and isinstance(fm.get("parties"), list):
-        tags = _tags(fm.get("parties"), lib_)
-    else:
-        return []
+    the Parties table, since decide() denies a tag it does not hold."""
+    got = lib_.meeting_labels(fm)
+    tags = sorted(got) if got else []
     return tags if tags and set(tags) <= set(ctx.get("parties", {})) else []
 
 
-def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool]:
+def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS,
+         start: Optional[Set[str]] = None) -> Tuple[List[dict], bool]:
     """The records a process that holds `held` may be given, best first, at
     most `most`, and whether a wall held any back: choose() without its count."""
-    chosen, back, _ = choose(records, held, ctx, lib_, most)
+    chosen, back, _ = choose(records, held, ctx, lib_, most, start)
     return chosen, back
 
 
-def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool, int]:
+def admits(ctx: dict, held: Set[str], adding: Set[str], lib_) -> bool:
+    """May records labelled `adding` be given to a process that holds `held`? decide() says. A process holding
+    nothing is given the group the records set; a record with no party is a published page (public)."""
+    scope = set(held) - {lib_.PUBLIC}
+    if not scope:
+        scope = set(adding) - {lib_.PUBLIC}
+    return lib_.decide(scope, set(adding) or {lib_.PUBLIC}, "read", ctx) == "permit"
+
+
+def starts(where, ctx: dict) -> Set[str]:
+    """The parties a find may start its group from, when the session holds none: a place's own labels,
+    the parties of a zone or of those named, or, across every zone, all of the table's."""
+    return set(where.parties) or set(ctx.get("parties", {}))
+
+
+def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS,
+           start: Optional[Set[str]] = None) -> Tuple[List[dict], bool, int]:
     """The records a process that holds `held` may be given, best first, at
     most `most`; whether a wall held any back: one whose parties are walled
     from each other, from a party held already, or from one picked before
@@ -826,12 +922,22 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
     what is on the far side. A question across every zone reads within one
     group of parties no wall divides, the one its best record starts."""
     group, chosen, back, matched = set(held), [], False, 0
-    known = set(ctx.get("parties", {}))
+    nothing_held = not held
+    known = (set(ctx.get("parties", {})) - {"none"}) | {lib_.PUBLIC}
     for r in records:
         parties = set(r["parties"])
         if not parties <= known:
             continue                            # a tag no wall can be checked against: never read
-        if any_wall(ctx, parties, parties | group, lib_):
+        # No label, no permit: only a published page of Knowledge is read with no party. The first
+        # record admitted sets the group of a question across every zone.
+        labels = parties or ({lib_.PUBLIC} if r.get("public") else set())
+        # The scope is what the session holds. Only when it holds nothing at all may a find that names its
+        # own place (`start`: a place's labels, a zone's parties) begin its group with the first record in it.
+        scope = group - {lib_.PUBLIC}
+        if not scope and nothing_held and (parties - {lib_.PUBLIC}) and (
+                (start is not None and (parties - {lib_.PUBLIC}) <= set(start)) or r.get("scoped")):
+            scope = parties - {lib_.PUBLIC}
+        if lib_.decide(scope, labels, "read", ctx) != "permit":
             back = True
             continue
         matched += 1

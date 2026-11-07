@@ -14,9 +14,8 @@ once a turn has run past the threshold, and the threads skill runs it for
 pick. No model is asked: the order is six rules, each a source that can be
 switched off in Settings › While you wait.
 
-1. stack    the top of the interruption stack, System/generated/interrupted.json,
-            read only with the status extra (System/status/page_action.py),
-            which keeps it
+1. back     the live thread whose note was written most recently today: the
+            one "back" opens. The note's modification time is the record
 2. due      Todo lines overdue or due today, the quickest first: a reply or a
             chase before a line that names a deliverable, then the latest
 3. chase    `#waiting` and Waiting on lines whose `⏳` chase day has come
@@ -61,9 +60,9 @@ sys.path.insert(0, str(HERE))
 import garrick_lib as gl  # noqa: E402
 
 KEY = "while-you-wait"
-SOURCES = ("stack", "due", "chase", "inbox", "parked", "wrap")
+SOURCES = ("back", "due", "chase", "inbox", "parked", "wrap")
 SOURCE_LABELS = {
-    "stack": "The interruption stack",
+    "back": "The thread left most recently today",
     "due": "Todo lines due today or late",
     "chase": "Chases that have come due",
     "inbox": "What waits in an Inbox",
@@ -73,8 +72,6 @@ SOURCE_LABELS = {
 DEFAULTS = {"on": True, "threshold": 45, "same-zone": False, "sources": list(SOURCES), "parked-days": 30, "wrap-days": 14}
 THRESHOLD = (10, 600)           # seconds a turn runs before the band offers anything
 DAYS = (1, 365)
-STACK_FILE = ("System", "generated", "interrupted.json")
-STATUS_EXTRA = ("System", "status", "page_action.py")
 SKIP = {"archive", "Inbox", "Sources", "Deliverables"}
 PARKED, DONE = "parked", "done"
 
@@ -118,6 +115,8 @@ def clean(given) -> dict:
             out[name] = value
     if "sources" in given:
         sources = given["sources"]
+        if isinstance(sources, list):
+            sources = ["back" if s == "stack" else s for s in sources]     # saved before the stack went (#367)
         if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources) or len(set(sources)) != len(sources):
             raise ValueError("While you wait: the sources are a list of names, each once")
         bad = [s for s in sources if s not in SOURCES]
@@ -232,7 +231,8 @@ def row(root: Path, zone: Path, project: Path, thread: Optional[str], note: Path
     except OSError:
         text = ""
     return {"zone": zone.name, "project": project.name, "thread": thread, "note": note.relative_to(root).as_posix(),
-            "status": status, "whole": whole, "touched": touched(note, fm), "resumed": block_date(text)}
+            "status": status, "whole": whole, "touched": touched(note, fm), "resumed": block_date(text),
+            "written": datetime.datetime.fromtimestamp(note.stat().st_mtime)}
 
 
 def meeting_names(root: Path) -> set:
@@ -276,28 +276,19 @@ def pick(rule: str, say: str, zone: Optional[str], note: Optional[str] = None, p
     return out
 
 
-def from_stack(root: Path) -> List[dict]:
-    """The held threads, top first; next_up() keeps the first the running
-    turn leaves. A note no longer there, or a path out of its zone, is passed
-    over, as page_action.py passes over it."""
-    if not root.joinpath(*STATUS_EXTRA).is_file():
-        return []
-    try:
-        entries = json.loads(root.joinpath(*STACK_FILE).read_text(encoding="utf-8")).get("stack")
-    except (OSError, ValueError, AttributeError):
-        return []
-    out = []
-    for e in entries if isinstance(entries, list) else []:
-        if not isinstance(e, dict) or not all(isinstance(e.get(k), str) for k in ("zone", "project", "file")):
+def from_back(notes: List[dict], today: datetime.date) -> List[dict]:
+    """The live threads whose note was written today, the latest first;
+    next_up() keeps the first the running turn leaves. The note's own
+    modification time is the record: a wrap, a finish or an edit sets it, and
+    nothing else keeps a place. A parked or finished thread is never offered."""
+    found = []
+    for r in notes:
+        if r["status"] in (PARKED, DONE) or r["written"].date() != today:
             continue
-        note = "Zones/%s/%s" % (e["zone"], e["file"])
-        if ".." in Path(note).parts or not (root / note).is_file():
-            continue
-        name = e.get("thread") or e["project"]
-        when = str(e.get("at") or "")
-        held = (" since " + when[11:16]) if re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d", when) else ""
-        out.append(pick("stack", "Back to %s, on hold%s" % (name, held), e["zone"], note, e["project"], e.get("thread")))
-    return out
+        name = r["thread"] or r["project"]
+        found.append((r["written"], pick("back", "Back to %s, left at %s" % (name, r["written"].strftime("%H:%M")), r["zone"],
+                                         r["note"], r["project"], r["thread"])))
+    return [p for _, p in sorted(found, key=lambda t: t[0], reverse=True)]
 
 
 def from_todo(root: Path, today: datetime.date, notes: List[dict]) -> Dict[str, List[dict]]:
@@ -414,8 +405,8 @@ def next_up(root: Path, zone: Optional[str] = None, exclude: Optional[str] = Non
     todo = None
     picks: List[dict] = []
     for source in chosen["sources"]:
-        if source == "stack":
-            found = from_stack(root)
+        if source == "back":
+            found = from_back(notes, today)
         elif source in ("due", "chase"):
             todo = todo if todo is not None else from_todo(root, today, notes)
             found = todo[source]
@@ -432,8 +423,8 @@ def next_up(root: Path, zone: Optional[str] = None, exclude: Optional[str] = Non
         picks = [p for p in picks if p["zone"] is not None and p["zone"].casefold() == zone.casefold()]
     seen, out = set(), []
     for p in picks:
-        if p["id"] in seen or (p["source"] == "stack" and any(o["source"] == "stack" for o in out)):
-            continue                    # the top of the stack alone: the first the running turn leaves
+        if p["id"] in seen or (p["source"] == "back" and any(o["source"] == "back" for o in out)):
+            continue                    # the latest thread alone: the first the running turn leaves
         seen.add(p["id"])
         out.append(p)
     return {"on": chosen["on"], "threshold": chosen["threshold"], "zone": zone, "same_zone": narrowed,

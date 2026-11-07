@@ -721,7 +721,7 @@ raw answer and nothing else, and commit nothing):
 | Answer | `question-answer --wiki Meetings --file "questions/<file>" --words "<their sentence>"` | the raw answer `raw/answers/<YYMMDD> - <slug>.md`, word for word with the question and the date, and only then `status: answered` and `answer:` on the question |
 | Later | `question-later --wiki Meetings --file "questions/<file>" --until <YYYY-MM-DD>` | `status: later` and the date |
 | Close | `question-close --wiki Meetings --file "questions/<file>"` | `status: closed` |
-| Decision | `question-decide` | nothing: not built yet, and it says so |
+| Decision | `question-decide --wiki Meetings --file "questions/<file>" --words "<their sentence>"` | in one transaction, the raw answer as for Answer, then the decision page `wiki/decisions/<YYMMDD> - <slug>.md` with `status: valid`, the question's `zone` and `parties` copied exactly, and their words under *Decision*; the question says `answered`, with `answer:` and `decision:` |
 
 Never write these by hand, and never edit a raw answer: it is the record the
 page rests on. A question that sits on both sides of a wall is refused with
@@ -744,6 +744,19 @@ questions", "work in the answers" or "work it in":
 3. Mark it: `question-done --wiki Meetings --file "questions/<file>"`.
 4. Commit the changed pages, the raw answer and the question in the Wikis
    repository, by name, in one commit. Never `git add -A`.
+
+**A decision is annotated by the assistant and settled only by the user.** The
+user's own save through *Record as a decision* is the act that settles it:
+`status: valid`, with their words under *Decision*. A decision page has four
+sections, *Decision*, *Assumptions*, *Options turned down* and *Revisit when*.
+You may fill *Assumptions* and *Options turned down* later, each line marked
+*Proposed*, and add a `revisit:` line to the frontmatter with the reason a
+revisit condition may be met. You never change `status:`, and never reword
+*Decision*: only the user marks a decision `superseded` or `withdrawn`, and a
+later page reads a settled decision as settled. When you work in an answered
+question that has a `decision:`, cite the decision page too, and leave it as
+it is. `check.py` warns when a commit changes a decision's `status:` with no
+raw answer dated that day.
 
 A question still `open`, `later` before its date, `closed` or `done` is left
 alone. Nurture lists these questions, and this is the step that works them.
@@ -768,8 +781,23 @@ As the `knowledge` skill's *Lint*, for this wiki, and it changes no page:
 4. **A finding only the user can settle**, such as a contradiction the
    records do not decide, is also a question file, as *A question for the
    user* says, for one party at a time. The report line links it.
-5. Commit the report and the question files together, and nothing else.
-6. "Lint the wikis" runs both, this one and the `knowledge` skill's.
+5. **Open sections.** The script's list ends with every line under an
+   *Open* or *Open issues* heading, each a question it could become. The
+   list comes in groups, one per zone and party. Show one group at a time
+   and ask once per group, never once for two groups together, and never
+   for groups a wall stands between. On a yes, run
+   `python3 System/status/page_action.py question-open-sections --wiki
+   Meetings --confirm true --pages "<page>,<page>"` naming that group's pages; it refuses pages from
+   two groups. It writes one question file per line, the page
+   as `origin:` and `pages:`, the page's own `zone:` and `parties:` copied
+   exactly, and changes no page. Without a yes, write nothing: a run
+   without `--confirm` only lists. A page with no `zone:` or `parties:`
+   gets no question, and the list says why: it is an unfinished page, so
+   finish it first. A line a question already asks is not proposed again,
+   whatever that question's status. Nothing is removed from the page; the
+   line stays until its question is answered and worked in.
+6. Commit the report and the question files together, and nothing else.
+7. "Lint the wikis" runs both, this one and the `knowledge` skill's.
 
 ## Listening mode
 

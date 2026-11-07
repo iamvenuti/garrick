@@ -161,6 +161,7 @@ from garrick_lib import (  # noqa: E402
     own_repo_env,
     staged_walls_refusal,
     entity_names,
+    frontmatter_form_problem,
     live_files,
     load_context,
     organisation_named,
@@ -168,7 +169,10 @@ from garrick_lib import (  # noqa: E402
     parse_frontmatter_text,
     party_entities,
     strip_tag,
-    walled,
+    PUBLIC,
+    labels,
+    crossings,
+    decide,
     workspace_root,
 )
 
@@ -508,7 +512,7 @@ def claim_wall(ctx: Ctx, item: Item) -> bool:
         if m:
             a = [t.strip() for t in m.group(1).split(",")]
             b = [t.strip() for t in m.group(2).split(",")]
-            hit = next(((x, y) for x in a for y in b if walled(ctx.context, x, y)), None)
+            hit = next(iter(crossings(ctx.context, a, b)), None)
             if hit:
                 item.wall = "%s and %s" % hit
                 item.message = ""
@@ -551,7 +555,7 @@ ORGANISATION_ASK = "no `organisation:` link, and its first line could mean more 
 NO_ENTITY_PARTY = "no `party:`"     # an entity page that does not say whose it is (#330)
 # Ops that write into a page a person wrote by hand: offered on a yes, and
 # never applied in a run with nobody watching, whatever their kind allows.
-ATTENDED_OPS = ("organisation",)
+ATTENDED_OPS = ("organisation", "party")
 DATE_INSIDE = re.compile(r"(?<!\d)(?:\d{6}|\d{4}-\d{2}-\d{2}|\d{8})(?!\d)")
 NOT_LIVE = re.compile(r"^(?:archive|build|render.*|specs|\..*|_.*)$", re.I)
 LINK = re.compile(r"(!?\[\[)([^\[\]|#\n]+)((?:#[^\[\]|\n]*)?(?:\|[^\[\]\n]*)?\]\])")
@@ -724,7 +728,12 @@ def across_wall(ctx: Ctx, source: str, target: str) -> bool:
     if len(parts) < 4 or parts[0] != "Zones":
         return False
     ours, theirs = parties_at(ctx, source), parties_at(ctx, target)
-    return any(walled(ctx.context, a, b) for a in ours for b in theirs)
+    if target.split("/")[:2] == ["Wikis", "Knowledge"] and not theirs:
+        theirs = {PUBLIC}                  # published material, which crosses every wall
+    # No label, no permit: a source with no party, a target with none or one the table lacks, is across a wall.
+    if not theirs or theirs - set(ctx.context.get("parties", {})) - {PUBLIC}:
+        return True
+    return decide(ours, theirs, "write", ctx.context) != "permit"
 
 
 def landing(ctx: Ctx, target: str) -> List[str]:
@@ -960,14 +969,61 @@ def apply_organisation(ctx: Ctx, item: Item, journal: "Journal") -> str:
     return "organisation is now %s" % item.fix["link"]
 
 
+def party_item(ctx: Ctx, arg: str, tag: str) -> Tuple[Item, str]:
+    """The fix an entity page's own answer writes (#330): the `party:` its
+    question asks for, `none` for an organisation that is not a party, else a
+    tag the Parties table lists. Raises Refusal for a page that is not an
+    entity page, one that says whose it is already, a frontmatter that can be
+    read two ways, and a tag no wall can see."""
+    if ctx.headless:
+        raise Refusal("an entity page's party is written only on its own yes, never with nobody watching", EXIT_USAGE)
+    path = (ctx.root / arg).resolve()
+    entities = ctx.root.joinpath("Wikis", "Meetings", "wiki", "entities").resolve()
+    if entities not in path.parents or path.is_symlink() or not path.is_file() or path.suffix != ".md":
+        raise Refusal("%s is not an entity page in Wikis/Meetings/wiki/entities/" % arg, EXIT_USAGE)
+    tag = strip_tag(str(tag or "").strip())
+    if tag != "none" and tag not in ctx.context.get("parties", {}):
+        raise Refusal("%s is not a party the workspace knows; say none for an organisation that is not a party" % tag,
+                      EXIT_USAGE)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        raise Refusal("%s is not readable as UTF-8 text, so the walls cannot read it; nothing was written" % arg)
+    if frontmatter_form_problem(text):
+        raise Refusal("%s: its frontmatter can be read two ways, so nothing was written" % arg)
+    fm = parse_frontmatter_text(text)
+    if not fm or any(str(k).strip().lower() in ("party", "parties") for k in fm):
+        raise Refusal("%s says whose it is already" % arg)
+    title = str(fm.get("title") or path.stem)
+    rel = ctx.rel(path)
+    return Item(source="nurture", check="party", path=rel, message="", kind="mechanical",
+                fix={"op": "party", "party": tag}, touches=[rel]), "Whose is %s: none, or a party?" % title
+
+
+def apply_party(ctx: Ctx, item: Item, journal: "Journal") -> str:
+    """One `party:` line added to an entity page's frontmatter, after `type:` where it has one."""
+    path = ctx.root / item.path
+    text = path.read_text(encoding="utf-8")
+    m = re.match(r"(---[^\n]*\n)(.*?)(\n(?:---|\.\.\.))", text, re.S)
+    if not m:
+        raise Held("its frontmatter does not read")
+    lines = m.group(2).split("\n")
+    if any(re.match(r"(party|parties)\s*:", l) for l in lines):
+        raise Held("it says whose it is already")
+    at = next((i + 1 for i, l in enumerate(lines) if re.match(r"type\s*:", l)), len(lines))
+    lines.insert(at, "party: %s" % item.fix["party"])
+    journal.write(path, text[:m.start(2)] + "\n".join(lines) + text[m.end(2):])
+    return "party is now %s" % item.fix["party"]
+
+
 OPS: Dict[str, Callable[[Ctx, Item, "Journal"], str]] = {
     "status": apply_status, "list-thread": apply_list_thread, "date": apply_date, "relink": apply_relink,
     "codelink": apply_codelink, "parent": apply_parent,
-    "organisation": apply_organisation}
+    "organisation": apply_organisation, "party": apply_party}
 OP_WORDS = {"status": ("status word", "status words"), "list-thread": ("hub list", "hub lists"),
             "date": ("date prefix", "date prefixes"), "relink": ("link", "links"),
             "codelink": ("path made a link", "paths made links"), "parent": ("parent link", "parent links"),
-            "organisation": ("organisation link", "organisation links")}
+            "organisation": ("organisation link", "organisation links"), "party": ("entity party", "entity parties")}
 
 
 def apply_mechanical(ctx: Ctx, item: Item, journal: "Journal") -> str:
@@ -1153,6 +1209,9 @@ def parties_at(ctx: Ctx, rel: str) -> set:
         zone = ctx.root / rel
         return set().union(*(note_tags(p / (p.name + ".md"), "party") for p in zone.iterdir() if p.is_dir())) \
             if zone.is_dir() else set()
+    if parts[0] == "Zones" and len(parts) >= 3:
+        got = labels(ctx.root, rel, ctx.context)       # one derivation; None (no label) is nobody's, so across a wall
+        return set(got) if got else set()
     if parts[0] in ("Zones", "System") and len(parts) >= (3 if parts[0] == "Zones" else 2):
         project = ctx.root.joinpath(*parts[:3 if parts[0] == "Zones" else 2])
         tags = note_tags(project / (project.name + ".md"), "party")
@@ -1194,9 +1253,12 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
     state: Dict[Path, Optional[set]] = {}
     for hit in hits:
         rel = ctx.rel(hit.path)
-        if ours and not inside(rel, scopes):
+        if scopes and not inside(rel, scopes):
             theirs = hit_parties(ctx, hit)
-            if theirs is None or any(walled(ctx.context, a, b) for a in ours for b in theirs):
+            if theirs is not None and not theirs and (hit.kind in ("memory", "context")
+                                                      or rel.split("/")[:2] == ["Wikis", "Knowledge"]):
+                theirs = {PUBLIC}          # the user's own, and published material: read on every side of a wall
+            if theirs is None or decide(ours, theirs, "read", ctx.context) != "permit":
                 withheld = True
                 continue
         files = [hit.path] if hit.kind != "raw" else list(hit.pages)
@@ -1298,11 +1360,21 @@ register(Kind("correction", "Corrections", 25, lambda ctx, item: False,
 
 
 def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, why: str = "",
-                   leave: Optional[List[str]] = None, path: str = "") -> dict:
+                   leave: Optional[List[str]] = None, path: str = "", commit: bool = True, watch=None,
+                   only=None, rebuild: bool = True) -> dict:
     """A correction the user gave, as one finding: listed, and on `yes`
     applied by correct.py, which commits once per repository. Recorded in the
     day's report: what it fixed, the yes, and what a wall or another
-    session's changes held back."""
+    session's changes held back.
+
+    `commit=False` is for a caller that commits the files itself, with other
+    changes (the Questions panel's save): `watch(path)` is called with every
+    file about to be written, before it is, so the caller can put it back,
+    the Meetings index correct.py rebuilds included; nothing is recorded
+    here, and `record_correction` records it once the caller has committed.
+    `only(hit)` keeps the copies a caller may change (the panel: Meetings wiki
+    pages on the near side of its view); the others are left alone and not
+    said. `rebuild=False` leaves the Meetings index to the caller."""
     if not new or not new.strip():
         raise ValueError("Say what it should be: --new cannot be empty.")
     if old == new:
@@ -1314,9 +1386,20 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     go, crossing, shaped = person_links_held(ctx, go, old, new)
     withheld = withheld or crossing
     held = held + shaped
+    if only is not None:
+        go = [h for h in go if only(h)]
     item = correction_item(ctx, old, new, go, path)
     out = {"old": old, "new": new, "item": item, "hits": correct.listing(go, ctx.root), "held": held, "done": None,
-           "wall": WALL_REFUSAL if withheld else ""}
+           "wall": WALL_REFUSAL if withheld else "", "go": go}
+    if not commit:
+        if yes and go:
+            if watch:
+                for h in go:
+                    for f in ([h.path] if h.kind != "raw" else list(h.pages)):
+                        watch(f)
+            out["done"] = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat(), commit=False,
+                                        rebuild=rebuild)
+        return out
     rec = read_record(ctx)
     rec["runs"].append({"at": datetime.datetime.now().strftime("%H:%M"), "scope": scope_key(scopes),
                         "headless": ctx.headless})
@@ -1326,23 +1409,7 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
         done = correct.apply(ctx.root, old, new, go, why=why, today=ctx.today.isoformat(),
                              verify=lambda repo, paths: walls_refusal(ctx, repo, paths))
         out["done"] = done
-        item.said = "%s in %s" % (plural(len(done.commits), "commit"), ", ".join(r for r, _ in done.commits)) \
-            if done.commits else "nothing committed"
-        for repo, sha in done.commits:
-            here = [c for c in done.changed if repo == "." or c.startswith(repo + "/")]
-            if repo == ".":
-                here = [c for c in here if not any(c.startswith(r + "/") for r, _ in done.commits if r != ".")]
-            rec["fixed"].append({"line": '"%s" is now "%s" in %s' % (old, new, ", ".join(here)), "path": item.path,
-                                 "commit": sha, "repo": repo_label(ctx, ctx.root / repo)})
-        for p, reason in done.uncommitted:
-            rec["fixed"].append({"line": '"%s" is now "%s" in %s, %s' % (old, new, p, reason), "path": p,
-                                 "commit": "not committed", "repo": "none"})
-        for repo, reason in done.refused:
-            leftover.append(Item("correct", "correction", repo, "the commit was refused: %s; its files were put back "
-                                 "as they were" % reason, kind="correction"))
-        rec["answered"].append({"path": item.path, "asked": "Correct \"%s\" to \"%s\" in %s?"
-                                % (old, new, plural(len(item.fix["files"]), "file")),
-                                "answer": "yes" + (", %s" % why.strip() if why.strip() else "")})
+        leftover += record_correction(ctx, rec, item, old, new, why, done)
     elif go:
         leftover.insert(0, item)
     mine = 'Correct "%s" to "%s"' % (old, new)
@@ -1351,6 +1418,32 @@ def run_correction(ctx: Ctx, scopes: List[str], old: str, new: str, yes: bool, w
     settle(ctx, rec, lambda s: s.get("line", "").startswith(mine) or s in now, now)
     out["report"] = write_report(ctx, rec)
     return out
+
+
+def record_correction(ctx: Ctx, rec: dict, item: Item, old: str, new: str, why: str, done) -> List[Item]:
+    """What a correction that was applied adds to the day's record: the line of
+    each commit, the files changed and not committed, and the yes. `done` is
+    correct.py's Applied, or anything with its commits, changed, uncommitted,
+    refused and superseded. Returns the findings a refused commit leaves."""
+    item.said = "%s in %s" % (plural(len(done.commits), "commit"), ", ".join(r for r, _ in done.commits)) \
+        if done.commits else "nothing committed"
+    for repo, sha in done.commits:
+        here = [c for c in done.changed if repo == "." or c.startswith(repo + "/")]
+        if repo == ".":
+            here = [c for c in here if not any(c.startswith(r + "/") for r, _ in done.commits if r != ".")]
+        rec["fixed"].append({"line": '"%s" is now "%s" in %s' % (old, new, ", ".join(here)), "path": item.path,
+                             "commit": sha, "repo": repo_label(ctx, ctx.root / repo)})
+    for p, reason in done.uncommitted:
+        rec["fixed"].append({"line": '"%s" is now "%s" in %s, %s' % (old, new, p, reason), "path": p,
+                             "commit": "not committed", "repo": "none"})
+    left = []
+    for repo, reason in done.refused:
+        left.append(Item("correct", "correction", repo, "the commit was refused: %s; its files were put back "
+                         "as they were" % reason, kind="correction"))
+    rec["answered"].append({"path": item.path, "asked": "Correct \"%s\" to \"%s\" in %s?"
+                            % (old, new, plural(len(item.fix["files"]), "file")),
+                            "answer": "yes" + (", %s" % why.strip() if why.strip() else "")})
+    return left
 
 
 # ---------------------------------------------------------------------------
@@ -2086,13 +2179,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if not (a.path and a.asked and a.answer):
             print("nurture: answered needs --path, --asked and --answer", file=sys.stderr)
             return EXIT_USAGE
-        rec = read_record(ctx)
-        rec["answered"].append({"path": a.path, "asked": a.asked, "answer": a.answer})
-        asked = lambda i: i.get("path") == a.path and i.get("kind") == "attribution"
-        for items in rec["left"].values():
-            items[:] = [i for i in items if not asked(i)]
-        settle(ctx, rec, asked, [])
-        print(write_report(ctx, rec).relative_to(root).as_posix())
+        print(record_answer(ctx, a.path, a.asked, a.answer).relative_to(root).as_posix())
         return 0
 
     if a.action == "correct":
@@ -2141,6 +2228,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     return code
 
 
+def record_answer(ctx: Ctx, path: str, asked: str, answer: str, settled: bool = True) -> Path:
+    """A question the user answered, in the day's report: the line, and the
+    finding off the list of what is left. `answered` says it, and so does the
+    Questions panel's save (page_action.py), so both record the same way."""
+    rec = read_record(ctx)
+    rec["answered"].append({"path": path, "asked": asked, "answer": answer})
+    if settled:             # a "no" settles nothing: the finding is still there, and the review sees the line
+        here = lambda i: i.get("path") == path and i.get("kind") == "attribution"
+        for items in rec["left"].values():
+            items[:] = [i for i in items if not here(i)]
+        settle(ctx, rec, here, [])
+    return write_report(ctx, rec)
+
+
 def walls_refusal(ctx: Ctx, repo: Path, paths: Optional[List[str]] = None) -> str:
     """The walls check on what a repository has staged, as its commit hook
     would run it: "" when it passes, else the refusing check and the paths
@@ -2149,68 +2250,77 @@ def walls_refusal(ctx: Ctx, repo: Path, paths: Optional[List[str]] = None) -> st
     return staged_walls_refusal(ctx.root, repo, paths)
 
 
-def main_organisation(ctx: Ctx, a) -> int:
-    """Write one person page's `organisation:` on that page's own yes (#330):
-    the link its question offered, worked out again now, or, with
-    `--entity`, the entity page the user named instead, as `ingest.py person
-    --organisation` takes it. Walls, two hats and an entity page with no
-    `party:` stop it as they stop the question, and so does a frontmatter
-    not in the strict shape. One page, one commit, made only after the
-    walls check passes on that change as staged, whether or not the
-    repository has a hook (`Wikis/` has none by default); never with nobody
-    watching."""
+class Refusal(Exception):
+    """Why a person page's organisation, or an entity page's party, is not
+    written, in words, and the exit code the command line gives it."""
+
+    def __init__(self, text: str, code: int = EXIT_FAILED):
+        super().__init__(text)
+        self.code = code
+
+
+def organisation_item(ctx: Ctx, arg: str, entity: str = "") -> Tuple[Item, str]:
+    """The fix a person page's own yes writes (#330), and the question it
+    answers: the link the page's question offered, worked out again now, or,
+    with `entity`, the entity page the user named instead, as `ingest.py
+    person --organisation` takes it. Raises Refusal for walls, two hats, an
+    entity page with no `party:`, a frontmatter not in the strict shape, a
+    page that is not a person page, one with an organisation line already,
+    and nobody watching."""
     if ctx.headless:
-        print("nurture: a person page's organisation is written only on its own yes, never with nobody watching",
-              file=sys.stderr)
-        return EXIT_USAGE
-    if not (a.path and a.yes):
-        print("nurture: organisation needs --path and --yes", file=sys.stderr)
-        return EXIT_USAGE
-    path = (ctx.root / a.path).resolve()
+        raise Refusal("a person page's organisation is written only on its own yes, never with nobody watching",
+                      EXIT_USAGE)
+    path = (ctx.root / arg).resolve()
     people = ctx.root.joinpath("Wikis", "Meetings", "wiki", "people").resolve()
     if people not in path.parents or not path.is_file() or path.suffix != ".md":
-        print("nurture: %s is not a person page in Wikis/Meetings/wiki/people/" % a.path, file=sys.stderr)
-        return EXIT_USAGE
+        raise Refusal("%s is not a person page in Wikis/Meetings/wiki/people/" % arg, EXIT_USAGE)
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        print("nurture: %s is not readable as UTF-8 text, so the walls cannot read it; nothing was written" % a.path,
-              file=sys.stderr)
-        return EXIT_FAILED
+        raise Refusal("%s is not readable as UTF-8 text, so the walls cannot read it; nothing was written" % arg)
     if garrick_check.person_shape_problem(text):
-        print("nurture: %s: %s; nothing was written" % (a.path, garrick_check.PERSON_SHAPE), file=sys.stderr)
-        return EXIT_FAILED
+        raise Refusal("%s: %s; nothing was written" % (arg, garrick_check.PERSON_SHAPE))
     if any(str(k).strip().lower() in ("organisation", "organization") for k in parse_frontmatter_text(text)):
-        print("nurture: %s has an organisation line already" % a.path, file=sys.stderr)
-        return EXIT_FAILED
+        raise Refusal("%s has an organisation line already" % arg)
     asked, link = organisation_question(ctx, path)
-    if a.entity:
+    if entity:
         fm = parse_frontmatter_text(text)
         title = str(fm.get("title") or path.stem)
-        link, why = organisation_named(ctx.root, ctx.context, (title, path.stem), fm.get("party"), a.entity)
+        link, why = organisation_named(ctx.root, ctx.context, (title, path.stem), fm.get("party"), entity)
         if why:
-            print("nurture: no organisation link: %s" % why, file=sys.stderr)
-            return EXIT_FAILED
+            raise Refusal("no organisation link: %s" % why)
     if not link:
-        print("nurture: nothing to write for %s" % a.path, file=sys.stderr)
-        return EXIT_FAILED
+        raise Refusal("nothing to write for %s" % arg)
     rel = ctx.rel(path)
-    item = Item(source="nurture", check="organisation", path=rel, message="", kind="mechanical",
-                fix={"op": "organisation", "link": link}, touches=[rel])
+    return Item(source="nurture", check="organisation", path=rel, message="", kind="mechanical",
+                fix={"op": "organisation", "link": link}, touches=[rel]), asked
+
+
+def organisation_answered(ctx: Ctx, item: Item, asked: str, entity: str = "") -> Path:
+    return record_answer(ctx, item.path, asked or "Where does this person work?",
+                         "yes" if not entity else "another page: %s" % entity)
+
+
+def main_organisation(ctx: Ctx, a) -> int:
+    """Write one person page's `organisation:` on that page's own yes (#330).
+    One page, one commit, made only after the walls check passes on that
+    change as staged, whether or not the repository has a hook (`Wikis/` has
+    none by default); never with nobody watching."""
+    if not (a.path and a.yes):
+        print("nurture: organisation needs --path and --yes", file=sys.stderr)
+        return EXIT_USAGE
+    try:
+        item, asked = organisation_item(ctx, a.path, a.entity)
+    except Refusal as why:
+        print("nurture: %s" % why, file=sys.stderr)
+        return why.code
     done = apply(ctx, [item])
     for i in done["held"]:
         print("nurture: held: %s" % i.held, file=sys.stderr)
     for c in done["commits"]:
         print("Committed %s in %s: %s" % (c["commit"], c["repo"], ", ".join(c["paths"])))
     if done["fixed"]:
-        rec = read_record(ctx)
-        rec["answered"].append({"path": rel, "asked": asked or "Where does this person work?",
-                                "answer": "yes" if not a.entity else "another page: %s" % a.entity})
-        asked_here = lambda i: i.get("path") == rel and i.get("kind") == "attribution"
-        for items in rec["left"].values():
-            items[:] = [i for i in items if not asked_here(i)]
-        settle(ctx, rec, asked_here, [])
-        write_report(ctx, rec)
+        organisation_answered(ctx, item, asked, a.entity)
     return 0 if done["fixed"] else EXIT_FAILED
 
 

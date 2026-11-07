@@ -41,12 +41,14 @@ with the same arguments, where `<garrick>` is the Garrick download.
 | "open X", "start a session on X" | `desk open X --prompt "open X"` | The session in the tab answers in two sentences. Already open: desk brings it forward and sends the phrase only if the tab is idle. Say which tab it was. |
 | "close X" | `desk close X --wrap`, read it back, then `desk close X --wrap --yes` | X's own session wraps the thread, then the tab closes. |
 | "close the X tab" | `desk close X`, read it back, then `--yes` | Closes without a wrap. |
-| "close for the day", "I'm done for today" | `desk shutdown`, read it back, then `desk shutdown --yes` | Each tab used today wraps its own thread, then cmux quits. It ends this session too. With the dry run, name what is still on the interruption stack (the threads skill's `stack`); it stays there, and a held thread's tab says so instead of wrapping. |
-| "back", "where was I", "back to X" | The threads skill's Back, then `desk open "<its folder>" --prompt "open X"` | The threads skill takes the thread off the interruption stack; its tab comes forward and the session there reads back where the user was. |
+| "close for the day", "I'm done for today" | `desk shutdown`, read it back, then `desk shutdown --yes` | Each tab used today wraps its own thread, then cmux quits. It ends this session too. The wrap is the threads skill's, run in front in each tab. |
+| "back", "where was I", "back to X" | The threads skill's Back, then `desk open "<its folder>" --prompt "open X"` | The threads skill picks the live thread whose note was written most recently; its tab comes forward and the session there reads back where the user was. |
 | "shut everything down" | `desk end`, read it back, then `desk end --yes` | Quits without wrapping. Every tab comes back on `start`. |
 | "start the day", "restore my tabs", "bring everything back" | `desk start` | Read back what came back and anything it did not resume, with the reason. |
 | "what tabs are open" | `desk status` | Spoken: how many, then the busy ones by name. |
 | "new workspace X" | `desk workspace X` | |
+
+**The tabs, in the rules' words.** Where the desk skill is installed (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation. "Open X" opens or brings forward X's tab, and the session there answers. "Close X" has that session wrap X, then closes the tab; "close the X tab" closes it without a wrap. "Close for the day" wraps each tab used today in its own session, then quits cmux. "Shut everything down" quits without wrapping. "Start the day" or "restore my tabs" brings them back, and "what tabs are open" lists them.
 
 `--yes` and `--force` are the user's to give, never yours. Read the dry run
 back first, and say everything you need to say before a quit: it lands three

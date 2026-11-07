@@ -30,11 +30,17 @@ out in an admitted result of this conversation. An id made up, one from
 before a reset, or one for a record that is gone gets the same words, which
 say nothing of whether the record exists.
 
-**Search is the recall index's, with a fallback.** `search` calls
-recall.search() (#341) with no project, so every row is returned and the walls
-are applied here, by party, to what comes back. Where the index is missing or
-raises, it falls back to the keyword find the Ask window used before
-(ask_scope.search()) and says so in the result.
+**Search is the scope index's, with a fallback.** The wall stands at the store
+(#358, #341): `search` and `read` open only the scope index of the conversation
+(recall.py), which holds the rows that scope may read and no others. Nothing is
+filtered after the search, because nothing walled is in the file to rank, count
+or order. With no `kind` a search reads every store the scope holds: the zone's
+notes, Meetings and Knowledge. The names in the words are expanded and a near
+spelling is found through the trigram table (recall.py does both), and a result
+that is a thread or hub note carries its Resume here block. `read` is a lookup of
+the id in the scope index. Only when the index cannot be opened does `search`
+fall back to the keyword find the window used before (ask_scope.search()), and
+it says so.
 
 The state folder holds `in.json` (ask.py's: the zone and the parties the
 requests named), `out.json` (this server's: its nonce, the parties admitted,
@@ -70,6 +76,7 @@ OVERSAMPLE = 5              # rows asked of the index for each one returned, sin
 MOST_TEXT = 6000            # characters of one record read() returns
 MOST_TODO = 200             # characters of a Todo line a proposal may carry: the button shows all of it
 MOST_OWED = 40              # items owed() returns
+STATE_TEXT = 1500           # characters of a thread's Resume here block a search result carries
 SNIPPET = 300               # characters of a record a search result shows
 
 STOPPED = "This conversation has been stopped. Do not answer. Reply with the single word: stopped."
@@ -118,6 +125,10 @@ def recall_for(ws: Path):
     """recall.py (#341): the workspace's own copy, else the one in Garrick's template. None when there is none."""
     sc = scope_mod()
     return sc._tool(ws, "recall.py", lambda m: callable(getattr(m, "search", None)))
+
+
+def sc_body(conv, text: str) -> str:
+    return conv.world()[0]._body(text)
 
 
 def tidy(text: str, most: int) -> str:
@@ -203,7 +214,7 @@ class Conversation:
             return False
         sc, lib, ctx, _ = self.world()
         parties = set(parties)
-        if not sc.admits(ctx, parties, self.held(), lib):
+        if not sc.admits(ctx, self.held(), parties, lib):
             self.wall = True
             self.save()
             return False
@@ -214,7 +225,7 @@ class Conversation:
         """An id for an admitted record: only an id handed out here can be read."""
         self.count += 1
         rid = "r%d-%s" % (self.count, self.nonce)
-        self.handed[rid] = {k: d.get(k) or "" for k in ("path", "title", "date", "imported")}
+        self.handed[rid] = {k: d.get(k) or "" for k in ("path", "title", "date", "imported", "rid", "scope", "kind", "zone")}
         self.handed[rid]["parties"] = sorted(d.get("parties") or [])
         return rid
 
@@ -227,7 +238,12 @@ class Conversation:
         walled from what it holds or from a row taken before it (ask_scope.choose()). Rows that a wall holds back are
         left out and counted, never named, so the answer ends with the rules' sentence. When a wall held back every
         row there was, the search reached across it: the conversation is stopped, and None is returned."""
-        chosen, back, _ = sc.choose(rows, self.held(), ctx, lib, most=most)
+        # A conversation that holds nothing begins its group with the first record, among the parties of the window's
+        # zone (all of the table's when it has none): the release's choose() takes that as `start`.
+        names = self.world()[3]
+        start = set(ctx.get("parties", {})) if not self.zone else set().union(
+            *[set(sc.place_parties(self.ws, self.zone, pr, None, lib)) for pr in names.get(self.zone, {})], set())
+        chosen, back, _ = sc.choose(rows, self.held(), ctx, lib, most=most, start=start)
         if back and not chosen:
             self.latch()
             return None
@@ -307,7 +323,7 @@ class Conversation:
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else p.stem
         return {"path": rel, "kind": kind, "zone": zone, "project": project, "thread": thread,
                 "title": title.strip(), "date": sc._date(fm, p), "imported": sc._imported(fm, p),
-                "parties": list(parties), "body": body, "text": sc.passage(body, words or [])}
+                "parties": list(parties), "public": kind in ("library", "docs"), "body": body, "text": sc.passage(body, words or [])}
 
     def line(self, rid: str, d: dict, snippet: str = "") -> str:
         when = [d["date"]] if d.get("date") else ["no date"]
@@ -358,6 +374,16 @@ class Conversation:
         found = mine or found
         return sorted(found, key=lambda f: tuple(str(x) for x in f)), ""
 
+    def zone_fits(self, zone: str, lib, ctx: dict) -> bool:
+        """Whether a zone as a place may be held with what is held: some scope of the zone has no wall between its
+        parties and anything held. A zone with no scope, or no way to list its scopes, does not fit."""
+        rc = recall_for(self.ws)
+        try:
+            scopes = [s for s in rc.scopes_of(self.ws, ctx) if s.kind == "zone" and s.zone.lower() == zone.lower()]
+        except Exception:
+            return False
+        return any(not self.crosses(s.tags, lib, ctx) for s in scopes)
+
     def one_place(self, place: str, names):
         """The one place a name stands for, or (None, a message that names only candidates the conversation may hold)."""
         found, why = self.resolve(place, names)
@@ -367,7 +393,8 @@ class Conversation:
         # left the answer is the words for a place that does not exist, so a name on the far side cannot be told
         # from one that is not there. The wall is noted (held_back) for the user's answer, never for the session.
         sc, lib, ctx, _ = self.world()
-        fair = [f for f in found if f[1] is None or sc.admits(ctx, sc.place_parties(self.ws, f[0], f[1], f[2], lib), self.held(), lib)]
+        fair = [f for f in found if (self.zone_fits(f[0], lib, ctx) if f[1] is None else
+                                     sc.admits(ctx, self.held(), sc.place_parties(self.ws, f[0], f[1], f[2], lib), lib))]
         if len(fair) < len(found):
             self.held_back += 1
             self.save()
@@ -418,50 +445,72 @@ class Conversation:
                     continue
         return list(dict.fromkeys(out))
 
-    def row_admit(self):
-        """recall's `admit` for this conversation, failing closed. It refuses session and system rows; admits a
-        library row that names no party and no zone; refuses any other row with no party, a tag the Parties table
-        does not hold, or a party walled (ask_scope.admits()) from what is held. With nothing held it admits only
-        rows of the window's zone alone. Whether the parties of that zone are walled from each other is not decided
-        row by row: the window zone's rows are admitted and fair() chooses among them, as before."""
-        sc, lib, ctx, _ = self.world()
-        tags = {t.casefold(): t for t in ctx.get("parties", {})}
-        held, zone = set(self.held()), (self.zone or "").casefold()
+    def held_tags(self, lib) -> set:
+        """Every party the conversation holds, seen or told, in any zone."""
+        return {lib.strip_tag(t) for t in self.held()} - {lib.PUBLIC}
 
-        def admit(row) -> bool:
-            if row.kind in ("session", "system"):
-                return False
-            if row.kind == "knowledge" and not row.parties and not row.zones:
-                return True
-            if not row.parties or any(p.casefold() not in tags for p in row.parties):
-                return False
-            if not sc.admits(ctx, {tags[p.casefold()] for p in row.parties}, held, lib):
-                return False
-            if not held and tuple(z.casefold() for z in row.zones) != (zone,):
-                return False
-            return True
-        return admit
+    def crosses(self, tags, lib, ctx: dict, extra=()) -> bool:
+        """Whether a wall stands between a scope's tags and anything held (or `extra`), or inside what is held."""
+        held = self.held_tags(lib) | {lib.strip_tag(t) for t in extra}
+        held -= {lib.PUBLIC}
+        return bool(held and (lib.crossings(ctx, set(tags), held) or lib.crossings(ctx, held)))
 
-    def indexed(self, words: str, limit: int) -> Tuple[Optional[List[str]], Dict[str, str]]:
-        """recall.search()'s paths, best first, and each one's snippet; (None, {})
-        when the index is missing or raises. It is asked for no project, so
-        nothing is filtered there: the walls are applied here."""
+    def scope_for(self, rc, ctx: dict, place, kind: str = "all"):
+        """The one scope index this conversation opens: the scope of the zone the window answers in (or the place's
+        zone), on the side that holds what is held. (scope, "") or (None, why). Several sides and nothing to choose
+        by: the user names the project. What is held spread over two sides: the conversation is stopped."""
+        sc, lib, _, _ = self.world()
+        zone = place[0] if place else self.zone
+        if not zone:
+            return None, NAME_A_PLACE
+        scopes = [s for s in rc.scopes_of(self.ws, ctx) if s.kind == "zone" and s.zone.lower() == zone.lower()]
+        if not scopes:
+            return None, NO_PLACE
+        every = set().union(*[set(s.tags) for s in scopes])
+        need = {lib.strip_tag(t) for t in self.held()} & every
+        if place and place[1]:
+            need |= {lib.strip_tag(t) for t in sc.place_parties(self.ws, place[0], place[1], place[2], lib)} & every
+        extra = {lib.strip_tag(t) for t in sc.place_parties(self.ws, place[0], place[1], place[2], lib)} \
+            if place and place[1] else set()
+        # A scope fits when what is held on its side is in it and no held party, of any zone, is walled from it.
+        fits = [s for s in scopes if need <= set(s.tags) and not self.crosses(s.tags, lib, ctx, extra)]
+        if not fits:
+            self.latch()
+            return None, STOPPED
+        if len(fits) > 1:
+            if kind == "library":
+                return fits[0], ""              # published pages name no party: every side holds the same ones
+            return None, NAME_A_PLACE
+        return fits[0], ""
+
+    def indexed(self, words: str, limit: int, place, wiki: Optional[str], after: Optional[str], kind: str = "all"):
+        """(rows, scope, why): the scope index's results for the words, best first. rows is None when the index
+        cannot be used (no recall, a recall without scopes, an error); scope is None with `why` when no scope fits."""
         rc = recall_for(self.ws)
-        if rc is None:
-            return None, {}
+        if rc is None or not all(callable(getattr(rc, n, None)) for n in ("scopes_of", "read", "search")):
+            return None, None, ""
+        _, _, ctx, _ = self.world()
         try:
-            # `admit` (#341) puts the walls before the ranking. A recall that does not take it raises TypeError
-            # here, and the index is then not used: never a second call without it.
-            rows = rc.search(words, project=None, limit=limit, root=self.ws, admit=self.row_admit())
+            scope, why = self.scope_for(rc, ctx, place, kind)
+            if scope is None:
+                return [], None, why
+            rows = rc.search(words, project=None, root=self.ws, scope=scope, limit=limit, wiki=wiki, after=after)
         except Exception:
-            return None, {}
-        paths, snippets = [], {}
-        for r in rows or []:
-            path = getattr(r, "path", None)
-            if isinstance(path, str) and path and path not in snippets:
-                paths.append(path)
-                snippets[path] = str(getattr(r, "snippet", "") or "")
-        return paths, snippets
+            return None, None, ""
+        return list(rows or []), scope, ""
+
+    def state_of(self, rc, scope, rid: str, path: str) -> str:
+        """The Resume here block of a hub or thread note a result names, as the scope index reads it."""
+        parts = path.split("/")
+        hub = len(parts) == 4 and parts[0] == "Zones" and parts[3] == parts[2] + ".md"
+        note = len(parts) == 6 and parts[0] == "Zones" and parts[3] == "Threads" and parts[5] == parts[4] + ".md"
+        if not (hub or note):
+            return ""
+        try:
+            text = rc.read(rid, project=None, root=self.ws, scope=scope)
+        except Exception:
+            return ""
+        return self.resume(text or "")
 
     @staticmethod
     def wanted(d: dict, kind: str, zone: Optional[str], place) -> bool:
@@ -500,21 +549,87 @@ class Conversation:
             if place is None:
                 return why
             zone = place[0]
-        wide = limit * OVERSAMPLE
-        paths, snippets = self.indexed(words, wide) if kind != "docs" else (None, {})
-        how = "the search index"
-        if paths is None:
-            how = "a keyword find"
-            paths, snippets = self.keyword(words, zone, place, kind, order, names), {}
-        elif kind in ("all", "docs"):
-            # The docs are Garrick's own pages: not in the index, so searched by keyword whatever the index says.
-            paths = paths + [p for p in self.keyword(words, zone, place, "docs", order, names) if p not in paths]
+        wiki = {"meetings": "Meetings", "library": "Knowledge"}.get(kind)
+        wide = 200 if order == "recent" else limit * OVERSAMPLE
+        rows, scope, why = (None, None, "") if kind == "docs" else self.indexed(words, wide, place, wiki, after, kind)
+        if scope is None and rows == []:
+            return why                          # no scope fits: the words of a place that is not there, or the question
         terms = [sc._norm(w) for w in words.split() if len(w) >= sc.SHORTEST]
-        known = set(ctx.get("parties", {}))
+        if rows is None:
+            return self.found_by_keyword(words, zone, place, kind, order, names, terms, after, limit)
         recs: List[dict] = []
-        for rel in paths:
+        rc = recall_for(self.ws)
+        for r in rows:
+            d = self.shape(r, scope, zone, place)
+            if d is None or (kind != "all" and d["kind"] != kind) or not self.in_place(d, place):
+                continue
+            recs.append(d)
+        if kind == "all":
+            # The docs are Garrick's own pages: not in the index, so searched by keyword whatever the index says.
+            for rel in self.keyword(words, zone, place, "docs", order, names):
+                d = self.describe(rel, terms)
+                if d is not None and d["kind"] == "docs" and not (after and (not d["date"] or d["date"] < str(after))):
+                    recs.append(dict(d, snippet=d["text"]))
+        if order == "recent":
+            recs.sort(key=lambda d: (d["date"], d["imported"]), reverse=True)
+        recs = recs[:limit]
+        # What the session now holds: the parties of the records it was given, for the reset between requests.
+        # It decides nothing about what is returned.
+        cache: dict = {}
+        for d in recs:
+            lab = lib.labels(self.ws, d["path"], ctx, cache) if d["kind"] != "docs" else None
+            self.seen |= {lib.strip_tag(t) for t in (lab or ())} - {"public"}
+        lines = []
+        for d in recs:
+            rid = self.hand(d)
+            line = self.line(rid, d, d.get("snippet") or "")
+            state = self.state_of(rc, scope, d["rid"], d["path"]) if d.get("rid") and d["kind"] == "threads" else ""
+            if state:
+                line += "\n    State of play: " + tidy(state, STATE_TEXT)
+            lines.append(line)
+        self.save()
+        head = "%d record%s returned (from the search index)." % (len(recs), "" if len(recs) == 1 else "s")
+        if len(recs) == limit:
+            head += " There may be more: ask for a larger limit, or narrow the words."
+        return head + ("\n" + "\n".join(lines) if lines else "")
+
+    def shape(self, r, scope, zone, place) -> Optional[dict]:
+        """A record from one result of the scope index: its kind from where it lives, no judgement of its parties."""
+        path = str(getattr(r, "path", "") or "")
+        source = str(getattr(r, "source", "") or "")
+        parts = path.split("/")
+        if parts[:3] == ["Wikis", "Meetings", "wiki"]:
+            kind, zn = "meetings", None
+        elif parts[:3] == ["Wikis", "Knowledge", "wiki"]:
+            kind, zn = "library", None
+        elif len(parts) >= 4 and parts[0] == "Zones" and parts[2] != "Todo.md" and not parts[2].startswith("."):
+            kind, zn = "threads", parts[1]
+        else:
+            return None                         # raw records, sessions, a zone's Todo list: not records Ask hands out
+        proj = parts[2] if kind == "threads" else None
+        thread = parts[4] if kind == "threads" and len(parts) > 5 and parts[3] == "Threads" else None
+        title = str(getattr(r, "title", "") or "") or Path(path).stem
+        return {"path": path, "kind": kind, "zone": zn, "project": proj, "thread": thread, "title": title,
+                "date": str(getattr(r, "date", "") or ""), "imported": "", "snippet": str(getattr(r, "snippet", "") or ""),
+                "rid": str(getattr(r, "id", "") or ""), "scope": scope.key, "parties": []}
+
+    @staticmethod
+    def in_place(d: dict, place) -> bool:
+        """A place narrows the notes of its own project or thread; Meetings and Knowledge are read whatever the place."""
+        if d["kind"] != "threads" or not (place and place[1]):
+            return True
+        if d["zone"] != place[0] or d["project"] != place[1]:
+            return False
+        return not place[2] or d["thread"] in (None, place[2]) or "Sources" in d["path"].split("/")
+
+    def found_by_keyword(self, words, zone, place, kind, order, names, terms, after, limit) -> str:
+        """The keyword find, when the index cannot be opened. It cannot open a scope, so its rows are chosen
+        against what is held after the search (ask_scope.choose()), as before the index."""
+        sc, lib, ctx, _ = self.world()
+        recs: List[dict] = []
+        for rel in self.keyword(words, zone, place, kind, order, names):
             d = self.describe(rel, terms)
-            if d is None or not set(d["parties"]) <= known or not self.wanted(d, kind, zone, place):
+            if d is None or not set(d["parties"]) <= set(ctx.get("parties", {})) or not self.wanted(d, kind, zone, place):
                 continue
             if after and (not d["date"] or d["date"] < str(after)):
                 continue
@@ -524,23 +639,42 @@ class Conversation:
         recs = self.fair(recs, limit, ctx, lib, sc)
         if recs is None:
             return STOPPED
-        lines = []
-        for d in recs:
-            rid = self.hand(d)
-            lines.append(self.line(rid, d, snippets.get(d["path"]) or d["text"]))
+        lines = [self.line(self.hand(d), d, d["text"]) for d in recs]
         self.save()
-        head = "%d record%s returned (from %s)." % (len(recs), "" if len(recs) == 1 else "s", how)
+        head = "%d record%s returned (from %s)." % (len(recs), "" if len(recs) == 1 else "s",
+                                                    "Garrick's docs" if kind == "docs" else "a keyword find")
         if len(recs) == limit:
             head += " There may be more: ask for a larger limit, or narrow the words."
-        if how == "a keyword find":
-            head += " " + INDEX_DOWN
-        return head + ("\n" + "\n".join(lines) if lines else "")
+        return head + ("" if kind == "docs" else " " + INDEX_DOWN) + ("\n" + "\n".join(lines) if lines else "")
 
     def read(self, a: dict) -> str:
         rid = a.get("id")
         rec = self.handed.get(rid) if isinstance(rid, str) else None
         if rec is None:
             return NOT_GIVEN
+        if rec.get("rid"):
+            # A record of the scope index: a lookup of its id in that index. An id the scope does not hold, because the
+            # page moved across a wall or is gone, answers as an id that was never given.
+            rc = recall_for(self.ws)
+            _, lib, ctx, _ = self.world()
+            try:
+                scope = rc.scope_named(self.ws, ctx, rec["scope"]) if rc is not None else None
+                if scope is None:
+                    return NOT_GIVEN
+                if self.crosses(scope.tags, lib, ctx):
+                    self.latch()                # what is held is walled from this scope: nothing is read
+                    return STOPPED
+                text = rc.read(rec["rid"], project=None, root=self.ws, scope=scope)
+            except Exception:
+                return NOT_GIVEN
+            if text is None:
+                return NOT_GIVEN
+            d = dict(rec, kind=rec.get("kind") or "threads")
+            body = text
+            if text.startswith("---"):
+                body = sc_body(self, text)
+            self.save()
+            return "%s\n\n%s" % (self.line(rid, d), inert(body.strip())[:MOST_TEXT])
         d = self.describe(rec["path"])
         if d is None:
             return NOT_GIVEN
@@ -568,14 +702,14 @@ class Conversation:
                 parties = set(sc.place_parties(self.ws, z, pr, None, lib))
                 if not parties or not parties <= set(ctx.get("parties", {})):
                     continue            # a place no party can be stated for is not named
-                if held and not sc.admits(ctx, parties, held, lib):
+                if held and not sc.admits(ctx, held, parties, lib):
                     continue            # names of the far side are left out, not refused
                 ts = "; ".join(t + ("" if s == "active" else " (%s)" % s) for t, s in r["threads"].items())
                 rows.append((parties, "- %s [%s]%s" % (inert(pr), r["status"], " threads: " + inert(ts) if ts else "")))
             if rows:
                 listing.append((z, rows))
         listed = {p for _, rows in listing for ps, _ in rows for p in ps}
-        if any(lib.walled(ctx, x, y) for x in listed for y in listed):
+        if bool(lib.crossings(ctx, listed)):
             return NO_PROJECTS          # the list would span a wall: the words of an empty zone, so the text says nothing
         if listed and not self.admit(listed):      # the names are material: what is listed is held
             return STOPPED
@@ -649,7 +783,7 @@ class Conversation:
             if not ps or not ps <= set(ctx.get("parties", {})):
                 return None
             every |= ps
-        return None if any(lib.walled(ctx, x, y) for x in every for y in every) else every
+        return None if bool(lib.crossings(ctx, every)) else every
 
     @staticmethod
     def surnamed(text: str, ctx: dict) -> set:
@@ -725,7 +859,7 @@ class Conversation:
         if isinstance(zn, str) and isinstance(pj, str) and pj in names.get(zn, {}):
             # Before anything else about the place is said: a project on the far side of a wall looks like one that
             # is not there, whatever else the action gets wrong (its thread, its app).
-            if not sc.admits(ctx, set(sc.place_parties(self.ws, zn, pj, None, lib)), self.held(), lib):
+            if not sc.admits(ctx, self.held(), set(sc.place_parties(self.ws, zn, pj, None, lib)), lib):
                 self.held_back += 1
                 self.save()
                 return "Refused: no project %r in %s." % (pj, zn)
@@ -735,7 +869,7 @@ class Conversation:
             return "Refused: %s." % e
         if act.get("project"):
             parties = sc.place_parties(self.ws, act["zone"], act["project"], act.get("thread"), lib)
-            if not sc.admits(ctx, set(parties), self.held(), lib):
+            if not sc.admits(ctx, self.held(), set(parties), lib):
                 # A place on the far side of a wall looks like one that is not there: the same words as proposal() uses.
                 self.held_back += 1
                 self.save()

@@ -1,7 +1,7 @@
 ---
 name: threads
 description: >
-  Open, list, wrap, hold, park, finish and create work threads, catch the
+  Open, list, wrap, park, finish and create work threads, catch the
   user up on what changed in them, and add zones, by voice or typed. The
   procedure behind the spoken commands in System/rules.md. Use when the
   user says "open X", "pick up X", "resume X",
@@ -74,13 +74,53 @@ Where the `desk` skill is installed (the cmux extra), "open X", "close X" and
 "close for the day" go to it first: it opens, wraps or closes each thread in
 its own tab, and the session in that tab runs this skill.
 
+## The rules behind the commands
+
+`System/rules.md` keeps one resume point per thread and open actions in
+`Todo.md`, and leaves the rest to this skill. These are the rules it moved
+here, word for word. The commands below carry them out.
+
+**Threads**
+
+- **Every thread has one resume point**: the `## State of play` section of its thread note, opening with a **Resume here** block. It says what is done, the live artifact, the next action, who it waits on and the deadline. Read it before opening anything else in the thread. A project that is only ever one thread may keep that section in its hub instead.
+- **The hub is the project's index.** It links every thread: under `## Threads`, or under `## Finished` once it is done.
+- **Rewrite the Resume here block at the end of any session that produced a decision or a deliverable**, so that it describes now. Add a dated entry below it; keep the old entries.
+- **A finished thread** gets `status: done`, and its Resume here block becomes `### Outcome`: what was delivered or decided. The project hub lists it under `## Finished`.
+- **A parked thread** gets `status: parked`: set aside, not finished. It keeps its folder, its Resume here block and its links, and drops out of "what's open" until it is woken. **A parked project** has `status: parked` on its hub, and every thread in it is parked with it, whatever its own note says.
+- **Open actions live in the zone's `Todo.md`.** A thread note says where the work stands; it is not a to-do list, and actions are not copied into it. An action that opens with its thread's link keeps pointing at a live thread: when a thread is renamed, its lines follow. Dates go last on the line, where Obsidian Tasks reads them.
+- **A checkpoint is the one exception.** As the work happens, a `### Checkpoint` block under Resume here records what this session made, decided and left half done, unconfirmed and never touching the block above it; its To file lines are held there, unfiled, until the next wrap files them and removes the block. Only a wrap or a finish confirms anything.
+- **A deadline nobody gave says so.** The Deadline row reads "not given" where nobody has dated the work, and "none" only where somebody said there is none.
+- **If your assistant has a memory of its own**, keep one entry per live or parked thread that says where its resume point is, and nothing else, with its `source:` and `created:`. No status: the note has it. Delete the entry when the thread is finished.
+
+**Voice**
+
+- **Names are the names the work already has.** Zones, projects and threads take letters and digits, spaces, hyphens, apostrophes, `&`, and a full stop inside an acronym: Q4 Planning, ISO 27001, Birch & Co. Nothing else, since the rest either cannot be stored as a folder or is a separator the spoken grammar uses, such as the comma in "Acme, pricing". Siblings must not sound alike.
+- **A name that does not say how it is said carries a spoken form.** `spoken:` in the note's frontmatter is what is heard for it (Q4 Planning, `spoken: fourth quarter planning`), and a request matches it alongside the name itself. A year standing as a word of its own needs none: Summit 2027 is said "twenty twenty-seven". A zone has no note, so a zone name has to say how it is said.
+- **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.
+- **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
+- **"I'm being interrupted"**, **"hold this"** and **"hold X"** run the wrap, as "wrap it" does. **"Back"** or **"where was I"** opens the thread whose note was written most recently and is not finished or parked; **"back to X"** opens X. Nothing to resume: say so, and offer the most recent thread.
+- **"Finish X" or "X is done"**: close the thread for good (see Threads).
+- **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back; so does "open X" on a parked thread. **"What's parked"**: name the parked threads. **"Rename X to Y"** moves the note and every link to it; **"delete X"**, for what should never have existed, lists what would go and acts only on the name said again.
+- **"Where am I" or "what's open"**: name the live threads, most recent first; at most five when the user is listening.
+- **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.
+- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on one yes fixes them all, one commit per repository. Live files keep only the new value, with no trail of the old: git holds it. A raw record is never edited; the page resting on it says it was superseded.
+
+**Files**
+
+- **Deliverables carry the date they were first made**: `YYMMDD - <name>.<ext>`. The date never moves, so a folder sorts by when the work started. Build intermediates (`build/`, `render/`, `specs/`), scripts and a folder's `README.md` are not deliverables and keep their names.
+- **A hub can change two things about its project.** `layout: thread-first` keeps everything inside the threads, each with its own `Sources/` and `Deliverables/`, and nothing at the project's top but `Threads/`. `anonymous: true` makes a project whose deliverables name no other party of its zone, nor any of their people; it can be a list of further names to keep out instead.
+- **Instruction files point, they do not restate.** An `AGENTS.md` routes to the file that owns a fact; it never copies it, holds status, or keeps a hand-written list of projects or skills.
+- **Garrick's instruction files stay as shipped.** This file and every `AGENTS.md` are Garrick's. A rule or a route of the workspace's own goes in the local file beside it, `System/rules.local.md` or an `AGENTS.local.md`, which Garrick never ships or changes. `check.py` warns when one of Garrick's differs from what it shipped.
+- **Run the check.** `python3 System/tools/check.py` tests the workspace against these rules and exits non-zero on a problem. Add `--ear` for a three-sentence answer to read aloud. Rules that only this workspace keeps are switched on in `System/garrick-checks.json`.
+- **A page that fades takes its raw record with it**, into the wiki's `dormant/raw/` or `archive/raw/`, renamed and never changed.
+
 ## Running an action: one executor, where the status page is installed
 
 Park, wake, a new project or thread, a rename, a deletion and ticking a
 `Todo.md` line each have one executor, `System/status/page_action.py`, which
 the status page extra installs. A page button, the Ask box and a session run
 the same code through it: the edit, the stale check, the commit with the wall
-check, the interruption stack, the record in the log, and one request for the
+check, the record in the log, and one request for the
 page to rebuild, so the page shows the change within seconds. From a session,
 give it the verb and its options, from the workspace root:
 
@@ -91,10 +131,9 @@ python3 System/status/page_action.py todo-done --zone Work --line "Send the revi
 
 It prints one sentence and exits 0, or prints why it refused and exits 1; a
 refusal writes nothing. The verbs are `park`, `wake`, `new-project`,
-`new-thread`, `rename`, `delete`, `undo`, `unstack`, `todo-add`, `todo-done`,
+`new-thread`, `rename`, `delete`, `undo`, `todo-add`, `todo-done`,
 `todo-undo` and `todo-date`; `--help` lists their options. Its other verbs
-take JSON on standard input, as *Interrupted* and *Back* show, with
-`--via session` after `--workspace .`.
+take JSON on standard input, with `--via session` after `--workspace .`.
 
 **Pending hand edits go first.** The executor commits the whole file it
 edits: the thread note for park and wake, `Todo.md` for a Todo verb. An edit of
@@ -105,10 +144,10 @@ or, as Wrap step 8 does for ticks, make the executor call first and the hand
 edit after.
 
 **Check for it first**: `test -f System/status/page_action.py`. Where it is
-there, use it for these verbs and do not also run `scaffold.py`, commit or
-`unstack` by hand for them: it has done all three. Where it is not there (no
-status page), each section's steps below are the way, exactly as before: the
-scaffolding script, a commit by hand, and no stack. Everything else a wrap
+there, use it for these verbs and do not also run `scaffold.py` or commit by
+hand for them: it has done both. Where it is not there (no status page), each
+section's steps below are the way, exactly as before: the scaffolding script
+and a commit by hand. Everything else a wrap
 writes is by hand either way.
 
 ## Resolving a name
@@ -222,8 +261,8 @@ the next wrap folds it in and removes it.
 3. The next action changing, by the user's words or because something saved
    finished the old one.
 
-Not a clock, not every turn, and not because the user asked: "wrap it" and
-"hold this" stay their commands. Write it at the end of the turn where the
+Not a clock, not every turn, and not because the user asked: "wrap it" stays
+its own command. Write it at the end of the turn where the
 event happened; one turn with three events makes one write. A long discussion
 with none of the three makes no checkpoint.
 
@@ -257,8 +296,8 @@ material.
 in the way. Open and "where am I" mention it; the wrap settles it.
 
 **Where the tool is not there** (a workspace installed before it), say once
-that checkpoints are not available here, and that "wrap it" or "hold this"
-before leaving is what saves the place.
+that checkpoints are not available here, and that "wrap it" before leaving is
+what saves the place.
 
 ## List: "where am I", "what's open"
 
@@ -308,8 +347,8 @@ best first, and changes nothing; `--say` prints only the first pick's line.
 4. **Nothing in the list:** "Nothing is waiting."
 
 The order is six plain rules, each a source Settings › While you wait on the
-status page can switch off or move: the top of the interruption stack (only
-with the status extra, which keeps it), Todo lines due today or late with a
+status page can switch off or move: the thread whose note was
+written most recently today, Todo lines due today or late with a
 reply or a chase first, chases that have come due, what waits in an Inbox, a
 parked thread left alone for 30 days ("park or finish?"), and a live thread
 not wrapped for 14 ("wrap?"). It never offers the thread in focus. It covers
@@ -428,15 +467,58 @@ freight, in any zone."
 
 Written: one line each: the name, its project, zone and status.
 
-## Wrap: "close X", "wrap X"
+## Wrap: "close X", "wrap X", "I'm being interrupted", "hold this", "hold X"
 
-Wrapping makes the thread resumable cold, by anyone, months from now. One thread
-per wrap: the one named, and nothing else.
+Wrapping makes the thread resumable cold, by anyone, months from now. It is
+the one way to save a thread's place: "wrap it", the band's *Wrap*, and the
+spoken "I'm being interrupted", "hold this" and "hold X" all run it. One
+thread per wrap: the one named, and nothing else.
 
-1. **Resolve X.** When this wrap is part of closing the day (yours, or a
-   cmux tab told "Shutting down for the day") and X is on the interruption
-   stack, stop here and say it is still held: its block holds what the user
-   said when they were cut off, and it stays on the stack.
+**How it runs.** Resolve X first ("hold this" or no name at all: the thread in
+focus, as under *No name given*). Then:
+
+- **Ask the one question, in the foreground, before anything starts**:
+   "Anything only in your head?" Enter, "no", "skip" or silence skips it. Take
+   the answer as said and never ask a follow-up. What the user already said
+   ("hold this, I was leaning towards the lower tier") is the answer, and is not
+   asked again. The answer goes into *Keep in mind*; a skipped question leaves
+   *Keep in mind* as the session knows it, or `nothing`. When the wrap is part of
+   closing the day, or for the band's *Close*, which waits for the note before
+   it ends the session, do not ask and do not run in the background: the wrap
+   runs in the foreground, each thread in turn.
+- **Take the lock**, unless the request says the band has taken it already,
+   so a second wrap of this thread cannot start while one is running, and so
+   the band can show it:
+   ```sh
+   python3 System/tools/wrap_lock.py start "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
+   ```
+   It prints `locked` and exits 0, or says that a wrap of this thread is
+   already running and exits 1: then say so and stop. The lock is a file in
+   `System/generated/`; a lock older than ten minutes counts as gone.
+- **Run the steps below**, 1 to 12. Where the assistant can start a
+   background subagent, start one for them and
+   return to the user at once: "Acme pricing is being wrapped. Say back when
+   you're done." Brief the subagent with everything the conversation holds that
+   the steps need, since it has not seen it: the thread note's path, what this
+   session did and decided, the files it touched, the actions to file and the
+   lines to tick, any deliverable that left the workspace and who edits it
+   next, and the answer to the question word for word. The brief carries the
+   walls too, since a cold run knows none: the project's `party` (from its
+   hub), the walls that stand against that party (from the Walls table in
+   `System/context.md`), and any material in this session that a wall held
+   back, named only as "held back" with no content, no party and no subject.
+   Tell it to do the wall check (*The wall check*, step 4 above) before it
+   writes anything, and to write nothing it cannot place. Tell it to follow the
+   steps to the letter, to touch nothing outside this thread, and to end with
+   step 13. The foreground run needs none of this: it has the session. Where the assistant has no background run, do the steps yourself,
+   in the foreground, as a wrap always was.
+- **The last act of the wrap, success or failure,** is step 13: remove the
+   lock. A wrap that died leaves the lock behind, and it expires by itself.
+
+**The steps:**
+
+1. **Resolve X** (done above) and stop if the thread is finished or parked:
+   say so and offer to open or wake it.
 2. **Re-read the thread note now.** Another session may have changed it since
    you last looked.
 3. **Gather what happened**, from this session's conversation and the thread's
@@ -497,10 +579,10 @@ per wrap: the one named, and nothing else.
    **Keep in mind** holds what no file can tell a cold resume: the decision
    half made and which way you were leaning and why, a doubt about a figure,
    a thing noticed and not yet acted on. Write it from what was said in this
-   session, not from the files; `nothing` is a valid answer, and the usual
-   one for a thread that is simply waiting. When the user is listening, ask
-   for it: "Anything that's only in your head right now?" A block written
-   before this row existed is still whole; the row is added at its next wrap.
+   session and from the answer to the question, not from the files; `nothing`
+   is a valid answer, and the usual one for a thread that is simply waiting.
+   A block written before this row existed is still whole; the row is added at
+   its next wrap.
    **Rebuild with** earns its place: an artifact nobody can regenerate is a dead
    end the moment it needs a change. Every path and link in the block must lead
    to something that exists now; `check.py` warns about one that does not.
@@ -613,110 +695,57 @@ per wrap: the one named, and nothing else.
     ```
     The message says what changed. One zone per commit. Never push: that leaves
     the machine and needs the user's yes.
-13. **Take it off the interruption stack** with `unstack`: a wrapped thread
-    is not waiting for "back". Not on it, nothing changes.
+13. **Remove the lock**, whatever happened above:
     ```sh
-    python3 System/status/page_action.py unstack --zone <Zone> --project "<Project>" --thread "<Thread>"
+    python3 System/tools/wrap_lock.py end "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
     ```
-    It also asks for the page to be rebuilt, once the commit above is made.
-    Without the status page there is no stack, and this step falls away.
+    The note's last write is the record that the wrap landed: "back" and the
+    band read the time of that write, and nothing else.
 
-Spoken: "Acme pricing wrapped. Next is the second draft once Dana sends
-volumes, due Friday." Add a third sentence only for something the user must
-know: a wall held material back, a meeting page was unfinished, a commit
-failed.
+Spoken, when the wrap runs in the background: "Acme pricing is being wrapped.
+Say back when you're done." When it runs in the foreground, or when the
+background wrap reports back: "Acme pricing wrapped. Next is the second draft
+once Dana sends volumes, due Friday." Add a third sentence only for something
+the user must know: a wall held material back, a meeting page was unfinished,
+a commit failed.
 
 Written: the same, plus the files changed and the commit hash.
 
-## Interrupted: "I'm being interrupted", "hold this", "hold X"
-
-Something has cut in, and the user has to leave the thread mid-thought.
-Someone is usually waiting, so the whole thing takes under thirty seconds:
-three short answers, one write, one sentence back. Skip everything else a
-wrap does.
-
-1. **Resolve X.** "Hold this" or no name at all: the thread in focus, as
-   under *No name given*.
-2. **Ask three questions, one at a time**, each answered in one line:
-   "Where are you, exactly?", "What's the very next step?", then "Anything
-   only in your head?" The third can be skipped: "no", "skip" or silence
-   leaves it out. Take each answer as said, and never ask a follow-up. An
-   answer the user gave already ("hold this, I'm on row 14") is not asked
-   again. When they say what cut in ("the Birch renewal call"), keep it as
-   *by*.
-3. **Save it**, through the status page's `page_action.py`:
-   ```sh
-   python3 System/status/page_action.py --workspace . --via session <<'EOF'
-   {"verb": "interrupt", "zone": "Work", "project": "Acme", "thread": "Pricing", "where": "<answer>", "next": "<answer>", "keep": "<answer, or leave the key out>", "by": "<what cut in, or leave the key out>"}
-   EOF
-   ```
-   It overwrites the *Where it stands* line with `**Interrupted 14:32, 13
-   October 2026.** <where>`, sets the `Next action` and `Keep in mind` rows
-   (a skipped Keep in mind stays as it was, or says `nothing` where the
-   row was missing), leaves the other rows alone, sets `updated:`, adds the
-   dated entry "Interrupted at 14:32, by <by>.", commits in the zone, and
-   puts the thread on top of the interruption stack (below). A checkpoint
-   under the block is rebased onto what was just written, its items and its
-   time untouched, so a hold never makes one stale. The thread
-   stays `status: active`: an interruption is not parking. When the zone's
-   wall check refuses the commit, nothing is written; say so.
-   **Without the status page extra** (no `System/status/page_action.py`),
-   make the same edit by hand and commit it as Wrap step 12 does. There is
-   no stack then, so "back" offers the most recent thread instead.
-4. **Reply in one sentence**: "Acme pricing held. Say back when you're
-   done." If what cut in is a thread of its own ("Birch renewal"), offer to
-   open it: "Open Birch renewal?"
-
 ## Back: "back", "where was I", "back to X"
 
-1. **Which thread.** "Back" or "where was I", with no thread named: the top
-   of the stack. "Back to X": resolve X; it comes out of the stack wherever
-   it is, and the rest stay in order. "Where was I on X" names a thread, so
-   it is Open, not Back.
-2. **Take it off the stack:**
+The record is the thread note: a wrap, a finish or an edit sets its
+modification time, and nothing else keeps a place.
+
+1. **Which thread.** "Back" or "where was I", with no thread named: the live
+   thread whose note was written most recently. A finished or parked thread is
+   never the answer. "Back to X": resolve X, and open it. "Where was I on X"
+   names a thread, so it is Open, not Back.
    ```sh
-   python3 System/status/page_action.py --workspace . --via session <<'EOF'
-   {"verb": "back"}
-   EOF
+   find Zones -mindepth 5 -maxdepth 5 -path 'Zones/*/*/Threads/*/*.md' | while IFS= read -r f; do
+     case "$f" in */_*) continue;; esac
+     [ "$(basename "$f" .md)" = "$(basename "$(dirname "$f")")" ] || continue
+     case "$(grep -m1 '^status:' "$f" | cut -d' ' -f2)" in done|parked) continue;; esac
+     printf '%s\t%s\n' "$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")" "$f"
+   done | sort -rn | head -3
    ```
-   or with `"zone"`, `"project"` and `"thread"` for "back to X". The reply
-   gives the thread's `name`, its note's `path`, the three saved lines
-   (`where`, `next`, `keep`) and how many are still held (`left`). It writes
-   nothing.
-3. **Open it as Open does.** Where the `desk` skill is installed, that is its
+   The first line is the thread. After two wraps it is the later one. A wrap
+   still running (`System/generated/wrap-*.lock`, less than ten minutes old)
+   writes the note at its end: say that it has not landed yet, and open the
+   thread from the block as it stands.
+2. **Open it as Open does.** Where the `desk` skill is installed, that is its
    tab: `desk open "<the thread's folder>" --prompt "open <short name>"`, and
    the session there answers. Otherwise it is the thread in focus here.
-4. **Read the three lines back**, as the context to carry on from: where the
-   user was, the next step, and Keep in mind when it says more than nothing.
-   Where the reply carries a `checkpoint`, add one clause: "There's also an
-   unwrapped checkpoint from 14:32." Then name the next one still held, if
-   any.
+3. **Read the block back**: where the user was, the next step, and Keep in
+   mind when it says more than nothing. Where there is a `checkpoint`, add one
+   clause: "There's also an unwrapped checkpoint from 14:32."
 
 Spoken: "Back to Acme pricing. You were halfway through the tier-two volumes,
-and next is row 14. You weren't sure about the tier-two rate. Birch launch is
-still held."
+and next is row 14. You weren't sure about the tier-two rate."
 
-**Nothing on the stack:** say so in one line, and offer the most recent live
-thread, which the reply names as `offer` (without the status page extra,
-the first line of the listing under *Where things are*): "Nothing's held. The last thread
-you worked on is Acme pricing. Open it?" Never answer with silence: it reads
-as a fault. **X is not on the stack:** treat "back to X" as "open X".
-
-## The interruption stack
-
-The threads held and not yet come back to, across zones, last in, first out,
-because interruptions nest: finish C, back to B, then A. It is
-`System/generated/interrupted.json`, kept by `page_action.py` and never
-committed: what each thread was doing is in its note, so losing the file
-loses only the order. A thread held again moves to the top, never twice.
-`{"verb": "stack"}` lists it, top first, and changes nothing;
-`{"verb": "unstack", "zone", "project", "thread"}` takes a thread off without
-reading it back, or with no thread, every thread of the project. The stack is
-not a to-do list, and nothing from it goes into `Todo.md`.
-
-Wrapping, parking, finishing or deleting a thread takes it off; each of
-those sections says at which step. Without the status page extra there is no stack, and those
-steps fall away.
+**Nothing to resume:** no live thread has a note. Say so in one line and name
+the most recent thread of any status: "Nothing to resume. The last thread you
+worked on is Acme pricing, which is finished. Open it?" Never answer with
+silence: it reads as a fault. **X is not a thread:** treat "back to X" as "open X".
 
 ## Close for the day: "close for the day", "I'm done for today"
 
@@ -743,9 +772,7 @@ Wrap every thread worked on today, then give one summary.
 
    Add any thread this conversation worked on that left no file behind. Skip
    threads marked done or parked: neither is live, and a wrap would rewrite
-   what finishing or parking left in place. Skip a thread on the
-   interruption stack (`stack`): its block holds what the user said when
-   they were cut off, and a reconstruction would overwrite it. Skip a thread already wrapped in
+   what finishing or parking left in place. Skip a thread already wrapped in
    this session with nothing changed since that wrap; name it in the summary
    as already wrapped.
 
@@ -763,16 +790,14 @@ Wrap every thread worked on today, then give one summary.
    truthfully, add the dated entry listing what changed, leave the block as it
    is, and say so. If another session is still open on a thread, that session
    should wrap it; tell the user.
-4. **One summary**, ending with what is still on the interruption stack,
-   top first. It stays there: closing the day does not empty it, and those
-   are the threads to come back to first.
+4. **One summary**, one line per thread, then anything that failed or was held
+   back.
 
 Spoken, three sentences at most: "Wrapped three: Acme pricing, Birch launch plan
-and roof repair. First thing tomorrow is the Acme second draft, due Friday.
-Still held: supplier audit."
+and roof repair. First thing tomorrow is the Acme second draft, due Friday."
 
 Written: one line per thread (short name, next action, commit hash), then
-anything that failed or was held back, then the stack, one line per thread.
+anything that failed or was held back.
 
 ## Finish: "finish X", "X is done"
 
@@ -811,8 +836,6 @@ Closes a thread for good.
    thread keeps announcing work that no longer exists.
 10. **Commit** in the zone's repository: "Acme, Pricing: finished; outcome
    recorded".
-11. **Take it off the interruption stack** with `unstack`, as Wrap step 13
-    does. Without the status page, nothing.
 
 Spoken: "Acme pricing is closed. Two actions still point at it: tick them, keep
 them, or drop them?"
@@ -830,15 +853,13 @@ stay exactly where they are.
    sets `status: parked`, or `status: active` for `wake`, and `updated:`
    today, adds the dated entry, "Parked." or "Woken.", and leaves the Resume
    here block as it is: it still says where the work stood. It commits the
-   note ("Acme, Pricing: parked"), takes a parked thread off the interruption
-   stack and asks for the page to be rebuilt.
+   note ("Acme, Pricing: parked") and asks for the page to be rebuilt.
    ```sh
    python3 System/status/page_action.py park --zone Work --project Acme --thread Pricing
    ```
    A thread already set aside, or an active one asked to wake, is refused in
    one line and nothing is written, so read what it says rather than running
-   it twice. Then step 3 if there is a reason, and steps 5 and 6; step 4 and
-   the stack are done.
+   it twice. Then step 3 if there is a reason, and step 5; step 4 is done.
    **Without the status page** (no `System/status/page_action.py`), run the
    scaffolding script instead. It writes that one note and commits nothing:
    ```sh
@@ -854,15 +875,13 @@ stay exactly where they are.
    aside, and what the last session recorded is part of where it stood. The
    check says nothing about it while the thread is parked, and waking the
    thread brings it back to be read and wrapped.
-6. **Parking takes it off the interruption stack**: the executor has done it;
-   without the status page there is no stack. Waking puts nothing back.
 
 **When X is a whole project** ("park Acme", where Acme has threads), leave
 `--thread` out: the executor (or the script) parks the hub note, with the dated entry under its
 `## State of play` if it has one, and the commit is "Acme: parked". Its thread
 notes are left alone: every thread in it counts as parked while the hub says
 so, and waking the project brings back exactly what was live before. Parking
-the project takes all its threads off the stack. If X could be
+the project parks all its threads with it. If X could be
 the project or one of its threads, ask which.
 
 Spoken: "Acme pricing is parked. Say wake Acme pricing to bring it back."
@@ -962,8 +981,7 @@ commit:
 python3 System/status/page_action.py rename --zone <Zone> --project "<Project>" [--thread "<Thread>"] --to "<New name>"
 ```
 
-It also commits the old name as a heard alias in `System/context.md`, moves the
-thread's place on the interruption stack, and asks for the page to be rebuilt.
+It also commits the old name as a heard alias in `System/context.md`, and asks for the page to be rebuilt.
 **Without the status page**, run the script itself, and do those by hand:
 
 ```sh
@@ -1007,10 +1025,9 @@ zone follow together, in one commit:
 python3 System/status/page_action.py move --zone <Zone> --project "<From project>" --thread "<Thread>" --to "<To project>"
 ```
 
-The script moves the thread's place on the interruption stack and the effort
-record with it, and `undo` of the move puts both back; the executor also asks
-for the page to be rebuilt. **Without the status page**, run the script itself,
-which does the same for the stack and the effort record:
+The script moves the effort record with it, and `undo` of the move puts it
+back; the executor also asks for the page to be rebuilt. **Without the status
+page**, run the script itself, which does the same for the effort record:
 
 ```sh
 python3 System/tools/scaffold.py move --zone <Zone> --project "<From project>" --thread "<Thread>" --to "<To project>"
@@ -1075,9 +1092,6 @@ python3 System/tools/scaffold.py delete --zone <Zone> --project "<Project>" [--t
 3. **Run the second form.** One commit in the zone; the reply gives the
    commit to revert. Meetings pages stay.
 4. **The memory pointer**, if you keep one: delete it.
-5. **Take it off the interruption stack**: the executor's confirmed form has
-   done it, for every thread of the project when it was a project. Without the
-   status page there is no stack.
 
 Spoken: "Deleted the test thread and its one open action. Say undo to bring
 it back." On undo, `python3 System/status/page_action.py undo --zone <Zone>

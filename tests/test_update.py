@@ -434,6 +434,45 @@ class TestSorting(Case):
         self.assertEqual(["log", "ls-files"], calls)
 
 
+class TestRetiredState(Case):
+    """The interruption stack is gone (#367): an update takes the file it
+    kept out of System/generated/, which belongs to the tools, and says so."""
+
+    def stack(self):
+        path = self.root / "System" / "generated" / "interrupted.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"stack": [{"zone": "Work", "project": "Acme", "thread": "Pricing",
+                                               "file": "Acme/Threads/Pricing/Pricing.md", "at": "2026-10-14T10:40"}]}))
+        return path
+
+    def test_an_update_removes_an_old_interrupted_file(self):
+        path = self.stack()
+        result = self.apply()
+        self.assertFalse(path.exists())
+        self.assertEqual(["System/generated/interrupted.json"], result["tidied"])
+        self.assertIn("Removed System/generated/interrupted.json", update.say_applied(self.plan(), result))
+
+    def test_nothing_to_remove_says_nothing(self):
+        result = self.apply()
+        self.assertEqual([], result["tidied"])
+        self.assertNotIn("Removed", update.say_applied(self.plan(), result))
+
+    def test_a_partial_update_leaves_it_for_the_full_one(self):
+        path = self.stack()
+        self.as_if_older("System/tools/scaffold.py", "# older\n")
+        self.apply(only=["System/tools/scaffold.py"])
+        self.assertTrue(path.exists())
+
+    def test_a_link_in_its_place_is_left_alone(self):
+        path = self.root / "System" / "generated" / "interrupted.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        target = self.base / "elsewhere.json"
+        target.write_text("{}")
+        path.symlink_to(target)
+        self.assertEqual([], self.apply()["tidied"])
+        self.assertTrue(target.exists())
+
+
 class TestSafety(Case):
     def test_a_removed_zone_is_not_put_back(self):
         shutil.rmtree(self.root / "Zones" / "Personal")
@@ -1110,6 +1149,22 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         make.assert_called_once_with(["/bin/bash", str(self.root / "System/status/app/make-app.sh"), "--workspace",
                                       str(self.root), "--dest", str(self.base / "Applications"), "--", "--no-graph"])
         self.assertIn("Rebuilt Garrick.app: /Applications/Garrick.app.", result["then"])
+
+    def test_a_rebuild_reports_only_the_notices_make_app_writes_for_the_user(self):
+        """#387: compiler output on stderr stays out of the message; a failed rebuild keeps its last line."""
+        stub = Path(self.tmp.name) / "make-app-stub.sh"
+        stub.write_text("#!/bin/bash\n"
+                        "echo 'main.swift:7:13: warning: value was defined but never used' >&2\n"
+                        "echo '  7 |     let folder = 1' >&2\n"
+                        "echo '    |         `- note: consider a boolean test' >&2\n"
+                        "echo 'make-app: Accessibility was reset for Garrick once; allow it again when macOS asks.' >&2\n"
+                        "echo '/Applications/Garrick.app'\n")
+        done = update.make_app(["/bin/bash", str(stub)])
+        self.assertEqual((0, "/Applications/Garrick.app. Accessibility was reset for Garrick once; "
+                             "allow it again when macOS asks"), done)
+        stub.write_text("#!/bin/bash\necho 'make-app: the app did not build.' >&2\n"
+                        "echo 'main.swift:9:1: error: expected declaration' >&2\nexit 1\n")
+        self.assertEqual((1, "main.swift:9:1: error: expected declaration"), update.make_app(["/bin/bash", str(stub)]))
 
     def report_of(self, p):
         p["then"] = [what for what, _ in update.next_steps(self.root, p)]

@@ -302,6 +302,13 @@ has no parties, so every page it names may change. Knowledge holds published
 material: the answer is cited as the user's word, and nothing from a
 conversation goes in.
 
+**Who settles a decision.** *Record as a decision* belongs to the Meetings
+wiki: a decision carries a zone and parties, and Knowledge has neither, so
+`question-decide` refuses a Knowledge question and writes nothing. Where a
+Knowledge page rests on a decision page, cite it and read it as settled; never
+change its `status:`. Only the user settles a decision, as the `meetings`
+skill says.
+
 ## Lint: "lint the library", "lint knowledge"
 
 A wiki that grows by ingest drifts in ways no file check sees. On request,
@@ -332,7 +339,15 @@ ordinary edit.
 4. **A finding only the user can settle**, such as a contradiction no
    later source decides, is also a question file, as *A question for the
    user* says. The report links it.
-5. **Commit** the report and the question files in the Wikis repository,
+5. **Open sections.** The script's list ends with every line under an
+   *Open* or *Open issues* heading. Knowledge has one group: show it, ask once for
+   the whole of it, and on a yes run `python3 System/status/page_action.py
+   question-open-sections --wiki Knowledge --confirm true`: one question
+   file per line, the page as `origin:` and `pages:`, no zone and no
+   parties, and no page changed. Without a yes, write nothing. A line a
+   question already asks is not proposed again. A Knowledge page that
+   carries a `zone:` or `parties:` gets no question, and the list says why.
+6. **Commit** the report and the question files in the Wikis repository,
    and nothing else, and say how many findings of each kind there are.
 
 Spoken: "Four things in the library: two pages disagree on failover times,

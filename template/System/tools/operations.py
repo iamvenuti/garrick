@@ -202,12 +202,6 @@ DECLARED: Dict[str, Op] = {
     "move": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),
-    "interrupt": _op(("zone", "project", "thread", "file", "where", "next", "keep", "by"),
-                     ("project", "thread", "file"), "zone", True),
-    # The interruption stack is in System/generated/, which is never committed.
-    "back": _op(("zone", "project", "thread", "file"), ("project", "thread", "file"), "workspace"),
-    "stack": _op((), (), "none", retry="safe"),
-    "unstack": _op(("zone", "project", "thread"), ("project", "thread"), "workspace"),
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
     "settings": _op(("launchers", "default", "zones", "graph", "notifications", "while-you-wait", "home", "memory",
@@ -227,14 +221,30 @@ DECLARED: Dict[str, Op] = {
     "later": _op(("zone", "file", "until"), ("file", "until"), "zone", True),
     # A wiki question (#224): the user's words filed as a raw answer, then the
     # question changed. Neither commits (a wiki's commit is the skill's) and
-    # the words are no part of what the request is. `question-decide` is
-    # point 5, not built: refused. `question-work` only reads.
+    # the words are no part of what the request is. `question-decide` (point
+    # 5) writes the raw answer and the decision page in one transaction.
+    # `question-work` only reads.
     "question-answer": _op(("wiki", "file", "words"), ("wiki", "file"), "workspace"),
     "question-later": _op(("wiki", "file", "until"), ("wiki", "file", "until"), "workspace"),
     "question-close": _op(("wiki", "file"), ("wiki", "file"), "workspace"),
-    "question-decide": _op(("wiki", "file"), ("wiki", "file"), "none", retry="safe"),
+    "question-decide": _op(("wiki", "file", "words"), ("wiki", "file"), "workspace"),
     "question-work": _op(("wiki", "file"), ("wiki", "file"), "none", retry="safe"),
     "question-done": _op(("wiki", "file"), ("wiki", "file"), "workspace"),
+    # Open sections as questions (#224, point 8): a read without `confirm`; with it,
+    # one question file per line, committing nothing and changing no page.
+    "question-open-sections": _op(("wiki", "confirm", "pages"), ("wiki", "confirm"), "workspace"),
+    # The Questions panel's Nurture answers (#224): an entity page's party, where
+    # a person works, a value corrected, and the review page's one Save. `zone`
+    # and `scope` name the view the rows were shown in (a zone, and a party of
+    # it), which the walls are checked against; each row is read again from the
+    # page it names. Each commits, once per repository, after the transaction.
+    "nurture-answer": _op(("zone", "scope", "path", "party"), ("path", "party"), "workspace", True),
+    "nurture-organisation": _op(("zone", "scope", "path", "entity"), ("path", "entity"), "workspace", True),
+    "nurture-correct": _op(("zone", "scope", "path", "old", "new"), ("path", "old", "new"), "workspace", True),
+    "nurture-save": _op(("zone", "scope", "rows"), ("zone", "scope"), "workspace", True),
+    # The same from the panel's All view (#384): `groups` is a list of
+    # {zone, scope, rows}, each saved as its own transaction and commit.
+    "nurture-save-all": _op(("groups",), (), "workspace", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
     # `suggested` asks a first look's suggested request instead (#182).

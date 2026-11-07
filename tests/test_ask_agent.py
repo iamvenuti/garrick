@@ -232,7 +232,7 @@ class TestAnswers(AgentCase):
         self.script([[{"call": "search", "args": {"words": "pallet", "kind": "library"}},
                       {"call": "search", "args": {"words": "kick-off quote", "kind": "meetings"}},
                       {"say": "The report says supply stays tight. [$1]\nAcme's quote holds. [$2]"}]])
-        out = self.agent().ask("Anything on pallets in the library or in my meetings?")
+        out = self.agent().ask("Anything on pallets in the library or in my meetings with Dana?")
         self.assertEqual(2, len(out["sources"]))
         self.assertEqual(2, len(out["claims"]))
 
@@ -241,7 +241,7 @@ class TestAnswers(AgentCase):
         self.script([[{"call": "search", "args": {"words": "pallet quote", "kind": "meetings"}}, {"say": "Forty. [$1]"}],
                      [{"call": "read", "args": {"id": "$1"}}, {"say": "Now fifty. [$1]"}]])
         a = self.agent()
-        a.ask("what is the quote?")
+        a.ask("what is the quote Dana gave?")
         page.write_text(page.read_text().replace("forty", "fifty EDITEDNOW"))
         a.ask("I just updated the note from the 10th")
         self.assertIn("EDITEDNOW", [r for r in self.results() if r["tool"] == "read"][0]["text"])
@@ -256,42 +256,28 @@ class TestTheWallReset(AgentCase):
         first = a.ask("What did Dana say about the pallet quote?")
         return a, first
 
-    def test_a_second_search_across_a_wall_resets_and_nothing_from_the_far_side_reaches_the_session(self):
+    def test_a_second_search_toward_the_far_side_finds_nothing_of_it_and_the_session_goes_on(self):
+        """The wall is at the store (#358): the far side is not in the scope index, so a search toward it returns
+        what the scope holds and nothing else. There is nothing to stop and nothing to reset."""
         a, first = self.asked_acme_then_birch()
         self.assertEqual(1, len(self.procs()))
         pid = a.session.proc.pid
         out = a.ask("and what about the launch?")
-        sentence = ask.page_action().wall_refusal(self.root)
-        self.assertTrue(sentence)
-        self.assertEqual(sentence, out["say"])
-        self.assertEqual("wall", out["reset"])
-        self.assertEqual([], out["claims"])
-        self.assertEqual([], out["sources"])
-        self.assertEqual("answer", out["kind"])
-        # The session was replaced, and nothing said in the stopped turn was kept.
-        self.assertNotEqual(pid, a.session.proc.pid)
-        for _ in range(100):                                            # the stand-in writes its line as it starts
-            if len(self.procs()) == 2:
-                break
-            time.sleep(0.05)
-        self.assertEqual(2, len(self.procs()))
-        self.assertEqual("wall", a.afresh)
-        # Nothing of the far side reached the session: not in a result, not in any message it was sent.
+        self.assertNotIn("reset", out)
+        self.assertEqual(pid, a.session.proc.pid)
+        self.assertEqual(1, len(self.procs()))
         everything = json.dumps(self.results()) + json.dumps(self.msgs())
-        for far in (BIRCH, "Birch", "birch-kickoff", "260312", "launch moves to May"):
+        for far in (BIRCH, "Birch", "birch-kickoff", "260312", "Theo said"):
             self.assertNotIn(far, everything)
-        later = [r for r in self.results() if r["turn"] == 1]
-        self.assertTrue(later and all(r["error"] for r in later))     # every call after the latch was refused
-        self.assertEqual({ask.tools_lib().STOPPED}, {r["text"] for r in later})
+        later = [r for r in self.results() if r["turn"] == 1 and r["tool"] == "search"]
+        self.assertTrue(later)
+        self.assertTrue(all("0 records returned" in r["text"] or "Acme" in r["text"] or "kick-off" in r["text"] for r in later))
 
     def test_the_new_conversation_holds_nothing(self):
         a, _ = self.asked_acme_then_birch()
-        a.ask("and what about the launch?")
-        self.assertEqual(set(), a.session.held())
-        self.script([[], [], [{"call": "search", "args": {"words": "launch moves", "kind": "meetings"}},
-                             {"say": "The launch moves to May. [$1]"}]])
-        out = a.ask("What about Birch, then?")        # a request that names the far side: its own conversation now
-        self.assertEqual("answer", out["kind"])
+        self.script([[], [], [{"say": "Fine."}]])
+        a.ask("What did Theo say about the launch?")        # names the far side: its own conversation now
+        self.assertNotIn("acme", a.session.held())
 
     def test_a_request_that_names_the_far_side_resets_before_it_is_sent(self):
         self.script([[{"say": "Forty."}], [{"say": "Fine."}]])
@@ -310,7 +296,7 @@ class TestTheWallReset(AgentCase):
         a = self.agent()
         a.ask("What did Dana say about the quote?")
         old = [r for r in self.results() if r["tool"] == "search"][0]["text"].split("[")[1].split("]")[0]
-        a.ask("and the launch?")
+        a.ask("What did Theo say about the launch?")
         self.script([[], [], [{"call": "read", "args": {"id": "r1-0000"}}, {"call": "read", "args": {"id": old}}, {"say": "x"}]])
         a.ask("read it")
         refusals = [r["text"] for r in self.results() if r["tool"] == "read"]
@@ -362,7 +348,7 @@ class TestActions(AgentCase):
         self.script([[{"call": "search", "args": {"words": "pallet quote", "kind": "meetings"}}, {"say": "Forty. [$1]"}],
                      [{"call": "propose", "args": {"action": self.PARK}}, {"say": "Proposed."}]])
         a = self.agent()
-        a.ask("what is the quote?")
+        a.ask("what is the quote Dana gave?")
         out = a.ask("ok, park pricing and tell me what it says")
         self.assertEqual("answer", out["kind"])
         self.assertIn("status: active", self.status("Acme Review/Threads/Pricing/Pricing.md"))

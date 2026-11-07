@@ -204,6 +204,13 @@ class InstallTest(unittest.TestCase):
         for tool in installer.ALLOWED_TOOLS:            # one rule each, and every one is shipped
             self.assertTrue((self.root / tool).is_file(), tool)
             self.assertIn("Bash(python3 %s:*)" % tool, allow)
+        # Recall is allowed for its three read-only words, from the zone, project and thread folders.
+        for depth in (0, 2, 3, 5):
+            for word in ("search", "stats", "read"):
+                self.assertIn("Bash(python3 %sSystem/tools/recall.py %s:*)" % ("../" * depth, word), allow)
+        self.assertNotIn("Bash(python3 System/tools/recall.py:*)", allow)
+        self.assertEqual([], [r for r in allow if "recall.py" in r and not re.search(r"recall\.py (search|stats|read):\*\)$", r)])
+        self.assertTrue((self.root / "System/tools/recall.py").is_file())
         # Each repository the installer makes, in the spelling the skills write and the plain one.
         for repo in (".", "Wikis", '"Zones/Work"', "Zones/Work", '"Zones/Personal"', "Zones/Personal"):
             for word in ("status", "diff", "log", "add", "commit"):
@@ -228,7 +235,8 @@ class InstallTest(unittest.TestCase):
         for rule in [r for r in allow if r.startswith("Bash(git")]:
             self.assertRegex(rule, r'^Bash\(git -C (?:"[^"]+"|\S+) (?:status|diff|log|add|commit):\*\)$')
         # Nothing outside the workspace, and not the one tool that reaches the network.
-        self.assertEqual([], [r for r in allow if "release.py" in r or ".." in r or "~" in r or "/Users/" in r])
+        self.assertEqual([], [r for r in allow if "release.py" in r or "~" in r or "/Users/" in r
+                                           or (".." in r and not re.match(r"^Bash\(python3 (?:\.\./){2,5}System/tools/recall\.py (?:search|stats|read):\*\)$", r))])
         self.assertEqual(len(set(allow)), len(allow))
         # Each is the shape the repository already knows for a shell command: the start
         # of the command, as extras/jobs/headless-settings.json writes its own.
@@ -380,6 +388,27 @@ class InstallTest(unittest.TestCase):
         self.assertIn("| `System/interviews/` |", text)
         # And the check finds no drift in it: no budget passed, nothing copied from another file.
         r = run([self.root / "System" / "tools" / "check.py", "--root", self.root, "--json"], self.box.env)
+        found = [f for f in json.loads(r.stdout)["findings"] if f["check"] == "instructions"]
+        self.assertEqual(found, [])
+
+
+class EveryExtraTest(unittest.TestCase):
+    """Garrick's own instruction files read clean in a workspace with every
+    extra installed, the cmux extra's desk skill included (#375)."""
+
+    def test_check_finds_nothing_to_say_about_an_instruction_file_garrick_ships(self):
+        box = Sandbox()
+        self.addCleanup(box.close)
+        root, made = box.install("every")
+        self.assertEqual(made.returncode, 0, made.stdout + made.stderr)
+        sys.path.insert(0, str(REPO))
+        import install as installer
+        for extra, _, places in installer.EXTRAS:
+            for src, dest, skip in places:
+                shutil.copytree(REPO / src, root / dest, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns("__pycache__", *skip))
+        self.assertTrue((root / "System" / "skills" / "desk" / "SKILL.md").is_file())
+        r = run([root / "System" / "tools" / "check.py", "--root", root, "--json"], box.env)
         found = [f for f in json.loads(r.stdout)["findings"] if f["check"] == "instructions"]
         self.assertEqual(found, [])
 

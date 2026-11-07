@@ -375,7 +375,8 @@ class TestApply(SplitCase):
 
     def test_the_check_warns_before_the_split_and_until_the_passages_are_settled(self):
         self.diverge()
-        before = self.check()
+        # (a rules.md grown past its size budget by the user's text is reported too, #366)
+        before = [f for f in self.check() if "above the" not in f["message"]]
         self.assertEqual([RULES], [f["path"] for f in before])
         self.assertIn("differs from what Garrick shipped", before[0]["message"])
         self.assertIn(LOCAL, before[0]["message"])

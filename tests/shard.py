@@ -52,6 +52,12 @@ TIME_LINE = re.compile(r"shard-time (\w+) (\d+(?:\.\d+)?)")
 # A changed test module runs itself. Any other changed file runs the full suite, so a file the
 # map does not know fails closed. Release pull requests and main always run the full suite.
 TOUCH_MAP = {
+    # The wall check: a change to it runs every module that tests a wall, not only test_check*.
+    "template/System/tools/check.py": ["test_wall_false_positives", "test_wall_forms", "test_wall_gaps",
+                                       "test_wall_gaps_340", "test_wall_noise", "test_wall_cache",
+                                       "test_walls_cases", "test_walls_deterministic", "test_staged_paths",
+                                       "test_pathspec_commit", "test_no_party", "test_decide"],
+    "tests/walls/cases.md": ["test_walls_cases"],
     "extras/status/questions_panel.py": ["test_questions_panel", "test_questions_panel_all",
                                          "test_panel_hardening", "test_decisions",
                                          "test_nurture_panel_actions", "test_question_transaction"],
@@ -83,6 +89,8 @@ FULL_ONLY = {
 ALWAYS_FULL = (".github/", "tests/fixtures.py")
 ALWAYS_FULL_NAMES = {"garrick_lib.py"}
 RUNNER_LOST = "not acquired by runner"
+# The jobs of tests.yml that run no tests.
+NOT_TEST_JOBS = {"Plan", "Tests", "Rerun a lost runner"}
 
 
 def touched(files, names=None):
@@ -130,7 +138,10 @@ def should_rerun(jobs, attempt):
     """
     if int(attempt) != 1:
         return False
-    failed = [j for j in jobs if j.get("conclusion") in ("failure", "timed_out", "cancelled")]
+    # The plan, the gate and this job itself fail only because a test job did: they say nothing of
+    # why, so they are left out, and the test jobs alone decide.
+    failed = [j for j in jobs if j.get("conclusion") in ("failure", "timed_out", "cancelled")
+              and j.get("name") not in NOT_TEST_JOBS]
     if not failed:
         return False
     return all(RUNNER_LOST in str(j.get("message", "")).lower() for j in failed)

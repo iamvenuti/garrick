@@ -36,6 +36,8 @@ Never leave a third kind. A file no script can finish and the user cannot recogn
 
 With the notes for the new version written in `CHANGELOG.md` and the work on `main`, review what the release carries before you tag it: `git diff v<last>..main`, read for correctness and for any way past the wall check. A release adds code nobody has read as a whole, and 0.45.0 shipped a way past the wall check that a review of the next two releases found. A finding goes to an issue, or, when it is a way past the wall check, to a private advisory as `SECURITY.md` says, and is fixed before the tag.
 
+A change to how the wall check reads a token is released only when `python3 tests/wall_diff.py <last tag>` shows no row going from refused to passed. That diff is the gate for the token reading: no round of review can reach a fixed edge. A form the last release also lets through is a factor for the next release, not a blocker. CI runs it on a pull request that changes `check.py` or `garrick_lib.py` (`.github/workflows/wall-diff.yml`), and `tests/walls/forms/` keeps the reviewers' cases.
+
 Then, from a clone:
 
 ```sh

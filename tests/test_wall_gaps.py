@@ -1237,6 +1237,79 @@ class TestFormsRead(GapCase):
                 self.assertEqual(["error"], [f.severity for f in found], found)
                 self.assertTrue(found[0].message.endswith(self.TAIL), found[0].message)
 
+    def harbour_harness(self):
+        harbour = self.work / "Harbour"
+        write(harbour / "Repo" / ".claude" / "settings.json", "{}\n")
+        write(harbour / "Repo" / ".agents" / "skills" / "x" / "SKILL.md", "# x\n")
+        write(harbour / ".claude" / "skills" / "harvest-co-onboarding" / "SKILL.md", "# onboarding\n")
+        write(harbour / ".claude" / "notes" / "plan.md", "# plan\n")
+        write(harbour / ".codex" / "x.md", "# x\n")
+
+    def errors(self, written):
+        return [s for s, _ in self.says(written)]
+
+    def test_the_harness_s_own_names_mean_the_notes_own_project_s(self):
+        self.harbour_harness()
+        for written in ("`.claude/settings.json`", "`.agents/skills`", "`.claude/skills`", "`.CLAUDE/settings.json`",
+                        "`.claude/skills/SKILL.md`", "`cat .claude/settings.json`", "[the file](.claude/settings.json)",
+                        "[[.claude/skills]]", "`.codex/config.toml`", "`.claude/\u2026`"):
+            with self.subTest(written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_harness_path_that_names_a_subject_is_refused_unless_the_note_s_project_has_it(self):
+        self.harbour_harness()
+        walled = ("`.claude/skills/harvest-co-onboarding/SKILL.md`", "`.claude/notes/plan.md`", "`.Claude/notes/plan.md`",
+                  "`.codex/x.md`", "[the plan](.claude/notes/plan.md)")
+        for written in walled:
+            with self.subTest(written):
+                self.assertEqual(["error"], self.errors(written))
+        northwind = self.work / "Northwind"
+        write(northwind / ".claude" / "skills" / "harvest-co-onboarding" / "SKILL.md", "# onboarding\n")
+        write(northwind / ".claude" / "notes" / "plan.md", "# plan\n")
+        write(northwind / ".codex" / "x.md", "# x\n")
+        for written in walled:
+            with self.subTest("own " + written):
+                self.assertEqual([], self.says(written))
+
+    def test_a_path_that_reaches_a_harness_folder_through_the_walled_project_is_refused(self):
+        self.harbour_harness()
+        write(self.work / "Harbour" / ".claude" / "settings.json", "{}\n")
+        for written in ("`Harbour/.claude/settings.json`", "`.claude/../Harbour/Threads/Tender/Tender.md`",
+                        "`.claude/%2e%2e/Harbour/Threads/Tender/Tender.md`", 
+                        "`../../../Harbour/.claude/settings.json`"):
+            with self.subTest(written):
+                self.assertEqual(["error"], self.errors(written))
+
+    @unittest.skipUnless(HAVE_GIT, "git is not installed")
+    def test_a_link_into_the_walled_project_is_not_the_notes_own_path(self):
+        self.harbour_harness()
+        northwind = self.work / "Northwind"
+        (northwind / ".claude").mkdir()
+        os.symlink(str(self.work / "Harbour" / ".claude" / "skills"), str(northwind / ".claude" / "skills"))
+        subject = "`.claude/skills/harvest-co-onboarding/SKILL.md`"
+        for written in (subject, "`.CLAUDE/skills/Harvest-Co-Onboarding/SKILL.md`", "[x](.claude/skills/harvest-co-onboarding/SKILL.md)"):
+            with self.subTest(written):
+                self.assertEqual(["error"], self.errors(written))
+        (northwind / ".claude" / "skills").unlink()           # the file really is Northwind's
+        write(northwind / ".claude" / "skills" / "harvest-co-onboarding" / "SKILL.md", "# onboarding\n")
+        self.assertEqual([], self.says(subject))
+
+    def test_a_leading_backslash_is_no_harness_path(self):
+        self.harbour_harness()
+        self.assertEqual(["error"], self.errors("`\\.claude/notes/plan.md`"))
+        self.assertEqual(["error"], self.errors("`\\.claude/skills/harvest-co-onboarding/SKILL.md`"))
+
+    def test_the_harness_helper_reads_what_it_is_given(self):
+        ws = check.discover(self.root)
+        note = self.note
+        for target, owed in ((".claude/settings.json", True), (".CODEX/config.toml", True), ("obsidian:Work", False),
+                             ("obsidian:Work:.claude/settings.json", False), ("file:.claude/settings.json", False),
+                             ("\\.claude\\settings.json", False), ("./.claude/settings.json", False),
+                             (".claude/../x", False), ("Harbour/.claude/settings.json", False), ("", False),
+                             (".claude/%2e%2e/x", False), ("src/.claude/settings.json", False)):
+            with self.subTest(target):
+                self.assertEqual(owed, check.harness_path(ws, note, target))
+
     def test_a_token_that_lands_nowhere_stays_silent(self):
         for written in ("`cat nowhere/at/all.md`", "`grep -r rate src/ docs/ | sort`", "`python3 System/tools/check.py --root .`",
                         "`curl https://example.com/Harbour/Threads/Tender/Tender.md`",

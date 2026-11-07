@@ -3,6 +3,7 @@
 
     python3 System/tools/check.py [--root PATH] [--ear] [--json] [--quick]
     python3 System/tools/check.py --staged --walls-only      (the pre-commit hook)
+    python3 System/tools/check.py --paths FILE [FILE ...]    (only these files' findings; what an update runs)
     python3 System/tools/check.py --install-hooks
     python3 System/tools/check.py --version                  (which Garrick, for a bug report, and whether a
                                                               newer one is out, as GitHub last said; never asks)
@@ -1022,7 +1023,10 @@ def setting_zones(ws: Workspace, key: str) -> List[Path]:
 # Discovery
 # ---------------------------------------------------------------------------
 
-def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
+def discover(root: Path, cache: Optional[NoteCache] = None, light: bool = False) -> Workspace:
+    """The workspace as the checks read it. `light` stops after the zones, the
+    projects and the settings: the wiki pages and the meetings are not indexed,
+    for a run over named paths that needs neither (run_path_checks, #412)."""
     ws = Workspace(root=root, context=load_context(root), cache=cache)
     ws.settings, ws.settings_problems = load_settings(root)
     ws.zones = visible_dirs(root / "Zones")
@@ -1034,6 +1038,8 @@ def discover(root: Path, cache: Optional[NoteCache] = None) -> Workspace:
         fm = note_frontmatter(ws, folder / (folder.name + ".md"))
         if fm.get("type") == "project":
             ws.projects.append((folder, fm))
+    if light:
+        return ws
     wikis = root / "Wikis"
     if wikis.is_dir():
         for path in walk_files(wikis):
@@ -1383,13 +1389,19 @@ def split_findings(ws: Workspace, texts: Dict[Path, str]) -> List[Finding]:
     return out
 
 
-def check_placeholders(ws: Workspace) -> List[Finding]:
+def check_placeholders(ws: Workspace, only: Optional[List[Path]] = None) -> List[Finding]:
     """Installer placeholders left unfilled, in a file's name or its text.
     Files git ignores are not the install's: a package's own templates may
     hold the same marks. Nor is a Garrick checkout kept in a project, whose
-    templates hold them by design (set_apart)."""
+    templates hold them by design (set_apart). With `only`, those files and
+    no others, left out by the same rules."""
     out = []
-    for path in walk_files(ws.root, set_apart(ws)):
+    apart = set_apart(ws)
+    if only is None:
+        files = walk_files(ws.root, apart)
+    else:
+        files = [f for f in only if f.is_file() and f not in apart and not (apart & set(f.parents))]
+    for path in files:
         if is_template_path(ws, path) or is_generated(ws, path):
             continue
         if rel(ws, path) == "/".join(VERSION_STAMP):
@@ -5402,6 +5414,9 @@ SPACES = {ord(c): " " for c in "\u00a0\u202f\u3000\u1680\u180e"} | {c: " " for c
 # project's name, one means the note's own project, whether or not that
 # project has made it yet.
 LAYOUT_FOLDERS = ("deliverables", "sources", "threads", "notes")
+# The folders an assistant's harness keeps in any project (`.claude/settings.json`, `.agents/skills`). Written
+# relative, first, they too mean the note's own project, whoever else holds one (#423).
+HARNESS_FOLDERS = (".claude", ".agents", ".codex")
 DIR_NAME_MAX = 255  # the longest a file name can be
 
 
@@ -5567,6 +5582,8 @@ def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[L
         word = window.split(None, 1)[0] if window.strip() else ""
         if "/".join(_strip_md(tuple(x.lower() for x in word.split("/") if x and x != "."))) in SHARED_PROJECT_PATHS:
             continue  # every project holds this one: the file reading says how
+        if harness_path(ws, source, word) and text[max(0, start - 1):start] not in tuple("=:&?#%"):
+            continue  # `.claude/…` from any project: its own, wherever a tail of it would land (#423)
         tries: List[Tuple[int, Optional[frozenset], str]] = []
         rest = window
         if head.startswith("file:"):
@@ -5639,6 +5656,61 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
 # Paths every project holds by Garrick's own layout: written by themselves they
 # name no project, whoever else holds one.
 SHARED_PROJECT_PATHS = ("deliverables/published",)
+
+
+# What a path under a harness folder may name without naming a subject: the files and folders the harness itself defines.
+HARNESS_VOCABULARY = frozenset({"settings.json", "settings.local.json", "skills", "agents", "commands", "hooks",
+                                "config.toml", "agents.md", "claude.md", "skill.md", "\u2026"})
+
+
+def harness_path(ws: Workspace, source: Path, target: str) -> bool:
+    """Is `target`, written in the note `source`, a relative path whose first name is a folder every project may
+    hold (`.claude/settings.json`, `.agents/skills`), with no `..` in it, and does it mean the note's own? It does
+    when every name after the folder is the harness's own vocabulary (HARNESS_VOCABULARY), or when the note's
+    project, or the repository the note sits in, has that same path. Any other (`.claude/skills/<a subject>/…`) is
+    read as before: a name that is a walled project's is refused. A project's name before the folder, `./`, `../`,
+    `/`, `~`, a leading `\\` and any address leave it a path into that project (#423)."""
+    if re.match(r"(?i)^[a-z][a-z0-9+.-]*:", target) or target.startswith("\\"):
+        return False                  # an address (`obsidian:`, `file:`) is read from a vault or the disk, not the note
+    written = unquote(target).replace("\\", "/")
+    if written.startswith(("/", "./", "../", "~")):
+        return False
+    parts = [x for x in written.split("/") if x]
+    if not parts or parts[0].lower() not in HARNESS_FOLDERS or any(x in ("..", ".") for x in parts) or "%" in written:
+        return False
+    if all(x.lower() in HARNESS_VOCABULARY for x in parts[1:]):
+        return True
+    owner = project_of(ws, source)
+    if owner is None:
+        return False
+    project = owner[0]
+    bases = [project]
+    for up in source.parents:
+        if up == project or project not in up.parents:
+            break
+        if (up / ".git").exists():
+            bases.append(up)
+            break
+    stem = re.sub(r"(?i)\.md$", "", "/".join(parts))
+    return any(_held_by(base, rel) for base in bases for rel in ("/".join(parts), stem, stem + ".md"))
+
+
+def _held_by(base: Path, rel: str) -> bool:
+    """Is `rel` a file or folder of `base` itself: there, with no symbolic link on the way, and with its real path
+    inside the real path of `base`? A link that leads into another project is that project's, not `base`'s."""
+    here = base
+    try:
+        for name in rel.split("/"):
+            here = here / name
+            if here.is_symlink():
+                return False
+        if not here.exists():
+            return False
+        real = Path(os.path.realpath(here))
+        top = Path(os.path.realpath(base))
+        return real == top or top in real.parents
+    except (OSError, ValueError):
+        return False
 
 
 def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
@@ -6367,6 +6439,9 @@ class PageNames:
         self._globs: Dict[str, List[Path]] = {}
         self.globs_read: set = set()         # the distinct globs this file holds; walls_for_file sets it again
         self._tails: Optional[Dict[int, Dict[str, List[Path]]]] = None
+        self._trigrams: Optional[Dict[str, set]] = None
+        self._paths: List[str] = []
+        self._budget = GLOB_FILE_MAX
         self._full: Optional[Dict[int, Dict[str, List[Path]]]] = None
         self.spaced = False                # does any page's name hold a space? (a decision's does)
         self.first_words: set = set()      # the first word of each such name, folded
@@ -6465,6 +6540,80 @@ class PageNames:
                         self._raw_tags.setdefault(found, set()).update(mine)
         return self._raw_tags.get(record, set())
 
+    def _may_match(self, form: str) -> bool:
+        """Does the glob `form` match a page? Only a glob that does counts towards GLOB_FILE_MAX, so a file of code,
+        full of `*` and `[`, is not refused for them. Every literal stretch of its last name (three letters or more)
+        must lie in the path of one page, which a trigram index of the paths tests at once; what survives is matched
+        for real (_glob). A glob whose stretches cannot rule it out, or whose class may span names (`entities[/]harvest-co`),
+        is matched for real."""
+        if "{" in form and ("[" in form or "]" in form):
+            return self._matches(form)
+        # A brace list is read as a `*`, which is at least as wide. A bracket class that can match a `/` (it holds one,
+        # spans one in a range, or is negated) spans names and keeps the glob; any other class matches one character.
+        # A `[` never closed and a `]` outside a class are plain characters.
+        flat = original = form
+        while "{" in flat:
+            wider = re.sub(r"\{[^{}]*\}", "*", flat)
+            if wider == flat:
+                break
+            flat = wider
+        form, flat, i = flat, "", 0
+        while i < len(form):
+            if form[i] != "[":
+                flat += form[i]
+                i += 1
+                continue
+            j = i + 1
+            if form[j:j + 1] in ("!", "^"):
+                j += 1
+            if form[j:j + 1] == "]":
+                j += 1
+            end = form.find("]", j)
+            if end < 0:
+                flat += form[i:]
+                break
+            body = form[i + 1:end]
+            if body[:1] in ("!", "^") or "/" in body or any(
+                    body[k] == "-" and body[k - 1] <= "/" <= body[k + 1] for k in range(1, len(body) - 1)):
+                return self._matches(original)
+            flat += "?"
+            i = end + 1
+        last = flat.rsplit("/", 1)[-1]
+        stretches = [t.lower() for t in re.split(r"[*?]", last) if len(t) >= 3]
+        if not stretches:
+            return self._matches(original)
+        if self._trigrams is None:
+            self._paths = ["/".join(have).lower() for have, _ in self.entries]
+            self._trigrams = {}
+            for i, path in enumerate(self._paths):
+                for k in {path[j:j + 3] for j in range(len(path) - 2)}:
+                    self._trigrams.setdefault(k, set()).add(i)
+        lists = []
+        for stretch in stretches:
+            for k in {stretch[j:j + 3] for j in range(len(stretch) - 2)}:
+                found = self._trigrams.get(k)
+                if not found:
+                    return False
+                lists.append(found)
+        lists.sort(key=len)
+        near = set(lists[0])
+        for more in lists[1:]:
+            near &= more
+            if not near:
+                return False
+        if not any(all(t in self._paths[i] for t in stretches) for i in near):
+            return False
+        return self._matches(original)
+
+    def _matches(self, form: str) -> bool:
+        """Does the glob match a page, matched for real? Each such matching of a glob not yet matched is paid from a
+        budget of GLOB_FILE_MAX, the work the limit has always allowed; past it a glob counts without being matched."""
+        if form in self._globs or self._budget > 0:
+            if form not in self._globs:
+                self._budget -= 1
+            return bool(self._glob(form))
+        return True
+
     def _glob(self, form: str) -> List[Path]:
         """The pages a glob (`kai-*`, `wiki/*/x`, `kai-{ross,x}`, `[kj]ai-r?ss`)
         matches by full path, by tail or by name, fnmatch's way. A glob whose
@@ -6547,6 +6696,8 @@ class PageNames:
                 # stylesheet or a script is code, and it does not count towards the limit.
                 if sum(c.isalpha() for c in re.sub(r"\.[A-Za-z0-9]{1,5}$", "", re.sub(r"[*?\[\]{},]", "", form))) < 3:
                     continue
+                if not self._may_match(form):
+                    continue                   # a run of words from code that holds a `*` or a `[`: it names no page (#422)
                 self.globs_read.add(form)
                 if len(self.globs_read) <= GLOB_FILE_MAX:
                     found.update(dict.fromkeys(self._glob(form)))
@@ -6854,6 +7005,8 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                 out[earlier] = found
 
         for verb, written, target in targets:
+            if harness_path(ws, path, target):
+                continue  # `.claude/settings.json` from any project: its own, made or not yet (#423)
             code = verb != "links"
             hits = resolve(ws, path, target, index) if code else link_dests(ws, path, target)
             if not code:
@@ -8601,6 +8754,11 @@ def check_updates(ws: Workspace) -> List[Finding]:
     return out
 
 
+# The checks a run over named paths makes whole, because each reads a handful of
+# fixed files and walks no notes (run_path_checks).
+PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
+
+
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
     check_hooks,
@@ -8634,6 +8792,67 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
                 name = check.__name__.replace("check_", "", 1)
                 findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
                                         "A check stopped before it finished"))
+    order = {c: i for i, (c, _) in enumerate(CHECKS)}
+    findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
+    return findings
+
+
+def run_path_checks(root: Path, paths: List[str]) -> List[Finding]:
+    """The findings a whole run reports for the named files (root-relative), and
+    no others, without reading the rest of the workspace (#412): what an update
+    asks of the files it wrote.
+
+    It makes four kinds of check. The placeholders check, on those files alone.
+    The instructions, settings, context and skills checks, whole, since each
+    reads a few fixed files and walks no notes. The walls check, per file
+    (walls_for_file and form_findings, the readings of the full run), for a
+    file in a project or in a wiki; only then are the wiki pages and the
+    meetings indexed. A path under a zone or a wiki that is not a zone's
+    instruction file is read as a project file would be, never passed over.
+
+    It does not run what only a whole run can see: a finding that rests on the
+    notes round a file (links, meetings, people, knowledge, raw records, inboxes,
+    the history), nor check_claude_md and check_updates, which look for files
+    that an update does not write. A caller that needs those runs the whole check."""
+    _BLOBS.clear()
+    root = Path(root).resolve()
+    ws = discover(root, None, light=True)
+    wanted = {Path(p).as_posix() for p in paths}
+    files = [root / p for p in sorted(wanted)]
+    findings: List[Finding] = []
+    for check in PATH_CHECKS:
+        try:
+            findings.extend(check(ws))
+        except Exception as e:
+            name = check.__name__.replace("check_", "", 1)
+            findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
+                                    "A check stopped before it finished"))
+    try:
+        findings.extend(check_placeholders(ws, files))
+    except Exception as e:
+        findings.append(Finding(ERROR, "placeholders", "", "the check stopped: %s: %s" % (type(e).__name__, e),
+                                "A check stopped before it finished"))
+    wikis = root / "Wikis"
+    areas = [wikis] + list(ws.zones)
+    reads = [f for f in files if f.is_file() and not f.is_symlink() and any(a in f.parents for a in areas)
+             and (f.name != "AGENTS.md" or project_of(ws, f) is not None or wikis in f.parents)]
+    if reads:
+        try:
+            ws = discover(root, None)            # the walls read the meetings and the wiki pages
+            for f in reads:
+                owner = project_of(ws, f)
+                if owner is None or f.suffix.lower() not in TEXT_SUFFIXES:
+                    continue
+                text = read_text(f)
+                project, pfm = owner
+                ptags = {strip_tag(t) for t in as_list(pfm.get("party"))}
+                if text and not (in_system(ws, project) and not ptags):
+                    findings.extend(walls_for_file(ws, project, ptags, f, text))
+            findings.extend(form_findings(ws, [(f, None) for f in reads if f.suffix.lower() == ".md"]))
+        except Exception as e:
+            findings.append(Finding(ERROR, "walls", "", "the check stopped: %s: %s" % (type(e).__name__, e),
+                                    "A check stopped before it finished"))
+    findings = [f for f in findings if f.path in wanted or not f.path]
     order = {c: i for i, (c, _) in enumerate(CHECKS)}
     findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
     return findings
@@ -8827,6 +9046,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--walls-only", action="store_true", help="run the walls check alone")
     parser.add_argument("--quick", action="store_true",
                         help="leave out the comparison of wording with the meetings, the slow part on a large workspace")
+    parser.add_argument("--paths", nargs="+", metavar="PATH",
+                        help="report only the findings for these files (relative to the root), reading no more of "
+                             "the workspace than they need; what an update asks of the files it wrote")
     parser.add_argument("--staged", action="store_true",
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
@@ -8863,7 +9085,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         if newer:
             print(newer)
         return 0
-    findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
+    if args.paths:
+        findings = run_path_checks(root, args.paths)
+    else:
+        findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
     if args.staged and not (args.json or args.ear):
         text = report_staged(findings)
         if text:

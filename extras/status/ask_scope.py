@@ -120,7 +120,7 @@ def _tool(ws: Path, name: str, fits):
 def lib(ws: Path):
     """garrick_lib.py: the context, the walls, the frontmatter and the live files, read as the checks read them."""
     return _tool(ws, "garrick_lib.py", lambda m: all(callable(getattr(m, f, None)) for f in
-                                                     ("load_context", "blocked", "decide", "labels", "meeting_labels", "parse_frontmatter_text", "live_files")))
+                                                     ("load_context", "blocked", "meets_in", "decide", "labels", "meeting_labels", "parse_frontmatter_text", "live_files")))
 
 
 def extractor(ws: Path):
@@ -133,11 +133,11 @@ def walled_in(ctx: dict, tags: Iterable[str], lib_) -> set:
     return {t for t in tags if lib_.is_walled(ctx, lib_.strip_tag(t))}
 
 
-def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_, ws: Optional[Path] = None) -> bool:
+def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_) -> bool:
     """Would a process holding `those` meet `these` (what a request names) with more than one walled party
-    between them, that no project names together? Naming them together is the yes."""
+    between them? No project is known here, so two walled parties stop."""
     a, b = walled_in(ctx, these, lib_), walled_in(ctx, those, lib_)
-    return bool(a and b and len(a | b) > 1 and (ws is None or not lib_.named_together(ws, ctx, a | b)))
+    return bool(a and b and len(a | b) > 1)
 
 
 # ---------------------------------------------------------------- the names in a request

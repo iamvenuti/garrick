@@ -677,7 +677,8 @@ def cmd_flip(root, args, today):
     if not (args.walled or args.open):
         raise Refusal("Say --walled or --open.")
     name = row.get("party") or tag
-    if bool(args.walled) == bool(row.get("walled")):
+    stated = row.get("flag") == "yes" if args.walled else not row.get("walled", True)     # a blank cell reads as walled but is not yet written as so
+    if stated:
         return f"{name} is already {'walled' if args.walled else 'open'}. Nothing was changed."
     if args.open:
         pair = next((p for p in hats_of(ctx, [tag] + [t for t in ctx["parties"] if t != tag]) if tag in p), None)
@@ -833,10 +834,11 @@ LABEL_CHANGES = ("System", "generated", "label-changes.jsonl")
 
 
 def write_party_line(note, tags):
-    """`party:` of a hub or thread note set to `tags`: one tag, or a flow list. The rest of the note is untouched."""
+    """`party:` of a hub or thread note set to `tags`: one tag, or a flow list. The rest of the note is untouched;
+    the item lines of a block-style list go with the line they belong to."""
     text = note.read_text(encoding="utf-8")
     value = tags[0] if len(tags) == 1 else "[%s]" % ", ".join(tags)
-    new, n = re.subn(r"(?m)^party:[^\n]*$", lambda m: "party: " + value, text, count=1)
+    new, n = re.subn(r"(?m)^party:[^\n]*(?:\n[ \t]*-[ \t]+[^\n]*)*$", lambda m: "party: " + value, text, count=1)
     if not n:
         new, n = re.subn(r"(?m)^(zone:[^\n]*)$", lambda m: m.group(1) + "\nparty: " + value, text, count=1)
     if not n:

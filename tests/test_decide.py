@@ -149,10 +149,11 @@ class LabelCases(unittest.TestCase):
         self.assertEqual(self.got("Zones/Personal/Garden/Threads/Beds/Plan.md"), {"jo", "cedar"})
         self.assertEqual(self.got("Zones/Personal/Garden/Garden.md"), {"jo", "cedar"})
 
-    def test_a_project_naming_two_walled_parties_is_the_yes(self):
-        self.assertTrue(lib.named_together(self.root, self.ctx, {"acme", "birch"}))
-        self.assertTrue(lib.named_together(self.root, self.ctx, {"acme", "cedar"}))
-        self.assertFalse(lib.named_together(self.root, self.ctx, {"acme", "lumen"}))
+    def test_two_walled_parties_meet_only_in_a_scope_naming_both(self):
+        self.assertTrue(lib.meets_in(self.ctx, {"acme", "birch"}, {"acme", "birch"}))
+        self.assertTrue(lib.meets_in(self.ctx, {"acme", "cedar"}))
+        self.assertFalse(lib.meets_in(self.ctx, {"acme", "birch"}))
+        self.assertFalse(lib.meets_in(self.ctx, {"acme", "birch"}, {"acme"}))
         self.assertEqual(self.got("Zones/Work/Both/Threads/T/Notes.md"), {"acme", "birch"})
 
     def test_two_hats_never_meet_in_one_record(self):

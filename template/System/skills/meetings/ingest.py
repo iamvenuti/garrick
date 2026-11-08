@@ -468,6 +468,28 @@ def _lines(path: Path) -> Tuple[List[str], int]:
 # The only keys a cut takes from the original's frontmatter: mechanical ones. A title, an attendee
 # line, a summary or any free text can name a party the cut is not written for, so none is carried.
 CARRY_KEYS = ("date", "type", "language", "duration")
+# and each only with a value of its own shape, so no free text rides in under a mechanical key
+CARRY_SHAPES = {"date": r"\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?", "language": r"[a-z]{2,3}(-[A-Za-z]{2})?",
+                "duration": r"\d+(\.\d+)?\s*(s|m|min|h)?", "type": r"(meeting|call|transcript|mail|note)"}
+
+
+def _carried(line: str) -> bool:
+    key, sep, value = line.partition(":")
+    key, value = key.strip().lower(), value.strip().strip("\"'")
+    return (bool(sep) and not line[:1].isspace() and key in CARRY_KEYS
+            and re.fullmatch(CARRY_SHAPES[key], value) is not None)
+
+
+def _neutral_stem(stem: str) -> str:
+    """A cut's name keeps only the date its original's name opens with: the rest of a name is free text, and can
+    name a party the cut is not written for."""
+    m = re.match(r"(\d{6}|\d{4}-\d{2}-\d{2})(?!\d)", stem)
+    return m.group(1) if m else "cut"
+
+
+def _origin(stem: str) -> str:
+    """What links a cut or an extract to the file it came from, without naming it: a short hash of its name."""
+    return hashlib.sha1(stem.encode("utf-8")).hexdigest()[:10]
 
 
 def _header(suffix: str, tags: List[str], extra: List[Tuple[str, str]], lines: List[str], head: int,
@@ -475,8 +497,7 @@ def _header(suffix: str, tags: List[str], extra: List[Tuple[str, str]], lines: L
     """The cut's own head: the original's mechanical keys (CARRY_KEYS) only, then ours, with a title of its own:
     the one given, or a neutral one built from the date and the cut's parties.
     A .vtt keeps WEBVTT first and our keys as header lines under it, as the format allows."""
-    keep = [l for l in (lines[1:head - 1] if head else []) if not l[:1].isspace()
-            and l.split(":", 1)[0].strip().lower() in CARRY_KEYS and not l.rstrip().endswith(":")]
+    keep = [l if l.endswith("\n") else l + "\n" for l in (lines[1:head - 1] if head else []) if _carried(l)]
     date = next((l.split(":", 1)[1].strip().strip("\"'") for l in keep if l.split(":", 1)[0].strip().lower() == "date"), "")
     title = " ".join((title or "").split()) or "Meeting%s, %s" % (" " + date if date else "", ", ".join(tags))
     own = ["title: %s\n" % ('"%s"' % title.replace('"', "'") if ":" in title or "#" in title else title),
@@ -533,7 +554,7 @@ def split_plan(root: Path, inbox: "str | Path", parts: List[str], drop: str = ""
                 if n in owner:
                     raise Refusal("Line %d is in two cuts; a line belongs to one label set." % n)
                 owner[n] = tuple(tags)
-        plan.append({"name": _name(src.stem, tags) + src.suffix.lower(), "tags": tags, "ranges": ranges,
+        plan.append({"name": _name(_neutral_stem(src.stem), tags) + src.suffix.lower(), "tags": tags, "ranges": ranges,
                      "lines": sum(min(b, len(lines)) - a + 1 for a, b in ranges)})
     if drop:
         for a, b in parse_ranges(drop):
@@ -546,9 +567,13 @@ def split_plan(root: Path, inbox: "str | Path", parts: List[str], drop: str = ""
         raise Refusal("%d line%s belong to no cut, starting at line %d. The original is deleted once it is split, so "
                       "every line goes into a cut or is dropped by name with --drop." % (len(loose), "" if len(loose) == 1 else "s", loose[0]))
     taken = taken_stems(meetings, "raw", "raw/inbox", "wiki/sources")
-    clash = [p["name"] for p in plan if Path(p["name"]).stem in taken]
-    if clash:
-        raise Refusal("%s already exists, so nothing was written." % clash[0])
+    for p in plan:                                  # a second split of the same day and parties is numbered
+        stem, n = Path(p["name"]).stem, 2
+        name = stem
+        while name in taken:
+            name, n = "%s-%d" % (stem, n), n + 1
+        taken.add(name)
+        p["name"] = name + src.suffix.lower()
     return src, plan
 
 
@@ -567,7 +592,7 @@ def split(root: Path, inbox: "str | Path", parts: List[str], drop: str = "", yes
         with filing(root):
             for i, p in enumerate(plan):
                 title = titles[i] if titles and i < len(titles) else ""
-                text = _header(src.suffix.lower(), p["tags"], [("split-of", src.stem)], lines, head, title) + _take(lines, head, p["ranges"], src.suffix.lower())
+                text = _header(src.suffix.lower(), p["tags"], [("split-of", _origin(src.stem))], lines, head, title) + _take(lines, head, p["ranges"], src.suffix.lower())
                 made.append(write_new(root, meetings, src.parent / p["name"], text.encode("utf-8")))
     except BaseException:
         for path in made:
@@ -602,12 +627,12 @@ def extract_plan(root: Path, raw: "str | Path", lines_spec: str, parties: str) -
     lines, head = _lines(src)
     for a, b in ranges:
         _take(lines, head, [(a, b)], src.suffix.lower())          # the same bounds checks
-    stem = _name(src.stem, tags, "extract")
+    stem = _name(_neutral_stem(src.stem), tags, "extract")
     taken = taken_stems(meetings, "raw", "raw/inbox", "wiki/sources")
     n, name = 2, stem
     while name in taken:
         name, n = "%s-%d" % (stem, n), n + 1
-    return src, {"name": name + src.suffix.lower(), "tags": tags, "ranges": ranges, "of": src.stem,
+    return src, {"name": name + src.suffix.lower(), "tags": tags, "ranges": ranges, "of": _origin(src.stem),
                  "lines": sum(b - a + 1 for a, b in ranges), "held": sorted(held)}
 
 

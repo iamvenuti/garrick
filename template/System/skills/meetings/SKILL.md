@@ -829,8 +829,10 @@ what each holds, and the user decides.
   original is gone, because an inbox is no record. A cut carries only the
   original's date and type, never its title, attendees or summary, which can
   name the other party: give each cut its own with `--title` (once per
-  `--part`, in order), or it gets "Meeting <date>, <parties>". File each
-  one as its own conversation, with a page of its own.
+  `--part`, in order), or it gets "Meeting <date>, <parties>". A cut is
+  named by the original's date and its own parties (`260310-cedar`), never
+  by the rest of the original's name. File each one as its own
+  conversation, with a page of its own.
 - **Extract, after it is a record.** A filed record is never edited. For a
   part of it on its own, run `ingest.py extract --raw <record> --lines
   <lines> --parties <tags>`, and on the user's yes again with `--yes`. It

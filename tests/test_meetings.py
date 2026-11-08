@@ -551,7 +551,7 @@ class SplitAndExtractTest(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve() / "ws"
         fixtures.build_workspace(self.root)
         self.inbox = self.root / "Wikis" / "Meetings" / "raw" / "inbox"
-        self.src = self.inbox / "call.txt"
+        self.src = self.inbox / "260310-acme-birch-call.txt"     # a name that names both parties
         self.src.write_text(TRANSCRIPT)
         self.parts = ["acme:1-2", "birch:3-4", "acme,birch:5"]
 
@@ -561,8 +561,8 @@ class SplitAndExtractTest(unittest.TestCase):
     def test_nothing_is_written_without_the_yes(self):
         plan, wrote = ingest.split(self.root, self.src, self.parts)
         self.assertFalse(wrote)
-        self.assertEqual(["call-acme-birch.txt", "call-acme.txt", "call-birch.txt"], sorted(p["name"] for p in plan))
-        self.assertEqual(["call.txt"], sorted(p.name for p in self.inbox.glob("call*")))
+        self.assertEqual(["260310-acme-birch.txt", "260310-acme.txt", "260310-birch.txt"], sorted(p["name"] for p in plan))
+        self.assertEqual(["260310-acme-birch-call.txt"], sorted(p.name for p in self.inbox.glob("260310*")))
         r = run_cli(self.root, "split", "--inbox", str(self.src), *sum((["--part", p] for p in self.parts), []))
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("Nothing was written", r.stdout)
@@ -572,18 +572,18 @@ class SplitAndExtractTest(unittest.TestCase):
         plan, wrote = ingest.split(self.root, self.src, self.parts, yes=True)
         self.assertTrue(wrote)
         self.assertFalse(self.src.exists())
-        got = {p.name: p.read_text() for p in self.inbox.glob("call-*")}
-        self.assertEqual({"call-acme.txt", "call-birch.txt", "call-acme-birch.txt"}, set(got))
-        self.assertIn("parties: [acme]\n", got["call-acme.txt"])
-        self.assertIn("parties: [acme, birch]\n", got["call-acme-birch.txt"])
-        self.assertIn("split-of: call\n", got["call-birch.txt"])
-        self.assertTrue(got["call-acme.txt"].endswith(TRANSCRIPT.splitlines(True)[0] + TRANSCRIPT.splitlines(True)[1]))
-        self.assertNotIn("Theo", got["call-acme.txt"])
-        self.assertNotIn("Dana", got["call-birch.txt"])
+        got = {p.name: p.read_text() for p in [q for q in self.inbox.glob("260310-*") if q != self.src]}
+        self.assertEqual({"260310-acme.txt", "260310-birch.txt", "260310-acme-birch.txt"}, set(got))
+        self.assertIn("parties: [acme]\n", got["260310-acme.txt"])
+        self.assertIn("parties: [acme, birch]\n", got["260310-acme-birch.txt"])
+        self.assertIn("split-of: %s\n" % ingest._origin("260310-acme-birch-call"), got["260310-birch.txt"])
+        self.assertTrue(got["260310-acme.txt"].endswith(TRANSCRIPT.splitlines(True)[0] + TRANSCRIPT.splitlines(True)[1]))
+        self.assertNotIn("Theo", got["260310-acme.txt"])
+        self.assertNotIn("Dana", got["260310-birch.txt"])
         # each is landed and given a page of its own: the labels are the page's
         sys.path.insert(0, str(REPO / "template" / "System" / "tools"))
         import garrick_lib as lib
-        expect = {"call-acme": {"acme"}, "call-birch": {"birch"}, "call-acme-birch": {"acme", "birch"}}
+        expect = {"260310-acme": {"acme"}, "260310-birch": {"birch"}, "260310-acme-birch": {"acme", "birch"}}
         for stem, tags in expect.items():
             slug, dest = ingest.land(self.root, self.inbox / (stem + ".txt"), "2026-03-10", stem)
             page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md")
@@ -598,7 +598,7 @@ class SplitAndExtractTest(unittest.TestCase):
             with self.assertRaisesRegex(ingest.Refusal, why):
                 ingest.split(self.root, self.src, parts, yes=True)
         self.assertTrue(self.src.exists())
-        self.assertEqual([], [p.name for p in self.inbox.glob("call-*")])
+        self.assertEqual([], [p.name for p in self.inbox.glob("260310-*") if p != self.src])
         plan, wrote = ingest.split(self.root, self.src, ["acme:1-2", "birch:3-4"], drop="5", yes=True)    # a named drop
         self.assertTrue(wrote)
 
@@ -615,16 +615,26 @@ class SplitAndExtractTest(unittest.TestCase):
         self.src.write_text(self.HEAD + TRANSCRIPT)
         parts = ["acme:10-11", "birch:12-13", "acme,birch:14"]
         ingest.split(self.root, self.src, parts, yes=True, titles=["Acme budget", ""])
-        got = {p.name: p.read_text() for p in self.inbox.glob("call-*")}
+        got = {p.name: p.read_text() for p in [q for q in self.inbox.glob("260310-*") if q != self.src]}
         for name, text in got.items():
             front = text.split("---")[1]
             for word in ("Birch joint", "Pat", "attendees", "summary", "source-id"):
-                self.assertNotIn(word, front if name != "call-acme-birch.txt" else front.replace("Acme, Birch", ""), name)
+                self.assertNotIn(word, front if name != "260310-acme-birch.txt" else front.replace("Acme, Birch", ""), name)
             self.assertIn("date: 2026-03-10\n", front)
-        self.assertIn("title: Acme budget\n", got["call-acme.txt"])
-        self.assertIn("title: Meeting 2026-03-10, birch\n", got["call-birch.txt"])
-        self.assertNotIn("Birch", got["call-acme.txt"].split("---")[1])
-        self.assertNotIn("Acme and", got["call-birch.txt"])
+        self.assertIn("title: Acme budget\n", got["260310-acme.txt"])
+        self.assertIn("title: Meeting 2026-03-10, birch\n", got["260310-birch.txt"])
+        self.assertNotIn("Birch", got["260310-acme.txt"].split("---")[1])
+        self.assertNotIn("Acme and", got["260310-birch.txt"])
+
+    def test_a_cut_carries_a_mechanical_key_only_with_a_value_of_its_shape(self):
+        """A free-text value under a mechanical key, and the original's name, never reach a narrower cut."""
+        self.src.write_text("---\ndate: 2026-03-10\ntype: Birch call\nlanguage: Theo of Birch\nduration: >\n---\n\n" + TRANSCRIPT)
+        ingest.split(self.root, self.src, ["acme:8-9", "birch:10-11", "acme,birch:12"], yes=True)
+        acme = (self.inbox / "260310-acme.txt").read_text()
+        self.assertNotIn("irch", acme)
+        self.assertNotIn("Theo", acme)
+        self.assertIn("date: 2026-03-10\n", acme)
+        self.assertNotIn("duration", acme)
 
     def test_an_extract_takes_no_title_or_attendee_line_either(self):
         self.src.write_text(self.HEAD + TRANSCRIPT)
@@ -653,7 +663,8 @@ class SplitAndExtractTest(unittest.TestCase):
         self.assertEqual(before, dest.read_bytes())
         made = (self.inbox / plan["name"]).read_text()
         self.assertIn("parties: [birch]\n", made)
-        self.assertIn("extract-of: %s\n" % slug, made)
+        self.assertIn("extract-of: %s\n" % ingest._origin(slug), made)
+        self.assertNotIn("acme", plan["name"])
         self.assertIn("Theo: we plan", made)
         self.assertNotIn("Dana", made)
 

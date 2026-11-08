@@ -472,10 +472,10 @@ class Conversation:
         return {lib.strip_tag(t) for t in self.held()}
 
     def crosses(self, tags, lib, ctx: dict, extra=()) -> bool:
-        """True when held and scope together hold two walled parties that no hub lists."""
+        """True when held and scope together hold two walled parties that this scope lacks."""
         held = {t for t in self.held_tags(lib) | {lib.strip_tag(t) for t in extra} if lib.is_walled(ctx, t)}
         mine = {t for t in tags if lib.is_walled(ctx, lib.strip_tag(t))}
-        return bool(held and mine and len(held | mine) > 1 and not lib.named_together(self.ws, ctx, held | mine))
+        return bool(held and mine and len(held | mine) > 1 and not lib.meets_in(ctx, held | mine, tags))
 
     def scope_for(self, rc, ctx: dict, place, kind: str = "all"):
         """The one scope index this conversation opens: the scope of the zone the window answers in (or the place's
@@ -731,7 +731,7 @@ class Conversation:
             if rows:
                 listing.append((z, rows))
         listed = {p for _, rows in listing for ps, _ in rows for p in ps}
-        if not lib.named_together(self.ws, ctx, listed):
+        if not lib.meets_in(ctx, listed):
             return NO_PROJECTS          # the list would span a wall: the words of an empty zone, so the text says nothing
         if listed and not self.admit(listed):      # the names are material: what is listed is held
             return STOPPED
@@ -805,7 +805,7 @@ class Conversation:
             if not ps or not ps <= set(ctx.get("parties", {})):
                 return None
             every |= ps
-        return every if lib.named_together(self.ws, ctx, every) else None
+        return every if lib.meets_in(ctx, every) else None
 
     @staticmethod
     def surnamed(text: str, ctx: dict) -> set:

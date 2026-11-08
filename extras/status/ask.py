@@ -1747,7 +1747,7 @@ class Asker:
                 self.quick = AgentSession(self.ws, tier())
             sess = self.quick
             lib = scope_lib().lib(self.ws)
-            if sess.alive() and scope_lib().any_wall(self.ctx, named.parties, sess.held(), lib, self.ws):
+            if sess.alive() and scope_lib().any_wall(self.ctx, named.parties, sess.held(), lib):
                 sess.stop()                         # its own conversation, ended at a wall as the other is
         else:
             sess = self.session
@@ -1803,7 +1803,7 @@ class Asker:
         lib = scope_lib().lib(self.ws)
         ctx = lib.load_context(self.ws)
         held = {lib.strip_tag(t) for t in held}
-        return not lib.named_together(self.ws, ctx, held)
+        return not lib.meets_in(ctx, held)
 
     def wall_stop(self) -> dict:
         """A wall stopped the conversation: both sessions are stopped and everything they held cleared, the session
@@ -2099,7 +2099,7 @@ class Asker:
         held = self.holding()
         if every:
             return bool(held)
-        return scope_lib().any_wall(self.ctx, parties, held, scope_lib().lib(self.ws), self.ws)
+        return scope_lib().any_wall(self.ctx, parties, held, scope_lib().lib(self.ws))
 
     def reset(self) -> None:
         """New conversation, and the wall reset: both sessions stopped and

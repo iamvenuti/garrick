@@ -116,7 +116,7 @@ __all__ = [
     "blocked",
     "is_walled",
     "hats_of",
-    "named_together",
+    "meets_in",
     "decide",
     "always_asked",
     "labels",
@@ -1290,20 +1290,12 @@ def blocked(context: dict, scope, labels) -> set:
     return {t for t in _tagset(labels) if t != KNOWLEDGE and t not in held and is_walled(context, t)}
 
 
-def named_together(root: PathLike, context: dict, tags) -> bool:
-    """Do `tags` hold one walled party at most, or does some project of the workspace name every walled
-    one of them? Naming two walled parties on one hub is the yes that lets their material meet."""
+def meets_in(context: dict, tags, scope=None) -> bool:
+    """May material holding `tags` meet in one place? One walled party at most always may. Two or more may only
+    where the place is known and names every walled one of them: `scope`, the tags of the project at hand.
+    With no place known yet, two walled parties stop. Naming them on that project is the yes."""
     walled_ = {t for t in _tagset(tags) if is_walled(context, t)}
-    if len(walled_) < 2:
-        return True
-    zones = Path(root) / "Zones"
-    for zone in sorted(zones.iterdir()) if zones.is_dir() else []:
-        for project in sorted(zone.iterdir()) if zone.is_dir() and not zone.name.startswith(".") else []:
-            if project.is_dir() and not project.name.startswith((".", "_")) and project.name != "Inbox":
-                got = labels(root, project)
-                if got and walled_ <= set(got):
-                    return True
-    return False
+    return len(walled_) < 2 or (scope is not None and walled_ <= _tagset(scope))
 
 
 def hats_of(context: dict, tags) -> List[Tuple[str, str]]:
@@ -1525,7 +1517,10 @@ def _labels_of(fm: dict, alone: bool = False) -> Optional[set]:
     one, many = tag_list(fm.get("party")), tag_list(fm.get("parties"))
     if fm.get("party") is not None and fm.get("parties") is not None and set(one) != set(many):
         return None
-    return set(many or one)
+    got = set(many or one)
+    if any(str(t).strip().strip("\"'").casefold() == KNOWLEDGE for t in got):
+        return None             # the sentinel is code's, never a tag a page may write: read as no label
+    return got
 
 
 def _note_labels(path: Path) -> set:

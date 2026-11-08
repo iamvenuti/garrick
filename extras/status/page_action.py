@@ -2355,10 +2355,10 @@ def tags_of(value) -> list:
     return [str(v).strip() for v in items if v is not None and str(v).strip()]
 
 
-def two_walled(lib, ctx: dict, tags, ws) -> bool:
-    """Do `tags` hold more than one walled party that no project names together? A page or a question of two
-    is mixed: nothing is named or written, unless a project names both."""
-    return not lib.named_together(ws, ctx, tags)
+def two_walled(lib, ctx: dict, tags) -> bool:
+    """Do `tags` hold more than one walled party? A page or a question of two is mixed and has no
+    destination yet: nothing is named or written."""
+    return not lib.meets_in(ctx, tags)
 
 
 def bare_tag(lib, tag: str) -> str:
@@ -2447,7 +2447,7 @@ def question_parties(q: WikiQuestion, wall: str) -> list:
         raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
     if not tags or any(t not in ctx.get("parties", {}) for t in tags):
         raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
-    if two_walled(q.lib, ctx, tags, q.ws):
+    if two_walled(q.lib, ctx, tags):
         raise Refused(wall)
     return tags
 
@@ -2517,7 +2517,7 @@ def question_pages(q: WikiQuestion, wall: str) -> tuple:
         seen.append(tags)
         readable.append((p, tags))
     flat = [t for tags in seen for t in tags]
-    if two_walled(q.lib, ctx, flat, q.ws):
+    if two_walled(q.lib, ctx, flat):
         raise Refused(wall)             # two walled parties: nothing named, nothing written
     allowed = []
     for p, tags in readable:
@@ -2695,7 +2695,7 @@ def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> l
         tags = [bare_tag(lib, t) for t in r["parties"]]
         if r["zone"] not in zones or any(t not in ctx.get("parties", {}) for t in tags):
             r.update(state="skipped", reason="its zone or parties are not ones this workspace knows")
-        elif two_walled(lib, ctx, tags, ws):
+        elif two_walled(lib, ctx, tags):
             r.update(state="skipped", reason=wall)
         else:
             r["parties"] = [t.strip() for t in r["parties"]]
@@ -3382,14 +3382,14 @@ class View:
             if scope not in self.parties:
                 raise Refused(wall)
             self.chosen = scope
-        elif not self.parties or two_walled(lib, self.ctx, self.parties, self.ws):
+        elif not self.parties or two_walled(lib, self.ctx, self.parties):
             raise Refused(wall)
 
     def ok(self, tags) -> bool:
         tags = set(tags or ())
         if self.unattributed or not tags or not tags <= self.parties:
             return False
-        if two_walled(self.lib, self.ctx, tags, self.ws):
+        if two_walled(self.lib, self.ctx, tags):
             return False
         return self.chosen is None or self.chosen in tags
 

@@ -54,9 +54,9 @@ TIME_LINE = re.compile(r"shard-time (\w+) (\d+(?:\.\d+)?)")
 TOUCH_MAP = {
     # The wall check: a change to it runs every module that tests a wall, not only test_check*.
     "template/System/tools/check.py": ["test_wall_false_positives", "test_wall_forms", "test_wall_gaps",
-                                       "test_wall_gaps_340", "test_wall_noise", "test_wall_cache",
+                                       "test_wall_noise", "test_wall_cache",
                                        "test_walls_cases", "test_walls_deterministic", "test_staged_paths",
-                                       "test_pathspec_commit", "test_no_party", "test_decide"],
+                                       "test_pathspec_commit", "test_decide"],
     "tests/walls/cases.md": ["test_walls_cases"],
     "extras/status/questions_panel.py": ["test_questions_panel", "test_questions_panel_all",
                                          "test_panel_hardening", "test_decisions",
@@ -81,10 +81,10 @@ FULL_ONLY = {
     "test_simple_home", "test_split", "test_update",
     "test_checkpoint", "test_cmux", "test_cmux_sidebar", "test_decide", "test_executor",
     "test_fetch", "test_knowledge_skill", "test_lib", "test_meetings", "test_memory_canary",
-    "test_mod", "test_nested_checkout", "test_no_party", "test_obsidian", "test_open_sections",
-    "test_pathspec_commit", "test_person_employer", "test_person_organisation", "test_reading",
+    "test_mod", "test_nested_checkout", "test_obsidian", "test_open_sections",
+    "test_party_flags", "test_pathspec_commit", "test_person_employer", "test_person_organisation", "test_reading", "test_refusals",
     "test_staged_paths", "test_wall_cache", "test_wall_false_positives", "test_wall_forms",
-    "test_wall_gaps", "test_wall_gaps_340", "test_wall_noise", "test_walls_cases",
+    "test_wall_gaps", "test_wall_noise", "test_walls_cases",
     "test_walls_deterministic", "test_wiki_answers", "test_wrap",
 }
 # A change here can break anything: the full suite runs.

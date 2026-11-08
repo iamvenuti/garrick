@@ -63,6 +63,14 @@ def build(root: Path) -> Path:
     write(work / "Cedarwork" / "Threads" / "T" / "T.md", thread_note("Cedarwork", "T", "cedar"))
     write(work / "Cedarwork" / "Sources" / ".gitkeep")
     write(work / "Reed" / "Sources" / ".gitkeep")
+    # one company under two hats, hub and thread: they never meet in one record
+    write(work / "Hats" / "Hats.md", project_hub("Work", "Hats", "lumen-adv", ["T"]))
+    write(work / "Hats" / "Threads" / "T" / "T.md", thread_note("Hats", "T", "lumen"))
+    write(work / "Hats" / "Threads" / "T" / "x.md", "# x\n")
+    # a thread folder spelt in lower case
+    write(work / "Low" / "Low.md", project_hub("Work", "Low", "acme"))
+    write(work / "Low" / "threads" / "T" / "T.md", thread_note("Low", "T", "birch"))
+    write(work / "Low" / "threads" / "T" / "x.md", "# x\n")
     # a project that names two walled parties on purpose: their material may meet there
     write(work / "Both" / "Both.md", project_hub("Work", "Both", "[acme, birch]", ["T"]))
     write(work / "Both" / "Threads" / "T" / "T.md", thread_note("Both", "T", "[acme, birch]"))

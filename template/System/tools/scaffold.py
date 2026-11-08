@@ -335,6 +335,20 @@ def refuse_hats(ctx, tags):
                       % pair)
 
 
+def refuse_hats_in_project(ctx, project_dir, hub_tags=None, thread=None, thread_tags=None):
+    """Two hats of one company never meet on a hub and its threads: the union of the hub's tags and each thread's
+    (with `hub_tags` or `thread_tags` standing in for the note being changed) is refused when it holds such a pair."""
+    hub = list(hub_tags) if hub_tags is not None else tag_list(parse_frontmatter(project_dir / f"{project_dir.name}.md").get("party"))
+    threads = project_dir / "Threads"
+    tags = {}
+    for t in (sorted(p.name for p in threads.iterdir() if p.is_dir()) if threads.is_dir() else []):
+        tags[t] = tag_list(parse_frontmatter(threads / t / f"{t}.md").get("party"))
+    if thread is not None:
+        tags[thread] = list(thread_tags)
+    for each in [hub] + list(tags.values()):
+        refuse_hats(ctx, set(hub) | set(each))
+
+
 def meet_sentence(ctx, tags):
     """"Maple's and Harbour's material will meet in this project" where `tags` hold two walled parties, else ''."""
     walled = [t for t in tags if is_walled(ctx, t)]
@@ -616,14 +630,14 @@ def files_labelled(root, tag):
 
 
 def walls_violations(root):
-    """The files the whole-workspace walls check refuses now, as paths: [] when it is clear or cannot run."""
+    """The files the whole-workspace walls check refuses now, as paths; None when the check could not run or finish."""
     check = Path(root) / "System" / "tools" / "check.py"
     try:
         run = subprocess.run([sys.executable, str(check), "--root", str(root), "--walls-only", "--json"],
                              capture_output=True, text=True, timeout=600)
         found = json.loads(run.stdout).get("findings", [])
     except (OSError, ValueError, subprocess.SubprocessError):
-        return []
+        return None
     return sorted({f["path"] for f in found if f.get("severity") == "error" and f.get("path")})
 
 
@@ -679,6 +693,9 @@ def cmd_flip(root, args, today):
     set_flag(root, tag, True)
     bad = walls_violations(root)
     said = [f"{name} is walled. System/context.md is changed; commit it on its own, in the workspace's own repository."]
+    if bad is None:
+        raise Refusal(said[0] + " The check could not run, so the files now in violation are not known: run "
+                      "`python3 System/tools/check.py --walls-only` before committing.")
     if bad:
         said.append("%d file%s now in violation:" % (len(bad), "s" if len(bad) != 1 else ""))
         said += ["  " + b for b in bad[:20]] + (["  and %d more" % (len(bad) - 20)] if len(bad) > 20 else [])
@@ -850,6 +867,10 @@ def cmd_label(root, args, today):
             return f"{tag} is already on {note.name}. Nothing was changed."
         new = now + [tag]
         refuse_hats(ctx, new)
+        if args.thread:
+            refuse_hats_in_project(ctx, project_dir, thread=note_dir.name, thread_tags=new)
+        else:
+            refuse_hats_in_project(ctx, project_dir, hub_tags=new)
         hub = tag_list(parse_frontmatter(project_dir / f"{project_dir.name}.md").get("party"))
         meet = meet_sentence(ctx, sorted(set(new) | set(hub)))
         if meet and not args.yes:
@@ -1574,6 +1595,7 @@ def cmd_move(root, args, today):
     wall = getattr(ops, "WALL_REFUSAL", None) or WALL_SENTENCE
     if wall_between(ctx, mine, theirs) or wall_between(ctx, source, theirs):
         raise Refusal(wall)
+    refuse_hats_in_project(ctx, target, thread=name, thread_tags=mine)
     why = thread_material_walls(root, zone_dir, thread_dir, theirs)
     if why == "WALL":
         raise Refusal(wall)

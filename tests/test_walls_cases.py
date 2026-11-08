@@ -176,6 +176,46 @@ class EnforcementPoints(unittest.TestCase):
             return "refused"
         return "permitted"
 
+    def hats_across_hub_and_thread(self):
+        self.addCleanup(self.restore)
+        hub, thread = self.work / "Northwind" / "Northwind.md", self.work / "Northwind" / "Threads" / "Pricing" / "Pricing.md"
+        hub.write_text(hub.read_text(encoding="utf-8").replace("party: acme", "party: [acme, lumen-adv]"), encoding="utf-8")
+        try:
+            scaffold.refuse_hats_in_project(lib.load_context(self.root), self.work / "Northwind", thread="Pricing",
+                                            thread_tags=["acme", "lumen"])
+        except scaffold.Refusal:
+            return "refused"
+        return "permitted"
+
+    def hats_checked(self):
+        self.addCleanup(self.restore)
+        hub = self.work / "Hats" / "Hats.md"
+        found = [f for f in check.run_checks(self.root) if "one company under two hats" in f.message
+                 and f.severity == "error" and f.check in ("projects", "threads")]
+        return "refused" if found else "permitted"
+
+    def hub_links_thread(self, link):
+        self.addCleanup(self.restore)
+        hub, thread = self.work / "Reed" / "Reed.md", self.work / "Reed" / "Threads" / "Notes" / "Notes.md"
+        thread.write_text(thread.read_text(encoding="utf-8").replace("party: cedar", "party: [cedar, birch]"), encoding="utf-8")
+        write(self.work / "Reed" / "Threads" / "Notes" / "Plan.md", "# Plan\n")
+        hub.write_text(hub.read_text(encoding="utf-8") + "\nSee %s.\n" % link, encoding="utf-8")
+        found = [f for f in check.run_checks(self.root, walls_only=True) if f.path.endswith("Reed/Reed.md") and f.severity == "error"]
+        return "refused" if found else "permitted"
+
+    def flip_asks(self):
+        args = type("A", (), dict(tag="acme", walled=False, open=True, yes=False))()
+        said = scaffold.cmd_flip(self.root, args, "2026-11-06")
+        return "asked" if "releases" in said and "| `acme` | yes |" in (self.root / "System" / "context.md").read_text() else "permitted"
+
+    def one_thread_changes_no_other_file(self):
+        before = lib.labels(self.root, "Zones/Work/Northwind/Sources/x.md", self.ctx)
+        self.addCleanup(self.restore)
+        note = self.work / "Northwind" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text(encoding="utf-8").replace("party: acme", "party: [acme, cedar]"), encoding="utf-8")
+        after = lib.labels(self.root, "Zones/Work/Northwind/Sources/x.md", self.ctx)
+        return "permitted" if before == after == frozenset({"acme"}) else "refused"
+
     def scaffold_none(self):
         args = type("A", (), dict(name="None", zone="Work", what="x", also=None, walled=False, open=False,
                                   check=False, spoken=None))()
@@ -317,6 +357,13 @@ class EnforcementPoints(unittest.TestCase):
                 __import__("nurture").Ctx(self.root), "Zones/Work/Both/Threads/T/Notes.md",
                 "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md") else "permitted",
             "e58": self.hats_refused,
+            "e60": lambda: "refused" if scaffold.wall_between(self.ctx, {"lumen"}, {"lumen-adv"}) else "permitted",
+            "e61": self.hats_across_hub_and_thread,
+            "e62": self.hats_checked,
+            "e63": lambda: self.hub_links_thread("[[Reed/Threads/Notes/Notes|Notes]]"),
+            "e64": lambda: self.hub_links_thread("[[Reed/Threads/Notes/Plan]]"),
+            "e65": self.flip_asks,
+            "e66": self.one_thread_changes_no_other_file,
             "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),
@@ -441,6 +488,13 @@ class EnforcementPoints(unittest.TestCase):
                 if re.search(r"\b(?:walled|crossings)\(", path.read_text(encoding="utf-8")):
                     own.append(path.relative_to(REPO).as_posix())
         self.assertEqual([], own)
+
+    def test_a_session_holding_nothing_is_admitted_to_a_one_party_group_as_in_0_59_1(self):
+        """Accepted, not new: v0.59.1's admits() took the scope from the records when nothing was held, and so does this one."""
+        self.assertTrue(ask_scope.admits(self.ctx, set(), {"acme"}, self.lib))
+        self.assertTrue(ask_scope.admits(self.ctx, set(), {"acme", "cedar"}, self.lib))
+        self.assertFalse(ask_scope.admits(self.ctx, {"acme"}, {"birch"}, self.lib))
+        self.assertFalse(ask_scope.admits(self.ctx, {"cedar"}, {"acme"}, self.lib))
 
     def test_the_shipped_table_is_the_tests_table(self):
         shipped = REPO / "template" / "System" / "tools" / "walls-cases.md"

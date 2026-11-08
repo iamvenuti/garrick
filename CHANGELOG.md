@@ -4,6 +4,25 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.60.0] - 2026-11-08
+
+Walls become a flag on the party. Every party is either walled or open: a walled party's material goes only into work that names that party, and an open party's material may go anywhere. The table of walled pairs, the reserved tag `public` and `scaffold.py party --walled-from` are gone, and one rule in `decide()` answers for every enforcement point.
+
+**Upgrading.** The update stops at a one-time migration. It proposes a Walled flag for every party (each party with a row in the old Walls table walled, every other open) and a Party and New parties column for each zone, then prints every flow in the workspace whose verdict would change. Nothing is written until you answer yes (`--apply --yes` for a scripted update; a headless run never answers). Until then the old pairs stay in force and decide as before, and `check.py` warns that the migration is pending.
+
+### Changed
+
+- **Walls are a flag on each party** ([#444](https://github.com/iamvenuti/garrick/issues/444)). The Parties table has a *Walled* column and the Zones table a *Party* and a *New parties* column. Material goes into a record only when every walled party on it is one the record's project names; open parties never block. A file carries its zone's party and the parties of the nearest note above it, the thread's and the hub's; nothing comes from sibling threads. `party:` takes one tag or a list everywhere. A project that names two walled parties takes the material of both: naming them is the yes. Two parties that share a name never meet on one note or one file.
+- **Scaffold and check under party flags** ([#445](https://github.com/iamvenuti/garrick/issues/445)). `scaffold.py party --tag T --walled|--open` changes a party's flag: opening one names the files it releases and writes only on `--yes`; walling one writes, then lists the files now in violation. `scaffold.py label --add|--remove` puts a party on a hub or thread note or takes one off; adding a second walled party says whose material will meet, and a removal names the files that lose the label, each writing on `--yes`. The check refuses a hand edit that drops a party with no recorded yes, and rechecks every zone after a label change. Recall's index and Ask start again when the Parties or Zones table changes.
+- **The wall docs describe the flag model in five sentences** ([#449](https://github.com/iamvenuti/garrick/issues/449), [#434](https://github.com/iamvenuti/garrick/issues/434)), identical in the principles, the concepts and the README. The threat model is written down: the check catches an honest writer's mistakes, and a form that needs deliberate disguise is by design, as paraphrase is. `SECURITY.md` says what is by design. The interview skill asks "whose material may go anywhere, and whose may not?" in place of collecting pairs.
+
+### Added
+
+- **The update migrates pairs to flags, with a workspace diff** ([#446](https://github.com/iamvenuti/garrick/issues/446)). The diff runs the old rule and the new one over every labelled record and every project scope, for read, write and file, and prints each flow whose verdict changes, grouped, with an example path each.
+- **A Parties tab on the status page** ([#447](https://github.com/iamvenuti/garrick/issues/447)) lists each zone's party and default, then each party with its flag and the projects and threads that name it. Flip runs the same command, with the same refusals, through `page_action.py`'s new `party-flag` verb.
+- **Mixed conversations are split in the inbox** ([#448](https://github.com/iamvenuti/garrick/issues/448)). A transcript that carries two walled parties is cut, on your yes, into a file for each party and one for what both share, each with its own page. A filed record is never edited: `ingest.py extract` writes a part of it as a new raw file with its own parties, and leaves the record byte for byte as it was.
+- **A record of every wall refusal** ([#437](https://github.com/iamvenuti/garrick/issues/437)). `check.py --staged --walls-only` appends one line per refused finding to `System/generated/walls/refusals.jsonl`: time, zone, kind and whether a wall was named, never a path, token, party or text. The Checks card shows the last 30 days, and the commits that landed soon after a refusal.
+
 ## [0.59.1] - 2026-11-08
 
 ### Fixed

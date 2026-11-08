@@ -465,12 +465,22 @@ def _lines(path: Path) -> Tuple[List[str], int]:
     return lines, head
 
 
-def _header(suffix: str, tags: List[str], extra: List[Tuple[str, str]], lines: List[str], head: int) -> str:
-    """The cut's own head: the original's frontmatter less the keys that name a source or a party, then ours.
+# The only keys a cut takes from the original's frontmatter: mechanical ones. A title, an attendee
+# line, a summary or any free text can name a party the cut is not written for, so none is carried.
+CARRY_KEYS = ("date", "type", "language", "duration")
+
+
+def _header(suffix: str, tags: List[str], extra: List[Tuple[str, str]], lines: List[str], head: int,
+            title: str = "") -> str:
+    """The cut's own head: the original's mechanical keys (CARRY_KEYS) only, then ours, with a title of its own:
+    the one given, or a neutral one built from the date and the cut's parties.
     A .vtt keeps WEBVTT first and our keys as header lines under it, as the format allows."""
-    keep = [l for l in lines[1:head - 1] if head and l.split(":", 1)[0].strip().lower() not in
-            SOURCE_ID_KEYS + ("party", "parties", "zone", "extract-of", "split-of")]
-    own = ["parties: [%s]\n" % ", ".join(tags)] + ["%s: %s\n" % kv for kv in extra]
+    keep = [l for l in (lines[1:head - 1] if head else []) if not l[:1].isspace()
+            and l.split(":", 1)[0].strip().lower() in CARRY_KEYS and not l.rstrip().endswith(":")]
+    date = next((l.split(":", 1)[1].strip().strip("\"'") for l in keep if l.split(":", 1)[0].strip().lower() == "date"), "")
+    title = " ".join((title or "").split()) or "Meeting%s, %s" % (" " + date if date else "", ", ".join(tags))
+    own = ["title: %s\n" % ('"%s"' % title.replace('"', "'") if ":" in title or "#" in title else title),
+           "parties: [%s]\n" % ", ".join(tags)] + ["%s: %s\n" % kv for kv in extra]
     if suffix == ".vtt":
         return "WEBVTT\n" + "".join("%s\n" % l.rstrip("\n").replace("[", "(").replace("]", ")") for l in own) + "\n"
     return "---\n" + "".join(keep) + "".join(own) + "---\n\n"
@@ -542,7 +552,8 @@ def split_plan(root: Path, inbox: "str | Path", parts: List[str], drop: str = ""
     return src, plan
 
 
-def split(root: Path, inbox: "str | Path", parts: List[str], drop: str = "", yes: bool = False) -> Tuple[List[dict], bool]:
+def split(root: Path, inbox: "str | Path", parts: List[str], drop: str = "", yes: bool = False,
+          titles: Optional[List[str]] = None) -> Tuple[List[dict], bool]:
     """Cut an inbox transcript into one file per label set, in the inbox, each with its own frontmatter, and remove
     the original: an inbox is no record. With no `yes` it says what it would make and writes nothing.
     Returns (the plan, whether it wrote)."""
@@ -554,8 +565,9 @@ def split(root: Path, inbox: "str | Path", parts: List[str], drop: str = "", yes
     meetings, made = meetings_root(root), []
     try:
         with filing(root):
-            for p in plan:
-                text = _header(src.suffix.lower(), p["tags"], [("split-of", src.stem)], lines, head) + _take(lines, head, p["ranges"], src.suffix.lower())
+            for i, p in enumerate(plan):
+                title = titles[i] if titles and i < len(titles) else ""
+                text = _header(src.suffix.lower(), p["tags"], [("split-of", src.stem)], lines, head, title) + _take(lines, head, p["ranges"], src.suffix.lower())
                 made.append(write_new(root, meetings, src.parent / p["name"], text.encode("utf-8")))
     except BaseException:
         for path in made:
@@ -599,7 +611,7 @@ def extract_plan(root: Path, raw: "str | Path", lines_spec: str, parties: str) -
                  "lines": sum(b - a + 1 for a, b in ranges), "held": sorted(held)}
 
 
-def extract(root: Path, raw: "str | Path", lines_spec: str, parties: str, yes: bool = False) -> Tuple[dict, bool]:
+def extract(root: Path, raw: "str | Path", lines_spec: str, parties: str, yes: bool = False, title: str = "") -> Tuple[dict, bool]:
     """A new file in the inbox cut from a filed record, with its own label set. The record is only read: it is never
     edited, and keeps its full labels. With no `yes` it writes nothing. Returns (the plan, whether it wrote)."""
     _headless(yes)
@@ -607,7 +619,7 @@ def extract(root: Path, raw: "str | Path", lines_spec: str, parties: str, yes: b
     if not yes:
         return plan, False
     lines, head = _lines(src)
-    text = _header(src.suffix.lower(), plan["tags"], [("extract-of", plan["of"])], lines, head) + _take(lines, head, plan["ranges"], src.suffix.lower())
+    text = _header(src.suffix.lower(), plan["tags"], [("extract-of", plan["of"])], lines, head, title) + _take(lines, head, plan["ranges"], src.suffix.lower())
     with filing(root):
         write_new(root, meetings_root(root), meetings_root(root) / "raw" / "inbox" / plan["name"], text.encode("utf-8"))
     return plan, True
@@ -669,6 +681,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     sp.add_argument("--inbox", required=True, help="path to the file in raw/inbox/")
     sp.add_argument("--part", action="append", default=[], metavar="TAGS:LINES",
                     help="one cut: the parties it is written for and its lines, such as cedar,maple:81-100")
+    sp.add_argument("--title", action="append", default=[], help="a title for each cut, in the order of the --part flags; "
+                    "without one a cut gets a neutral title from the date and its parties")
     sp.add_argument("--drop", default="", help="lines to leave out of every cut, named on purpose")
     sp.add_argument("--yes", action="store_true", help="the user said yes in this session: write the files, remove the original")
 
@@ -676,6 +690,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ex.add_argument("--raw", required=True, help="the filed record under raw/")
     ex.add_argument("--lines", required=True, help="the lines to take, such as 12-30,44-50")
     ex.add_argument("--parties", required=True, help="comma-separated tags the extract is written for; never wider than the record")
+    ex.add_argument("--title", default="", help="the extract's own title; without one it gets a neutral title")
     ex.add_argument("--yes", action="store_true", help="the user said yes in this session: write the file")
 
     args = ap.parse_args(argv)
@@ -703,13 +718,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             path, n = rebuild_index(root)
             print("%s: %d page%s" % (path.relative_to(root), n, "" if n == 1 else "s"))
         elif args.command == "split":
-            plan, wrote = split(root, args.inbox, args.part, args.drop, args.yes)
+            plan, wrote = split(root, args.inbox, args.part, args.drop, args.yes, args.title)
             for p in plan:
                 print("%s\t%s\tlines %s (%d)" % (p["name"], ",".join(p["tags"]), _say_ranges(p["ranges"]), p["lines"]))
             print("Split %s and removed it." % Path(args.inbox).name if wrote else
                   "Nothing was written. Show the user these cuts; on their yes, run it again with --yes.")
         elif args.command == "extract":
-            plan, wrote = extract(root, args.raw, args.lines, args.parties, args.yes)
+            plan, wrote = extract(root, args.raw, args.lines, args.parties, args.yes, args.title)
             print("%s\t%s\tlines %s (%d) of %s, written for %s" % (plan["name"], ",".join(plan["tags"]), _say_ranges(plan["ranges"]),
                                                               plan["lines"], plan["of"], ", ".join(plan["held"])))
             print("Wrote it in raw/inbox/; %s is unchanged." % Path(args.raw).name if wrote else

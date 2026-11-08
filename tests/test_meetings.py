@@ -608,6 +608,33 @@ class SplitAndExtractTest(unittest.TestCase):
                 ingest.split(self.root, self.src, self.parts, yes=True)
         self.assertTrue(self.src.exists())
 
+    HEAD = ("---\ntitle: Acme and Birch joint budget call\ndate: 2026-03-10\ntype: meeting\n"
+            "attendees: Dana (Acme), Pat (Birch)\nsummary: Acme and Birch budgets\nsource-id: x1\n---\n\n")
+
+    def test_a_cut_takes_no_title_or_attendee_line_from_the_original(self):
+        self.src.write_text(self.HEAD + TRANSCRIPT)
+        parts = ["acme:10-11", "birch:12-13", "acme,birch:14"]
+        ingest.split(self.root, self.src, parts, yes=True, titles=["Acme budget", ""])
+        got = {p.name: p.read_text() for p in self.inbox.glob("call-*")}
+        for name, text in got.items():
+            front = text.split("---")[1]
+            for word in ("Birch joint", "Pat", "attendees", "summary", "source-id"):
+                self.assertNotIn(word, front if name != "call-acme-birch.txt" else front.replace("Acme, Birch", ""), name)
+            self.assertIn("date: 2026-03-10\n", front)
+        self.assertIn("title: Acme budget\n", got["call-acme.txt"])
+        self.assertIn("title: Meeting 2026-03-10, birch\n", got["call-birch.txt"])
+        self.assertNotIn("Birch", got["call-acme.txt"].split("---")[1])
+        self.assertNotIn("Acme and", got["call-birch.txt"])
+
+    def test_an_extract_takes_no_title_or_attendee_line_either(self):
+        self.src.write_text(self.HEAD + TRANSCRIPT)
+        slug, dest = self.filed()
+        plan, wrote = ingest.extract(self.root, dest, "12-13", "birch", yes=True)
+        front = (self.inbox / plan["name"]).read_text().split("---")[1]
+        self.assertNotIn("Pat", front)
+        self.assertNotIn("Acme", front)
+        self.assertIn("title: Meeting 2026-03-10, birch\n", front)
+
     def filed(self):
         """The call filed as one record under a page of both parties."""
         slug, dest = ingest.land(self.root, self.src, "2026-03-10", "call")

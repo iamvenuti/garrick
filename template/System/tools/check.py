@@ -6902,7 +6902,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                     continue                   # nobody's
                 mfm = {"parties": sorted(names.tags_of(page)), "zone": zone}
             # labels, not `parties:` alone: a page whose `party:` and `parties:` disagree reads as neither
-            label = frozenset(strip_tag(t) for t in as_list(mfm.get("parties"))) if synthesized else meeting_labels(mfm)
+            label = frozenset(strip_tag(t) for t in as_list(mfm.get("parties"))) if synthesized else meeting_labels(mfm, ws.context.get("pending") is not None)
             mtags = sorted(label) if label else []
             if not mtags or not mfm.get("zone"):
                 reported.add(page)

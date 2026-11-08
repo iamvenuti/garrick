@@ -249,6 +249,9 @@ DECLARED: Dict[str, Op] = {
     # The same from the panel's All view (#384): `groups` is a list of
     # {zone, scope, rows}, each saved as its own transaction and commit.
     "nurture-save-all": _op(("groups",), (), "workspace", True),
+    # A party's flag from the Parties tab (#447): scaffold.py's `party --walled | --open`, committed in the
+    # workspace's own repository. `yes` answers the question a walled-to-open change asks first.
+    "party-flag": _op(("tag", "flag", "yes"), ("tag", "flag"), "workspace", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
     # `suggested` asks a first look's suggested request instead (#182).

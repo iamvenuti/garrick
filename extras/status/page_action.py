@@ -282,7 +282,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all")
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -1883,6 +1883,45 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         found = re.search(r"\bin commit ([0-9a-f]{7,40})\b", said)
         return {"say": first_line(said).rstrip("."), "commit": found.group(1) if found else ""}
     return said
+
+
+def said_all(said: str, most: int = 1200) -> str:
+    """The whole of what scaffold.py said, for a reply that carries a count or a list (the files a flag releases or
+    now holds in violation), cut at `most` characters."""
+    text = said.strip()
+    return text if len(text) <= most else text[:most].rsplit("\n", 1)[0] + "\n..."
+
+
+def party_flag(ws: Path, req: dict):
+    """Flip a party's flag from the Parties tab (#447): scaffold.py's own `party --walled | --open`, so the
+    page, a session and a terminal meet the same refusals, then System/context.md committed in the workspace's
+    own repository. Walled to open releases history: the command says how many files and writes only on
+    `yes`, so a first request without it comes back as a question (`ask`) and nothing changed. Open to walled
+    writes at once and the reply lists the files now in violation."""
+    tag, flag = field(req, "tag"), req.get("flag")
+    if flag not in ("walled", "open"):
+        raise Refused("not a flag: %r" % (flag,))
+    if req.get("yes") not in (None, True, False):
+        raise Refused("not an answer: %r" % (req.get("yes"),))
+    context = ws / "System" / "context.md"
+    with held("page-action-context.lock", busy="another change to the parties is still running"):
+        try:
+            before = context.read_bytes()
+        except OSError:
+            raise Refused("System/context.md is missing")
+        said = scaffold(ws, "party", "--tag", tag, "--" + flag, *(["--yes"] if req.get("yes") else []))
+        try:
+            after = context.read_bytes()
+        except OSError:
+            after = b""
+        if after == before:
+            return {"say": said_all(said), "ask": not req.get("yes") and bool(said), "written": False}
+        code, why = committing(ws, "System/context.md", "Party %s: %s" % (tag, flag))
+        if code != 0:
+            context.write_bytes(before)
+            git(ws, "reset", "-q", "--", "System/context.md", timeout=10)
+            raise Refused("not committed, so nothing changed: %s" % why)
+    return {"say": said_all(said), "ask": False, "written": True}
 
 
 def asks_how(ws: Path, args: list) -> None:
@@ -5233,6 +5272,8 @@ def act(ws: Path, req, today=None, now=None):
         return save_settings(ws, req)
     if req["verb"] == "memory-preview":
         return memory_preview(ws, req)
+    if req["verb"] == "party-flag":
+        return party_flag(ws, req)
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":

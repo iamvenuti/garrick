@@ -594,6 +594,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
         # The Questions panel's Nurture answers (#224) act on the wikis and zones their rows name, under their own lock.
         unzoned |= {v for v in page_action.VERBS if v.startswith("nurture-")}
+        # The Parties tab's flip edits the workspace's own context under its own lock (#447).
+        unzoned.add("party-flag")
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

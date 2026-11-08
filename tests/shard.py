@@ -61,6 +61,8 @@ TOUCH_MAP = {
     "extras/status/questions_panel.py": ["test_questions_panel", "test_questions_panel_all",
                                          "test_panel_hardening", "test_decisions",
                                          "test_nurture_panel_actions", "test_question_transaction"],
+    "extras/status/parties_panel.py": ["test_status", "test_page_action"],
+    "migrate_walls.py": ["test_update"],
     "extras/status/status.py": ["test_status", "test_status_find", "test_status_finder",
                                 "test_status_graph_3d", "test_status_graph_ignored",
                                 "test_status_more", "test_status_work"],
@@ -245,7 +247,7 @@ def run_parallel(names, jobs, times):
         with lock:
             print(f"\n=== {name}: {'ok' if proc.returncode == 0 else 'FAILED'} in {took[name]:.1f}s", flush=True)
             print(proc.stdout.rstrip(), flush=True)
-            ran.extend(int(n) for n in re.findall(r"^Ran (\d+) tests?", proc.stdout, re.MULTILINE))
+            ran.extend(int(n) for n in re.findall(r"^\S+ (\d+) tests? in ", proc.stdout, re.MULTILINE))
             if proc.returncode:
                 failed.append(name)
 

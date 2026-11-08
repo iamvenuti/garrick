@@ -30,8 +30,9 @@ first thread. A thread inherits its project's party. `--check` applies every ref
 and makes nothing, so a form can check a name as it is typed.
 
 `party` adds a row to the Parties table in System/context.md and offers the tag
-itself, so nobody has to invent one. The row it adds, and a Walls row, carry a
-Learned cell, `2026-10-16, user`, which says where they came from; the rows
+itself, so nobody has to invent one. The row it adds carries the Walled flag, `yes` or `no`, which
+the zone's New parties column proposes and `--walled` or `--open` sets, and a
+Learned cell, `2026-10-16, user`, which says where it came from; the rows
 typed by hand are left as they are. It has to run, and its row be committed,
 before `project`: a project is refused with a tag System/context.md does not
 already carry, and that file is in the workspace's own repository while a project
@@ -41,8 +42,7 @@ things and writes nothing: that the party is new and what its tag would be; that
 it is already there, with its tag, its zone and any project whose hub note names
 that tag; or, where two parties share the name, a refusal naming both and asking
 which is meant. `--also` adds a second row for an organisation already in Parties,
-in another capacity, with the wider tag that keeps the two apart, and
-`--walled-from` writes the Walls row that keeps their material apart.
+in another capacity, with the wider tag that keeps the two apart; both stay walled.
 
 `park` sets a project or a thread aside and `wake` brings it back: `status:`,
 `updated:` today and a dated entry, "Parked." or "Woken.", in the note the
@@ -151,8 +151,6 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     table_row,
     tag_for,
-    PUBLIC,
-    crossings,
     decide,
     workspace_root,
     write_if_unchanged,
@@ -307,8 +305,6 @@ def check_party(root, party, zone=None):
     places in another zone is refused, since its material would land in a zone it was never kept in."""
     parties = load_context(root).get("parties", {})
     tag = party.strip().strip("`")
-    if tag == PUBLIC:                      # reserved: chosen, never inferred, and in no Parties row
-        return tag
     if tag not in parties:
         known = ", ".join(sorted(parties)) or "none yet"
         raise Refusal(f"{party} is not a party tag in System/context.md. The tags are {known}.")
@@ -394,11 +390,17 @@ def list_zone(root, name, holds):
         return False
     path = root / "System" / "context.md"
     lines = path.read_text(encoding="utf-8").splitlines()
-    row = table_row([name, holds or f"<What {name} holds>"])
     start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## zones"), None)
+    header = None
+    if start is not None:
+        header = next((l for l in lines[start + 1:] if l.lstrip().startswith("|")), None)
+    cells = [name, holds or f"<What {name} holds>"]
+    if header is None or "new parties" in header.lower():
+        cells += ["", "walled"]          # no zone party; a new party there is walled until its row says otherwise
+    row = table_row(cells)
     if start is None:
         at = next((i for i, l in enumerate(lines) if l.strip().lower() == "## parties"), len(lines))
-        block = ["## Zones", "", "| Zone | Holds |", "|---|---|", row, ""]
+        block = ["## Zones", "", "| Zone | Holds | Party | New parties |", "|---|---|---|---|", row, ""]
         if at == len(lines) and lines and lines[-1].strip():
             block = [""] + block[:-1]
         lines[at:at] = block
@@ -408,7 +410,7 @@ def list_zone(root, name, holds):
         if rows:
             lines.insert(rows[-1] + 1, row)
         else:
-            lines[start + 1:start + 1] = ["", "| Zone | Holds |", "|---|---|", row]
+            lines[start + 1:start + 1] = ["", "| Zone | Holds | Party | New parties |", "|---|---|---|---|", row]
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return True
 
@@ -529,11 +531,12 @@ def party_zone(root, args, name, required=True):
     raise Refusal("Which zone is %s in? The zones are %s." % (name, ", ".join(zones) or "none yet"))
 
 
-def add_party_row(root, name, what, zone, tag, today=None):
+def add_party_row(root, name, what, zone, tag, walled=True, today=None):
     """The row in context.md's Parties table, written where the installer wrote
-    its own. The commit is the caller's, as a new zone's row is. With `today`,
-    the row is a learned one, added on the user's word, and its Learned cell
-    says so; the rows typed by hand are left as they are."""
+    its own, each cell under its header. The commit is the caller's, as a new
+    zone's row is. With `today`, the row is a learned one, added on the user's
+    word, and its Learned cell says so; the rows typed by hand are left as
+    they are."""
     path = root / "System" / "context.md"
     if not path.is_file():
         raise Refusal("System/context.md is missing, so the party could not be listed there.")
@@ -543,33 +546,27 @@ def add_party_row(root, name, what, zone, tag, today=None):
         raise Refusal("System/context.md has no `## Parties` table to add the party to.")
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
-    cells = [name, what, zone, "`%s`" % tag, ""]
     if len(rows) < 2:
-        lines[end:end] = ["| Party | What it is | Zone | Tag | Domains |", "|---|---|---|---|---|", ""]
+        lines[end:end] = ["| Party | What it is | Zone | Tag | Walled | Domains |", "|---|---|---|---|---|---|", ""]
         rows = [end, end + 1]
+    given = {"party": name, "what": what, "zone": zone, "tag": "`%s`" % tag, "walled": "yes" if walled else "no"}
+    header = [h.lower() for h in lines[rows[0]].strip().strip("|").split("|")]
+    cells = [next((v for k, v in given.items() if h.strip().startswith(k)), "") for h in header]
     row = learned_row(lines, rows, cells, learned_cell(today, "user")) if today else table_row(cells)
     lines.insert(rows[-1] + 1, row)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def add_wall_row(root, tag, other, why, today=None):
-    """The row in context.md's Walls table between two tags, with a Learned
-    cell, as a party's row has, when `today` is given."""
-    path = root / "System" / "context.md"
-    lines = path.read_text(encoding="utf-8").splitlines()
-    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## walls"), None)
-    if start is None:
-        raise Refusal("System/context.md has no `## Walls` table, so the wall could not be written. "
-                      "The party's row is there; add the wall by hand.")
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
-    rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
-    cells = ["`%s`" % tag, "`%s`" % other, why]
-    if len(rows) < 2:
-        lines[end:end] = ["| Between | And | Why |", "|---|---|---|", ""]
-        rows = [end, end + 1]
-    row = learned_row(lines, rows, cells, learned_cell(today, "user")) if today else table_row(cells)
-    lines.insert(rows[-1] + 1, row)
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+def party_flag(root, args, zone, hats):
+    """Whether the new party is walled: `--walled` or `--open`, else the zone's New parties column.
+    The second hat of a company is walled, whatever else is said."""
+    if hats:
+        if getattr(args, "open", False):
+            raise Refusal("The two hats of one company both stay walled, so --open is refused.")
+        return True
+    if getattr(args, "walled", False) or getattr(args, "open", False):
+        return bool(args.walled)
+    return load_context(root).get("zone_default", {}).get(zone, "walled") != "open"
 
 
 def cmd_party(root, args, today):
@@ -607,30 +604,20 @@ def cmd_party(root, args, today):
         raise Refusal('No tag can be made from "%s": a tag is %s. What should it be?' % (name, TAG_RULE))
     if tag == "none":
         raise Refusal("`none` is reserved: it says a page is nobody's, so it is never a party's tag. What should the tag be?")
-    if tag == PUBLIC:
-        raise Refusal("`public` is reserved: a hub names it to say anyone may read the project. It is never a party "
-                      "of its own, so no row is made for it. What should the tag be?")
     if not TAG_RE.match(tag):                     # the library offers only valid tags; belt and braces
         raise Refusal('"%s" will not work as a tag: it must be %s.' % (tag, TAG_RULE))
-    other = strip_tag(args.walled_from or "")
-    if other:
-        if other == tag:
-            raise Refusal("A wall needs two parties, not `%s` twice." % tag)
-        if other not in parties:
-            raise Refusal("`%s` is not a party tag in System/context.md, so no wall can name it. "
-                          "The tags are %s." % (other, ", ".join(sorted(parties)) or "none yet"))
+    walled = party_flag(root, args, zone, bool(same))
     if args.check:
         where = ", in %s" % zone if zone else ""
-        return "%s is not a party yet, and the tag would be `%s`%s." % (name, tag, where)
+        return "%s is not a party yet, and the tag would be `%s`%s, %s." % (
+            name, tag, where, "walled" if walled else "open")
     what = " ".join((args.what or "").split()) or f"<What {name} is>"
-    add_party_row(root, name, what, zone, tag, today)
-    said = [f"Added {name} to the Parties table in System/context.md, with the tag `{tag}`, in {zone}."]
-    if other:
-        add_wall_row(root, tag, other, args.why or "<Why their material never meets>", today)
-        said.append(f"Added a wall between `{tag}` and `{other}`, so neither ever informs the other in writing.")
-    elif same:
-        said.append("`%s` and `%s` are both %s with no wall between them, which the workspace check warns "
-                    "about until one is added." % (same[0][0], tag, name))
+    add_party_row(root, name, what, zone, tag, walled, today)
+    said = [f"Added {name} to the Parties table in System/context.md, with the tag `{tag}`, in {zone}, "
+            f"{'walled: only a project that names it holds its material' if walled else 'open: its material may go anywhere'}."]
+    if same:
+        said.append("`%s` and `%s` are both %s, and both stay walled: a note never names the two together."
+                    % (same[0][0], tag, name))
     said.append("Commit System/context.md on its own, in the workspace's own repository at its top folder: "
                 "a project is in its zone's repository, and one commit never spans the two.")
     said.append('Next, once that row is committed: scaffold.py project --zone %s --name "<Project>" '
@@ -1089,7 +1076,7 @@ def party_tags(root, note, what):
     if not tags or (isinstance(value, list) and len(tags) != len(value)):
         raise cannot
     declared = load_context(root).get("parties", {})
-    if any(t not in declared and t != PUBLIC for t in tags):
+    if any(t not in declared for t in tags):
         raise Refusal(f"The {what}'s `party:` is not a tag in the Parties table of System/context.md, so the move could "
                       "not be checked against the walls. Nothing was moved.")
     return tags
@@ -2076,9 +2063,10 @@ def main(argv=None):
     y.add_argument("--what", help="what it is, in a few words, for the table")
     y.add_argument("--also", action="store_true",
                    help="a second row for an organisation already in Parties, in another capacity")
-    y.add_argument("--walled-from", dest="walled_from",
-                   help="a party tag whose material must never meet this one's: writes the Walls row")
-    y.add_argument("--why", help="why the wall stands, for the Walls table")
+    flag = y.add_mutually_exclusive_group()
+    flag.add_argument("--walled", action="store_true",
+                      help="walled: its material goes only into a project that names it (the zone's default is proposed)")
+    flag.add_argument("--open", action="store_true", help="open: its material may go anywhere")
     p = sub.add_parser("project", help="a new project, with its first thread")
     p.add_argument("--zone", required=True)
     p.add_argument("--name", required=True)

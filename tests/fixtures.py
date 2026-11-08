@@ -54,23 +54,17 @@ Jo Example. Independent advisor.
 
 ## Zones
 
-| Zone | Holds |
-|---|---|
-| Work | Client work |
-| Personal | Everything else |
+| Zone | Holds | Party | New parties |
+|---|---|---|---|
+| Work | Client work | | walled |
+| Personal | Everything else | | walled |
 
 ## Parties
 
-| Party | What it is | Zone | Tag | Domains |
-|---|---|---|---|---|
-| Acme Corp | Client. Supply-chain review | Work | `acme` | acmecorp.example |
-| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |
-
-## Walls
-
-| Between | And | Why |
-|---|---|---|
-| `acme` | `birch` | Competitors, and both are clients |
+| Party | What it is | Zone | Tag | Walled | Domains |
+|---|---|---|---|---|---|
+| Acme Corp | Client. Supply-chain review | Work | `acme` | yes | acmecorp.example |
+| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | birchco.example, mail.birchco.example |
 
 ## People
 

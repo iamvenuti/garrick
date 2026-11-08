@@ -1793,11 +1793,11 @@ class Asker:
         return out
 
     def crossing(self, held: set) -> bool:
-        """Whether a wall stands between any two of the parties a conversation holds (admitted or named)."""
+        """Whether a conversation holds two walled parties (admitted or named)."""
         lib = scope_lib().lib(self.ws)
         ctx = lib.load_context(self.ws)
-        held = {lib.strip_tag(t) for t in held} - {lib.PUBLIC}
-        return bool(held and lib.crossings(ctx, held))
+        held = {lib.strip_tag(t) for t in held}
+        return sum(1 for t in held if lib.is_walled(ctx, t)) > 1
 
     def wall_stop(self) -> dict:
         """A wall stopped the conversation: both sessions are stopped and everything they held cleared, the session

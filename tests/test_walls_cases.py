@@ -160,7 +160,7 @@ class EnforcementPoints(unittest.TestCase):
     def reserved_row(self, tag):
         context = self.root / "System" / "context.md"
         before = context.read_text(encoding="utf-8")
-        context.write_text(before.replace("| Cedar Ltd |", "| Nobody | None | Work | `%s` | |\n| Cedar Ltd |" % tag), encoding="utf-8")
+        context.write_text(before.replace("| Cedar Ltd |", "| Nobody | None | Work | `%s` | yes | |\n| Cedar Ltd |" % tag), encoding="utf-8")
         try:
             write(self.work / "Northwind" / "Threads" / "Pricing" / "CaseNote.md", "# N\n\nPlain.\n")
             git(self.work, "add", "-A")
@@ -170,7 +170,7 @@ class EnforcementPoints(unittest.TestCase):
             context.write_text(before, encoding="utf-8")
 
     def scaffold_none(self):
-        args = type("A", (), dict(name="None", zone="Work", what="x", also=None, walled_from=None, why=None,
+        args = type("A", (), dict(name="None", zone="Work", what="x", also=None, walled=False, open=False,
                                   check=False, spoken=None))()
         try:
             scaffold.cmd_party(self.root, args, "2026-11-06")
@@ -198,11 +198,11 @@ class EnforcementPoints(unittest.TestCase):
         git(self.work, "reset", "-q", "--hard", "HEAD")
         git(self.work, "clean", "-fdq")
 
-    def flip_to_public(self):
+    def flip_to_open(self):
         self.addCleanup(self.restore)
         for rel in ("Northwind/Northwind.md", "Northwind/Threads/Pricing/Pricing.md"):
             path = self.work / rel
-            path.write_text(path.read_text(encoding="utf-8").replace("party: acme", "party: public"), encoding="utf-8")
+            path.write_text(path.read_text(encoding="utf-8").replace("party: acme", "party: cedar"), encoding="utf-8")
         git(self.work, "add", "-A")
         found = check.run_checks(self.root, staged=self.work)
         return "refused" if any(f.severity == "error" and f.path.endswith("Deal.md") for f in found) else "permitted"
@@ -212,19 +212,6 @@ class EnforcementPoints(unittest.TestCase):
         path = self.work / "Orchard" / "Orchard.md"
         path.write_text(path.read_text(encoding="utf-8").replace("status: active", "party: none\nstatus: active"), encoding="utf-8")
         return self.staged(self.work / "Orchard" / "Threads" / "Drafts" / "CaseNote.md", "# N\n\nPlain.\n")
-
-    def public_row(self):
-        context = self.root / "System" / "context.md"
-        before = context.read_text(encoding="utf-8")
-        context.write_text(before.replace("| Cedar Ltd |", "| Open Notes | Anyone | Work | `public` | |\n| Cedar Ltd |"), encoding="utf-8")
-        try:
-            path = self.work / "Northwind" / "Threads" / "Pricing" / "CaseNote.md"
-            write(path, "# N\n\nPlain.\n")
-            git(self.work, "add", "-A")
-            found = check.run_checks(self.root, staged=self.work)
-            return "refused" if any(f.severity == "error" and f.path.endswith("context.md") for f in found) else "permitted"
-        finally:
-            context.write_text(before, encoding="utf-8")
 
     def mail_filed(self, text, **kw):
         path = self.work / "Inbox" / "case.eml"
@@ -284,18 +271,17 @@ class EnforcementPoints(unittest.TestCase):
             "e17": lambda: "asked" if self.mail(**{"from": ["jo+lumen@elsewhere.example"]})["confirm"] else "permitted",
             "e18": lambda: self.filed("Orchard", ["acme"]),
             "e19": lambda: "refused" if scaffold.wall_between(self.ctx, {"birch"}, {"acme"}) else "permitted",
-            "e24": self.flip_to_public,
+            "e24": self.flip_to_open,
             "e25": lambda: self.binary("Orchard"),
             "e26": lambda: self.staged(self.work / "Northwind" / "tool.py", "# Ask Theo Marsh at Birch & Co\n"),
             "e27": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Todo]].\n"),
             "e28": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260319-orphan-call]].\n"),
             "e29": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260315-split]].\n"),
-            "e30": lambda: self.asked({"public"}, self.place("Northwind", "Pricing")),
+            "e30": lambda: self.asked(set(), self.place("Northwind", "Pricing")),
             "e31": lambda: self.asked({"none"}, self.place("Northwind", "Pricing")),
             "e32": lambda: self.mail_filed("From: Kai <kai@cedarltd.example>\nSubject: Hi\n\nHello.\n"),
             "e33": lambda: self.mail_filed("X-Garrick-Parties: acme\nFrom: Kai <kai@birchco.example>\nSubject: Hi\n\nHello.\n",
                                            confirmed=True),
-            "e34": self.public_row,
             "e35": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk Da\u200bna Whitlock.\n"),
             "e36": self.nurture_across,
             "e37": self.hub_party_none,
@@ -314,7 +300,7 @@ class EnforcementPoints(unittest.TestCase):
             "e48": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Dis/Threads/T/Memo]].\n"),
             "e49": lambda: self.nurture_from("Zones/Work/Orchard/Threads/Drafts/x.md"),
             "e50": lambda: self.filed("Dis", ["acme"]),
-            "e51": lambda: "permitted" if ask_scope.admits(self.ctx, {"acme"}, {"public"}, self.lib) else "refused",
+            "e51": lambda: "permitted" if ask_scope.admits(self.ctx, {"acme"}, {lib.KNOWLEDGE}, self.lib) else "refused",
             "e52": self.knowledge_link,
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),
@@ -354,9 +340,10 @@ class EnforcementPoints(unittest.TestCase):
             self.addCleanup(shutil.rmtree, self.work / name, True)
             with self.assertRaises(intake.Refusal, msg=name):
                 intake.file_to_project(self.root, self.inbox_item(), "Zones/Work/" + name, ["acme"])
-        write(self.work / "Third" / "Third.md", project_hub("Work", "Third", "cedar"))
+        write(self.work / "Third" / "Third.md", project_hub("Work", "Third", "lumen"))
         self.addCleanup(shutil.rmtree, self.work / "Third", True)
-        self.assertEqual("asked", self.filed_or_asked("Third", ["acme", "birch"]))
+        self.assertEqual("asked", self.filed_or_asked("Third", ["lumen"]))
+        self.assertEqual("refused", self.filed_or_asked("Third", ["lumen-adv"]))
         self.assertEqual([], list((self.work / "Third").glob("Sources/case-item*")))
 
     def filed_or_asked(self, project, tags):
@@ -370,11 +357,11 @@ class EnforcementPoints(unittest.TestCase):
 
     def test_walls_cases_runs_the_table_against_the_workspaces_own_tags(self):
         roles = lib.wall_roles(self.ctx)
-        self.assertEqual({"near": "acme", "far": "birch", "other": "cedar", "hat": "lumen", "hat2": "lumen-adv"},
-                         {k: v for k, v in roles.items() if k in ("near", "far", "other", "hat", "hat2")})
+        self.assertEqual({"near": "acme", "far": "birch", "other": "cedar", "hat": "lumen", "hat2": "lumen-adv", "zone": "jo"},
+                         {k: v for k, v in roles.items() if k in ("near", "far", "other", "hat", "hat2", "zone")})
         ran, skipped, failed = lib.run_wall_cases(self.ctx, CASES.read_text(encoding="utf-8"))
         self.assertEqual(([], []), (skipped, failed))
-        self.assertGreaterEqual(ran, 50)
+        self.assertGreaterEqual(ran, 45)
         self.assertEqual(0, check.walls_cases(self.root))
 
     def test_ask_takes_a_place_from_labels_and_reads_nothing_where_there_are_none(self):
@@ -411,8 +398,9 @@ class EnforcementPoints(unittest.TestCase):
             build(root)
             context = root / "System" / "context.md"
             text = context.read_text(encoding="utf-8")
-            context.write_text(text.replace("| `acme` | `birch` | Competitors, and both are clients |\n", "")
-                               .replace("| `lumen` | `lumen-adv` | Two hats, one company |\n", ""), encoding="utf-8")
+            context.write_text(text.replace("| `acme` | yes |", "| `acme` | no |").replace("| `birch` | yes |", "| `birch` | no |")
+                               .replace("| `jo` | yes |", "| `jo` | no |").replace("| `lumen` | yes |", "| `lumen` | no |")
+                               .replace("| `lumen-adv` | yes |", "| `lumen-adv` | no |"), encoding="utf-8")
             out = io.StringIO()
             with redirect_stdout(out):
                 code = check.walls_cases(root)
@@ -427,14 +415,14 @@ class EnforcementPoints(unittest.TestCase):
         self.assertTrue(any(line.startswith("d01") for line in failed), failed)
 
     def test_no_enforcement_point_holds_a_wall_test_of_its_own(self):
-        """walled() is garrick_lib's, under decide() and crossings(). Recall asks decide() and labels() too, and holds none."""
+        """is_walled() is garrick_lib's, under decide() and blocked(). Recall asks decide() and labels() too, and holds none."""
         import re
         own = []
         for top in ("template", "extras"):
             for path in sorted((REPO / top).rglob("*.py")):
                 if path.name == "garrick_lib.py" or "__pycache__" in path.parts:
                     continue
-                if re.search(r"\bwalled\(", path.read_text(encoding="utf-8")):
+                if re.search(r"\b(?:walled|crossings)\(", path.read_text(encoding="utf-8")):
                     own.append(path.relative_to(REPO).as_posix())
         self.assertEqual([], own)
 

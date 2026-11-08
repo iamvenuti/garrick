@@ -120,7 +120,7 @@ def _tool(ws: Path, name: str, fits):
 def lib(ws: Path):
     """garrick_lib.py: the context, the walls, the frontmatter and the live files, read as the checks read them."""
     return _tool(ws, "garrick_lib.py", lambda m: all(callable(getattr(m, f, None)) for f in
-                                                     ("load_context", "crossings", "decide", "labels", "meeting_labels", "parse_frontmatter_text", "live_files")))
+                                                     ("load_context", "blocked", "decide", "labels", "meeting_labels", "parse_frontmatter_text", "live_files")))
 
 
 def extractor(ws: Path):
@@ -128,8 +128,16 @@ def extractor(ws: Path):
     return _tool(ws, "extract.py", lambda m: callable(getattr(m, "text_of", None)) and isinstance(getattr(m, "KINDS", None), dict))
 
 
+def walled_in(ctx: dict, tags: Iterable[str], lib_) -> set:
+    """The walled parties among `tags`; a tag the Parties table lacks counts as walled."""
+    return {t for t in tags if lib_.is_walled(ctx, lib_.strip_tag(t))}
+
+
 def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_) -> bool:
-    return bool(lib_.crossings(ctx, these, list(those)))
+    """Do two sets of parties hold different walled parties, each at least one? Material of one is then
+    not for a process that holds the other."""
+    a, b = walled_in(ctx, these, lib_), walled_in(ctx, those, lib_)
+    return bool(a and b and a != b)
 
 
 # ---------------------------------------------------------------- the names in a request
@@ -502,7 +510,7 @@ def groups(ws: Path, words: List[str], names: Dict[str, Dict[str, dict]], ctx: d
                 # page, which names the party, never Garrick's folder (#397).
                 # A party many projects share, as an employer's, adds nothing.
                 if e.kind in ("project", "thread"):
-                    for tag in sorted(e.parties - {lib_.PUBLIC, "none"}):
+                    for tag in sorted(e.parties - {"none"}):
                         if places.get(tag) == {(e.zone, e.project)}:
                             more += party_forms.get(tag, [])
                 for f in more:
@@ -613,7 +621,7 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
         return Scope(route, None, None, None, words, set(), **kept)
     if project is not None:
         place = place_parties(ws, zone, project, thread, lib_)
-        if not place or not place <= (set(ctx.get("parties", {})) - {"none"}) | {lib_.PUBLIC}:
+        if not place or not place <= (set(ctx.get("parties", {})) - {"none"}):
             # Nothing can say which side of a wall its files are on: labels() found none, or a tag the table lacks.
             raise Refused("%s names no party %s, so nothing in it is read"
                           % (project, "the Parties table holds" if place else "in its hub"))
@@ -820,7 +828,7 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             if text is None:
                 continue
             fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
-            if any(fm.get(k) for k in ("parties", "party", "zone")) or lib_.labels(ws, path) != {lib_.PUBLIC}:
+            if any(fm.get(k) for k in ("parties", "party", "zone")) or lib_.labels(ws, path) != {lib_.KNOWLEDGE}:
                 continue                        # a page of someone's, not published: never read as published
             consider(path, [], text, home, public=True)
 
@@ -838,10 +846,7 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
                 continue
             if not sc.every and not set(parties) & sc.parties:
                 continue
-            if sc.project is not None and (
-                    any_wall(ctx, parties, sc.parties, lib_)
-                    or any(lib_.decide({p}, set(parties), "read", ctx) != "permit" for p in sc.parties - {lib_.PUBLIC})
-                    or (lib_.PUBLIC in sc.parties and not sc.parties - {lib_.PUBLIC})):
+            if sc.project is not None and lib_.decide(sc.parties, set(parties), "read", ctx) != "permit":
                 continue                        # a page decide() does not admit against every party of the project's scope (#397)
             # The wall test, before the page is matched, ranked, counted or
             # cut: choose() itself, on this page alone and holding nothing, so
@@ -928,11 +933,9 @@ def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_R
 
 def admits(ctx: dict, held: Set[str], adding: Set[str], lib_) -> bool:
     """May records labelled `adding` be given to a process that holds `held`? decide() says. A process holding
-    nothing is given the group the records set; a record with no party is a published page (public)."""
-    scope = set(held) - {lib_.PUBLIC}
-    if not scope:
-        scope = set(adding) - {lib_.PUBLIC}
-    return lib_.decide(scope, set(adding) or {lib_.PUBLIC}, "read", ctx) == "permit"
+    nothing is given the group the records set; a record with no party is a published page (Knowledge)."""
+    scope = set(held) or set(adding)
+    return lib_.decide(scope, set(adding) or {lib_.KNOWLEDGE}, "read", ctx) == "permit"
 
 
 def starts(where, ctx: dict) -> Set[str]:
@@ -953,20 +956,20 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
     group of parties no wall divides, the one its best record starts."""
     group, chosen, back, matched = set(held), [], False, 0
     nothing_held = not held
-    known = (set(ctx.get("parties", {})) - {"none"}) | {lib_.PUBLIC}
+    known = (set(ctx.get("parties", {})) - {"none"}) | {lib_.KNOWLEDGE}
     for r in records:
         parties = set(r["parties"])
         if not parties <= known:
             continue                            # a tag no wall can be checked against: never read
         # No label, no permit: only a published page of Knowledge is read with no party. The first
         # record admitted sets the group of a question across every zone.
-        labels = parties or ({lib_.PUBLIC} if r.get("public") else set())
+        labels = parties or ({lib_.KNOWLEDGE} if r.get("public") else set())
         # The scope is what the session holds. Only when it holds nothing at all may a find that names its
         # own place (`start`: a place's labels, a zone's parties) begin its group with the first record in it.
-        scope = group - {lib_.PUBLIC}
-        if not scope and nothing_held and (parties - {lib_.PUBLIC}) and (
-                (start is not None and (parties - {lib_.PUBLIC}) <= set(start)) or r.get("scoped")):
-            scope = parties - {lib_.PUBLIC}
+        scope = set(group)
+        if not scope and nothing_held and parties and (
+                (start is not None and parties <= set(start)) or r.get("scoped")):
+            scope = set(parties)
         if lib_.decide(scope, labels, "read", ctx) != "permit":
             back = True
             continue

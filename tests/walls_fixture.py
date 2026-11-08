@@ -1,8 +1,9 @@
 """The fixture workspace of the wall cases (walls/cases.md): invented names only.
 
 Northwind is a project of Acme (`acme`), Harbour one of Birch & Co (`birch`),
-Orchard one whose hub names no party, Reed a `public` one. A wall stands
-between `acme` and `birch`; no folder is named after its party.
+Orchard one whose hub names no party, Reed one of Cedar Ltd (`cedar`), an open
+party. Acme, Birch & Co, Jo (`jo`, the party the Personal zone names) and the
+two Lumen hats are walled; no folder is named after its party.
 """
 
 from __future__ import annotations
@@ -25,19 +26,19 @@ def build(root: Path) -> Path:
     # one company under two hats, a wall between the hats: mail from either is asked about
     context = root / "System" / "context.md"
     text = context.read_text(encoding="utf-8")
-    text = text.replace("| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |\n",
-                        "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |\n"
-                        "| Lumen Group | Partner | Work | `lumen` | |\n| Lumen Group | Adviser to its board | Work | `lumen-adv` | |\n"
-                        "| Cedar Ltd | Supplier | Work | `cedar` | cedarltd.example |\n")
-    text = text.replace("| `acme` | `birch` | Competitors, and both are clients |\n",
-                        "| `acme` | `birch` | Competitors, and both are clients |\n| `lumen` | `lumen-adv` | Two hats, one company |\n")
+    text = text.replace("| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | birchco.example, mail.birchco.example |\n",
+                        "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | birchco.example, mail.birchco.example |\n"
+                        "| Lumen Group | Partner | Work | `lumen` | yes | |\n| Lumen Group | Adviser to its board | Work | `lumen-adv` | yes | |\n"
+                        "| Cedar Ltd | Supplier | Work | `cedar` | no | cedarltd.example |\n"
+                        "| Jo Example | Own affairs | Personal | `jo` | yes | |\n")
+    text = text.replace("| Personal | Everything else | | walled |", "| Personal | Everything else | `jo` | walled |")
     context.write_text(text, encoding="utf-8")
     work = root / "Zones" / "Work"
     for name in ("Acme Review", "Birch Entry"):
         shutil.rmtree(work / name)
     meetings = root / "Wikis" / "Meetings"
     for project, party, thread in (("Northwind", "acme", "Pricing"), ("Harbour", "birch", "Sizing"),
-                                   ("Reed", "public", "Notes")):
+                                   ("Reed", "cedar", "Notes")):
         write(work / project / (project + ".md"), project_hub("Work", project, party, [thread]))
         write(work / project / "Threads" / thread / (thread + ".md"), thread_note(project, thread, party))
     write(work / "Orchard" / "Orchard.md", project_hub("Work", "Orchard", "", ["Drafts"]))
@@ -62,6 +63,11 @@ def build(root: Path) -> Path:
     write(work / "Cedarwork" / "Threads" / "T" / "T.md", thread_note("Cedarwork", "T", "cedar"))
     write(work / "Cedarwork" / "Sources" / ".gitkeep")
     write(work / "Reed" / "Sources" / ".gitkeep")
+    # a project of the Personal zone, which names `jo`: its files carry `jo` and the hub's open party
+    home = root / "Zones" / "Personal"
+    write(home / "Garden" / "Garden.md", project_hub("Personal", "Garden", "cedar", ["Beds"]))
+    write(home / "Garden" / "Threads" / "Beds" / "Beds.md", thread_note("Garden", "Beds", "cedar"))
+    write(home / "Garden" / "Threads" / "Beds" / "Plan.md", "# Plan\n")
     # a hub whose type is not `project`: the hook and labels() both find it as the note named after its folder
     write(work / "Hubnote" / "Hubnote.md", project_hub("Work", "Hubnote", "acme").replace("type: project", "type: note"))
     write(work / "Hubnote" / "Threads" / "T" / "x.md", "# x\n")
@@ -71,5 +77,5 @@ def build(root: Path) -> Path:
     # a Northwind thread written for the far side: the thread note and the hub disagree
     write(work / "Northwind" / "Threads" / "Odd" / "Odd.md", thread_note("Northwind", "Odd", "birch"))
     write(work / "Northwind" / "Threads" / "Odd" / "Notes.md", "# Notes\n")
-    write(work / "Reed" / "Threads" / "Notes" / "Notes.md", thread_note("Reed", "Notes", "public"))
+    write(work / "Reed" / "Threads" / "Notes" / "Notes.md", thread_note("Reed", "Notes", "cedar"))
     return root

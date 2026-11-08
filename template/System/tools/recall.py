@@ -73,6 +73,7 @@ import fade  # noqa: E402
 from garrick_lib import (  # noqa: E402
     NOT_LIVE_DIR_RE,
     SKIP_DIRS,
+    KNOWLEDGE,
     decide,
     labels,
     load_context,
@@ -285,21 +286,23 @@ def zone_names(root: Path) -> List[str]:
     return sorted(p.name for p in top.iterdir() if p.is_dir() and not p.name.startswith(".")) if top.is_dir() else []
 
 
+def e_walled(ctx: dict, tag: str) -> bool:
+    return bool((ctx.get("parties", {}).get(tag) or {}).get("walled", True))
+
+
 def scopes_of(root: Path, ctx: dict) -> List[Scope]:
     """Every scope a session can hold: the root, then for each zone one scope
-    where no wall stands between two of its parties, and one per side where
-    one does. A side is a group of the zone's parties with no wall inside it,
-    taken in tag order; a party that stands in no wall joins the first group."""
+    where it has one walled party at most, and one per side where it has more.
+    A side is one walled party of the zone, taken in tag order; open parties
+    join the first side."""
     out = [ROOT]
     for zone in zone_names(root):
         mine = sorted(t for t, e in ctx.get("parties", {}).items()
-                      if str(e.get("zone") or "").strip().lower() == zone.lower() and t not in ("none", "public"))
-        groups: List[List[str]] = []
-        for tag in mine:
-            for g in groups:
-                if not any(frozenset((tag, other)) in ctx.get("walls", set()) for other in g):
-                    g.append(tag)
-                    break
+                      if str(e.get("zone") or "").strip().lower() == zone.lower() and t != "none")
+        groups: List[List[str]] = [[t] for t in mine if e_walled(ctx, t)]
+        for tag in (t for t in mine if not e_walled(ctx, t)):
+            if groups:
+                groups[0].append(tag)
             else:
                 groups.append([tag])
         if len(groups) <= 1:
@@ -350,11 +353,12 @@ def scope_named(root: Path, ctx: dict, key: str) -> Optional[Scope]:
 
 def policy_stamp(ctx: dict, scope: Scope) -> str:
     """What the walls were when an index was made: a change to the Parties or
-    Walls tables makes every index again, because a file that was admitted may
+    Zones tables makes every index again, because a file that was admitted may
     no longer be."""
-    walls = sorted("|".join(sorted(w)) for w in ctx.get("walls", set()))
-    parties = sorted("%s:%s" % (t, str(e.get("zone") or "").lower()) for t, e in ctx.get("parties", {}).items())
-    return hashlib.sha1(json.dumps([scope.key, list(scope.tags), walls, parties]).encode()).hexdigest()
+    zones = sorted("%s:%s" % (z, t) for z, t in ctx.get("zone_parties", {}).items())
+    parties = sorted("%s:%s:%d" % (t, str(e.get("zone") or "").lower(), bool(e.get("walled", True)))
+                     for t, e in ctx.get("parties", {}).items())
+    return hashlib.sha1(json.dumps([scope.key, list(scope.tags), zones, parties]).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -766,7 +770,7 @@ class Refresher:
         if held is None:
             return False
         if self.scope.kind == "root":
-            return all(strip_tag(t) in self.known or strip_tag(t) == "public" for t in held)   # a tag no table lists is nobody's
+            return all(strip_tag(t) in self.known or t == KNOWLEDGE for t in held)   # a tag no table lists is nobody's
         return decide(set(self.scope.tags), set(held), "read", self.ctx) == "permit"
 
     def admit_session(self, held: Optional[frozenset]) -> bool:

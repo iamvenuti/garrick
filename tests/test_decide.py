@@ -22,12 +22,12 @@ import walls_fixture  # noqa: E402
 import garrick_lib as lib  # noqa: E402
 
 CASES = Path(__file__).resolve().parent / "walls" / "cases.md"
-ROLES = {"near": "acme", "far": "birch", "other": "cedar", "hat": "lumen", "hat2": "lumen-adv",
-         "ghost": "ghost", "public": "public"}
+ROLES = {"near": "acme", "far": "birch", "other": "cedar", "hat": "lumen", "hat2": "lumen-adv", "zone": "jo",
+         "ghost": "ghost", "knowledge": lib.KNOWLEDGE}
 CONTEXT = {
-    "parties": {"acme": {"party": "Acme Corp"}, "birch": {"party": "Birch & Co"}, "cedar": {"party": "Cedar Ltd"},
-                "lumen": {"party": "Harbour Systems"}, "lumen-adv": {"party": "Harbour Systems"}},
-    "walls": {frozenset(("acme", "birch")), frozenset(("lumen", "lumen-adv"))},
+    "parties": {"acme": {"party": "Acme Corp", "walled": True}, "birch": {"party": "Birch & Co", "walled": True},
+                "cedar": {"party": "Cedar Ltd", "walled": False}, "jo": {"party": "Jo Example", "walled": True},
+                "lumen": {"party": "Harbour Systems", "walled": True}, "lumen-adv": {"party": "Harbour Systems", "walled": True}},
 }
 
 
@@ -51,6 +51,7 @@ class DecideCases(unittest.TestCase):
     def test_every_row(self):
         table = rows()
         self.assertGreaterEqual(len(table), 40)
+        self.assertLess(len(table), 50)
         for ident, scope, labels, action, expect, source in table:
             with self.subTest(case=ident, source=source):
                 scope_tags = tags(scope)
@@ -64,18 +65,31 @@ class DecideCases(unittest.TestCase):
         ids = [r[0] for r in rows()]
         self.assertEqual(len(ids), len(set(ids)))
 
-    def test_the_wall_is_read_the_same_both_ways(self):
-        for action in ("read", "write", "file"):
-            self.assertEqual(lib.decide({"acme"}, {"birch"}, action, CONTEXT),
-                             lib.decide({"birch"}, {"acme"}, action, CONTEXT))
-
     def test_a_tag_wrapped_in_backticks_is_the_tag(self):
         self.assertEqual(lib.decide({"`acme`"}, {"`birch`"}, "read", CONTEXT), "deny")
 
-    def test_crossings_name_the_pair(self):
-        self.assertEqual(lib.crossings(CONTEXT, {"acme", "cedar"}, {"birch"}), [("acme", "birch")])
-        self.assertEqual(lib.crossings(CONTEXT, {"birch", "acme", "cedar"}), [("acme", "birch")])
-        self.assertEqual(lib.crossings(CONTEXT, {"acme"}, set()), [])
+    def test_blocked_names_the_walled_tags_the_scope_lacks(self):
+        self.assertEqual(lib.blocked(CONTEXT, {"acme", "cedar"}, {"birch", "cedar"}), {"birch"})
+        self.assertEqual(lib.blocked(CONTEXT, {"acme", "birch"}, {"birch", "acme"}), set())
+        self.assertEqual(lib.blocked(CONTEXT, {"acme"}, {"cedar"}), set())
+        self.assertEqual(lib.blocked(CONTEXT, {"acme"}, {"ghost"}), {"ghost"})
+        self.assertEqual(lib.blocked(CONTEXT, {"acme"}, set()), set())
+
+    def test_a_party_row_with_no_plain_no_is_walled(self):
+        parties = lib.load_context(self.tmp_root())["parties"]
+        self.assertTrue(parties["acme"]["walled"])
+
+    def tmp_root(self):
+        import tempfile
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        write(Path(d.name) / "System" / "context.md", "## Parties\n\n| Party | What | Zone | Tag | Walled |\n|---|---|---|---|---|\n"
+              "| Acme | x | Work | `acme` | |\n| Cedar | x | Work | `cedar` | no |\n")
+        return Path(d.name)
+
+    def test_the_two_hats_are_the_names_a_note_may_not_carry_together(self):
+        self.assertEqual(lib.hats_of(CONTEXT, {"lumen", "lumen-adv", "acme"}), [("lumen", "lumen-adv")])
+        self.assertEqual(lib.hats_of(CONTEXT, {"acme", "birch"}), [])
 
 
 class LabelCases(unittest.TestCase):
@@ -104,7 +118,7 @@ class LabelCases(unittest.TestCase):
         write(inbox / "web.eml", "From: Kai <kai@gmail.com>\nTo: jo@example.invalid\nSubject: Hi\n\nHello.\n")
         write(inbox / "stamped.eml", "X-Garrick-Parties: acme, birch\nFrom: Kai <kai@gmail.com>\nSubject: Hi\n\nHello.\n")
         write(inbox / "header.eml", "X-Garrick-Parties: acme\nFrom: Kai <kai@birchco.example>\nSubject: Hi\n\nHello.\n")
-        write(inbox / "pubhead.eml", "X-Garrick-Parties: public\nFrom: Kai <kai@birchco.example>\nSubject: Hi\n\nHello.\n")
+        write(inbox / "pubhead.eml", "X-Garrick-Parties: none\nFrom: Kai <kai@birchco.example>\nSubject: Hi\n\nHello.\n")
         write(inbox / "ghosthead.eml", "X-Garrick-Parties: ghost\nFrom: Kai <kai@gmail.com>\nSubject: Hi\n\nHello.\n")
         work = cls.root / "Zones" / "Work"
         write(work / "Nonehub" / "Nonehub.md", project_hub("Work", "Nonehub", "none"))
@@ -123,12 +137,22 @@ class LabelCases(unittest.TestCase):
         self.assertEqual(self.got("Zones/Work/Northwind/Threads/Pricing/Notes.md"), {"acme"})
         self.assertEqual(self.got("Zones/Work/Harbour/Threads/Sizing/Notes.md"), {"birch"})
         self.assertEqual(self.got("Zones/Work/Northwind/Threads/Odd/Notes.md"), {"acme", "birch"})
-        self.assertEqual(self.got("Zones/Work/Northwind"), {"acme", "birch"})
+        self.assertEqual(self.got("Zones/Work/Northwind"), {"acme"})
+        self.assertEqual(self.got("Zones/Work/Northwind/Sources/x.md"), {"acme"})
 
     def test_a_project_with_no_party_is_unlabelled_and_not_public(self):
         self.assertIsNone(self.got("Zones/Work/Orchard/Threads/Drafts/Drafts.md"))
         self.assertIsNone(self.got("Zones/Work/NoHub/x.md"))
-        self.assertEqual(self.got("Zones/Work/Reed/Threads/Notes/Notes.md"), {"public"})
+        self.assertEqual(self.got("Zones/Work/Reed/Threads/Notes/Notes.md"), {"cedar"})
+
+    def test_a_file_carries_its_zones_party(self):
+        self.assertEqual(self.got("Zones/Personal/Garden/Threads/Beds/Plan.md"), {"jo", "cedar"})
+        self.assertEqual(self.got("Zones/Personal/Garden/Garden.md"), {"jo", "cedar"})
+
+    def test_a_hub_party_can_be_a_list(self):
+        write(self.root / "Zones" / "Work" / "Pair" / "Pair.md",
+              project_hub("Work", "Pair", "").replace("zone: Work\n", "zone: Work\nparty: [acme, cedar]\n"))
+        self.assertEqual(self.got("Zones/Work/Pair/x.md"), {"acme", "cedar"})
 
     def test_a_page_whose_party_and_parties_disagree_has_no_label(self):
         self.assertIsNone(self.got("Wikis/Meetings/wiki/sources/260315-split.md"))
@@ -142,9 +166,9 @@ class LabelCases(unittest.TestCase):
         self.assertIsNone(self.got("Wikis/Meetings/raw/260319-orphan-call.txt"))
 
     def test_knowledge_is_public_unless_it_says_otherwise(self):
-        self.assertEqual(self.got("Wikis/Knowledge/wiki/concepts/resilience.md"), {"public"})
+        self.assertEqual(self.got("Wikis/Knowledge/wiki/concepts/resilience.md"), {lib.KNOWLEDGE})
         self.assertIsNone(self.got("Wikis/Knowledge/wiki/concepts/owned.md"))     # a party key: someone's, not published
-        self.assertEqual({"public"}, self.got("Wikis/Knowledge/wiki/concepts/tagged.md"))
+        self.assertEqual({lib.KNOWLEDGE}, self.got("Wikis/Knowledge/wiki/concepts/tagged.md"))
 
     def test_a_party_key_in_any_spelling_leaves_a_knowledge_page_without_a_label(self):
         for name in ("caps", "upper", "quoted", "spaced", "indented", "zone"):
@@ -168,10 +192,6 @@ class LabelCases(unittest.TestCase):
         self.assertEqual({"none"}, got)
         for scope in ({"acme"}, {"none"}, set()):
             self.assertEqual("deny", lib.decide(scope, got, "read", self.ctx))
-
-    def test_a_conversation_is_never_public(self):
-        write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260321-pub.md", meeting_page("Work", "[public]", "Pub"))
-        self.assertIsNone(self.got("Wikis/Meetings/wiki/sources/260321-pub.md"))
 
     def test_a_path_outside_the_workspace_has_no_label(self):
         self.assertIsNone(lib.labels(self.root, "../elsewhere.md", self.ctx))

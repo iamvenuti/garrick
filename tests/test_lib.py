@@ -271,16 +271,28 @@ class TestContext(unittest.TestCase):
     def test_parties(self):
         self.assertEqual({"acme", "birch"}, set(self.ctx["parties"]))
         self.assertEqual({"party": "Birch & Co", "what": "Client. Market-entry advice; competes with Acme", "zone": "Work",
-                          "domains": ["birchco.example", "mail.birchco.example"]},
+                          "domains": ["birchco.example", "mail.birchco.example"], "walled": True, "flag": "yes"},
                          self.ctx["parties"]["birch"])
         self.assertEqual(["acmecorp.example"], self.ctx["parties"]["acme"]["domains"])
 
-    def test_walls(self):
-        self.assertEqual({frozenset({"acme", "birch"})}, self.ctx["walls"])
-        self.assertTrue(lib.walled(self.ctx, "acme", "birch"))
-        self.assertTrue(lib.walled(self.ctx, "`birch`", "acme"))
-        self.assertFalse(lib.walled(self.ctx, "acme", "acme"))
-        self.assertFalse(lib.walled(self.ctx, "acme", ""))
+    def test_flags(self):
+        self.assertTrue(lib.is_walled(self.ctx, "acme"))
+        self.assertTrue(lib.is_walled(self.ctx, "ghost"))          # a tag the table lacks is walled
+        self.assertEqual({"birch"}, lib.blocked(self.ctx, {"acme"}, {"`birch`"}))
+        self.assertEqual(set(), lib.blocked(self.ctx, {"acme"}, {"acme"}))
+        self.assertNotIn("walls", self.ctx)
+
+    def test_a_walled_cell_other_than_no_walls_the_party(self):
+        write(self.root / "System" / "context.md", CONTEXT.replace("| `acme` | yes |", "| `acme` | no |").replace("| `birch` | yes |", "| `birch` | maybe |"))
+        ctx = lib.load_context(self.root)
+        self.assertFalse(lib.is_walled(ctx, "acme"))
+        self.assertTrue(lib.is_walled(ctx, "birch"))
+
+    def test_zone_party_and_default(self):
+        write(self.root / "System" / "context.md", CONTEXT.replace("| Personal | Everything else | | walled |", "| Personal | Everything else | `jo` | open |"))
+        ctx = lib.load_context(self.root)
+        self.assertEqual({"Personal": "jo"}, ctx["zone_parties"])
+        self.assertEqual({"Work": "walled", "Personal": "open"}, ctx["zone_default"])
 
     def test_people_and_aliases(self):
         self.assertEqual({"name": "Theo Marsh", "party": "birch", "role": "Managing partner"}, self.ctx["people"][1])
@@ -295,7 +307,7 @@ class TestContext(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ctx = lib.load_context(tmp)
         self.assertEqual({}, ctx["parties"])
-        self.assertEqual(set(), ctx["walls"])
+        self.assertEqual({}, ctx["zone_parties"])
 
 
 class TestWorkspaceRoot(unittest.TestCase):

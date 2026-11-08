@@ -469,13 +469,13 @@ class Conversation:
 
     def held_tags(self, lib) -> set:
         """Every party the conversation holds, seen or told, in any zone."""
-        return {lib.strip_tag(t) for t in self.held()} - {lib.PUBLIC}
+        return {lib.strip_tag(t) for t in self.held()}
 
     def crosses(self, tags, lib, ctx: dict, extra=()) -> bool:
-        """Whether a wall stands between a scope's tags and anything held (or `extra`), or inside what is held."""
-        held = self.held_tags(lib) | {lib.strip_tag(t) for t in extra}
-        held -= {lib.PUBLIC}
-        return bool(held and (lib.crossings(ctx, set(tags), held) or lib.crossings(ctx, held)))
+        """Whether the walled parties held (or `extra`) differ from the scope's own, each at least one."""
+        held = {t for t in self.held_tags(lib) | {lib.strip_tag(t) for t in extra} if lib.is_walled(ctx, t)}
+        mine = {t for t in tags if lib.is_walled(ctx, lib.strip_tag(t))}
+        return bool(held and mine and held != mine)
 
     def scope_for(self, rc, ctx: dict, place, kind: str = "all"):
         """The one scope index this conversation opens: the scope of the zone the window answers in (or the place's
@@ -600,7 +600,7 @@ class Conversation:
         cache: dict = {}
         for d in recs:
             lab = lib.labels(self.ws, d["path"], ctx, cache) if d["kind"] != "docs" else None
-            self.seen |= {lib.strip_tag(t) for t in (lab or ())} - {"public"}
+            self.seen |= {lib.strip_tag(t) for t in (lab or ()) if t != lib.KNOWLEDGE}
         lines = []
         for d in recs:
             rid = self.hand(d)
@@ -731,7 +731,7 @@ class Conversation:
             if rows:
                 listing.append((z, rows))
         listed = {p for _, rows in listing for ps, _ in rows for p in ps}
-        if bool(lib.crossings(ctx, listed)):
+        if sum(1 for t in listed if lib.is_walled(ctx, t)) > 1:
             return NO_PROJECTS          # the list would span a wall: the words of an empty zone, so the text says nothing
         if listed and not self.admit(listed):      # the names are material: what is listed is held
             return STOPPED
@@ -797,7 +797,7 @@ class Conversation:
         return None, "period is a date (YYYY-MM-DD), today, tomorrow, this week or this month"
 
     def zone_parties(self, zone: str, names, ctx: dict, sc, lib) -> Optional[set]:
-        """Every party of a zone's projects, or None when a wall stands between any two of them (an unplaceable
+        """Every party of a zone's projects, or None when it holds two walled parties (an unplaceable
         project counts as one)."""
         every = set()
         for pr in names.get(zone, {}):
@@ -805,7 +805,7 @@ class Conversation:
             if not ps or not ps <= set(ctx.get("parties", {})):
                 return None
             every |= ps
-        return None if bool(lib.crossings(ctx, every)) else every
+        return None if sum(1 for t in every if lib.is_walled(ctx, t)) > 1 else every
 
     @staticmethod
     def surnamed(text: str, ctx: dict) -> set:

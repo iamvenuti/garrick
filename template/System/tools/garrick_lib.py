@@ -19,8 +19,8 @@ functions below keep their signatures:
     learned_cell(date, sources) -> str / parse_learned(cell) -> (date, [source]) or None
     learned_row(lines, rows, cells, learned) -> str
     memory_folders(root, value=None) -> [Path] / memory_entries(folders) -> [Path]
-    walled(context, tag_a, tag_b) -> bool
-    decide(scope, labels, action, context) -> permit | deny | confirm; crossings(context, left, right) -> [pair]
+    is_walled(context, tag) -> bool / blocked(context, scope, labels) -> {walled tags the scope lacks}
+    decide(scope, labels, action, context) -> permit | deny | confirm
     labels(root, path, context=None, cache=None) -> frozenset or None
     workspace_root(start=None) -> Path
     nested_repo(folder) -> bool / is_checkout(folder) -> bool
@@ -113,9 +113,10 @@ __all__ = [
     "memory_folders",
     "memory_entries",
     "knowledge_schema",
-    "walled",
+    "blocked",
+    "is_walled",
+    "hats_of",
     "decide",
-    "crossings",
     "always_asked",
     "labels",
     "meeting_labels",
@@ -123,7 +124,7 @@ __all__ = [
     "mail_labels",
     "wall_roles",
     "run_wall_cases",
-    "PUBLIC",
+    "KNOWLEDGE",
     "MEETINGS_ENTITIES",
     "tag_list",
     "party_entities",
@@ -834,9 +835,8 @@ def _table_header(lines: List[str]) -> Optional[List[str]]:
 # The sections of context.md read as tables: the columns each is written
 # with, and the ones the checks cannot do without.
 CONTEXT_TABLES = {
-    "zones": (("Zone", "Holds"), ("zone",)),
-    "parties": (("Party", "What it is", "Zone", "Tag", "Domains"), ("tag",)),
-    "walls": (("Between", "And", "Why"), ()),          # read by position when the names differ
+    "zones": (("Zone", "Holds", "Party", "New parties"), ("zone",)),
+    "parties": (("Party", "What it is", "Zone", "Tag", "Walled", "Domains"), ("tag", "walled")),
     "people": (("Name", "Party", "Role"), ("name", "party")),
     "aliases": (("Heard", "Means"), ("heard", "means")),
 }
@@ -856,8 +856,9 @@ def load_context(root: PathLike) -> dict:
     Returns::
 
         {
-          "parties": {tag: {"party": name, "what": ..., "zone": ..., "domains": [...]}},
-          "walls":   {frozenset({tag_a, tag_b}), ...},
+          "parties": {tag: {"party": name, "what": ..., "zone": ..., "domains": [...], "walled": bool, "flag": the Walled cell as written}},
+          "zone_parties": {zone name: party tag, ...},   # the one party every file of a zone carries
+          "zone_default": {zone name: "walled" | "open"},   # what `scaffold.py party` proposes there
           "people":  [{"name", "party", "role"}, ...],
           "aliases": {heard (lower case): means},
           "zones":   {zone name: what it holds},
@@ -872,7 +873,7 @@ def load_context(root: PathLike) -> dict:
     Tags are lower-cased and stripped of backticks. A missing file gives
     empty collections.
     """
-    ctx = {"parties": {}, "walls": set(), "people": [], "aliases": {}, "zones": {}, "me": [], "tables": {},
+    ctx = {"parties": {}, "zone_parties": {}, "zone_default": {}, "people": [], "aliases": {}, "zones": {}, "me": [], "tables": {},
            "learned": []}
     path = Path(root) / "System" / "context.md"
     try:
@@ -897,7 +898,7 @@ def load_context(root: PathLike) -> dict:
             cell = (row.get(column) or "").strip()
             if cell:
                 first = next(iter(row.values()), "")
-                ctx["learned"].append({"table": name, "row": strip_tag(first) if name == "walls" else first.strip(),
+                ctx["learned"].append({"table": name, "row": first.strip(),
                                        "cell": cell})
 
     for addr in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "\n".join(sections.get("me", []))):
@@ -913,14 +914,9 @@ def load_context(root: PathLike) -> dict:
             "what": _col(row, "what"),
             "zone": _col(row, "zone"),
             "domains": split_domains(_col(row, "domain")),
+            "walled": _col(row, "walled").strip().strip("`*").strip().lower() != "no",     # only a plain `no` opens a party
+            "flag": _col(row, "walled").strip().strip("`*").strip().lower(),
         }
-
-    for row in _table(sections.get("walls", [])):
-        cells = list(row.values())
-        a = strip_tag(_col(row, "between") or (cells[0] if cells else ""))
-        b = strip_tag(_col(row, "and") or (cells[1] if len(cells) > 1 else ""))
-        if a and b:
-            ctx["walls"].add(frozenset((a, b)))
 
     for row in _table(sections.get("people", [])):
         name = _col(row, "name")
@@ -940,6 +936,8 @@ def load_context(root: PathLike) -> dict:
         zone = _col(row, "zone")
         if zone:
             ctx["zones"][zone] = _col(row, "holds")
+            ctx["zone_parties"][zone] = strip_tag(_col(row, "party"))
+            ctx["zone_default"][zone] = "open" if _col(row, "new parties").strip().strip("`*").lower() == "open" else "walled"
 
     # A party's zone is compared with a zone's folder name, so it is written as that name: `**Work**` or `work` in
     # the Zone cell is Work, the folder under Zones/ first, then the Zones table. A zone neither knows is kept as
@@ -952,6 +950,9 @@ def load_context(root: PathLike) -> dict:
     for row in ctx["parties"].values():
         written = row["zone"].replace("*", "").strip().strip("`").strip()
         row["zone"] = canon.get(written.casefold(), written)
+    for key in ("zone_parties", "zone_default"):
+        ctx[key] = {canon.get(z.casefold(), z): v for z, v in ctx[key].items()}
+    ctx["zone_parties"] = {z: t for z, t in ctx["zone_parties"].items() if t}
     return ctx
 
 
@@ -1204,28 +1205,18 @@ def knowledge_schema(root: PathLike) -> Tuple[dict, List[str]]:
     return schema, problems
 
 
-def walled(context: dict, tag_a: str, tag_b: str) -> bool:
-    """Does a wall stand between two party tags?"""
-    if not tag_a or not tag_b:
-        return False
-    a, b = strip_tag(tag_a), strip_tag(tag_b)
-    if a == b:
-        return False
-    return frozenset((a, b)) in context.get("walls", set())
-
-
 # ---------------------------------------------------------------------------
 # Walls: one decision for every enforcement point (#398)
 # ---------------------------------------------------------------------------
 #
-# The policy is the Parties and Walls tables of System/context.md. Every point
-# that enforces it (the pre-commit check, Ask, the status page's actions,
+# The policy is the Parties table of System/context.md (a Walled column, `yes`
+# or `no`) and the Zones table (the one party a zone's files carry). Every
+# point that enforces it (the pre-commit check, Ask, the status page's actions,
 # intake, Nurture, scaffold) asks decide() and holds no wall test of its own;
-# what a record's labels are, labels() says, once. A wall test that needs the
-# pair it found, to name it in a finding, asks crossings(), which decide()
-# itself is made of.
+# what a record's labels are, labels() says, once. A finding that names the
+# parties in the way asks blocked(), which decide() itself is made of.
 
-PUBLIC = "public"       # a reserved tag: material anyone may read, into which nothing is written down
+KNOWLEDGE = "*knowledge"   # what labels() gives a Knowledge page with no party: read by every scope, takes only material with no party
 ACTIONS = ("read", "write", "file")
 
 
@@ -1238,89 +1229,67 @@ def _tagset(value) -> set:
     return {t for t in (strip_tag(str(v)) for v in value) if t}
 
 
-def crossings(context: dict, left, right=None) -> List[Tuple[str, str]]:
-    """The pairs, in sorted order, with a wall between them: one tag from
-    each of `left` and `right`; with no `right`, two tags of `left` (a < b)."""
-    a = _tagset(left)
-    if right is None:
-        return sorted((x, y) for x in a for y in a if x < y and walled(context, x, y))
-    b = _tagset(right)
-    pairs = {(x, y) for x in a for y in b if walled(context, x, y)}
-    if PUBLIC in a:        # a public record is walled, for writing, from every party
-        pairs |= {(PUBLIC, y) for y in b if y in context.get("parties", {})}
-    return sorted(pairs)
+def is_walled(context: dict, tag: str) -> bool:
+    """Is a party walled? A tag the Parties table lacks is, as is a row with no plain `no`."""
+    return bool((context.get("parties", {}).get(tag) or {}).get("walled", True))
+
+
+def blocked(context: dict, scope, labels) -> set:
+    """The walled tags in `labels` that `scope` lacks: what stops material
+    labelled `labels` from going into a record whose parties are `scope`."""
+    held = _tagset(scope)
+    return {t for t in _tagset(labels) if t != KNOWLEDGE and t not in held and is_walled(context, t)}
+
+
+def hats_of(context: dict, tags) -> List[Tuple[str, str]]:
+    """The pairs of tags in `tags` whose Parties rows share a name: one company under two hats."""
+    tags = sorted(_tagset(tags))
+    return [(a, b) for i, a in enumerate(tags) for b in tags[i + 1:]
+            if always_asked(context, a) and always_asked(context, b) and _name(context, a) == _name(context, b)]
+
+
+def _name(context: dict, tag: str) -> str:
+    return " ".join(re.findall(r"\w+", str((context.get("parties", {}).get(tag) or {}).get("party") or "").lower()))
 
 
 def always_asked(context: dict, tag: str) -> bool:
     """Is a party one that shares its name with another tag (one company, two
     hats)? Saying its name never says which, so a mail from it is asked about."""
-    parties = context.get("parties", {})
-    name = " ".join(re.findall(r"\w+", str((parties.get(tag) or {}).get("party") or "").lower()))
-    return bool(name) and any(t != tag and " ".join(re.findall(r"\w+", str(e.get("party") or "").lower())) == name
-                              for t, e in parties.items())
+    name = _name(context, tag)
+    return bool(name) and any(t != tag and _name(context, t) == name for t in context.get("parties", {}))
 
 
 def decide(scope, labels, action: str, context: dict) -> str:
     """`permit`, `deny` or `confirm`: may `scope` use a record labelled `labels`?
-    (`public` stands alone: a project that names it takes no party's material.)
 
-    `scope` is the parties a session, a check or a project may use. `labels`
-    are the record's, or None when they cannot be derived (labels()). No label,
-    no permit: a record with none, or one that names a tag the Parties table
-    lacks, is `deny` to read and `confirm` to file.
-
-    read   the record is read by a process holding `scope`. `public` records
-           are read by every scope. A scope with no party reads only those.
-    write  `labels` is the material written into a record whose parties are
-           `scope`. A record with no party takes nothing. A `public` record
-           takes only material with no party: for a write it is walled from
-           every party.
-    file   an item labelled `labels` is filed into a project of `scope`, or,
-           with `scope` None, into one not yet chosen. A
-           wall between them is `deny`; an item that names both sides of a
-           wall, names a party that is always asked about, or has no label
-           is `confirm`: nothing proceeds on it without the user.
+    One rule: material goes into a record whose parties are `scope` only when every walled party on it is one of
+    them. `scope` is None for a project not yet chosen (filing). `labels` is None when they cannot be derived: no
+    label, no permit (`deny` to read and write, `confirm` to file). A tag the Parties table lacks is `deny`.
+    A Knowledge page (KNOWLEDGE) is read by every scope and takes only material with no party. Filing asks
+    (`confirm`) on an item with no label or from a party that is always asked about, and before a project is
+    chosen on one with two walled parties.
     """
     if action not in ACTIONS:
         raise ValueError("action is read, write or file, not %r" % (action,))
-    known = set(context.get("parties", {})) - {"none", PUBLIC}      # reserved tags are never parties, row or no row
-    mine = _tagset(scope)
-    if scope is not None and (mine - {PUBLIC}) - known:
-        return "deny"           # a scope with a tag the Parties table lacks (`none`, a ghost) is no scope at all
+    known = set(context.get("parties", {}))
+    mine, theirs = _tagset(scope), _tagset(labels)
+    if (scope is not None and mine - known - {KNOWLEDGE}) or (labels is not None and theirs - known - {KNOWLEDGE}):
+        return "deny"
     if labels is None:
         return "deny" if action != "file" else "confirm"
-    theirs = _tagset(labels)
+    parties = theirs - {KNOWLEDGE}
+    asked = not theirs or any(always_asked(context, t) for t in parties)
     if action == "read":
-        if not theirs:
-            return "deny"
-        if theirs <= {PUBLIC}:
-            return "permit"
-        theirs -= {PUBLIC}
-        mine -= {PUBLIC}
-        if not theirs <= known or not mine:
-            return "deny"
-        return "deny" if crossings(context, mine, theirs) or crossings(context, theirs) or crossings(context, mine) \
-            else "permit"
-    if action == "write":
-        if not mine:
-            return "deny"
-        if PUBLIC in mine:
-            return "deny" if theirs - {PUBLIC} else "permit"
-        theirs -= {PUBLIC}
-        if not theirs <= known:            # a tag the table lacks (`none`, a ghost) is material no wall can place
-            return "deny"
-        return "deny" if crossings(context, mine, theirs) or crossings(context, theirs) else "permit"
-    # file
-    if not theirs:
-        return "confirm"
-    if scope is not None and (not mine or crossings(context, mine, theirs - {PUBLIC})):
+        return "permit" if theirs and (not parties or (mine - {KNOWLEDGE} and not blocked(context, mine, parties))) else "deny"
+    if scope is None and action == "file":      # intake, before a project is chosen
+        return "confirm" if asked or sum(is_walled(context, t) for t in parties) > 1 else "permit"
+    if not mine:
+        return "deny"                           # a record with no party takes nothing
+    if mine == {KNOWLEDGE}:
+        return "deny" if parties else "permit"
+    if blocked(context, mine, parties):
         return "deny"
-    theirs -= {PUBLIC}
-    if not theirs <= known:
-        return "deny"
-    if crossings(context, theirs) or any(always_asked(context, t) for t in theirs):
-        return "confirm"
-    return "permit"
+    return "confirm" if action == "file" and asked else "permit"
 
 
 def wall_cases(text: str) -> Dict[str, List[List[str]]]:
@@ -1343,10 +1312,10 @@ def mail_labels(context: dict, data: bytes) -> Tuple[Optional[frozenset], bool]:
     """(the parties a saved mail is written for, whether its header and its
     addresses disagree). The labels are the union of its `X-Garrick-Parties`
     header and the parties of the domains it carries; a header tag that is
-    unknown, `none` or `public` makes them None. A mail with neither has none."""
+    unknown or `none` makes them None. A mail with neither has none."""
     known = set(context.get("parties", {}))
     header = set(stamped_parties(data))
-    if header and (header - known or header & {"none", PUBLIC}):
+    if header and (header - known or header & {"none"}):
         return None, True
     domains = set()
     mail = parse_mail_bytes(data)
@@ -1360,32 +1329,32 @@ def mail_labels(context: dict, data: bytes) -> Tuple[Optional[frozenset], bool]:
 
 def wall_roles(context: dict) -> Dict[str, str]:
     """The tags that stand for the roles of the wall cases (tests/walls/cases.md)
-    in a Parties and Walls table: `near` and `far`, the first pair a wall keeps
-    apart; `other`, a party walled from neither; `hat` and `hat2`, two tags of
-    one name with a wall between them; `ghost`, a tag the table lacks; `public`.
+    in a Parties table: `near` and `far`, two walled parties that share no name;
+    `other`, an open party; `hat` and `hat2`, two walled parties of one name;
+    `zone`, the party a zone names; `ghost`, a tag the table lacks; `knowledge`.
     A role the table has no tag for is left out."""
     parties = sorted(context.get("parties", {}))
-    roles = {"ghost": "ghost-not-in-parties", "public": PUBLIC}
+    roles = {"ghost": "ghost-not-in-parties", "knowledge": KNOWLEDGE}
     while roles["ghost"] in parties:
         roles["ghost"] += "-x"
-    pairs = [(a, b) for a in parties for b in parties if a < b and walled(context, a, b)]
-    twins = [(a, b) for a, b in pairs if always_asked(context, a) and always_asked(context, b)
-             and context["parties"][a].get("party") == context["parties"][b].get("party")]
-    plain = [p for p in pairs if p not in twins]
-    if plain:
-        roles["near"], roles["far"] = plain[0]
-        free = [t for t in parties if t not in (roles["near"], roles["far"]) and not always_asked(context, t)
-                and not crossings(context, [t], parties)]
-        if free:
-            roles["other"] = free[0]
+    walled_ = [t for t in parties if is_walled(context, t)]
+    twins = [(a, b) for a in walled_ for b in walled_ if a < b and hats_of(context, [a, b])]
+    plain = [t for t in walled_ if not always_asked(context, t)]
+    if len(plain) >= 2:
+        roles["near"], roles["far"] = plain[:2]
+    open_ = [t for t in parties if not is_walled(context, t)]
+    if open_:
+        roles["other"] = open_[0]
     if twins:
         roles["hat"], roles["hat2"] = twins[0]
+    zoned = sorted(set(context.get("zone_parties", {}).values()) & set(parties))
+    if zoned:
+        roles["zone"] = zoned[0]
     return roles
 
 
 def run_wall_cases(context: dict, text: str) -> Tuple[int, List[str], List[str]]:
-    """The decide() rows of a wall-cases file, run against a Parties and Walls
-    table with its own tags in place of the fixture's roles. Returns (rows run,
+    """The decide() rows of a wall-cases file, run against a Parties table with its own tags in place of the fixture's roles. Returns (rows run,
     rows skipped because the table has no tag for a role, the rows that failed)."""
     roles = wall_roles(context)
     ran, skipped, failed = 0, [], []
@@ -1448,7 +1417,7 @@ def meeting_labels(fm: dict) -> Optional[frozenset]:
     person or entity page may have its `party:` alone; `party:` and `parties:`
     that disagree read two ways, so neither."""
     got = _labels_of(fm)
-    if not got or PUBLIC in got:          # `public` is a project's choice, never a conversation's
+    if not got:
         return None
     kind = str(fm.get("type") or "").strip().lower()
     if kind in ("person", "entity") and fm.get("parties") is None:
@@ -1464,7 +1433,7 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
     None when they cannot be derived (decide() reads None as no label).
 
     In this order: a Knowledge page's own `parties:` (a page with none is
-    `public`, as Knowledge crosses every wall); a Meetings page's own `parties:`
+    KNOWLEDGE's, read by every scope); a Meetings page's own `parties:`
     or `party:` (a finished page has a zone; a person or entity page may have
     its `party:` alone); a raw record's, the pages that cite it; a mail in an
     inbox, its `X-Garrick-Parties` header or the domains it carries; a file in
@@ -1498,7 +1467,7 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         if full.suffix == ".md" and full.is_file() and _party_like_key(full):
             return None             # a page that carries a party key in any spelling is someone's, not published
         got = _labels_of(fm)
-        return None if got is None else frozenset(got or {PUBLIC})
+        return None if got is None else frozenset(got or {KNOWLEDGE})
     if parts[:3] == ("Wikis", "Meetings", "wiki"):
         if full.suffix != ".md" or not full.is_file():
             return None
@@ -1540,16 +1509,16 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
             cache[hub] = _labels_of(fm)         # the note named after the folder, whatever its type, as the hook finds it
         found = cache[hub]
         if not found:
-            return None
+            return None                         # a hub that names no party labels nothing
         out = set(found)
-        threads = [parts[4]] if len(parts) >= 5 and parts[3] == "Threads" else \
-            sorted(p.name for p in (project / "Threads").glob("*/")) if len(parts) <= 3 else []
-        for t in threads:
-            got = _labels_of(parse_frontmatter(project / "Threads" / t / (t + ".md")))
+        if len(parts) >= 5 and parts[3] == "Threads":      # a thread's file adds its thread note's parties, no other thread's
+            got = _labels_of(parse_frontmatter(project / "Threads" / parts[4] / (parts[4] + ".md")))
             if got is None:
                 return None
             out |= got
-        return frozenset(out)
+        context = context if context is not None else load_context(root)
+        zone_party = context.get("zone_parties", {}).get(parts[1])
+        return frozenset(out | ({zone_party} if zone_party else set()))
     if len(parts) >= 3 and parts[0] == "Zones" and parts[2] == "Inbox" and full.suffix.lower() == ".eml" and full.is_file():
         try:
             data = full.read_bytes()
@@ -1813,7 +1782,7 @@ def _short_of_two_hats(context: dict, names) -> set:
     out = set()
     for whole, rows in persons.items():
         tags = {strip_tag(p.get("party") or "") for p in rows} - {""}
-        if not any(walled(context, a, b) for a in tags for b in tags):
+        if not _any_wall(context, tags):
             continue
         surnames = {w[-1] for p in rows for f in person_forms(context, p) for w in [name_words(f)] if w}
         for page in pages:
@@ -1849,7 +1818,7 @@ def organisation_link(root: PathLike, context: dict, names, party,
     if len(tags) != 1 or tags[0] == "none" or tags[0] not in context.get("parties", {}):
         return ""
     tag, rows = tags[0], people_parties(context, names)
-    if rows and (tag not in rows or any(walled(context, a, b) for a in rows for b in rows)):
+    if rows and (tag not in rows or _any_wall(context, rows)):
         return ""
     pages = (party_entities(root) if entities is None else entities).get(tag, [])
     if len(pages) != 1:
@@ -2042,7 +2011,8 @@ def _unlinkable(context: dict, group: List[dict]) -> str:
 
 
 def _any_wall(context: dict, tags: set) -> bool:
-    return any(walled(context, a, b) for a in tags for b in tags if a < b)
+    """Do `tags` hold two walled parties? A person or a page that stands for two of them is not told apart."""
+    return sum(is_walled(context, t) for t in set(tags)) > 1
 
 
 def named_in(line: str, index: List[dict], every: bool = False) -> List[str]:

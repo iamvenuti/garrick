@@ -16,6 +16,7 @@ Instructions for any assistant working on this repository. This is the source of
 | `install.py` | The installer. `examples/acme.json` is a complete fictional config |
 | `update.py` | `install.py --update`: brings an installed workspace up to this Garrick. Runs from the newer download, never from the workspace; `System/tools/release.py update` downloads a release and runs it. Updates the extras a workspace has copied in, too |
 | `split.py` | `install.py --update --split`: moves a workspace's own text out of Garrick's instruction files, `System/rules.md` and each `AGENTS.md`, into the local file beside each (`rules.local.md`, `AGENTS.local.md`), and puts Garrick's back as shipped |
+| `migrate_walls.py` | The one-time step `update.py` runs when a Parties table has no Walled column: proposes the flags, diffs the workspace under the old and the new rule, writes on a yes. The old rule lives there, under `legacy_` names |
 | `release-hashes.json` | The fingerprint of every file each tagged release shipped, and each release's zone template, so an update knows a file still as an older Garrick wrote it. *Releasing* has the step that rewrites it; a test fails until the result is committed |
 | `VERSION` | Which commit a download is: git fills in its lines when GitHub serves a ZIP (`export-subst`). The installer copies the answer into the workspace's `System/garrick-version.json` |
 | `examples/demo/` | The demo workspace. `build.py` installs it and replays a month of invented work from `content/` |

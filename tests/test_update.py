@@ -923,6 +923,107 @@ class TestCommandLine(Case):
         self.assertIn("Updated on 6 October 2026 from", r.stdout)
 
 
+class TestWallsMigration(Case):
+    """Pairs to flags (#446): the proposal, the diff of the workspace, and a write only on a yes."""
+
+    def setUp(self):
+        super().setUp()
+        sys.path.insert(0, str(REPO / "tests"))
+        import legacy_walls
+        self.legacy = legacy_walls
+        legacy_walls.build(self.root)
+        self.commit(self.root, "the 0.59 context")
+        self.context = self.root / "System" / "context.md"
+
+    def run_update(self, *args):
+        return subprocess.run([sys.executable, str(INSTALL), "--update", str(self.root), *args],
+                              capture_output=True, text=True, env=self.env)
+
+    def study(self):
+        import migrate_walls
+        return migrate_walls.study(self.root, update.install.lib())
+
+    def test_the_proposal_is_the_pairs_as_flags(self):
+        prop = self.study()["prop"]
+        self.assertEqual({t: f == "yes" for t, f in self.legacy.FLAGS.items()}, prop["flags"])
+        self.assertEqual("jo", prop["zone_party"]["Personal"])
+        self.assertEqual("", prop["zone_party"]["Work"])              # four parties fit; none is picked
+        self.assertEqual("", prop["zone_party"]["Projects"])
+        self.assertEqual({"Work": "walled", "Personal": "walled", "Projects": "open"}, prop["zone_default"])
+        self.assertTrue(any("`cedar`" in n and "open" in n for n in prop["notes"]))
+
+    def test_the_diff_shows_the_four_kinds(self):
+        items = self.study()["items"]
+
+        def has(old, new, source, scope, action=None):
+            return any((e["old"], e["new"]) == (old, new) and e["s_after"] is not None and set(e["s_after"]) == source
+                       and e["c_after"] is not None and scope <= set(e["c_after"])
+                       and (action is None or action in e["actions"]) for e in items)
+        self.assertTrue(has("deny", "permit", {"cedar"}, {"acme"}, "write"), "an open venture into a walled scope")
+        self.assertTrue(has("permit", "deny", {"acme"}, {"birch"}, "write"), "one client into another's")
+        self.assertTrue(has("deny", "permit", {"acme", "jo"}, {"acme", "jo"}, "write"), "two walled into a scope naming both")
+        self.assertTrue(has("permit", "deny", {"mint", "jo"}, {"mint"}, "write"), "personal refused elsewhere")
+        text = self.study()["text"]
+        self.assertIn("Refused today, allowed after", text)
+        self.assertIn("Allowed today, refused after", text)
+
+    def test_nothing_is_written_without_the_yes(self):
+        before, head = self.context.read_bytes(), self.head(self.root)
+        r = self.run_update()
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Refused today, allowed after", r.stdout)
+        r = self.run_update("--apply")                     # no tty here: a headless run never answers
+        self.assertIn("Nothing was written", r.stdout)
+        self.assertIn("Refused today, allowed after", r.stdout)
+        self.assertEqual(before, self.context.read_bytes())
+        self.assertEqual(head, self.head(self.root))
+        r = self.run_update("--yes")                       # a yes without --apply writes nothing either
+        self.assertEqual(before, self.context.read_bytes())
+
+    def test_the_yes_writes_the_flags_and_takes_out_the_walls(self):
+        r = self.run_update("--apply", "--yes")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("took out the Walls table", r.stdout)
+        text = self.context.read_text()
+        self.assertNotIn("## Walls", text)
+        ctx = update.install.lib().load_context(self.root)
+        self.assertEqual(self.legacy.FLAGS, {t: e["flag"] for t, e in ctx["parties"].items()})
+        self.assertEqual({"Personal": "jo"}, ctx["zone_parties"])
+        self.assertEqual("open", ctx["zone_default"]["Projects"])
+        self.assertEqual("", self.git(self.root, "status", "--porcelain", "--", "System/context.md"))
+        self.assertIn("party flags", self.git(self.root, "log", "-1", "--format=%s"))
+        self.assertIn("| Acme Corp | Client | Work | `acme` | yes | acmecorp.example |", text)
+
+    def test_a_second_run_changes_nothing(self):
+        self.run_update("--apply", "--yes")
+        written, head = self.context.read_bytes(), self.head(self.root)
+        r = self.run_update("--apply", "--yes")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertNotIn("Walls table", r.stdout)
+        self.assertEqual(written, self.context.read_bytes())
+        self.assertEqual(head, self.head(self.root))
+        self.assertIsNone(self.study())
+
+    def test_the_check_warns_until_the_migration_has_run(self):
+        def findings():
+            r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root),
+                                "--json", "--paths", "System/context.md"], capture_output=True, text=True, env=self.env)
+            return [f["message"] for f in json.loads(r.stdout)["findings"] if f["check"] == "context"]
+        before = findings()
+        self.assertTrue(any("no Walled column" in m for m in before), before)
+        self.assertTrue(any("Walls table is still there" in m for m in before), before)
+        self.run_update("--apply", "--yes")
+        after = findings()
+        self.assertFalse(any("Walled column" in m or "Walls table" in m for m in after), after)
+
+    def test_an_uncommitted_context_is_left_alone(self):
+        self.context.write_text(self.context.read_text() + "\nMy own line.\n")
+        mine = self.context.read_bytes()
+        r = self.run_update("--apply", "--yes")
+        self.assertIn("not committed", r.stdout)
+        self.assertEqual(mine, self.context.read_bytes())
+
+
 class TestIgnoreFiles(Case):
     """A .gitignore has no local file beside it: Garrick's lines sit between two
     markers, yours anywhere outside, and an update replaces only the block."""

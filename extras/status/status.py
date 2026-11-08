@@ -5119,6 +5119,28 @@ def questions_data(ws: Path, C: Optional[dict], today: dt.date, link: "Links") -
         return None
 
 
+_PP = None
+
+
+def parties_mod():
+    """parties_panel.py, beside this file: the Parties tab's data and page (#447)."""
+    global _PP
+    if _PP is None:
+        spec = importlib.util.spec_from_file_location("garrick_status_parties", str(Path(__file__).with_name("parties_panel.py")))
+        _PP = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_PP)
+    return _PP
+
+
+def parties_data(ws: Path, link: "Links") -> Optional[dict]:
+    """The Parties tab's data, or None: no tab. Any fault leaves the tab out."""
+    try:
+        lib = workspace_lib(ws)
+        return parties_mod().build(ws, lib, link) if lib is not None else None
+    except Exception:
+        return None
+
+
 _YW = None
 
 
@@ -8304,6 +8326,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
     qdata = questions_data(ws, C, now.date(), link)        # the Questions panel (#224), None where it cannot be placed
+    pdata = parties_data(ws, link)                         # the Parties tab (#447), None without a Parties table
 
     # ---- what needs attention, worst first
     attn = []
@@ -8803,11 +8826,11 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     tabs = ('<div class="tabs" role="tablist">' + ('<button type="button" role="tab" data-tab="home">Home</button>' if simple else "")
             + '<button type="button" role="tab" data-tab="overview">Overview</button>%s'
             '<button type="button" role="tab" data-tab="status">Status%s</button>%s'
-            '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
+            '%s<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
                '<span class="dot critical" title="something failed"></span>' if trouble else "",
-               questions_mod().tab_button() if qdata else ""))
+               questions_mod().tab_button() if qdata else "", parties_mod().tab_button(pdata) if pdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
     if qdata:
@@ -8839,9 +8862,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                      + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)
                                + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s</main>%s%s'
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s%s</main>%s%s'
             % (home_tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
                section("questions", True, questions_mod().body(qdata)) if qdata else "",
+               section("parties", True, parties_mod().body(pdata)) if pdata else "",
                section("guide", True, guide_body), menu, catch_dialog(ws, T, bool(DK))))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
@@ -8852,12 +8876,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", parties_mod().JS if pdata else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + (questions_mod().CSS if qdata else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + (questions_mod().CSS if qdata else "") + (parties_mod().CSS if pdata else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),

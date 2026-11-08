@@ -1450,11 +1450,22 @@ def check_context(ws: Workspace) -> List[Finding]:
                                "%s is written as prose or a list; the checks cannot read anything in it. "
                                "Make it a table: %s%s" % (title, wanted, CONTEXT_EFFECT.get(name, "")),
                                "The %s section of the context file is not a table" % title))
-        elif seen["missing"]:
+        elif [c for c in seen["missing"] if c != "walled"]:
             out.append(Finding(WARNING, "context", ctx_path,
                                "the %s table has no %s column; it needs %s" % (
-                                   title, " or ".join(c.capitalize() for c in seen["missing"]), wanted),
+                                   title, " or ".join(c.capitalize() for c in seen["missing"] if c != "walled"), wanted),
                                "The %s table is missing a column" % title))
+    text = read_text(ws.root / ctx_path) or ""
+    if "walled" in (ws.context.get("tables", {}).get("parties") or {}).get("missing", []):
+        out.append(Finding(WARNING, "context", ctx_path,
+                           "the Parties table has no Walled column, so the walls migration has not run and every party "
+                           "is read as walled; run the update (`python3 install.py --update`) and read what it shows",
+                           "The walls migration is pending"))
+    if re.search(r"(?m)^## Walls\s*$", text):
+        out.append(Finding(WARNING, "context", ctx_path,
+                           "a Walls table is still there, and nothing reads it; the Walled column holds the policy. "
+                           "Take the section out",
+                           "A Walls table is left in the context file"))
     if not parties and "parties" not in unread:
         out.append(Finding(WARNING, "context", ctx_path, "the Parties table is empty; no wall can be checked",
                            "The Parties table is empty"))
@@ -1521,7 +1532,6 @@ def check_context(ws: Workspace) -> List[Finding]:
                                    "`%s` shares its name with `%s` and is open; both hats stay walled" % (
                                        tag, next(t for t in tags if t != tag)),
                                    "Two parties share a name and one is open"))
-    text = read_text(ws.root / ctx_path) or ""
     if not re.search(r"(?m)^## Aliases\s*$", text):
         out.append(Finding(WARNING, "context", ctx_path,
                            "no `## Aliases` table (| Heard | Means |); names that arrive mangled by dictation have nothing to match",

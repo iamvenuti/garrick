@@ -227,6 +227,18 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 10. **Next item.** When all are done, one summary.
 
+## A mixed conversation
+
+A transcript whose parties are two walled ones is a `confirm`, and a yes is
+not the end of it: the transcript is cut in the inbox, before it is a record,
+by label set. Hand it to the `meetings` skill's *A conversation that carries
+two walled parties, and extracts*: it proposes a file for each party alone
+and one for what belongs to both, with the cut points, and writes nothing
+until the user says yes. Speaker and timestamp alone never decide which
+party a passage belongs to; you propose, the user decides. Then each file is
+filed as its own conversation. Do not file the whole call under one page of
+both parties unless the user asks for exactly that.
+
 ## Replies
 
 Spoken, three sentences at most, the answer first:

@@ -810,6 +810,33 @@ asked for the detail.
 - Written: the spoken answer on top, then the detail: paths, tables, links,
   commit hashes.
 
+## A conversation that carries two walled parties, and extracts
+
+A record that carries two walled parties can enter only a project that names
+both. When a transcript in `Wikis/Meetings/raw/inbox/` is that, or the user
+asks for a part of a filed record to be used on its own, cut it with the
+helper instead of by hand. Speaker and timestamp alone never decide which
+party a passage belongs to: you propose the cuts, with the line numbers and
+what each holds, and the user decides.
+
+- **Split, before it is a record.** Propose a file for each party alone and
+  one for what belongs to both. Run `python3 System/skills/meetings/ingest.py
+  split --inbox <file> --part "<tag>:<lines>" --part "<tag>,<tag>:<lines>"`
+  with no `--yes`: it prints the files and the lines in each and writes
+  nothing. Every line goes into a cut, or is dropped by name with `--drop`.
+  Only on the user's yes in this session, run it again with `--yes`: the
+  inbox file becomes the cut files, each with its own `parties:`, and the
+  original is gone, because an inbox is no record. File each one as its own
+  conversation, with a page of its own.
+- **Extract, after it is a record.** A filed record is never edited. For a
+  part of it on its own, run `ingest.py extract --raw <record> --lines
+  <lines> --parties <tags>`, and on the user's yes again with `--yes`. It
+  writes a new file in the inbox, never wider than the record, and the record
+  stays byte for byte as it was under its full labels. File the extract with
+  its own page, which cites the extract and never the original.
+
+A run with nobody to answer, such as a scheduled job, never writes.
+
 ## What this skill does not do
 
 - **It does not transcribe audio or talk to a recorder.** The inbox folder

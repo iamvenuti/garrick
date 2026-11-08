@@ -1449,6 +1449,75 @@ class TestJournal(ActionCase):
         self.assertEqual(("Work: added to Inbox, Book the room", ""), self.last_commit())
 
 
+class TestPartyFlag(ActionCase):
+    """The Parties tab's Flip (#447): scaffold.py's real flip command, then the context committed in the workspace's own repository."""
+
+    def setUp(self):
+        super().setUp()
+        for tool in ("check.py", "nurture.py"):         # the flip's workspace-wide check
+            shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
+        git(self.root, "init", "-q")
+        git(self.root, "config", "user.name", "Sam Rivera")
+        git(self.root, "config", "user.email", "sam@example.com")
+        git(self.root, "config", "maintenance.auto", "false")
+        git(self.root, "config", "gc.auto", "0")
+        git(self.root, "add", "System/context.md")
+        git(self.root, "commit", "-q", "-m", "start")
+        self.context = self.root / "System" / "context.md"
+
+    def head(self):
+        return git(self.root, "log", "-1", "--format=%s").strip(), git(self.root, "status", "--porcelain", "--", "System/context.md").strip()
+
+    def test_walled_to_open_asks_once_and_writes_nothing_until_the_yes(self):
+        before = self.context.read_bytes()
+        out = self.act(verb="party-flag", tag="acme", flag="open")
+        self.assertTrue(out["ask"])
+        self.assertRegex(out["say"], r"releases \d+ files")
+        self.assertEqual(before, self.context.read_bytes())
+        self.assertEqual(("start", ""), self.head())
+        out = self.act(verb="party-flag", tag="acme", flag="open", yes=True)
+        self.assertEqual((False, True), (out["ask"], out["written"]))
+        self.assertIn("| `acme` | no |", self.context.read_text())
+        self.assertEqual(("Party acme: open", ""), self.head())
+
+    def test_open_to_walled_writes_at_once_and_says_what_is_now_in_violation(self):
+        self.act(verb="party-flag", tag="birch", flag="open", yes=True)
+        (self.work / "Acme Review" / "Notes.md").write_text("# Notes\n\nSee [[260312-birch-kickoff]].\n")
+        out = self.act(verb="party-flag", tag="birch", flag="walled")
+        self.assertTrue(out["written"])
+        self.assertIn("now in violation", out["say"])
+        self.assertIn("Acme Review/Notes.md", out["say"])
+        self.assertIn("| `birch` | yes |", self.context.read_text())
+        self.assertEqual(("Party birch: walled", ""), self.head())
+
+    def test_a_flag_already_set_changes_nothing(self):
+        out = self.act(verb="party-flag", tag="acme", flag="walled")
+        self.assertEqual((False, False), (out["written"], out["ask"]))
+        self.assertEqual(("start", ""), self.head())
+
+    def test_the_commands_refusal_is_the_pages(self):
+        with self.assertRaisesRegex(pa.Refused, "^ghost is not a party tag in System/context.md"):
+            self.act(verb="party-flag", tag="ghost", flag="open")
+
+    def test_the_request_is_closed(self):
+        for bad in (dict(tag="acme", flag="maybe"), dict(tag="acme", flag="open", yes="yes"), dict(tag="-acme", flag="open"),
+                    dict(flag="open"), dict(tag="acme", flag="open", confirm="x"), dict(tag="acme", flag="open", extra=1)):
+            with self.assertRaises(pa.Refused, msg=bad):
+                self.act(verb="party-flag", **bad)
+        self.assertEqual(("start", ""), self.head())
+
+    def test_a_commit_the_check_refuses_puts_the_context_back(self):
+        hook = self.root / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\necho refused >&2\nexit 1\n")
+        hook.chmod(0o755)
+        before = self.context.read_bytes()
+        with self.assertRaisesRegex(pa.Refused, "not committed, so nothing changed"):
+            self.act(verb="party-flag", tag="acme", flag="open", yes=True)
+        self.assertEqual(before, self.context.read_bytes())
+        self.assertEqual(("start", ""), self.head())
+
+
 class TestFlag(ActionCase):
     """The actions were a preview, `page-actions`; released, they need no flag."""
 

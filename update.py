@@ -61,8 +61,12 @@ kept outside the workspace.
 Nothing is written without `--apply`, and nothing is ever deleted. Each
 repository the update touches gets one commit of its own, holding only the
 files the update wrote, `.new` files included, so `git revert` undoes it.
-`System/context.md` is never read or written, and neither is a local file
-beside an instruction file, such as `System/rules.local.md`. The
+`System/context.md` is never read or written, but for one step: when its
+Parties table has no Walled column, the update prints the flag each party would
+get and every flow in the workspace whose verdict changes, and writes the flags
+and takes out the Walls table only with a yes (`--yes`, or typed at a terminal;
+a run without one never answers). A local file beside an instruction file, such
+as `System/rules.local.md`, is never read or written. The
 version stamp changes last, once everything picked has applied and the
 workspace's check finds no error in a file the update wrote. Running it twice
 changes nothing the second time.
@@ -1517,6 +1521,50 @@ def release_hashes(repo=REPO):
 # --------------------------------------------------------------------------- main
 
 
+def walls_migration(root, answer, apply_changes=True, as_json=False):
+    """The walls step (migrate_walls.py): when System/context.md has no Walled column, print the flags it
+    proposes and every flow whose verdict changes; write on a yes. `answer` is True for --yes, False when
+    nobody can answer. Returns (text, written, data); text is "" when nothing is pending."""
+    lib = install.lib()
+    import migrate_walls        # System/tools of this Garrick, which install.lib() has put on the path
+    study = migrate_walls.study(root, lib)
+    if study is None:
+        return "", False, None
+    data = {"flags": study["prop"]["flags"], "zone_party": study["prop"]["zone_party"],
+            "zone_default": study["prop"]["zone_default"], "changes": len(study["items"])}
+    out = [study["text"], ""]
+    if not apply_changes:
+        out.append("Nothing is written. Run the update with --apply; answer with --yes, or at a terminal.")
+        return "\n".join(out), False, data
+    if not answer and sys.stdin.isatty() and sys.stdout.isatty() and not as_json:
+        print("\n".join(out))
+        out = []
+        answer = input("Write these flags and take out the Walls table? [y/N] ").strip().lower() in ("y", "yes")
+    if not answer:
+        out.append("Nothing was written. The Walls table stays and keeps "
+                   "deciding every flow as before; the check warns until the flags are written. Answer with --yes once you have read the changes above.")
+        return "\n".join(out), False, data
+    path = root / "System" / "context.md"
+    text = migrate_walls.rewrite(path.read_text(encoding="utf-8"), study["prop"])
+    if text is None:
+        return "\n".join(out + ["Nothing was written: System/context.md has no Parties table."]), False, data
+    why = commit_files(root, {"System/context.md": (text.encode("utf-8"), path.stat().st_mode & 0o777)},
+                       "Garrick: party flags in System/context.md, the Walls table out")
+    if why:
+        return "\n".join(out + ["Nothing was written: System/context.md: %s." % why]), False, data
+    out.append("Wrote the Walled column, the zones' Party and New parties columns, and took out the Walls table.")
+    found = migrate_walls.walls_check(root)
+    if found:
+        out.append("The walls check now refuses %d thing%s that was committed before:" % (len(found), "" if len(found) == 1 else "s"))
+        out += ["  " + f for f in found[:50]]
+        if len(found) > 50:
+            out.append("  ... and %d more; run System/tools/check.py --walls-only." % (len(found) - 50))
+    else:
+        out.append("The walls check finds nothing the new flags refuse.")
+    data["written"] = True
+    return "\n".join(out), True, data
+
+
 def find_workspace(path):
     root = Path(path).expanduser()
     root = Path(os.path.abspath(root))
@@ -1540,6 +1588,8 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true", help="make the changes; without it, only say what they would be")
     ap.add_argument("--only", default="", help="comma-separated paths, as the report lists them")
     ap.add_argument("--json", action="store_true", help="the report as JSON")
+    ap.add_argument("--yes", action="store_true",
+                    help="answer yes to the walls migration: write the party flags (needs --apply)")
     ap.add_argument("--split", action="store_true",
                     help="move your own text out of Garrick's instruction files, into the local file beside each")
     ap.add_argument("--today", help=argparse.SUPPRESS)
@@ -1562,19 +1612,32 @@ def main(argv=None):
             return split.main(root, p, args.apply, only, args.json)
         if not args.apply:
             p["then"] = [what for what, _ in next_steps(root, p)]
+            said, _, walls = walls_migration(root, False, apply_changes=False)
             if args.json:
                 shown = {k: v for k, v in p.items() if k not in ("files", "recorded")}
                 if shown.get("allowlist"):      # its files hold bytes, as p["files"] does
                     shown["allowlist"] = {k: v for k, v in shown["allowlist"].items() if k != "files"}
+                if walls is not None:
+                    shown["walls"] = walls
                 print(json.dumps(shown, indent=2))
             else:
                 print(report(p))
+                if said:
+                    print("\n" + said)
             return 0
         result = apply(root, p, only, args.today)
+        if only is None:
+            said, _, walls = walls_migration(root, args.yes, as_json=args.json)
+            if walls is not None:
+                result["walls"] = walls
+        else:
+            said = ""
         if args.json:
             print(json.dumps(result, indent=2))
         else:
             print(say_applied(p, result))
+            if said:
+                print("\n" + said)
         return 1 if result["problems"] or result["unstamped"] else 0
     except (UpdateError, install.InstallError) as exc:
         print(exc, file=sys.stderr)

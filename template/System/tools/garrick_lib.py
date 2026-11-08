@@ -879,7 +879,7 @@ def load_context(root: PathLike) -> dict:
     empty collections.
     """
     ctx = {"parties": {}, "zone_parties": {}, "zone_default": {}, "people": [], "aliases": {}, "zones": {}, "me": [], "tables": {},
-           "learned": []}
+           "learned": [], "pending": None}
     path = Path(root) / "System" / "context.md"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -910,6 +910,8 @@ def load_context(root: PathLike) -> dict:
         if addr.lower() not in ctx["me"]:
             ctx["me"].append(addr.lower())
 
+    # A Parties table with no Walled column and no Walls table declares nothing: every party reads as open.
+    has_flags = any(h.startswith("walled") for h in (_table_header(sections.get("parties", [])) or []))
     for row in _table(sections.get("parties", [])):
         tag = strip_tag(_col(row, "tag"))
         if not tag:
@@ -919,7 +921,7 @@ def load_context(root: PathLike) -> dict:
             "what": _col(row, "what"),
             "zone": _col(row, "zone"),
             "domains": split_domains(_col(row, "domain")),
-            "walled": _col(row, "walled").strip().strip("`*").strip().lower() != "no",     # only a plain `no` opens a party
+            "walled": _col(row, "walled").strip().strip("`*").strip().lower() != "no" and has_flags,   # only a plain `no` opens a party
             "flag": _col(row, "walled").strip().strip("`*").strip().lower(),
         }
 
@@ -958,7 +960,45 @@ def load_context(root: PathLike) -> dict:
     for key in ("zone_parties", "zone_default"):
         ctx[key] = {canon.get(z.casefold(), z): v for z, v in ctx[key].items()}
     ctx["zone_parties"] = {z: t for z, t in ctx["zone_parties"].items() if t}
+    ctx["pending"] = _pending_pairs(sections)
     return ctx
+
+
+def _pending_pairs(sections: Dict[str, List[str]]) -> Optional[set]:
+    """The pairs of the old Walls table while the update's flag migration has not run: the Parties table has no
+    Walled column and a Walls table is there. Until the user says yes to the migration the old rule stays in
+    force, so a workspace updated without an answer changes no verdict (migrate_walls.py). None otherwise: a
+    context with a Walled column, or with neither table, is read by its flags."""
+    header = _table_header(sections.get("parties", [])) or []
+    if "walls" not in sections or not header or any(h.startswith("walled") for h in header):
+        return None
+    pairs = set()
+    for row in _table(sections["walls"]):
+        cells = list(row.values())
+        a = strip_tag(row.get("between") or (cells[0] if cells else ""))
+        b = strip_tag(row.get("and") or (cells[1] if len(cells) > 1 else ""))
+        if a and b:
+            pairs.add(frozenset((a, b)))
+    return pairs
+
+
+def _self():
+    """This module's own functions as the old rule needs them, however the module was loaded."""
+    import types
+    return types.SimpleNamespace(always_asked=always_asked, _labels_of=_labels_of, parse_frontmatter=parse_frontmatter)
+
+
+def _old_rule():
+    """migrate_walls.py, beside this file: the one place the pairs rule lives. Loaded by path, so a caller that
+    imported this file from elsewhere (the status page, Ask) finds it too."""
+    mod = sys.modules.get("garrick_migrate_walls")
+    if mod is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("garrick_migrate_walls", str(Path(__file__).with_name("migrate_walls.py")))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["garrick_migrate_walls"] = mod
+        spec.loader.exec_module(mod)
+    return mod
 
 
 # ---------------------------------------------------------------------------
@@ -1236,12 +1276,16 @@ def _tagset(value) -> set:
 
 def is_walled(context: dict, tag: str) -> bool:
     """Is a party walled? A tag the Parties table lacks is, as is a row with no plain `no`."""
+    if context.get("pending") is not None:
+        return any(tag in pair for pair in context["pending"])
     return bool((context.get("parties", {}).get(tag) or {}).get("walled", True))
 
 
 def blocked(context: dict, scope, labels) -> set:
     """The walled tags in `labels` that `scope` lacks: what stops material
     labelled `labels` from going into a record whose parties are `scope`."""
+    if context.get("pending") is not None:
+        return _old_rule().legacy_blocked(context, scope, labels)
     held = _tagset(scope)
     return {t for t in _tagset(labels) if t != KNOWLEDGE and t not in held and is_walled(context, t)}
 
@@ -1292,6 +1336,8 @@ def decide(scope, labels, action: str, context: dict) -> str:
     """
     if action not in ACTIONS:
         raise ValueError("action is read, write or file, not %r" % (action,))
+    if context.get("pending") is not None:
+        return _old_rule().legacy_decide(scope, labels, action, context, _self())
     known = set(context.get("parties", {}))
     mine, theirs = _tagset(scope), _tagset(labels)
     if (scope is not None and mine - known - {KNOWLEDGE}) or (labels is not None and theirs - known - {KNOWLEDGE}):
@@ -1573,7 +1619,9 @@ def _labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         if full.suffix == ".md" and full.is_file() and _party_like_key(full):
             return None             # a page that carries a party key in any spelling is someone's, not published
         got = _labels_of(fm)
-        return None if got is None else frozenset(got or {KNOWLEDGE})
+        context = context if context is not None else load_context(root)
+        none = _old_rule().LEGACY_PUBLIC if context.get("pending") is not None else KNOWLEDGE
+        return None if got is None else frozenset(got or {none})
     if parts[:3] == ("Wikis", "Meetings", "wiki"):
         if full.suffix != ".md" or not full.is_file():
             return None
@@ -1609,6 +1657,9 @@ def _labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         project = root / "Zones" / parts[1] / parts[2]
         if not project.is_dir():
             return None
+        context = context if context is not None else load_context(root)
+        if context.get("pending") is not None:
+            return _old_rule().legacy_project_labels(root, _self(), parts, cache)
         hub = ("hub", str(project))
         if hub not in cache:
             fm = parse_frontmatter(project / (project.name + ".md"))

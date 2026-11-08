@@ -122,6 +122,10 @@ __all__ = [
     "labels",
     "meeting_labels",
     "wall_cases",
+    "REFUSALS",
+    "refusal_kind",
+    "record_refusals",
+    "refusal_counts",
     "mail_labels",
     "wall_roles",
     "run_wall_cases",
@@ -1307,6 +1311,79 @@ def decide(scope, labels, action: str, context: dict) -> str:
     if blocked(context, mine, parties):
         return "deny"
     return "confirm" if action == "file" and asked else "permit"
+
+
+# What each wall refusal leaves behind, with no content (#437): when, where, and what kind of finding.
+REFUSALS = ("System", "generated", "walls", "refusals.jsonl")
+REFUSAL_KINDS = ("link", "name", "wording", "path", "unlabelled", "unreadable")
+
+
+def refusal_kind(message: str) -> str:
+    m = (message or "").lower()
+    for kind, words in (("wording", ("repeats wording",)),
+                        ("unreadable", ("cannot be read", "cannot read", "cannot be checked", "cannot be placed", "nul bytes")),
+                        ("unlabelled", ("names no party", "no party to check", "has a party", "unfinished", "no party")),
+                        ("name", ("one of its people",)),
+                        ("path", ("writes the path", "a path that leads"))):
+        if any(w in m for w in words):
+            return kind
+    return "link"
+
+
+def record_refusals(root: PathLike, repo: PathLike, messages: Iterable[str]) -> None:
+    """Append one line per refused finding to System/generated/walls/refusals.jsonl: the time, the zone, the kind of
+    repository, the kind of finding and whether a wall was named. No path, token, party or text, so the record can
+    never carry what the refusal held back."""
+    top, root = Path(repo).resolve(), Path(root).resolve()
+    parts = top.relative_to(root).parts if root in top.parents or top == root else ()
+    if parts[:1] == ("Zones",) and len(parts) >= 2:
+        zone, kind = parts[1], ("zone" if len(parts) == 2 else "nested")
+    else:
+        zone, kind = (parts[1] if parts[:1] == ("Wikis",) and len(parts) > 1 else ""), ("wiki" if parts[:1] == ("Wikis",) else "nested")
+    at = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    lines = [json.dumps({"at": at, "zone": zone, "repo": kind, "kind": refusal_kind(m), "walled": "is walled and" in m},
+                        sort_keys=True) for m in messages]
+    try:
+        path = root.joinpath(*REFUSALS)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+    except OSError:
+        pass
+
+
+def refusal_counts(root: PathLike, now=None, days: int = 30) -> dict:
+    """The last `days` of refusals: {"kinds": {kind: n}, "days": [date, ...], "overridden": n}. A refusal is
+    overridden when its zone's repository took a commit within ten minutes after it (a `--no-verify` is not seen by
+    the hook, but the log is)."""
+    now = now or datetime.datetime.now().astimezone()
+    out = {"kinds": {}, "days": [], "overridden": 0}
+    try:
+        rows = [json.loads(l) for l in Path(root).joinpath(*REFUSALS).read_text(encoding="utf-8").splitlines() if l.strip()]
+    except (OSError, ValueError):
+        return out
+    seen = set()
+    for row in rows:
+        try:
+            at = datetime.datetime.fromisoformat(row["at"])
+        except (KeyError, ValueError):
+            continue
+        if now - at > datetime.timedelta(days=days):
+            continue
+        out["kinds"][row.get("kind", "link")] = out["kinds"].get(row.get("kind", "link"), 0) + 1
+        out["days"].append(at.date().isoformat())
+        folder = Path(root) / ("Wikis" if row.get("repo") == "wiki" else "Zones") / str(row.get("zone") or "")
+        if (row["at"], str(folder)) in seen:
+            continue                                # one refusal can leave several lines; it is overridden once
+        seen.add((row["at"], str(folder)))
+        try:
+            log = git(["log", "--since=%s" % at.isoformat(), "--until=%s" % (at + datetime.timedelta(minutes=10)).isoformat(),
+                       "--format=%H"], folder)
+        except (GitError, OSError):
+            continue
+        out["overridden"] += bool(log.strip())
+    out["days"] = sorted(set(out["days"]))
+    return out
 
 
 def wall_cases(text: str) -> Dict[str, List[List[str]]]:

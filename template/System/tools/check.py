@@ -153,6 +153,7 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     KNOWLEDGE,
     blocked,
+    record_refusals,
     is_walled,
     hats_of,
     decide,
@@ -9081,6 +9082,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         findings = run_path_checks(root, args.paths)
     else:
         findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
+    if args.staged and any(f.severity == ERROR for f in findings):
+        record_refusals(root, Path.cwd(), [f.message for f in findings if f.severity == ERROR])
     if args.staged and not (args.json or args.ear):
         text = report_staged(findings)
         if text:

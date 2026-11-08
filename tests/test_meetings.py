@@ -532,3 +532,131 @@ class CliTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+TRANSCRIPT = (
+    "Dana: our renewal floor is a figure we hold back from every supplier this year.\n"      # 1: acme alone
+    "Dana: the second warehouse opens in the spring after the audit is signed off.\n"        # 2
+    "Theo: we plan to enter the northern market with a partner chosen before autumn.\n"      # 3: birch alone
+    "Theo: our launch budget was approved by the board without any outside advice.\n"        # 4
+    "Both: we agree to share the freight lanes from the harbour on a trial basis.\n"         # 5: joint
+)
+
+
+class SplitAndExtractTest(unittest.TestCase):
+    """#448: a mixed conversation is cut in the inbox by label set; a filed record gives extracts."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve() / "ws"
+        fixtures.build_workspace(self.root)
+        self.inbox = self.root / "Wikis" / "Meetings" / "raw" / "inbox"
+        self.src = self.inbox / "call.txt"
+        self.src.write_text(TRANSCRIPT)
+        self.parts = ["acme:1-2", "birch:3-4", "acme,birch:5"]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_nothing_is_written_without_the_yes(self):
+        plan, wrote = ingest.split(self.root, self.src, self.parts)
+        self.assertFalse(wrote)
+        self.assertEqual(["call-acme-birch.txt", "call-acme.txt", "call-birch.txt"], sorted(p["name"] for p in plan))
+        self.assertEqual(["call.txt"], sorted(p.name for p in self.inbox.glob("call*")))
+        r = run_cli(self.root, "split", "--inbox", str(self.src), *sum((["--part", p] for p in self.parts), []))
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Nothing was written", r.stdout)
+        self.assertTrue(self.src.exists())
+
+    def test_the_yes_makes_three_files_three_pages_and_removes_the_original(self):
+        plan, wrote = ingest.split(self.root, self.src, self.parts, yes=True)
+        self.assertTrue(wrote)
+        self.assertFalse(self.src.exists())
+        got = {p.name: p.read_text() for p in self.inbox.glob("call-*")}
+        self.assertEqual({"call-acme.txt", "call-birch.txt", "call-acme-birch.txt"}, set(got))
+        self.assertIn("parties: [acme]\n", got["call-acme.txt"])
+        self.assertIn("parties: [acme, birch]\n", got["call-acme-birch.txt"])
+        self.assertIn("split-of: call\n", got["call-birch.txt"])
+        self.assertTrue(got["call-acme.txt"].endswith(TRANSCRIPT.splitlines(True)[0] + TRANSCRIPT.splitlines(True)[1]))
+        self.assertNotIn("Theo", got["call-acme.txt"])
+        self.assertNotIn("Dana", got["call-birch.txt"])
+        # each is landed and given a page of its own: the labels are the page's
+        sys.path.insert(0, str(REPO / "template" / "System" / "tools"))
+        import garrick_lib as lib
+        expect = {"call-acme": {"acme"}, "call-birch": {"birch"}, "call-acme-birch": {"acme", "birch"}}
+        for stem, tags in expect.items():
+            slug, dest = ingest.land(self.root, self.inbox / (stem + ".txt"), "2026-03-10", stem)
+            page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md")
+            fixtures.write(page, fixtures.meeting_page("Work", "[%s]" % ", ".join(sorted(tags)), stem)
+                           .replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
+            self.assertEqual(tags, set(lib.labels(self.root, dest.relative_to(self.root))))
+
+    def test_a_cut_that_leaves_a_line_out_or_doubles_one_is_refused(self):
+        for parts, why in ((["acme:1-2", "birch:3"], "belong to no cut"), (["acme:1-3", "birch:3-5"], "in two cuts"),
+                           (["acme:1-2", "acme:3-5"], "same parties"), (["acme:1-2", "ghost:3-5"], "not a tag"),
+                           (["acme:1-5"], "at least two"), (["acme:1-2", "birch:3-9"], "past the end")):
+            with self.assertRaisesRegex(ingest.Refusal, why):
+                ingest.split(self.root, self.src, parts, yes=True)
+        self.assertTrue(self.src.exists())
+        self.assertEqual([], [p.name for p in self.inbox.glob("call-*")])
+        plan, wrote = ingest.split(self.root, self.src, ["acme:1-2", "birch:3-4"], drop="5", yes=True)    # a named drop
+        self.assertTrue(wrote)
+
+    def test_a_run_with_nobody_to_answer_writes_nothing(self):
+        with mock.patch.dict(os.environ, {"GARRICK_HEADLESS": "1"}):
+            with self.assertRaisesRegex(ingest.Refusal, "nobody to ask"):
+                ingest.split(self.root, self.src, self.parts, yes=True)
+        self.assertTrue(self.src.exists())
+
+    def filed(self):
+        """The call filed as one record under a page of both parties."""
+        slug, dest = ingest.land(self.root, self.src, "2026-03-10", "call")
+        fixtures.write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md"),
+                       fixtures.meeting_page("Work", "[acme, birch]", "Call").replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
+        return slug, dest
+
+    def test_an_extract_leaves_the_original_byte_identical(self):
+        slug, dest = self.filed()
+        before = dest.read_bytes()
+        plan, wrote = ingest.extract(self.root, dest, "3-4", "birch")
+        self.assertFalse(wrote)
+        self.assertFalse((self.inbox / plan["name"]).exists())
+        plan, wrote = ingest.extract(self.root, dest, "3-4", "birch", yes=True)
+        self.assertTrue(wrote)
+        self.assertEqual(before, dest.read_bytes())
+        made = (self.inbox / plan["name"]).read_text()
+        self.assertIn("parties: [birch]\n", made)
+        self.assertIn("extract-of: %s\n" % slug, made)
+        self.assertIn("Theo: we plan", made)
+        self.assertNotIn("Dana", made)
+
+    def test_an_extract_is_never_wider_than_its_record(self):
+        slug, dest = self.filed()
+        fixtures.write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md"),
+                       fixtures.meeting_page("Work", "[acme]", "Call").replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
+        with self.assertRaisesRegex(ingest.Refusal, "never wider"):
+            ingest.extract(self.root, dest, "3-4", "birch", yes=True)
+        with self.assertRaisesRegex(ingest.Refusal, "not a filed record"):
+            ingest.extract(self.root, self.src, "1", "acme", yes=True)
+
+    def test_a_page_quoting_the_extract_is_not_refused_against_the_record(self):
+        """A birch project quoting a passage of the extract is not refused against the record it came from; a passage
+        only the record holds still is."""
+        slug, dest = self.filed()
+        plan, _ = ingest.extract(self.root, dest, "3-4", "birch", yes=True)
+        ex_slug, ex_dest = ingest.land(self.root, self.inbox / plan["name"], "2026-03-10", "birch part")
+        fixtures.write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (ex_slug + ".md"),
+                       fixtures.meeting_page("Work", "[birch]", "Birch part").replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % ex_slug))
+        note = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Notes.md"
+
+        def findings(text):
+            fixtures.write(note, text)
+            r = subprocess.run([sys.executable, str(REPO / "template" / "System" / "tools" / "check.py"), "--root", str(self.root),
+                                "--walls-only", "--json"], capture_output=True, text=True)
+            import json
+            return [f for f in json.loads(r.stdout)["findings"] if f["path"].endswith("Notes.md")]
+        text = "# Notes\n\nWe plan to enter the northern market with a partner chosen before autumn.\n"
+        self.assertEqual([], findings(text))
+        (self.root / "Wikis/Meetings/wiki/sources" / (ex_slug + ".md")).unlink()          # without the extract's page the record speaks
+        self.assertTrue(findings(text))
+        self.assertTrue(findings("# Notes\n\nWe agree to share the freight lanes from the harbour on a trial basis.\n"))

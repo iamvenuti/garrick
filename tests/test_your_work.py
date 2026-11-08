@@ -76,7 +76,7 @@ if "-p" in args:
 sys.exit(2)
 '''
 
-ONE_PARTY = CONTEXT.replace("| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | "
+ONE_PARTY = CONTEXT.replace("| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | "
                             "birchco.example, mail.birchco.example |\n", "")
 
 
@@ -380,7 +380,7 @@ class TestStartWithThisOne(Case):
         head = self.git("rev-parse", "HEAD")
         hook = self.base / "hooks" / "pre-commit"
         line = check.report_staged([check.Finding(check.ERROR, "walls", "Catalogue 2027/Catalogue 2027.md",
-                                                  "names Birch & Co (`birch`); a wall stands between acme and birch")])
+                                                  "names Birch & Co (`birch`); birch is walled and this project does not name it")])
         write(hook, "#!/bin/sh\n# Garrick wall check (a stand-in)\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line).chmod(0o755)
         self.git("config", "core.hooksPath", str(hook.parent))
         with self.assertRaises(pa.Refused) as said:

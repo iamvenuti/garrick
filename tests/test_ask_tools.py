@@ -543,11 +543,8 @@ class TestAHeldPartyOfAnotherZone(ToolCase):
         from fixtures import project_hub, thread_note
         ctx = self.root / "System" / "context.md"
         text = ctx.read_text(encoding="utf-8")
-        text = text.replace("| `acme` | `birch` | Competitors, and both are clients |\n",
-                            "| `acme` | `jo` | Own affairs vs client |\n| `birch` | `jo` | Own affairs vs client |\n")
-        text = text.replace("| `lumen` | `lumen-adv` | Two hats, one company |\n", "")
-        text = text.replace("| `birch` | birchco.example, mail.birchco.example |\n",
-                            "| `birch` | birchco.example, mail.birchco.example |\n| Jo Private | Own affairs | Personal | `jo` | |\n")
+        text = text.replace("| `birch` | yes | birchco.example, mail.birchco.example |\n",
+                            "| `birch` | yes | birchco.example, mail.birchco.example |\n| Jo Private | Own affairs | Personal | `jo` | yes | |\n")
         ctx.write_text(text, encoding="utf-8")
         scoped.write(self.root / "Zones" / "Personal" / "Home" / "Home.md", project_hub("Personal", "Home", "jo", ["Bills"]))
         scoped.write(self.root / "Zones" / "Personal" / "Home" / "Threads" / "Bills" / "Bills.md",
@@ -701,15 +698,10 @@ class TestAPlaceThatCannotBePlacedLooksAbsent(ToolCase):
             self.assertTrue(self.ask("propose", {"action": {"verb": verb, "zone": "Work", "project": "Harbour"}})[0].startswith("Refused"))
         self.assertFalse((self.state / "proposals.jsonl").exists())
 
-    def test_a_project_holding_a_walled_thread_is_a_missing_one(self):
+    def test_a_thread_adding_a_walled_party_is_placed_with_both_and_the_project_with_its_hub(self):
         scoped.write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Odd" / "Odd.md",
                      scoped.thread_note("Acme Review", "Odd", "birch", "oddfact"))
-        for place in ("Acme Review", "Acme Review/Odd"):
-            self.assertEqual(self.ask("thread_state", {"place": "Zzz"}), self.ask("thread_state", {"place": place}), place)
-        act = {"verb": "open", "zone": "Work", "project": "Acme Review", "thread": "Odd"}
-        a = self.ask("propose", {"action": act})
-        self.assertTrue(a[0].startswith("Refused: no project"))
-        self.assertFalse((self.state / "proposals.jsonl").exists())
+        self.assertNotIn("No such place", self.ask("thread_state", {"place": "Acme Review"})[0])
 
     def test_a_labelled_own_side_place_still_works(self):
         self.assertNotIn("No such place", self.ask("thread_state", {"place": "Acme Review/Pricing"})[0])

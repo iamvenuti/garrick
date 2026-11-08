@@ -63,6 +63,10 @@ def build(root: Path) -> Path:
     write(work / "Cedarwork" / "Threads" / "T" / "T.md", thread_note("Cedarwork", "T", "cedar"))
     write(work / "Cedarwork" / "Sources" / ".gitkeep")
     write(work / "Reed" / "Sources" / ".gitkeep")
+    # a project that names two walled parties on purpose: their material may meet there
+    write(work / "Both" / "Both.md", project_hub("Work", "Both", "[acme, birch]", ["T"]))
+    write(work / "Both" / "Threads" / "T" / "T.md", thread_note("Both", "T", "[acme, birch]"))
+    write(work / "Both" / "Threads" / "T" / "Notes.md", "# Notes\n")
     # a project of the Personal zone, which names `jo`: its files carry `jo` and the hub's open party
     home = root / "Zones" / "Personal"
     write(home / "Garden" / "Garden.md", project_hub("Personal", "Garden", "cedar", ["Beds"]))

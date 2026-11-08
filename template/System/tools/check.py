@@ -3945,7 +3945,7 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
             if hit:
                 out.append(Finding(ERROR, "walls", rel(ws, page),
                                    "`organisation:` joins this person to two walled parties, and a person page "
-                                   "carries identity alone; take the link out: %s and %s are both walled" % hit,
+                                   "carries identity alone; take the link out: %s is walled and this page does not name it" % hit[1:],
                                    "A person page links an entity page across a wall"))
                 continue
         # A link in the page's text draws a graph edge in Obsidian as
@@ -3960,8 +3960,8 @@ def organisation_walls(ws: Workspace, pages: List[Tuple[Path, str]]) -> List[Fin
             if hit:
                 out.append(Finding(ERROR, "walls", rel(ws, page),
                                    "a link in its text joins this person to two walled parties, and a person "
-                                   "page carries identity alone; take the link out: %s and %s are both walled"
-                                   % hit, "A person page links an entity page across a wall"))
+                                   "page carries identity alone; take the link out: %s is walled and this page does not name it"
+                                   % hit[1:], "A person page links an entity page across a wall"))
                 break
             if problem:
                 out.append(Finding(ERROR, "walls", rel(ws, page), problem,

@@ -127,10 +127,8 @@ class Walls(unittest.TestCase):
 
     def test_a_session_is_read_from_the_root_only_in_a_zone_with_no_wall_inside_too(self):
         context = self.root / "System" / "context.md"
-        wall = "| `acme` | `birch` |"
         text = context.read_text(encoding="utf-8")
-        line = next(l for l in text.splitlines() if l.startswith(wall))
-        context.write_text(text.replace(line + "\n", ""), encoding="utf-8")
+        context.write_text(text.replace("| `acme` | yes |", "| `acme` | no |").replace("| `birch` | yes |", "| `birch` | no |"), encoding="utf-8")
         self.session("own", self.bash("cat Threads/Pricing/Pricing.md"), "ownwombat finding.")
         self.assertEqual(self.extract_and_search("ownwombat"), [])        # no zone or project scope reads a session
         found = [h.path for h in recall.search("ownwombat", project=None, root=self.root, sessions=True)]

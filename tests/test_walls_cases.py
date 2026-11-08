@@ -302,6 +302,13 @@ class EnforcementPoints(unittest.TestCase):
             "e50": lambda: self.filed("Dis", ["acme"]),
             "e51": lambda: "permitted" if ask_scope.admits(self.ctx, {"acme"}, {lib.KNOWLEDGE}, self.lib) else "refused",
             "e52": self.knowledge_link,
+            "e53": lambda: self.check_note("Both", "T", "# N\n\nSee [[260310-acme-kickoff]] and [[260312-birch-kickoff]].\n"),
+            "e54": lambda: self.asked({"acme", "birch"}, self.place("Both", "T")),
+            "e55": lambda: self.filed("Both", ["acme", "birch"]),
+            "e56": lambda: "refused" if scaffold.wall_between(self.ctx, {"acme", "birch"}, {"acme", "birch"}) else "permitted",
+            "e57": lambda: "refused" if __import__("nurture").across_wall(
+                __import__("nurture").Ctx(self.root), "Zones/Work/Both/Threads/T/Notes.md",
+                "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md") else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),
             "e22": lambda: recall({"acme"}, {"birch"}),

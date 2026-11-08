@@ -267,10 +267,15 @@ class TestContext(CheckCase):
     def test_pass(self):
         self.assertClean("context")
 
-    def test_wall_names_unknown_tag(self):
+    def test_zone_names_unknown_party(self):
         ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("| `acme` | `birch` |", "| `acme` | `cedar` |"))
+        ctx.write_text(ctx.read_text().replace("| Work | Client work | | walled |", "| Work | Client work | `cedar` | walled |"))
         self.assertFinds("context", "error", "`cedar`")
+
+    def test_party_with_no_flag_warns(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("| `acme` | yes |", "| `acme` | |"))
+        self.assertFinds("context", "warning", "Walled")
 
     def test_missing_context(self):
         (self.root / "System" / "context.md").unlink()
@@ -534,10 +539,10 @@ class TestThreads(CheckCase):
         note.write_text(note.read_text().replace("### Outcome", "### Summary"))
         self.assertFinds("threads", "error", "Outcome")
 
-    def test_party_differs_from_project(self):
+    def test_a_thread_may_name_another_party_than_its_project(self):
         note = self.acme / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(note.read_text().replace("party: acme", "party: birch"))
-        self.assertFinds("threads", "warning", "differs")
+        self.assertClean("threads")
 
 
 class TestResume(CheckCase):
@@ -793,7 +798,7 @@ class TestWalls(CheckCase):
     def test_wikilink_across_wall(self):
         write(self.acme / "Threads" / "Pricing" / "Benchmarks.md",
               "Their pricing: see [[260312-birch-kickoff|the Birch call]].\n")
-        hit = self.assertFinds("walls", "error", "wall stands between acme and birch")[0]
+        hit = self.assertFinds("walls", "error", "birch is walled and this project does not name it")[0]
         self.assertEqual("Zones/Work/Acme Review/Threads/Pricing/Benchmarks.md", hit.path)
         self.assertIn("[[260312-birch-kickoff|the Birch call]]", hit.message)
 
@@ -1051,11 +1056,13 @@ class TestWikiQuestions(CheckCase):
     def test_every_check_can_be_said_aloud_in_a_group(self):
         self.assertEqual([], [c for c, _ in check.CHECKS if c not in check.EAR_GROUP])
 
-    def test_an_unknown_party_and_both_sides_of_a_wall_are_named(self):
+    def test_an_unknown_party_and_two_hats_are_named(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client.", "| Acme Corp | Second role | Work | `acme-board` | yes | |\n| Birch & Co | Client.", 1))
         write(self.asked / "260312 - cedar.md", wiki_question("zone: Work\nparties: [cedar]\n"))
-        write(self.asked / "260312 - both.md", wiki_question("zone: Work\nparties: [acme, birch]\n"))
+        write(self.asked / "260312 - both.md", wiki_question("zone: Work\nparties: [acme, acme-board]\n"))
         self.assertFinds("questions", "error", "party `cedar` is not a tag", "Wikis/Meetings/questions/260312 - cedar.md")
-        self.assertFinds("questions", "warning", "names both acme and birch, which a wall keeps apart, so no project "
+        self.assertFinds("questions", "warning", "names both acme and acme-board, one company in two hats, so no project "
                          "of either may use it; ask it once for each side", "Wikis/Meetings/questions/260312 - both.md")
 
     def test_a_knowledge_question_with_no_parties_passes(self):
@@ -1151,8 +1158,7 @@ class TestWikiQuestions(CheckCase):
     def test_a_project_may_not_link_a_raw_answer_across_a_wall(self):
         write(self.meetings / "raw" / "answers" / "260313 - birch-lease.md", answer_record("[birch]"))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260313 - birch-lease]].\n")
-        self.assertFinds("walls", "error", "links [[260313 - birch-lease]], a reply with birch; a wall stands "
-                         "between acme and birch", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
+        self.assertFinds("walls", "error", "links [[260313 - birch-lease]], a reply with birch; birch is walled and this project does not name it", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
 
     def test_wording_from_a_raw_answer_across_a_wall_is_refused(self):
         quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
@@ -1175,8 +1181,7 @@ class TestWikiQuestions(CheckCase):
         write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Work\nparties: [birch]\n",
                                                                      pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260312 - birch-lease]].\n")
-        self.assertFinds("walls", "error", "links [[260312 - birch-lease]], a question with birch; a wall stands "
-                         "between acme and birch", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
+        self.assertFinds("walls", "error", "links [[260312 - birch-lease]], a question with birch; birch is walled and this project does not name it", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
 
     def test_a_question_in_a_subfolder_or_named_apart_is_read_too(self):
         for name in ("answered/260312 - birch-lease.md", "_260312 - birch-lease.md"):
@@ -1212,8 +1217,8 @@ class TestWikiQuestions(CheckCase):
 
     def test_a_question_citing_a_meeting_across_its_wall_warns(self):
         write(self.asked / "260312 - floor.md", wiki_question(pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
-        self.assertFinds("questions", "warning", "cites 260312-birch-kickoff, a meeting with birch, but is written "
-                         "for acme, across a wall", "Wikis/Meetings/questions/260312 - floor.md")
+        self.assertFinds("questions", "warning", "cites 260312-birch-kickoff, a meeting with birch; birch is walled "
+                         "and this page does not name it", "Wikis/Meetings/questions/260312 - floor.md")
 
     def test_the_wiki_lint_counts_no_question_as_a_page(self):
         import wiki_lint  # noqa: E402

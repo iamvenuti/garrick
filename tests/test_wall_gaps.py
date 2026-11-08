@@ -345,7 +345,7 @@ class TestUnfinishedPages(QuoteCase):
         write(self.acme / "Deliverables" / "260320 - Note.md", "They lose the Bergen warehouse lease at the end of the spring quarter.\n")
         found = [f for f in self.walls() if "Note.md" in f.path]
         self.assertEqual(1, len(found), found)
-        self.assertIn("wall stands between", found[0].message)
+        self.assertIn("is walled and", found[0].message)
 
     def test_the_inbox_is_still_not_a_record(self):
         write(self.meetings / "raw" / "inbox" / "260319-call.txt",
@@ -427,7 +427,7 @@ class TestProjectFiles(QuoteCase):
         self.assertEqual(1, len(found), found)
         self.assertEqual(("error", "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"), (found[0].severity, found[0].path))
         self.assertIn("Zones/Work/Acme Review/Sources/Acme brief.md, in project Acme Review for acme", found[0].message)
-        self.assertIn("a wall stands between birch and acme", found[0].message)
+        self.assertIn("acme is walled and this project does not name it", found[0].message)
         self.assertEqual("A note in Birch Entry's Market Sizing thread quotes a file of Acme Corp", found[0].ear)
         self.assertNoLeak(found, *BRIEF_WORDS)
 
@@ -557,7 +557,7 @@ class TestMeetingsQuestions(QuoteCase):
                 found = check.run_checks(self.root, staged=self.work)
                 self.assertEqual([("error", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")],
                                  [(f.severity, f.path) for f in found], deleted)
-                self.assertIn("a wall stands between acme and birch", found[0].message)
+                self.assertIn("birch is walled and this project does not name it", found[0].message)
                 self.assertNoLeak(found, *BRIEF_WORDS)
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
@@ -752,9 +752,9 @@ class TestNearSidePersonPartyTag(GapCase):
         ctx_file = self.root / "System" / "context.md"
         ctx = ctx_file.read_text()
         ctx = ctx.replace(
-            "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |\n",
-            "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example, mail.birchco.example |\n"
-            "| Dana Rossi | Advisor | Work | `rossi` | |\n"
+            "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | birchco.example, mail.birchco.example |\n",
+            "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | birchco.example, mail.birchco.example |\n"
+            "| Dana Rossi | Advisor | Work | `rossi` | yes | |\n"
         )
         ctx = ctx.replace(
             "| `acme` | `birch` | Competitors, and both are clients |\n",
@@ -939,7 +939,7 @@ class TestProjectLinks(GapCase):
     path holds a name of the far party. Northwind is for Acme, Harbour for
     Birch, Lantern for Cobalt, which no wall keeps from either."""
 
-    TAIL = ", a note of birch; a wall stands between acme and birch"
+    TAIL = ", a note of birch; birch is walled and this project does not name it"
     WALLED = ("[[Harbour/Threads/Tender/Tender]]",                 # a wikilink by its path
               "[[Tender|the tender]]",                             # a bare name, a thread only Harbour has
               "[[Harbour]]",                                       # the hub
@@ -966,7 +966,7 @@ class TestProjectLinks(GapCase):
         ctx = self.root / "System" / "context.md"
         ctx.write_text(ctx.read_text().replace(
             "mail.birchco.example |\n",
-            "mail.birchco.example |\n| Cobalt Ltd | Client. Logistics audit | Work | `cobalt` | cobalt.example |\n", 1))
+            "mail.birchco.example |\n| Cobalt Ltd | Client. Logistics audit | Work | `cobalt` | no | cobalt.example |\n", 1))
         for name, party, thread in (("Northwind", "acme", "Freight"), ("Harbour", "birch", "Tender"),
                                     ("Lantern", "cobalt", "Survey")):
             self.project(name, party, thread)
@@ -1208,7 +1208,7 @@ class TestFormsRead(GapCase):
     a link or a whole code span. Harbour is Birch & Co's, in a folder that does
     not name its party; Northwind is Acme's, and walled from it."""
 
-    TAIL = ", a note of birch; a wall stands between acme and birch"
+    TAIL = ", a note of birch; birch is walled and this project does not name it"
     def setUp(self):
         GapCase.setUp(self)
         TestProjectLinks.build(self)

@@ -277,7 +277,7 @@ class CommandsTest(unittest.TestCase):
 
     def test_the_party_command_takes_the_options_the_route_passes(self):
         source = SCAFFOLD.read_text(encoding="utf-8")
-        for option in ('"--name"', '"--zone"', '"--what"', '"--also"', '"--walled-from"'):
+        for option in ('"--name"', '"--zone"', '"--what"', '"--also"', '"--walled"', '"--open"'):
             self.assertIn(option, source, option)
         self.assertIn("for each in (y, p, t, r, mv):", source)    # party takes --check too, as move does
 

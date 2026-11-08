@@ -663,7 +663,7 @@ class TestPartyWhoIsAPerson(PersonPartyCase):
         self.assertEqual(1, len(found), found)
         self.assertEqual("Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md", found[0].path)
         self.assertIn("names Rowan Keeler, or one of its people", found[0].message)
-        self.assertIn("wall stands between birch and keeler", found[0].message)
+        self.assertIn("keeler is walled and this project does not name it", found[0].message)
 
     def test_an_unrelated_near_side_name_holding_the_word_clears_nothing(self):
         """The containing name has to be a form of the walled party itself. An

@@ -76,7 +76,7 @@ class TestParty(ManageCase):
         before = self.context()
         r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work", "--check")
         self.assertEqual(0, r.returncode, r.stderr)
-        self.assertIn("Cobalt Freight is not a party yet, and the tag would be `cobalt`, in Work.", r.stdout)
+        self.assertIn("Cobalt Freight is not a party yet, and the tag would be `cobalt`, in Work, walled.", r.stdout)
         self.assertEqual(before, self.context())
         self.assertEqual("", self.root_git("status", "--porcelain").stdout)
 
@@ -94,8 +94,8 @@ class TestParty(ManageCase):
         r = self.scaffold("--today", "2027-01-01", "party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("Added Cobalt Freight to the Parties table in System/context.md, with the tag `cobalt`, "
-                      "in Work.", r.stdout)
-        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |  | 2027-01-01, user |", self.context())
+                      "in Work, walled", r.stdout)
+        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` | yes |  | 2027-01-01, user |", self.context())
         # The rows typed by hand are left exactly as they were; only the header gains the column.
         self.assertIn("| Domains | Learned |", self.context())
         self.assertNotIn("|  |  |\n", self.context())
@@ -131,28 +131,26 @@ class TestParty(ManageCase):
         r = self.scaffold("party", "--name", "Cobalt Freight", "--check")
         self.assertIn("with the project Cobalt Review.", r.stdout)
 
-    def test_a_second_capacity_gets_the_wider_tag_and_the_wall(self):
+    def test_a_second_capacity_gets_the_wider_tag_and_both_stay_walled(self):
         self.assertEqual(0, self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work",
                                           "--what", "Supplier").returncode)
-        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Personal", "--what", "Advisory client",
-                          "--also", "--walled-from", "cobalt", "--why", "Two capacities, two confidences")
+        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Personal", "--what", "Advisory client", "--also")
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("with the tag `cobalt-freight`, in Personal", r.stdout)
-        self.assertIn("Added a wall between `cobalt-freight` and `cobalt`", r.stdout)
-        self.assertIn("| `cobalt-freight` | `cobalt` | Two capacities, two confidences |", self.context())
-        # The check that would otherwise warn about the two: one name, two tags, a wall.
+        self.assertIn("both stay walled", r.stdout)
+        self.assertIn("`cobalt-freight` | yes |", self.context())
         found = json.loads(self.run_tool("check.py", "--json").stdout)
-        self.assertEqual([], [f for f in found["findings"] if "no wall between them" in f.get("message", "")],
-                         found)
+        self.assertEqual([], [f for f in found["findings"] if "both hats stay walled" in f.get("message", "")], found)
 
-    def test_a_second_capacity_with_no_wall_says_what_the_check_will_warn(self):
+    def test_a_second_capacity_cannot_be_opened(self):
         self.assertEqual(0, self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work",
                                           "--what", "Supplier").returncode)
+        before = self.context()
         r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Personal", "--what", "Advisory client",
-                          "--also")
-        self.assertEqual(0, r.returncode, r.stderr)
-        self.assertIn("with no wall between them, which the workspace check warns about until one is added",
-                      r.stdout)
+                          "--also", "--open")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("both stay walled", r.stderr)
+        self.assertEqual(before, self.context())
 
     def test_two_parties_of_one_name_are_a_question_and_nothing_is_written(self):
         """Never resolved silently: which capacity a request means is the user's."""
@@ -177,8 +175,8 @@ class TestParty(ManageCase):
             (["--name", "4Birch", "--zone", "Work", "--check"], 'No tag can be made from "4Birch"'),
             (["--name", "Cobalt Freight", "--zone", "Work", "--also"],
              "is not a party yet, so there is no first capacity for --also to stand beside"),
-            (["--name", "Cobalt Freight", "--zone", "Work", "--walled-from", "dune"],
-             "`dune` is not a party tag in System/context.md"),
+            (["--name", "Cobalt Freight", "--zone", "Work", "--walled", "--open"],
+             "not allowed with argument"),
         ):
             before = self.context()
             r = self.scaffold("party", *extra)
@@ -502,7 +500,8 @@ class TestMove(ManageCase):
         note.write_text(re.sub(r"(?m)^party: .*$", "party: " + value, text, count=1))
 
     def cobalt(self):
-        r = self.scaffold("--today", "2027-01-01", "party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
+        r = self.scaffold("--today", "2027-01-01", "party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier",
+                          "--open")
         self.assertEqual(0, r.returncode, r.stderr)
 
     def test_a_party_list_with_no_wall_moves(self):

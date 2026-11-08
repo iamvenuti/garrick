@@ -133,11 +133,11 @@ def walled_in(ctx: dict, tags: Iterable[str], lib_) -> set:
     return {t for t in tags if lib_.is_walled(ctx, lib_.strip_tag(t))}
 
 
-def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_) -> bool:
-    """Do two sets of parties hold different walled parties, each at least one? Material of one is then
-    not for a process that holds the other."""
+def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_, ws: Optional[Path] = None) -> bool:
+    """Would a process holding `those` meet `these` (what a request names) with more than one walled party
+    between them, that no project names together? Naming them together is the yes."""
     a, b = walled_in(ctx, these, lib_), walled_in(ctx, those, lib_)
-    return bool(a and b and a != b)
+    return bool(a and b and len(a | b) > 1 and (ws is None or not lib_.named_together(ws, ctx, a | b)))
 
 
 # ---------------------------------------------------------------- the names in a request
@@ -967,7 +967,7 @@ def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX
         # The scope is what the session holds. Only when it holds nothing at all may a find that names its
         # own place (`start`: a place's labels, a zone's parties) begin its group with the first record in it.
         scope = set(group)
-        if not scope and nothing_held and parties and (
+        if not scope and nothing_held and parties and len(walled_in(ctx, parties, lib_)) <= 1 and (
                 (start is not None and parties <= set(start)) or r.get("scoped")):
             scope = set(parties)
         if lib_.decide(scope, labels, "read", ctx) != "permit":

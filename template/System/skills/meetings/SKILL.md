@@ -858,7 +858,7 @@ A run with nobody to answer, such as a scheduled job, never writes.
   once, as pasted. A landed file is moved once, by `ingest.py land` or
   `intake.py file-conversation`, and never opened for writing again. A
   correction goes in the summary, never the source.
-- **It never decides a wall for the user.** It only checks the Walls table
+- **It never decides a wall for the user.** It only checks the Walled column
   and says that something was held back, never what.
 - **`prep` writes nothing unless asked.** Asked to save the brief, it
   writes that one file, in the project's `Deliverables/`, and commits it in

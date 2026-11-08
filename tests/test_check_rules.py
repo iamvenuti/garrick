@@ -107,21 +107,19 @@ class TestInstructionFilesPresent(CheckCase):
 
 
 class TestContextNames(CheckCase):
-    def add_row(self, wall: bool):
+    def add_row(self, walled: bool):
         ctx = self.root / "System" / "context.md"
         text = ctx.read_text().replace(
-            "| Birch & Co | Client.", "| Acme Corp | Advisory to Acme's board, a second role | Work | `acme-board` | |\n"
-                                    "| Birch & Co | Client.")
-        if wall:
-            text = text.replace("| `acme` | `birch` |", "| `acme` | `acme-board` | Two roles |\n| `acme` | `birch` |")
+            "| Birch & Co | Client.", "| Acme Corp | Advisory to Acme's board, a second role | Work | `acme-board` | %s | |\n"
+                                    "| Birch & Co | Client." % ("yes" if walled else "no"))
         ctx.write_text(text)
 
-    def test_shared_name_without_a_wall(self):
-        self.add_row(wall=False)
-        self.assertFinds("context", "warning", "no wall between them")
+    def test_shared_name_with_an_open_hat(self):
+        self.add_row(walled=False)
+        self.assertFinds("context", "warning", "both hats stay walled")
 
-    def test_shared_name_with_a_wall(self):
-        self.add_row(wall=True)
+    def test_shared_name_with_both_hats_walled(self):
+        self.add_row(walled=True)
         self.assertClean("context")
 
     def test_no_aliases_table(self):
@@ -742,9 +740,15 @@ class TestMeetingWalls(CheckCase):
         page.write_text(page.read_text().replace("party: acme", "party: none"))
         self.assertClean("meetings")
 
-    def test_both_sides_of_a_wall(self):
+    def test_two_walled_parties_on_a_page_are_allowed(self):
         write(self.meetings / "wiki" / "sources" / "260315-panel.md", meeting_page(parties="[acme, birch]"))
-        self.assertFinds("meetings", "warning", "both acme and birch")
+        self.assertClean("meetings")
+
+    def test_both_hats_of_a_company(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client.", "| Acme Corp | Second role | Work | `acme-board` | yes | |\n| Birch & Co | Client."))
+        write(self.meetings / "wiki" / "sources" / "260315-panel.md", meeting_page(parties="[acme, acme-board]"))
+        self.assertFinds("meetings", "warning", "one company in two hats")
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")

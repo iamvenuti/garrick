@@ -34,7 +34,7 @@ TOOLS = REPO / "template" / "System" / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-from garrick_lib import load_context, parse_frontmatter, walled  # noqa: E402
+from garrick_lib import load_context, parse_frontmatter, blocked  # noqa: E402
 
 ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
 REPOS = (".", "Wikis", "Zones/Work", "Zones/Personal")
@@ -246,7 +246,7 @@ class DemoTest(unittest.TestCase):
                   if "cobalt" in parse_frontmatter(p).get("parties", [])}
         self.assertEqual(set(cobalt), {ACME_SIDE, BIRCH_SIDE})
         passed = {slug for slug, fm in cobalt.items()
-                  if fm.get("zone") == "Work" and not any(walled(ctx, "birch", t) for t in fm["parties"])}
+                  if fm.get("zone") == "Work" and not blocked(ctx, {"birch"}, fm["parties"])}
         self.assertEqual(passed, {BIRCH_SIDE})
 
     def test_no_birch_file_uses_the_acme_call(self):

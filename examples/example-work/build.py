@@ -465,7 +465,7 @@ def add_rows(root, data):
     lines = path.read_text(encoding="utf-8").split("\n")
     party = data["party"]
     wanted = {"Parties": [{"party": party["name"], "what it is": party["what"], "zone": data["zone"],
-                           "tag": "`%s`" % party["tag"], "domains": ", ".join(party.get("domains", []))}],
+                           "tag": "`%s`" % party["tag"], "walled": "no" if party.get("walled") is False else "yes", "domains": ", ".join(party.get("domains", []))}],
               "People": [{"name": p["name"], "party": "`%s`" % party["tag"], "role": p["role"]}
                          for p in data["people"]]}
     for heading, rows in wanted.items():

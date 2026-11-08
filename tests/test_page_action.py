@@ -1449,38 +1449,13 @@ class TestJournal(ActionCase):
         self.assertEqual(("Work: added to Inbox, Book the room", ""), self.last_commit())
 
 
-STAND_IN_PARTY = r"""#!/usr/bin/env python3
-# A stand-in for scaffold.py's `party --tag T --walled | --open [--yes]`: the contract the Parties tab relies on.
-import re, sys
-args = sys.argv[1:]
-root = args[args.index("--root") + 1]
-rest = [a for a in args if a not in ("--root", root)]
-tag, flag, yes = rest[rest.index("--tag") + 1], "walled" if "--walled" in rest else "open", "--yes" in rest
-path = root + "/System/context.md"
-text = open(path).read()
-m = re.search(r"^(\|[^\n]*\| `%s` \| )(yes|no)( \|[^\n]*)$" % re.escape(tag), text, re.M)
-if not m:
-    print("No party has the tag `%s`." % tag, file=sys.stderr)
-    sys.exit(1)
-now = "walled" if m.group(2) == "yes" else "open"
-if now == flag:
-    print("`%s` is %s already." % (tag, flag))
-elif flag == "open" and not yes:
-    print("Making `%s` open releases 3 files. Run it again with --yes to write." % tag)
-else:
-    open(path, "w").write(text[:m.start(2)] + ("yes" if flag == "walled" else "no") + text[m.end(2):])
-    print("`%s` is %s now." % (tag, flag))
-    if flag == "walled":
-        print("2 files are in violation: Zones/Work/Birch Entry/Notes.md")
-"""
-
-
 class TestPartyFlag(ActionCase):
-    """The Parties tab's Flip (#447): scaffold.py's command, then the context committed in the workspace's own repository."""
+    """The Parties tab's Flip (#447): scaffold.py's real flip command, then the context committed in the workspace's own repository."""
 
     def setUp(self):
         super().setUp()
-        (self.root / "System" / "tools" / "scaffold.py").write_text(STAND_IN_PARTY)
+        for tool in ("check.py", "nurture.py"):         # the flip's workspace-wide check
+            shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
         git(self.root, "init", "-q")
         git(self.root, "config", "user.name", "Sam Rivera")
         git(self.root, "config", "user.email", "sam@example.com")
@@ -1497,7 +1472,7 @@ class TestPartyFlag(ActionCase):
         before = self.context.read_bytes()
         out = self.act(verb="party-flag", tag="acme", flag="open")
         self.assertTrue(out["ask"])
-        self.assertIn("releases 3 files", out["say"])
+        self.assertRegex(out["say"], r"releases \d+ files")
         self.assertEqual(before, self.context.read_bytes())
         self.assertEqual(("start", ""), self.head())
         out = self.act(verb="party-flag", tag="acme", flag="open", yes=True)
@@ -1507,19 +1482,21 @@ class TestPartyFlag(ActionCase):
 
     def test_open_to_walled_writes_at_once_and_says_what_is_now_in_violation(self):
         self.act(verb="party-flag", tag="birch", flag="open", yes=True)
+        (self.work / "Acme Review" / "Notes.md").write_text("# Notes\n\nSee [[260312-birch-kickoff]].\n")
         out = self.act(verb="party-flag", tag="birch", flag="walled")
         self.assertTrue(out["written"])
-        self.assertIn("2 files are in violation", out["say"])
+        self.assertIn("now in violation", out["say"])
+        self.assertIn("Acme Review/Notes.md", out["say"])
         self.assertIn("| `birch` | yes |", self.context.read_text())
         self.assertEqual(("Party birch: walled", ""), self.head())
 
     def test_a_flag_already_set_changes_nothing(self):
         out = self.act(verb="party-flag", tag="acme", flag="walled")
-        self.assertEqual((False, False), (out["written"], out["ask"] and out["written"]))
+        self.assertEqual((False, False), (out["written"], out["ask"]))
         self.assertEqual(("start", ""), self.head())
 
     def test_the_commands_refusal_is_the_pages(self):
-        with self.assertRaisesRegex(pa.Refused, "^No party has the tag `ghost`\\.$"):
+        with self.assertRaisesRegex(pa.Refused, "^ghost is not a party tag in System/context.md"):
             self.act(verb="party-flag", tag="ghost", flag="open")
 
     def test_the_request_is_closed(self):

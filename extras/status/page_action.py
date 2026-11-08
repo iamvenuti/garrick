@@ -1915,7 +1915,7 @@ def party_flag(ws: Path, req: dict):
         except OSError:
             after = b""
         if after == before:
-            return {"say": said_all(said), "ask": not req.get("yes") and bool(said), "written": False}
+            return {"say": said_all(said), "ask": not req.get("yes") and "--yes" in said, "written": False}
         code, why = committing(ws, "System/context.md", "Party %s: %s" % (tag, flag))
         if code != 0:
             context.write_bytes(before)

@@ -3,8 +3,7 @@ documents or writes draws no warning the workspace cannot act on.
 
     python3 -m unittest discover -s tests -p test_check_conventions.py
 
-A thread may carry a party its hub does not, unless a wall stands between
-them; a Knowledge lint report is the knowledge skill's own output; a Resume
+A thread may carry a party its hub does not; a Knowledge lint report is the knowledge skill's own output; a Resume
 here path may lead into another project of the same zone; and a thread note
 made by scaffold.py passes the parent-links rule as it is made.
 """
@@ -37,9 +36,9 @@ nurture = importlib.util.module_from_spec(_spec)
 sys.modules[_spec.name] = nurture
 _spec.loader.exec_module(nurture)
 
-# A third invented party, with no wall to Acme or Birch: the organisers of a
+# A third invented party, open: the organisers of a
 # trade fair, whose confidence one thread of a project holds.
-CEDAR_ROW = "| Cedar Fairs | Organisers of an invented trade fair | Work | `cedar` | |\n"
+CEDAR_ROW = "| Cedar Fairs | Organisers of an invented trade fair | Work | `cedar` | no | |\n"
 
 
 class Case(unittest.TestCase):
@@ -72,19 +71,13 @@ class TestThreadParty(Case):
         self.party("cedar")
         self.assertEqual([], [f.message for f in self.findings("threads")])
 
-    def test_a_party_across_a_wall_still_warns(self):
+    def test_a_thread_adds_a_walled_party_without_a_warning(self):
         self.party("[acme, birch]")
-        hits = [f for f in self.findings("threads") if "differs from the project's" in f.message]
-        self.assertEqual(1, len(hits))
-        self.assertEqual("warning", hits[0].severity)
+        self.assertEqual([], [f.message for f in self.findings("threads")])
 
-    def test_a_thread_wholly_across_the_wall_still_warns(self):
+    def test_a_thread_of_another_walled_party_alone_passes(self):
         self.party("birch")
-        self.assertTrue([f for f in self.findings("threads") if "differs from the project's" in f.message])
-
-    def test_an_unwalled_party_beside_a_walled_one_still_warns(self):
-        self.party("[birch, cedar]")
-        self.assertTrue([f for f in self.findings("threads") if "differs from the project's" in f.message])
+        self.assertEqual([], [f.message for f in self.findings("threads")])
 
 
 class TestNurtureThreadParty(Case):
@@ -100,12 +93,9 @@ class TestNurtureThreadParty(Case):
         self.pricing.write_text(self.pricing.read_text().replace("party: acme", "party: [acme, cedar]"))
         self.assertEqual([], [(i.kind, i.question, i.proposal) for i in self.items()])
 
-    def test_a_walled_thread_party_is_a_wall_with_no_proposal(self):
+    def test_a_walled_thread_party_is_not_asked_about_either(self):
         self.pricing.write_text(self.pricing.read_text().replace("party: acme", "party: [acme, birch]"))
-        items = self.items()
-        self.assertEqual(["wall"], [i.kind for i in items])
-        self.assertEqual("", items[0].proposal)
-        self.assertEqual("", items[0].message)       # the wall is named, the material never repeated
+        self.assertEqual([], [(i.kind, i.question, i.proposal) for i in self.items()])
 
     def test_a_finding_handed_in_proposes_no_party(self):
         # A finding from an older check, or one stored before this one: still
@@ -119,75 +109,6 @@ class TestNurtureThreadParty(Case):
 
 
 BRIEF = "The board plans to close the northern plant by the end of the third quarter and move the pump line south.\n"
-
-
-class TestThreadsWalledFromEachOther(Case):
-    """A project for cedar with one thread for acme and one for birch, walled
-    from each other and from neither the hub: the threads check says so, and
-    wording carried from one thread's notes into the other's is refused, by
-    the full check and by the commit check alike."""
-
-    def setUp(self):
-        super().setUp()
-        self.fair = self.work / "Trade Fair"
-        write(self.fair / "Trade Fair.md", project_hub("Work", "Trade Fair", "cedar", ["Stand A", "Stand B", "Stand C"]))
-        write(self.fair / "Threads" / "Stand A" / "Stand A.md", thread_note("Trade Fair", "Stand A", "acme"))
-        write(self.fair / "Threads" / "Stand B" / "Stand B.md", thread_note("Trade Fair", "Stand B", "birch"))
-        write(self.fair / "Threads" / "Stand C" / "Stand C.md", thread_note("Trade Fair", "Stand C", "cedar"))
-        write(self.fair / "Threads" / "Stand B" / "Brief.md", '---\nparent: "[[Stand B]]"\n---\n\n' + BRIEF)
-        self.notes = self.fair / "Threads" / "Stand A" / "Notes.md"
-
-    def quotes(self, found):
-        return [f for f in found if f.check == "walls" and f.path.endswith("Stand A/Notes.md")
-                and "repeats wording from" in f.message]
-
-    def test_the_threads_check_names_the_wall(self):
-        hits = sorted((f.path, f.message) for f in self.findings("threads") if "in the same project" in f.message)
-        self.assertEqual(["Zones/Work/Trade Fair/Threads/Stand A/Stand A.md",
-                          "Zones/Work/Trade Fair/Threads/Stand B/Stand B.md"], [path for path, _ in hits])
-        self.assertIn("walled from thread Stand B's", hits[0][1])
-        self.assertIn("walled from thread Stand A's", hits[1][1])
-        for _, message in hits:
-            self.assertIn("a wall stands between acme and birch", message)
-
-    def test_wording_copied_between_the_threads_is_refused(self):
-        write(self.notes, '---\nparent: "[[Stand A]]"\n---\n\n' + BRIEF)
-        hits = self.quotes(check.run_checks(self.root))
-        self.assertEqual(1, len(hits))
-        self.assertEqual("error", hits[0].severity)
-        self.assertIn("Stand B/Brief.md", hits[0].message)
-
-    def test_the_commit_check_refuses_it_too(self):
-        if not HAVE_GIT:
-            self.skipTest("git is not installed")
-        shutil.rmtree(self.work / ".git")
-        git(self.work, "init", "-q")
-        commit_all(self.work, "start")
-        write(self.notes, '---\nparent: "[[Stand A]]"\n---\n\n' + BRIEF)
-        git(self.work, "add", "-A")
-        hits = self.quotes(check.run_checks(self.root, walls_only=True, staged=self.work))
-        self.assertEqual(["error"], [f.severity for f in hits])
-
-    def test_wording_shared_with_an_unwalled_thread_of_the_project_is_not_refused(self):
-        write(self.fair / "Threads" / "Stand C" / "Notes.md", '---\nparent: "[[Stand C]]"\n---\n\n' + BRIEF)
-        write(self.fair / "Threads" / "Stand B" / "Brief.md", '---\nparent: "[[Stand B]]"\n---\n\nNothing here.\n')
-        write(self.notes, '---\nparent: "[[Stand A]]"\n---\n\n' + BRIEF)
-        self.assertEqual([], self.quotes(check.run_checks(self.root)))
-
-    def test_nurture_names_it_as_a_wall(self):
-        ctx = nurture.Ctx(self.root)
-        items = [nurture.sort_item(ctx, i) for i in nurture.from_check(ctx) if i.check == "threads"]
-        self.assertEqual([("wall", "acme and birch", "")] * 2, [(i.kind, i.wall, i.message) for i in items])
-
-
-class TestThreadHoldingBothSides(Case):
-    def test_a_thread_naming_both_sides_of_a_wall_warns_under_any_hub(self):
-        fair = self.work / "Trade Fair"
-        write(fair / "Trade Fair.md", project_hub("Work", "Trade Fair", "cedar", ["Stand"]))
-        write(fair / "Threads" / "Stand" / "Stand.md", thread_note("Trade Fair", "Stand", "[acme, birch]"))
-        hits = [f for f in self.findings("threads") if f.path.endswith("Stand/Stand.md")]
-        self.assertEqual(1, len(hits))
-        self.assertIn("holds both sides of a wall; a wall stands between acme and birch", hits[0].message)
 
 
 class TestKnowledgeLintReport(Case):

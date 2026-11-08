@@ -58,8 +58,8 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
   - a conversation (a mail exchange with people, notes of a call) is filed in Meetings, with its zone and parties;
   - something to read (a newsletter, an article, a report) is filed in Knowledge, with no parties. If it comes from a party's domain, ask before treating it as published;
   - material for a project (a client's document, a contract, a data file) goes into that project's `Sources/`. If it came by mail, the mail is filed in Meetings as a conversation too, and only the attachment goes to the project. A mail the Meetings wiki keeps out goes whole into a project's `Sources/` only when the user says it is material, not a conversation.
-- **Parties come from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and a plus tag (`you+acme@`) is a strong hint. Personal webmail never names anyone, and neither do your own addresses (listed under Me in `System/context.md`): they carry what you forward, and the people inside the forward are the ones who count. When the addresses do not settle it, or put both sides of a wall on one mail, ask.
-- **Check the wall before anything goes into a project.** The project's party must not be walled from the parties the material came from. If it is, stop, and say only the sentence under *Zones and walls* in `System/rules.md`, word for word.
+- **Parties come from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and a plus tag (`you+acme@`) is a strong hint. Personal webmail never names anyone, and neither do your own addresses (listed under Me in `System/context.md`): they carry what you forward, and the people inside the forward are the ones who count. When the addresses do not settle it, or put two walled parties on one mail, ask.
+- **Check the wall before anything goes into a project.** The project must name every walled party the material came from. If it does not, stop, and say only the sentence under *Zones and walls* in `System/rules.md`, word for word.
 - **Unsure of the kind, the zone, a party or the project: ask**, in one short line. Never guess across a wall.
 - **Code moves, parses and lists; it never chooses where a thing goes.**
 
@@ -140,9 +140,9 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
    published, or Cobalt writing to you?"
 
 6. **For project material, the project.** The candidates are the projects in
-   that zone whose hub `party` is one of the item's parties. One: use it and
+   that zone whose hub names (`party`, one tag or a list) one of the item's parties. One: use it and
    say its name. Several, or none: ask. "Acme Review or Supplier Audit?"
-   Never offer a project whose party is walled from the item's parties, and
+   Never offer a project that does not name a walled party of the item, and
    never one in another zone.
 
 7. **File it.**
@@ -181,7 +181,7 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
      ```
      It saves the attachment into the project's `Sources/`; the raw record
      keeps its own copy. It refuses a mail with no finished page, a project
-     in another zone, and a project walled from the mail's parties.
+     in another zone, and a project that does not name a walled party of the mail.
    - **Material dropped as a file**:
      ```sh
      python3 System/skills/intake/intake.py file-to-project --file "Zones/<Zone>/Inbox/<file>" --project "Zones/<Zone>/<Project>" --parties <tag>
@@ -227,6 +227,18 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 10. **Next item.** When all are done, one summary.
 
+## A mixed conversation
+
+A transcript whose parties are two walled ones is a `confirm`, and a yes is
+not the end of it: the transcript is cut in the inbox, before it is a record,
+by label set. Hand it to the `meetings` skill's *A conversation that carries
+two walled parties, and extracts*: it proposes a file for each party alone
+and one for what belongs to both, with the cut points, and writes nothing
+until the user says yes. Speaker and timestamp alone never decide which
+party a passage belongs to; you propose, the user decides. Then each file is
+filed as its own conversation. Do not file the whole call under one page of
+both parties unless the user asks for exactly that.
+
 ## Replies
 
 Spoken, three sentences at most, the answer first:
@@ -234,7 +246,7 @@ Spoken, three sentences at most, the answer first:
 "Five waiting: Theo's call and four mails. Filed the call with Theo: the
 board said yes to March, and you owe him the draft by Friday the 9th. The
 newsletter went to the library, Owen's quotes are in Acme Review, and
-Marta's mail copies both Acme and Birch, who are walled: Acme, Birch, or
+Marta's mail copies both Acme and Birch, two walled parties: Acme, Birch, or
 both?"
 
 Add a sentence only for what the user must know: a question, a wall that

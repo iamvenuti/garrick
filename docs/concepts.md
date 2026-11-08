@@ -88,37 +88,39 @@ What a catch-up raises first, says in a line, and leaves out, in plain words: "a
 
 ## Parties and walls
 
+> Every party you deal with is either **walled** or **open**. A walled party's material goes only into work that names that party. An open party's material may go anywhere. A file belongs to the parties of its zone and of the note above it, the thread's or the project's. Nothing else to declare: a project is walled when one of its parties is, a conversation with two walled parties waits for you to say where it goes, and a record with no label is used nowhere.
+
 ### Party
 
-An organisation or person whose confidences you hold. Each has a tag, one lowercase word, which a project or thread carries in `party:` and a meeting page in `parties:`. The tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.
+An organisation or person whose confidences you hold. Each has a tag, one lowercase word, which a project or thread carries in `party:` (one tag or a list) and a meeting page in `parties:`. A project without one cannot draw on the Meetings wiki until it has one.
 
 ### Wall
 
-A declared pair of parties whose material must not meet. With a wall between them, nothing from a meeting with one goes into the other's projects: not quoted, not paraphrased, not summarised. A wall exists only when you list the pair in the Walls table of `System/context.md`; separate folders and different tags do not make one. The assistant is asked to read the table before it uses a meeting, and the [wall check](#the-wall-check) refuses some crossings at commit. See [One memory, walled use](principles.md#one-memory-walled-use).
+A walled party's flag. A walled party's material goes only into work that names that party; an open party's goes anywhere. A zone can name one party, and everything in the zone carries it. Elsewhere a file takes the parties of the nearest note above it: a thread's file the thread note's and the hub's, any other file the hub's. Naming two walled parties on one note is the yes: that project holds both. One company under two hats is two parties with one name, which no note may name together. A conversation with two walled parties waits for your yes, then is cut in the inbox: a file per party and one for both. A filed record is never edited; a part used alone becomes an extract with its own parties. The assistant is asked to follow this, and the [wall check](#the-wall-check) refuses some mistakes at commit. See [One memory, walled use](principles.md#one-memory-walled-use).
 
 ### The Parties table
 
-The table in `System/context.md` that lists every party: its name, what it is, its zone, its tag and the mail domains that name it. A listed domain names its party when mail comes in, and personal webmail never names one. `scaffold.py party` adds a row and offers the tag itself.
+The table in `System/context.md` that lists every party: its name, what it is, its zone, its tag, whether it is walled and the mail domains that name it. A listed domain names its party when mail comes in; personal webmail never does. `scaffold.py party` adds a row and offers the tag and the flag, taking the default from the Zones table.
 
 ### People
 
-The table in `System/context.md` of the people who come up, one row per person and party. The wall check reads it to recognise a name from across a wall. Someone known on both sides of a wall can have a row under each party, and their name then no longer counts as crossing it, with one known gap described in [What is enforced](enforced.md#the-wall-checks-known-gaps).
+The table in `System/context.md` of the people who come up, one row per person and party. The wall check reads it to recognise a walled party's person by name. See [What is enforced](enforced.md#the-wall-checks-known-gaps).
 
 ### Aliases
 
-The table in `System/context.md` that maps names your dictation gets wrong to what they mean. The assistant matches every proper noun against Parties, People and Aliases before acting on it, and adds a row when it had to ask what a heard name meant. See [Voice](../template/System/rules.md#voice) in the rules.
+The table in `System/context.md` that maps names your dictation gets wrong to what they mean. The assistant matches every proper noun against Parties, People and Aliases before acting on it. See [Voice](../template/System/rules.md#voice) in the rules.
 
 ### `System/context.md`
 
-Who you are and who you deal with: Me, Zones, Parties, Walls, People and Aliases. It is yours, filled in from your answers at install, and every session reads it.
+Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says which party a zone carries, if any, and whether new parties there start walled or open. It is yours, filled in from your answers at install, and every session reads it.
 
 ### Learned entry
 
-Something one session wrote down and later sessions read as fact: an entry in your assistant's own memory, or a row the assistant added to a table in `System/context.md`, such as an alias it had to ask about. Each says where it came from. A memory entry carries `source:` and `created:` in its frontmatter, at the top or under `metadata:` where an assistant keeps keys of its own; a row carries a Learned cell, `2026-10-16, user`. The source is `user` (you said it), `file:<path>` (a note in the workspace) or `inbound:<raw path>` (a mail, a transcript or a page). Rows you typed yourself have no Learned cell. What the assistant may write down without asking depends on what acting on it would do: a pointer or an alias goes ahead, a domain or a destination waits for your yes, and something that only a mail or a page said is never kept as a belief until you confirm it. See [Autonomy](../template/System/rules.md#autonomy) in the rules. The check warns about a learned entry with no origin, and one whose only source is inbound, once `memory` in the [check settings](commands.md#check-settings) names your assistant's memory folder.
+Something one session wrote down and later sessions read as fact: a memory entry, or a row added to a table in `System/context.md`. Each says where it came from: `user`, `file:<path>` or `inbound:<raw path>`. A domain or a destination waits for your yes, and what only a mail or a page said is never kept as a belief until you confirm it. See [Autonomy](../template/System/rules.md#autonomy) in the rules.
 
 ### Correction
 
-What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live copy of the wrong value, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on your one yes fixes them all, one commit per repository. Live files then show only the right value; git keeps the old one. A raw record is never edited: the page that rests on it gets `superseded:` in its frontmatter and a line saying so. See [Correcting a value](commands.md#correcting-a-value).
+What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live copy of the wrong value and on your one yes fixes them all, one commit per repository. A raw record is never edited: the page that rests on it gets `superseded:`. See [Correcting a value](commands.md#correcting-a-value).
 
 ## The two wikis
 
@@ -141,7 +143,7 @@ You answer in your own words, in one line, and pick one of four outcomes. The **
 - **Close** (`question-close`) is for a question with nothing to work in, `status: closed`.
 - **Record as a decision** (`question-decide`) is for an answer that settles something. In one transaction it files your sentence as the raw answer, then writes a decision page, `wiki/decisions/<YYMMDD> - <slug>.md` in the Meetings wiki, with `status: valid`, your words under *Decision*, and the question's zone and parties copied exactly, never widened. A decision page has four sections: *Decision*, *Assumptions*, *Options turned down* and *Revisit when*. The assistant may fill in the assumptions and the options it can see, each marked as proposed, and may flag a decision whose revisit condition may be met, with its reason. It never changes `status:`: only you mark a decision `superseded` or `withdrawn`, and a later rewrite reads a settled decision as settled. `check.py` warns when a commit changes a decision's `status:` with no raw answer dated the same day. A Knowledge question has no zone and no parties, so it cannot be recorded as a decision.
 
-Nothing else changes. The pages change in a step of their own: say "work in the questions", and the `meetings` or `knowledge` skill reads each answered question (`question-work`), changes the pages in its `pages:`, cites the raw answer, and sets `status: done` (`question-done`). A Meetings page is changed only if it carries the question's own parties and no others: one walled from them, one written for nobody or not readable plainly is not changed, and the answer says that a wall held something back, in the rule's words, without naming it. A question whose pages sit on both sides of a wall is refused with the same sentence, and nothing is written. A Knowledge question has no parties, so every page it names may change. A Meetings raw answer carries its question's zone and parties, and the walls read it as they read the question.
+Nothing else changes. The pages change in a step of their own: say "work in the questions", and the `meetings` or `knowledge` skill reads each answered question (`question-work`), changes the pages in its `pages:`, cites the raw answer, and sets `status: done` (`question-done`). A Meetings page is changed only if it carries the question's own parties and no others: one naming a walled party the question does not, one written for nobody or not readable plainly is not changed, and the answer says that a wall held something back, in the rule's words, without naming it. A question whose pages sit on both sides of a wall is refused with the same sentence, and nothing is written. A Knowledge question has no parties, so every page it names may change. A Meetings raw answer carries its question's zone and parties, and the walls read it as they read the question.
 
 ### `raw/`
 
@@ -237,7 +239,7 @@ How the assistant answers when you are listening: when you say so, or the reques
 
 ### The wall check
 
-The part of the check about walls. Each zone's pre-commit hook runs it as `check.py --staged --walls-only` and refuses a commit whose project files link to, name or quote a party across a declared wall. It has limits and known gaps: see [What the check covers](principles.md#what-the-check-covers) and [What is enforced](enforced.md).
+The part of the check about walls. Each zone's pre-commit hook runs it as `check.py --staged --walls-only` and refuses a commit whose project files link to, name or quote a walled party's material in a project that does not name that party. It has limits and known gaps: see [What the check covers](principles.md#what-the-check-covers) and [What is enforced](enforced.md).
 
 ### `System/generated/`
 

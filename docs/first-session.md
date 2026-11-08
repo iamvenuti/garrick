@@ -29,7 +29,7 @@ If you would rather set the whole workspace up before doing anything with it, sa
 
 > Interview me.
 
-The assistant asks one question at a time: what you do and for whom, whose confidences you hold and which of them must never meet in writing, the five things you do every week, who you owe something right now, where your files live today, and what you keep forgetting. It pushes back on vague answers and keeps a record in `System/interviews/` as it goes. Say "stop" when you have said enough. It then proposes parties, walls, projects, first threads and open actions, lists what it still does not know, and sets up only what you say yes to. Allow twenty minutes. Afterwards, pick one of the projects it made and carry on from step 2.
+The assistant asks one question at a time: what you do and for whom, whose confidences you hold, and whose material may go anywhere and whose may not, the five things you do every week, who you owe something right now, where your files live today, and what you keep forgetting. It pushes back on vague answers and keeps a record in `System/interviews/` as it goes. Say "stop" when you have said enough. It then proposes parties, walls, projects, first threads and open actions, lists what it still does not know, and sets up only what you say yes to. Allow twenty minutes. Afterwards, pick one of the projects it made and carry on from step 2.
 
 ## 2. Give it one conversation
 
@@ -39,7 +39,7 @@ Use a short email, transcript or notes from a call that you are allowed to proce
 
 Or save an email as `.eml` in `Zones/Work/Inbox/`, or a text transcript in `Wikis/Meetings/raw/inbox/`, and say “process the inbox”. There is no need to connect your mailbox yet.
 
-Confirm the source, date and parties when asked. These labels let Garrick apply walls you have already declared; labelling a meeting does not create a new wall. Read the filed summary against the original and correct mistakes now.
+Confirm the source, date and parties when asked. These labels let Garrick apply the walled and open flags you have already set; labelling a meeting does not wall a party. Read the filed summary against the original and correct mistakes now.
 
 ## 3. Get something useful back
 
@@ -78,6 +78,6 @@ For a clone, start with `cd ~/garrick-source` instead. Then open `~/Garrick-demo
 
 1. Say “Open Birch Entry, Carrier Choice.”
 2. Say “Prep me for Cobalt for this Birch project. Apply the walls before drafting.” The intended result uses the Birch-side call and says some material was held back, without revealing the Acme call's contents.
-3. Ask “Which party pairs have a wall declared?” It should identify the configured Acme/Birch pair. It should not claim that every separate project has a wall.
+3. Ask “Which parties are walled?” It should name the walled parties the demo sets and say that Acme's and Birch's material stays in its own projects. It should not claim that every separate project has a wall.
 
 This checks how your assistant follows the rules in one example. It is not proof against every leak. [Principles](principles.md#what-the-check-covers) describes the deterministic check and its limits. Return to your own workspace when done.

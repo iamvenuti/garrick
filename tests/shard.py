@@ -54,20 +54,22 @@ TIME_LINE = re.compile(r"shard-time (\w+) (\d+(?:\.\d+)?)")
 TOUCH_MAP = {
     # The wall check: a change to it runs every module that tests a wall, not only test_check*.
     "template/System/tools/check.py": ["test_wall_false_positives", "test_wall_forms", "test_wall_gaps",
-                                       "test_wall_gaps_340", "test_wall_noise", "test_wall_cache",
+                                       "test_wall_noise", "test_wall_cache",
                                        "test_walls_cases", "test_walls_deterministic", "test_staged_paths",
-                                       "test_pathspec_commit", "test_no_party", "test_decide"],
+                                       "test_pathspec_commit", "test_decide"],
     "tests/walls/cases.md": ["test_walls_cases"],
     "extras/status/questions_panel.py": ["test_questions_panel", "test_questions_panel_all",
                                          "test_panel_hardening", "test_decisions",
                                          "test_nurture_panel_actions", "test_question_transaction"],
+    "extras/status/parties_panel.py": ["test_status", "test_page_action"],
+    "template/System/tools/migrate_walls.py": ["test_update", "test_decide"],
     "extras/status/status.py": ["test_status", "test_status_find", "test_status_finder",
                                 "test_status_graph_3d", "test_status_graph_ignored",
                                 "test_status_more", "test_status_work"],
     "extras/status/app/": ["test_status_finder", "test_status_graph_3d", "test_status_more"],
     "tests/shard.py": ["test_shard"],
     "tests/shard-times.json": ["test_shard"],
-    "docs/": ["test_docs"],
+    "docs/": ["test_docs", "test_docs_limits"],
     "template/System/skills/": ["test_skills", "test_docs"],
     "tests/walls/": ["test_wall_form_files"],
 }
@@ -75,14 +77,14 @@ TOUCH_MAP = {
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",
     "test_cleanroom_worktree", "test_demo", "test_example", "test_git_env", "test_install",
-    "test_jobs", "test_onboarding", "test_public", "test_rules_map", "test_setup",
+    "test_jobs", "test_onboarding", "test_rules_map", "test_setup",
     "test_simple_home", "test_split", "test_update",
     "test_checkpoint", "test_cmux", "test_cmux_sidebar", "test_decide", "test_executor",
     "test_fetch", "test_knowledge_skill", "test_lib", "test_meetings", "test_memory_canary",
-    "test_mod", "test_nested_checkout", "test_no_party", "test_obsidian", "test_open_sections",
-    "test_pathspec_commit", "test_person_employer", "test_person_organisation", "test_reading",
+    "test_mod", "test_nested_checkout", "test_obsidian", "test_open_sections",
+    "test_party_flags", "test_pathspec_commit", "test_person_employer", "test_person_organisation", "test_reading", "test_refusals",
     "test_staged_paths", "test_wall_cache", "test_wall_false_positives", "test_wall_forms",
-    "test_wall_gaps", "test_wall_gaps_340", "test_wall_noise", "test_walls_cases",
+    "test_wall_gaps", "test_wall_noise", "test_walls_cases",
     "test_walls_deterministic", "test_wiki_answers", "test_wrap",
 }
 # A change here can break anything: the full suite runs.
@@ -245,7 +247,7 @@ def run_parallel(names, jobs, times):
         with lock:
             print(f"\n=== {name}: {'ok' if proc.returncode == 0 else 'FAILED'} in {took[name]:.1f}s", flush=True)
             print(proc.stdout.rstrip(), flush=True)
-            ran.extend(int(n) for n in re.findall(r"^Ran (\d+) tests?", proc.stdout, re.MULTILINE))
+            ran.extend(int(n) for n in re.findall(r"^\S+ (\d+) tests? in ", proc.stdout, re.MULTILINE))
             if proc.returncode:
                 failed.append(name)
 

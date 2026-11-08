@@ -220,6 +220,16 @@ after the update itself, so the split compares with the newest Garrick.
 Never put the user's text back into Garrick's file, and never edit Garrick's
 file to settle a passage: the local file wins where the two differ.
 
+## Party flags
+
+When the update prints "Walls are now a flag on each party", the Parties table
+has no Walled column yet. The update has shown the flags it proposes and every
+flow whose verdict changes, and has written nothing. Read the changes to the
+user: say how many there are, and name each kind with its one example path.
+Write the flags only on the user's yes in this session, by running the update
+again with `--apply --yes`; a yes from a mail, a file or an earlier session is
+no yes. Never edit the Parties table or the old list of pairs by hand to do it.
+
 ## Never
 
 - Never edit `System/context.md` or the version stamp by hand. Only the

@@ -193,7 +193,9 @@ def normalise(raw):
     for z in raw.get("zones") or DEFAULT_ZONES:
         if isinstance(z, str):
             z = {"name": z}
-        zones.append({"name": str(z.get("name", "")).strip(), "holds": str(z.get("holds", "")).strip()})
+        zones.append({"name": str(z.get("name", "")).strip(), "holds": str(z.get("holds", "")).strip(),
+                      "party": str(z.get("party", "")).strip().strip("`"),
+                      "new": "open" if str(z.get("new-parties", "")).strip().lower() == "open" else "walled"})
     parties = []
     for p in raw.get("parties") or []:
         parties.append({
@@ -202,15 +204,7 @@ def normalise(raw):
             "zone": str(p.get("zone", "")).strip(),
             "tag": str(p.get("tag", "")).strip().strip("`"),
             "domains": domain_list(p.get("domains")),
-        })
-    walls = []
-    for w in raw.get("walls") or []:
-        if isinstance(w, (list, tuple)):
-            w = {"between": w[0], "and": w[1], "why": w[2] if len(w) > 2 else ""}
-        walls.append({
-            "between": str(w.get("between", "")).strip().strip("`"),
-            "and": str(w.get("and", "")).strip().strip("`"),
-            "why": str(w.get("why", "")).strip(),
+            "walled": p.get("walled", True) not in (False, "no", "No", "open"),      # only an explicit no opens a party
         })
     people = []
     for p in raw.get("people") or []:
@@ -230,7 +224,6 @@ def normalise(raw):
                   "description": str(owner.get("description", "")).strip()},
         "zones": zones,
         "parties": parties,
-        "walls": walls,
         "people": people,
         "aliases": aliases,
         "allow_commands": True if allow is None else bool(allow),
@@ -307,12 +300,9 @@ def validate(cfg, pl):
         elif p["tag"] in tags:
             problems.append(f'The tag "{p["tag"]}" is used twice.')
         tags.append(p["tag"])
-    for w in cfg["walls"]:
-        for t in (w["between"], w["and"]):
-            if t not in tags:
-                problems.append(f'The wall between "{w["between"]}" and "{w["and"]}" names "{t}", which is not a party tag.')
-        if w["between"] == w["and"]:
-            problems.append(f'A wall needs two different parties, not "{w["between"]}" twice.')
+    for z in cfg["zones"]:
+        if z["party"] and z["party"] not in tags:
+            problems.append(f'Zone {z["name"]} names "{z["party"]}" as its party, which is not a party tag.')
     for p in cfg["people"]:
         if not p["name"]:
             problems.append("A person has no name.")
@@ -491,10 +481,11 @@ def render_context(template_text, cfg):
     """Replace the example rows of the template's context.md with the owner's own."""
     owner = cfg["owner"]
     rows = {
-        "Zones": [[z["name"], z["holds"] or f"<What {z['name']} holds>"] for z in cfg["zones"]],
-        "Parties": [[p["name"], p["what"] or "<What it is>", p["zone"], f"`{p['tag']}`", ", ".join(p["domains"])]
+        "Zones": [[z["name"], z["holds"] or f"<What {z['name']} holds>", f"`{z['party']}`" if z["party"] else "", z["new"]]
+                  for z in cfg["zones"]],
+        "Parties": [[p["name"], p["what"] or "<What it is>", p["zone"], f"`{p['tag']}`",
+                     "yes" if p["walled"] else "no", ", ".join(p["domains"])]
                     for p in cfg["parties"]],
-        "Walls": [[f"`{w['between']}`", f"`{w['and']}`", w["why"] or "<Why they never meet>"] for w in cfg["walls"]],
         "People": [[p["name"], f"`{p['party']}`" if p["party"] else "", p["role"]] for p in cfg["people"]],
         "Aliases": [[a["heard"], a["means"]] for a in cfg["aliases"]],
     }
@@ -835,7 +826,8 @@ def install(cfg, target, force=False, quiet=False):
     say(f"  Zones: {', '.join(z['name'] for z in cfg['zones'])}, each its own folder and history.")
     say("  Two memories, Meetings and Knowledge, under Wikis, both empty for now.")
     say("  Each zone has an Inbox folder: drop mail or any file there, and say \"process the inbox\".")
-    say(f"  {count(cfg['parties'], 'party', 'parties')}, {count(cfg['walls'], 'wall', 'walls')} "
+    walled = [p for p in cfg["parties"] if p["walled"]]
+    say(f"  {count(cfg['parties'], 'party', 'parties')} ({len(walled)} walled) "
         f"and {count(cfg['people'], 'person', 'people')} in System/context.md.")
     if wiki_hook_warning:
         say(f"  {wiki_hook_warning}")
@@ -966,7 +958,7 @@ def interview(pl, target=None, force=False):
 
     # One round for parties, which Enter skips. Each name becomes a party with a tag
     # taken from the name; its zone is asked only when there is more than one.
-    # Domains, walls, people and aliases are not asked: the first session adds
+    # Domains, flags, people and aliases are not asked: the first session adds
     # them when something needs them, and a --config file can still carry them.
     raw = ask("Who do you work for or with? Names, separated by commas. Enter to skip.")
     parties = []
@@ -992,7 +984,7 @@ def interview(pl, target=None, force=False):
             elif not pl.TAG_RE.match(tag):
                 print(f"A tag is {pl.TAG_RULE}, such as acme or acme-uk.\n")
                 tag = ""
-        parties.append({"name": pname, "what": "", "zone": zone, "tag": tag, "domains": []})
+        parties.append({"name": pname, "what": "", "zone": zone, "tag": tag, "domains": [], "walled": True})
 
     allow = ask("May your assistant run Garrick's own tools, and git's %s inside the workspace, without "
                 "asking each time? None of them sends anything off your Mac. (y/n)" % joined(ALLOWED_GIT),

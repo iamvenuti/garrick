@@ -258,13 +258,12 @@ class TestPropose(MailCase):
         self.assertEqual(1, len(p["ask"]))
         self.assertIn("wall", p["ask"][0])
 
-    def own(self):
-        """Jo works for Cobalt, walled from Birch, and forwards from there."""
+    def own(self, walled=False):
+        """Jo works for Cobalt, open or walled, and forwards from there."""
         ctx = dict(self.ctx, parties={t: dict(e) for t, e in self.ctx["parties"].items()},
-                   walls=set(self.ctx["walls"]) | {frozenset(("cobalt", "birch"))},
                    me=["jo@cobalt.example", "jo@gmail.com"])
         ctx["parties"]["cobalt"] = {"party": "Cobalt Ltd", "what": "Employer", "zone": "Work",
-                                    "domains": ["cobalt.example"]}
+                                    "domains": ["cobalt.example"], "walled": walled}
         return ctx
 
     def forward(self, ctx, *inside, zone="Work", sender="jo@cobalt.example"):
@@ -280,14 +279,14 @@ class TestPropose(MailCase):
         self.assertEqual(["cobalt"], p["own"]["added"])
 
     def test_own_party_left_off_across_a_wall_without_a_question(self):
-        p = self.forward(self.own(), "theo@birchco.example")
+        p = self.forward(self.own(True), "theo@birchco.example")
         self.assertEqual(["birch"], p["parties"])
         self.assertEqual([], p["ask"])
         self.assertEqual(["cobalt"], p["own"]["tags"])
         self.assertEqual([], p["own"]["added"])
 
     def test_two_walled_parties_in_the_forward_still_ask(self):
-        p = self.forward(self.own(), "dana.whitlock@acmecorp.example", "theo@birchco.example")
+        p = self.forward(self.own(True), "dana.whitlock@acmecorp.example", "theo@birchco.example")
         self.assertEqual(["acme", "birch"], p["parties"])
         self.assertIn("wall", " ".join(p["ask"]))
 
@@ -1049,14 +1048,14 @@ class TestLearn(MailCase):
     def test_adds_the_column_to_an_older_table(self):
         ctx = self.root / "System" / "context.md"
         text = ctx.read_text()
-        text = text.replace("| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|",
-                            "| Party | What it is | Zone | Tag |\n|---|---|---|---|")
-        text = text.replace(" | acmecorp.example |", " |").replace(" | birchco.example, mail.birchco.example |", " |")
+        text = text.replace("| Party | What it is | Zone | Tag | Walled | Domains |\n|---|---|---|---|---|---|",
+                            "| Party | What it is | Zone | Tag | Walled |\n|---|---|---|---|---|")
+        text = text.replace(" | yes | acmecorp.example |", " | yes |").replace(" | yes | birchco.example, mail.birchco.example |", " | yes |")
         ctx.write_text(text)
         self.assertEqual([], lib.load_context(self.root)["parties"]["birch"]["domains"])
         intake.learn(self.root, "birchco.example", "birch")
-        self.assertIn("| Party | What it is | Zone | Tag | Domains |", ctx.read_text())
-        self.assertIn("| Acme Corp | Client. Supply-chain review | Work | `acme` |  |", ctx.read_text())
+        self.assertIn("| Party | What it is | Zone | Tag | Walled | Domains |", ctx.read_text())
+        self.assertIn("| Acme Corp | Client. Supply-chain review | Work | `acme` | yes |  |", ctx.read_text())
         loaded = lib.load_context(self.root)["parties"]
         self.assertEqual((["birchco.example"], []), (loaded["birch"]["domains"], loaded["acme"]["domains"]))
 

@@ -282,7 +282,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all")
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -1885,6 +1885,50 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     return said
 
 
+def said_all(said: str, most: int = 1200) -> str:
+    """The whole of what scaffold.py said, for a reply that carries a count or a list (the files a flag releases or
+    now holds in violation), cut at `most` characters."""
+    text = said.strip()
+    return text if len(text) <= most else text[:most].rsplit("\n", 1)[0] + "\n..."
+
+
+def party_flag(ws: Path, req: dict):
+    """Flip a party's flag from the Parties tab (#447): scaffold.py's own `party --walled | --open`, so the
+    page, a session and a terminal meet the same refusals, then System/context.md committed in the workspace's
+    own repository. Walled to open releases history: the command says how many files and writes only on
+    `yes`, so a first request without it comes back as a question (`ask`) and nothing changed. Open to walled
+    writes at once and the reply lists the files now in violation."""
+    tag, flag = field(req, "tag"), req.get("flag")
+    if flag not in ("walled", "open"):
+        raise Refused("not a flag: %r" % (flag,))
+    if req.get("yes") not in (None, True, False):
+        raise Refused("not an answer: %r" % (req.get("yes"),))
+    context = ws / "System" / "context.md"
+    with held("page-action-context.lock", busy="another change to the parties is still running"):
+        try:
+            before = context.read_bytes()
+        except OSError:
+            raise Refused("System/context.md is missing")
+        try:
+            said = scaffold(ws, "party", "--tag", tag, "--" + flag, *(["--yes"] if req.get("yes") else []))
+        except BaseException:
+            # the command may write and then refuse (it could not run its check): the context goes back as it was
+            try:
+                if context.read_bytes() != before:
+                    context.write_bytes(before)
+            except OSError:
+                context.write_bytes(before)
+            raise
+        try:
+            after = context.read_bytes()
+        except OSError:
+            after = b""
+        if after == before:
+            return {"say": said_all(said), "ask": not req.get("yes") and "--yes" in said, "written": False}
+        commit(ws, context, before, "Party %s: %s" % (tag, flag), wall=wall_refusal(ws))
+    return {"say": said_all(said), "ask": False, "written": True}
+
+
 def asks_how(ws: Path, args: list) -> None:
     """Before anything is written (#344): scaffold.py's own --check, and where it asks how a name is said, Refused
     with that question and nothing made. The answer is the request's `spoken` (a project's first thread's
@@ -2316,6 +2360,12 @@ def tags_of(value) -> list:
     return [str(v).strip() for v in items if v is not None and str(v).strip()]
 
 
+def two_walled(lib, ctx: dict, tags) -> bool:
+    """Do `tags` hold more than one walled party? A page or a question of two is mixed and has no
+    destination yet: nothing is named or written."""
+    return not lib.meets_in(ctx, tags)
+
+
 def bare_tag(lib, tag: str) -> str:
     return lib.strip_tag(tag) if callable(getattr(lib, "strip_tag", None)) else tag
 
@@ -2342,7 +2392,7 @@ class WikiQuestion:
         self.path = path
         self.lib = prefs().lib(ws)
         if self.lib is None or not all(callable(getattr(self.lib, n, None)) for n in
-                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide")):
+                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "blocked", "decide")):
             raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
         self.reload()
 
@@ -2402,7 +2452,7 @@ def question_parties(q: WikiQuestion, wall: str) -> list:
         raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
     if not tags or any(t not in ctx.get("parties", {}) for t in tags):
         raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
-    if q.lib.crossings(ctx, tags):
+    if two_walled(q.lib, ctx, tags):
         raise Refused(wall)
     return tags
 
@@ -2472,8 +2522,8 @@ def question_pages(q: WikiQuestion, wall: str) -> tuple:
         seen.append(tags)
         readable.append((p, tags))
     flat = [t for tags in seen for t in tags]
-    if q.lib.crossings(ctx, flat):
-        raise Refused(wall)             # both sides of a wall: nothing named, nothing written
+    if two_walled(q.lib, ctx, flat):
+        raise Refused(wall)             # two walled parties: nothing named, nothing written
     allowed = []
     for p, tags in readable:
         # Only a page that carries the question's own parties, and no others:
@@ -2624,7 +2674,7 @@ def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> l
     tool = Path(ws) / "System" / "tools" / "wiki_lint.py"
     lib = prefs().lib(ws)
     if not tool.is_file() or lib is None or not all(callable(getattr(lib, n, None)) for n in
-                                                     ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide")):
+                                                     ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "blocked", "decide")):
         raise Refused("this workspace's wiki_lint.py or garrick_lib.py cannot read the pages, so nothing was written")
     import importlib.util
     spec = importlib.util.spec_from_file_location("wiki_lint_for_open_sections", str(tool))
@@ -2650,7 +2700,7 @@ def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> l
         tags = [bare_tag(lib, t) for t in r["parties"]]
         if r["zone"] not in zones or any(t not in ctx.get("parties", {}) for t in tags):
             r.update(state="skipped", reason="its zone or parties are not ones this workspace knows")
-        elif lib.crossings(ctx, tags):
+        elif two_walled(lib, ctx, tags):
             r.update(state="skipped", reason=wall)
         else:
             r["parties"] = [t.strip() for t in r["parties"]]
@@ -3011,9 +3061,9 @@ def tx_dirs(folder) -> None:
 
 
 # A finding of the walls family, by its check or its words: a page naming, linking or quoting across a wall,
-# repeating a meeting's wording, or two parties a wall divides. Any severity. The words are nurture.py's
+# repeating a meeting's wording, or one company under two hats. Any severity. The words are nurture.py's
 # (claim_wall), kept here because the transaction reads findings without loading it.
-WALLISH = re.compile(r"across a wall|wall stands between|which a wall keeps apart|a wall keeps|eight or more words|"
+WALLISH = re.compile(r"across a wall|is walled and|one company in two hats|eight or more words|"
                      r"names both \S+ and \S+|a Meetings page|from zone \S+|filed in zone \S+", re.I)
 
 
@@ -3321,7 +3371,7 @@ class View:
 
     def __init__(self, ws: Path, lib, zone, scope):
         wall = wall_sentence(ws)
-        self.lib, self.ctx = lib, lib.load_context(ws)
+        self.lib, self.ctx, self.ws = lib, lib.load_context(ws), ws
         zones = zone_names(ws)
         self.unattributed = zone == UNATTRIBUTED and zone not in zones
         home = str(scope).strip() if self.unattributed and scope else zone
@@ -3337,14 +3387,14 @@ class View:
             if scope not in self.parties:
                 raise Refused(wall)
             self.chosen = scope
-        elif not self.parties or lib.crossings(self.ctx, self.parties):
+        elif not self.parties or two_walled(lib, self.ctx, self.parties):
             raise Refused(wall)
 
     def ok(self, tags) -> bool:
         tags = set(tags or ())
         if self.unattributed or not tags or not tags <= self.parties:
             return False
-        if self.lib.crossings(self.ctx, tags):
+        if two_walled(self.lib, self.ctx, tags):
             return False
         return self.chosen is None or self.chosen in tags
 
@@ -3544,7 +3594,7 @@ def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool =
     wall = wall_sentence(ws)
     lib = prefs().lib(ws)
     if lib is None or not all(callable(getattr(lib, n, None)) for n in
-                              ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "crossings", "decide",
+                              ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "blocked", "decide",
                                "entity_names", "staged_walls_refusal")):
         raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
     view = View(ws, lib, req.get("zone"), req.get("scope"))
@@ -4267,7 +4317,7 @@ def owner_party(ws: Path, zone: Path, name: str) -> str:
     workspace's own repository, as scaffold.py says a new party is."""
     if not name or "\n" in name or len(name) > NAME_MAX or name.startswith("-"):
         raise Refused(your_work().OWNER_ASK)
-    if name.strip().casefold() in ("none", "public"):         # reserved tags are no party's name
+    if name.strip().casefold() == "none":         # a reserved tag is no party's name
         raise Refused(your_work().OWNER_ASK)
 
     def found():
@@ -5228,6 +5278,8 @@ def act(ws: Path, req, today=None, now=None):
         return save_settings(ws, req)
     if req["verb"] == "memory-preview":
         return memory_preview(ws, req)
+    if req["verb"] == "party-flag":
+        return party_flag(ws, req)
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":

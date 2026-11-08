@@ -124,7 +124,7 @@ One meeting at a time, even when several files are waiting.
    why, for an entity page with no `party:` at all: a customer's or an
    integrator's page says `party: none`, and only then is it linked. It
    writes none across a wall: when the entity page, or another going by the
-   same name, names a party walled from the person's, or is named after one
+   same name, names a walled party other than the person's, or is named after one
    (`Acme`, `The Acme Corp`, `Acme Corp Ltd` are Acme's);
    when the People table has the name under two parties a wall keeps apart,
    since one page that two hats share links neither hat's entity page; and
@@ -319,14 +319,14 @@ skill once this page exists. One mail at a time.
    hint: you confirm it.
    - `ask` empty: use the suggested parties. Add a party only when the text
      plainly shows it (a Cobalt mail about Acme's renewal is `acme, cobalt`).
-     A party the text suggests that is walled from a suggested one is never
+     A walled party the text suggests, besides a suggested one, is never
      added on your own judgement: ask.
    - `ask` with a reason: ask in one line, naming what you found, and wait.
-     Never guess, and never pick one side of a wall. Spoken forms:
+     Never guess, and never pick one of two walled parties. Spoken forms:
      - No match: "Whose is the mail from Pat at fernway.example?"
      - Webmail: "The mail from Pat is from a Gmail address. Whose is it?"
-     - Both sides of a wall: "Marta's mail copies both Acme and Birch, who
-       are walled. File it under Acme, Birch, or both? Both means neither
+     - Two walled parties: "Marta's mail copies both Acme and Birch, who
+       are both walled. File it under Acme, Birch, or both? Both means neither
        project can use it."
      - Wrong zone: "That's an Acme mail in the Personal inbox. File it in
        Work instead?" If yes, move the file to that zone's `Inbox/` and parse
@@ -573,13 +573,11 @@ something needs it.
    the user says the new party is an organisation already in Parties, under
    another hat, the two need the one thing that tells them apart in writing:
 
-   > Is this the same Acme Corp in another capacity? Shall I keep the two
-   > apart in writing, so neither ever informs the other?
+   > Is this the same Acme Corp in another capacity? Both stay walled, and a
+   > note never names the two together.
 
-   A yes writes the Walls row, with `--also --walled-from <the first tag>`.
-   A no writes the row without a wall, and says plainly that the workspace
-   check will warn about two parties of one name until a wall is there.
-   Never guess a wall, either way.
+   A yes writes the row with `--also`; both hats are walled. A no is a new
+   party under its own name. Never guess which, either way.
 
 6. **On the yes, the two scripts, in this order.** The order is forced:
    `project` is refused with a tag `System/context.md` does not already
@@ -698,8 +696,8 @@ pages give both figures.
   the answer would change.
 - **`zone` and `parties` are those of the pages it comes from**, never
   guessed. The walls read them as they read a page: a question with
-  neither is unfinished, and one may not name both sides of a wall. A
-  question that would draw on both sides is two questions, one for each.
+  neither is unfinished, and one may not name two walled parties. A
+  question that would draw on two walled parties is two questions, one for each.
 - **One question per file**, and none that a file in `questions/` already
   asks: read their bold lines first.
 - **The page stays as it is.** It gets no *Open* line. The question waits
@@ -724,8 +722,8 @@ raw answer and nothing else, and commit nothing):
 | Decision | `question-decide --wiki Meetings --file "questions/<file>" --words "<their sentence>"` | in one transaction, the raw answer as for Answer, then the decision page `wiki/decisions/<YYMMDD> - <slug>.md` with `status: valid`, the question's `zone` and `parties` copied exactly, and their words under *Decision*; the question says `answered`, with `answer:` and `decision:` |
 
 Never write these by hand, and never edit a raw answer: it is the record the
-page rests on. A question that sits on both sides of a wall is refused with
-the rules' sentence, and the user says which side it belongs to.
+page rests on. A question that holds two walled parties is refused with
+the rules' sentence, and the user says which party it belongs to.
 
 **Work in the answered questions**, when the user says "work in the
 questions", "work in the answers" or "work it in":
@@ -733,7 +731,7 @@ questions", "work in the answers" or "work it in":
 1. List the files in `questions/` with `status: answered`. For each, run
    `question-work --wiki Meetings --file "questions/<file>"`. It names the
    raw answer to cite and the pages the answer may change, and leaves out
-   every page not written for the question's own parties (one walled from them, one for nobody, `party: none`, or not readable plainly), and a page that is not there.
+   every page not written for the question's own parties (one with a walled party they do not hold, one for nobody, `party: none`, or not readable plainly), and a page that is not there.
    When it says the wall sentence, say it once, word for word, and name no
    party, page or subject. A refusal with that sentence stops this question;
    go on to the next, and change nothing for it.
@@ -812,6 +810,38 @@ asked for the detail.
 - Written: the spoken answer on top, then the detail: paths, tables, links,
   commit hashes.
 
+## A conversation that carries two walled parties, and extracts
+
+A record that carries two walled parties can enter only a project that names
+both. When a transcript in `Wikis/Meetings/raw/inbox/` is that, or the user
+asks for a part of a filed record to be used on its own, cut it with the
+helper instead of by hand. Speaker and timestamp alone never decide which
+party a passage belongs to: you propose the cuts, with the line numbers and
+what each holds, and the user decides.
+
+- **Split, before it is a record.** Propose a file for each party alone and
+  one for what belongs to both. Run `python3 System/skills/meetings/ingest.py
+  split --inbox <file> --part "<tag>:<lines>" --part "<tag>,<tag>:<lines>"`
+  with no `--yes`: it prints the files and the lines in each and writes
+  nothing. Every line goes into a cut, or is dropped by name with `--drop`.
+  Only on the user's yes in this session, run it again with `--yes`: the
+  inbox file becomes the cut files, each with its own `parties:`, and the
+  original is gone, because an inbox is no record. A cut carries only the
+  original's date and type, never its title, attendees or summary, which can
+  name the other party: give each cut its own with `--title` (once per
+  `--part`, in order), or it gets "Meeting <date>, <parties>". A cut is
+  named by the original's date and its own parties (`260310-cedar`), never
+  by the rest of the original's name. File each one as its own
+  conversation, with a page of its own.
+- **Extract, after it is a record.** A filed record is never edited. For a
+  part of it on its own, run `ingest.py extract --raw <record> --lines
+  <lines> --parties <tags>`, and on the user's yes again with `--yes`. It
+  writes a new file in the inbox (give it a `--title` of its own), never wider than the record, and the record
+  stays byte for byte as it was under its full labels. File the extract with
+  its own page, which cites the extract and never the original.
+
+A run with nobody to answer, such as a scheduled job, never writes.
+
 ## What this skill does not do
 
 - **It does not transcribe audio or talk to a recorder.** The inbox folder
@@ -831,7 +861,7 @@ asked for the detail.
   once, as pasted. A landed file is moved once, by `ingest.py land` or
   `intake.py file-conversation`, and never opened for writing again. A
   correction goes in the summary, never the source.
-- **It never decides a wall for the user.** It only checks the Walls table
+- **It never decides a wall for the user.** It only checks the Walled column
   and says that something was held back, never what.
 - **`prep` writes nothing unless asked.** Asked to save the brief, it
   writes that one file, in the project's `Deliverables/`, and commits it in

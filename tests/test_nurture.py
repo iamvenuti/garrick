@@ -140,13 +140,13 @@ class ClassificationTest(Base):
     def test_a_wall_is_named_by_its_file_and_its_wall_never_its_material(self):
         _, out = self.run_tool("list")
         wall = self.by_path(out["items"], "Acme Review/Notes.md")[0]
-        self.assertEqual("acme and birch", wall["wall"])
+        self.assertEqual("birch", wall["wall"])
         self.assertEqual("", wall["message"])
         report = (self.root / out["report"]).read_text()
         for said in (json.dumps(out), report, wall["line"]):
             for word in ("Theo", "Marsh", "tender", "ninth"):
                 self.assertNotIn(word, said)
-        self.assertIn("Acme Review/Notes.md: the wall between acme and birch", report)
+        self.assertIn("Acme Review/Notes.md: the wall around birch", report)
 
     def test_a_word_that_is_no_status_is_asked_not_fixed(self):
         write(self.pricing, thread_note("Acme Review", "Pricing", "acme", status="someday"))
@@ -170,12 +170,14 @@ class ClassificationTest(Base):
               "pages: [\"[[wiki/sources/260312-birch-kickoff]]\"]\n---\n\n**Acme: which volume floor holds?**\n")
         _, out = self.run_tool("list")
         item = self.by_path(out["items"], "questions/261015 - floor.md")[0]
-        self.assertEqual(("wall", "birch and acme"), (item["kind"], item["wall"]))
+        self.assertEqual(("wall", "birch"), (item["kind"], item["wall"]))
 
     def test_each_finding_has_a_key_of_its_own_that_holds_across_runs(self):
-        # One page, one check, two findings: no zone, and both sides of a wall.
+        # One page, one check, two findings: no zone, and both hats of one company.
         page = self.wikis / "Meetings" / "wiki" / "sources" / "260322-joint-call.md"
-        write(page, meeting_page(None, "[acme, birch]", "Joint call"))
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client.", "| Acme Corp | Second role | Work | `acme-board` | yes | |\n| Birch & Co | Client.", 1))
+        write(page, meeting_page(None, "[acme, acme-board]", "Joint call"))
         _, out = self.run_tool("list")
         found = [i for i in self.by_path(out["items"], "260322-joint-call.md") if i["check"] == "meetings"]
         self.assertEqual({"attribution", "wall"}, {i["kind"] for i in found}, found)
@@ -444,7 +446,7 @@ class WalledLinkTest(Base):
         ctx = self.root / "System" / "context.md"
         ctx.write_text(ctx.read_text().replace(
             "mail.birchco.example |\n",
-            "mail.birchco.example |\n| Cobalt Ltd | Client. Logistics audit | Work | `cobalt` | cobalt.example |\n", 1))
+            "mail.birchco.example |\n| Cobalt Ltd | Client. Logistics audit | Work | `cobalt` | no | cobalt.example |\n", 1))
         lantern = self.work / "Lantern"
         write(lantern / "Lantern.md", project_hub("Work", "Lantern", "cobalt", ["Survey"]))
         write(lantern / "Threads" / "Survey" / "Survey.md", thread_note("Lantern", "Survey", "cobalt"))

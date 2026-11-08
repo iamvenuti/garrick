@@ -12,10 +12,12 @@ My addresses: <you@work.example>, <you@personal.example>. Mail you forward from 
 
 ## Zones
 
-| Zone | Holds |
-|---|---|
-| Work | <Client work, employer work> |
-| Personal | <Everything that is yours alone> |
+A zone may name one party, which every file in the zone carries; leave it empty for none. New parties says what `scaffold.py party` proposes for a party added in the zone: walled or open.
+
+| Zone | Holds | Party | New parties |
+|---|---|---|---|
+| Work | <Client work, employer work> | | walled |
+| Personal | <Everything that is yours alone> | | walled |
 
 ## Parties
 
@@ -23,18 +25,12 @@ Every organisation or person whose confidences you hold. The tag is what project
 
 Domains are optional: the part after the @ in their mail addresses. Mail from a listed domain files itself under that party. Personal webmail, such as gmail.com, never names a party by itself.
 
-| Party | What it is | Zone | Tag | Domains |
-|---|---|---|---|---|
-| Acme Corp | Client. Supply-chain review | Work | `acme` | acmecorp.example |
-| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example |
+Walled says whether a party is walled, `yes` or `no`. A walled party's material goes only into work that names that party; an open party's material may go anywhere. The assistant checks this column before it uses a conversation in a project.
 
-## Walls
-
-Pairs whose material never meets in writing. A wall holds in both directions. The assistant checks this table before it uses a conversation in a project.
-
-| Between | And | Why |
-|---|---|---|
-| `acme` | `birch` | Competitors, and both are clients |
+| Party | What it is | Zone | Tag | Walled | Domains |
+|---|---|---|---|---|---|
+| Acme Corp | Client. Supply-chain review | Work | `acme` | yes | acmecorp.example |
+| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | birchco.example |
 
 ## People
 

@@ -65,7 +65,7 @@ Claude does the work underneath. Codex works too, in its app or a terminal, with
 
 ### The assistant
 
-**Your assistant** is Claude Code or Codex, in its desktop app or a terminal. Garrick asks it to read `AGENTS.md` and the rules before anything else, to ask before anything leaves the machine or cannot be undone, to check the Walls table before it uses a meeting, and never to skip the wall check with `git commit --no-verify`. The assistant's own permissions decide what it can run; the installer can allow Garrick's own tools and git's read and save commands, and nothing that pushes. See [Assistant compatibility](harnesses.md).
+**Your assistant** is Claude Code or Codex, in its desktop app or a terminal. Garrick asks it to read `AGENTS.md` and the rules before anything else, to ask before anything leaves the machine or cannot be undone, to check a meeting's parties against the project's before it uses it, and never to skip the wall check with `git commit --no-verify`. The assistant's own permissions decide what it can run; the installer can allow Garrick's own tools and git's read and save commands, and nothing that pushes. See [Assistant compatibility](harnesses.md).
 
 ### The rules
 
@@ -144,7 +144,7 @@ You press Continue on the Garrick App's home, or open a session in your app or t
 
 ### The walls
 
-Walls are declared in one place, the Walls table of `System/context.md`, and every project and meeting carries the party tags they are checked against. They are read by the assistant: before it uses a meeting in a project, the rules ask it to compare the project's party with the meeting's parties and leave walled material out, saying only that something was held back. They are enforced, in part, by code: the pre-commit hook in each zone refuses a project file that links to a walled meeting, names a party or person from across the wall, or repeats eight words held only on the far side. A clean paraphrase, a chat reply and anything sent are outside what the hook can see, and the check has known gaps. See [What the check covers](principles.md#what-the-check-covers) and [What is enforced, and what is asked](enforced.md).
+A party is walled or open, a flag in the Parties table of `System/context.md`, and every project and meeting carries the party tags it is checked against. They are read by the assistant: before it uses a meeting in a project, the rules ask it to compare the project's parties with the meeting's and leave a walled party's material out unless the project names that party, saying only that something was held back. They are enforced, in part, by code: the pre-commit hook in each zone refuses a project file that links to a walled meeting, names a walled party or person the project does not, or repeats eight words held only on the far side. A clean paraphrase, a chat reply and anything sent are outside what the hook can see, and the check has known gaps. See [What the check covers](principles.md#what-the-check-covers) and [What is enforced, and what is asked](enforced.md).
 
 ### An update
 

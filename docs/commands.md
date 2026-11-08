@@ -20,7 +20,7 @@ To skip the questions (for a demo, a test, or a guided session), pass a config f
 python3 install.py --config examples/acme.json --target ~/Garrick-acme
 ```
 
-`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, walled from each other). Copy it and edit it as a starting point for your own config. Its keys are `owner`, `zones`, `parties`, `walls`, `people`, `aliases`, and `allow-commands`, the last question, which is `true` unless the file says `false`, so a config run asks nothing. A config carries more than the questions do: each party's mail domains, and the walls, people and aliases, all installed as written.
+`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, both walled). Copy it and edit it as a starting point for your own config. Its keys are `owner`, `zones`, `parties`, `people`, `aliases`, and `allow-commands`, the last question, which is `true` unless the file says `false`, so a config run asks nothing. A config carries more than the questions do: each party's mail domains and `walled` flag, a zone's `party` and `new-parties`, and the people and aliases, all installed as written.
 
 To allow those commands in a workspace already installed, because you answered no or installed before Garrick asked, run this from the folder Garrick came in. It writes the same rules and changes nothing else, and it overwrites neither file:
 
@@ -104,6 +104,20 @@ git add System/context.md
 git commit -m "Cobalt Freight added as a party (cobalt)"
 ```
 
+A new party is walled or open. `--walled` and `--open` say which; without either, the zone's *New parties* cell in the Zones table decides. A walled party's material goes only into a project that names it. To change the flag of a party already in the table:
+
+```sh
+python3 System/tools/scaffold.py party --tag cobalt --open          # says how many files it releases; writes only with --yes
+python3 System/tools/scaffold.py party --tag cobalt --walled        # writes, then lists the files now in violation
+```
+
+Both leave `System/context.md` changed and uncommitted. The two hats of one company, which share a name, both stay walled, and a note never names both. To put a party on a hub or thread note, or take one off, use `label`; a second walled party on one note says whose material will meet there, and writes only with `--yes`, and taking a party off says how many files lose the label and also needs `--yes`:
+
+```sh
+python3 System/tools/scaffold.py label --zone Work --project Acme --add birch --yes
+python3 System/tools/scaffold.py label --zone Work --project Acme --thread Pricing --remove birch --yes
+```
+
 Working with an assistant instead of the command line, just ask: "new project Acme for acme in Work, first thread pricing." The `threads` skill resolves the request, runs the script and commits for you. If the party doesn't exist yet, it offers to add a row to `System/context.md` first, and asks whether a wall belongs between it and any existing party.
 
 ## Another zone
@@ -166,7 +180,7 @@ For app users, ask “Run the workspace check and explain any findings.” The c
 python3 System/tools/check.py
 ```
 
-Tests the workspace against every rule a machine can check. `python3 System/tools/check.py --walls-cases` instead runs the table of wall cases (`System/tools/walls-cases.md`) against your own Parties and Walls tables, with your tags in place of the fixture's roles, and says which case, if any, your tables answer wrongly. A project whose hub names no `party:` is an error, and the commit hook refuses any file in it until the hub names one (`public` is a party for a project anyone may read; see [Principles](principles.md#one-decision-for-every-point)).
+Tests the workspace against every rule a machine can check. `python3 System/tools/check.py --walls-cases` instead runs the table of wall cases (`System/tools/walls-cases.md`) against your own Parties and Zones tables, with your tags in place of the fixture's roles, and says which case, if any, your tables answer wrongly. A project whose hub names no `party:` is an error, and the commit hook refuses any file in it until the hub names one (see [Principles](principles.md#one-decision-for-every-point)).
 
 The check covers:
 
@@ -174,7 +188,7 @@ The check covers:
 - a missing `AGENTS.md` at the root or in a wiki, and instruction files that drift: an `AGENTS.md` or `AGENTS.local.md` past its word budget, `System/rules.md` past 8,000 characters, the same sentence copied into two instruction files, or a hand-written list of skills, or of a zone's projects, that no longer matches the folder, counting Garrick's file and the local one beside it together (warnings);
 - one of Garrick's instruction files, `System/rules.md` or an `AGENTS.md`, that differs from what Garrick shipped: your own text belongs in the local file beside it. Also a local file Garrick's does not point to yet, and passages an update's split left to settle (warnings);
 - installer placeholders left unfilled (an error: the install did not finish; files git ignores are skipped, and so is a Garrick checkout kept in a project, cloned or unpacked from a release, whose templates hold them by design);
-- a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties, two parties with the same name and no wall between them, or no Aliases table (warnings);
+- a wall or a person in `System/context.md` naming a tag that is not in Parties, or a mail domain that is personal webmail or listed for two parties, two parties with the same name, one of them open, or no Aliases table (warnings);
 - a learned entry that does not say where it came from: a memory entry, in the folder `memory` names in the check settings, with no `source:` or `created:`, or a Learned cell in `System/context.md` that does not read as `YYYY-MM-DD, source`; and one whose only source is inbound, a mail, a transcript or a page, which nobody has confirmed (warnings);
 - a skill one of the assistants cannot find from the root, a zone or a wiki, through the repository's skill link or your own; two assistants that see different skills in one place; a `model` that names a version rather than a tier; a skill copied from elsewhere whose `VENDORED.md` names no source commit (warnings);
 - a zone that is not its own git repository, or has no `AGENTS.md` or `Todo.md`, or no pre-commit wall check (a warning; `--install-hooks` puts it back), or no `Inbox/` (a warning); a git repository inside a project that has a remote and no wall check (a warning; `--install-hooks` adds it);

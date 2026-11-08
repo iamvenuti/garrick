@@ -63,7 +63,7 @@ class TestNames(WallCase):
         self.assertEqual("error", found[0].severity)
         self.assertEqual("Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md", found[0].path)
         self.assertIn("Acme Corp", found[0].message)
-        self.assertIn("wall stands between birch and acme", found[0].message)
+        self.assertIn("acme is walled and this project does not name it", found[0].message)
         self.assertNoLeak(found, "Dana", "Whitlock")
 
     def test_party_name_tag_and_possessive(self):
@@ -521,7 +521,7 @@ VALUE_FORMS = {
     "item under a key with a value": "{key}: cedar\n  - {value}",
 }
 
-CEDAR = "| Cedar Ltd | Supplier | Work | `cedar` | cedar.example |\n| Birch & Co | Client."
+CEDAR = "| Cedar Ltd | Supplier | Work | `cedar` | no | cedar.example |\n| Birch & Co | Client."
 
 
 class TestFrontmatterValues(WallCase):

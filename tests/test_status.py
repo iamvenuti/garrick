@@ -576,6 +576,96 @@ class TestTabs(StatusCase):
         self.assertIn('data-tab="status">Status<span class="dot critical"', html)
 
 
+class TestParties(StatusCase):
+    """The Parties tab (#447): each party with its flag and the notes that name it, nothing else."""
+
+    def setUp(self):
+        super().setUp()
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / "template" / "System" / "tools" / "garrick_lib.py", tools / "garrick_lib.py")
+
+    def tab(self, html):
+        start = html.index('<section class="tab" id="tab-parties"')
+        return html[start:html.index("</section>", start)]
+
+    def article(self, html, tag):
+        start = self.tab(html).index('data-tag="%s"' % tag)
+        block = self.tab(html)[start:]
+        return block[:block.index("</article>")]
+
+    def test_the_tab_lists_each_party_with_its_flag_and_who_names_it(self):
+        html = self.page()
+        self.assertIn('data-tab="parties">Parties</button>', html)               # no dot while every party has a flag
+        self.assertIn('id="tab-parties" hidden', html)
+        acme = self.article(html, "acme")
+        self.assertIn("Acme Corp", acme)
+        self.assertIn(">walled<", acme)
+        self.assertIn("Acme Review", acme)
+        self.assertIn("Acme Review / Pricing", acme)                              # its thread, beside its project
+        self.assertIn('data-flip="open"', acme)                                   # a walled party offers the other flag
+        self.assertNotIn("Birch Entry", acme)
+        zones = self.tab(html)
+        self.assertIn("<caption>Zones</caption>", zones)
+        self.assertIn("<td>Work</td><td><span class=\"muted\">none</span></td><td>walled</td>", zones)
+
+    def test_an_open_party_offers_the_other_flag(self):
+        path = self.root / "System" / "context.md"
+        path.write_text(path.read_text().replace("`birch` | yes", "`birch` | no"))
+        birch = self.article(self.page(), "birch")
+        self.assertIn(">open<", birch)
+        self.assertIn('data-flip="walled"', birch)
+
+    def test_a_party_with_no_flag_stands_out_and_the_tab_has_a_dot(self):
+        path = self.root / "System" / "context.md"
+        path.write_text(path.read_text().replace(" Walled |", "").replace("| yes |", "|"))
+        html = self.page()
+        self.assertIn('data-tab="parties">Parties<span class="dot critical"', html)
+        self.assertIn('class="pp-party pp-flagless" data-tag="acme"', self.tab(html))
+        self.assertIn("no flag", self.article(html, "acme"))
+
+    def test_a_party_no_note_names_and_a_note_naming_none_stand_out(self):
+        path = self.root / "System" / "context.md"
+        path.write_text(path.read_text().replace("## People", "## People\n\n| Name | Party | Role |\n|---|---|---|\n", 0)
+                        .replace("| Birch & Co |", "| Cedar Ltd | Supplier | Work | `cedar` | no | |\n| Birch & Co |", 1))
+        write(self.root / "Zones" / "Work" / "Orphan" / "Orphan.md", project_hub("Work", "Orphan", "", ["Loose"]))
+        write(self.root / "Zones" / "Work" / "Orphan" / "Threads" / "Loose" / "Loose.md", thread_note("Orphan", "Loose", ""))
+        html = self.page()
+        self.assertIn("No project or thread names this party.", self.article(html, "cedar"))
+        tab = self.tab(html)
+        self.assertIn("Names no party", tab)
+        self.assertIn("Orphan / Loose", tab)
+
+    def test_two_parties_of_one_name_on_a_note_give_the_tab_a_dot(self):
+        path = self.root / "System" / "context.md"
+        path.write_text(path.read_text().replace("| Birch & Co |", "| Acme Corp | Adviser to its board | Work | `acme-adv` | yes | |\n| Birch & Co |", 1))
+        note = self.root / "Zones" / "Work" / "Acme Review" / "Acme Review.md"
+        note.write_text(note.read_text().replace("party: acme", "party: [acme, acme-adv]"))
+        html = self.page()
+        self.assertIn('data-tab="parties">Parties<span class="dot critical"', html)
+        self.assertIn("Names two parties with one name", self.tab(html))
+
+    def test_no_parties_table_no_tab(self):
+        (self.root / "System" / "context.md").write_text("# Context\n")
+        html = self.page()
+        self.assertNotIn('data-tab="parties"', html)
+        self.assertNotIn('id="tab-parties"', html)
+
+    def test_the_tab_script_is_small_and_names_are_text(self):
+        pp = status.parties_mod()
+        self.assertLess(len(pp.JS.strip().splitlines()), 80)
+        write(self.root / "Zones" / "Work" / "Odd" / "Odd.md", project_hub("Work", "Odd", "acme", ["T"]).replace("title: Odd", "title: Odd").replace("# Odd", "# Odd"))
+        (self.root / "Zones" / "Work" / "Odd" / "Threads").mkdir(parents=True, exist_ok=True)
+        path = self.root / "System" / "context.md"
+        path.write_text(path.read_text().replace("Acme Corp |", "Acme <b>Corp</b> |", 1))
+        tab = self.tab(self.page())
+        self.assertNotIn("<b>Corp</b>", tab)
+        self.assertIn("Acme &lt;b&gt;Corp&lt;/b&gt;", tab)
+
+    def test_a_rebuilt_page_is_the_same_page(self):
+        self.assertEqual(self.tab(self.page()), self.tab(self.page()))
+
+
 class TestGuide(StatusCase):
     """#133: the Guide tab shows the docs the workspace was installed with,
     and every link on it stays on the page or opens on GitHub."""
@@ -966,7 +1056,7 @@ class TestOpensOnTheWork(StatusCase):
     def test_a_wall_finding_is_explained_without_its_material(self):
         self.fake_check({"check": "walls", "severity": "error",
                          "path": "Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
-                         "message": "names Birch Entry, but a wall stands between acme and birch"})
+                         "message": "names Birch Entry, but birch is walled and this project does not name it"})
         pricing = self.row(self.page(), "Pricing")
         self.assertEqual(["check"], self.chips(pricing))
         found = self.pop(pricing, "cp")

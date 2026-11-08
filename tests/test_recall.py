@@ -1083,20 +1083,18 @@ class ScopeIndexTest(Base):
         recall.build(self.root)
         self.assertEqual(sorted(sc.file(self.root) for sc in scopes if sc.kind != "root"), self.indexes())
         self.assertFalse((self.root / "System" / recall.INDEX_NAME).exists())     # the root scope is made in memory
-        # a wall added inside Personal splits it in two; a zone with no wall stays one
+        # two walled parties inside Personal split it in two; a zone with one walled party stays one
         context = self.root / "System" / "context.md"
         text = context.read_text(encoding="utf-8")
-        text = text.replace("| Acme Corp |", "| Lumen Ltd | Own venture | Personal | `lumen` | lumen.example |\n"
+        text = text.replace("| Acme Corp |", "| Lumen Ltd | Own venture | Personal | `lumen` | no | lumen.example |\n"
                             "| Acme Corp |", 1)
-        text = text.replace("| Birch & Co |", "| Fern Ltd | Own venture | Personal | `fern` | fern.example |\n"
+        text = text.replace("| Birch & Co |", "| Fern Ltd | Own venture | Personal | `fern` | no | fern.example |\n"
                             "| Birch & Co |", 1)
         context.write_text(text, encoding="utf-8")
         self.assertEqual(["root", "personal", "work/acme", "work/birch"],
                          [sc.key for sc in recall.scopes_of(self.root, garrick_lib.load_context(self.root))])
         text = context.read_text(encoding="utf-8")
-        walls = text.index("## Walls")
-        row = text.index("\n|", text.index("|---", walls))
-        context.write_text(text[:row] + "\n| `lumen` | `fern` | Two hats |" + text[row:], encoding="utf-8")
+        context.write_text(text.replace("`lumen` | no |", "`lumen` | yes |").replace("`fern` | no |", "`fern` | yes |"), encoding="utf-8")
         keys = [sc.key for sc in recall.scopes_of(self.root, garrick_lib.load_context(self.root))]
         self.assertEqual(["root", "personal/fern", "personal/lumen", "work/acme", "work/birch"], keys)
 
@@ -1371,9 +1369,7 @@ class WallReviewTest(Base):
         self.assertTrue(self.find("zebrafinch", BIRCH))
         context = self.root / "System" / "context.md"
         original = context.read_text(encoding="utf-8")
-        wall = "| `acme` | `birch` |"
-        line = next(l for l in original.splitlines() if l.startswith(wall))
-        context.write_text(original.replace(line + "\n", ""), encoding="utf-8")
+        context.write_text(original.replace("| `acme` | yes |", "| `acme` | no |").replace("| `birch` | yes |", "| `birch` | no |"), encoding="utf-8")
         self.assertTrue(self.find("zebrafinch", ACME))                    # no wall: one zone-wide file
         self.assertTrue((self.root / "Zones/Work" / recall.INDEX_NAME).is_file())
         context.write_text(original, encoding="utf-8")
@@ -1427,17 +1423,14 @@ class NamesAndSpellingTest(Base):
             con.close()
         self.assertTrue(self.find("quokaplan"))             # and back again: the index is made again with it
 
-    def test_a_changed_wall_makes_the_index_again(self):
+    def test_a_changed_flag_makes_the_index_again(self):
         self.assertTrue(self.find("quokkaplan"))
         context = self.root / "System" / "context.md"
         text = context.read_text(encoding="utf-8")
-        walls = text.index("## Walls")
-        row = text.index("\n|", text.index("|---", walls))
-        # a wall between acme and a party that now holds the Acme page's other label
-        self.assertIn("acme", text)
+        self.assertIn("| `acme` | yes |", text)
         stamp = recall.policy_stamp(garrick_lib.load_context(self.root), recall.scopes_of(
             self.root, garrick_lib.load_context(self.root))[2])
-        context.write_text(text[:row] + "\n| `acme` | `personal` | Test |" + text[row:], encoding="utf-8")
+        context.write_text(text.replace("| `acme` | yes |", "| `acme` | no |"), encoding="utf-8")
         ctx = garrick_lib.load_context(self.root)
         self.assertNotEqual(stamp, recall.policy_stamp(ctx, recall.scopes_of(self.root, ctx)[2]))
         self.assertTrue(self.find("quokkaplan"))

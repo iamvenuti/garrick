@@ -1408,6 +1408,7 @@ class Asker:
         self.heard_text = ""        # that request as the names were read from it, with any earlier one it answers
         self.asking = False         # whether the last reply was a session's own question for the user
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
+        self.policy = None          # the Parties and Zones tables the admissions were made under
         self.refreshed = set()      # the sessions renewed by size, "command" and "answer", not yet told so
         self.quick = None           # the small tier's session for a plain "open X" or "park X" (#358)
         self.progress = lambda text: None
@@ -1430,6 +1431,11 @@ class Asker:
         if lib is None:
             raise Bad("ask needs garrick_lib.py in System/tools/")
         self.ctx = lib.load_context(self.ws)
+        tables = repr(sorted((t, bool(e.get("walled", True)), e.get("zone")) for t, e in self.ctx.get("parties", {}).items())
+                      + sorted(self.ctx.get("zone_parties", {}).items()))
+        if self.policy is not None and tables != self.policy:
+            self.reset()                            # the Parties or Zones table changed: what was admitted may no longer be
+        self.policy = tables
         names = scan(self.ws)
         window = zone if isinstance(zone, str) and zone in names else None
         picked = window if picked else None         # a zone the user chose for this question, which settles it
@@ -1793,11 +1799,11 @@ class Asker:
         return out
 
     def crossing(self, held: set) -> bool:
-        """Whether a wall stands between any two of the parties a conversation holds (admitted or named)."""
+        """Whether a conversation holds two walled parties (admitted or named)."""
         lib = scope_lib().lib(self.ws)
         ctx = lib.load_context(self.ws)
-        held = {lib.strip_tag(t) for t in held} - {lib.PUBLIC}
-        return bool(held and lib.crossings(ctx, held))
+        held = {lib.strip_tag(t) for t in held}
+        return not lib.meets_in(ctx, held)
 
     def wall_stop(self) -> dict:
         """A wall stopped the conversation: both sessions are stopped and everything they held cleared, the session

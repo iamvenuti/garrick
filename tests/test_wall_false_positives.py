@@ -21,7 +21,7 @@ from fixtures import HAVE_GIT, build_workspace, git_init, project_hub, thread_no
 
 import check  # noqa: E402
 
-WALL_MESSAGE = "a wall stands between"
+WALL_MESSAGE = "is walled and this project does not name it"
 
 
 class FalsePositiveTest(unittest.TestCase):

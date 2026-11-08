@@ -67,7 +67,7 @@ TOUCH_MAP = {
     "extras/status/app/": ["test_status_finder", "test_status_graph_3d", "test_status_more"],
     "tests/shard.py": ["test_shard"],
     "tests/shard-times.json": ["test_shard"],
-    "docs/": ["test_docs"],
+    "docs/": ["test_docs", "test_docs_limits"],
     "template/System/skills/": ["test_skills", "test_docs"],
     "tests/walls/": ["test_wall_form_files"],
 }
@@ -245,7 +245,7 @@ def run_parallel(names, jobs, times):
         with lock:
             print(f"\n=== {name}: {'ok' if proc.returncode == 0 else 'FAILED'} in {took[name]:.1f}s", flush=True)
             print(proc.stdout.rstrip(), flush=True)
-            ran.extend(int(n) for n in re.findall(r"^Ran (\d+) tests?", proc.stdout, re.MULTILINE))
+            ran.extend(int(n) for n in re.findall(r"^\S+ (\d+) tests? in ", proc.stdout, re.MULTILINE))
             if proc.returncode:
                 failed.append(name)
 

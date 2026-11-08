@@ -166,7 +166,7 @@ For app users, ask “Run the workspace check and explain any findings.” The c
 python3 System/tools/check.py
 ```
 
-Tests the workspace against every rule a machine can check. `python3 System/tools/check.py --walls-cases` instead runs the table of wall cases (`System/tools/walls-cases.md`) against your own Parties and Walls tables, with your tags in place of the fixture's roles, and says which case, if any, your tables answer wrongly. A project whose hub names no `party:` is an error, and the commit hook refuses any file in it until the hub names one (`public` is a party for a project anyone may read; see [Principles](principles.md#one-decision-for-every-point)).
+Tests the workspace against every rule a machine can check. `python3 System/tools/check.py --walls-cases` instead runs the table of wall cases (`System/tools/walls-cases.md`) against your own Parties and Zones tables, with your tags in place of the fixture's roles, and says which case, if any, your tables answer wrongly. A project whose hub names no `party:` is an error, and the commit hook refuses any file in it until the hub names one (see [Principles](principles.md#one-decision-for-every-point)).
 
 The check covers:
 

@@ -3,7 +3,7 @@ name: interview
 description: >
   Interview the user one question at a time about what they do, for whom,
   and whose confidences they hold, keep a record as it goes, then propose
-  the first parties, walls, projects, threads and open actions, and set them
+  the first parties, which are walled, projects, threads and open actions, and set them
   up only on a yes. The opening move in a new workspace, and useful again
   when a new side of work starts. Use when the user says "interview me",
   "get to know me", "ask me about my work", "help me set up my workspace",
@@ -18,7 +18,8 @@ a record behind. This skill asks, writes down and proposes. It creates nothing
 until the user says yes.
 
 What makes it a Garrick interview is the second question: whose confidences
-the user holds, and which of them must never meet in writing. Everything else
+the user holds, and whose material may go anywhere and whose may not.
+Everything else
 in the workspace leans on that answer.
 
 Everything here works spoken or typed. Ask for the ear when the user is
@@ -32,7 +33,7 @@ All paths are relative to the workspace root.
 | What | Path |
 |---|---|
 | The interview record | `System/interviews/YYMMDD - <Topic>.md` |
-| Me, Zones, Parties, Walls, People, Aliases | `System/context.md` |
+| Me, Zones, Parties, People, Aliases | `System/context.md` |
 | The zones | the folders under `Zones/` |
 | New zones, projects and threads | `System/tools/scaffold.py`, as the `threads` skill's *New zone* and *New* procedures run it |
 | Open actions | `Zones/<Zone>/Todo.md` |
@@ -66,10 +67,11 @@ installer already answered; confirm it instead.
 2. **Whose confidences you hold.** Every organisation or person who tells you
    things they would not want the others to see: clients, an employer's
    projects, a board you sit on, a friend's business. For each one, what it
-   is and which zone it belongs to. Then ask about pairs, by name: "Would Acme
-   mind Birch seeing your notes, or the other way round?" A yes is a wall.
-   Inside one employer, two internal projects can be parties too, with a
-   wall between them.
+   is and which zone it belongs to. Then ask, for each: "Whose material may
+   go anywhere, and whose may not?" A party whose material may not is walled;
+   the rest are open. Ask about one party at a time, by name, and never
+   infer a flag. Inside one employer, two internal projects can be walled
+   parties too.
 3. **The five things you do every week.** Recurring work, not projects.
 4. **Who you owe something right now**, what it is, and by when.
 5. **Where your files and notes live today.** Folders, mail, apps, paper.
@@ -100,7 +102,7 @@ Follow-ups go under the same heading. Save after every answer, so stopping at
 any point loses nothing.
 
 **Who and what kind, never what a party said in confidence.** The record
-sits in `System/`, where any project can read it, on either side of any wall.
+sits in `System/`, where any project can read it, whichever parties it names.
 If an answer carries a party's numbers, plans or words, write who and what
 kind only ("Birch shared its launch figures with me"), and tell the user you
 did. No check reads the record, so this rule is all that guards it. And the
@@ -115,9 +117,10 @@ end of the record under `## Proposal`, then show it.
 
 1. **Parties** to add to `System/context.md`: name, what it is, zone, tag, and
    mail domains if the user gave them. Check each tag is one lowercase word.
-2. **Walls**: each pair, and why. Mark any wall you inferred rather than
-   heard, and ask about it by name. Never add a wall the user did not confirm,
-   and never leave out one they asked for.
+2. **Walled or open**: the flag for each party in item 1, and why. Mark
+   any flag you inferred rather than heard, and ask about it by name. Never
+   mark a party open that the user did not say is open, and never leave
+   open a party they asked to protect. When unsure, propose walled.
 3. **People and aliases** heard during the interview.
 4. **Projects and first threads**, zone by zone: the project, its party, its
    first thread. Names can be the ones the work already has, Q4 Planning and
@@ -141,7 +144,7 @@ what it holds. On a yes it is made first, through the `threads` skill's
 *New zone* procedure.
 
 Spoken: "I'd set up three projects in Work and one in Personal, with four
-parties and one wall, between Acme and Birch. The thing I still need most is
+parties, two of them walled, Acme and Birch. The thing I still need most is
 who owns the Cobalt contract. Shall I set it up?"
 
 Written: the whole proposal, as it stands in the record, and the record's
@@ -156,12 +159,12 @@ step 7, and another session may have changes of its own in any repository.
 
 1. **Zones**, if the proposal adds any, one at a time through the `threads`
    skill's *New zone* procedure, before anything names them.
-2. **Parties, Walls, People, Aliases.** Re-read `System/context.md` right
+2. **Parties with their flags, People, Aliases.** Re-read `System/context.md` right
    before editing it, then add the rows. Commit it alone in the workspace
    root's repository:
    ```sh
    git add -- System/context.md
-   git commit -m "Interview: four parties, one wall"
+   git commit -m "Interview: four parties, two walled"
    ```
 3. **Projects and threads**, through the scaffolding script, one at a time, as
    the `threads` skill's *New* procedure says. When it refuses a name, relay
@@ -198,7 +201,7 @@ step 7, and another session may have changes of its own in any repository.
 
 Never push. That leaves the machine and needs its own yes.
 
-Spoken: "Set up: four parties, one wall, four projects. Say 'what's open' to
+Spoken: "Set up: four parties, two walled, four projects. Say 'what's open' to
 see them, or 'open' and a project's name to start."
 
 ## What this skill does not do
@@ -206,7 +209,7 @@ see them, or 'open' and a project's name to start."
 - **It creates nothing before a yes**, and only what the yes covered.
 - **It asks one question at a time**, never a form.
 - **It never records what a party said in confidence**, only who and what kind.
-- **It never guesses a wall.** An inferred wall is proposed and asked about.
+- **It never guesses a flag.** An inferred flag is proposed and asked about, and an unsure one is proposed walled.
 - **It makes a zone only through the `threads` skill's *New zone***, and
   only on a yes. It does not move, copy or connect the user's existing files
   and accounts.

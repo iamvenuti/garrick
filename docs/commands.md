@@ -20,7 +20,7 @@ To skip the questions (for a demo, a test, or a guided session), pass a config f
 python3 install.py --config examples/acme.json --target ~/Garrick-acme
 ```
 
-`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, both walled). Copy it and edit it as a starting point for your own config. Its keys are `owner`, `zones`, `parties`, `walls`, `people`, `aliases`, and `allow-commands`, the last question, which is `true` unless the file says `false`, so a config run asks nothing. A config carries more than the questions do: each party's mail domains, and the walls, people and aliases, all installed as written.
+`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, walled from each other). Copy it and edit it as a starting point for your own config. Its keys are `owner`, `zones`, `parties`, `walls`, `people`, `aliases`, and `allow-commands`, the last question, which is `true` unless the file says `false`, so a config run asks nothing. A config carries more than the questions do: each party's mail domains, and the walls, people and aliases, all installed as written.
 
 To allow those commands in a workspace already installed, because you answered no or installed before Garrick asked, run this from the folder Garrick came in. It writes the same rules and changes nothing else, and it overwrites neither file:
 

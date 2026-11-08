@@ -155,6 +155,13 @@ class LabelCases(unittest.TestCase):
         self.assertFalse(lib.named_together(self.root, self.ctx, {"acme", "lumen"}))
         self.assertEqual(self.got("Zones/Work/Both/Threads/T/Notes.md"), {"acme", "birch"})
 
+    def test_two_hats_never_meet_in_one_record(self):
+        self.assertIsNone(self.got("Zones/Work/Hats/Threads/T/x.md"))
+
+    def test_a_thread_folder_is_found_however_it_is_spelt(self):
+        self.assertEqual(self.got("Zones/Work/Low/threads/T/x.md"), {"acme", "birch"})
+        self.assertEqual(self.got("Zones/Work/Low/Threads/T/x.md"), {"acme", "birch"})
+
     def test_a_hub_party_can_be_a_list(self):
         write(self.root / "Zones" / "Work" / "Pair" / "Pair.md",
               project_hub("Work", "Pair", "").replace("zone: Work\n", "zone: Work\nparty: [acme, cedar]\n"))
@@ -204,7 +211,7 @@ class LabelCases(unittest.TestCase):
         self.assertIsNone(lib.labels(self.root, "Zones/Work/Todo.md", self.ctx))
 
     def test_the_rows_of_the_table_are_all_covered(self):
-        self.assertEqual(len(lib.wall_cases(CASES.read_text(encoding="utf-8"))["labels()"]), 27)
+        self.assertEqual(len(lib.wall_cases(CASES.read_text(encoding="utf-8"))["labels()"]), 29)
 
 
 if __name__ == "__main__":

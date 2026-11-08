@@ -51,11 +51,11 @@ A source marked `Recall` is Recall's case: Recall is not on `main`, so it is tes
 | d17 | near | ? | write | deny | labels that cannot be derived |
 | d18 | near | far | write | deny | material from a walled party the project lacks |
 | d19 | near | near | write | permit | material of the same party |
-| d20 | near | - | write | permit | material that names no party |
+| d20 | near | - | write | permit | material with no party is new text, so it carries nothing walled |
 | d21 | - | near | write | deny | a project with no party takes nothing: no label, no permit |
 | d22 | - | - | write | deny | a project with no party takes nothing, even nothing |
 | d23 | knowledge | near | write | deny | a Knowledge page takes only material with no party |
-| d24 | knowledge | - | write | permit | the same, with none |
+| d24 | knowledge | - | write | permit | the same: new text with no party goes into a Knowledge page |
 | d25 | near | knowledge | write | permit | Knowledge material quoted into a project |
 | d26 | near | ghost | write | deny | material labelled with a tag the table lacks cannot be placed |
 | d27 | other | near | write | deny | walled material into an open party's project |
@@ -116,6 +116,8 @@ Each row is a record in the fixture workspace; `Harbour` is a project of `far` w
 | l26 | a file in a project whose hub has `party: none` | none | `none` is a tag no table row holds: decide() denies it |
 | l27 | a Knowledge page with `tags: [near]` | knowledge | `tags:` is not a party key |
 | l28 | a file in a project whose hub names two parties as a list | both | `party:` takes one tag or a list |
+| l29 | a file in a thread whose note names `hat`, in a hub that names `hat2` | ? | one company under two hats never meets in one record |
+| l30 | a file in a thread folder spelt `threads` (lower case) whose note names `far` | near, far | the folder is found however it is spelt |
 
 ## Enforcement points
 
@@ -177,6 +179,13 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e57 | nurture | a link from a note of Both to a meeting page of `far` | permitted | the same, for a fix that writes a link |
 | e58 | scaffold | a hub or thread note that names `hat` and `hat2` | refused | one company under two hats never meets on one note |
 | e59 | scaffold | a second walled party put on a hub | asked | "Maple's and Harbour's material will meet in this project", and a yes |
+| e60 | scaffold | a thread of `hat` moved into a project of `hat2` | refused | a walled party the scope lacks is `deny`, before any question |
+| e61 | scaffold | `hat` put on a thread whose hub names `hat2` | refused | the union of a hub and its thread holds two hats |
+| e62 | check | a hub naming `hat2` and a thread naming `hat` | refused | the same, on every note where the union holds it |
+| e63 | check | a hub that links its own thread note, where the thread adds `far` | permitted | the hub lists its threads: a link to the note is navigation |
+| e64 | check | a hub that links another file of that thread | refused | only the thread note itself is navigation |
+| e65 | scaffold | `party --tag` flipping a walled party to open, without a yes | asked | it names the files it releases and writes nothing |
+| e66 | labels | a thread's party changed, then another file of its project | permitted | a change to one thread changes no other file's labels |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
 | e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; a row decide() does not admit is not in the scope index, so it ranks nothing;  ranking statistics computed over walled rows |

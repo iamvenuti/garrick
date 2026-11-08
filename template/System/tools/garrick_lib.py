@@ -1523,6 +1523,18 @@ def meeting_labels(fm: dict) -> Optional[frozenset]:
 
 def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
            cache: Optional[dict] = None) -> Optional[frozenset]:
+    """The parties a record is written for (see _labels), or None when they cannot be derived, or when they hold
+    two parties that share a name: one company under two hats never meets in one record."""
+    got = _labels(root, path, context, cache)
+    if got is not None and len(got) > 1:
+        context = context if context is not None else load_context(root)
+        if hats_of(context, got):
+            return None
+    return got
+
+
+def _labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
+            cache: Optional[dict] = None) -> Optional[frozenset]:
     """The parties a record is written for, derived here and nowhere else, or
     None when they cannot be derived (decide() reads None as no label).
 
@@ -1605,8 +1617,8 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         if not found:
             return None                         # a hub that names no party labels nothing
         out = set(found)
-        if len(parts) >= 5 and parts[3] == "Threads":      # a thread's file adds its thread note's parties, no other thread's
-            got = _labels_of(parse_frontmatter(project / "Threads" / parts[4] / (parts[4] + ".md")))
+        if len(parts) >= 5 and parts[3].casefold() == "threads":      # a thread's file adds its thread note's parties, no other thread's
+            got = _labels_of(parse_frontmatter(project / parts[3] / parts[4] / (parts[4] + ".md")))
             if got is None:
                 return None
             out |= got

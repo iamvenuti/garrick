@@ -1968,8 +1968,9 @@ def check_projects(ws: Workspace) -> List[Finding]:
             if tag not in ws.context["parties"]:
                 out.append(Finding(ERROR, "projects", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Project %s names an unknown party" % project.name))
-        for pair in hats_of(ws.context, tags):
-            out.append(Finding(ERROR, "projects", r, "`party` names %s and %s, one company under two hats; a note never names both" % pair,
+        every = set(tags).union(*(note_party_tags(note_frontmatter(ws, t / (t.name + ".md"))) for t in threads))
+        for pair in hats_of(ws.context, every):
+            out.append(Finding(ERROR, "projects", r, "`party` and its threads' name %s and %s, one company under two hats; a note never names both" % pair,
                                "Project %s names both hats of one company" % project.name))
         text = read_text(hub) or ""
         if not threads and not own_resume(text):
@@ -2083,8 +2084,8 @@ def check_threads(ws: Workspace) -> List[Finding]:
             for tag in sorted(ttags - set(ws.context["parties"])):
                 out.append(Finding(ERROR, "threads", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Thread %s names an unknown party" % spoken))
-            for pair in hats_of(ws.context, ttags):
-                out.append(Finding(ERROR, "threads", r, "`party` names %s and %s, one company under two hats; a note never names both" % pair,
+            for pair in hats_of(ws.context, ttags | ptags):
+                out.append(Finding(ERROR, "threads", r, "`party` and the project's name %s and %s, one company under two hats; a note never names both" % pair,
                                    "Thread %s names both hats of one company" % spoken))
             if "none" in ttags:
                 out.append(Finding(ERROR, "threads", r,
@@ -4974,7 +4975,7 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
                 continue  # holds no run: nobody asks what it is written for
             parts = path.relative_to(project).parts
             ftags = set(ptags)
-            if len(parts) > 2 and parts[0] == "Threads":
+            if len(parts) > 2 and parts[0].casefold() == "threads":
                 if parts[1] not in thread_tags:
                     note = project / "Threads" / parts[1] / (parts[1] + ".md")
                     thread_tags[parts[1]] = party_tags(ws, note)
@@ -5164,7 +5165,7 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
     tags = set(ptags) | zone_party(ws, project, ptags)
     parts = Path(rel(ws, path)).parts
     where = project.name
-    if len(parts) > 5 and parts[3] == "Threads":
+    if len(parts) > 5 and parts[3].casefold() == "threads":
         thread = parts[4]
         note = project / "Threads" / thread / (thread + ".md")
         tags |= note_party_tags(note_frontmatter(ws, note))
@@ -5612,7 +5613,7 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
         return set()        # a hub that names no party labels nothing under it: never its thread's
     tags |= zone_party(ws, project, tags)
     parts = path.relative_to(project).parts
-    if len(parts) > 2 and parts[0] == "Threads":
+    if len(parts) > 2 and parts[0].casefold() == "threads":
         tags |= party_tags(ws, project / "Threads" / parts[1] / (parts[1] + ".md"))
     return tags
 
@@ -5690,7 +5691,7 @@ def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
     rel_parts = hit.relative_to(project).parts
     if depth > len(rel_parts) or (len(rel_parts) == 1 and rel_parts[0].lower() == project.name.lower() + ".md"):
         return True
-    if len(rel_parts) >= 3 and rel_parts[0] == "Threads" and (
+    if len(rel_parts) >= 3 and rel_parts[0].casefold() == "threads" and (
             depth >= len(rel_parts) - 1 or Path(rel_parts[-1]).stem.lower() == rel_parts[1].lower()):
         if ws.thread_owners is None:
             ws.thread_owners = {}
@@ -6994,6 +6995,9 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                 if owner is None:
                     continue  # not a project's: a wiki page or System's, which the meeting check reads
                 other = owner[0]
+                if verb == "links" and other == project and path == project / (project.name + ".md") \
+                        and hit.parent.parent == project / "Threads" and hit.name == hit.parent.name + ".md":
+                    continue        # the hub lists its own threads: a link to a thread note is navigation, nothing else is
                 pair = sorted(blocked(ws.context, tags, project_file_tags(ws, other, hit)))
                 if pair:
                     far_hits.append((hit, other, pair[0]))
@@ -7846,7 +7850,7 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
         project = owner[0]
         notes = [project / (project.name + ".md")]
         inner = path.relative_to(project).parts if project in path.parents else ()
-        if len(inner) > 2 and inner[0] == "Threads":
+        if len(inner) > 2 and inner[0].casefold() == "threads":
             notes.append(project / "Threads" / inner[1] / (inner[1] + ".md"))
         for note in notes:
             if note not in have and note.is_file():
@@ -7925,7 +7929,7 @@ def notes_disagree(ws: Workspace, project: Path, hit: Path) -> bool:
     """Do the hub or the thread note a file of `project` is under carry `party:` and `parties:` that disagree?"""
     notes = [project / (project.name + ".md")]
     parts = hit.relative_to(project).parts
-    if len(parts) > 2 and parts[0] == "Threads":
+    if len(parts) > 2 and parts[0].casefold() == "threads":
         notes.append(project / "Threads" / parts[1] / (parts[1] + ".md"))
     for note in notes:
         fm = note_frontmatter(ws, note)
@@ -7989,7 +7993,7 @@ def changed_party_notes(ws: Workspace, repo: Path, staged_texts: List[Tuple[Path
         inner = path.relative_to(project).parts
         if len(inner) == 1 and inner[0] == project.name + ".md":
             scope = project
-        elif len(inner) == 3 and inner[0] == "Threads" and inner[2] == inner[1] + ".md":
+        elif len(inner) == 3 and inner[0].casefold() == "threads" and inner[2] == inner[1] + ".md":
             scope = project / "Threads" / inner[1]
         else:
             continue

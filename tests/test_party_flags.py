@@ -72,6 +72,14 @@ class FlipTest(Base):
         self.assertIn("Zones/Work/Reed/Threads/Notes/Deal.md", said)
         self.assertIn("refused until each is fixed or its project names the party", said)
 
+    def test_walling_a_party_says_when_the_check_could_not_run(self):
+        (self.root / "System" / "tools" / "check.py").unlink()
+        self.run_scaffold("party", "--tag", "acme", "--open", "--yes")
+        code, _, err = self.run_scaffold("party", "--tag", "acme", "--walled")
+        self.assertEqual(1, code)
+        self.assertIn("could not run", err)
+        self.assertIn("| `acme` | yes |", self.context())             # the flag is written, and the user told to run the check
+
     def test_the_two_hats_cannot_be_opened(self):
         code, _, err = self.run_scaffold("party", "--tag", "lumen", "--open", "--yes")
         self.assertEqual(1, code)
@@ -94,10 +102,21 @@ class LabelTest(Base):
         self.assertEqual(1, code)
         self.assertIn("one company under two hats", err)
 
+    def test_two_hats_cannot_meet_through_a_hub_and_its_thread(self):
+        self.run_scaffold("label", "--zone", "Work", "--project", "Northwind", "--thread", "Pricing", "--add", "lumen-adv", "--yes")
+        code, _, err = self.run_scaffold("label", "--zone", "Work", "--project", "Northwind", "--add", "lumen", "--yes")
+        self.assertEqual(1, code)
+        self.assertIn("one company under two hats", err)
+        self.assertNotIn("lumen", (self.work / "Northwind" / "Northwind.md").read_text())
+
+    def test_the_check_reports_a_hat_pair_across_a_hub_and_its_thread(self):
+        found = [f for f in check.run_checks(self.root) if "one company under two hats" in f.message]
+        self.assertEqual({"projects", "threads"}, {f.check for f in found})        # the Hats project: on its hub and its thread
+
     def test_the_check_refuses_a_hub_that_names_both_hats(self):
         hub = self.work / "Northwind" / "Northwind.md"
         hub.write_text(hub.read_text().replace("party: acme", "party: [lumen, lumen-adv]"), encoding="utf-8")
-        found = [f for f in check.run_checks(self.root) if f.check == "projects" and "two hats" in f.message]
+        found = [f for f in check.run_checks(self.root) if f.check == "projects" and "two hats" in f.message and "Northwind" in f.path]
         self.assertEqual(1, len(found))
 
     def test_taking_a_party_off_names_the_files_and_writes_only_on_yes(self):

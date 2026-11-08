@@ -111,7 +111,7 @@ class SkillsTest(unittest.TestCase):
         text = (SKILLS / "interview" / "SKILL.md").read_text(encoding="utf-8")
         for needle in ("one question at a time", "Whose confidences you hold", "System/interviews/",
                        "## Proposal", "What I still don't know", "## On a yes", "Never push",
-                       "never guesses a wall", "who and what kind"):
+                       "never guesses a flag", "who and what kind"):
             self.assertIn(needle.lower(), text.lower(), needle)
         self.assertEqual({"interview me", "get to know me", "ask me about my work",
                           "help me set up my workspace", "where do i start"}, triggers(SKILLS / "interview"))

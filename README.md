@@ -16,7 +16,9 @@ Behind the home, Garrick holds three things in one place: what you're working on
 
 ![Context is all you need. Articles and reports are ingested into Knowledge, a graph of what you read, linked by topic. Recordings and mail are ingested into Meetings, a graph of what was said, linked by who and what. Your files sit in a folder tree, what you're working on by subject: Work and Personal, projects inside, sources and deliverables inside a project. Your assistant draws on all three and starts already set up. Two graphs and a tree, so you never set up the same context twice.](docs/assets/two-graphs-and-a-tree.png)
 
-When some of your work comes from people whose confidences you hold, such as two clients or a client and your employer, you can declare walls between them. The agent gets rules for what may not cross, and every commit of your work is checked against them.
+When some of your work comes from people whose confidences you hold, such as two clients or a client and your employer, you mark a party as walled. The agent gets rules for what may not cross, and every commit of your work is checked against them.
+
+> Every party you deal with is either **walled** or **open**. A walled party's material goes only into work that names that party. An open party's material may go anywhere. A file belongs to the parties of its zone and of the note above it, the thread's or the project's. Nothing else to declare: a project is walled when one of its parties is, a conversation with two walled parties waits for you to say where it goes, and a record with no label is used nowhere.
 
 Your folders stay as they are. Garrick reads them and writes nothing there unless you ask it to move the files in. Its own record is plain Markdown in folders on your Mac, and updates keep your edits. Claude does the work underneath. Codex works too, in its app or a terminal, without the home's Continue.
 
@@ -50,17 +52,17 @@ Already set up? [Your first useful session](docs/first-session.md) takes one con
 
 - **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving or when you're interrupted, and “open [thread]” or “back” when you return.
 - **Two kinds of memory.** Meetings keeps conversations and correspondence with their sources. Knowledge keeps published material you read. [How Garrick keeps context](docs/context.md) shows how a conversation, a correction and an old page are each handled.
-- **Declared information boundaries.** You choose which pairs of parties must be kept apart. The assistant checks those rules before using a conversation for a project. In supported text files, a commit check catches links and names from across a wall, and wording copied from a walled meeting, its transcript or another party's project files.
+- **Walled parties.** You mark a party as walled, and its material goes only into work that names it. The assistant checks those rules before using a conversation for a project. In supported text files, a commit check catches links and names of a walled party the project does not name, and wording copied from a walled meeting, its transcript or another project's files.
 - **Files you own.** Notes and history stay in the workspace. Claude Code and Codex can read the same record; their private chat history and app settings are separate.
 - **Short, speakable requests.** Use your app's voice features or dictation. Garrick supplies the naming and reply conventions; the app supplies the microphone and voice connection.
 
-**What the walls mean:** they are rules for the assistant, backed by limited checks before a commit. Separate folders do not create a wall automatically. A clean paraphrase can pass, and so can wording moved rather than copied from one party's note to another's. Generated Word, PowerPoint and PDF contents are outside the text scan. The hook does not block chat replies, initial file writes or sending. Review anything you intend to share. [Principles and limits](docs/principles.md#what-the-check-covers) explain the scope.
+**What the walls mean:** they are rules for the assistant, backed by limited checks before a commit. Separate folders do not create a wall; a walled party does. A clean paraphrase can pass, and so can wording moved rather than copied from one party's note to another's. Generated Word, PowerPoint and PDF contents are outside the text scan. The hook does not block chat replies, initial file writes or sending. Review anything you intend to share. [Principles and limits](docs/principles.md#the-threat-model) explain who the check is for and what it reads.
 
 ## Who it's for
 
 People who already use Claude or Codex every day and run several lines of work at once: a few projects, partners and internal asks, put down and picked up all day. If you have one line of work, your assistant's own project memory is probably enough.
 
-It matters most when that work holds other people's confidences: advisors, account managers, people working with partners under NDA, and members of a team who handle separate internal projects. For two internal projects to have a wall, give them separate party tags and declare the pair, even if both belong to one company.
+It matters most when that work holds other people's confidences: advisors, account managers, people working with partners under NDA, and members of a team who handle separate internal projects. For two internal projects to have a wall, give each its own party tag and mark both as walled, even if both belong to one company.
 
 At work, use the assistant and account your employer approves. Files stay on your disk, but content the assistant reads goes to its provider. Garrick does not control the provider's retention or training settings.
 

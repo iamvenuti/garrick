@@ -1967,6 +1967,9 @@ def check_projects(ws: Workspace) -> List[Finding]:
             if tag not in ws.context["parties"]:
                 out.append(Finding(ERROR, "projects", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Project %s names an unknown party" % project.name))
+        for pair in hats_of(ws.context, tags):
+            out.append(Finding(ERROR, "projects", r, "`party` names %s and %s, one company under two hats; a note never names both" % pair,
+                               "Project %s names both hats of one company" % project.name))
         text = read_text(hub) or ""
         if not threads and not own_resume(text):
             out.append(Finding(WARNING, "projects", rel(ws, project),
@@ -2079,6 +2082,9 @@ def check_threads(ws: Workspace) -> List[Finding]:
             for tag in sorted(ttags - set(ws.context["parties"])):
                 out.append(Finding(ERROR, "threads", r, "`party` %s is not a tag in the Parties table" % tag,
                                    "Thread %s names an unknown party" % spoken))
+            for pair in hats_of(ws.context, ttags):
+                out.append(Finding(ERROR, "threads", r, "`party` names %s and %s, one company under two hats; a note never names both" % pair,
+                                   "Thread %s names both hats of one company" % spoken))
             if "none" in ttags:
                 out.append(Finding(ERROR, "threads", r,
                                    "`party` is `none`; a thread says whose it is, and `none` is nobody, so no label",
@@ -7884,6 +7890,7 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
         if path not in seen:
             seen.add(path)
             files.append((path, text, project))
+    out.extend(dropped_party_findings(ws, repo, staged_texts))
     # The wording check asks only after the runs of words these files hold:
     # the index is built for those alone, from the cache where it can be.
     if not ws.quick:
@@ -7966,14 +7973,13 @@ def staged_other_texts(repo: Path) -> List[Tuple[Path, str]]:
     return out
 
 
-def recheck_after_party_change(ws: Workspace, repo: Path, staged_texts: List[Tuple[Path, str]]):
-    """(path, text, (project, hub fields)) for every file already committed in a project, or in a thread, whose hub
-    or thread note is staged with other parties than HEAD holds."""
+def changed_party_notes(ws: Workspace, repo: Path, staged_texts: List[Tuple[Path, str]]):
+    """(path, scope folder, owner, parties HEAD holds, parties staged) for each hub or thread note staged with other
+    parties than HEAD holds."""
     staged = _staged_raw(repo)
     if staged is None:
         return []
-    top_path = staged[0]
-    out = []
+    top_path, out = staged[0], []
     for path, text in staged_texts:
         owner = project_of(ws, path)
         if owner is None:
@@ -7989,22 +7995,52 @@ def recheck_after_party_change(ws: Workspace, repo: Path, staged_texts: List[Tup
         before = _git_bytes(["show", "HEAD:" + path.relative_to(top_path).as_posix()], top_path)
         if before is None:
             continue
-        old = {strip_tag(t) for t in as_list(parse_frontmatter_text(before.decode("utf-8", errors="replace")).get("party"))}
-        old |= {strip_tag(t) for t in as_list(parse_frontmatter_text(before.decode("utf-8", errors="replace")).get("parties"))}
-        new = {strip_tag(t) for t in as_list(parse_frontmatter_text(text).get("party"))}
-        new |= {strip_tag(t) for t in as_list(parse_frontmatter_text(text).get("parties"))}
-        if old == new:
-            continue
+        old_fm, new_fm = parse_frontmatter_text(before.decode("utf-8", errors="replace")), parse_frontmatter_text(text)
+        old, new = note_party_tags(old_fm), note_party_tags(new_fm)
+        if old != new:
+            out.append((path, scope, owner, old, new))
+    return out
+
+
+def recheck_after_party_change(ws: Workspace, repo: Path, staged_texts: List[Tuple[Path, str]]):
+    """(path, text, (project, hub fields)) for every file already committed in a project, or in a thread, whose hub
+    or thread note is staged with other parties than HEAD holds."""
+    top_path = (_staged_raw(repo) or (None,))[0]
+    out = []
+    for _, scope, owner, _, _ in changed_party_notes(ws, repo, staged_texts):
         listed = _git_bytes(["ls-files", "-z", "--", scope.relative_to(top_path).as_posix()], top_path)
         for name in (listed.decode("utf-8", errors="replace").split("\0") if listed else []):
             if not name:
                 continue
-            target = top_path / name
             data = _git_bytes(["show", ":" + name], top_path)
             text = text_of(data, strict=True) if data and len(data) <= MAX_STAGED_BYTES else None
-            if text is None:
-                continue
-            out.append((target, text, owner))
+            if text is not None:
+                out.append((top_path / name, text, owner))
+    return out
+
+
+def dropped_party_findings(ws: Workspace, repo: Path, staged_texts: List[Tuple[Path, str]]) -> List[Finding]:
+    """A party taken off a hub or thread note is a release of history: scaffold.py `label --remove` names the files
+    and records the yes. A drop with no record is refused, and any drop puts every project of every zone under the new
+    labels, since copies of the project's material may sit in a zone this commit is not in."""
+    done = set()
+    try:
+        for line in (ws.root.joinpath("System", "generated", "label-changes.jsonl").read_text(encoding="utf-8")).splitlines():
+            row = json.loads(line)
+            done |= {(row.get("note"), t) for t in row.get("dropped", [])}
+    except (OSError, ValueError):
+        pass
+    out, any_drop = [], False
+    for path, _, _, old, new in changed_party_notes(ws, repo, staged_texts):
+        for tag in sorted(old - new):
+            any_drop = True
+            if (rel(ws, path), tag) not in done:
+                out.append(Finding(ERROR, "walls", rel(ws, path),
+                                   "drops %s from its parties without the confirmation scaffold.py `label --remove` records, "
+                                   "so the files it releases were never named; put it back, or run that command" % tag,
+                                   "A party was taken off a note without a confirmation"))
+    if any_drop:
+        out += [f for f in check_walls(ws) if f.severity == ERROR and f not in out]
     return out
 
 

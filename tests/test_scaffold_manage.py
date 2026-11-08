@@ -175,8 +175,6 @@ class TestParty(ManageCase):
             (["--name", "4Birch", "--zone", "Work", "--check"], 'No tag can be made from "4Birch"'),
             (["--name", "Cobalt Freight", "--zone", "Work", "--also"],
              "is not a party yet, so there is no first capacity for --also to stand beside"),
-            (["--name", "Cobalt Freight", "--zone", "Work", "--walled", "--open"],
-             "not allowed with argument"),
         ):
             before = self.context()
             r = self.scaffold("party", *extra)

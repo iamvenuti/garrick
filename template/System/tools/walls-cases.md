@@ -175,6 +175,8 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e55 | intake | file an item of `near` and `far` into Both | permitted | the project names both |
 | e56 | scaffold | a thread of `near` and `far` moved into Both | permitted | the same, for a move |
 | e57 | nurture | a link from a note of Both to a meeting page of `far` | permitted | the same, for a fix that writes a link |
+| e58 | scaffold | a hub or thread note that names `hat` and `hat2` | refused | one company under two hats never meets on one note |
+| e59 | scaffold | a second walled party put on a hub | asked | "Maple's and Harbour's material will meet in this project", and a yes |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
 | e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; a row decide() does not admit is not in the scope index, so it ranks nothing;  ranking statistics computed over walled rows |

@@ -169,6 +169,13 @@ class EnforcementPoints(unittest.TestCase):
         finally:
             context.write_text(before, encoding="utf-8")
 
+    def hats_refused(self):
+        try:
+            scaffold.check_party(self.root, "lumen,lumen-adv", "Work")
+        except scaffold.Refusal:
+            return "refused"
+        return "permitted"
+
     def scaffold_none(self):
         args = type("A", (), dict(name="None", zone="Work", what="x", also=None, walled=False, open=False,
                                   check=False, spoken=None))()
@@ -309,6 +316,8 @@ class EnforcementPoints(unittest.TestCase):
             "e57": lambda: "refused" if __import__("nurture").across_wall(
                 __import__("nurture").Ctx(self.root), "Zones/Work/Both/Threads/T/Notes.md",
                 "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md") else "permitted",
+            "e58": self.hats_refused,
+            "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),
             "e22": lambda: recall({"acme"}, {"birch"}),

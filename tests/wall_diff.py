@@ -42,11 +42,20 @@ FILES = ("check.py", "garrick_lib.py")
 def legacy_walls(root: Path) -> None:
     """Add to the fixture's System/context.md the Walls table a release before the flag model reads: a row for
     every pair of walled parties, and for no other."""
-    sys.path.insert(0, str(TOOLS))
-    import garrick_lib
     path = Path(root) / "System" / "context.md"
-    parties = garrick_lib.load_context(root)["parties"]
-    walled = sorted(t for t, e in parties.items() if e["walled"])
+    walled, header = [], None
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("|"):
+            header = None
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if header is None:
+            header = [c.lower() for c in cells]
+        elif "tag" in header and "walled" in header and not set(line) <= set("|-: "):
+            tag = cells[header.index("tag")].strip("`")
+            if cells[header.index("walled")].lower() == "yes":
+                walled.append(tag)
+    walled = sorted(walled)
     rows = ["| `%s` | `%s` | pair |" % (a, b) for i, a in enumerate(walled) for b in walled[i + 1:]]
     path.write_text(path.read_text(encoding="utf-8").rstrip("\n") + "\n\n## Walls\n\n| Between | And | Why |\n|---|---|---|\n"
                     + "\n".join(rows) + "\n", encoding="utf-8")

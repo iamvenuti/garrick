@@ -1525,8 +1525,8 @@ def walls_migration(root, answer, apply_changes=True, as_json=False):
     """The walls step (migrate_walls.py): when System/context.md has no Walled column, print the flags it
     proposes and every flow whose verdict changes; write on a yes. `answer` is True for --yes, False when
     nobody can answer. Returns (text, written, data); text is "" when nothing is pending."""
-    import migrate_walls        # beside this file, from the same Garrick
     lib = install.lib()
+    import migrate_walls        # System/tools of this Garrick, which install.lib() has put on the path
     study = migrate_walls.study(root, lib)
     if study is None:
         return "", False, None
@@ -1541,8 +1541,8 @@ def walls_migration(root, answer, apply_changes=True, as_json=False):
         out = []
         answer = input("Write these flags and take out the Walls table? [y/N] ").strip().lower() in ("y", "yes")
     if not answer:
-        out.append("Nothing was written. The Walls table stays; until the flags are written every party is read "
-                   "as walled and the check warns. Answer with --yes once you have read the changes above.")
+        out.append("Nothing was written. The Walls table stays and keeps "
+                   "deciding every flow as before; the check warns until the flags are written. Answer with --yes once you have read the changes above.")
         return "\n".join(out), False, data
     path = root / "System" / "context.md"
     text = migrate_walls.rewrite(path.read_text(encoding="utf-8"), study["prop"])

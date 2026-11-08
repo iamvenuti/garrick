@@ -80,11 +80,11 @@ A file you changed that Garrick hasn't changed stays as you left it and isn't li
 
 Before 0.60.0 a workspace kept a list of pairs of parties in `System/context.md`. From 0.60.0 each party has one flag, **Walled**, in the Parties table: a walled party's material goes only into work that names it, and an open party's goes anywhere. An update that finds a Parties table with no Walled column does this once, and shows you before it writes:
 
-1. It proposes the flags: every party that stood in a pair is walled, every other one open, and a party of the Projects zone, which holds your own ventures, open. It proposes each zone's *Party* and *New parties* columns the same way.
+1. It proposes the flags: every party that stood in a pair is walled, every other one open, and a party of the Projects zone, which holds your own ventures, open. It proposes each zone's *Party* as the party named by most of the zone's projects, walled, and *New parties* as walled when most of the zone's parties are.
 2. It prints what that changes. It does not compare parties; it runs the old rule and the new one over every record and every project in your workspace and prints each flow whose answer differs, grouped as refused before and allowed after, allowed before and refused after, and asked about. A flow that only exists for a record with two walled parties on it shows up here and in no table of parties.
 3. It writes only on your yes. `--apply --yes` answers for a scripted update, and at a terminal it asks. A run with nobody to answer prints the changes and writes nothing. On a yes it writes the columns, takes out the old list of pairs, and runs the walls check over the whole workspace, naming what the flags now refuse that was committed before.
 
-Until you answer, the workspace's check warns, and every party is read as walled: the new code can only refuse more than the old, never less. A second run finds nothing to do.
+Until you answer, the old list of pairs stays in force and decides every flow as it did before, so an update you did not answer changes no verdict; the workspace's check warns until the flags are written. A second run finds nothing to do.
 
 ## Your rules, and Garrick's
 

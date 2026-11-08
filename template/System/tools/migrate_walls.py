@@ -56,7 +56,7 @@ def legacy_pairs(root, lib):
 def legacy_walled(context, tag_a, tag_b):
     if not tag_a or not tag_b or tag_a == tag_b:
         return False
-    return frozenset((tag_a, tag_b)) in context.get("walls", set())
+    return frozenset((tag_a, tag_b)) in (context.get("walls") or context.get("pending") or set())
 
 
 def _tags(value):
@@ -117,6 +117,14 @@ def legacy_decide(scope, labels, action, context, lib):
     if legacy_crossings(context, theirs) or any(lib.always_asked(context, t) for t in theirs):
         return "confirm"
     return "permit"
+
+
+def legacy_blocked(context, scope, labels):
+    """The tags in `labels` the old rule keeps out of a record whose parties are `scope`: those with a pair
+    against one of them, and those paired with another tag of `labels`."""
+    held, theirs = _tags(scope), _tags(labels)
+    pairs = {t for t in theirs for s in held if legacy_walled(context, t, s)}
+    return pairs | {t for t in theirs for o in theirs if legacy_walled(context, t, o)}
 
 
 def legacy_project_labels(root, lib, parts, cache):
@@ -194,27 +202,21 @@ def propose(root, lib, ctx):
     zones = list(ctx["zones"]) or sorted(projects)
     zone_party, zone_default = {}, {}
     for zone in zones:
-        fits = []
-        for tag, row in parties.items():
-            if not flags.get(tag):
-                continue
-            where = {row.get("zone", "")} if row.get("zone") else set()
-            for z, group in projects.items():
-                for hub, threads in group.values():
-                    if tag in (hub or set()) or any(tag in (t or set()) for t in threads.values()):
-                        where.add(z)
-            others = [t for t, r in parties.items() if flags.get(t) and r.get("zone") and r["zone"] != zone
-                      and r["zone"].casefold() != zone.casefold()]
-            if {w.casefold() for w in where} == {zone.casefold()} \
-                    and all(legacy_walled({"walls": pairs}, tag, o) for o in others):
-                fits.append(tag)
-        if len(fits) == 1:
-            zone_party[zone] = fits[0]
-        elif fits:
-            zone_party[zone] = ""
-            notes.append("zone %s: several parties fit as its party (%s); left empty." % (zone, ", ".join(sorted(fits))))
-        else:
-            zone_party[zone] = ""
+        # a zone's party is the one named in the `party:` of more than half of its project hubs (the Projects zone,
+        # which holds ventures, names none); it is proposed walled, since an open zone party labels nothing that matters
+        hubs = [hub or set() for hub, _ in projects.get(zone, {}).values()]
+        count = {}
+        for hub in hubs:
+            for tag in hub:
+                count[tag] = count.get(tag, 0) + 1
+        top = [t for t, n in count.items() if n * 2 > len(hubs) and t in parties]
+        pick = top[0] if len(top) == 1 and zone.casefold() != OPEN_ZONE else ""
+        zone_party[zone] = pick
+        if pick and not flags.get(pick):
+            flags[pick] = True
+            notes.append("`%s` is the party of zone %s (named by most of its projects): proposed walled, as its "
+                         "material stays in the zone." % (pick, zone))
+    for zone in zones:
         mine = [t for t, r in parties.items() if (r.get("zone") or "").casefold() == zone.casefold()]
         zone_default[zone] = "walled" if not mine or sum(flags[t] for t in mine) * 2 > len(mine) else "open"
     for group in projects.values():
@@ -228,7 +230,7 @@ def propose(root, lib, ctx):
 
 def proposed_context(ctx, prop):
     """The context dict as load_context() would give it once the proposal is written."""
-    new = dict(ctx)
+    new = dict(ctx, pending=None)
     new["parties"] = {t: dict(r, walled=prop["flags"][t], flag="yes" if prop["flags"][t] else "no")
                       for t, r in ctx["parties"].items()}
     new["zone_parties"] = {z: t for z, t in prop["zone_party"].items() if t}

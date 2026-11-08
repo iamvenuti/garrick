@@ -1909,18 +1909,23 @@ def party_flag(ws: Path, req: dict):
             before = context.read_bytes()
         except OSError:
             raise Refused("System/context.md is missing")
-        said = scaffold(ws, "party", "--tag", tag, "--" + flag, *(["--yes"] if req.get("yes") else []))
+        try:
+            said = scaffold(ws, "party", "--tag", tag, "--" + flag, *(["--yes"] if req.get("yes") else []))
+        except BaseException:
+            # the command may write and then refuse (it could not run its check): the context goes back as it was
+            try:
+                if context.read_bytes() != before:
+                    context.write_bytes(before)
+            except OSError:
+                context.write_bytes(before)
+            raise
         try:
             after = context.read_bytes()
         except OSError:
             after = b""
         if after == before:
             return {"say": said_all(said), "ask": not req.get("yes") and "--yes" in said, "written": False}
-        code, why = committing(ws, "System/context.md", "Party %s: %s" % (tag, flag))
-        if code != 0:
-            context.write_bytes(before)
-            git(ws, "reset", "-q", "--", "System/context.md", timeout=10)
-            raise Refused("not committed, so nothing changed: %s" % why)
+        commit(ws, context, before, "Party %s: %s" % (tag, flag), wall=wall_refusal(ws))
     return {"say": said_all(said), "ask": False, "written": True}
 
 

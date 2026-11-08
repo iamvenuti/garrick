@@ -1517,6 +1517,18 @@ class TestPartyFlag(ActionCase):
         self.assertEqual(before, self.context.read_bytes())
         self.assertEqual(("start", ""), self.head())
 
+    def test_a_command_that_writes_and_then_refuses_puts_the_context_back(self):
+        (self.root / "System" / "tools" / "scaffold.py").write_text(
+            "import sys\nfrom pathlib import Path\n"
+            "p = Path(sys.argv[2]) / 'System' / 'context.md'\n"
+            "p.write_text(p.read_text() + '\\nhalf done\\n')\n"
+            "print('the check could not run', file=sys.stderr)\nsys.exit(1)\n")
+        before = self.context.read_bytes()
+        with self.assertRaisesRegex(pa.Refused, "the check could not run"):
+            self.act(verb="party-flag", tag="acme", flag="open", yes=True)
+        self.assertEqual(before, self.context.read_bytes())
+        self.assertEqual(("start", ""), self.head())
+
 
 class TestFlag(ActionCase):
     """The actions were a preview, `page-actions`; released, they need no flag."""

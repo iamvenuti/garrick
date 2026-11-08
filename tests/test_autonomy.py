@@ -171,7 +171,7 @@ STILL_STOPS = [
         "the party is not resolved",
         "A mail from personal webmail, or one carrying parties from two zones.",
         "ways in",
-        ["When the addresses do not settle it, or put both sides of a wall on one mail, ask."],
+        ["When the addresses do not settle it, or put two walled parties on one mail, ask."],
     ),
     case(
         "the party is not resolved, in the skill that files it",

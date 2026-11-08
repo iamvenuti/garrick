@@ -1086,6 +1086,19 @@ class TestPendingKeepsTheOldRule(Case):
         self.assertNotIn("Zones/Work/Northwind/Threads/Pricing/Notes.md", found)
         self.assertEqual({"jo"}, set(lib.labels(self.root, "Zones/Personal/Garden/Threads/Beds/Notes.md", ctx)))
 
+    def test_a_public_meetings_page_reads_as_in_0591_while_pending(self):
+        page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260401-open-call.md"
+        page.parent.mkdir(parents=True, exist_ok=True)
+        page.write_text("---\ntitle: Open call\ntype: meeting\nzone: Work\nparties: [public]\n---\n\n# Open call\n")
+        ctx, got, lib = self.verdicts()
+        self.assertIsNotNone(ctx["pending"])
+        rel = "Wikis/Meetings/wiki/sources/260401-open-call.md"
+        label = lib.labels(self.root, rel, ctx)
+        self.assertIsNone(label)                        # v0.59.1: a conversation never names `public`
+        self.assertEqual(["deny", "deny", "confirm"],
+                         [lib.decide({"acme"}, label, a, ctx) for a in ("read", "write", "file")])
+        self.assertIsNone(lib.meeting_labels({"zone": "Work", "parties": ["public"]}, True))
+
     def test_a_context_with_flags_or_with_neither_table_is_never_pending(self):
         lib = self.lib()
         flagged = "## Parties\n\n| Party | What it is | Zone | Tag | Walled | Domains |\n|---|---|---|---|---|---|\n| A | x | Work | `a` | yes | |\n"

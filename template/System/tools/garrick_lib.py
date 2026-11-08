@@ -1447,7 +1447,8 @@ def mail_labels(context: dict, data: bytes) -> Tuple[Optional[frozenset], bool]:
     unknown or `none` makes them None. A mail with neither has none."""
     known = set(context.get("parties", {}))
     header = set(stamped_parties(data))
-    if header and (header - known or header & {"none"}):
+    reserved = {"none", "public"} if context.get("pending") is not None else {"none"}      # pending: as v0.59.1
+    if header and (header - known or header & reserved):
         return None, True
     domains = set()
     mail = parse_mail_bytes(data)
@@ -1546,13 +1547,14 @@ def _party_like_key(path: Path) -> bool:
     return bool(_PARTY_KEY_RE.search(block[1] if len(block) > 1 else text[:4000]))
 
 
-def meeting_labels(fm: dict) -> Optional[frozenset]:
+def meeting_labels(fm: dict, pending: bool = False) -> Optional[frozenset]:
     """The parties a Meetings page's frontmatter names, or None when they
     cannot all be stated: a finished page has a zone and a list of `parties:`; a
     person or entity page may have its `party:` alone; `party:` and `parties:`
-    that disagree read two ways, so neither."""
+    that disagree read two ways, so neither. While the migration is pending (`pending`), as v0.59.1 answered:
+    `public` is a project's choice, never a conversation's, so a page naming it has no labels."""
     got = _labels_of(fm)
-    if not got:
+    if not got or (pending and "public" in got):
         return None
     kind = str(fm.get("type") or "").strip().lower()
     if kind in ("person", "entity") and fm.get("parties") is None:
@@ -1569,7 +1571,7 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
     got = _labels(root, path, context, cache)
     if got is not None and len(got) > 1:
         context = context if context is not None else load_context(root)
-        if hats_of(context, got):
+        if context.get("pending") is None and hats_of(context, got):      # pending: v0.59.1 had no such rule
             return None
     return got
 
@@ -1620,7 +1622,8 @@ def _labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
     if parts[:3] == ("Wikis", "Meetings", "wiki"):
         if full.suffix != ".md" or not full.is_file():
             return None
-        return meeting_labels(parse_frontmatter(full))
+        context = context if context is not None else load_context(root)
+        return meeting_labels(parse_frontmatter(full), context.get("pending") is not None)
     if parts[:3] == ("Wikis", "Meetings", "raw"):
         key = ("cites", str(root))
         if key not in cache:

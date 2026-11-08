@@ -1102,7 +1102,7 @@ class TestJournal(ActionCase):
     def test_every_kind_of_refusal_line_is_read_as_the_walls_line(self):
         """0.59.0: a refusal ends with the fix of its own kind; the page reads each of them as the wall check's line."""
         import check
-        for message in ("names Acme Corp, or one of its people; a wall stands between birch and acme",
+        for message in ("names Acme Corp, or one of its people; acme is walled and this project does not name it",
                         "uses x, but the project has no party to check the walls against",
                         "names a different party on disk from the one staged; stage that change",
                         "uses x, an unfinished source (no zone or parties)",
@@ -1123,7 +1123,7 @@ class TestJournal(ActionCase):
         self.assertEqual({"park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add", "answer",
                           "later"}, set(requests))
         line = self.wall_line("Birch Entry/Threads/Market Sizing/Market Sizing.md",
-                              "names Acme Corp (`acme`), or one of its people; a wall stands between birch and acme")
+                              "names Acme Corp (`acme`), or one of its people; acme is walled and this project does not name it")
         self.assertTrue(pa.WALL_LINE.match(line), line)
         self.hook("cat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
         head = git(self.work, "rev-parse", "HEAD")

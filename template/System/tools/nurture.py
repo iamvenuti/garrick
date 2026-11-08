@@ -169,9 +169,8 @@ from garrick_lib import (  # noqa: E402
     parse_frontmatter_text,
     party_entities,
     strip_tag,
-    PUBLIC,
+    KNOWLEDGE,
     labels,
-    crossings,
     decide,
     workspace_root,
 )
@@ -484,10 +483,10 @@ def in_scope(item: Item, scopes: List[str]) -> bool:
 # The wall kind
 # ---------------------------------------------------------------------------
 
-WALL_RE = re.compile(r"a wall stands between (\S+) and (\S+?)[.;,]?$")
+WALL_RE = re.compile(r"(\S+) is walled and this (?:project|page) does not name it[.;,]?$")
 CROSS_ZONE_RE = re.compile(r"from zone (\S+?)[;,]|filed in zone (\S+?)[;,]")
 WALL_WORDS = ("repeats eight or more words", "shares eight or more words", "a Meetings page", "across a wall",
-              "which a wall keeps apart")
+              "one company in two hats")
 
 
 def claim_wall(ctx: Ctx, item: Item) -> bool:
@@ -496,10 +495,9 @@ def claim_wall(ctx: Ctx, item: Item) -> bool:
     m = WALL_RE.search(item.message)
     if item.check == "walls" or m or any(w in item.message for w in WALL_WORDS):
         if m:
-            item.wall = "%s and %s" % (m.group(1), m.group(2))
+            item.wall = m.group(1)
         else:
-            pair = re.search(r"names both (\S+) and (\S+),", item.message) or \
-                re.search(r"a (?:meeting|question) with (\S+), but is written for ([^,]+), across a wall", item.message)
+            pair = re.search(r"names both (\S+) and (\S+),", item.message)
             zone = CROSS_ZONE_RE.search(item.message)
             if pair:
                 item.wall = "%s and %s" % pair.groups()
@@ -507,16 +505,6 @@ def claim_wall(ctx: Ctx, item: Item) -> bool:
                 item.wall = "the %s zone" % (zone.group(1) or zone.group(2))
         item.message = ""          # never repeat the material, nor what matched it
         return True
-    if item.check == "threads" and "differs from the project's" in item.message:
-        m = re.search(r"`party` (.+) differs from the project's (.+)$", item.message)
-        if m:
-            a = [t.strip() for t in m.group(1).split(",")]
-            b = [t.strip() for t in m.group(2).split(",")]
-            hit = next(iter(crossings(ctx.context, a, b)), None)
-            if hit:
-                item.wall = "%s and %s" % hit
-                item.message = ""
-                return True
     return False
 
 
@@ -524,7 +512,7 @@ def say_wall(item: Item) -> str:
     if item.wall.startswith("the "):
         return "%s: material from %s, which a project uses only when asked" % (item.path, item.wall)
     if item.wall:
-        return "%s: the wall between %s" % (item.path, item.wall)
+        return "%s: the wall %s %s" % (item.path, "between" if " and " in item.wall else "around", item.wall)
     return "%s: %s" % (item.path, item.ear or "a wall finding")
 
 
@@ -719,9 +707,8 @@ def relink_fix(ctx: Ctx, item: Item, path: Path, target: str) -> Optional[dict]:
 
 
 def across_wall(ctx: Ctx, source: str, target: str) -> bool:
-    """Does a wall stand between the parties the note at `source`, in a
-    project, is written for and those of the note at `target`, both from the
-    workspace's top? A fix never writes a link that the wall check would
+    """Does a walled party stand on the note at `target` that the note at `source`, in a
+    project, is not written for, both from the workspace's top? A fix never writes a link that the wall check would
     refuse. A wiki page is not a project's, and the walls stand where
     material is used, so a link between two of them is not asked about."""
     parts = source.split("/")
@@ -729,9 +716,9 @@ def across_wall(ctx: Ctx, source: str, target: str) -> bool:
         return False
     ours, theirs = parties_at(ctx, source), parties_at(ctx, target)
     if target.split("/")[:2] == ["Wikis", "Knowledge"] and not theirs:
-        theirs = {PUBLIC}                  # published material, which crosses every wall
+        theirs = {KNOWLEDGE}               # published material, which crosses every wall
     # No label, no permit: a source with no party, a target with none or one the table lacks, is across a wall.
-    if not theirs or theirs - set(ctx.context.get("parties", {})) - {PUBLIC}:
+    if not theirs or theirs - set(ctx.context.get("parties", {})) - {KNOWLEDGE}:
         return True
     return decide(ours, theirs, "write", ctx.context) != "permit"
 
@@ -1257,7 +1244,7 @@ def sort_hits(ctx: Ctx, hits: list, scopes: List[str]) -> Tuple[list, List[Item]
             theirs = hit_parties(ctx, hit)
             if theirs is not None and not theirs and (hit.kind in ("memory", "context")
                                                       or rel.split("/")[:2] == ["Wikis", "Knowledge"]):
-                theirs = {PUBLIC}          # the user's own, and published material: read on every side of a wall
+                theirs = {KNOWLEDGE}       # the user's own, and published material: read on every side of a wall
             if theirs is None or decide(ours, theirs, "read", ctx.context) != "permit":
                 withheld = True
                 continue

@@ -60,10 +60,9 @@ from garrick_lib import (  # noqa: E402
     split_domains,
     stamp_parties,
     strip_tag,
-    PUBLIC,
     always_asked,
     labels,
-    crossings,
+    is_walled,
     decide,
     mail_labels,
     workspace_root,
@@ -77,7 +76,7 @@ BODY_LIMIT = 50_000  # characters of text `parse` gives; the file keeps the rest
 TEXT_EXTS = {".md", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".vtt", ".xml", ".yaml", ".yml"}
 SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd|aw|wg|sv|vs|tr|rif|r)\s*(?:\[\d+\])?\s*:\s*", re.I)
 KINDS = ("transcript", "mail", "file", "unreadable")
-WALL_REFUSAL = ("Refused: a wall stands between that project's party and the parties this came from. "
+WALL_REFUSAL = ("Refused: a party this came from is walled and that project does not name it. "
                 "Nothing was moved. Tell the user only this, word for word: \"A wall holds some "
                 "material back from this project, so I have not used it. Nothing was written.\"")
 
@@ -237,14 +236,14 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
     Personal webmail never names a party by itself. Addresses inside a message
     forwarded or quoted inline count like the rest. The hint says to ask when
     nothing matches, when a domain belongs to two parties, when two parties on
-    the mail are walled from each other, or when a party belongs to another
+    the mail are both walled, or when a party belongs to another
     zone. It never picks one side of a wall, and never says where the mail goes.
 
     The user's own addresses (the Me section of context.md) carry mail; they
     do not say whose it is. Their plus tags still count, but their domains
     never raise a question. The party an own address points to (an employer,
-    say) is added only when no wall stands between it and the parties the
-    other addresses found, or when they found none, and is listed under
+    say) is added only when it would not put a second walled party beside the
+    ones the other addresses found, or when they found none, and is listed under
     `own` either way. It is never added to a mail in another zone's inbox. So
     a mail forwarded from a work account is read by what was forwarded.
     """
@@ -257,17 +256,17 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
         local, _, domain = addr.rpartition("@")
         if "+" in local:
             tag = strip_tag(local.split("+", 1)[1])
-            if tag in ctx["parties"] and tag != PUBLIC and tag not in plus:
+            if tag in ctx["parties"] and tag not in plus:
                 plus.append(tag)
         if is_own_address(ctx, addr):
             if not is_webmail(domain):
-                own_tags += [t for t in parties_for_domain(ctx, domain) if t not in own_tags and t != PUBLIC]
+                own_tags += [t for t in parties_for_domain(ctx, domain) if t not in own_tags]
             continue
         if is_webmail(domain):
             if domain not in webmail:
                 webmail.append(domain)
             continue
-        tags = [t for t in parties_for_domain(ctx, domain) if t != PUBLIC]   # `public` is no party of a row
+        tags = parties_for_domain(ctx, domain)
         if tags:
             by_domain[domain] = tags
         elif domain and domain not in unknown:
@@ -288,14 +287,16 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
         elif not own_tags:
             ask.append("There is no address on it to go by.")
     found = sorted(parties)
-    own_added = [t for t in own_tags if t not in parties and not crossings(ctx, [t], found)
+    own_added = [t for t in own_tags if t not in parties
+                 and not (is_walled(ctx, t) and any(is_walled(ctx, f) for f in found))
                  and (not zone or (ctx["parties"][t].get("zone") or zone).strip() == zone)]
     parties |= set(own_added)
     parties_list = sorted(parties)
     if not parties_list and not ask:
         ask.append("Only your own addresses are on it, and they do not say whose it is.")
-    for a, b in crossings(ctx, found):
-        ask.append("%s and %s are both on it, and a wall stands between them." % (_name(ctx, a), _name(ctx, b)))
+    both = [t for t in found if is_walled(ctx, t)]
+    for a, b in zip(both, both[1:]):
+        ask.append("%s and %s are both walled, and both are on it." % (_name(ctx, a), _name(ctx, b)))
     for tag in parties_list:
         pzone = (ctx["parties"][tag].get("zone") or "").strip()
         if zone and pzone and pzone != zone:
@@ -660,7 +661,7 @@ def resolve_project(root: Path, project: Optional[str]) -> Tuple[Path, str, List
         raise Refusal("%s has no project hub note, %s.md." % (_rel(root, p), p.name))
     got = labels(root, p)                 # one derivation: the hub's and every thread's, None where they read two ways
     tags = sorted(got or ())
-    known = (set(load_context(root).get("parties", {})) - {"none"}) | {PUBLIC}
+    known = set(load_context(root).get("parties", {})) - {"none"}
     if not tags or any(t not in known for t in tags):
         raise Refusal("%s has no party, so the wall cannot be checked; set its party first." % p.name)
     return p, parts[1], tags
@@ -678,8 +679,7 @@ def _check_wall(ctx: dict, project_tags: List[str], tags: List[str], confirmed: 
         raise Refusal(WALL_REFUSAL)
     if verdict == "confirm" and not confirmed:
         raise Confirm("Needs your answer first: %s Nothing was filed. Ask the user, then file again with --confirmed."
-                      % (why or "it names both sides of a wall, a party that is always asked about, or a party the "
-                               "table lacks."))
+                      % (why or "it is from a party that is always asked about, or names no party."))
 
 
 def _safe_name(name: str) -> str:

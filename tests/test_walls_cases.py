@@ -160,7 +160,7 @@ class EnforcementPoints(unittest.TestCase):
     def reserved_row(self, tag):
         context = self.root / "System" / "context.md"
         before = context.read_text(encoding="utf-8")
-        context.write_text(before.replace("| Cedar Ltd |", "| Nobody | None | Work | `%s` | |\n| Cedar Ltd |" % tag), encoding="utf-8")
+        context.write_text(before.replace("| Cedar Ltd |", "| Nobody | None | Work | `%s` | yes | |\n| Cedar Ltd |" % tag), encoding="utf-8")
         try:
             write(self.work / "Northwind" / "Threads" / "Pricing" / "CaseNote.md", "# N\n\nPlain.\n")
             git(self.work, "add", "-A")
@@ -169,8 +169,55 @@ class EnforcementPoints(unittest.TestCase):
         finally:
             context.write_text(before, encoding="utf-8")
 
+    def hats_refused(self):
+        try:
+            scaffold.check_party(self.root, "lumen,lumen-adv", "Work")
+        except scaffold.Refusal:
+            return "refused"
+        return "permitted"
+
+    def hats_across_hub_and_thread(self):
+        self.addCleanup(self.restore)
+        hub, thread = self.work / "Northwind" / "Northwind.md", self.work / "Northwind" / "Threads" / "Pricing" / "Pricing.md"
+        hub.write_text(hub.read_text(encoding="utf-8").replace("party: acme", "party: [acme, lumen-adv]"), encoding="utf-8")
+        try:
+            scaffold.refuse_hats_in_project(lib.load_context(self.root), self.work / "Northwind", thread="Pricing",
+                                            thread_tags=["acme", "lumen"])
+        except scaffold.Refusal:
+            return "refused"
+        return "permitted"
+
+    def hats_checked(self):
+        self.addCleanup(self.restore)
+        hub = self.work / "Hats" / "Hats.md"
+        found = [f for f in check.run_checks(self.root) if "one company under two hats" in f.message
+                 and f.severity == "error" and f.check in ("projects", "threads")]
+        return "refused" if found else "permitted"
+
+    def hub_links_thread(self, link):
+        self.addCleanup(self.restore)
+        hub, thread = self.work / "Reed" / "Reed.md", self.work / "Reed" / "Threads" / "Notes" / "Notes.md"
+        thread.write_text(thread.read_text(encoding="utf-8").replace("party: cedar", "party: [cedar, birch]"), encoding="utf-8")
+        write(self.work / "Reed" / "Threads" / "Notes" / "Plan.md", "# Plan\n")
+        hub.write_text(hub.read_text(encoding="utf-8") + "\nSee %s.\n" % link, encoding="utf-8")
+        found = [f for f in check.run_checks(self.root, walls_only=True) if f.path.endswith("Reed/Reed.md") and f.severity == "error"]
+        return "refused" if found else "permitted"
+
+    def flip_asks(self):
+        args = type("A", (), dict(tag="acme", walled=False, open=True, yes=False))()
+        said = scaffold.cmd_flip(self.root, args, "2026-11-06")
+        return "asked" if "releases" in said and "| `acme` | yes |" in (self.root / "System" / "context.md").read_text() else "permitted"
+
+    def one_thread_changes_no_other_file(self):
+        before = lib.labels(self.root, "Zones/Work/Northwind/Sources/x.md", self.ctx)
+        self.addCleanup(self.restore)
+        note = self.work / "Northwind" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text(encoding="utf-8").replace("party: acme", "party: [acme, cedar]"), encoding="utf-8")
+        after = lib.labels(self.root, "Zones/Work/Northwind/Sources/x.md", self.ctx)
+        return "permitted" if before == after == frozenset({"acme"}) else "refused"
+
     def scaffold_none(self):
-        args = type("A", (), dict(name="None", zone="Work", what="x", also=None, walled_from=None, why=None,
+        args = type("A", (), dict(name="None", zone="Work", what="x", also=None, walled=False, open=False,
                                   check=False, spoken=None))()
         try:
             scaffold.cmd_party(self.root, args, "2026-11-06")
@@ -198,11 +245,11 @@ class EnforcementPoints(unittest.TestCase):
         git(self.work, "reset", "-q", "--hard", "HEAD")
         git(self.work, "clean", "-fdq")
 
-    def flip_to_public(self):
+    def flip_to_open(self):
         self.addCleanup(self.restore)
         for rel in ("Northwind/Northwind.md", "Northwind/Threads/Pricing/Pricing.md"):
             path = self.work / rel
-            path.write_text(path.read_text(encoding="utf-8").replace("party: acme", "party: public"), encoding="utf-8")
+            path.write_text(path.read_text(encoding="utf-8").replace("party: acme", "party: cedar"), encoding="utf-8")
         git(self.work, "add", "-A")
         found = check.run_checks(self.root, staged=self.work)
         return "refused" if any(f.severity == "error" and f.path.endswith("Deal.md") for f in found) else "permitted"
@@ -212,19 +259,6 @@ class EnforcementPoints(unittest.TestCase):
         path = self.work / "Orchard" / "Orchard.md"
         path.write_text(path.read_text(encoding="utf-8").replace("status: active", "party: none\nstatus: active"), encoding="utf-8")
         return self.staged(self.work / "Orchard" / "Threads" / "Drafts" / "CaseNote.md", "# N\n\nPlain.\n")
-
-    def public_row(self):
-        context = self.root / "System" / "context.md"
-        before = context.read_text(encoding="utf-8")
-        context.write_text(before.replace("| Cedar Ltd |", "| Open Notes | Anyone | Work | `public` | |\n| Cedar Ltd |"), encoding="utf-8")
-        try:
-            path = self.work / "Northwind" / "Threads" / "Pricing" / "CaseNote.md"
-            write(path, "# N\n\nPlain.\n")
-            git(self.work, "add", "-A")
-            found = check.run_checks(self.root, staged=self.work)
-            return "refused" if any(f.severity == "error" and f.path.endswith("context.md") for f in found) else "permitted"
-        finally:
-            context.write_text(before, encoding="utf-8")
 
     def mail_filed(self, text, **kw):
         path = self.work / "Inbox" / "case.eml"
@@ -284,18 +318,17 @@ class EnforcementPoints(unittest.TestCase):
             "e17": lambda: "asked" if self.mail(**{"from": ["jo+lumen@elsewhere.example"]})["confirm"] else "permitted",
             "e18": lambda: self.filed("Orchard", ["acme"]),
             "e19": lambda: "refused" if scaffold.wall_between(self.ctx, {"birch"}, {"acme"}) else "permitted",
-            "e24": self.flip_to_public,
+            "e24": self.flip_to_open,
             "e25": lambda: self.binary("Orchard"),
             "e26": lambda: self.staged(self.work / "Northwind" / "tool.py", "# Ask Theo Marsh at Birch & Co\n"),
             "e27": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Todo]].\n"),
             "e28": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260319-orphan-call]].\n"),
             "e29": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260315-split]].\n"),
-            "e30": lambda: self.asked({"public"}, self.place("Northwind", "Pricing")),
+            "e30": lambda: self.asked(set(), self.place("Northwind", "Pricing")),
             "e31": lambda: self.asked({"none"}, self.place("Northwind", "Pricing")),
             "e32": lambda: self.mail_filed("From: Kai <kai@cedarltd.example>\nSubject: Hi\n\nHello.\n"),
             "e33": lambda: self.mail_filed("X-Garrick-Parties: acme\nFrom: Kai <kai@birchco.example>\nSubject: Hi\n\nHello.\n",
                                            confirmed=True),
-            "e34": self.public_row,
             "e35": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk Da\u200bna Whitlock.\n"),
             "e36": self.nurture_across,
             "e37": self.hub_party_none,
@@ -314,8 +347,24 @@ class EnforcementPoints(unittest.TestCase):
             "e48": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Dis/Threads/T/Memo]].\n"),
             "e49": lambda: self.nurture_from("Zones/Work/Orchard/Threads/Drafts/x.md"),
             "e50": lambda: self.filed("Dis", ["acme"]),
-            "e51": lambda: "permitted" if ask_scope.admits(self.ctx, {"acme"}, {"public"}, self.lib) else "refused",
+            "e51": lambda: "permitted" if ask_scope.admits(self.ctx, {"acme"}, {lib.KNOWLEDGE}, self.lib) else "refused",
             "e52": self.knowledge_link,
+            "e53": lambda: self.check_note("Both", "T", "# N\n\nSee [[260310-acme-kickoff]] and [[260312-birch-kickoff]].\n"),
+            "e54": lambda: self.asked({"acme", "birch"}, self.place("Both", "T")),
+            "e55": lambda: self.filed("Both", ["acme", "birch"]),
+            "e56": lambda: "refused" if scaffold.wall_between(self.ctx, {"acme", "birch"}, {"acme", "birch"}) else "permitted",
+            "e57": lambda: "refused" if __import__("nurture").across_wall(
+                __import__("nurture").Ctx(self.root), "Zones/Work/Both/Threads/T/Notes.md",
+                "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md") else "permitted",
+            "e58": self.hats_refused,
+            "e60": lambda: "refused" if scaffold.wall_between(self.ctx, {"lumen"}, {"lumen-adv"}) else "permitted",
+            "e61": self.hats_across_hub_and_thread,
+            "e62": self.hats_checked,
+            "e63": lambda: self.hub_links_thread("[[Reed/Threads/Notes/Notes|Notes]]"),
+            "e64": lambda: self.hub_links_thread("[[Reed/Threads/Notes/Plan]]"),
+            "e65": self.flip_asks,
+            "e66": self.one_thread_changes_no_other_file,
+            "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),
             "e22": lambda: recall({"acme"}, {"birch"}),
@@ -354,9 +403,10 @@ class EnforcementPoints(unittest.TestCase):
             self.addCleanup(shutil.rmtree, self.work / name, True)
             with self.assertRaises(intake.Refusal, msg=name):
                 intake.file_to_project(self.root, self.inbox_item(), "Zones/Work/" + name, ["acme"])
-        write(self.work / "Third" / "Third.md", project_hub("Work", "Third", "cedar"))
+        write(self.work / "Third" / "Third.md", project_hub("Work", "Third", "lumen"))
         self.addCleanup(shutil.rmtree, self.work / "Third", True)
-        self.assertEqual("asked", self.filed_or_asked("Third", ["acme", "birch"]))
+        self.assertEqual("asked", self.filed_or_asked("Third", ["lumen"]))
+        self.assertEqual("refused", self.filed_or_asked("Third", ["lumen-adv"]))
         self.assertEqual([], list((self.work / "Third").glob("Sources/case-item*")))
 
     def filed_or_asked(self, project, tags):
@@ -370,11 +420,11 @@ class EnforcementPoints(unittest.TestCase):
 
     def test_walls_cases_runs_the_table_against_the_workspaces_own_tags(self):
         roles = lib.wall_roles(self.ctx)
-        self.assertEqual({"near": "acme", "far": "birch", "other": "cedar", "hat": "lumen", "hat2": "lumen-adv"},
-                         {k: v for k, v in roles.items() if k in ("near", "far", "other", "hat", "hat2")})
+        self.assertEqual({"near": "acme", "far": "birch", "other": "cedar", "hat": "lumen", "hat2": "lumen-adv", "zone": "jo"},
+                         {k: v for k, v in roles.items() if k in ("near", "far", "other", "hat", "hat2", "zone")})
         ran, skipped, failed = lib.run_wall_cases(self.ctx, CASES.read_text(encoding="utf-8"))
         self.assertEqual(([], []), (skipped, failed))
-        self.assertGreaterEqual(ran, 50)
+        self.assertGreaterEqual(ran, 45)
         self.assertEqual(0, check.walls_cases(self.root))
 
     def test_ask_takes_a_place_from_labels_and_reads_nothing_where_there_are_none(self):
@@ -411,8 +461,9 @@ class EnforcementPoints(unittest.TestCase):
             build(root)
             context = root / "System" / "context.md"
             text = context.read_text(encoding="utf-8")
-            context.write_text(text.replace("| `acme` | `birch` | Competitors, and both are clients |\n", "")
-                               .replace("| `lumen` | `lumen-adv` | Two hats, one company |\n", ""), encoding="utf-8")
+            context.write_text(text.replace("| `acme` | yes |", "| `acme` | no |").replace("| `birch` | yes |", "| `birch` | no |")
+                               .replace("| `jo` | yes |", "| `jo` | no |").replace("| `lumen` | yes |", "| `lumen` | no |")
+                               .replace("| `lumen-adv` | yes |", "| `lumen-adv` | no |"), encoding="utf-8")
             out = io.StringIO()
             with redirect_stdout(out):
                 code = check.walls_cases(root)
@@ -427,20 +478,109 @@ class EnforcementPoints(unittest.TestCase):
         self.assertTrue(any(line.startswith("d01") for line in failed), failed)
 
     def test_no_enforcement_point_holds_a_wall_test_of_its_own(self):
-        """walled() is garrick_lib's, under decide() and crossings(). Recall asks decide() and labels() too, and holds none."""
+        """is_walled() is garrick_lib's, under decide() and blocked(). Recall asks decide() and labels() too, and holds none."""
         import re
         own = []
         for top in ("template", "extras"):
             for path in sorted((REPO / top).rglob("*.py")):
                 if path.name == "garrick_lib.py" or "__pycache__" in path.parts:
                     continue
-                if re.search(r"\bwalled\(", path.read_text(encoding="utf-8")):
+                if re.search(r"\b(?:walled|crossings)\(", path.read_text(encoding="utf-8")):
                     own.append(path.relative_to(REPO).as_posix())
         self.assertEqual([], own)
+
+    def test_a_session_holding_nothing_is_admitted_to_a_one_party_group_as_in_0_59_1(self):
+        """Accepted, not new: v0.59.1's admits() took the scope from the records when nothing was held, and so does this one."""
+        self.assertTrue(ask_scope.admits(self.ctx, set(), {"acme"}, self.lib))
+        self.assertTrue(ask_scope.admits(self.ctx, set(), {"acme", "cedar"}, self.lib))
+        self.assertFalse(ask_scope.admits(self.ctx, {"acme"}, {"birch"}, self.lib))
+        self.assertFalse(ask_scope.admits(self.ctx, {"cedar"}, {"acme"}, self.lib))
 
     def test_the_shipped_table_is_the_tests_table(self):
         shipped = REPO / "template" / "System" / "tools" / "walls-cases.md"
         self.assertEqual(CASES.read_text(encoding="utf-8"), shipped.read_text(encoding="utf-8"))
+
+
+
+# ----------------------------------------------------------------------
+# merged from test_no_party.py
+# ----------------------------------------------------------------------
+# No label, no permit: a project whose hub names no party commits nothing (#398).
+# 
+#     cd tests && python3 -m unittest test_no_party
+# 
+# Orchard is a project of the Work zone whose hub names no party. The hook refuses
+# a commit of any file in it and names the hub as the fix; a zone's own files and
+# its Inbox belong to no project, and are not refused for it.
+
+
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.dont_write_bytecode = True
+
+from fixtures import HAVE_GIT, commit_all, git, project_hub, thread_note, write  # noqa: E402
+from walls_fixture import build  # noqa: E402
+
+import check  # noqa: E402
+
+
+@unittest.skipUnless(HAVE_GIT, "git is not installed")
+class NoPartyTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build(self.root)
+        self.work = self.root / "Zones" / "Work"
+        shutil.rmtree(self.work / ".git", ignore_errors=True)
+        git(self.work, "init", "-q")
+        env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
+        env.start()
+        self.addCleanup(env.stop)
+        commit_all(self.work, "start")
+
+    def staged(self):
+        git(self.work, "add", "-A")
+        return check.run_checks(self.root, staged=self.work)
+
+    def test_a_file_of_a_project_with_no_party_is_refused_and_the_hub_is_named(self):
+        write(self.work / "Orchard" / "Threads" / "Drafts" / "Notes.md", "# Notes\n\nPlain words.\n")
+        found = [f for f in self.staged() if f.path.endswith("Orchard/Threads/Drafts/Notes.md")]
+        self.assertTrue(found, "nothing was said about a file of a project with no party")
+        self.assertEqual({"error"}, {f.severity for f in found})
+        self.assertIn("Orchard/Orchard.md", found[0].message)
+        self.assertIn("`party:`", found[0].message)
+
+    def test_a_file_that_links_nothing_and_names_nobody_is_refused_all_the_same(self):
+        write(self.work / "Orchard" / "Deliverables" / "260301 - memo.md", "# Memo\n")
+        self.assertTrue([f for f in self.staged() if f.severity == "error" and "Orchard" in f.path])
+
+    def test_a_zone_file_and_an_inbox_file_belong_to_no_project(self):
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n- [ ] call Jo\n\n## Done\n")
+        write(self.work / "AGENTS.local.md", "# Work\n")
+        self.assertEqual([], [f for f in self.staged() if f.severity == "error"])
+
+    def test_once_the_hub_names_a_party_the_project_commits(self):
+        write(self.work / "Orchard" / "Orchard.md", project_hub("Work", "Orchard", "acme", ["Drafts"]))
+        write(self.work / "Orchard" / "Threads" / "Drafts" / "Drafts.md", thread_note("Orchard", "Drafts", "acme"))
+        write(self.work / "Orchard" / "Threads" / "Drafts" / "Notes.md", "# Notes\n\nPlain words.\n")
+        self.assertEqual([], [f for f in self.staged() if f.severity == "error"])
+
+    def test_a_project_with_no_party_is_not_read_as_public(self):
+        write(self.work / "Orchard" / "Threads" / "Drafts" / "Notes.md", "# Notes\n\nSee [[260312-birch-kickoff]].\n")
+        found = [f for f in self.staged() if f.path.endswith("Orchard/Threads/Drafts/Notes.md")]
+        self.assertTrue(any("no party" in f.message for f in found), [f.message for f in found])
+
+    def test_the_full_check_lists_each_hub_with_no_party(self):
+        found = [f for f in check.run_checks(self.root) if f.check == "projects" and "no `party`" in f.message]
+        self.assertEqual(["Zones/Work/Orchard/Orchard.md"], [f.path for f in found])
+        self.assertEqual(["error"], [f.severity for f in found])
 
 
 if __name__ == "__main__":

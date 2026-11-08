@@ -20,7 +20,7 @@ To skip the questions (for a demo, a test, or a guided session), pass a config f
 python3 install.py --config examples/acme.json --target ~/Garrick-acme
 ```
 
-`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, walled from each other). Copy it and edit it as a starting point for your own config. Its keys are `owner`, `zones`, `parties`, `walls`, `people`, `aliases`, and `allow-commands`, the last question, which is `true` unless the file says `false`, so a config run asks nothing. A config carries more than the questions do: each party's mail domains, and the walls, people and aliases, all installed as written.
+`examples/acme.json` is a complete fictional setup (an advisor with two clients, Acme Corp and Birch & Co, both walled). Copy it and edit it as a starting point for your own config. Its keys are `owner`, `zones`, `parties`, `people`, `aliases`, and `allow-commands`, the last question, which is `true` unless the file says `false`, so a config run asks nothing. A config carries more than the questions do: each party's mail domains and `walled` flag, a zone's `party` and `new-parties`, and the people and aliases, all installed as written.
 
 To allow those commands in a workspace already installed, because you answered no or installed before Garrick asked, run this from the folder Garrick came in. It writes the same rules and changes nothing else, and it overwrites neither file:
 
@@ -102,6 +102,20 @@ With `--check` it writes nothing and answers in one line: that the party is new 
 ```sh
 git add System/context.md
 git commit -m "Cobalt Freight added as a party (cobalt)"
+```
+
+A new party is walled or open. `--walled` and `--open` say which; without either, the zone's *New parties* cell in the Zones table decides. A walled party's material goes only into a project that names it. To change the flag of a party already in the table:
+
+```sh
+python3 System/tools/scaffold.py party --tag cobalt --open          # says how many files it releases; writes only with --yes
+python3 System/tools/scaffold.py party --tag cobalt --walled        # writes, then lists the files now in violation
+```
+
+Both leave `System/context.md` changed and uncommitted. The two hats of one company, which share a name, both stay walled, and a note never names both. To put a party on a hub or thread note, or take one off, use `label`; a second walled party on one note says whose material will meet there, and writes only with `--yes`, and taking a party off says how many files lose the label and also needs `--yes`:
+
+```sh
+python3 System/tools/scaffold.py label --zone Work --project Acme --add birch --yes
+python3 System/tools/scaffold.py label --zone Work --project Acme --thread Pricing --remove birch --yes
 ```
 
 Working with an assistant instead of the command line, just ask: "new project Acme for acme in Work, first thread pricing." The `threads` skill resolves the request, runs the script and commits for you. If the party doesn't exist yet, it offers to add a row to `System/context.md` first, and asks whether a wall belongs between it and any existing party.

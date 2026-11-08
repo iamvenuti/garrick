@@ -199,7 +199,7 @@ class TestWhatTheExecutorRefuses(ExecutorCase):
 
     def test_a_party_of_another_zone_is_refused(self):
         ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Home | the household | Personal | `home` |  |\n\n## Walls", 1))
+        ctx.write_text(ctx.read_text().replace("\n## People", "| Home | the household | Personal | `home` | yes |  |\n\n## People", 1))
         for args in (("--zone", "Work", "--name", "Taxes", "--party", "home", "--thread", "Return"),):
             code, out, err, spawned = self.session("new-project", *args)
             self.assertEqual((1, []), (code, spawned))
@@ -210,7 +210,7 @@ class TestWhatTheExecutorRefuses(ExecutorCase):
     def test_a_party_whose_zone_cell_is_marked_up_or_lower_case_is_of_that_zone(self):
         """`**Work**` or `work` in the Zone cell is the Work zone: the project is made, and committed."""
         ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Theo's Shop | a shop | **work** | `theo` |  |\n\n## Walls", 1))
+        ctx.write_text(ctx.read_text().replace("\n## People", "| Theo's Shop | a shop | **work** | `theo` | yes |  |\n\n## People", 1))
         code, out, err, spawned = self.session("new-project", "--zone", "Work", "--name", "Shopfront", "--party", "theo",
                                                "--thread", "Launch")
         self.assertEqual((0, ""), (code, err))

@@ -504,7 +504,7 @@ focus, as under *No name given*). Then:
    lines to tick, any deliverable that left the workspace and who edits it
    next, and the answer to the question word for word. The brief carries the
    walls too, since a cold run knows none: the project's `party` (from its
-   hub), the walls that stand against that party (from the Walls table in
+   hub), the walled parties it does not name (from the Walled column of the Parties table in
    `System/context.md`), and any material in this session that a wall held
    back, named only as "held back" with no content, no party and no subject.
    Tell it to do the wall check (*The wall check*, step 4 above) before it
@@ -927,12 +927,12 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    not a refusal: two projects can each have a Pricing thread, so a new one is
    made if the user still wants it.
 3. **A new party:** offer to add it to Parties before scaffolding, and ask
-   whether a wall applies: "Birch isn't a party yet. Add it to the Work zone,
-   and should anyone be walled off from it?" With the answer, re-read
+   whether it is walled: "Birch isn't a party yet. Add it to the Work zone,
+   walled, so only a project that names it holds its material, or open?" With the answer, re-read
    `System/context.md`, then run
    `python3 System/tools/scaffold.py party --name "<Party>" --zone <Zone> --what "<what it is>"`,
-   which writes the row and offers the tag itself, with `--walled-from <tag>`
-   for a wall; commit `System/context.md` on its own before the project, which
+   which writes the row and offers the tag itself, with `--walled` or `--open`
+   for the flag; commit `System/context.md` on its own before the project, which
    is refused until the row is there. Never scaffold with a made-up tag. Where
    the user did not ask for a project at all but for help with a piece of work,
    the short route sets up the party, the project and the thread on one
@@ -1038,9 +1038,9 @@ python3 System/tools/scaffold.py move --zone <Zone> --project "<From project>" -
    which. A project is never moved, and Y in another zone is not a move.
 2. **One match goes ahead**: the instruction named it, so do not ask it back.
 3. **Run the script.** It checks the thread's `party:` and the new project's
-   `party:` against the Walls table in `System/context.md` first, and the
+   `party:` against the Walled column of the Parties table in `System/context.md` first, and the
    old project's party, and the parties of the Meetings pages and other
-   projects' files its notes link. If a wall stands between them, or any party
+   projects' files its notes link. If a walled party is not named by the new project, or any party
    cannot be read plainly, nothing moves:
    for a wall, say the sentence from *Zones and walls* and nothing more. It
    also refuses another zone, a thread of that name already in the new project,

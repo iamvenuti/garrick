@@ -1363,6 +1363,20 @@ REVIEW_SAID = "A short session through what is left, across the workspace, up to
 REVIEW_COUNTS = ("fixed", "answered", "deferred")
 
 
+def refusals_block(ws: Path) -> str:
+    """The last 30 days of wall refusals for the Checks card: by kind, the days they fell, and the commits that
+    landed within ten minutes of one (overridden). Counts only; the record holds no path, name or text."""
+    lib = workspace_lib(ws)
+    count = getattr(lib, "refusal_counts", None)
+    got = count(ws) if count else None
+    if not got or not got["kinds"]:
+        return ""
+    kinds = ", ".join("%s %d" % (k, n) for k, n in sorted(got["kinds"].items()))
+    days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
+    return ('<div class="hint" id="refusals">Wall refusals, 30 days: %s. Days: %s. Overridden: %d.</div>'
+            % (E(kinds), E(days), got["overridden"]))
+
+
 def review_block(ws: Path) -> str:
     """The Review context line for the Checks card; "" in a workspace with
     no nurture.py, since the review is Nurture's."""
@@ -8609,7 +8623,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
-    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + review_block(ws) + body)
+    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + refusals_block(ws) + review_block(ws) + body)
 
     # ---- open actions and inboxes
     tb = ""

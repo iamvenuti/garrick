@@ -57,6 +57,7 @@
   "test_wall_forms": 170.0,
   "test_wall_gaps": 52.9,
   "test_wall_noise": 37.9,
+  "test_walls_cases": 0,
   "test_walls_deterministic": 19.2,
   "test_wiki_lint": 0.1,
   "test_work_files": 66.1,

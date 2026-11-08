@@ -566,13 +566,13 @@ class WallFormsRowsTest(unittest.TestCase):
             with self.subTest(written):
                 found = self.says(written)
                 self.assertEqual(["error"], [s for s, _ in found], found)
-                self.assertIn("a wall stands between acme and birch", found[0][1])
+                self.assertIn("birch is walled and this project does not name it", found[0][1])
 
     def test_a_message_names_the_page_and_the_wall_and_nothing_it_holds(self):
         found = self.says("`./wiki/people/kai-ross/`")
         self.assertEqual(1, len(found), found)
         self.assertIn("person page", found[0][1])
-        self.assertIn("a wall stands between acme and birch", found[0][1])
+        self.assertIn("birch is walled and this project does not name it", found[0][1])
 
     def test_a_raw_record_by_its_name_or_its_path_is_refused(self):
         for written in ("`raw/260315-harvest-call.txt`", "`./raw/260315-harvest-call/`", "`260315-harvest-call`",

@@ -966,7 +966,7 @@ class TestOpensOnTheWork(StatusCase):
     def test_a_wall_finding_is_explained_without_its_material(self):
         self.fake_check({"check": "walls", "severity": "error",
                          "path": "Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
-                         "message": "names Birch Entry, but a wall stands between acme and birch"})
+                         "message": "names Birch Entry, but birch is walled and this project does not name it"})
         pricing = self.row(self.page(), "Pricing")
         self.assertEqual(["check"], self.chips(pricing))
         found = self.pop(pricing, "cp")

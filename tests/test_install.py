@@ -353,7 +353,8 @@ class InstallTest(unittest.TestCase):
         ctx = load_context(self.root)
         self.assertEqual(set(ctx["parties"]), {"acme", "birch"})
         self.assertEqual(ctx["parties"]["birch"]["party"], "Birch & Co")
-        self.assertIn(frozenset({"acme", "birch"}), ctx["walls"])
+        self.assertEqual([True, True], [ctx["parties"][t]["walled"] for t in ("acme", "birch")])
+        self.assertNotIn("walls", ctx)
         self.assertEqual(sorted(p["name"] for p in ctx["people"]), ["Dana Whitlock", "Theo Marsh"])
         self.assertEqual(ctx["aliases"]["birchen co"], "Birch & Co")
         self.assertEqual(ctx["parties"]["acme"]["domains"], ["acmecorp.example"])
@@ -483,7 +484,7 @@ class RefusalTest(unittest.TestCase):
         cases = {
             "digit": dict(zones=["Work", "Personal", "Clients 2"]),
             "alike": dict(zones=["Work", "Werk"]),
-            "wall": dict(walls=[{"between": "acme", "and": "cedar"}]),
+            "wall": dict(zones=[{"name": "Work", "party": "cedar"}, "Personal"]),
             "zone": dict(parties=[{"name": "Acme Corp", "what": "Client", "zone": "Office", "tag": "acme"}]),
             "webmail": dict(parties=[{"name": "Acme Corp", "what": "Client", "zone": "Work", "tag": "acme",
                                       "domains": "acmecorp.example, gmail.com"}]),
@@ -492,7 +493,7 @@ class RefusalTest(unittest.TestCase):
             "shared": dict(parties=[{"name": "Acme Corp", "what": "Client", "zone": "Work", "tag": "acme",
                                      "domains": ["shared.example"]},
                                     {"name": "Birch & Co", "what": "Client", "zone": "Work", "tag": "birch",
-                                     "domains": ["shared.example"]}], walls=[]),
+                                     "domains": ["shared.example"]}]),
         }
         for label, change in cases.items():
             target, r = self.box.install(label, config=self.box.config(label, **change))
@@ -725,10 +726,11 @@ class InteractiveTest(unittest.TestCase):
             ctx = parse_context(target)
             self.assertEqual({t: (p["party"], p["zone"], p["domains"]) for t, p in ctx["parties"].items()},
                              {"acme": ("Acme Corp", "Work", []), "birch": ("Birch & Co", "Personal", [])})
-            self.assertEqual((ctx["walls"], ctx["people"], ctx["aliases"]), (set(), [], {}))
+            self.assertEqual((ctx["people"], ctx["aliases"]), ([], {}))
+            self.assertTrue(all(p["walled"] for p in ctx["parties"].values()))      # a new party is walled until its row says otherwise
             text = (target / "System" / "context.md").read_text()
             # What each party is stays for the user, or their assistant, to fill in.
-            self.assertIn("| Acme Corp | <What it is> | Work | `acme` |  |", text)
+            self.assertIn("| Acme Corp | <What it is> | Work | `acme` | yes |  |", text)
             self.assertIn("| Personal | <What Personal holds> |", text)
         finally:
             box.close()

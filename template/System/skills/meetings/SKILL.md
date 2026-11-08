@@ -573,13 +573,11 @@ something needs it.
    the user says the new party is an organisation already in Parties, under
    another hat, the two need the one thing that tells them apart in writing:
 
-   > Is this the same Acme Corp in another capacity? Shall I keep the two
-   > apart in writing, so neither ever informs the other?
+   > Is this the same Acme Corp in another capacity? Both stay walled, and a
+   > note never names the two together.
 
-   A yes writes the Walls row, with `--also --walled-from <the first tag>`.
-   A no writes the row without a wall, and says plainly that the workspace
-   check will warn about two parties of one name until a wall is there.
-   Never guess a wall, either way.
+   A yes writes the row with `--also`; both hats are walled. A no is a new
+   party under its own name. Never guess which, either way.
 
 6. **On the yes, the two scripts, in this order.** The order is forced:
    `project` is refused with a tag `System/context.md` does not already
@@ -831,7 +829,7 @@ asked for the detail.
   once, as pasted. A landed file is moved once, by `ingest.py land` or
   `intake.py file-conversation`, and never opened for writing again. A
   correction goes in the summary, never the source.
-- **It never decides a wall for the user.** It only checks the Walls table
+- **It never decides a wall for the user.** It only checks the Walled column
   and says that something was held back, never what.
 - **`prep` writes nothing unless asked.** Asked to save the brief, it
   writes that one file, in the project's `Deliverables/`, and commits it in

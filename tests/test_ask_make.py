@@ -132,9 +132,9 @@ class TestProposals(MakeCase):
 
     def test_two_rows_with_one_name_are_told_apart_by_tag(self):
         ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` |",
-                                               "| Acme Corp | The other hat | Work | `acme-adv` |\n"
-                                               "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` |"))
+        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes |",
+                                               "| Acme Corp | The other hat | Work | `acme-adv` | yes |\n"
+                                               "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes |"))
         with self.assertRaises(ask.Needs) as e:
             self.propose({"verb": "new-project", "zone": "Work", "name": "Harbour"}, {"acme", "acme-adv"})
         self.assertEqual(["Acme Corp (acme)", "Acme Corp (acme-adv)"], [c["label"] for c in e.exception.choices])
@@ -142,7 +142,7 @@ class TestProposals(MakeCase):
     def test_a_long_list_of_parties_is_not_made_into_buttons(self):
         ctx = self.root / "System" / "context.md"
         rows = "".join("| Party %d | x | Work | `p%d` |  |\n" % (i, i) for i in range(10))
-        ctx.write_text(ctx.read_text().replace("\n## Walls", rows + "\n## Walls"))
+        ctx.write_text(ctx.read_text().replace("\n## People", rows + "\n## People"))
         with self.assertRaises(ask.Needs) as e:
             self.propose({"verb": "new-project", "zone": "Work", "name": "Harbour"}, set())
         self.assertEqual([], e.exception.choices)
@@ -209,7 +209,7 @@ class TestWhatTheRequestNamed(MakeCase):
 
     def test_a_party_of_another_zone_is_refused_in_one_line_not_listed_around(self):
         ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("\n## Walls", "| Home | the household | Personal | `home` |  |\n\n## Walls", 1))
+        ctx.write_text(ctx.read_text().replace("\n## People", "| Home | the household | Personal | `home` | yes |  |\n\n## People", 1))
         with self.assertRaisesRegex(ask.Bad, "^Home is a party of Personal, not of Work$"):
             self.propose({"verb": "new-project", "zone": "Work", "name": "Taxes"}, Named({"home"}, []))
 
@@ -420,7 +420,7 @@ class TestMakingThem(MakeCase):
         import check
         line = check.report_staged([check.Finding(check.ERROR, "walls", "Harbour/Harbour.md",
                                                   "names Acme Corp (`acme`), or one of its people; "
-                                                  "a wall stands between acme and birch")])
+                                                  "birch is walled and this project does not name it")])
         hook = self.work / ".git" / "hooks" / "pre-commit"
         write(hook, "#!/bin/sh\n# Garrick wall check (a stand-in)\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
         hook.chmod(0o755)

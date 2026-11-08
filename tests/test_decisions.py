@@ -387,7 +387,7 @@ class TestWhatTheCheckSays(DecisionCase):
     def test_a_decision_citing_a_meeting_across_a_wall_is_warned_about(self):
         write(self.meetings / RECORD, answer_record())
         write(self.meetings / DECISION, decision().replace("None yet.", "See [[wiki/sources/260312-birch-kickoff]].", 1))
-        self.assertTrue([f for f in self.findings() if "across a wall" in f.message])
+        self.assertTrue([f for f in self.findings() if "is walled and" in f.message])
 
     def test_the_lint_counts_a_decision_as_no_orphan(self):
         self.decide()

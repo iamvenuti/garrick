@@ -1,15 +1,20 @@
-"""Compare the wall check's verdicts with a release's: the gate for the token reading.
+"""Compare the wall check's verdicts with a release's: the gate for the token reading and for the flag model.
 
-    python3 tests/wall_diff.py v0.58.1
+    python3 tests/wall_diff.py v0.59.1
 
 Takes `check.py` and `garrick_lib.py` of the tag with `git show` into a temporary
 folder, runs the generated table of `tests/test_wall_forms.py` through the tag's
 check and through the working tree's, and prints three counts: rows refused in
 both, rows passed in both, and rows whose verdict changed, split into
-refused -> passed and passed -> refused by page kind and wrapper. Exits 1 when
-any row goes from refused to passed: a row the tag refused and this tree lets
-through. A form the tag also lets through is a factor for the next release,
-not a blocker. `--full` runs every row (the default runs the rows the test
+refused -> passed and passed -> refused by page kind and wrapper.
+
+The tag declares walls as pairs and this tree as a flag on each party, so the
+fixture's context is written for the tag with a Walls table of every pair of
+walled parties (`legacy_walls`). A refused -> passed row is then one of three
+kinds: *by design*, a token that does not resolve (the threat model of 0.58.0);
+*by the design*, a flow the flag model allows on purpose (an open party's
+material into a walled scope; a source of two walled parties into a scope
+naming both); or *other*. Exits 1 when *other* is not 0. `--full` runs every row (the default runs the rows the test
 runs). `diff(tag)` returns the same numbers as a dict, for a test or a session.
 
 Each side runs in a process of its own, so that two copies of `check` never
@@ -34,7 +39,20 @@ TOOLS = REPO / "template" / "System" / "tools"
 FILES = ("check.py", "garrick_lib.py")
 
 
-def verdicts(tools: Path, full: bool = False) -> dict:
+def legacy_walls(root: Path) -> None:
+    """Add to the fixture's System/context.md the Walls table a release before the flag model reads: a row for
+    every pair of walled parties, and for no other."""
+    sys.path.insert(0, str(TOOLS))
+    import garrick_lib
+    path = Path(root) / "System" / "context.md"
+    parties = garrick_lib.load_context(root)["parties"]
+    walled = sorted(t for t, e in parties.items() if e["walled"])
+    rows = ["| `%s` | `%s` | pair |" % (a, b) for i, a in enumerate(walled) for b in walled[i + 1:]]
+    path.write_text(path.read_text(encoding="utf-8").rstrip("\n") + "\n\n## Walls\n\n| Between | And | Why |\n|---|---|---|\n"
+                    + "\n".join(rows) + "\n", encoding="utf-8")
+
+
+def verdicts(tools: Path, full: bool = False, legacy: bool = False) -> dict:
     """{(project, party, label): "refused" | "passed"} for the table run through
     the check in `tools`. Runs in this process: the check in `tools` must be the
     first one imported (`worker` arranges that)."""
@@ -45,6 +63,15 @@ def verdicts(tools: Path, full: bool = False) -> dict:
     assert Path(check.__file__).resolve().parent == Path(tools).resolve(), check.__file__
     with _tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp).resolve() / "Workspace"
+        if legacy:
+            built = forms.build
+
+            def build_with_pairs(where):
+                pages = built(where)
+                legacy_walls(where)
+                return pages
+
+            forms.build = build_with_pairs
         table = forms.Table(tools=check, root=root)
         real = table.verdict
 
@@ -60,16 +87,17 @@ def verdicts(tools: Path, full: bool = False) -> dict:
     return {k: ("refused" if v == "refused" else "passed") for k, v in out.items()}
 
 
-def worker(tools: Path, full: bool) -> None:
+def worker(tools: Path, full: bool, legacy: bool = False) -> None:
     """Child process: the check in `tools` first, then the table; JSON on stdout."""
     sys.path.insert(0, str(HERE))
     sys.path.insert(0, str(tools))
-    out = verdicts(tools, full)
+    out = verdicts(tools, full, legacy)
     json.dump([[*k, v] for k, v in sorted(out.items())], sys.stdout)
 
 
-def start(tools: Path, full: bool) -> subprocess.Popen:
-    cmd = [sys.executable, "-I", str(Path(__file__).resolve()), "--worker", str(tools)] + (["--full"] if full else [])
+def start(tools: Path, full: bool, legacy: bool = False) -> subprocess.Popen:
+    cmd = [sys.executable, "-I", str(Path(__file__).resolve()), "--worker", str(tools)] + (["--full"] if full else []) \
+        + (["--legacy"] if legacy else [])
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(HERE))
 
 
@@ -98,12 +126,37 @@ def split(label: str):
     return kind, rest.split("/", 1)[-1].split(":", 1)[0]
 
 
+def flags() -> dict:
+    """{tag: walled} of the table's fixture, as this tree reads it."""
+    import tempfile as _tempfile
+    sys.path.insert(0, str(TOOLS))
+    sys.path.insert(0, str(HERE))
+    import garrick_lib
+    from fixtures import build_workspace
+    with _tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp).resolve() / "W"
+        build_workspace(root)
+        return {t: e["walled"] for t, e in garrick_lib.load_context(root)["parties"].items()}
+
+
+def by_design(label: str) -> bool:
+    """Is a refused -> passed row one whose token does not resolve? The table's rows all name a page that is
+    there, so none is; the threat model's rows would be listed here."""
+    return False
+
+
+def by_the_design(party: str, scope: str, walled: dict) -> bool:
+    """Is a refused -> passed row a flow the flag model allows on purpose: the page's party is open, or the
+    project's scope names the party? A page of a walled party into a scope that lacks it is never one."""
+    return not walled.get(party, True) or party == scope
+
+
 def diff(tag: str, full: bool = False) -> dict:
     """The comparison, as numbers: {"tag", "rows", "refused_both", "passed_both", "changed",
     "refused_to_passed": {"total", "by_kind", "by_wrapper", "rows"}, "passed_to_refused": {...}}."""
     with tempfile.TemporaryDirectory() as tmp:
         old_tools = tag_tools(tag, Path(tmp) / "tag")
-        procs = (start(old_tools, full), start(TOOLS, full))
+        procs = (start(old_tools, full, legacy=True), start(TOOLS, full))
         old, new = finish(procs[0]), finish(procs[1])
     result = {"tag": tag, "rows": len(new), "refused_both": 0, "passed_both": 0}
     moved = {"refused_to_passed": [], "passed_to_refused": []}
@@ -121,6 +174,15 @@ def diff(tag: str, full: bool = False) -> dict:
                         "by_wrapper": dict(Counter(split(k[2])[1] for k in keys)),
                         "rows": ["%s reads %s: %s" % k for k in sorted(keys)]}
     result["changed"] = sum(result[n]["total"] for n in moved)
+    walled = flags()
+    scopes = {"Northwind": "acme", "Harbour": "birch"}
+    kinds = {"by_design": [], "by_the_design": [], "other": []}
+    for key in moved["refused_to_passed"]:
+        project, party, label = key
+        kind = "by_design" if by_design(label) else "by_the_design" if by_the_design(party, scopes[project], walled) else "other"
+        kinds[kind].append(key)
+    result["refused_to_passed"]["kinds"] = {k: len(v) for k, v in kinds.items()}
+    result["refused_to_passed"]["other_rows"] = ["%s reads %s: %s" % k for k in sorted(kinds["other"])]
     return result
 
 
@@ -136,11 +198,15 @@ def report(result: dict, show: int = 20) -> str:
             for title, counts in (("page kind", part["by_kind"]), ("wrapper", part["by_wrapper"])):
                 lines.append("    by %s: %s" % (title, ", ".join("%s %d" % kv for kv in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))))
             if name == "refused_to_passed":
-                lines += ["    " + r[:200] for r in part["rows"][:show]]
-                if part["total"] > show:
-                    lines.append("    ... and %d more" % (part["total"] - show))
-    lines.append("FAIL: %d rows the release refused now pass." % result["refused_to_passed"]["total"]
-                 if result["refused_to_passed"]["total"] else "OK: no row goes from refused to passed.")
+                kinds = part["kinds"]
+                lines.append("    by design: %d, by the design: %d, other: %d"
+                             % (kinds["by_design"], kinds["by_the_design"], kinds["other"]))
+                lines += ["    " + r[:200] for r in part["other_rows"][:show]]
+                if kinds["other"] > show:
+                    lines.append("    ... and %d more" % (kinds["other"] - show))
+    other = result["refused_to_passed"]["kinds"]["other"]
+    lines.append("FAIL: %d rows the release refused now pass, and the design does not allow them." % other
+                 if other else "OK: every row that goes from refused to passed is by design.")
     return "\n".join(lines)
 
 
@@ -149,15 +215,16 @@ def main(argv=None) -> int:
     ap.add_argument("tag", nargs="?", help="the release tag to compare with, such as v0.58.1")
     ap.add_argument("--full", action="store_true", help="run every row, not the rows the test runs")
     ap.add_argument("--worker", help=argparse.SUPPRESS)
+    ap.add_argument("--legacy", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     if args.worker:
-        worker(Path(args.worker), args.full)
+        worker(Path(args.worker), args.full, args.legacy)
         return 0
     if not args.tag:
         ap.error("name a tag")
     result = diff(args.tag, args.full)
     print(report(result))
-    return 1 if result["refused_to_passed"]["total"] else 0
+    return 1 if result["refused_to_passed"]["kinds"]["other"] else 0
 
 
 if __name__ == "__main__":

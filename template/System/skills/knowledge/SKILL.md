@@ -22,7 +22,7 @@ is the schema and wins over this file wherever the two disagree; this skill
 is the procedure for using it.
 
 This is not the Meetings wiki. Meetings holds conversations, one person's
-confidence at a time, and is subject to the Walls table. Knowledge holds
+confidence at a time, and is subject to the Walled column of the Parties table. Knowledge holds
 things anyone could have read. The two are never mixed; see *The boundary*.
 
 ## Where things are

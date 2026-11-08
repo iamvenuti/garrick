@@ -614,18 +614,18 @@ class TestScopeFirst(AnswerCase):
             ctx = lib.load_context(self.root)
             got = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, ctx, lib, answer=len(asked) + 1)
             return got.question or got.places
-        own = "| Jo Example | Own affairs | Personal | `personal` | |"
+        own = "| Jo Example | Own affairs | Personal | `personal` | yes | |"
         self.assertEqual([("Personal", "Home", "Pricing")], settled(own, "The one in Personal."))
         firm = "| Fernwood | Own company | Fernwood | `fernwood` | |"
         self.assertEqual([("Fernwood", "Ledger", "Pricing")], settled(firm, "In Fernwood"))
-        elsewhere = "| Personal | A shop | Work | `shop` | |"                  # named like the zone, of another one
+        elsewhere = "| Personal | A shop | Work | `shop` | yes | |"                  # named like the zone, of another one
         self.assertTrue(str(settled(elsewhere, "The one in Personal.")).startswith("Which do you mean"))
 
     def test_a_clarify_is_settled_by_an_option_as_it_was_offered(self):
         """#294: one company under two tags, one in each zone. "What did Dana
         say?" could be settled only by typing the bare tag."""
         write(self.root / "System" / "context.md", CONTEXT.replace(
-            "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | |\n| Birch & Co |").replace(
+            "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | yes | |\n| Birch & Co |").replace(
             "| Theo Marsh | `birch` | Managing partner |",
             "| Theo Marsh | `birch` | Managing partner |\n| Dana Whitlock | `acme-adv` | Advisory client |"))
         lib = ask.scope_lib().lib(self.root)
@@ -792,8 +792,8 @@ class TestOneQuestionManyStores(AnswerCase):
     def test_a_page_walled_from_one_party_of_the_scope_changes_nothing(self):
         ctx = self.root / "System" / "context.md"
         text = ctx.read_text()
-        text = text.replace("\n## Walls", "| Northwind | Client | Work | `northwind` | northwind.example |\n"
-                            "| Cedar | Client | Work | `cedar` | cedar.example |\n\n## Walls", 1)
+        text = text.replace("\n## People", "| Northwind | Client | Work | `northwind` | yes | northwind.example |\n"
+                            "| Cedar | Client | Work | `cedar` | yes | cedar.example |\n\n## People", 1)
         text = text.replace("| `acme` | `birch` | Competitors, and both are clients |",
                             "| `acme` | `birch` | Competitors, and both are clients |\n| `cedar` | `northwind` | Competitors |", 1)
         write(ctx, text)
@@ -895,7 +895,7 @@ class TestFailsClosed(AnswerCase):
         out = a.ask("Where does Side Deal stand?")
         self.assertEqual("wall", out.get("reset"))                         # the thread's party, walled from Acme's
         self.assertEqual([], self.together(ACME, "BIRCHSIDE88"))
-        self.assertEqual([], self.together("BIRCHSIDE88"))                 # on both sides of the wall: never read
+        self.assertEqual([], self.together(ACME, "BIRCHSIDE88"))           # never in the process that held Acme
         lib = ask.scope_lib().lib(self.root)
         self.assertEqual({"acme", "birch"}, set(ask.scope_lib().place_parties(self.root, "Work", "Acme Review", "Side Deal", lib)))
 
@@ -1074,7 +1074,7 @@ class TestFailsClosed(AnswerCase):
         with no option, the answer as typed, used as it is when it does not
         settle as the answer did, for the user to read."""
         write(self.root / "System" / "context.md", CONTEXT.replace(
-            "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | |\n| Birch & Co |").replace(
+            "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | yes | |\n| Birch & Co |").replace(
             "| Theo Marsh | `birch` | Managing partner |",
             "| Theo Marsh | `birch` | Managing partner |\n| Dana Whitlock | `acme-adv` | Advisory client |"))
         a = self.asker()
@@ -1690,7 +1690,7 @@ class TestProtocol(unittest.TestCase):
         zone = {"acme", "birch"}                  # a zone-wide find: its first record sets the group
         self.assertEqual(([rec("birch"), published], True), sc.pick([rec("birch"), rec("acme"), published], set(), ctx, lib, start=zone))
         self.assertEqual(([published], True), sc.pick([rec("birch"), rec("acme"), published], set(), ctx, lib))   # no place, no start
-        self.assertEqual(([published], True), sc.pick([rec("birch"), published], {"public"}, ctx, lib, start=zone))   # holds only public
+        self.assertEqual(([published], True), sc.pick([rec("birch"), published], {lib.KNOWLEDGE}, ctx, lib, start=zone))   # holds only Knowledge
         self.assertEqual(([rec("birch")], True), sc.pick([rec("birch"), rec()], set(), ctx, lib, start=zone))   # no label, no permit
         self.assertEqual(([rec("acme")], True), sc.pick([rec("birch"), rec("acme")], {"acme"}, ctx, lib))
         self.assertEqual(([], True), sc.pick([rec("acme", "birch")], set(), ctx, lib, start=zone))     # a page on both sides
@@ -2455,7 +2455,7 @@ class TestOneZone(AnswerCase):
         super().setUp()
         ctx = self.root / "System" / "context.md"
         text = ctx.read_text()
-        text = text.replace("| Birch & Co | Client.", "| Cedar Club | Rowing club | Personal | `cedar` | cedarclub.example |\n"
+        text = text.replace("| Birch & Co | Client.", "| Cedar Club | Rowing club | Personal | `cedar` | no | cedarclub.example |\n"
                                                      "| Birch & Co | Client.")
         text = text.replace("| Theo Marsh |", "| Pat Lowe | `cedar` | Club secretary |\n| Theo Marsh |")
         write(ctx, text)

@@ -349,7 +349,7 @@ class TestCarryOut(AskCase):
         pa = ask.page_action()
         line = check.report_staged([check.Finding(check.ERROR, "walls", "Acme Review/Threads/Pricing/Pricing.md",
                                                   "names Birch & Co (`birch`), or one of its people; "
-                                                  "a wall stands between acme and birch")])
+                                                  "birch is walled and this project does not name it")])
         hook = self.work / ".git" / "hooks" / "pre-commit"
         write(hook, "#!/bin/sh\n# Garrick wall check (a stand-in)\ncat >&2 <<'EOF'\n%s\nEOF\nexit 1\n" % line)
         hook.chmod(0o755)

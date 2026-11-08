@@ -22,7 +22,7 @@ from fixtures import GIT_ENV, HAVE_GIT, build_workspace, commit_all, git, git_in
 
 import check  # noqa: E402
 
-WALL_MESSAGE = "a wall stands between"
+WALL_MESSAGE = "is walled and this project does not name it"
 
 
 class Base(unittest.TestCase):
@@ -119,7 +119,7 @@ class RefusalTrailerTest(Base):
 
     def test_each_kind_has_a_fix_that_says_commit_again(self):
         kinds = {
-            "names Acme Corp, or one of its people; a wall stands between birch and acme": "Take it out",
+            "names Acme Corp, or one of its people; acme is walled and this project does not name it": "Take it out",
             "uses x, but the project has no party to check the walls against": "Name a party",
             "names a different party on disk from the one staged; stage that change or undo it": "Stage that change",
             "uses x, an unfinished source (no zone or parties)": "Finish or file it",

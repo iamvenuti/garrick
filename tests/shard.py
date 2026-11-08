@@ -75,7 +75,7 @@ TOUCH_MAP = {
 FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",
     "test_cleanroom_worktree", "test_demo", "test_example", "test_git_env", "test_install",
-    "test_jobs", "test_onboarding", "test_public", "test_rules_map", "test_setup",
+    "test_jobs", "test_onboarding", "test_rules_map", "test_setup",
     "test_simple_home", "test_split", "test_update",
     "test_checkpoint", "test_cmux", "test_cmux_sidebar", "test_decide", "test_executor",
     "test_fetch", "test_knowledge_skill", "test_lib", "test_meetings", "test_memory_canary",
@@ -245,7 +245,7 @@ def run_parallel(names, jobs, times):
         with lock:
             print(f"\n=== {name}: {'ok' if proc.returncode == 0 else 'FAILED'} in {took[name]:.1f}s", flush=True)
             print(proc.stdout.rstrip(), flush=True)
-            ran.extend(int(n) for n in re.findall(r"^Ran (\d+) tests?", proc.stdout, re.MULTILINE))
+            ran.extend(int(n) for n in re.findall(r"^\S+ (\d+) tests? in ", proc.stdout, re.MULTILINE))
             if proc.returncode:
                 failed.append(name)
 

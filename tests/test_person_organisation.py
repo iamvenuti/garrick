@@ -55,7 +55,7 @@ nurture = load("garrick_nurture_319", TOOLS / "nurture.py")
 # name, two hats, one person page between them.
 CONTEXT = fixtures.CONTEXT.replace(
     "| Birch & Co | Client.",
-    "| Cedar Ltd | Supplier to Acme | Work | `cedar` | cedarltd.example |\n| Birch & Co | Client.",
+    "| Cedar Ltd | Supplier to Acme | Work | `cedar` | no | cedarltd.example |\n| Birch & Co | Client.",
 ).replace(
     "| Theo Marsh | `birch` | Managing partner |",
     "| Theo Marsh | `birch` | Managing partner |\n"
@@ -326,10 +326,10 @@ class CheckTest(Workspace):
         found = self.findings("walls")
         self.assertEqual(["Wikis/Meetings/wiki/people/dana-whitlock.md"], [f.path for f in found])
         self.assertEqual("error", found[0].severity)
-        self.assertTrue(found[0].message.endswith("a wall stands between acme and birch"), found[0].message)
+        self.assertTrue(found[0].message.endswith("birch is walled and this page does not name it"), found[0].message)
         item = nurture.sort_item(nurture.Ctx(self.root), nurture.check_items(vars(found[0]))[0])
         self.assertEqual("wall", item.kind)
-        self.assertEqual("acme and birch", item.wall)
+        self.assertEqual("birch", item.wall)
 
     def test_a_link_on_a_page_both_hats_share_is_a_wall_finding(self):
         write(self.entities / "acme-corp.md", entity("acme"))
@@ -337,7 +337,7 @@ class CheckTest(Workspace):
         found = self.findings("walls")
         self.assertEqual(["Wikis/Meetings/wiki/people/rowan-blake.md"], [f.path for f in found])
         rowan = found[0]
-        self.assertTrue(rowan.message.endswith("a wall stands between acme and birch"), rowan.message)
+        self.assertTrue(rowan.message.endswith("birch is walled and this page does not name it"), rowan.message)
 
     def test_a_link_on_a_page_a_short_name_puts_on_both_sides_is_a_wall_finding(self):
         write(self.root / "System" / "context.md", CONTEXT.replace(
@@ -350,7 +350,7 @@ class CheckTest(Workspace):
         self.assertEqual(["Wikis/Meetings/wiki/people/blake-rowan.md", "Wikis/Meetings/wiki/people/eli-cohen.md"],
                          sorted(f.path for f in found))
         for f in found:
-            self.assertTrue(f.message.endswith("a wall stands between acme and birch"), f.message)
+            self.assertTrue(f.message.endswith("birch is walled and this page does not name it"), f.message)
 
     def test_a_page_titled_otherwise_is_still_known_by_its_file_name(self):
         write(self.entities / "acme-corp.md", entity("acme"))
@@ -359,7 +359,7 @@ class CheckTest(Workspace):
         write(self.people / "rowan-blake.md", person("R. Blake", "acme", "[[wiki/entities/acme-corp]]"))
         rowan = self.findings("walls")
         self.assertEqual(1, len(rowan))
-        self.assertTrue(rowan[0].message.endswith("a wall stands between acme and birch"), rowan[0].message)
+        self.assertTrue(rowan[0].message.endswith("birch is walled and this page does not name it"), rowan[0].message)
 
     def test_an_alias_heading_or_other_path_is_warned(self):
         write(self.entities / "acme-corp.md", entity("acme"))
@@ -396,10 +396,12 @@ class CheckTest(Workspace):
         self.assertEqual("", self.link("Dana Whitlock", "acme"))
 
     def test_an_entity_page_naming_two_walled_parties_is_warned(self):
-        write(self.entities / "plain.md", entity("[acme, birch]", "Plain"))
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client.", "| Acme Corp | Second role | Work | `acme-board` | yes | |\n| Birch & Co | Client.", 1))
+        write(self.entities / "plain.md", entity("[acme, acme-board]", "Plain"))
         found = [f for f in self.findings("meetings") if "entities" in f.path]
         self.assertEqual(1, len(found))
-        self.assertIn("names both acme and birch, which a wall keeps apart", found[0].message)
+        self.assertIn("names both acme and acme-board, one company in two hats", found[0].message)
 
     def test_more_than_one_link_is_warned(self):
         write(self.entities / "acme-corp.md", entity("acme"))
@@ -463,7 +465,7 @@ class StagedWallCheckTest(Workspace):
         found = check.run_checks(self.root, walls_only=True, staged=wikis)
         self.assertEqual([("error", "walls", "Wikis/Meetings/wiki/people/mira-holt.md")],
                          [(f.severity, f.check, f.path) for f in found])
-        self.assertTrue(found[0].message.endswith("a wall stands between acme and birch"), found[0].message)
+        self.assertTrue(found[0].message.endswith("birch is walled and this page does not name it"), found[0].message)
         # Unstaged edits do not count: git's copy of the person page is what is read.
         write(self.people / "mira-holt.md", person("Mira Holt", "acme"))
         self.assertEqual(1, len(check.run_checks(self.root, walls_only=True, staged=wikis)))
@@ -569,7 +571,7 @@ class NurtureTest(Workspace):
         # Another page the user names instead goes through the same rules: a walled one is refused.
         code, _, err = self.organisation("theo-marsh.md", "--yes", "--entity", "acme-corp")
         self.assertNotEqual(0, code)
-        self.assertIn("a wall stands between", err)
+        self.assertIn("two walled parties meet", err)
         self.assertNotIn("organisation", (self.people / "theo-marsh.md").read_text())
 
     def test_with_nobody_watching_it_is_asked_and_never_written(self):

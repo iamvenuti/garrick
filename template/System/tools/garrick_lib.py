@@ -116,6 +116,7 @@ __all__ = [
     "blocked",
     "is_walled",
     "hats_of",
+    "named_together",
     "decide",
     "always_asked",
     "labels",
@@ -1241,6 +1242,22 @@ def blocked(context: dict, scope, labels) -> set:
     return {t for t in _tagset(labels) if t != KNOWLEDGE and t not in held and is_walled(context, t)}
 
 
+def named_together(root: PathLike, context: dict, tags) -> bool:
+    """Do `tags` hold one walled party at most, or does some project of the workspace name every walled
+    one of them? Naming two walled parties on one hub is the yes that lets their material meet."""
+    walled_ = {t for t in _tagset(tags) if is_walled(context, t)}
+    if len(walled_) < 2:
+        return True
+    zones = Path(root) / "Zones"
+    for zone in sorted(zones.iterdir()) if zones.is_dir() else []:
+        for project in sorted(zone.iterdir()) if zone.is_dir() and not zone.name.startswith(".") else []:
+            if project.is_dir() and not project.name.startswith((".", "_")) and project.name != "Inbox":
+                got = labels(root, project)
+                if got and walled_ <= set(got):
+                    return True
+    return False
+
+
 def hats_of(context: dict, tags) -> List[Tuple[str, str]]:
     """The pairs of tags in `tags` whose Parties rows share a name: one company under two hats."""
     tags = sorted(_tagset(tags))
@@ -2144,7 +2161,7 @@ def organisation_named(root: PathLike, context: dict, names, party, entity: str,
     if every is None:
         return "", "the page names no one known party, or the People table has the name on both sides of a wall"
     if _any_wall(context, every | entity_parties(context, group)):
-        return "", "a wall stands between this person and that entity page"
+        return "", "two walled parties meet between this person and that entity page"
     return "[[wiki/entities/%s]]" % page["rel"], ""
 
 

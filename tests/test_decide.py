@@ -84,7 +84,7 @@ class DecideCases(unittest.TestCase):
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         write(Path(d.name) / "System" / "context.md", "## Parties\n\n| Party | What | Zone | Tag | Walled |\n|---|---|---|---|---|\n"
-              "| Acme | x | Work | `acme` | |\n| Cedar | x | Work | `cedar` | no |\n")
+              "| Acme | x | Work | `acme` | yes | |\n| Cedar | x | Work | `cedar` | no |\n")
         return Path(d.name)
 
     def test_the_two_hats_are_the_names_a_note_may_not_carry_together(self):
@@ -148,6 +148,12 @@ class LabelCases(unittest.TestCase):
     def test_a_file_carries_its_zones_party(self):
         self.assertEqual(self.got("Zones/Personal/Garden/Threads/Beds/Plan.md"), {"jo", "cedar"})
         self.assertEqual(self.got("Zones/Personal/Garden/Garden.md"), {"jo", "cedar"})
+
+    def test_a_project_naming_two_walled_parties_is_the_yes(self):
+        self.assertTrue(lib.named_together(self.root, self.ctx, {"acme", "birch"}))
+        self.assertTrue(lib.named_together(self.root, self.ctx, {"acme", "cedar"}))
+        self.assertFalse(lib.named_together(self.root, self.ctx, {"acme", "lumen"}))
+        self.assertEqual(self.got("Zones/Work/Both/Threads/T/Notes.md"), {"acme", "birch"})
 
     def test_a_hub_party_can_be_a_list(self):
         write(self.root / "Zones" / "Work" / "Pair" / "Pair.md",

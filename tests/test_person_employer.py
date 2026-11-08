@@ -58,7 +58,7 @@ nurture = load("garrick_nurture_330", TOOLS / "nurture.py")
 # in no row at all, as a customer's architect would be.
 CONTEXT = fixtures.CONTEXT.replace(
     "| Birch & Co | Client.",
-    "| Cedar Ltd | Supplier to Acme | Work | `cedar` | cedarltd.example |\n| Birch & Co | Client.",
+    "| Cedar Ltd | Supplier to Acme | Work | `cedar` | no | cedarltd.example |\n| Birch & Co | Client.",
 ).replace(
     "| Theo Marsh | `birch` | Managing partner |",
     "| Theo Marsh | `birch` | Managing partner |\n"
@@ -236,8 +236,8 @@ class ProposalWallTest(Workspace):
         self.assertEqual(("", []), self.propose("Pat Newcomer", "acme", "Consultant at Birchen Co."))
 
     def test_one_company_under_two_walled_tags_still_links_each_hats_own_page(self):
-        context = CONTEXT.replace("| Cedar Ltd | Supplier to Acme | Work | `cedar` | cedarltd.example |",
-                                  "| Birch & Co | Advisory client | Work | `birch-adv` | |")
+        context = CONTEXT.replace("| Cedar Ltd | Supplier to Acme | Work | `cedar` | no | cedarltd.example |",
+                                  "| Birch & Co | Advisory client | Work | `birch-adv` | yes | |")
         write(self.root / "System" / "context.md", context.replace(
             "| `acme` | `birch` | Competitors, and both are clients |",
             "| `acme` | `birch` | Competitors, and both are clients |\n| `birch` | `birch-adv` | Two hats |"))
@@ -291,7 +291,7 @@ class IngestTest(Workspace):
     def test_across_a_wall_the_page_is_written_without_it(self):
         r = self.run_person("--name", "Pat Newcomer", "--party", "acme", "--organisation", "birch-co")
         self.assertEqual(0, r.returncode)
-        self.assertIn("no organisation link: a wall stands between", r.stderr)
+        self.assertIn("no organisation link: two walled parties meet", r.stderr)
         text = (self.people / "pat-newcomer.md").read_text()
         for leak in ("organisation", "birch", "Birch"):
             self.assertNotIn(leak, text)
@@ -305,7 +305,7 @@ class IngestTest(Workspace):
         why = []
         path, _ = ingest.ensure_person(self.root, "Theo Marsh", "birch", "2026-03-10", "acme-customer", why)
         self.assertNotIn("organisation", path.read_text())
-        self.assertIn("a wall stands between", why[0])
+        self.assertIn("two walled parties meet", why[0])
 
     def test_an_existing_page_is_left_as_it_is(self):
         write(self.people / "kit-avery.md", person("Kit Avery", "none", "Architect."))
@@ -365,7 +365,7 @@ class CheckTest(Workspace):
         write(self.people / "theo-marsh.md", person("Theo Marsh", "birch", "Partner.", "[[wiki/entities/acme-customer]]"))
         found = self.findings("walls")
         self.assertEqual(["Wikis/Meetings/wiki/people/theo-marsh.md"], [f.path for f in found])
-        self.assertTrue(found[0].message.endswith("a wall stands between acme and birch"), found[0].message)
+        self.assertTrue(found[0].message.endswith("birch is walled and this page does not name it"), found[0].message)
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
@@ -931,7 +931,7 @@ class ShapeTest(Workspace):
                                                             'party: [acme, birch]\norganisation: "[[wiki/entities/larch-partners]]"\n'))
         found = self.findings("walls")
         self.assertEqual(["Wikis/Meetings/wiki/people/pat-newcomer.md"], [f.path for f in found])
-        self.assertTrue(found[0].message.endswith("a wall stands between acme and birch"), found[0].message)
+        self.assertTrue(found[0].message.endswith("birch is walled and this page does not name it"), found[0].message)
         self.assertEqual(("", []), self.propose("Pat Newcomer", ["acme", "birch"], "At Larch Partners."))
 
     def test_the_hook_refuses_a_misread_page_in_plain_words(self):
@@ -1370,7 +1370,7 @@ class LoneCarriageReturnTest(Workspace):
         for nl in ("\n", "\r", "\r\n"):
             text = "---\ntitle: Acme Corp\ntype: entity\nparty: acme\n---\n\n# Acme Corp\n\nSee [[260312-birch-kickoff]].\n"
             (self.entities / "acme-corp.md").write_bytes(text.replace("\n", nl).encode())
-            found = [f for f in check.run_checks(self.root) if f.path.endswith("acme-corp.md") and "across a wall" in f.message]
+            found = [f for f in check.run_checks(self.root) if f.path.endswith("acme-corp.md") and "is walled and" in f.message]
             self.assertEqual(1, len(found), repr(nl))
 
     def test_the_shape_still_refuses_a_lone_cr_in_a_person_page(self):

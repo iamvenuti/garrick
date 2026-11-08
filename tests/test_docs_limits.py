@@ -1,6 +1,6 @@
 """The wall docs stay short, say the same five sentences everywhere, and name no pair.
 
-    python3 -m unittest tests.test_docs_limits
+    cd tests && python3 -m unittest test_docs_limits
 
 A review that wants to add to a limited section has to raise the limit here, which is a decision.
 """
@@ -17,7 +17,8 @@ sys.dont_write_bytecode = True
 REPO = Path(__file__).resolve().parent.parent
 DOCS = REPO / "docs"
 FIVE = re.compile(r"^> (Every party you deal with is either .*)$", re.M)
-BANNED = ("Walls table", "between two parties", "both ways", "not transitive")
+BANNED = ("Walls table", "between two parties", "both ways", "not transitive",
+          "walled from", "no wall between")
 
 
 def section(page: str, heading: str) -> str:

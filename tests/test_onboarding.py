@@ -47,8 +47,8 @@ AMBIGUOUS = ("Two of your parties are called Acme Corp: the supplier in Work, an
              "in Consulting. Which one is this call with?")
 BOTH_SIDES = ("These notes mention both, and a wall stands between them. Which one is this brief for? "
               "What belongs to the other stays out.")
-SECOND_HAT = ("Is this the same Acme Corp in another capacity? Shall I keep the two apart in writing, "
-              "so neither ever informs the other?")
+SECOND_HAT = ("Is this the same Acme Corp in another capacity? Both stay walled, and a "
+              "note never names the two together.")
 
 JOURNEYS = [
     journey(
@@ -87,7 +87,7 @@ JOURNEYS = [
          "Saying the name says nothing about which capacity is meant, so this is the user's to answer, "
          "every time, however plain the rest of the request is.",
          "It lists; it never picks.",
-         "Never guess a wall, either way."],
+         "Never guess which, either way."],
         # Nothing may resolve the pair for the user, however it is dressed up.
         ["pick the one in", "choose the one", "default to the", "whichever is more", "assume the supplier",
          "the more recent of the two", "take the first"],

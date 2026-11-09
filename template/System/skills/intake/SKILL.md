@@ -268,7 +268,7 @@ aloud; a domain said as its name; dates as a day and a date.
   provider. Whatever put an item in the inbox (you, a rule, a script, a
   connector) is outside it.
 - **It never guesses the kind, the zone, a party or a project.** Unsure, it
-  asks one short question. It never guesses across a wall.
+  asks one short question. It never guesses which walled party applies.
 - **It never puts a mail itself into a project** unless the user said the
   mail is material and not a conversation. Otherwise the mail is a
   conversation, in Meetings, and only its attachment goes to `Sources/`.

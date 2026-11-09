@@ -30,7 +30,7 @@ def build(root: Path) -> Path:
                         "| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | birchco.example, mail.birchco.example |\n"
                         "| Lumen Group | Partner | Work | `lumen` | yes | |\n| Lumen Group | Adviser to its board | Work | `lumen-adv` | yes | |\n"
                         "| Cedar Ltd | Supplier | Work | `cedar` | no | cedarltd.example |\n"
-                        "| Jo Example | Own affairs | Personal | `jo` | yes | |\n")
+                        "| Own affairs | Personal matters, no outside party | Personal | `jo` | yes | |\n")
     text = text.replace("| Personal | Everything else | | walled |", "| Personal | Everything else | `jo` | walled |")
     context.write_text(text, encoding="utf-8")
     work = root / "Zones" / "Work"

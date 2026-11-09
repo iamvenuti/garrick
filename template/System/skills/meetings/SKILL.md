@@ -51,7 +51,7 @@ and moves a transcript, rebuilds the index, logs the ingest and stubs a
 person page. `intake.py`, the `intake` skill's helper, reads a saved mail,
 suggests its parties from the addresses on it, files it as a conversation,
 and records a domain the user has placed. Neither decides what a
-conversation was about, who it was for, or which side of a wall it sits on:
+conversation was about, who it was for, or which walled party it belongs to:
 that judgement stays here, in this procedure. Both find their own workspace,
 so they can be run from anywhere; pass `--root` only to point them at a
 different one.
@@ -123,7 +123,7 @@ One meeting at a time, even when several files are waiting.
    page: the entity page's link and nothing else. It writes none, and says
    why, for an entity page with no `party:` at all: a customer's or an
    integrator's page says `party: none`, and only then is it linked. It
-   writes none across a wall: when the entity page, or another going by the
+   writes none that a walled party's scope would refuse: when the entity page, or another going by the
    same name, names a walled party other than the person's, or is named after one
    (`Acme`, `The Acme Corp`, `Acme Corp Ltd` are Acme's);
    when the People table has the name under two parties a wall keeps apart,

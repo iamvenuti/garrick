@@ -23,14 +23,18 @@ The policy the Walls table wrote is kept here under names that start with
 `legacy_`: this module is the only place it lives.
 """
 
+import json
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 LEGACY_PUBLIC = "public"
 ACTIONS = ("read", "write", "file")
 OPEN_ZONE = "projects"          # the zone of the user's own, published ventures
+OWN_LABEL = "Own affairs"       # what a party named after the owner is called instead: what it holds
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +187,27 @@ def _projects(root, lib):
     return out
 
 
+def _owner(root):
+    """{"name", "first"} of the workspace's owner: the first sentence of `## Me` in System/context.md, up to its
+    first full stop, Markdown taken off. A placeholder in angle brackets, or no sentence, is no owner: {}.
+    garrick_lib's load_context() gives the same as ctx["owner"] in a Garrick that has it."""
+    try:
+        text = (Path(root) / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    start = re.search(r"(?mi)^##\s+me\s*$", text)
+    if not start:
+        return {}
+    body = re.split(r"(?m)^##\s", text[start.end():], maxsplit=1)[0]
+    body = " ".join(l.strip() for l in body.splitlines() if l.strip())
+    name = body.split(".", 1)[0]
+    name = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", name)
+    name = re.sub(r"[*_`]", "", name).strip()
+    if not name or "<" in name or ">" in name:
+        return {}
+    return {"name": name, "first": name.split()[0]}
+
+
 def propose(root, lib, ctx):
     """The flags and the zone columns the Walls table implies, as a dict:
     flags {tag: True when walled}, zone_party {zone: tag or ""}, zone_default {zone: "walled" | "open"},
@@ -224,14 +249,24 @@ def propose(root, lib, ctx):
             if LEGACY_PUBLIC in (hub or set()) or any(LEGACY_PUBLIC in (t or set()) for t in threads.values()):
                 notes.append("project %s names the reserved tag `public`, which is no longer a party: it will "
                              "label nothing until its note names a party." % name)
+    owner = ctx.get("owner") or _owner(root)
+    renames = {}
+    for tag, row in parties.items():
+        if owner and (row.get("party") or "").strip().casefold() == owner["name"].casefold():
+            taken = {(r.get("party") or "").strip().casefold() for r in parties.values()}
+            label = OWN_LABEL if OWN_LABEL.casefold() not in taken else "%s (%s)" % (OWN_LABEL, row.get("zone") or tag)
+            renames[tag] = label
+            notes.append("`%s` is named after you, %s. Its name would be read as a walled party's in every note that "
+                         "says it, so it is proposed renamed to %s, a label of what it holds." % (tag, owner["name"], label))
     return {"flags": flags, "zone_party": zone_party, "zone_default": zone_default, "notes": notes,
-            "pairs": pairs, "zones": zones}
+            "pairs": pairs, "zones": zones, "renames": renames}
 
 
 def proposed_context(ctx, prop):
     """The context dict as load_context() would give it once the proposal is written."""
     new = dict(ctx, pending=None)
-    new["parties"] = {t: dict(r, walled=prop["flags"][t], flag="yes" if prop["flags"][t] else "no")
+    new["parties"] = {t: dict(r, walled=prop["flags"][t], flag="yes" if prop["flags"][t] else "no",
+                              party=prop.get("renames", {}).get(t, r.get("party")))
                       for t, r in ctx["parties"].items()}
     new["zone_parties"] = {z: t for z, t in prop["zone_party"].items() if t}
     new["zone_default"] = dict(prop["zone_default"])
@@ -243,9 +278,9 @@ def say_proposal(prop, ctx):
     for z in prop["zones"]:
         lines.append("| %s | %s | %s |" % (z, "`%s`" % prop["zone_party"][z] if prop["zone_party"].get(z) else "",
                                           prop["zone_default"][z]))
-    lines += ["", "The Parties table would carry:", "", "| Tag | Walled |", "|---|---|"]
+    lines += ["", "The Parties table would carry:", "", "| Tag | Walled | Renamed to |", "|---|---|---|"]
     for t in sorted(prop["flags"]):
-        lines.append("| `%s` | %s |" % (t, "yes" if prop["flags"][t] else "no"))
+        lines.append("| `%s` | %s | %s |" % (t, "yes" if prop["flags"][t] else "no", prop.get("renames", {}).get(t, "")))
     for n in prop["notes"]:
         lines.append("")
         lines.append("Note: " + n)
@@ -417,6 +452,29 @@ def _add_column(lines, span, name, index_before, values, sep="---"):
     return True
 
 
+def _rename_parties(lines, span, renames):
+    """Put each new name in the Party cell of the row whose tag is a key of `renames`, keeping bold."""
+    run = _table_lines(lines, span) if renames else None
+    if not run:
+        return
+    first, last = run
+    names = [c.strip().lower() for c in _cells(lines[first])[1:-1]]
+    name_at = next((i for i, n in enumerate(names) if n.startswith("party")), None)
+    tag_at = next((i for i, n in enumerate(names) if n.startswith("tag")), None)
+    if name_at is None or tag_at is None:
+        return
+    for i in range(first + 2, last):
+        cells = _cells(lines[i])
+        inner = cells[1:-1]
+        if len(inner) <= max(name_at, tag_at):
+            continue
+        tag = inner[tag_at].strip().strip("`#").lower()
+        if tag in renames:
+            bold = inner[name_at].strip().startswith("**")
+            inner[name_at] = " %s " % ("**%s**" % renames[tag] if bold else renames[tag])
+            lines[i] = "|" + "|".join(inner) + "|"
+
+
 def rewrite(text, prop):
     """context.md with the columns in and the Walls table out. None when there is no Parties table."""
     lines = text.splitlines()
@@ -438,6 +496,7 @@ def rewrite(text, prop):
             _add_column(lines, zones, "New parties", ("learned",),
                         lambda row: prop["zone_default"].get(row.get("zone", ""), "walled"))
     parties = _section(lines, "parties")
+    _rename_parties(lines, parties, prop.get("renames") or {})
     _add_column(lines, parties, "Walled", ("domains", "learned"),
                 lambda row: "yes" if prop["flags"].get(row.get("tag", "").strip("` ").lower(), True) else "no")
     walls = _section(lines, "walls")
@@ -464,6 +523,52 @@ def walls_check(root):
     return ["%s: %s" % (f.get("path"), f.get("message")) for f in found if f.get("severity") in ("error", "warning")]
 
 
+def refused_with(root, prop):
+    """What the walls check, as it stands, refuses in the workspace once the proposed flags are written: [message].
+    It runs on a temporary workspace of links to the real folders, with a copy of System/context.md that holds the
+    flags, so nothing is written here. Names are in it, not only the verdicts of labelled records. The check could
+    not run: []."""
+    root = Path(root)
+    tool = root / "System" / "tools" / "check.py"
+    path = root / "System" / "context.md"
+    try:
+        text = rewrite(path.read_text(encoding="utf-8"), prop)
+    except OSError:
+        return []
+    if text is None or not tool.is_file():
+        return []
+    tmp = Path(tempfile.mkdtemp(prefix="garrick-walls-")).resolve()
+    try:
+        for entry in root.iterdir():
+            if entry.name == "System":
+                (tmp / "System").mkdir()
+                for child in entry.iterdir():
+                    if child.name != "context.md":
+                        (tmp / "System" / child.name).symlink_to(child)
+            elif entry.name != ".git":
+                (tmp / entry.name).symlink_to(entry)
+        (tmp / "System" / "context.md").write_text(text, encoding="utf-8")
+        r = subprocess.run([sys.executable, str(tool), "--root", str(tmp), "--walls-only", "--json"],
+                           capture_output=True, text=True, timeout=1800)
+        found = json.loads(r.stdout).get("findings", [])
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return []
+    finally:
+        shutil.rmtree(str(tmp), ignore_errors=True)
+    return sorted({"%s: %s" % (f.get("path"), f.get("message")) for f in found if f.get("severity") in ("error", "warning")})
+
+
+def say_refused(found):
+    if not found:
+        return "The walls check, run with these flags, refuses no file."
+    out = ["The walls check, run with these flags, would refuse %d thing%s that is committed today (a name in a note "
+           "counts, not only a label):" % (len(found), "" if len(found) == 1 else "s")]
+    out += ["  " + f for f in found[:50]]
+    if len(found) > 50:
+        out.append("  ... and %d more." % (len(found) - 50))
+    return "\n".join(out)
+
+
 def study(root, lib):
     """Everything the user is shown before a yes: {"prop", "items", "text"}; None when nothing is pending."""
     if not pending(root, lib):
@@ -471,7 +576,8 @@ def study(root, lib):
     ctx = lib.load_context(root)
     prop = propose(root, lib, ctx)
     items = flows(root, lib, ctx, prop)
+    refused = refused_with(root, prop)
     text = "\n".join([
         "Walls are now a flag on each party (walled or open), not pairs of parties.",
-        "", say_proposal(prop, ctx), "", say_flows(items)])
-    return {"prop": prop, "items": items, "text": text}
+        "", say_proposal(prop, ctx), "", say_flows(items), "", say_refused(refused)])
+    return {"prop": prop, "items": items, "refused": refused, "text": text}

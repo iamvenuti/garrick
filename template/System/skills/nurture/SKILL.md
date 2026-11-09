@@ -47,7 +47,7 @@ own: a new kind of problem gets a check in `check.py` first.
 | Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's | Lists them, and applies them all on one yes, one commit per repository |
 | Correction | a value written down wrong, an address, an account, a name, which the user corrects | Lists every live copy as one finding, and corrects them all on one yes, one commit per repository |
 | Attribution and category | a meeting page with no zone or parties; a person under no party; a person page in Meetings with no `organisation:`, for the one entity page its first line names or else its party's, asked one page at a time ("Does Theo Marsh work at AC Corp? (yes / no / another page)") and never a batch fix, since a name can stand for the wrong organisation however it is spelled; a person page whose first line could mean two entity pages ("Where does Kit Avery work: Birch & Co or Larch Partners?"); an entity page in Meetings with no `party:` that a person page's first line names, its party's link would reach, or a person page links by hand ("Whose is Larch Partners: none, or a party?"), which no tool links a person page to until it says; one nothing points at, such as a topic or an event, is not asked about; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses across a wall |
-| Wall | a project file that names, links or quotes a party across a wall | Says which file and which wall, never the material, and offers to take it out |
+| Wall | a project file that names, links or quotes a walled party the project does not name | Says which file and which wall, never the material, and offers to take it out |
 | Judgment | a stale resume point, a published file drifted from its shared copy, an orphan page, two pages that disagree | Leaves the text alone and names the page to open |
 | Behind the share | a published file whose ledger row ends in `share`, and whose copy here differs from the shared one: colleagues edit it there, so the copy here is a snapshot | Names it last, as low urgency, and changes nothing |
 | Fading | meeting pages or reading old enough to leave working memory, or a faded page linked again | Says how many, per wiki, and what to say: "fade the meetings". Nothing moves without a written proposal and a yes on it; see *Fading* below |
@@ -94,7 +94,7 @@ thread whose name another note shares.
    written down is wrong is a correction: see *A correction* below. Add your
    own from the page's
    addresses, the People table and the page's text, as the `intake` skill
-   reads them; when the evidence points to both sides of a wall, propose
+   reads them; when the evidence points to two walled parties, propose
    nothing and ask. Ask in one line: "260310 Kick-off: Work, Acme?" On an
    answer, make the edit, commit it in its repository, and record it:
    ```sh
@@ -105,7 +105,7 @@ thread whose name another note shares.
    ```sh
    python3 System/tools/nurture.py organisation --path "<person page>" --yes [--entity "<entity>"]
    ```
-   It works the link out again, refuses one across a wall, runs the walls
+   It works the link out again, refuses one to a walled party the page does not name, runs the walls
    check on that page's change as staged and commits that page as the
    check read it only if it passes, leaving what another session staged
    alone, since `Wikis/` has
@@ -147,7 +147,7 @@ value is found and replaced one way only.
    ```
    The scope is the pass's, none for the workspace. It lists what
    `correct.py` finds, by file and line, as one finding. With a scope, a
-   copy in a file across a wall from it, or in one whose parties cannot be
+   copy in a file whose scope does not name the walled party, or in one whose parties cannot be
    told, is left out and left alone, and the tool prints the sentence
    *Zones and walls* in `System/rules.md` gives. Say that sentence, word for
    word, and nothing else about it: no file, no party, no count, not that a
@@ -311,8 +311,8 @@ deferred: 1
    - **A file another session has changes in is held**, as `nurture.py`
      holds it. Defer the item, with the reason "another session holds the
      file".
-   - **Nothing crosses a wall.** Never move, merge or quote material from
-     one side of a wall into a file on the other. When an answer would need
+   - **Walled material stays where its party is named.** Never move, merge or quote material from
+     a walled party into a file whose scope does not name that party. When an answer would need
      it, change nothing, and say the sentence *Zones and walls* in
      `System/rules.md` gives, word for word: "A wall holds some material back
      from this project, so I have not used it. Nothing was written." Nothing

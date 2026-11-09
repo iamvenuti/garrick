@@ -184,6 +184,9 @@ def lib():
 # --------------------------------------------------------------------------- config
 
 
+OWN_PARTY = "Own affairs"       # what the owner's private party is called: what it holds, never the owner's name
+
+
 def normalise(raw):
     """Turn a config dict (from JSON or the questions) into one canonical shape."""
     owner = raw.get("owner") or {}
@@ -197,10 +200,17 @@ def normalise(raw):
                       "party": str(z.get("party", "")).strip().strip("`"),
                       "new": "open" if str(z.get("new-parties", "")).strip().lower() == "open" else "walled"})
     parties = []
+    owner_name = str(owner.get("name", "")).strip()
     for p in raw.get("parties") or []:
+        name = str(p.get("name", "")).strip()
+        what = str(p.get("what", "")).strip()
+        if name and name.casefold() == owner_name.casefold():
+            # The party of the owner's own matters is named by what it holds: the owner's name is said in
+            # every note, and a walled party's name is refused wherever its scope is not named.
+            name, what = OWN_PARTY, what or "Personal matters, no outside party"
         parties.append({
-            "name": str(p.get("name", "")).strip(),
-            "what": str(p.get("what", "")).strip(),
+            "name": name,
+            "what": what,
             "zone": str(p.get("zone", "")).strip(),
             "tag": str(p.get("tag", "")).strip().strip("`"),
             "domains": domain_list(p.get("domains")),

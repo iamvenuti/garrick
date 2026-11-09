@@ -210,8 +210,9 @@ class HubsAreNotRefusedForWhatTheyShareTest(unittest.TestCase):
         found = self.hub_says(self.hub, text + "\nCedar asked for the figures.\n")
         self.assertTrue(any("names Cedar" in m for m in found), found)
 
-    def test_wording_that_three_hubs_for_three_parties_share_is_common(self):
+    def test_wording_that_hubs_share_with_a_shipped_template_is_common(self):
         template = "\n## Contents\n\n| Folder | Holds |\n|---|---|\n| `Sources/` | what the party sent, kept as received |\n| `Notes/` | working notes of the team |\n"
+        write(self.root / "System" / "templates" / "project" / "{{PROJECT}}.md", "# {{PROJECT}}\n" + template)
         for name, party in (("Maple", "maple"), ("Elm", "cedar"), ("Fir", "acme")):
             write(self.cedar / name / (name + ".md"), project_hub("Cedar", name, party) + template)
         ws = check.discover(self.root)
@@ -219,6 +220,13 @@ class HubsAreNotRefusedForWhatTheyShareTest(unittest.TestCase):
             hub = self.cedar / name / (name + ".md")
             found = check.walls_for_file(ws, hub.parent, {party}, hub, hub.read_text(encoding="utf-8"))
             self.assertEqual([], [f.message for f in found if f.severity == "error"], name)
+
+    def test_a_sentence_pasted_into_other_projects_is_never_common(self):
+        leak = "\nThe lender wants the amended schedule before the quarter closes, so hold the draft.\n"
+        for name, party in (("Elm", "cedar"), ("Fir", "acme"), ("Oak", "birch")):
+            write(self.cedar / name / (name + ".md"), project_hub("Cedar", name, party) + leak)
+        found = self.hub_says(self.hub, project_hub("Cedar", "Maple", "maple") + leak)
+        self.assertTrue(any("repeats wording" in m for m in found), found)
 
     def test_eight_words_copied_from_one_hub_into_another_are_still_refused(self):
         own = project_hub("Cedar", "Elm", "cedar") + "\n### Resume here\n\nThe lender wants the amended schedule before the quarter closes, so hold the draft.\n"

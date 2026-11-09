@@ -5000,12 +5000,13 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
             common |= found
             if knowledge not in path.parents:
                 beyond |= found
-    # Wording that the files of three or more projects for different parties hold, such as the text of one hub
-    # template, belongs to no single project's confidence (#465).
-    for h, held in owners.items():
-        if len(held) >= 3 and h not in common and all(o in projects for o in held) \
-                and len({projects[o] for o in held}) >= 3 and len({tags[o] for o in held}) >= 3:
-            common.add(h)
+    # Wording also found in a template Garrick ships (System/templates/: the zone, project and thread templates) is
+    # common wording: a hub made from one template shares its text, and the template is nobody's confidence (#465).
+    templates = ws.root.joinpath(*TEMPLATES)
+    if templates.is_dir():
+        for path in walk_files(templates):
+            if path.suffix.lower() in TEXT_SUFFIXES:
+                common |= {h for h in file_runs(ws, path, False) if h in owners}
     ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
     if ws.cache is not None:
         ws.cache.whole = True

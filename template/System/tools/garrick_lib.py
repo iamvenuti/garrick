@@ -847,6 +847,22 @@ CONTEXT_TABLES = {
 }
 
 
+def plain_name(cell: str) -> str:
+    """A name cell as plain text: Markdown emphasis (`**`, `*`, `_`) and surrounding backticks taken off."""
+    return (cell or "").strip().strip("*_` \t").strip()
+
+
+def _owner(lines: List[str]) -> Optional[dict]:
+    """The owner of the workspace, from the first sentence of `## Me`, up to its first full stop: `{"name", "first"}`,
+    or None when the section holds no name, or only a placeholder in angle brackets (`<Your name>`)."""
+    first = next((l.strip() for l in lines if l.strip()), "")
+    sentence = re.split(r"\.(?:\s|$)", first, maxsplit=1)[0]
+    name = plain_name(re.sub(r"[*_`]", "", sentence))
+    if not name or re.search(r"[<>\[\]|:@]", name) or len(name.split()) > 5:
+        return None
+    return {"name": name, "first": name.split()[0]}
+
+
 def _col(row: Dict[str, str], *names: str) -> str:
     for key, value in row.items():
         for n in names:
@@ -868,6 +884,7 @@ def load_context(root: PathLike) -> dict:
           "aliases": {heard (lower case): means},
           "zones":   {zone name: what it holds},
           "me":      [your own addresses, lower case],
+          "owner":   {"name": "Jo Example", "first": "Jo"}, or None,   # the first sentence of ## Me
           "learned": [{"table", "row", "cell"}, ...],
         }
 
@@ -878,7 +895,7 @@ def load_context(root: PathLike) -> dict:
     Tags are lower-cased and stripped of backticks. A missing file gives
     empty collections.
     """
-    ctx = {"parties": {}, "zone_parties": {}, "zone_default": {}, "people": [], "aliases": {}, "zones": {}, "me": [], "tables": {},
+    ctx = {"parties": {}, "zone_parties": {}, "zone_default": {}, "people": [], "aliases": {}, "zones": {}, "me": [], "owner": None, "tables": {},
            "learned": [], "pending": None}
     path = Path(root) / "System" / "context.md"
     try:
@@ -906,6 +923,7 @@ def load_context(root: PathLike) -> dict:
                 ctx["learned"].append({"table": name, "row": first.strip(),
                                        "cell": cell})
 
+    ctx["owner"] = _owner(sections.get("me", []))
     for addr in re.findall(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", "\n".join(sections.get("me", []))):
         if addr.lower() not in ctx["me"]:
             ctx["me"].append(addr.lower())
@@ -917,7 +935,7 @@ def load_context(root: PathLike) -> dict:
         if not tag:
             continue
         ctx["parties"][tag] = {
-            "party": _col(row, "party", "name"),
+            "party": plain_name(_col(row, "party", "name")),
             "what": _col(row, "what"),
             "zone": _col(row, "zone"),
             "domains": split_domains(_col(row, "domain")),
@@ -926,7 +944,7 @@ def load_context(root: PathLike) -> dict:
         }
 
     for row in _table(sections.get("people", [])):
-        name = _col(row, "name")
+        name = plain_name(_col(row, "name"))
         if name:
             ctx["people"].append(
                 {"name": name, "party": strip_tag(_col(row, "party")), "role": _col(row, "role")}

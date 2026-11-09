@@ -199,6 +199,11 @@ class Table:
         self.check = tools
         self.root = root
         self.pages = build(root)
+        ctx = root / "System" / "context.md"       # a walled party named like its zone: the case 0.60.1's gate missed
+        text = ctx.read_text(encoding="utf-8").replace("| Work | Client work | | walled |", "| Work | Client work | | walled |\n| Cedar | Its own affairs | | walled |")
+        text = text.replace("| Acme Corp |", "| Cedar | The company itself | Cedar | `cedar` | yes | |\n| Acme Corp |", 1)
+        ctx.write_text(text, encoding="utf-8")
+        write(root / "Zones" / "Cedar" / "Todo.md", "# Todo\n")
         for project in ("Harbour", "Northwind"):
             write(root / "Zones" / "Work" / project / ".claude" / "harbour-ledger.md", "{}\n")
         self.ws = tools.discover(root)
@@ -216,6 +221,9 @@ class Table:
             return "refused"
         return "warned" if walls else "passed"
 
+    ZONE_ROWS = {"cedar-zone/prose": "# Notes\n\nCedar asked for the figures.\n",
+                 "cedar-zone/zone-key": "---\nzone: Cedar\ntype: note\n---\n\nx\n"}
+
     def expected(self):
         """{(project, party, label): what the tree owes}: refused across the wall, or by design (text) there too."""
         want = {}
@@ -223,6 +231,8 @@ class Table:
             for party in (FAR, NEAR):
                 for label, _ in rows(self.root, self.pages, party):
                     want[(project_name, party, label)] = "refused" if party != own else "passed"
+        want[("Northwind", "cedar", "cedar-zone/prose")] = "refused"
+        want[("Northwind", "cedar", "cedar-zone/zone-key")] = "by design"       # #465: the `zone:` key is structure
         for rnd, n, name, far, near, _ in all_cases():
             want[("Northwind", FAR, "form/%s/%d %s" % (rnd, n, name))] = "refused" if far == "refused" else "by design"
             want[("Northwind", NEAR, "form/%s/%d %s" % (rnd, n, name))] = "passed"
@@ -236,6 +246,8 @@ class Table:
             for party in (FAR, NEAR):
                 for label, text in rows(self.root, self.pages, party):
                     out[(project_name, party, label)] = self.verdict(project_name, text)
+        for label, text in self.ZONE_ROWS.items():
+            out[("Northwind", "cedar", label)] = self.verdict("Northwind", text)
         for rnd, n, name, far, near, template in all_cases():
             for party in (FAR, NEAR):
                 out[("Northwind", party, "form/%s/%d %s" % (rnd, n, name))] = self.verdict(
@@ -270,6 +282,10 @@ class EndToEndTest(unittest.TestCase):
         for project, party in (("Northwind", FAR), ("Harbour", NEAR)):
             wrong = sorted(k for k, v in self.read(project, party).items() if v != "refused")
             self.assertEqual([], wrong[:15], "%s: %d rows pass" % (project, len(wrong)))
+
+    def test_a_walled_party_named_like_its_zone_is_named_in_prose_but_not_by_the_zone_key(self):
+        self.assertEqual("refused", self.verdicts[("Northwind", "cedar", "cedar-zone/prose")])
+        self.assertEqual("passed", self.verdicts[("Northwind", "cedar", "cedar-zone/zone-key")])
 
     def test_every_row_on_the_near_side_passes_with_no_finding(self):
         for project, party in (("Northwind", NEAR), ("Harbour", FAR)):

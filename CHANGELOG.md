@@ -4,6 +4,44 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.61.0] - 2026-11-10
+
+The wall check now treats as a reference only what the vault resolves, so globs, bold text and code no longer refuse a commit. The status page gets one place to answer findings, and every session used today wraps its own thread when you close for the day.
+
+**Upgrading.**
+- `desk start`, `desk end` and `desk shutdown` are gone. cmux resumes each tab's agent session by itself, so to start the day you open cmux.
+- If `System/desk.json` has a `before_quit` entry, the update moves its commands into `System/jobs/nightly.local`, which the jobs extra's nightly run executes. If that file already exists, or the jobs extra is not installed, the update names the commands instead.
+- An old `System/nurture-review.md` is read once: its deferred items become *Later* rows, and the file is removed.
+- `System/briefing.md` is no longer read. `System/briefing.local.md` still is.
+
+### Changed
+
+- **Wall check: a reference is what the vault resolves** ([#436](https://github.com/iamvenuti/garrick/issues/436), closes [#435](https://github.com/iamvenuti/garrick/issues/435)). Four rules replace the old token reading:
+  - a link that resolves;
+  - a token that is the exact path of a file in the workspace, read from the note's own folder first;
+  - a name from the Parties, People or Aliases tables;
+  - eight words in a row shared with a walled file.
+
+  A glob, a folder, a bare word and a path with an escape are text. `check.py` drops from 9,179 to 7,977 lines, and the generated verdict table is gone. `tests/wall_diff.py` splits the rows that go from refused to passed into *by design* and *other*. The release gate is *other* at 0.
+- **A project put away in a zone's `archive/` keeps its hub's `party:`** ([#438](https://github.com/iamvenuti/garrick/issues/438)), so its files stay labelled. Any other file there, or in a hidden folder, has no label by design. `check.py` warns about a put-away project whose hub names no party, and about a loose archived note that carries one.
+- **Context: one place to answer findings** ([#433](https://github.com/iamvenuti/garrick/issues/433)). The Questions tab is now **Context**. The Checks card has one link, *Answer in Context*, with the open count of each group, in place of *Nurture* and *Review context*. A judgment row has *Open in Claude*, or *Open in Codex* where it is installed, which hands that one finding to a session. "Review the context with me" opens the tab.
+- **Status page: Checks in Context, no Needs attention card, any card movable** ([#443](https://github.com/iamvenuti/garrick/issues/443)). Each trouble shows on its own card, and a newer Garrick shows on *Repositories*. A tab whose cards hold trouble carries a dot. Every tab has a left and a right slot, and *Move to…* moves a card to any tab. A saved layout stays valid.
+- **Catch up is a prompt only** ([#441](https://github.com/iamvenuti/garrick/issues/441)). The Catch up button and dialog, *File › Catch Up…* and the Obsidian command are gone. "Catch me up on X since Monday", typed in a session or in Ask, is the way in. The answer is no longer offered for saving; say "save that" to keep it.
+- **Close for the day: every session wraps its own thread** ([#442](https://github.com/iamvenuti/garrick/issues/442)). The sessions are asked one at a time:
+  - cmux tabs, through the new `desk wrap`;
+  - other sessions the assistant can reach;
+  - the session you said it in.
+
+  A Codex app session cannot be reached, so it is listed with its folder. Nothing is quit, and no thread is reconstructed from the day's changes. The page's Start up and Shut down buttons are gone.
+- **cmux resumes the tabs** ([#440](https://github.com/iamvenuti/garrick/issues/440)). A tab that comes back at a bare prompt means cmux never quit. `check.py` warns once when `terminal.autoResumeAgentSessions` is `false`.
+
+### Fixed
+
+- **Project hubs are no longer refused for their own zone, their template's wording or their own paths** ([#465](https://github.com/iamvenuti/garrick/issues/465)). The `zone:` key is never read as a name. Wording that a template under `System/templates/` also holds is common wording. A relative path is read from the note's own folder first.
+- **The band offers *Resume* only after a wrap** ([#453](https://github.com/iamvenuti/garrick/issues/453)). Before, a turn that rewrote the Resume here block without wrapping was enough. Now `wrap_lock.py end` writes the time the wrap finished, and the band and *Close* read that record.
+- **Ask's `docs` route reads a party key in any case or nesting** ([#439](https://github.com/iamvenuti/garrick/issues/439)), a byte order mark included. A page with one is labelled, not published.
+- **The owner's name** is now read correctly from a sentence with an initial, a title or a suffix, and from a long name. A walled name that contains the owner's name stays matched in full.
+
 ## [0.60.1] - 2026-11-09
 
 The walls migration can be finished from the app, and a migrated workspace can commit notes that name its owner.

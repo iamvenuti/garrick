@@ -98,6 +98,35 @@ class OwnerNamesTest(unittest.TestCase):
             (root / "System" / "context.md").write_text(text, encoding="utf-8")
             self.assertIsNone(garrick_lib.load_context(root)["owner"], me)
 
+    def test_a_sentence_about_the_work_is_no_owner(self):
+        for me in ("Emp sales engineer. Works on pricing.", "Birch consultant. Works alone.", "Jo_Ann Example. Advisor."):
+            root = Path(self._tmp.name) / "q" / str(abs(hash(me)))
+            build(root)
+            text = CONTEXT.replace("**Jo Example**. Independent advisor.", me)
+            (root / "System" / "context.md").write_text(text, encoding="utf-8")
+            owner = garrick_lib.load_context(root)["owner"]
+            if me.startswith("Jo_Ann"):
+                self.assertEqual(owner, {"name": "Jo_Ann Example", "first": "Jo_Ann"})
+            else:
+                self.assertIsNone(owner, me)
+
+    def test_a_tag_that_is_the_partys_own_name_is_matched_in_prose(self):
+        text = CONTEXT.replace("| Acme Corp | Client |", "| Page | Client | Clients | `page` | yes | |\n| Acme Corp | Client |", 1)
+        (self.root / "System" / "context.md").write_text(text, encoding="utf-8")
+        self.ws = check.discover(self.root)
+        self.ws.quick = True
+        self.assertTrue(self.refused("# Notes\n\nPage wants a quote.\n"))
+
+    def test_a_party_named_like_its_zone_is_matched_in_prose(self):
+        text = CONTEXT.replace("| Clients | Client work | | walled |", "| Clients | Client work | | walled |\n| Northwind | A client's own zone | | walled |", 1)
+        text = text.replace("| Acme Corp | Client |", "| Northwind | Client | Northwind | `northwind` | yes | |\n| Acme Corp | Client |", 1)
+        (self.root / "System" / "context.md").write_text(text, encoding="utf-8")
+        (self.root / "Zones" / "Northwind" / ".git").mkdir(parents=True)
+        self.ws = check.discover(self.root)
+        self.ws.quick = True
+        self.assertTrue(self.refused("# Notes\n\nNorthwind asked for the figures.\n"))
+        self.assertFalse(self.refused("# Notes\n\nA private matter, kept private.\n"))
+
     def test_the_owners_first_name_is_not_refused(self):
         self.assertFalse(self.refused("# Notes\n\nOn Jo's word, filed the quote.\n"))
 

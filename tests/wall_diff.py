@@ -4,7 +4,7 @@
 
 Takes `check.py` and `garrick_lib.py` of the tag with `git show` into a temporary
 folder, runs the generated table of `tests/test_wall_forms.py` through the tag's
-check and through the working tree's, and prints three counts: rows refused in
+check and through the working tree's, and prints three counts (the rows whose keys hold the temporary root are compared with it taken out, and counted as a group of their own): rows refused in
 both, rows passed in both, and rows whose verdict changed, split into
 refused -> passed and passed -> refused by page kind and wrapper.
 
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -110,11 +111,26 @@ def start(tools: Path, full: bool, legacy: bool = False) -> subprocess.Popen:
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(HERE))
 
 
+# The fixture's root, as a run of the table names it in a row's label: a temporary folder, new each run.
+TEMP_ROOT_RE = re.compile(r"(?:/private)?/(?:var/folders/[^/]+/[^/]+/T|var/tmp|tmp)/tmp[^/\s]*/Workspace")
+TEMP = "<temp>/Workspace"
+
+
 def finish(proc: subprocess.Popen) -> dict:
+    """{key: verdict} for the table's rows; a row whose key holds the temporary path has that path replaced by
+    TEMP, so that the two runs' rows meet, and its key's label starts with TEMP_MARK."""
     out, err = proc.communicate()
     if proc.returncode:
         raise RuntimeError("the table did not run:\n" + err[-2000:])
-    return {(p, q, label): v for p, q, label, v in json.loads(out)}
+    rows = {}
+    for p, q, label, v in json.loads(out):
+        if TEMP_ROOT_RE.search(label):
+            label = TEMP_MARK + TEMP_ROOT_RE.sub(TEMP, label)
+        rows[(p, q, label)] = v
+    return rows
+
+
+TEMP_MARK = "[temp path] "
 
 
 def tag_tools(tag: str, into: Path) -> Path:
@@ -167,16 +183,22 @@ def diff(tag: str, full: bool = False) -> dict:
         old_tools = tag_tools(tag, Path(tmp) / "tag")
         procs = (start(old_tools, full, legacy=True), start(TOOLS, full))
         old, new = finish(procs[0]), finish(procs[1])
-    result = {"tag": tag, "rows": len(new), "refused_both": 0, "passed_both": 0}
+    temp = {k for k in new if k[2].startswith(TEMP_MARK)}
+    result = {"tag": tag, "rows": len(new) - len(temp), "refused_both": 0, "passed_both": 0}
     moved = {"refused_to_passed": [], "passed_to_refused": []}
+    group = {"rows": len(temp), "refused_both": 0, "passed_both": 0, "no_twin": 0,
+             "refused_to_passed": [], "passed_to_refused": []}
     for key, now in new.items():
         before = old.get(key)
         if before is None:
+            if key in temp:
+                group["no_twin"] += 1
             continue                                   # a row the tag has no twin for
         if before == now:
-            result["refused_both" if now == "refused" else "passed_both"] += 1
+            target = group if key in temp else result
+            target["refused_both" if now == "refused" else "passed_both"] += 1
         else:
-            moved["refused_to_passed" if before == "refused" else "passed_to_refused"].append(key)
+            (group if key in temp else moved)["refused_to_passed" if before == "refused" else "passed_to_refused"].append(key)
     for name, keys in moved.items():
         result[name] = {"total": len(keys),
                         "by_kind": dict(Counter(split(k[2])[0] for k in keys)),
@@ -185,13 +207,28 @@ def diff(tag: str, full: bool = False) -> dict:
     result["changed"] = sum(result[n]["total"] for n in moved)
     walled = flags()
     scopes = {"Northwind": "acme", "Harbour": "birch"}
-    kinds = {"by_design": [], "by_the_design": [], "other": []}
-    for key in moved["refused_to_passed"]:
-        project, party, label = key
-        kind = "by_design" if by_design(label) else "by_the_design" if by_the_design(party, scopes[project], walled) else "other"
-        kinds[kind].append(key)
+
+    def sort(keys):
+        kinds = {"by_design": [], "by_the_design": [], "other": []}
+        for key in keys:
+            project, party, label = key
+            kind = "by_design" if by_design(label) else "by_the_design" if by_the_design(party, scopes[project], walled) else "other"
+            kinds[kind].append(key)
+        return kinds
+
+    kinds = sort(moved["refused_to_passed"])
     result["refused_to_passed"]["kinds"] = {k: len(v) for k, v in kinds.items()}
     result["refused_to_passed"]["other_rows"] = ["%s reads %s: %s" % k for k in sorted(kinds["other"])]
+    # The rows whose keys hold the temporary path: compared with that path taken out, and a group of their own.
+    tkinds = sort(group["refused_to_passed"])
+    result["temp_path"] = {
+        "rows": group["rows"], "refused_both": group["refused_both"], "passed_both": group["passed_both"],
+        "no_twin": group["no_twin"],
+        "refused_to_passed": {"total": len(group["refused_to_passed"]), "kinds": {k: len(v) for k, v in tkinds.items()},
+                              "other_rows": ["%s reads %s: %s" % k for k in sorted(tkinds["other"])]},
+        "passed_to_refused": {"total": len(group["passed_to_refused"]),
+                              "rows": ["%s reads %s: %s" % k for k in sorted(group["passed_to_refused"])]},
+    }
     return result
 
 
@@ -213,7 +250,17 @@ def report(result: dict, show: int = 20) -> str:
                 lines += ["    " + r[:200] for r in part["other_rows"][:show]]
                 if kinds["other"] > show:
                     lines.append("    ... and %d more" % (kinds["other"] - show))
-    other = result["refused_to_passed"]["kinds"]["other"]
+    t = result["temp_path"]
+    lines.append("rows with a temporary path in the key, compared with it taken out: %d" % t["rows"])
+    lines += ["  refused in both:   %d" % t["refused_both"], "  passed in both:    %d" % t["passed_both"],
+              "  no twin in the release: %d" % t["no_twin"],
+              "  refused -> passed: %d (by design: %d, by the design: %d, other: %d)"
+              % (t["refused_to_passed"]["total"], t["refused_to_passed"]["kinds"]["by_design"],
+                 t["refused_to_passed"]["kinds"]["by_the_design"], t["refused_to_passed"]["kinds"]["other"]),
+              "  passed -> refused: %d" % t["passed_to_refused"]["total"]]
+    lines += ["    " + r[:200] for r in t["refused_to_passed"]["other_rows"][:show]]
+    lines += ["    " + r[:200] for r in t["passed_to_refused"]["rows"][:show]]
+    other = result["refused_to_passed"]["kinds"]["other"] + t["refused_to_passed"]["kinds"]["other"]
     lines.append("FAIL: %d rows the release refused now pass, and the design does not allow them." % other
                  if other else "OK: every row that goes from refused to passed is by design.")
     return "\n".join(lines)
@@ -233,7 +280,7 @@ def main(argv=None) -> int:
         ap.error("name a tag")
     result = diff(args.tag, args.full)
     print(report(result))
-    return 1 if result["refused_to_passed"]["kinds"]["other"] else 0
+    return 1 if result["refused_to_passed"]["kinds"]["other"] + result["temp_path"]["refused_to_passed"]["kinds"]["other"] else 0
 
 
 if __name__ == "__main__":

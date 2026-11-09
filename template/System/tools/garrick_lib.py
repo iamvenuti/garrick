@@ -855,7 +855,8 @@ def plain_name(cell: str) -> str:
 NAME_PARTICLES = frozenset("de di da del della van von der den la le du dos das bin al".split())
 
 
-NAME_TITLES = frozenset("dr mr mrs ms mx prof professor sir dame lord lady jr sr".split())
+NAME_TITLES = frozenset("dr mr mrs ms mx prof professor sir dame lord lady".split())
+NAME_SUFFIXES = frozenset("jr sr ii iii iv".split())
 NOT_PARTICLES = frozenset("and of the at for in on with to or a an".split())
 
 
@@ -872,7 +873,7 @@ def _owner(lines: List[str]) -> Optional[dict]:
         word = plain_name(last[0])
         if len(word) == 1 or word.lower() in NAME_TITLES:
             continue
-        sentence = first[:m.start()]
+        sentence = first[:m.start() + (1 if word.lower() in NAME_SUFFIXES else 0)]
         break
     tokens = [t for t in (plain_name(t) for t in plain_name(sentence).split()) if t]
     while tokens and tokens[0].rstrip(".").lower() in NAME_TITLES:
@@ -885,7 +886,7 @@ def _owner(lines: List[str]) -> Optional[dict]:
         if any(c.isdigit() for c in t) or not (t[0].isalpha() and t[0].isupper() or particle):
             return None
     head = tokens[0].rstrip(".")
-    return {"name": " ".join(tokens), "first": head if len(head) > 1 else ""}
+    return {"name": " ".join(tokens).rstrip("."), "first": head if len(head) > 1 else ""}
 
 
 def _col(row: Dict[str, str], *names: str) -> str:

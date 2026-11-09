@@ -183,6 +183,10 @@ class OwnerFormsTest(unittest.TestCase):
         self.assertEqual(self.owner("Prof. J. R. Example. Advisor."), {"name": "J. R. Example", "first": ""})
         self.assertEqual(self.owner("Jo Example. Independent advisor."), {"name": "Jo Example", "first": "Jo"})
 
+    def test_a_suffix_ends_the_name_and_its_full_stop_ends_the_sentence(self):
+        self.assertEqual(self.owner("Jo Example Jr. Writes."), {"name": "Jo Example Jr", "first": "Jo"})
+        self.assertEqual(self.owner("Dr. Jo Example III. Independent advisor."), {"name": "Jo Example III", "first": "Jo"})
+
     def test_a_long_name_or_an_unlisted_particle_still_gives_an_owner(self):
         self.assertEqual(self.owner("Maria de la Cruz Lopez Ortega. Advisor.")["name"], "Maria de la Cruz Lopez Ortega")
         self.assertEqual(self.owner("Ludwig ten Brink. Advisor.")["first"], "Ludwig")

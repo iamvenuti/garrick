@@ -454,6 +454,9 @@ focus, as under *No name given*). Then:
    ```sh
    python3 System/tools/wrap_lock.py start "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
    ```
+   Name the note that holds the Resume here block: the thread note, or the
+   hub (`Zones/<Zone>/<Project>/<Project>.md`) for a project that keeps its
+   resume point there. The band reads the record of that note.
    It prints `locked` and exits 0, or says that a wrap of this thread is
    already running and exits 1: then say so and stop. The lock is a file in
    `System/generated/`; a lock older than ten minutes counts as gone.
@@ -661,6 +664,7 @@ focus, as under *No name given*). Then:
     ```sh
     python3 System/tools/wrap_lock.py end "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
     ```
+    The same note as the lock in step 1, hub included.
     `end` also writes the time the wrap finished (`wrap-<note>.done`). That
     record, not the note's last write, is what says a wrap landed: the band and
     Close read it.

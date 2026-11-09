@@ -317,7 +317,7 @@ def review_rows(ws: Path, nurture, C: Optional[dict], lib, ctx: dict, today: dt.
             if key.startswith("unattributed|") or not view.ok(tags):
                 continue
             out.setdefault(key, {"entities": [], "people": [], "read": []})["read"].append(
-                {"key": item.key, "path": rel, "check": clip(item.check, 40), "href": link(path)})
+                {"key": item.key, "path": rel, "check": clip(item.check, 40), "line": clip(item.message, LINE_MAX), "href": link(path)})
     return out
 
 
@@ -513,7 +513,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         buckets[key]["picks"] = picks
     # the menu's number: the open questions of each zone's default bucket. A Knowledge question has no zone, so it
     # is counted once, apart (menu_knowledge), and in no zone's number.
-    menu, per_group = {}, {}
+    menu, per_group, per_find = {}, {}, {}
     for info in zone_info:
         key = "%s|%s" % (info["zone"], info["default"])
         if key in buckets:
@@ -521,9 +521,19 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         # each group's own open count, for the menu to name apart (#384): never added up, and Knowledge apart
         per_group[info["zone"]] = [{"h": v["heading"], "n": len(buckets[v["key"]]["questions"])}
                                    for v in group_views([info]) if v["kind"] != "unattributed"]
+        per_find[info["zone"]] = {v["heading"]: findings_in(buckets[v["key"]])
+                                  for v in group_views([info]) if v["kind"] != "unattributed"}
     return {"today": today.isoformat(), "root": str(ws), "zones": zone_info, "select": selections(zone_info), "buckets": buckets, "knowledge": knowledge,
-            "knowledge_answered": answered_k, "knowledge_waiting": waiting_k, "menu": menu, "menu_groups": per_group,
+            "knowledge_answered": answered_k, "knowledge_waiting": waiting_k, "menu": menu, "menu_groups": per_group, "menu_findings": per_find,
             "menu_knowledge": len(knowledge), "built": int(time.time() * 1000)}
+
+
+def findings_in(bucket: dict) -> int:
+    """The Nurture findings a group holds to answer or open: the people and
+    the judgment rows of its own, and the entity pages the unattributed view of
+    its zone offers, which the zone's groups do not carry, so are not here."""
+    rev = bucket.get("review") or {}
+    return len(rev.get("people") or []) + len(rev.get("read") or [])
 
 
 def counts_of(data: dict) -> dict:
@@ -538,14 +548,14 @@ def counts_of(data: dict) -> dict:
 def tab_button() -> str:
     """The tab. Its number is the open count of the zone shown, set by the
     panel's own script: a number made here would add up zones."""
-    return '<button type="button" role="tab" data-tab="questions">Questions<span class="n" id="qp-tab-n"></span></button>'
+    return '<button type="button" role="tab" data-tab="questions">Context<span class="n" id="qp-tab-n"></span></button>'
 
 
 def body(data: dict) -> str:
     """The panel's skeleton and its data. The data is JSON in a script element
     of its own (type application/json, so nothing in it runs)."""
     blob = json.dumps(data, ensure_ascii=False).replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
-    return ('<div class="qp" id="qp">'
+    return ('<div class="qp" id="qp"><h2 class="qp-title">Context Nurture</h2>'
             '<div class="qp-counts" id="qp-counts" role="status"></div>'
             '<div class="qp-bar">'
             '<label>Zone <select id="qp-zone"></select></label>'
@@ -566,7 +576,8 @@ def body(data: dict) -> str:
 
 
 CSS = r"""
-/* the Questions panel (#224) */
+/* the Context tab (#224) */
+.qp-title{margin:0 0 12px;font:600 20px/1.2 var(--display)}
 .qp-counts{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.qp-counts .chip b{margin-right:4px}
 .qp-bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:0 0 14px;font-size:13px}
 .qp-bar label{display:flex;align-items:center;gap:6px;color:var(--ink2)}
@@ -766,6 +777,14 @@ if(c==='yes'||c==='another'||c==='later'||c==='no'){v.choice=c;if(c==='another')
 else{v.do='correct';v.choice='yes'}
 if(edc.checked&&oldv.value&&newv.value)v.edit={old:oldv.value,new:newv.value};return v}};
 paint();return out}
+/* Open in Claude, and in Codex where installed (#433): one finding handed to a session, with its path, the check and its line. In a browser, or with neither installed, the request is copied. */
+var OPENS=[['claude','Open in Claude'],['codex','Open in Codex']];
+function handOver(r){var box=el('div','gacts'),say_='Look at this finding with me: '+r.path+', check '+r.check+(r.line?', '+r.line:'')+'. Open the file, say what is wrong and propose the edit; change nothing until I say yes.',
+on=(document.body.dataset.launchers||'').split(',');
+var ls=host?OPENS.filter(function(o){return on.indexOf(o[0])>=0}):[];
+ls.forEach(function(o){var b=el('button','act',o[1]);b.type='button';b.setAttribute('data-launch',o[0]);b.setAttribute('data-folder',D.root||'');b.setAttribute('data-phrase',say_);b.setAttribute('data-say','Opening '+o[1].slice(8)+' on this finding…');box.appendChild(b)});
+if(!ls.length){var c=el('button','act','Copy request');c.type='button';c.setAttribute('data-request',say_);c.setAttribute('data-folder',D.root||'');box.appendChild(c)}
+return box}
 function review(){var box=$('qp-nurture');box.textContent='';rows=[];var secs=[],zs=[],labels=[];
 sel().views.forEach(function(v){if(zs.indexOf(v.zone)<0)zs.push(v.zone)});
 zs.forEach(function(z){var vs=sel().views.filter(function(v){return v.zone===z});
@@ -789,14 +808,14 @@ var f=function(){label(sb,sec.rows)};labels.push(f);f();sb.onclick=function(){se
 box.appendChild(d)});
 qviews().forEach(function(v){var rd=bucketOf(v.key).review.read;if(!rd.length)return;
 var d=el('details','qp-group');d.appendChild(el('summary','',(sel().views.length>1?v.heading+': ':'')+'Judgment and other findings, to open ('+rd.length+')'));
-rd.forEach(function(r){var p=el('div','qp-row');p.appendChild(link(r.path,r.href));p.appendChild(el('div','',r.check));p.appendChild(el('div'));d.appendChild(p)});box.appendChild(d)});
+rd.forEach(function(r){var p=el('div','qp-row');p.appendChild(link(r.path,r.href));p.appendChild(el('div','',r.check+(r.line?': '+r.line:'')));p.appendChild(handOver(r));d.appendChild(p)});box.appendChild(d)});
 if(!rows.length){box.appendChild(el('div','qp-empty','No findings to answer here.'));return}
 var foot=el('div','qp-save'),sv=el('button','act primary qp-hostonly');sv.type='button';
 if(many){sv.textContent='Save all answers'}
 else{rows.forEach(function(r){r.change=function(){label(sv,rows)}});label(sv,rows)}
 sv.onclick=function(){send(secs)};
 foot.appendChild(sv);
-var web=el('button','act qp-webonly','Review in the chat');web.type='button';web.setAttribute('data-request','review the context with me');web.setAttribute('data-folder',D.root||'');
+var web=el('button','act qp-webonly','Nurture in the chat');web.type='button';web.setAttribute('data-request','nurture the context');web.setAttribute('data-folder',D.root||'');
 foot.appendChild(web);box.appendChild(foot)}
 var prevActed=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&(q.verb==='nurture-save'||q.verb==='nurture-save-all')){(res&&res.rows||[]).forEach(function(x){var r=rows.filter(function(y){return y.key===x.key})[0];if(!r)return;

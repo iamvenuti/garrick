@@ -168,7 +168,7 @@ class CmuxCase(unittest.TestCase):
         dirs = patch.object(desk, "AGENT_DIRS", ())
         dirs.start()
         self.addCleanup(dirs.stop)
-        for name in ("notify", "quit_cmux", "bring_forward"):
+        for name in ("bring_forward",):
             p = patch.object(desk, name)
             p.start()
             self.addCleanup(p.stop)
@@ -346,19 +346,19 @@ class ConfigTest(CmuxCase):
         cfg = self.config((EXTRA / "desk.example.json").read_text(encoding="utf-8"))
         self.assertEqual(cfg["workspaces"]["neutral"], "System")
 
-    def test_settings_merge_and_commands_parse(self):
+    def test_settings_merge(self):
         cfg = self.config({"workspaces": {"Work": "Client work"}, "agent": "codex", "aliases": {"the price": "Pricing"},
-                           "before_quit": ["git -C 'Zones/Work' status", ["python3", "backup.py", "--all"]]})
+                           "before_quit": ["git -C 'Zones/Work' status"]})
         d = desk.Desk(self.ws, cfg)
         self.assertEqual(d.workspace_for("Work"), "Client work")
         self.assertEqual(d.workspace_for("Personal"), "Personal")
         self.assertEqual(cfg["agent"], "codex")
-        self.assertEqual(cfg["before_quit"], [["git", "-C", "Zones/Work", "status"], ["python3", "backup.py", "--all"]])
+        self.assertEqual(cfg["before_quit"], ["git -C 'Zones/Work' status"])      # retired: kept to be reported, never run
 
     def test_bad_settings_are_refused_by_name(self):
         for data, said in (("{not json", "not valid JSON"), ([], "one JSON object"), ({"agents": "codex"}, "agents"),
                            ({"agent": "opencode"}, "agent should be"), ({"before_quit": "backup.sh"}, "list of commands"),
-                           ({"before_quit": [3]}, "not a command"), ({"skip": "archive"}, "skip"),
+                           ({"skip": "archive"}, "skip"),
                            ({"workspaces": {"Work": 1}}, "workspaces")):
             with self.subTest(data=data), self.assertRaisesRegex(desk.DeskError, said):
                 self.config(data)
@@ -735,33 +735,67 @@ class DeskVerbTest(CmuxCase):
         self.assertTrue(sent[0].startswith("/threads wrap it. "))
         self.assertIn("close-surface", self.verbs())
 
-    def test_shutdown_dry_run_wraps_in_turn_then_runs_the_before_quit_commands(self):
-        marker = self.tmp / "before-quit.txt"
-        write(self.ws / "System" / "desk.json", json.dumps({"before_quit": [
-            [sys.executable, "-c", "open(%r, 'w').write('ran')" % str(marker)]]}))
-        sessions = [self.session("a", self.pricing, claude_rows()),
-                    self.session("b", self.work / "Birch Entry", [event("task_started"), event("task_complete")], agent="codex")]
-        self.state({"sessions": sessions})
-        code, out, _ = self.run_desk("shutdown")
-        self.assertIn("2 tab(s) open; 2 used today would be wrapped", out)
-        self.assertFalse(marker.exists())
-        prompts = []
+    def test_wrap_one_tab_waits_for_the_wrap_and_leaves_the_tab_open(self):
+        s = self.session("a", self.pricing, claude_rows())
+        self.state({"sessions": [s]})
+        sent = []
+        note = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        write(self.ws / note, "# Pricing\n")
+        name = "wrap-" + note.replace("/", "__")
+        generated = self.ws / "System" / "generated"
+        lock = generated / (name + ".lock")
+        write(lock, "{}\n")
+        polls = []
 
         def answer(surface, text):
-            s = next(x for x in sessions if x["surface_id"] == surface)
-            for other in sessions:                      # the one before has finished first
-                self.assertEqual(cx.turn_state(other["transcript_path"])[0], "idle")
-            prompts.append(text)
-            self.append(s["transcript_path"], [event("task_started", "w"), event("task_complete", "w")]
-                        if s["agent"] == "codex" else claude_rows())
+            sent.append(text)
+            self.append(s["transcript_path"], [{"type": "user", "message": {"content": text}},
+                                               {"type": "system", "subtype": "turn_duration"}])
+
+        def sleep(_):
+            polls.append(1)
+            if len(polls) == 2:                          # the turn has ended; the wrap's lock goes a poll later
+                lock.unlink()
+                done = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + 1))
+                write(generated / (name + ".done"), json.dumps({"note": note, "finished": done}))
+
+        with patch.object(desk, "send", side_effect=answer), patch.object(desk.time, "sleep", side_effect=sleep):
+            code, out, _ = self.run_desk("wrap", "pricing", "--yes")
+        self.assertEqual(code, 0)
+        self.assertTrue(sent[0].startswith("/threads wrap it. "))
+        self.assertGreaterEqual(len(polls), 2)           # it waited for the lock, not only for the turn
+        self.assertIn("wrapped (Pricing) (%s" % note, out)
+        self.assertIn("record written", out)
+        self.assertNotIn("close-surface", self.verbs())
+
+    def test_wrap_says_when_the_wrap_left_no_record(self):
+        s = self.session("a", self.pricing, claude_rows())
+        self.state({"sessions": [s]})
+        note = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        write(self.ws / note, "# Pricing\n")
+
+        def answer(surface, text):
+            self.append(s["transcript_path"], claude_rows())
 
         with patch.object(desk, "send", side_effect=answer), patch.object(desk.time, "sleep"):
-            self.assertEqual(self.run_desk("shutdown", "--yes")[0], 0)
-        self.assertEqual(sorted(p.split(".")[0] for p in prompts), ["/threads wrap it", "Use the threads skill to wrap it"])
-        self.assertEqual(marker.read_text(), "ran")
-        desk.quit_cmux.assert_called_once()
-        snap = json.loads((self.tmp / "jobs" / "desk-snapshot.json").read_text())
-        self.assertEqual(sorted(t["session_id"] for t in snap["tabs"]), ["a", "b"])
+            code, out, _ = self.run_desk("wrap", "pricing", "--yes")
+        self.assertEqual(code, 0)
+        self.assertIn("no wrap record: check " + note, out)
+
+    def test_wrap_without_yes_changes_nothing(self):
+        self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
+        code, out, _ = self.run_desk("wrap", "pricing")
+        self.assertEqual(code, 0)
+        self.assertIn("Run again with --yes", out)
+        self.assertNotIn("send", self.verbs())
+
+    def test_wrap_types_nothing_into_a_busy_or_unreadable_tab_and_says_so(self):
+        for rows in (claude_rows(done=False), [{"type": "unknown"}]):
+            self.state({"sessions": [self.session("a", self.pricing, rows)]})
+            code, out, _ = self.run_desk("wrap", "pricing", "--yes")
+            self.assertEqual(code, 3)
+            self.assertIn("skipped (Pricing)", out)
+            self.assertNotIn("send", self.verbs())
 
     def test_a_tab_busy_by_its_turn_to_wrap_is_typed_nothing(self):
         # Both idle at the check. While the first wraps, the second starts a
@@ -779,11 +813,10 @@ class DeskVerbTest(CmuxCase):
                                                         {"type": "assistant", "message": {"model": "m"}}])
 
         with patch.object(desk, "send", side_effect=answer), patch.object(desk.time, "sleep"):
-            code, _, err = self.run_desk("shutdown", "--yes")
-        self.assertEqual(sent, ["a-surface"])
-        self.assertEqual(code, 2)
-        self.assertIn("not wrapped, busy when its turn came: (Pricing)", err)
-        desk.quit_cmux.assert_not_called()
+            code, out, _ = self.run_desk("wrap", "--folder", str(self.work), "--yes")
+        self.assertEqual((code, sent), (3, ["a-surface"]))
+        self.assertIn("skipped (Pricing)", out)
+        self.assertNotIn("close-surface", self.verbs())
 
         self.log.unlink()
         for path in (first["transcript_path"], second["transcript_path"]):
@@ -794,14 +827,6 @@ class DeskVerbTest(CmuxCase):
         self.assertEqual((code, sent), (2, ["a-surface"]))
         self.assertEqual([c["argv"][2] for c in self.calls() if c["argv"][0] == "close-surface"], ["a-surface"])
         self.assertIn("left open", err)
-
-    def test_shutdown_refuses_a_busy_or_unreadable_tab(self):
-        for rows in (claude_rows(done=False), [{"type": "unknown"}]):
-            self.state({"sessions": [self.session("a", self.pricing, rows)]})
-            code, _, err = self.run_desk("shutdown", "--yes")
-            self.assertEqual(code, 2)
-            self.assertNotIn("send", self.verbs())
-            desk.quit_cmux.assert_not_called()
 
     def empty(self, sid, folder, status="idle", record_sid=None):
         """A Claude Code tab with no prompt since it started or was cleared:
@@ -830,7 +855,7 @@ class DeskVerbTest(CmuxCase):
         self.assertEqual("?", cx.session_state(row))
         self.assertEqual("?", cx.session_state(dict(row, agent="codex", transcript=str(self.tmp / "none.jsonl"))))
 
-    def test_status_close_and_shutdown_pass_an_empty_tab(self):
+    def test_status_close_and_wrap_pass_an_empty_tab(self):
         self.state({"sessions": [self.empty("a", self.pricing)]})
         code, out, _ = self.run_desk("status")
         self.assertEqual(0, code)
@@ -838,23 +863,14 @@ class DeskVerbTest(CmuxCase):
         code, _, err = self.run_desk("close", "pricing", "--wrap", "--yes")
         self.assertEqual(2, code)
         self.assertIn("nothing to wrap", err)
-        code, out, _ = self.run_desk("shutdown")
+        code, out, _ = self.run_desk("status", "--today")      # nothing to wrap, so not listed
         self.assertEqual(0, code)
-        self.assertIn("0 used today would be wrapped", out)
+        self.assertIn("0 assistant tabs used today", out)
         self.assertEqual(0, self.run_desk("close", "pricing", "--yes")[0])
         self.assertIn("close-surface", self.verbs())
         self.assertNotIn("send", self.verbs())
 
-    def test_shutdown_quits_over_an_empty_tab_without_wrapping_it(self):
-        self.state({"sessions": [self.empty("a", self.pricing)]})
-        with patch.object(desk, "write_snapshot", return_value=0) as snap:
-            code, _, err = self.run_desk("shutdown", "--yes")
-        self.assertEqual((0, ""), (code, err))
-        self.assertNotIn("send", self.verbs())
-        self.assertEqual([], snap.call_args[0][0])          # nothing to resume tomorrow
-        desk.quit_cmux.assert_called_once()
-
-    def test_a_wrap_that_never_finishes_leaves_cmux_running(self):
+    def test_a_wrap_that_never_starts_is_reported(self):
         self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
         clock = [0.0]
 
@@ -863,94 +879,40 @@ class DeskVerbTest(CmuxCase):
 
         with patch.object(desk, "send"), patch.object(desk.time, "sleep", side_effect=tick), \
                 patch.object(desk.time, "time", side_effect=lambda: clock[0]):
-            code, _, err = self.run_desk("shutdown", "--yes")
+            code, _, err = self.run_desk("wrap", "pricing", "--yes")
         self.assertEqual(code, 2)
         self.assertIn("never started", err)
-        desk.quit_cmux.assert_not_called()
 
-    def snapshot(self, tabs, taken=None):
-        write(self.tmp / "jobs" / "desk-snapshot.json", json.dumps(
-            {"taken_unix": time.time() - 60 if taken is None else taken, "tabs": tabs}))
-
-    def recorded(self, sid, surface, tab, folder, agent="claude"):
-        return {"session_id": sid, "agent": agent, "surface": surface, "workspace": "Work", "tab": tab, "cwd": str(folder)}
-
-    def typed(self):
-        return [c["argv"] for c in self.calls() if c["argv"][0] == "send"]
-
-    def test_start_resumes_tabs_that_came_back_empty(self):
-        tabs = [self.recorded("gone", "s-1", "Pricing", self.pricing, agent="codex"),
-                self.recorded("here", "s-2", "Birch", self.work / "Birch Entry")]
-        self.state({"sessions": [self.session("here", self.work / "Birch Entry", claude_rows(), surface="s-2")],
-                    "workspaces": [{"id": "ws-work", "title": "Work"}], "top": top({"s-1": ["zsh"], "s-2": ["claude"]}),
-                    "surfaces": {"ws-work": [{"id": "s-1", "title": "Pricing"}, {"id": "s-2", "title": "Birch"}]}})
-        resumed, lost = desk.resume_missing(tabs, set())
-        self.assertEqual((resumed, lost), (["Pricing"], []))
-        self.assertEqual(shlex.split(self.typed()[0][-1]), ["cd", str(self.pricing), "&&", "codex", "resume", "gone"])
-
-    def test_start_resumes_nothing_when_cmux_was_already_running(self):
-        self.snapshot([self.recorded("gone", "s-1", "Pricing", self.pricing)])
-        self.state({"sessions": [self.session("here", self.work / "Birch Entry", claude_rows(), surface="s-2")],
-                    "workspaces": [{"id": "ws-work", "title": "Work"}], "top": top({"s-1": ["zsh"]}),
-                    "surfaces": {"ws-work": [{"id": "s-1", "title": "Pricing"}, {"id": "s-2", "title": "Birch"}]}})
-        code, out, _ = self.run_desk("start")
+    def test_status_today_as_json_lists_the_tabs_used_today_with_their_thread_note(self):
+        note = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        write(self.ws / note, "# Pricing\n")
+        used = self.session("a", self.pricing, claude_rows())
+        old = self.session("b", self.work / "Birch Entry", claude_rows())
+        os.utime(old["transcript_path"], (1, 1))
+        self.state({"sessions": [used, old]})
+        code, out, _ = self.run_desk("status", "--today", "--json")
         self.assertEqual(code, 0)
-        self.assertIn("already running", out)
-        self.assertEqual(self.typed(), [])
+        rows = json.loads(out)
+        self.assertEqual([(r["session_id"], r["note"]) for r in rows], [("a", note)])
+        self.assertEqual(sorted(rows[0]), ["agent", "folder", "note", "session_id", "state", "tab", "workspace"])
 
-    def test_start_types_only_at_a_shell_prompt_in_a_tab_it_brought_back(self):
-        # cmux is up with no session. The user's own tab, s-0, sits at a shell
-        # prompt; the restore brings back s-1 at a prompt and s-2 with an editor open.
-        self.snapshot([self.recorded("mine", "s-0", "Notes", self.work / "Birch Entry"),
-                       self.recorded("one", "s-1", "Pricing", self.pricing),
-                       self.recorded("two", "s-2", "Acme", self.work / "Acme Review")])
-        bare = {"workspaces": [{"id": "ws-work", "title": "Work"}],
-                "top": top({"s-0": ["zsh"], "s-1": ["zsh"], "s-2": ["vim"]})}
-        self.state(dict(bare, surfaces={"ws-work": [{"id": "s-0", "title": "Notes"}]}, after_restore={"surfaces": {
-            "ws-work": [{"id": "s-0", "title": "Notes"}, {"id": "s-1", "title": "Pricing"}, {"id": "s-2", "title": "Acme"}]}}))
-        with patch.object(desk, "settle"):
-            code, out, _ = self.run_desk("start")
+    def test_start_end_and_shutdown_are_gone_and_no_snapshot_is_written(self):
+        for verb in ("start", "end", "shutdown"):
+            with self.subTest(verb=verb), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                desk.main(["--workspace", str(self.ws), verb])
+        self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
+        self.assertEqual(self.run_desk("close", "pricing", "--yes")[0], 0)
+        self.assertEqual(list(self.tmp.rglob("desk-snapshot*")), [])
+
+    def test_before_quit_in_the_settings_is_reported_and_never_run(self):
+        marker = self.tmp / "before-quit.txt"
+        write(self.ws / "System" / "desk.json", json.dumps({"before_quit": [
+            [sys.executable, "-c", "open(%r, 'w').write('ran')" % str(marker)]]}))
+        self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
+        code, _, err = self.run_desk("status")
         self.assertEqual(code, 0)
-        self.assertEqual([(a[2], shlex.split(a[-1])[-1]) for a in self.typed()], [("s-1", "one")])
-        self.assertIn("Notes (not among the tabs this start brought back)", out)
-        self.assertIn("Acme (something other than a shell holds the tab)", out)
-        # The record is used once.
-        self.assertFalse((self.tmp / "jobs" / "desk-snapshot.json").exists())
-        self.log.unlink()
-        self.state(dict(bare, surfaces={"ws-work": []}, after_restore={"surfaces": {"ws-work": [{"id": "s-1", "title": "Pricing"}]}}))
-        with patch.object(desk, "settle"):
-            self.run_desk("start")
-        self.assertEqual(self.typed(), [])
-
-    def test_two_recorded_tabs_with_one_name_are_not_guessed_between(self):
-        self.snapshot([self.recorded("one", "old-1", "Pricing", self.pricing),
-                       self.recorded("two", "old-2", "Pricing", self.work / "Birch Entry")])
-        self.state({"workspaces": [{"id": "ws-work", "title": "Work"}], "top": top({"new-1": ["zsh"]}),
-                    "after_restore": {"surfaces": {"ws-work": [{"id": "new-1", "title": "Pricing"}]}}})
-        with patch.object(desk, "settle"):
-            code, out, _ = self.run_desk("start")
-        self.assertEqual((code, self.typed()), (0, []))
-        self.assertIn("Pricing (not among the tabs this start brought back)", out)
-
-    def test_a_record_older_than_cmuxs_last_session_or_undated_is_ignored(self):
-        tabs = [self.recorded("one", "s-1", "Pricing", self.pricing)]
-        later = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 30))
-        restore = {"surfaces": {"ws-work": [{"id": "s-1", "title": "Pricing"}]}}
-        for taken, records, said in (
-                (None, [dict(self.session("old", self.pricing, claude_rows(), pid=dead_pid()), started_at=later)],
-                 "cmux has run since the last quit"),
-                ("undated", [], "carries no date")):
-            with self.subTest(said=said):
-                if taken == "undated":
-                    write(self.tmp / "jobs" / "desk-snapshot.json", json.dumps({"taken": "2026-01-01T09:00:00", "tabs": tabs}))
-                else:
-                    self.snapshot(tabs)
-                self.state({"sessions": records, "workspaces": [{"id": "ws-work", "title": "Work"}],
-                            "top": top({"s-1": ["zsh"]}), "after_restore": dict(restore)})
-                with patch.object(desk, "settle"):
-                    code, out, _ = self.run_desk("start")
-                self.assertEqual((code, self.typed()), (0, []))
-                self.assertIn(said, out)
+        self.assertIn("before_quit is retired", err)
+        self.assertFalse(marker.exists())
 
 
 class ZoneColourTest(CmuxCase):
@@ -1029,7 +991,7 @@ class PageVerbTest(CmuxCase):
     def test_refused_without_the_extra_or_without_cmux(self):
         with patch.object(pa, "CMUX_EXTRA", self.tmp / "nothing"):
             with self.assertRaisesRegex(pa.Refused, "need the cmux extra"):
-                self.act({"verb": "startup"})
+                self.act({"verb": "open", "zone": "Work", "project": "Acme Review"})
         with patch.dict(os.environ, {"GARRICK_CMUX": str(self.tmp / "no-cmux")}):
             with self.assertRaisesRegex(pa.Refused, "not installed"):
                 self.act({"verb": "open", "zone": "Work", "project": "Acme Review"})
@@ -1120,26 +1082,6 @@ class PageVerbTest(CmuxCase):
         self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
         self.assertIn("Acme Review", self.act({"verb": "close", "zone": "Work", "project": "Acme Review"}))
         self.assertIn("close-surface", self.verbs())
-
-    def test_shutdown_runs_the_dry_run_here_and_the_rest_detached(self):
-        self.state({"sessions": [self.session("a", self.pricing, claude_rows(done=False))]})
-        with patch.object(pa, "desk_detached") as spawn:
-            with self.assertRaisesRegex(pa.Refused, "mid-turn or waiting"):
-                self.act({"verb": "shutdown"})
-            spawn.assert_not_called()
-        self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
-        with patch.object(pa, "desk_detached") as spawn:
-            self.assertEqual(self.act({"verb": "shutdown"}), "Shutting down: wrapping 1 tab, then cmux quits")
-        spawn.assert_called_once_with(self.ws, "shutdown", "--yes")
-
-    def test_startup_goes_on_detached_in_a_session_of_its_own(self):
-        with patch.object(pa, "desk_detached") as spawn:
-            self.assertIn("Starting cmux", self.act({"verb": "startup"}))
-        spawn.assert_called_once_with(self.ws, "start", "--notify")
-        with patch.object(pa.subprocess, "Popen") as popen:
-            pa.desk_detached(self.ws, "start", "--notify")
-        self.assertEqual(popen.call_args.args[0][-4:], ["--workspace", str(self.ws), "start", "--notify"])
-        self.assertTrue(popen.call_args.kwargs["start_new_session"])
 
     def test_the_reply_is_json_from_the_command_line(self):
         done = subprocess.run([sys.executable, str(REPO / "extras" / "status" / "page_action.py"), "--workspace", str(self.ws)],

@@ -183,8 +183,8 @@ def load_agent(ws: Path):
 
 # The cmux extra's library, beside this folder as System/cmux/ is beside
 # System/status/. With it, the page shows which projects and threads have a
-# session open, and in the app offers Open and Close session, Start up and
-# Shut down, which the desk carries out. Without it, none of that is drawn.
+# session open, and in the app offers Open and Close session, which the desk
+# carries out. Without it, none of that is drawn.
 CMUXLIB = Path(__file__).resolve().parent.parent / "cmux" / "cmuxlib.py"
 
 
@@ -1353,14 +1353,21 @@ def sorted_finding(ws: Path, lib, f: dict) -> List[Tuple[str, Tuple[str, str], s
     return out
 
 
-# Review context (#258), under the debt: the button that hands Nurture's
-# guided review to the assistant, and from the review record's frontmatter
-# alone the day the last review was done and whether one is unfinished.
-# Nothing of its items is read: they are the user's decisions, across zones.
-REVIEW_RECORD = ("System", "nurture-review.md")
-REVIEW_REQUEST = "review the context with me"
-REVIEW_SAID = "A short session through what is left, across the workspace, up to a limit you choose; the next goes on where it stopped."
-REVIEW_COUNTS = ("fixed", "answered", "deferred")
+def context_link(qdata: Optional[dict]) -> str:
+    """The line under the debt that sends the user to the Context tab (#433),
+    where Nurture's findings are answered, with what each group holds open: its
+    wiki questions and its findings. A tab that is not there has no link."""
+    if not qdata:
+        return ""
+    said = []
+    for zone in sorted(qdata.get("menu_groups") or {}):
+        for g in qdata["menu_groups"][zone]:
+            n, f = int(g.get("n") or 0), int(((qdata.get("menu_findings") or {}).get(zone) or {}).get(g["h"]) or 0)
+            if n or f:
+                said.append("%s: %s" % (g["h"], ", ".join(x for x in ("%d question%s" % (n, "" if n == 1 else "s") if n else "",
+                                                                    "%d finding%s" % (f, "" if f == 1 else "s") if f else "") if x)))
+    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a><span class="hint">%s</span></div>'
+            % E("Nurture runs every night; what it leaves is answered in the Context tab. " + ("; ".join(said) + "." if said else "Nothing is open.")))
 
 
 def refusals_block(ws: Path) -> str:
@@ -1375,33 +1382,6 @@ def refusals_block(ws: Path) -> str:
     days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
     return ('<div class="hint" id="refusals">Wall refusals, 30 days: %s. Days: %s. Overridden: %d.</div>'
             % (E(kinds), E(days), got["overridden"]))
-
-
-def review_block(ws: Path) -> str:
-    """The Review context line for the Checks card; "" in a workspace with
-    no nurture.py, since the review is Nurture's."""
-    if not ws.joinpath("System", "tools", "nurture.py").is_file():
-        return ""
-    record = ws.joinpath(*REVIEW_RECORD)
-    fm = frontmatter(record, ws) if record.is_file() else {}
-
-    def day(key):
-        try:
-            return dt.date.fromisoformat(str(fm.get(key) or "").strip()[:10])
-        except ValueError:
-            return None
-    done, started = day("last_completed"), day("started")
-    # The decisions the latest review has made so far (#278), as the skill counts them in its frontmatter.
-    made = ", ".join("%s %s" % (str(fm[k]).strip(), k) for k in REVIEW_COUNTS
-                     if re.fullmatch(r"\d+", str(fm.get(k) or "").strip(), re.ASCII))
-    unfinished = str(fm.get("status") or "").strip().lower() == "open"
-    said = ["Last review %s" % done.strftime("%a %d %b %Y") if done else "No review done yet"]
-    if unfinished:
-        said.append("one unfinished" + (", started %s" % started.strftime("%a %d %b %Y") if started else ""))
-    tail = (": %s so far" if unfinished else ": %s") % made if made and (unfinished or done) else ""
-    return ('<div class="gacts review" id="review">%s<span class="hint">%s</span></div>'
-            % (request_button("Review context", REVIEW_REQUEST, ws),
-               E(REVIEW_SAID + " " + " · ".join(said) + tail + ".")))
 
 
 DEBT_CSS = r"""
@@ -2408,7 +2388,6 @@ var S={parked:[],live:[]};try{S=JSON.parse(document.getElementById('state-data')
 var i=w.x.indexOf(':'),want=w.x.slice(0,i),key=w.x.slice(i+1),now;
 if(want==='parked'||want==='active')now=(S.parked||[]).indexOf(key)>=0?'parked':'active';
 else if(want==='named')now=(S.notes||[]).indexOf(key)>=0?'named':'none';     /* a rename (#184): the page has the new note */
-/* live: or none: with no folder (Start up, Shut down) asks about every folder */
 else now=(S.live||[]).some(function(f){return f===key||f.indexOf(key+'/')===0})?'live':'none';
 if(now===want||!(Date.now()<w.until)){try{localStorage.removeItem('garrick-expect')}catch(e){}return}
 if(w.q)window.GarrickRedo=w.q;
@@ -4298,7 +4277,7 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
             % (set_head("About Garrick", "about"), help_text("about", 'These open GitHub in your browser. Nothing is sent '
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
-               'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and in Needs attention, and never updates.'),
+               'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and on the Repositories card, and never updates.'),
                E(version), release_controls(*release_choice(ws), walls=walls_pending(ws)) if ws is not None else "", rows))
 
 
@@ -4853,7 +4832,7 @@ def card(id_: str, title: str, meta: str, body: str, open_: bool = True, fixed: 
     """A folding card. Unless fixed, its header has a grip to drag it elsewhere
     and a button to hide it; the browser remembers both."""
     tools = "" if fixed else ('<span class="tools"><span class="grip" draggable="true" title="Drag to move" aria-hidden="true">%s</span>'
-                              '<button class="totab" type="button" title="Move to the other tab" aria-label="Move %s to the other tab">%s</button>'
+                              '<button class="totab" type="button" title="Move to…" aria-label="Move %s to another tab" aria-haspopup="menu">%s</button>'
                               '<button class="hide" type="button" title="Hide this card" aria-label="Hide %s">%s</button></span>'
                               % (GRIP, E(title), MOVE, E(title), CLOSE))
     return ('<details class="card" id="%s"%s><summary class="head">%s<h2>%s</h2><span class="meta">%s</span>%s</summary>'
@@ -6658,6 +6637,9 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .stack .zones{grid-template-columns:1fr}[hidden]{display:none!important}
 .head .tools{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .12s;margin-left:2px}
 .head:hover .tools,.head:focus-within .tools{opacity:1}
+.moveto{position:absolute;z-index:30;min-width:150px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:4px;display:flex;flex-direction:column}
+.moveto button{font:inherit;font-size:13px;color:var(--ink);background:none;border:0;border-radius:6px;padding:6px 10px;text-align:left;cursor:pointer}.moveto button:hover{background:var(--wash)}
+.tabs .dot.tr,.unhide .dot.tr{display:inline-block;margin-left:6px;vertical-align:middle}
 .grip,.hide,.totab{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;color:var(--muted);border:0;background:none;padding:0;cursor:pointer}
 .grip{cursor:grab}.grip:hover,.hide:hover,.totab:hover{background:var(--wash);color:var(--ink)}.grip svg,.hide svg,.totab svg{width:14px;height:14px}
 .dragging .slot{display:flex!important;min-height:64px;border-radius:14px;outline:2px dashed var(--grid);outline-offset:4px}
@@ -6707,7 +6689,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .cols b{display:block;width:100%;max-width:22px;background:var(--accent);border-radius:4px 4px 0 0;min-height:0}
 .cols em{position:absolute;top:-16px;font-style:normal;font-size:11px;color:var(--ink2)}
 .ticks{display:flex;gap:2px;font-size:10px;color:var(--muted);margin-top:4px}.ticks span{flex:1;text-align:center}
-.desk-acts{display:flex;gap:6px;margin-left:6px}.act.armed{background:var(--critical);border-color:var(--critical);color:#fff}
+.act.armed{background:var(--critical);border-color:var(--critical);color:#fff}
 @media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.left{grid-column:span 12}}
 @media (max-width:820px){main{padding:16px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
@@ -7282,136 +7264,6 @@ window.GarrickWait={changed:function(){return changed},request:request,saved:fun
 # ---- end of Settings › While you wait ---------------------------------------------
 
 
-# ---- Catch up (#27) ------------------------------------------------------------------
-# "Catch me up", asked from the page: a button beside Settings opens a small
-# dialog that picks the period (the last day, unless a "catch-up" key in the
-# settings file says otherwise) and, if wanted, the projects and threads of
-# one zone, then hands the request to the default assistant at the workspace
-# root, as Ask Garrick and Process the Inbox do, or copies it in a browser.
-# System/tools/briefing.py owns the periods, their words and the check; this
-# block only draws them. Settings, the menu bar's menu and the panel offer no
-# Catch up of their own (#226): the button, File › Catch Up… and Obsidian's
-# command reach this dialog. Without briefing.py, all of it is left out.
-_CATCH: Dict[Path, object] = {}
-
-
-def catch_lib(ws: Path):
-    """System/tools/briefing.py, found as wait_lib() finds next_up.py. None
-    when there is none, and then the page offers no Catch up."""
-    key = Path(ws)
-    if key not in _CATCH:
-        found = None
-        for src in (key / "System" / "tools" / "briefing.py", Path(__file__).resolve().parent.parent / "tools" / "briefing.py",
-                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "briefing.py"):
-            if not src.is_file():
-                continue
-            try:
-                spec = importlib.util.spec_from_file_location("garrick_status_briefing", str(src))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            if callable(getattr(mod, "settings", None)) and hasattr(mod, "PERIODS"):
-                found = mod
-                break
-        _CATCH[key] = found
-    return _CATCH[key]
-
-
-CATCH_ICON = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" '
-              'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3.6 10a6.4 6.4 0 1 0 1.9-4.5M3.4 3.2v2.9h2.9'
-              'M10 6.4V10l2.6 1.6"/></svg>')
-
-
-def catch_button(ws: Path) -> str:
-    return ('<button class="cog" type="button" id="open-catchup" aria-label="Catch up" '
-            'title="Catch up">%s</button>' % CATCH_ICON
-            if catch_lib(ws) is not None else "")
-
-
-def catch_dialog(ws: Path, T: Dict[str, dict], desk: bool) -> str:
-    """The dialog the button opens: the period, the zone, and the projects
-    and threads of that zone to narrow it to, none ticked to mean the whole
-    zone. Each box carries the name a request says: a project by its name,
-    a thread as "Project, Thread". Live work only: a parked thread is named
-    by asking for it."""
-    lib = catch_lib(ws)
-    if lib is None:
-        return ""
-    chosen = lib.settings(ws)["period"]
-    zones = [z for z, data in T.items() if data["rows"]]
-    periods = "".join('<label class="cuperiod"><input type="radio" name="cu-period" value="%s" data-words="%s"%s> %s</label>'
-                      % (E(k), E(words), " checked" if k == chosen else "", E(label)) for k, label, words in lib.PERIODS)
-    lists = ""
-    for zone in zones:
-        groups: Dict[str, list] = {}
-        for r in T[zone]["rows"]:
-            groups.setdefault(r["project"], []).append(r)
-        items = ""
-        for project, rs in sorted(groups.items(), key=lambda kv: kv[0].casefold()):
-            threads_in = sorted((r["thread"] for r in rs if r["note"] != r["hub"]), key=str.casefold)
-            items += ('<li><label><input type="checkbox" data-cu="%s"> %s</label>%s</li>'
-                      % (E(project), E(project), '<ul>%s</ul>' % "".join(
-                          '<li><label><input type="checkbox" data-cu="%s" data-cup="%s"> %s</label></li>'
-                          % (E("%s, %s" % (project, t)), E(project), E(t)) for t in threads_in) if threads_in else ""))
-        lists += '<ul class="cuz" data-zone="%s"%s>%s</ul>' % (E(zone), "" if zone == zones[0] else " hidden", items)
-    pick = ('<label class="cuzone">Zone <select id="cu-zone">%s</select></label>'
-            % "".join('<option value="%s">%s</option>' % (E(z), E(z)) for z in zones)) if len(zones) > 1 else ""
-    return ('<dialog id="catchup" class="catchup" aria-labelledby="catchup-title" data-root="%s" data-default="%s" data-zone="%s"%s>'
-            '<h2 id="catchup-title">Catch up</h2>'
-            '<fieldset class="cuperiods"><legend>Since</legend>%s</fieldset>%s%s'
-            '<p class="cusaid">Asks: <q id="cu-said"></q></p>'
-            '<div class="gacts"><button class="act primary" type="button" id="cu-go">Catch up</button>'
-            '<button class="act" type="button" id="cu-cancel">Cancel</button></div></dialog>'
-            % (E(str(ws)), E(chosen), E(zones[0] if zones else ""), ' data-dk="1"' if desk else "", periods, pick, lists))
-
-
-CATCH_CSS = r"""
-/* Catch up (#27): the dialog beside Settings */
-dialog.catchup{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);
-padding:20px 22px;box-shadow:var(--shadow);max-height:calc(100vh - 48px);overflow:auto}dialog.catchup::backdrop{background:rgba(0,0,0,.35)}
-dialog.catchup h2{margin:0 0 12px;font:600 20px/1.2 var(--display)}
-.cuperiods{border:0;margin:0 0 12px;padding:0;display:flex;flex-wrap:wrap;gap:4px 14px}.cuperiods legend{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px}
-.cuperiod{font-size:13px;display:flex;align-items:center;gap:6px}.cuperiod input,.cuz input{accent-color:var(--accent)}
-.cuzone{display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 10px}.cuzone select{font:inherit;font-size:13px;color:var(--ink);
-background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 8px}
-.cuz{list-style:none;margin:0 0 10px;padding:0;font-size:13px;max-height:260px;overflow:auto}.cuz ul{list-style:none;margin:0;padding-left:22px}
-.cuz label{display:flex;align-items:center;gap:6px;padding:2px 0}.cusaid{margin:0 0 4px;font-size:12.5px;color:var(--ink2)}
-"""
-
-# The dialog. The request's words are said in one place, phrase(), so what the dialog
-# shows under "Asks" is exactly what the assistant is handed. It goes to JS's
-# GarrickAssistant(), the one rule for which assistant a request opens.
-CATCH_JS = r"""
-(function(){var dlg=document.getElementById('catchup'),host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
-if(!dlg)return;var said=document.getElementById('cu-said'),zone=document.getElementById('cu-zone');
-var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux'};
-function shown(){return zone?zone.value:dlg.dataset.zone}
-function list(){return dlg.querySelector('.cuz[data-zone="'+String(shown()).replace(/"/g,'\\"')+'"]')}
-/* the names ticked in the zone shown: a project ticked stands for its threads */
-function names(){var l=list(),out=[];if(!l)return out;var whole={};
-l.querySelectorAll('input[data-cu]:not([data-cup]):checked').forEach(function(b){whole[b.dataset.cu]=1;out.push(b.dataset.cu)});
-l.querySelectorAll('input[data-cup]:checked').forEach(function(b){if(!whole[b.dataset.cup])out.push(b.dataset.cu)});return out}
-function and(a){return a.length<2?a.join(''):a.slice(0,-1).join(' and ')+' and '+a[a.length-1]}
-function phrase(){var n=names(),p=dlg.querySelector('input[name=cu-period]:checked');
-return'catch me up'+(n.length?' on '+and(n):shown()?' on '+shown():'')+' '+(p?p.dataset.words:'since yesterday')}
-function paint(){dlg.querySelectorAll('.cuz').forEach(function(u){u.hidden=u.dataset.zone!==shown()});said.textContent=phrase()}
-dlg.addEventListener('change',paint);
-function open(){dlg.returnValue='';var d=dlg.querySelector('input[name=cu-period][value="'+dlg.dataset.default+'"]');if(d)d.checked=true;
-dlg.querySelectorAll('input[data-cu]').forEach(function(b){b.checked=false});paint();if(!dlg.open)dlg.showModal()}
-function say(s){if(window.GarrickSay)GarrickSay(s)}
-dlg.addEventListener('close',function(){if(dlg.returnValue!=='go')return;var p=phrase(),a=host&&window.GarrickAssistant&&GarrickAssistant();
-if(a){var m={launch:a,folder:dlg.dataset.root,phrase:p};if(a==='cmux'&&dlg.dataset.dk)m.dk=1;host.postMessage(m);
-say('Opening '+LABEL[a]+' on “'+p+'”…');return}
-if(window.GarrickCopy)GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')})});
-document.getElementById('cu-go').onclick=function(){dlg.close('go')};document.getElementById('cu-cancel').onclick=function(){dlg.close('')};
-var b=document.getElementById('open-catchup');if(b)b.onclick=open;
-window.GarrickCatchUp={open:open,phrase:phrase};
-})();
-"""
-# ---- end of Catch up ------------------------------------------------------------------
-
-
 # ---- Settings › About Garrick: Check for updates (#410) ----------------------------
 # The button asks page_action.py's `release-check`, which asks GitHub now: the click
 # is the consent for that one request. A newer release is applied at once, through
@@ -7848,17 +7700,29 @@ if(L&&L.v===2){Object.keys(L.c||{}).forEach(function(k){var s=slots[k];if(s)(L.c
 (L.h||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))el.hidden=true})}
 function save(){var c={};Object.keys(slots).forEach(function(k){c[k]=Array.prototype.slice.call(slots[k].children).filter(function(e){return e.classList.contains('card')}).map(function(e){return e.id})});
 st.set(KEY,JSON.stringify({v:2,c:c,h:cards().filter(function(e){return e.hidden}).map(function(e){return e.id})}));sync()}
-function sync(){var h=cards().filter(function(e){return e.hidden});
-cards().forEach(function(c){var b=c.querySelector('.totab'),sec=c.closest('section.tab');if(!b||!sec)return;
-var to=sec.id==='tab-status'?'Overview':'Status';b.title='Move to '+to;b.setAttribute('aria-label','Move '+c.querySelector('h2').textContent+' to '+to)});
+function sync(){var h=cards().filter(function(e){return e.hidden});dots(h);
 var n=document.getElementById('hidden-cards');if(n){n.hidden=!h.length;n.innerHTML=h.length?'<p class="hint">Hidden cards</p><div class="gacts">'+h.map(function(c){
 var t=c.querySelector('h2').textContent.replace(/[&<>"]/g,function(x){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[x]});
-return'<button class="act unhide" type="button" data-card="'+c.id+'" title="Show '+t+' again">'+t+'</button>'}).join('')+'</div>':''}}
+return'<button class="act unhide" type="button" data-card="'+c.id+'" title="Show '+t+' again">'+t+(sev(c)?'<span class="dot tr '+sev(c)+'" title="needs attention"></span>':'')+'</button>'}).join('')+'</div>':''}}
+/* Trouble sits on the card that shows it, hidden or not: a tab carries a dot for the cards it holds, worst first (#443) */
+var TR=[];try{TR=JSON.parse(document.getElementById('trouble-data').textContent)}catch(e){}
+function sev(c){var w='';TR.forEach(function(t){var el=document.getElementById(t[1]);if(el&&(el===c||c.contains(el))&&w!=='critical')w=t[0]});return w}
+function dots(){var w={};TR.forEach(function(t){var el=document.getElementById(t[1]),sec=el&&el.closest('section.tab');if(sec&&w[sec.id]!=='critical')w[sec.id]=t[0]});
+document.querySelectorAll('.tabs [data-tab]').forEach(function(b){var d=b.querySelector('.dot.tr'),s=w['tab-'+b.dataset.tab];if(d&&!s)d.remove();
+else if(s){if(!d){d=document.createElement('span');b.appendChild(d)}d.className='dot tr '+s;d.title=s==='critical'?'something failed':'needs attention'}})}
+/* Move to…: a short menu of the other tabs that have slots, under the button; the card goes to that tab's left slot */
+function closeMove(){var o=document.querySelector('.moveto');if(o)o.remove()}
+function moveMenu(b){var c=b.closest('.card'),here=c.closest('section.tab'),was=document.querySelector('.moveto'),again=was&&was.dataset.card===c.id;closeMove();if(again)return;
+var o=document.createElement('div');o.className='moveto';o.setAttribute('role','menu');o.dataset.card=c.id;
+document.querySelectorAll('main>section.tab').forEach(function(t){var tb=document.querySelector('.tabs [data-tab="'+t.id.slice(4)+'"]');if(t===here||!tb||!t.querySelector('[data-slot]'))return;
+var i=document.createElement('button');i.type='button';i.setAttribute('role','menuitem');i.dataset.to=t.id;i.textContent=tb.firstChild.textContent;o.appendChild(i)});
+var r=b.getBoundingClientRect();o.style.top=(r.bottom+window.scrollY+4)+'px';o.style.left=Math.max(8,r.right+window.scrollX-150)+'px';document.body.appendChild(o)}
 function toast(t){var el=document.getElementById('toast');if(!el)return;el.textContent=t;el.style.opacity=1;setTimeout(function(){el.style.opacity=0},2600)}
 document.addEventListener('click',function(e){
-var m=e.target.closest('.head .totab');if(m){e.preventDefault();e.stopPropagation();var mc=m.closest('.card'),ms=mc.closest('section.tab');
-var to=ms&&ms.id==='tab-status'?'overview':'status',slot=document.querySelector('#tab-'+to+' [data-slot$="left"]');
-if(slot){slot.appendChild(mc);save();toast(mc.querySelector('h2').textContent+' moved to '+(to==='status'?'Status':'Overview')+'.')}return}
+var m=e.target.closest('.head .totab');if(m){e.preventDefault();e.stopPropagation();moveMenu(m);return}
+var pick=e.target.closest('.moveto [data-to]');if(pick){e.preventDefault();e.stopPropagation();var mc=document.getElementById(pick.parentNode.dataset.card),sl=document.querySelector('#'+pick.dataset.to+' [data-slot$="left"]');
+if(mc&&sl){sl.appendChild(mc);save();toast(mc.querySelector('h2').textContent+' moved to '+pick.textContent+'.')}closeMove();return}
+closeMove();
 var b=e.target.closest('.head .hide,.head .grip');if(b){e.preventDefault();e.stopPropagation();
 if(b.classList.contains('hide')){var c=b.closest('.card');c.hidden=true;save();toast(c.querySelector('h2').textContent+' hidden. Bring it back from Settings, or Reset view.')}return}
 var u=e.target.closest('.unhide');if(u){var uc=document.getElementById(u.dataset.card),ud=u.closest('dialog');if(ud)ud.close();if(uc){uc.hidden=false;uc.open=true;save();
@@ -8369,7 +8233,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
-    qdata = questions_data(ws, C, now.date(), link)        # the Questions panel (#224), None where it cannot be placed
+    qdata = questions_data(ws, C, now.date(), link)        # the Context tab (#224), None where it cannot be placed
     pdata = parties_data(ws, link)                         # the Parties tab (#447), None without a Parties table
 
     # ---- what needs attention, worst first
@@ -8432,6 +8296,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                                                        "file": f["file"]} if f["both"] else None}))
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
+    # Where each trouble shows (#443): on its own card, so a tab carries a dot for the cards it holds. A newer Garrick
+    # and a drifted shared file show at the head of the Repositories card; a thread's row, on its own.
+    troubled = [(k, "repos" if isinstance(h, dict) or h.startswith("https://") else h.lstrip("#"), t) for k, t, h in attn]
 
     live = sum(len(z["rows"]) for z in T.values())
     parked_n = sum(len(z["parked"]) for z in T.values())
@@ -8469,12 +8336,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # move between the work and the machinery, the cards are open on the page,
     # and the Status tab's own figures say whether anything needs attention.
     # With the cmux extra and cmux, the desk's buttons: Open
-    # in cmux and Close session on cards, Start up and Shut down here, in the app only.
+    # in cmux and Close session on cards, in the app only.
     DK = S is not None and acting and desk_ready()
-    desk_acts = ('<span class="desk-acts apponly"><button class="act" type="button" data-act="%s" data-expect="live:" data-say="Starting up…">Start up</button>'
-                 '<button class="act stop" type="button" data-act="%s" data-expect="none:" data-confirm="Click again to shut down" '
-                 'data-say="Shutting down: each session wraps, then cmux quits…">Shut down</button></span>'
-                 % (E(json.dumps({"verb": "startup"})), E(json.dumps({"verb": "shutdown"})))) if DK else ""
     simple_bar = ""
     if simple:
         simple_bar = ('<button class="sh-dot" type="button" data-more="status" title="%s">'
@@ -8484,13 +8347,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                          "All clear" if not attn else "%d %s attention" % (len(attn), "thing needs" if len(attn) == 1 else "things need")))
     controls = ('<div class="bacts">' + simple_bar + '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
-                '%s<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s%s</div>'
-                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, catch_button(ws), GEAR, THEME_SEG, desk_acts))
+                '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s</div>'
+                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, GEAR, THEME_SEG))
 
     # ---- hero and tiles
     if attn:
-        hero = '<a class="hero go" id="summary" href="#attention"><div class="fig">%s%d</div><div class="lbl">%s attention</div></a>' % (
-            ICON[worst], len(attn), "thing needs" if len(attn) == 1 else "things need")
+        hero = '<a class="hero go" id="summary" href="#%s"><div class="fig">%s%d</div><div class="lbl">%s attention</div></a>' % (
+            troubled[0][1], ICON[worst], len(attn), "thing needs" if len(attn) == 1 else "things need")
     else:
         hero = '<div class="hero" id="summary"><div class="fig" style="font-size:38px">%sAll clear</div><div class="lbl">Nothing failing, waiting or broken.</div></div>' % ICON["good"]
     # Each tile leads to the card that explains it, in whichever tab that card sits.
@@ -8509,13 +8372,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     top = '<div class="top" style="--tiles:%d">%s%s</div>' % (len(tiles), hero, "".join(
         '<a class="tile go" href="#%s"><div class="lbl">%s</div><div class="val">%s</div><div class="sub">%s</div></a>' % (h, E(a), b, E(c))
         for a, b, c, h in tiles))
-
-    # ---- attention
-    attn_card = ""
-    if attn:
-        attn_card = '<div class="full">%s</div>' % card("attention", "Needs attention", "%d item%s" % (len(attn), "" if len(attn) == 1 else "s"),
-                                                       '<div class="attn">%s</div>' % "".join(attn_row(k, t, h) for k, t, h in attn),
-                                                       fixed=True)
 
     # ---- threads, one column per zone: a row per project, its threads folding
     # under it; a project with no thread notes is a thread row of its own. With
@@ -8690,7 +8546,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
-    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + refusals_block(ws) + review_block(ws) + body)
+    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + refusals_block(ws) + context_link(qdata) + body)
 
     # ---- open actions and inboxes
     tb = ""
@@ -8788,9 +8644,11 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         ICON["warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none"], E(r["name"]),
         "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
     changed = sum(1 for r in R if r["dirty"])
+    notices = "".join(attn_row(k, t, h) for k, t, h in attn if isinstance(h, dict) or h.startswith("https://"))
     repos_card = card("repos", "Repositories", "%d with changes" % changed if changed else "",
-                      ('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
-                      if rr else '<p class="muted">No git repositories found.</p>')
+                      ('<div class="attn" id="notices">%s</div>' % notices if notices else "")
+                      + (('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
+                         if rr else '<p class="muted">No git repositories found.</p>'))
     def newest(w):
         if not w["when"]:
             return LOG_NOT_READ if w.get("unread") else "nothing logged yet"
@@ -8842,7 +8700,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # be moved between Overview and Status from their headers, and Reset view
     # puts them back; the Guide holds no cards. The figures at the top count
     # the machinery's state, so they open the Status tab.
-    machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
+    on_context = bool(qdata and checks_card)           # Checks sits under the findings it explains (#443)
+    here = [checks_card] if on_context else []
+    machinery = [c for c in (jobs_card, calls_card, None if on_context else checks_card, repos_card, wikis_card) if c]
+    def slots(name, left="", right=""):
+        return ('<div class="grid"><div class="slot stack left" data-slot="%s-left">%s</div>'
+                '<div class="slot stack right" data-slot="%s-right">%s</div></div>' % (name, left, name, right))
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
     # The Overview opens on the Threads card: each live thread with at most
@@ -8861,19 +8724,18 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
                        '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, todo_card, inbox_card, graph_card))
-    # Needs attention leads the Status tab: what it lists is the machinery's.
-    status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
+    # Every tab with content has a left and a right slot below its own content (#443).
+    status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
-                         % (top, attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
+                         % (top, "".join(machinery[0::2]), "".join(machinery[1::2])))
     late = sum(z["late"] for z in lists)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or (C.get("failed") and not C.get("pending")))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist">' + ('<button type="button" role="tab" data-tab="home">Home</button>' if simple else "")
             + '<button type="button" role="tab" data-tab="overview">Overview</button>%s'
-            '<button type="button" role="tab" data-tab="status">Status%s</button>%s'
+            '<button type="button" role="tab" data-tab="status">Status</button>%s'
             '%s<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
-               '<span class="dot critical" title="something failed"></span>' if trouble else "",
                questions_mod().tab_button() if qdata else "", parties_mod().tab_button(pdata) if pdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
@@ -8883,6 +8745,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
                         "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
     menu = '<script type="application/json" id="menu-data">%s</script>' % script_json(md)
+    menu += '<script type="application/json" id="trouble-data">%s</script>' % script_json([list(t) for t in troubled])
     # What RELOAD_JS compares a button's expectation with: the parked threads
     # and, with the cmux extra, the folders a session is open in.
     folders = {f for z in T.values() for r in z["rows"] + z["parked"] for f in (r["note"].parent, (r["hub"] or r["note"]).parent)}
@@ -8906,11 +8769,11 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                      + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)
                                + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s%s</main>%s%s'
-            % (home_tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
-               section("questions", True, questions_mod().body(qdata)) if qdata else "",
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s%s</main>%s'
+            % (home_tabs, overview, section("todo", True, todo_tab + slots("todo")) if todo_tab else "", status_tab,
+               section("questions", True, questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "",
                section("parties", True, parties_mod().body(pdata)) if pdata else "",
-               section("guide", True, guide_body), menu, catch_dialog(ws, T, bool(DK))))
+               section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
     # still hears what its menu lists.
@@ -8920,12 +8783,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", parties_mod().JS if pdata else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", parties_mod().JS if pdata else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + (questions_mod().CSS if qdata else "") + (parties_mod().CSS if pdata else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (parties_mod().CSS if pdata else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),

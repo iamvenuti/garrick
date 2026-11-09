@@ -111,7 +111,7 @@ See {person} now.
 ~~~~~
 
 ### at sign prefix
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -120,7 +120,7 @@ See `@{person}` now.
 ~~~~~
 
 ### path prefix
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -138,7 +138,7 @@ See `!{person}`, `${person}` and `~{person}` now.
 ~~~~~
 
 ### full-width slash
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -147,7 +147,7 @@ See `wiki／people／{pname}` now.
 ~~~~~
 
 ### line-range suffix
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -156,7 +156,7 @@ See `{person}:3-5`, `{person}.md:3-5` and `{person}::Heading` now.
 ~~~~~
 
 ### glob
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -165,7 +165,7 @@ See `wiki/people/{pstar}` now.
 ~~~~~
 
 ### backslash escape
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -174,7 +174,7 @@ See `wiki/people/{pesc}` now.
 ~~~~~
 
 ### underscore for a hyphen
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -183,7 +183,7 @@ See `wiki/people/{punder}` now.
 ~~~~~
 
 ### space for a hyphen
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes

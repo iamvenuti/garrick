@@ -8,6 +8,7 @@ what a fix needs, and the mechanical ones applied on one yes.
     python3 System/tools/nurture.py answered --path PATH --asked "<question>" --answer "<answer>"
     python3 System/tools/nurture.py correct --old OLD --new NEW [--scope PATH]... [--yes] [--why "..."] [--leave PATH]...
     python3 System/tools/nurture.py organisation --path PERSON_PAGE --yes [--entity ENTITY]
+    python3 System/tools/nurture.py import-review [--json]
 
 It adds no checks of its own. Its sources are the existing tools, each run
 as it runs for anyone: `check.py --json`, `wiki_lint.py --json` for each
@@ -2130,7 +2131,7 @@ def item_json(item: Item) -> dict:
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Sort the workspace's findings by what a fix needs; apply the mechanical ones on a yes.")
     ap.add_argument("action", nargs="?", default="list",
-                    choices=("list", "fix", "nightly", "answered", "correct", "organisation"))
+                    choices=("list", "fix", "nightly", "answered", "correct", "organisation", "import-review"))
     ap.add_argument("--root", help="the workspace (default: the one this script sits in)")
     ap.add_argument("--scope", action="append", default=[], help="a zone, project, thread or wiki, from the workspace's top")
     ap.add_argument("--yes", action="store_true", help="fix, correct: apply them; without it, only say what would change")
@@ -2175,7 +2176,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     if a.action == "organisation":
         return main_organisation(ctx, a)
 
+    if a.action == "import-review":
+        got = import_review(ctx)
+        print(json.dumps(got, indent=1) if a.json else got["say"])
+        return 0 if got["ok"] else EXIT_FAILED
+
     items = gather(ctx, scopes)
+    if a.action == "nightly":
+        import_review(ctx, items)       # a record an older release left is read once and removed (#433)
     done = None
     if a.action == "nightly" or (a.action == "fix" and a.yes):
         done = apply(ctx, items)
@@ -2213,6 +2221,76 @@ def main(argv: Optional[List[str]] = None) -> int:
     for f in ctx.failed:
         print("nurture: did not run: %s" % f, file=sys.stderr)
     return code
+
+
+REVIEW_RECORD = "System/nurture-review.md"
+LATER_FILE = ("System", "generated", "nurture", "later.json")
+DEFERRED_RE = re.compile(r"^deferred to (\d{4}-\d{2}-\d{2})$")
+
+
+def import_review(ctx: Ctx, items: Optional[List[Item]] = None) -> dict:
+    """Read the guided review's record, `System/nurture-review.md`, once and
+    remove it (#433). Each row deferred to a day still to come becomes a Later
+    row, bound to the page its finding stands on now, which is what the Context
+    tab's *Later* writes; every other row is dropped, since a finding that is
+    settled is gone from the checks and the rest is found again. The record
+    goes in one commit of its own, in the repository that holds it, so git has
+    it. A finding that no longer stands, and a wall (never put off), is dropped.
+    Returns {"ok", "read", "later", "commit", "say"}."""
+    record = ctx.root / REVIEW_RECORD
+    out = {"ok": True, "read": False, "later": 0, "commit": "", "say": "No review record to read."}
+    if not record.is_file() or record.is_symlink():
+        return out
+    try:
+        text = record.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return dict(out, ok=False, say="The review record cannot be read, so it stays.")
+    due = {}
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")] if line.strip().startswith("|") else []
+        if len(cells) == 5 and re.fullmatch(r"[0-9a-f]{%d}" % KEY_LENGTH, cells[0]):
+            m = DEFERRED_RE.match(cells[2])
+            if m and m.group(1) > ctx.today.isoformat():
+                due[cells[0]] = m.group(1)
+    put = {}
+    if due:
+        found = {i.key: i for i in (items if items is not None else gather(ctx, []))
+                 if i.kind in ("attribution", "judgment") and i.key in due}
+        put = {k: {"until": due[k], "path": i.path} for k, i in found.items()}
+        if put:
+            target = ctx.root.joinpath(*LATER_FILE)
+            try:
+                data = json.loads(target.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
+            data = data if isinstance(data, dict) else {}
+            for k, v in put.items():
+                data.setdefault(k, v)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".")
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(json.dumps(data, indent=1, sort_keys=True) + "\n")
+            os.replace(tmp, str(target))
+    repo = ctx.repo_of(record)
+    commit = ""
+    rel = record.relative_to(repo).as_posix() if repo is not None else ""
+    if repo is not None and rel in ctx.tracked(repo):
+        rm = ctx.git(repo, "rm", "-q", "--", rel)
+        c = rm if rm.returncode else ctx.git(repo, "commit", "-q", "-m",
+                                             "Nurture: the review record is read and removed; its deferred rows are Later rows",
+                                             "--", rel)
+        if c.returncode:
+            ctx.git(repo, "reset", "-q", "HEAD", "--", rel)
+            ctx.git(repo, "checkout", "--", rel)
+            return dict(out, ok=False, read=True, later=len(put),
+                        say="The review record could not be committed away (%s), so it stays." % (
+                            ((c.stderr or c.stdout).strip().splitlines() or ["git said no more"])[-1]))
+        commit = ctx.git(repo, "rev-parse", "--short", "HEAD").stdout.strip()
+    else:
+        record.unlink()
+    return {"ok": True, "read": True, "later": len(put), "commit": commit,
+            "say": "Read the review record: %s now Later; removed%s." % (
+                plural(len(put), "row") if put else "no row", " in commit " + commit if commit else "")}
 
 
 def record_answer(ctx: Ctx, path: str, asked: str, answer: str, settled: bool = True) -> Path:

@@ -21,7 +21,7 @@ The Garrick App's home lists your work, most recent first, each with its next ac
 
 - **Overview**: every live thread, one column per zone, each with at most two chips, *todo* for its open actions and *check* for an error the page can explain and fix; open actions and the inboxes beside them; and *Explore*, the graph of the notes in one zone or one wiki at a time.
 - **Todo**: each zone's `Todo.md`, to tick, date and add to. A workspace with no `Todo.md` has no Todo tab.
-- **Status**: the machinery: what needs attention, the check, the scheduled jobs and the assistant's calls, and the state of each repository.
+- **Status**: the machinery: the scheduled jobs and the assistant's calls, and the state of each repository.
 - **Guide**: these pages, as the release the workspace runs shipped them, in `System/garrick-docs/`.
 
 The Garrick App is one HTML page, `System/generated/status.html`, built by `status.py` from the workspace's own files. It shows in **the Mac app**, *Garrick.app*, in **Obsidian** through its plugin, or in a browser. A workspace installed with this Garrick has it from the start: the installer puts the extra in `System/status/` and builds the page once, and "Set up Garrick" offers to build the Mac app. A workspace installed before the simple home keeps what it had. The code keeps its old name, `status.py` in `extras/status/`. See [The Garrick App](extras/status-page.md).

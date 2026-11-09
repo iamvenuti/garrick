@@ -724,14 +724,6 @@ class TestReviewRecord(CheckCase):
         self.record("drift.py | drift.py | skipped |  | 2026-03-14")
         self.assertFinds("review", "warning", "row 1 has an Id")
 
-    def test_the_skill_names_the_same_reasons_and_sources(self):
-        skill = (Path(check.__file__).resolve().parent.parent / "skills" / "nurture" / "SKILL.md").read_text()
-        review = " ".join(skill.split("### The review record", 1)[1].split("### The review\n", 1)[0].split())
-        for reason in check.REVIEW_REASONS:
-            self.assertIn('"%s"' % reason, review)
-        for source in check.REVIEW_SOURCES:
-            self.assertIn("`%s`" % source, review)
-
 
 class TestDeliverables(CheckCase):
     def test_pass(self):

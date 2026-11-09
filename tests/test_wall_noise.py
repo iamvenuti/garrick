@@ -28,12 +28,12 @@ from garrick_lib import (CHECKPOINT_KINDS, CHECKPOINT_ONE, CHECKPOINT_SAID,  # n
 
 
 class TestZoneArchive(WallCase):
-    """#23: a zone's `archive/` holds retired material, not a project."""
+    """#23: a zone's `archive/` holds retired material, not a live project; a project put away keeps its hub's party (#438)."""
 
     def retired(self, folder):
         write(folder / "Todo 2026-09.md",
               "# Done in September\n\n- [x] Read the notes of [[260312-birch-kickoff]] with Theo Marsh\n")
-        write(folder / "Old Lane" / "Old Lane.md", "# Old Lane\n\nMoved here when it closed.\n")
+        write(folder / "Old Lane" / "Old Lane.md", "---\ntitle: Old Lane\ntype: project\nparty: acme\n---\n\n# Old Lane\n\nMoved here when it closed.\n")
 
     def found_in(self, folder):
         prefix = check.rel(check.discover(self.root), folder) + "/"
@@ -51,6 +51,16 @@ class TestZoneArchive(WallCase):
                 self.assertIn(("walls", "error"), [(f.check, f.severity) for f in found])
                 self.assertIn(("projects", "error"), [(f.check, f.severity) for f in found])
                 shutil.rmtree(retired)
+
+    def test_a_file_put_away_with_a_party_has_the_label_the_rule_gives_it(self):
+        folder = self.root / "Zones" / "Work" / "archive"
+        self.retired(folder)
+        self.assertEqual([], self.found_in(folder))
+        write(folder / "Todo 2026-09.md", "---\nparty: acme\n---\n\n# Loose\n")        # no project's: no label, by design
+        write(folder / "Bare Lane" / "Bare Lane.md", "---\ntitle: Bare Lane\ntype: project\n---\n\n# Bare\n")   # a project with no party
+        found = [(f.severity, f.path) for f in self.found_in(folder)]
+        self.assertEqual([("warning", "Zones/Work/archive/Bare Lane/Bare Lane.md"), ("warning", "Zones/Work/archive/Todo 2026-09.md")],
+                         sorted(found, key=lambda x: x[1]))
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_committing_the_archive_passes_the_hook(self):
@@ -771,16 +781,6 @@ class TestCheckPyCommitsItself(WallCase):
         res = _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"], zone)
         print("check.py commit on 3200 pages: %.1f s" % (time.time() - started), file=sys.stderr)
         self.assertEqual((0, ""), (res.returncode, res.stderr.split("check.py commit on")[0].strip()))
-
-    def test_a_glob_that_can_match_no_page_is_not_counted(self):
-        names = check.PageNames(check.discover(self.root))
-        for word in ("zzqx one*", "a zzqx b ?", "cat x[0] zzqx"):
-            names.named(word, 1, False)
-        self.assertEqual(set(), names.globs_read)
-        have = next(h[-1] for h, _ in names.entries if h[-1][:4].isalpha())                # a glob one token long that can match a page is read as before
-        names.named(have[:4] + "*", 1, False)
-        names.named("x " + have[:4] + "*", 1, False)           # one that cannot, because of its first word, is not
-        self.assertEqual({have[:4] + "*"}, names.globs_read)
 
 
 if __name__ == "__main__":

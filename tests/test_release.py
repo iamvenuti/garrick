@@ -210,7 +210,7 @@ class TestAsking(ReleaseCase):
         self.assertIn("offline", cache["failed"])
         html = self.page()
         self.assertNotRegex(html, r"Garrick \d[\d.]* is out")
-        self.assertNotIn('id="attention"', html)          # nothing to attend to: no red, no amber
+        self.assertIn('id="trouble-data">[]</script>', html)          # nothing to attend to: no red, no amber
         self.run_release("latest", "--background")         # and not asked again the same day
         self.assertEqual(1, len(fake.requests))
 
@@ -231,7 +231,7 @@ class TestWhereItShows(ReleaseCase):
                       "python3 System/tools/release.py update", html)
         self.assertIn('<a href="https://github.com/iamvenuti/garrick/releases/tag/v0.16.0" target="_blank" '
                       'rel="noopener">', html)
-        self.assertIn('id="attention"', html)
+        self.assertRegex(html, r'id="trouble-data">\[\["warning","repos","Garrick 0\.16\.0 is out')     # shown on the Repositories card
         out = self.version()
         self.assertIn("Garrick 0.16.0 is out; this workspace runs 0.15.2.", out)
         self.assertIn("python3 System/tools/release.py update", out)

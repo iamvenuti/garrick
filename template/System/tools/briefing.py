@@ -9,9 +9,11 @@
     python3 System/tools/briefing.py --zone Work --project Acme --thread "Birch Entry/Launch"
     python3 System/tools/briefing.py --zone Work --zone Personal   more zones, only when named
 
-It prints JSON and changes nothing. The `threads` skill's *Catch up* runs it,
-reads `System/briefing.md` (and `System/briefing.local.md`, which wins) for
-what deserves attention, and writes the briefing from what it printed.
+It prints JSON and changes nothing. The `threads` skill's *Catch up* runs it
+and writes the briefing from what it printed. What deserves attention is
+`judgment` in that JSON, JUDGMENT below, the one place Garrick sets it; a
+workspace's own, in `System/briefing.local.md`, is named under `guidance`
+when it exists and wins where the two differ.
 
 **One zone at a time.** `--zone` names it, and is repeated for more. A
 workspace with a single zone needs none. `--project` and `--thread` narrow
@@ -52,8 +54,7 @@ A parked thread only when it, or its project, is named. A finished thread
 only when it changed. The live threads in scope that did not change are
 named under "quiet", and the parked ones left out are counted, never named.
 
-Importable: `gather()`, `period()`, `settings()`, `clean()`, and PERIODS
-for the status page's Catch up dialog. Exit codes: 0; 2 for a usage
+Importable: `gather()`, `period()`, `settings()`, `clean()` and PERIODS. Exit codes: 0; 2 for a usage
 error, no workspace or no such zone. Standard library only, Python 3.9 or
 later.
 """
@@ -92,7 +93,33 @@ PERIOD_LABELS = {k: label for k, label, _ in PERIODS}
 PERIOD_WORDS = {k: words for k, _, words in PERIODS}
 DEFAULTS = {"period": "day"}
 DAYS = (1, 366)
-GUIDANCE = ("System/briefing.md", "System/briefing.local.md")
+GUIDANCE = ("System/briefing.local.md",)
+# What deserves attention in a catch-up: Garrick's own judgment, in plain words. A person would
+# add it by hand; the tool lists and orders, and this is handed on with what it listed.
+JUDGMENT = {
+    "raise_first": [
+        "A decision, with who took it and why, in the words it was taken in where the wording was the point.",
+        "What now waits on the user: a question someone put to them, an action of theirs that came due or went late, a chase whose day has come.",
+        "What changed the plan: a deadline moved, a scope changed, a next action replaced by a different one, a thread parked, woken or finished.",
+        "What someone else did in the thread: a commit by another person or another session, work saved and not committed, a checkpoint nobody has wrapped.",
+        "What to look at before carrying on: the file the Live artifact row now names, a deliverable made in the period, an entry that says something was left out on purpose.",
+        "A gap in the records: work that moved with no dated entry to say why, a resume point older than the thread's last commit, an action that could belong to two threads. Say it as a gap, and never fill it in with a guess.",
+    ],
+    "say_in_a_line": [
+        "Steady progress: a draft taken further, a line ticked that was only bookkeeping.",
+        "Several commits of one piece of work: say the work once, not each commit.",
+    ],
+    "leave_out": [
+        "The threads that did not change, beyond how many there are, and a parked thread nobody named.",
+        "Housekeeping: a commit that only swept or tidied the Todo list, renamed or moved files, or fixed a typo.",
+        "Anything the records do not hold: a catch-up reports what the notes, their history and the list say, not what probably happened in between.",
+        "What a meeting said. A meeting the thread note links is named by that link and nothing more.",
+    ],
+    "never": [
+        "Rank one client, party or person above another, or judge how well anyone did.",
+        "Change anything: no tick, no wrap, no commit.",
+    ],
+}
 SKIP = {"archive", "Inbox", "Sources", "Deliverables"}
 PARKED, DONE = "parked", "done"
 EXIT_USAGE = 2
@@ -556,7 +583,7 @@ def gather(root: Path, zones: Optional[List[str]] = None, since: Optional[dateti
             "period": {"since": first.isoformat(), "said": "since " + said_day(first, today), "given": how,
                        "default": chosen["period"]},
             "named": {"projects": projects or [], "threads": threads or []}, "unmatched": unmatched,
-            "guidance": [g for g in GUIDANCE if (root / g).is_file()],
+            "judgment": JUDGMENT, "guidance": [g for g in GUIDANCE if (root / g).is_file()],
             "threads": listed, "quiet": quiet, "parked_left_out": parked_out}
 
 

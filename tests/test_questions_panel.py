@@ -282,12 +282,12 @@ class TestNurtureFindings(Panel):
         blob = json.dumps(self.data(self.check()))
         self.assertNotIn("Odd Person", blob)
 
-    def test_judgment_rows_carry_a_path_and_the_checks_name_only(self):
+    def test_judgment_rows_carry_a_path_the_check_and_its_line_only(self):
         write(self.people / "dangling.md", person_page("Dangling", "acme") + "\nSee [[wiki/people/not-there]].\n")
         commit_all(self.meetings, "dangling")
         read = self.data(self.check())["buckets"]["Work|acme"]["review"]["read"]
         for r in read:
-            self.assertEqual({"key", "path", "check", "href"}, set(r))
+            self.assertEqual({"key", "path", "check", "line", "href"}, set(r))     # the line is the check's own words (#433)
 
     def test_a_row_put_off_stays_hidden_until_its_day(self):
         key = next(r["key"] for r in self.data(self.C)["buckets"]["Work|acme"]["review"]["people"] if r["title"] == "Jo Lee")
@@ -381,6 +381,14 @@ class TestGroupModelOnTheFixture(Panel):
 
 
 class TestThePage(Panel):
+    def test_a_judgment_row_hands_its_finding_to_a_session(self):
+        self.assertIn("function handOver(r)", qp.JS)
+        self.assertIn("'Open in Claude'", qp.JS)
+        self.assertIn("'Open in Codex'", qp.JS)
+        self.assertIn("setAttribute('data-launch',o[0])", qp.JS)         # the page's own launcher click, in the app
+        self.assertIn("setAttribute('data-request',say_)", qp.JS)        # in a browser the request is copied
+        self.assertIn("p.appendChild(handOver(r))", qp.JS)
+
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_script_is_valid(self):
         with tempfile.TemporaryDirectory() as t:
@@ -392,7 +400,8 @@ class TestThePage(Panel):
     def test_the_tab_the_panel_and_its_script_are_in_the_page(self):
         with mock.patch.object(status, "launch_agents", lambda: self.root / "LaunchAgents"):
             html = status.build(self.root, now=dt.datetime(2026, 11, 5, 9, 0), folder=self.jobs)
-        self.assertIn('data-tab="questions"', html)
+        self.assertIn('data-tab="questions">Context<', html)           # one word, like Overview and Guide (#433)
+        self.assertIn("<h2 class=\"qp-title\">Context Nurture</h2>", html)
         self.assertIn('id="tab-questions"', html)
         self.assertIn("window.GarrickQuestions", html)
         self.assertIn('"z": {"Work": 1}', html.replace('"z":{"Work":1}', '"z": {"Work": 1}'))
@@ -403,13 +412,14 @@ class TestThePage(Panel):
 
 
 class TestTheMenu(unittest.TestCase):
-    """The Questions row (decision 8): under Catch Up in File, in the menu bar's menu and in the edge panel."""
+    """The Questions row (decision 8): under Ask Garrick in File, in the menu bar's menu and in the edge panel."""
 
     def setUp(self):
         self.swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
 
-    def test_file_menu_has_it_under_catch_up(self):
-        self.assertRegex(self.swift, r'item\("Catch Up…".*\n\s*item\("Questions", #selector\(openQuestions\(_:\)\), ""\)')
+    def test_file_menu_has_it_under_ask_garrick(self):
+        self.assertRegex(self.swift, r'\n\s*ask,\n\s*item\("Context", #selector\(openQuestions\(_:\)\), ""\)')
+        self.assertNotIn("Catch Up", self.swift)                      # the prompt is the only way in (#441)
 
     def test_the_menu_and_the_panel_have_a_row_with_the_count_of_the_zones_they_show(self):
         self.assertIn("if text.isEmpty, let questions = questionsItem()", self.swift)

@@ -13,9 +13,17 @@ gone: a wrap that died leaves one behind, and it must not block the thread for
 good. The Garrick band reads the same file by the same name and the same
 ten minutes; it asks no model.
 
+`end` also writes the time the wrap finished, beside the lock:
+`wrap-<the note's path, with / as __>.done`, holding the note's path and that
+time. The band compares it with the start of the session's last turn, and
+Close reads the same record, so a note written by any other route is never
+taken for a wrap that ran. `end --abandon` removes the lock and writes none:
+for a wrap that never began.
+
 `start` prints `locked` and exits 0, or says that a wrap of this note is
-already running and exits 1. `end` removes the lock, and exits 0 when there is
-none. `status` prints `running` or `idle`. Standard library only.
+already running and exits 1. `end` removes the lock, writes the record, and
+exits 0 when there is no lock. `status` prints `running` or `idle`. Standard
+library only.
 """
 
 from __future__ import annotations
@@ -49,6 +57,15 @@ def root_of(given: Optional[str]) -> Path:
 def lock_name(note: str) -> str:
     """The lock's file name for a note given by its path from the workspace root."""
     return "wrap-%s.lock" % note.strip("/").replace("/", "__")
+
+
+def done_name(note: str) -> str:
+    """The name of the record a finished wrap leaves, beside the lock."""
+    return "wrap-%s.done" % note.strip("/").replace("/", "__")
+
+
+def done_path(root: Path, note: str) -> Path:
+    return lock_path(root, note).with_name(done_name(note))
 
 
 def lock_path(root: Path, note: str) -> Path:
@@ -121,9 +138,30 @@ def take(path: Path, note: str, now: Optional[float]) -> bool:
     return True
 
 
-def end(root: Path, note: str) -> None:
+def finished(path: Path) -> Optional[float]:
+    """When the wrap finished, as seconds since the epoch; None when there is
+    no record or it does not read."""
     try:
-        lock_path(root, note).unlink()
+        data = json.loads(path.read_text(encoding="utf-8"))
+        stamp = datetime.datetime.strptime(data["finished"], "%Y-%m-%dT%H:%M:%S.%fZ")
+        return stamp.replace(tzinfo=datetime.timezone.utc).timestamp()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def end(root: Path, note: str, now: Optional[float] = None, abandon: bool = False) -> None:
+    """Remove the lock and record when the wrap finished. `abandon` records nothing."""
+    lock = lock_path(root, note)
+    if not abandon:
+        when = datetime.datetime.fromtimestamp(time.time() if now is None else now, datetime.timezone.utc)
+        body = json.dumps({"note": note.strip("/"), "finished": when.strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (when.microsecond // 1000)}) + "\n"
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        done = done_path(root, note)
+        tmp = done.with_name(done.name + ".tmp")
+        tmp.write_text(body, encoding="utf-8")
+        os.replace(str(tmp), str(done))
+    try:
+        lock.unlink()
     except FileNotFoundError:
         pass
 
@@ -132,6 +170,7 @@ def main(argv: Optional[list] = None) -> int:
     ap = argparse.ArgumentParser(description="The lock a running wrap holds.")
     ap.add_argument("verb", choices=("start", "end", "status"))
     ap.add_argument("note", help="the thread note, by its path from the workspace root")
+    ap.add_argument("--abandon", action="store_true", help="with end: remove the lock and record no finish time")
     ap.add_argument("--root", help="the workspace (default: the one this script sits in)")
     a = ap.parse_args(argv)
     root = root_of(a.root)
@@ -142,7 +181,7 @@ def main(argv: Optional[list] = None) -> int:
                 return 1
             print("locked")
         elif a.verb == "end":
-            end(root, a.note)
+            end(root, a.note, abandon=a.abandon)
             print("unlocked")
         else:
             print("running" if running(lock_path(root, a.note)) else "idle")

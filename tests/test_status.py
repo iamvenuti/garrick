@@ -84,6 +84,16 @@ def contrast(a, b):
     return (la + 0.05) / (lb + 0.05)
 
 
+def trouble(html):
+    """What the Needs attention list holds, as data (#443): [severity, the card or row it shows on, its line]."""
+    m = re.search(r'id="trouble-data">(.*?)</script>', html, re.S)
+    return json.loads(m.group(1)) if m else []
+
+
+def attention_text(html):
+    return "".join("%s<\n" % t[2] for t in trouble(html))
+
+
 class StatusCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -297,7 +307,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(23, html.count("</script>"))         # the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, Catch up's, Memory's, About Garrick's check for updates, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
+        self.assertEqual(23, html.count("</script>"))         # the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -503,8 +513,9 @@ class TestTabs(StatusCase):
         overview, machinery = self.section(html, "overview"), self.section(html, "status")
         for card_id in ("graph", "threads", "todo", "inboxes"):
             self.assertIn('id="%s"' % card_id, overview, card_id)
-        for card_id in ("jobs", "checks", "repos", "wikis"):
+        for card_id in ("jobs", "repos", "wikis"):
             self.assertIn('id="%s"' % card_id, machinery, card_id)
+        self.assertIn('id="checks"', self.section(html, "questions") if 'id="tab-questions"' in html else machinery)   # under the findings (#443)
         self.assertNotIn('class="top"', overview)                               # the overview is the work alone
         self.assertLess(machinery.index('class="top"'), machinery.index('class="onlybar"'))   # the figures lead Status
         self.assertIn('id="tab-status" hidden', html)
@@ -512,17 +523,27 @@ class TestTabs(StatusCase):
     def test_a_card_moves_between_tabs_and_reset_puts_it_back(self):
         html = self.page()
         self.assertGreaterEqual(html.count('class="totab"'), 4)
-        self.assertNotIn('class="totab"', html[html.index('id="attention"'):html.index("</summary>", html.index('id="attention"'))]
-                         if 'id="attention"' in html else "")
-        self.assertIn("'#tab-'+to+' [data-slot$=\"left\"]'", status.LAYOUT_JS)
+        self.assertIn('title="Move to…"', html)
+        self.assertIn("'#'+pick.dataset.to+' [data-slot$=\"left\"]'", status.LAYOUT_JS)    # Move to… offers every tab with slots (#443)
+        for name in ("todo", "context", "status"):
+            self.assertIn('data-slot="%s-left"' % name, html)
+            self.assertIn('data-slot="%s-right"' % name, html)
         self.assertIn("{v:2,c:c,", status.LAYOUT_JS)                         # a layout saved by the old page is not replayed
 
-    def test_needs_attention_leads_the_status_tab(self):
+    def test_a_tab_carries_a_dot_for_trouble_on_its_own_cards(self):
         self.job(4)
         html = self.page()
-        machinery = self.section(html, "status")
-        self.assertLess(machinery.index('id="attention"'), machinery.index('id="jobs"'))
-        self.assertNotIn('id="attention"', self.section(html, "overview"))
+        self.assertNotIn('id="attention"', html)
+        self.assertIn(["critical", "jobs"], [t[:2] for t in trouble(html)])
+        self.assertIn("function dots(", status.LAYOUT_JS)                      # worst first, a hidden card still counts
+        self.assertIn("w[sec.id]!=='critical'", status.LAYOUT_JS)
+        self.assertIn("sev(c)", status.LAYOUT_JS)                              # and the hidden-cards list shows it
+
+    def test_checks_sits_in_the_context_tab_under_the_findings(self):
+        html = self.page()
+        if 'id="tab-questions"' in html:
+            self.assertIn('id="checks"', self.section(html, "questions"))
+            self.assertNotIn('id="checks"', self.section(html, "status"))
 
     def test_the_figures_lead_to_the_cards(self):
         self.job(0)
@@ -570,10 +591,10 @@ class TestTabs(StatusCase):
 
     def test_a_failure_marks_the_status_tab(self):
         self.job(0)
-        self.assertNotIn('data-tab="status">Status<span class="dot critical"', self.page())
+        self.assertEqual([], [t for t in trouble(self.page()) if t[1] == "jobs"])
         self.job(4)
         html = self.page()
-        self.assertIn('data-tab="status">Status<span class="dot critical"', html)
+        self.assertIn(["critical", "jobs"], [t[:2] for t in trouble(html)])      # the dot is drawn on the tab that holds the card (LAYOUT_JS)
 
 
 class TestParties(StatusCase):
@@ -856,11 +877,11 @@ class TestLayout(StatusCase):
         self.assertIsNone(re.search(r"(^|[\s,}>])\.r[\s{,:.\[]", status.CSS))  # .r styles table cells only
         self.assertIn("th.r,td.r{text-align:right", status.CSS)
 
-    def test_needs_attention_is_pinned(self):
+    def test_there_is_no_needs_attention_card(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
         html = self.page()
-        start = html.index('id="attention"')
-        self.assertNotIn('class="grip"', html[start:html.index("</details>", start)])
+        self.assertNotIn('id="attention"', html)
+        self.assertEqual("inboxes", [t for t in trouble(html) if "waiting" in t[2]][0][1])      # the list stays, as data (#443)
 
 
 def overview(html):
@@ -915,9 +936,9 @@ class TestOpensOnTheWork(StatusCase):
         self.assertIn('<details class="card" id="graph">', tab)                    # folded shut: Explore opens it
         self.assertNotIn('class="top"', tab)                                       # the figures stay on Status
         machinery = html[html.index('id="tab-status"'):html.index("</section>", html.index('id="tab-status"'))]
-        for cid in ("jobs", "checks", "repos", "wikis"):                           # the Status tab is untouched
+        for cid in ("jobs", "checks", "repos", "wikis"):                           # the machinery stays off the Overview
             self.assertNotIn('id="%s"' % cid, tab, cid)
-        self.assertIn('id="checks"', machinery)
+        self.assertIn('id="repos"', machinery)
         self.assertLess(machinery.index('class="top"'), machinery.index('class="onlybar"'))
 
     def test_parked_and_finished_work_stays_out(self):
@@ -1652,7 +1673,7 @@ class TestSettingsLayout(StatusCase):
         self.assertLess(main.index('id="preview-settings"'), main.index('<div class="setfoot">'))   # Reset view at the end
         self.assertNotIn("setcols", dialog)
         self.assertEqual(len(built) - 1, dialog.count('<p class="setlede">'))       # each opens with what it is for, About with nothing
-        self.assertNotIn('id="catch-settings"', dialog)                            # Catch up lives in the window (#226)
+        self.assertNotIn('id="catch-settings"', dialog)                            # nor does anything else (#226)
         for lede in re.findall(r'<p class="setlede">(.*?)</p>', dialog):
             self.assertLessEqual(len(re.findall(r"[.;:]\s+[A-Z]", htmllib.unescape(lede))), 0, lede)   # one sentence at most
 
@@ -1759,94 +1780,27 @@ class TestWaitSettings(StatusCase):
         self.assertEqual(0, done.returncode, done.stderr)
 
 
-class TestCatchUp(StatusCase):
-    """Catch up (#27): beside Settings, a dialog that picks the period and,
-    if wanted, the projects and threads of one zone, and hands "catch me up
-    ..." to the default assistant. The default period is briefing.py's, or
-    the settings file's "catch-up"; Settings, the menu bar's menu and the
-    panel offer no Catch up of their own (#226)."""
+class TestNoCatchUpButton(StatusCase):
+    """#441: "catch me up" is a prompt, here, in a session or in Ask, and has no button, dialog, menu
+    item or Obsidian command of its own."""
 
-    def dialog(self, html=None):
-        html = html or self.page()
-        start = html.index('<dialog id="catchup"')
-        return html[start:html.index("</dialog>", start)]
-
-    def menu(self, html):
-        return json.loads(htmllib.unescape(re.search(r'id="menu-data">(.*?)</script>', html, re.S).group(1)))
-
-    def test_a_button_beside_settings_opens_it(self):
+    def test_the_page_has_no_dialog_button_or_script(self):
         html = self.page()
-        bar = html[html.index('<div class="bacts">'):html.index('id="open-settings"')]
-        self.assertIn('id="open-catchup" aria-label="Catch up" title="Catch up">', bar)
-        self.assertIn("window.GarrickCatchUp={open:open,phrase:phrase}", status.CATCH_JS)
-        self.assertIn("var b=document.getElementById('open-catchup');if(b)b.onclick=open;", status.CATCH_JS)
-
-    def test_the_periods_and_the_default_are_briefings(self):
-        lib = status.catch_lib(self.root)
-        sec = self.dialog()
-        self.assertEqual([k for k, _, _ in lib.PERIODS], re.findall(r'name="cu-period" value="([^"]+)"', sec))
-        self.assertIn('value="day" data-words="since yesterday" checked', sec)
-        write(self.root / "System" / "garrick-settings.json", json.dumps({"catch-up": {"period": "week"}}))
-        sec = self.dialog()
-        self.assertIn('data-default="week"', sec)
-        self.assertIn('value="week" data-words="this week" checked', sec)
-
-    def test_projects_and_threads_by_the_names_a_request_says(self):
-        sec = self.dialog()
-        self.assertIn('data-root="%s"' % htmllib.escape(str(self.root)), sec)
-        self.assertIn('<input type="checkbox" data-cu="Acme Review"> Acme Review', sec)
-        self.assertIn('data-cu="Acme Review, Pricing" data-cup="Acme Review"> Pricing', sec)   # "Project, Thread"
-        self.assertIn('<ul class="cuz" data-zone="Work">', sec)
-
-    def test_only_choices_and_the_request(self):
-        sec = self.dialog()                                                   # no sentence but the request it sends (#236)
-        self.assertEqual(["Asks: "], re.findall(r'<p[^>]*>([^<]*)', sec))
-        for gone in ("cuwhat", "cuhint", "while you were away", "none ticked"):
-            self.assertNotIn(gone, sec)
-            self.assertNotIn(gone, status.CATCH_CSS)
-
-    def test_the_request_goes_to_the_default_assistant_or_is_copied(self):
-        js = status.CATCH_JS
-        self.assertIn("return'catch me up'+(n.length?' on '+and(n):shown()?' on '+shown():'')+' '+(p?p.dataset.words:'since yesterday')}", js)
-        self.assertIn("var m={launch:a,folder:dlg.dataset.root,phrase:p};if(a==='cmux'&&dlg.dataset.dk)m.dk=1;host.postMessage(m)", js)
-        self.assertIn("GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')})", js)
-        self.assertIn("a=host&&window.GarrickAssistant&&GarrickAssistant();", js)         # the one rule, in JS
-        self.assertNotIn("function assistant(", js)
-        self.assertIn("return a.indexOf(d)>=0?d:a[0]||null", status.JS)                 # as the app's assistant()
-
-    def test_settings_has_no_catch_up(self):
-        html = self.page()
-        self.assertNotIn('id="catch-settings"', html)
-        self.assertNotIn("cu-default", html)
-        self.assertNotIn("catch-up", status.JS)                                          # nothing to send when Settings closes
-        self.assertNotIn("GarrickCatch=", status.CATCH_JS)
-
-    def test_the_menu_has_no_catch_up(self):
-        self.assertNotIn("catchup", self.menu(self.page(launchers=("claude",))))
-        self.assertIn("intake", self.menu(self.page(launchers=("claude",))))               # Process the Inbox stays
-
-    def test_left_out_without_briefing(self):
-        with mock.patch.object(status, "catch_lib", lambda ws: None):
-            html = self.page(launchers=("claude",))
-        for gone in ('id="catchup"', 'id="open-catchup"', 'id="catch-settings"'):
+        for gone in ('id="catchup"', 'id="open-catchup"', "GarrickCatchUp", "cu-go", "dialog.catchup"):
             self.assertNotIn(gone, html)
-        self.assertNotIn("catchup", self.menu(html))
+        for name in ("catch_lib", "catch_button", "catch_dialog", "CATCH_JS", "CATCH_CSS"):
+            self.assertFalse(hasattr(status, name), name)
 
-    def test_the_app_and_obsidian_open_the_same_dialog(self):
+    def test_the_app_and_obsidian_have_no_command_for_it(self):
         swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
-        self.assertIn('web.evaluateJavaScript("window.GarrickCatchUp && window.GarrickCatchUp.open()")', swift)
-        self.assertIn('item("Catch Up…", #selector(openCatchUp(_:)), "")', swift)            # File › Catch Up…
-        for gone in ("catchItem", "catchPhrase", "PanelCatch", "model.catchUp", "catchUpRow", "Choose Projects or Threads"):
-            self.assertNotIn(gone, swift)                                                 # not in the menu or the panel (#226)
         main = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn('this.addCommand({ id: "catch-up", name: "Catch up", callback: () => this.catchUp() });', main)
-        self.assertIn('window.GarrickCatchUp&&window.GarrickCatchUp.open()', main)
+        for text in (swift, main):
+            self.assertNotRegex(text, r"(?i)catch.?up")
 
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_the_script_parses(self):
-        done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=status.CATCH_JS,
-                              capture_output=True, text=True, timeout=30)
-        self.assertEqual(0, done.returncode, done.stderr)
+    def test_the_menu_keeps_process_the_inbox(self):
+        menu = json.loads(htmllib.unescape(re.search(r'id="menu-data">(.*?)</script>', self.page(launchers=("claude",)), re.S).group(1)))
+        self.assertNotIn("catchup", menu)
+        self.assertIn("intake", menu)
 
 
 class TestLaunchers(StatusCase):
@@ -2339,8 +2293,7 @@ class TestJobs(StatusCase):
                 f.write(json.dumps(dict({"ts": self.now.timestamp() - 600}, **e)) + "\n")
 
     def attention(self, html):
-        start = html.index('id="attention"')
-        return html[start:html.index("</details>", start)]
+        return attention_text(html)
 
     def test_one_attention_line_per_capped_job(self):
         refused = {"job": "brief", "refused": True}
@@ -3639,7 +3592,7 @@ class TestDriftRows(StatusCase):
         write(self.root / "System" / "generated" / "drift.json", json.dumps({"files": list(files)}))
 
     def rows(self, html):
-        start = html.index('<div class="attn">')
+        start = html.index('<div class="attn" id="notices">')
         return html[start:html.index("</details>", start)]
 
     def test_a_drift_row_leads_to_its_project_or_thread_and_offers_show_both(self):
@@ -4056,65 +4009,32 @@ class TestContextDebt(StatusCase):
             self.assertNotIn('id="debt"', self.page())
 
 
-class TestReviewContext(StatusCase):
-    """#258: Review context on the Checks card hands Nurture's guided review
-    to the assistant, and says from the review record's frontmatter alone when
-    the last review was done and whether one is unfinished."""
+class TestContextLink(StatusCase):
+    """#433: the Checks card has no Review context button. One link to the Context tab replaces
+    Nurture and Review context, with what each group holds open."""
 
     def setUp(self):
         super().setUp()
         shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
                         ignore=shutil.ignore_patterns("__pycache__"))
-        self.record = self.root / "System" / "nurture-review.md"
 
-    def block(self, html):
-        start = html.index('<div class="gacts review" id="review">')
-        return html[start:html.index("</div>", start)]
+    def test_the_link_names_each_group_with_its_open_count(self):
+        data = {"menu_groups": {"Work": [{"h": "Work · Acme Corp", "n": 2}, {"h": "Work · Birch & Co", "n": 0}], "Home": [{"h": "Home", "n": 1}]},
+                "menu_findings": {"Work": {"Work · Acme Corp": 3, "Work · Birch & Co": 0}, "Home": {"Home": 0}}}
+        b = status.context_link(data)
+        self.assertIn('<a class="act" href="#qp">Answer in Context</a>', b)
+        self.assertIn("Home: 1 question; Work · Acme Corp: 2 questions, 3 findings.", b)
+        self.assertNotIn("Birch", b)                                         # a group with nothing open is not named
+        self.assertIn("Nothing is open.", status.context_link({"menu_groups": {"Work": [{"h": "Work", "n": 0}]}}))
+        self.assertEqual("", status.context_link(None))                      # no tab, no link
 
-    def checks(self, html):
-        start = html.index('id="checks"')
-        return html[start:html.index("</details>", start)]
-
-    def test_the_button_hands_over_the_request(self):
-        b = self.block(self.checks(self.page()))
-        self.assertIn('<button class="act" type="button" data-request="review the context with me" data-folder="%s"' % self.root, b)
-        self.assertIn(">Review context</button>", b)
-        self.assertIn("No review done yet.", b)                               # no record: nothing that looks measured
-        self.assertNotIn("unfinished", b)
-
-    def test_the_dates_and_the_unfinished_flag_come_from_the_record(self):
-        write(self.record, "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n"
-                           "limit: 15 minutes\n---\n# Context review\n\n| Id | Source | Decision | Reason | Date |\n|---|---|---|---|---|\n"
-                           "| 3f2a9c1d0b4e | check.py | deferred to 2026-03-21 | waiting on someone | 2026-03-14 |\n"
-                           "| drift.py | drift.py | source failed | source did not run | 2026-03-14 |\n")
+    def test_the_card_has_no_review_button_and_reads_no_record(self):
+        write(self.root / "System" / "nurture-review.md",
+              "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n---\n")
         html = self.page()
-        b = self.block(html)
-        self.assertIn("Last review Sat 07 Mar 2026 · one unfinished, started Sat 14 Mar 2026.", b)
-        for item in ("3f2a9c1d0b4e", "deferred to", "waiting on someone", "source did not run", "15 minutes"):
-            self.assertNotIn(item, html)                                               # nothing of its items
-        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n---\n")
-        b = self.block(self.page())
-        self.assertIn("Last review Sat 14 Mar 2026.", b)
-        self.assertNotIn("unfinished", b)
-
-    def test_left_out_without_nurture(self):
-        (self.root / "System" / "tools" / "nurture.py").unlink()
-        self.assertNotIn('id="review"', self.page())
-
-    def test_it_says_what_it_does_and_what_the_latest_review_decided(self):
-        b = self.block(self.page())
-        self.assertIn("A short session through what is left, across the workspace, up to a limit you choose", b)
-        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n"
-                           "fixed: 6\nanswered: 3\ndeferred: 2\n---\n")
-        self.assertIn("Last review Sat 14 Mar 2026: 6 fixed, 3 answered, 2 deferred.", self.block(self.page()))
-        write(self.record, "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n"
-                           "fixed: 4\nanswered: 0\ndeferred: 1\n---\n")
-        self.assertIn("one unfinished, started Sat 14 Mar 2026: 4 fixed, 0 answered, 1 deferred so far.", self.block(self.page()))
-        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n"
-                           "fixed: the Cedar floor\n---\n")
-        b = self.block(self.page())
-        self.assertIn("Last review Sat 14 Mar 2026.", b)                   # a count that is not a number is not shown
-        self.assertNotIn("Cedar", b)
+        self.assertNotIn("Review context", html)
+        self.assertNotIn("review the context with me", html)
+        self.assertNotIn("Last review", html)
 
 
 class TestChecksCardActs(StatusCase):
@@ -4136,7 +4056,8 @@ class TestChecksCardActs(StatusCase):
 
     def card(self, html):
         start = html.index('<details class="card" id="checks"')
-        return html[start:html.find('<details class="card" id="', start + 1)]
+        ends = [i for i in (html.find('<details class="card" id="', start + 1), html.find("</section>", start)) if i > 0]
+        return html[start:min(ends)]
 
     def groups(self, card):
         return re.findall(r'<details class="group" data-ok="0"( open)?><summary>.*?<b>([^<]+)</b>', card, re.S)

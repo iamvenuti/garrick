@@ -45,10 +45,7 @@ import subprocess
 import sys
 import time
 import unicodedata
-from fnmatch import filter as fnmatch_filter
-from functools import lru_cache
 from array import array
-from bisect import bisect_left
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
@@ -66,23 +63,6 @@ def urlsplit(url: str):
         return _urlsplit(url)
     except ValueError:
         return _urlsplit(url.replace("[", "%5B").replace("]", "%5D"))
-
-def _safe_fnmatch(names, pattern):
-    """fnmatch's filter, the same on every Python and never raising. A bracket
-    class whose range is out of order (`[pick-harvest]`, which is ordinary
-    bracketed text, holds `k-h`) is read as literal brackets: Python 3.9's `re`
-    refuses such a class and 3.13 reads it as matching nothing, so neither is a
-    reading to rely on. The token's literal readings are resolved elsewhere."""
-    def bad(m):
-        body = m.group(1).lstrip("!^")
-        return any(body[i - 1] > body[i + 1] for i in range(1, len(body) - 1) if body[i] == "-")
-    if any(bad(m) for m in re.finditer(r"\[([^\]]*)\]", pattern)):
-        pattern = pattern.replace("[", "\0").replace("]", "[]]").replace("\0", "[[]")
-    try:
-        return fnmatch_filter(names, pattern)
-    except re.error:
-        return [n for n in names if n == pattern]
-
 
 sys.dont_write_bytecode = True  # keep System/tools free of __pycache__
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -151,7 +131,6 @@ from garrick_lib import (  # noqa: E402
     stamped_parties,
     strip_recipients,
     strip_tag,
-    KNOWLEDGE,
     blocked,
     record_refusals,
     is_walled,
@@ -168,7 +147,7 @@ from garrick_lib import _listed  # noqa: E402  (#340)
 from garrick_lib import _frontmatter_body  # noqa: E402  (#388)
 from garrick_lib import (  # noqa: E402  (#330)
     FRONTMATTER_PLAIN, PERSON_KEYS, PERSON_PLAIN, PERSON_SHAPE, WALLS_KEYS, WIKI_GIT_REASON, frontmatter_form_problem,
-    entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, org_key, organisation_link,
+    entity_names, entity_parties, entity_rel, first_line, links_in, name_group, named_in, organisation_link,
     organisation_proposal,
 )
 
@@ -186,6 +165,7 @@ CHECKS = [
     ("memory", "Learned entries"),
     ("zones", "Zones"),
     ("hooks", "Commit hooks"),
+    ("cmux", "cmux"),
     ("skills", "Skills"),
     ("names", "Names"),
     ("projects", "Projects"),
@@ -222,6 +202,7 @@ EAR_GROUP = {
     "memory": "{n} learned entries do not say where they came from, or came only from outside",
     "zones": "the zone folders have {n} gaps",
     "hooks": "git skips the hooks of {n} repositories",
+    "cmux": "cmux does not resume the tabs of agent sessions",
     "skills": "{n} things need fixing in the skills",
     "names": "{n} names are hard to say or sound alike",
     "projects": "{n} things need fixing in project hub notes",
@@ -246,9 +227,6 @@ EAR_GROUP = {
     "review": "the review record has {n} entries outside its fixed form",
 }
 
-# Files of markup or data: their indentation is layout, not an indented code block, and a bare name in a string or a
-# stylesheet is a name, not a path (a path written in one is still read).
-MARKUP_SUFFIXES = {".html", ".htm", ".json"}
 TEXT_SUFFIXES = {".md", ".markdown", ".txt", ".csv", ".tsv", ".html", ".htm", ".json", ".yaml", ".yml", ".vtt"}
 PLACEHOLDER_RE = re.compile(r"\{\{[A-Z][A-Z0-9_]*\}\}")
 COMMIT_RE = re.compile(r"[0-9a-fA-F]{7,40}")
@@ -264,7 +242,6 @@ MDLINK_RE = re.compile(r"\]\(\s*(?:<([^<>\n]*)>|((?:[^()\s<>]|\([^()\s<>]*\))+))
 # A reference-style link's definition, `[1]: <path>` or `[1]: path`, and an
 # HTML anchor's href.
 REFDEF_RE = re.compile(r"(?m)^ {0,3}\[[^\]\n]+\]:[ \t]*(?:<([^<>\n]*)>|(\S+))")
-HREF_RE = re.compile(r"(?i)<a\b(?:[^<>\"']|\"[^\"]*\"|'[^']*')*?\bhref\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))")
 # An HTML tag, name and attributes, up to its `>`, or a `<` outside a quoted
 # value, or the end of the text. A quoted value runs to its closing quote, or to
 # the end of the text when none closes it. Nothing follows the repeat, so it
@@ -312,7 +289,8 @@ class Workspace:
     index_files: Optional[set] = None  # staged mode: the files the commit holds (git's index), by real path; None reads the disk
     page_names: Optional["PageNames"] = None  # every page of the Meetings wiki, of every kind and grade, by name, on first use
     project_links: Optional["PathIndex"] = None  # every project's files, indexed for links on first use
-    project_dirs: Optional["DirIndex"] = None  # every project's folders, indexed on first use
+    ref_files: Optional[Dict[str, List[Path]]] = None  # every file a note may point at, by its path, on first use
+    ref_wikis: List[Path] = field(default_factory=list)  # each wiki's top folder, set with ref_files
     project_files: Optional[Dict[Path, Path]] = None  # each of those files -> its project
     thread_owners: Optional[Dict[str, set]] = None  # a thread's name, lower case -> the projects that have one
     wiki_links: Optional["PathIndex"] = None  # every wiki page, indexed for links on first use
@@ -747,12 +725,6 @@ def extract_links(text: str) -> List[Tuple[str, str]]:
                 for target in _link_forms(unquote(one)):
                     links.append(('<%s %s="%s">' % (name, key, shown), target))
     return links
-
-
-def tag_texts(text: str) -> List[Tuple[str, str]]:
-    """(as written, what it holds) for every HTML tag in `text`: its name and
-    attributes, up to the `>` or the end of the text."""
-    return [("<%s>" % m.group(1).lower(), html.unescape(m.group(2))) for m in TAG_RE.finditer(text)]
 
 
 def code_texts(text: str, limit: Optional[int] = MAX_CODE_PATH) -> List[Tuple[str, str]]:
@@ -1209,7 +1181,6 @@ def instruction_files(ws: Workspace) -> List[Path]:
         files += sorted(w / "AGENTS.md" for w in wikis.iterdir() if w.is_dir() and not w.name.startswith("."))
     files += [local for local in (local_beside(ws, f) for f in list(files)) if local is not None]
     return [f for f in files if f.is_file()]
-
 
 
 def text_blocks(text: str) -> List[str]:
@@ -1677,6 +1648,35 @@ def project_repos(ws: Workspace) -> List[Tuple[Path, Path, dict]]:
 
 def has_remote(repo: Path) -> bool:
     return bool((_git(["remote"], repo) or "").strip())
+
+
+CMUX_CONFIG = (".config", "cmux", "cmux.json")
+
+
+def _without_json_comments(text: str) -> str:
+    """`text` with `//` and `/* */` comments taken out, outside strings: cmux.json may be JSONC."""
+    return re.sub(r'"(?:[^"\\]|\\.)*"|//[^\n]*|/\*.*?\*/', lambda m: m.group(0) if m.group(0)[0] == '"' else " ", text, flags=re.S)
+
+
+def check_cmux(ws: Workspace) -> List[Finding]:
+    """cmux resumes the agent sessions of its tabs itself when it reopens (`terminal.autoResumeAgentSessions`, on by
+    default). Warn once when `~/.config/cmux/cmux.json` turns it off: nothing resumes the tabs then (#440)."""
+    if not (ws.root / "System" / "cmux").is_dir():
+        return []                                # only a workspace with the cmux extra: no other run reads the home folder
+    path = Path(os.path.expanduser("~")).joinpath(*CMUX_CONFIG)
+    try:
+        data = json.loads(_without_json_comments(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return []
+    nested = data.get("terminal") if isinstance(data, dict) else None
+    value = nested.get("autoResumeAgentSessions") if isinstance(nested, dict) else None
+    if isinstance(data, dict) and "terminal.autoResumeAgentSessions" in data:
+        value = data["terminal.autoResumeAgentSessions"]
+    if value is not False:
+        return []
+    return [Finding(WARNING, "cmux", "~/" + "/".join(CMUX_CONFIG),
+                    "turns `terminal.autoResumeAgentSessions` off, so cmux does not resume the agent sessions of its tabs "
+                    "when it reopens; set it to true, or delete the key", "cmux does not resume the tabs of agent sessions")]
 
 
 def check_hooks(ws: Workspace) -> List[Finding]:
@@ -4459,7 +4459,7 @@ def body_of(text: str) -> str:
 
 
 def without_party_field(text: str) -> str:
-    """The file's text with its own frontmatter `party:` field blanked out."""
+    """The file's text with its own frontmatter `party:` and `zone:` fields blanked out: structure, not prose (#465)."""
     if not text.startswith("---"):
         return text
     lines = text.split("\n")
@@ -4467,7 +4467,7 @@ def without_party_field(text: str) -> str:
     for i, line in enumerate(lines[1:], 1):
         if line.rstrip("\r") in ("---", "..."):        # a `---` alone at the margin ends it, as for YAML
             break
-        if re.match(r"party\s*:", line):
+        if re.match(r"(?:party|zone)\s*:", line):
             lines[i], in_party = "", True
         elif in_party and (line[:1].isspace() or line.startswith("-")):
             lines[i] = ""
@@ -5007,6 +5007,13 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
             common |= found
             if knowledge not in path.parents:
                 beyond |= found
+    # Wording also found in a template Garrick ships (System/templates/: the zone, project and thread templates) is
+    # common wording: a hub made from one template shares its text, and the template is nobody's confidence (#465).
+    templates = ws.root.joinpath(*TEMPLATES)
+    if templates.is_dir():
+        for path in walk_files(templates):
+            if path.suffix.lower() in TEXT_SUFFIXES:
+                common |= {h for h in file_runs(ws, path, False) if h in owners}
     ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
     if ws.cache is not None:
         ws.cache.whole = True
@@ -5054,12 +5061,13 @@ def _in_near_side(form: str, near_side: set) -> bool:
     return any(padded in (" %s " % ns) for ns in near_side)
 
 
-def owner_keys(ws: Workspace) -> set:
-    """The owner's full name and first name as word forms: never a walled party's or person's name to the check."""
+def owner_keys(ws: Workspace, first: bool = False) -> set:
+    """The owner's full name as a word form, never a walled party's or person's name to the check; with `first`,
+    their first name too, which only a person's first name gives way to (a party named like it is still a name)."""
     owner = ws.context.get("owner")
     if not owner:
         return set()
-    return {k for k in (" ".join(words(owner["name"])), " ".join(words(owner["first"]))) if k}
+    return {k for k in (" ".join(words(owner["name"])), " ".join(words(owner["first"])) if first else "") if k}
 
 
 def everyday_tag(ws: Workspace, tag: str) -> bool:
@@ -5069,12 +5077,10 @@ def everyday_tag(ws: Workspace, tag: str) -> bool:
     if not key:
         return False
     zones = {" ".join(words(z)) for z in {z.name for z in ws.zones} | set(ws.context["zones"])}
-    if key in owner_keys(ws):
-        return True
     # A tag that is the party's own name ("Page", `page`) is the name too: matched in prose, as before.
     if key == " ".join(words(ws.context["parties"].get(tag, {}).get("party") or "")):
         return False
-    return key in zones or key in STOPWORDS or key in COMMON_WORD_NAMES
+    return key in owner_keys(ws, True) or key in zones or key in STOPWORDS or key in COMMON_WORD_NAMES
 
 
 def tag_only_forms(ws: Workspace, walled_tags: set) -> Dict[str, Tuple[bool, str]]:
@@ -5108,6 +5114,7 @@ def tag_scope_text(text: str) -> str:
 def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, str]]]:
     ctx = ws.context
     owner = owner_keys(ws)
+    owner_first = owner_keys(ws, True)
     forms: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
     firsts: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
     means: Dict[str, str] = {}
@@ -5150,7 +5157,7 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
                  if f not in near_side and not _in_near_side(f, both) and f not in skip]
         found += [(True, f) for f in sorted(firsts[tag])
                   if f.lower() not in near_side and not _in_near_side(f.lower(), both) and f.lower() not in forms[tag]
-                  and f.lower() not in owner]
+                  and f.lower() not in owner_first]
         # Longest first. Which form a finding names decides whether it reads as
         # a tag hit or a name hit, so it must be the most telling form the text
         # holds and not whichever one the alphabet put first.
@@ -5241,89 +5248,6 @@ def file_tags(ws: Workspace, project: Path, ptags: set, path: Path) -> Tuple[set
 # What separates one candidate path from the next in a code line: white space,
 # quotes, brackets, pipes, redirects, separators and `=`. A path with a space
 # in it is read as a run of words (below), or as a quoted string.
-CODE_TOKEN_RE = re.compile(r"[^\s\"'`()<>|;,=&{}\[\]]+")
-QUOTED_RE = re.compile(r"\"([^\"]*)\"|'([^']*)'")
-SHELL_BREAK_RE = re.compile(r"[;|&<>]")
-MAX_RUN_WORDS = 8  # words a path with spaces in it may span in a code line
-
-
-def _without_position(token: str) -> str:
-    """`token` with a trailing `:12`, `:12:3` or `:12:3:` taken off, in one
-    pass from the end."""
-    end = len(token)
-    while end and token[end - 1] == ":":
-        end -= 1
-    while True:
-        i = end
-        while i and token[i - 1].isdigit():
-            i -= 1
-        if 0 < i < end and token[i - 1] == ":":
-            end = i - 1
-        else:
-            return token[:end]
-
-
-def _forms(raw: str) -> List[str]:
-    """The paths one candidate may mean: as written, without a heading, a
-    query or a line position, and without trailing punctuation."""
-    base = raw.split("#", 1)[0].strip()
-    if re.match(r"(?i)^file:", base):
-        base = re.sub(r"(?i)^file:(?://[^/]*)?", "", base)
-    plain = base.split("?", 1)[0]
-    forms = [base, base.rstrip(".:,;"), plain, _without_position(plain).rstrip(".:,;")]
-    forms += [unquote(f) for f in forms if "%" in f]
-    forms += [lexical(f) for f in forms if ".." in f]
-    return [f for i, f in enumerate(forms) if f and f not in forms[:i]]
-
-
-def code_paths(text: str, is_file: Optional[Callable[[str], bool]] = None) -> List[Tuple[str, str]]:
-    """(as written, target) for every path written as code in `text`: a code
-    span, or a line of a fenced block, that holds a slash (code_texts). The
-    whole of the span or line is read as a path, and so is each slash-bearing
-    token of it, each quoted string, and each run of up to eight words that
-    holds a slash, since `cat Harbour/Notes.md` names a file as
-    `Harbour/Notes.md` does and a file name may hold spaces. A trailing `:12`
-    or `?x` is taken off as well as kept. Nothing resolves these as a link
-    does, but a person or an assistant follows one just the same, and Nurture
-    may turn one into a link. A target that ends in `/` names a folder and is
-    left out, unless its last segment has an extension or `is_file` says a file
-    has exactly that path: matched by name it would find a note of that name."""
-    out = []
-    for written, body in code_texts(text):
-        candidates = [body.strip().strip("\"'")]
-        candidates += [a or b for a, b in QUOTED_RE.findall(body)]
-        shell = body.replace("\\ ", "\0")                      # `Bid\ model.md` is one word
-        candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)]
-        for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
-            words = [w.strip("\"'`()").replace("\0", " ") for w in segment.split()]
-            for i in range(len(words)):
-                for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
-                    if any("/" in w for w in words[i:j]):
-                        candidates.append(" ".join(words[i:j]))
-        seen = set()
-        for candidate in candidates:
-            for target in _forms(candidate):
-                if target in seen:
-                    continue
-                seen.add(target)
-                target = re.sub(r"/[*?]+$", "/", target)  # `Demo.md/*`: a glob tail
-                slashed = target.endswith("/")
-                if slashed:
-                    # A folder path is never matched by name to a note (the
-                    # folder reading follows it). A last segment with an
-                    # extension is a file written with a stray slash: it is
-                    # read as the same token without it.
-                    target = target.rstrip("/")
-                    if target in seen or not (re.search(r"\.[A-Za-z0-9]{1,5}$", target)
-                                              or (is_file is not None and is_file(target))):
-                        continue  # no extension, and no file of exactly that name: a folder
-                    seen.add(target)
-                    if lexical(target) and lexical(target) not in seen:  # as _forms settles it
-                        seen.add(lexical(target))
-                        out.append((written, lexical(target)))
-                if ("/" in target or slashed) and not re.match(r"^[a-z][a-z0-9+.-]*:", target):
-                    out.append((written, target))
-    return out
 
 
 def project_index(ws: Workspace) -> "PathIndex":
@@ -5355,316 +5279,21 @@ def project_index(ws: Workspace) -> "PathIndex":
     return ws.project_links
 
 
-@dataclass
-class DirIndex:
-    """Every folder of every project, nested repositories included, and the
-    folders above them up to the workspace. A Garrick checkout is left out, as
-    project_index leaves it. `by_name` maps a folder's lower-cased name to its
-    folders, `child` a (parent, lower-cased name) to the folder, `names` a
-    folder to the lower-cased names of its folders and `owner` a folder to its
-    project (None above the projects)."""
-    by_name: Dict[str, List[Path]] = field(default_factory=dict)
-    child: Dict[Tuple[Path, str], Path] = field(default_factory=dict)
-    names: Dict[Path, set] = field(default_factory=dict)
-    owner: Dict[Path, Optional[Path]] = field(default_factory=dict)
-    memo: Dict[tuple, frozenset] = field(default_factory=dict)
-    links: Dict[str, List[Tuple[Path, Path]]] = field(default_factory=dict)  # a symlinked folder's lower-cased name -> (its parent, the folder it leads to)
-    hidden: set = field(default_factory=set)  # folders git ignores: a path reaches one only when it names the project (#399)
-
-    def add(self, folder: Path, project: Optional[Path]) -> None:
-        if folder in self.owner:
-            return
-        self.owner[folder] = project
-        name = folder.name.lower()
-        self.by_name.setdefault(name, []).append(folder)
-        self.child[(folder.parent, name)] = folder
-        self.names.setdefault(folder.parent, set()).add(name)
-
-
-def project_dir_index(ws: Workspace) -> DirIndex:
-    """The folders a path written in a note may lead into (DirIndex), built once
-    a run. In staged mode, the folders of a file deleted from disk but still in
-    git count too."""
-    if ws.project_dirs is None:
-        idx = DirIndex()
-        skip = set(checkouts(ws))
-        ignores = ignored(ws)
-        for apart in skip:  # named, so a path into one ends there; never entered
-            idx.names.setdefault(apart.parent, set()).add(apart.name.lower())
-        pending_links: List[Tuple[Path, str]] = []
-        for project, _ in ws.projects:
-            for above in project.parents:
-                if above not in idx.owner:
-                    try:
-                        pending_links += [(above, e.name) for e in os.scandir(above) if e.is_symlink() and e.is_dir()]
-                    except OSError:
-                        pass
-                idx.add(above, None)
-                if above == ws.root:
-                    break
-            for dirpath, dirnames, _ in os.walk(project):
-                here = Path(dirpath)
-                pending_links += [(here, d) for d in dirnames if (here / d).is_symlink() and here / d not in skip]
-                dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and here / d not in skip)
-                idx.add(here, project)
-                if ignores and (here in ignores or here.parent in idx.hidden):
-                    idx.hidden.add(here)
-            for path in ws.git_view:
-                if project in path.parents:
-                    for above in path.parents:
-                        if above == project:
-                            break
-                        idx.add(above, project)
-        # A symbolic link to a folder is a name for the folder it leads to, when
-        # that is inside the workspace. One that leads out of it (a shared
-        # drive) is never followed.
-        real_root = Path(os.path.realpath(ws.root))
-        for parent, name in pending_links:
-            try:
-                target = Path(os.path.realpath(parent / name)).relative_to(real_root)
-            except ValueError:
-                continue
-            folder = ws.root.joinpath(*target.parts)
-            if folder in idx.owner:
-                idx.links.setdefault(name.lower(), []).append((parent, folder))
-                idx.names.setdefault(parent, set()).add(name.lower())
-        ws.project_dirs = idx
-    return ws.project_dirs
-
-
 # What may follow a folder's name without being part of a longer name, and what
 # ends a path written in a note: white space, a quote, a closing bracket, a
 # comma and the like. Anything else after a folder and its slash is part of a
 # longer path.
-PATH_ENDERS = set("'\"`)]}>,;|&:")
-UNSEEN = dict.fromkeys(list(range(0x200b, 0x2010)) + list(range(0x202a, 0x202f)) + list(range(0x2060, 0x2065)) + [0xfeff, 0xad])
-SPACES = {ord(c): " " for c in "\u00a0\u202f\u3000\u1680\u180e"} | {c: " " for c in range(0x2000, 0x200b)}
 # The folders every project has by Garrick's layout. Written without the
 # project's name, one means the note's own project, whether or not that
 # project has made it yet.
-LAYOUT_FOLDERS = ("deliverables", "sources", "threads", "notes")
 # The folders an assistant's harness keeps in any project (`.claude/settings.json`, `.agents/skills`). Written
 # relative, first, they too mean the note's own project, whoever else holds one (#423).
-HARNESS_FOLDERS = (".claude", ".agents", ".codex")
-DIR_NAME_MAX = 255  # the longest a file name can be
-
-
-def plain_text(text: str) -> str:
-    """`text` as a person reads a path in it: zero-width characters gone,
-    every kind of space a space, a backslash before a space gone, and `%20`
-    and the like undone."""
-    text = text.translate(UNSEEN).translate(SPACES).replace("\\ ", " ")
-    return unquote(text) if "%" in text else text
-
-
-def _namey(c: str) -> bool:
-    return c.isalnum() or c in "_-."
-
-
-def _ends_path(c: str) -> bool:
-    return c.isspace() or c in PATH_ENDERS
-
-
-def _step(idx: DirIndex, here: Optional[frozenset], name: str, key: tuple) -> frozenset:
-    """The folders called `name` inside any of `here` (any folder at all when
-    `here` is None), remembered by `key`."""
-    got = idx.memo.get(key)
-    if got is None:
-        low = name.lower()
-        named = idx.by_name.get(low, ())
-        if here is None:
-            got = frozenset(named)
-        elif len(named) <= len(here):
-            got = frozenset(f for f in named if f.parent in here)
-        else:
-            got = frozenset(c for p in here for c in (idx.child.get((p, low)),) if c is not None)
-        led = idx.links.get(low)
-        if led:
-            got = got | frozenset(f for p, f in led if here is None or p in here)
-        idx.memo[key] = got
-    return got
-
-
-def _run(idx: DirIndex, text: str, start: int, end: int, here: Optional[frozenset], ctx: str = ""):
-    """From `start`, how far the written path follows folders: (the folders
-    reached, how many names led there, whether the path goes on past them with
-    a name). `ctx` says where `here` is, for the memory. A path that ends
-    at a folder, with or without its slash, or goes on only with white space
-    or a closing quote, is a path to a folder and does not go on."""
-    pos = start
-    key: tuple = (ctx,)
-    reached: Optional[frozenset] = None
-    count = 0
-    while pos < end:
-        slash = text.find("/", pos, end)
-        stop = end if slash == -1 else slash
-        seg = text[pos:stop]
-        if not seg:
-            pos = stop + 1
-            continue
-        if len(seg) > DIR_NAME_MAX:
-            nxt = frozenset()
-        else:
-            key = key + (seg.lower(),)
-            nxt = _step(idx, here, seg, key)
-        if nxt:
-            reached, here, count = nxt, nxt, count + 1
-            if slash == -1:
-                return reached, count, False
-            pos = slash + 1
-            continue
-        if here is None:
-            return None, 0, False
-        # No folder of that name. A folder's name with a space or a closing
-        # quote after it is a path to the folder, with something after it.
-        known = set().union(*(idx.names.get(f, ()) for f in here))
-        low = seg.lower()
-        for i in range(1, len(seg) + 1):
-            if (i == len(seg) or not _namey(seg[i])) and low[:i] in known:
-                return reached, count, False
-        return reached, count, not _ends_path(seg[0])
-    return reached, count, False
 
 
 # The top folders of an operating system: a path written from one leads out of the workspace, unless it passes
 # through the workspace's own folder or its Zones/ or Wikis/.
-SYSTEM_TOPS = frozenset({"users", "home", "library", "system", "applications", "volumes", "private", "tmp", "var", "etc",
-                         "opt", "usr", "mnt", "srv", "root", "network", "cores", "bin", "sbin", "dev", "proc", "run", "media"})
 # The folders a home folder holds by the operating system's own layout. `~/Harbour` could be a folder of the
 # workspace written from the home folder, so it is still read by its names; `~/Library` cannot.
-HOME_FOLDERS = frozenset({"library", "documents", "downloads", "desktop", "applications", "pictures", "music", "movies",
-                          "public", "appdata", "onedrive"})
-
-
-def _folder_key(name: str) -> str:
-    """A folder's name as the resolver reads it: case, `-`, `_` and spaces do not tell two names apart."""
-    return re.sub(r"[-_\s]+", "", name.lower())
-
-
-def _workspace_names(ws: Workspace, idx: DirIndex) -> frozenset:
-    """The names (_folder_key) of every zone, project and thread folder of the workspace, once a run."""
-    got = getattr(idx, "top_names", None)
-    if got is None:
-        names = set()
-        zones = ws.root / "Zones"
-        try:
-            names |= {_folder_key(e.name) for e in os.scandir(zones) if e.is_dir()}
-        except OSError:
-            pass
-        projects = {project for project, _ in ws.projects}
-        for folder in idx.owner:
-            if folder in projects:
-                names.add(_folder_key(folder.name))
-            elif folder.parent.name.lower() == "threads" and folder.parent.parent in projects:
-                names.add(_folder_key(folder.name))
-        for project in projects:
-            names.add(_folder_key(project.parent.name))
-        got = idx.top_names = frozenset(names)
-    return got
-
-
-def _outside_workspace(ws: Workspace, idx: DirIndex, rest: str) -> bool:
-    """Does the absolute path `rest`, which holds no mark of the workspace, lead out of it: `~/` and a folder every
-    home folder holds, or `/…` from an operating system's top folder, and only when no zone, project or thread of
-    this workspace has that name. A workspace with a project called `Home` or `Library` reads `/Home/…` and
-    `~/Library/…` by its names, as before. What is still read by names: every other first segment, and any
-    path whose first system folder is also a zone, project or thread name (any case; `-`, `_` and spaces alike).
-    A later segment is not looked at: `~/Library/<anything>` is outside the workspace whatever the segments after
-    it are called, which is the case the rule exists for."""
-    if rest.startswith("~/"):
-        first = rest[2:].split("/", 1)[0]
-        listed = first.lower() in HOME_FOLDERS or first.startswith(".")
-    else:
-        first = rest[1:].split("/", 1)[0]
-        listed = rest.startswith("/") and first.lower() in SYSTEM_TOPS
-    return listed and _folder_key(first) not in _workspace_names(ws, idx)
-
-
-def dir_crossings(ws: Workspace, source: Path, text: str, whole: bool) -> List[List[Tuple[Path, bool]]]:
-    """(folder, whether the path names its project) for each project folder that a path written in `text` leads
-    into and goes on past with a name. A path is read from each start in
-    `text` when `whole` is False (a code line, a tag), and from its first
-    character when True (a link). It ends at the next `; | & < >`. It is read
-    from the folders above the note (`./`, `../`), from the workspace (a path
-    from `Zones/` or the workspace's own folder, with or without what is in
-    front) or by its last names: a folder anywhere whose names end the same
-    way. Nothing in a Garrick checkout counts."""
-    idx = project_dir_index(ws)
-    text = plain_text(text)
-    breaks = [m.start() for m in SHELL_BREAK_RE.finditer(text)]
-    root_name, found = ws.root.name, []
-    starts = [0] if whole else [m.start() for m in CODE_TOKEN_RE.finditer(text)]
-    for start in starts:
-        k = bisect_left(breaks, start)
-        end = breaks[k] if k < len(breaks) else len(text)
-        first = text.find("/", start, min(end, start + DIR_NAME_MAX + 1))
-        head = text[start:start + 8].lower()
-        if first == -1 and not head.startswith(("file:", "~")):
-            continue
-        window = text[start:min(end, start + 4096)]
-        settled = lexical(window)
-        if settled and settled != window:
-            # `x/../Harbour/…` is `Harbour/…`; a `..` left in front is read from the note and by its names alone.
-            for variant in {settled, settled.lstrip("./") if settled.startswith("../") else settled}:
-                found += dir_crossings(ws, source, variant, True)
-            continue
-        word = window.split(None, 1)[0] if window.strip() else ""
-        if "/".join(_strip_md(tuple(x.lower() for x in word.split("/") if x and x != "."))) in SHARED_PROJECT_PATHS:
-            continue  # every project holds this one: the file reading says how
-        if harness_path(ws, source, word) and text[max(0, start - 1):start] not in tuple("=:&?#%"):
-            continue  # `.claude/…` from any project: its own, wherever a tail of it would land (#423)
-        tries: List[Tuple[int, Optional[frozenset], str]] = []
-        rest = window
-        if head.startswith("file:"):
-            rest = re.sub(r"(?i)^file:(?://[^/]*)?", "", rest)
-            start += len(window) - len(rest)
-        if rest.startswith(("/", "~")):
-            for m in re.finditer(r"(?<=/)([^/]{1,%d})(?=/|$)" % DIR_NAME_MAX, rest[:4096]):
-                name = m.group(1)
-                if name == root_name:
-                    tries.append((start + m.end() + 1, frozenset({ws.root}), "@"))
-                elif name in ("Zones", "Wikis"):
-                    tries.append((start + m.start(), frozenset({ws.root}), "@"))
-            if rest.startswith("~/"):
-                name = rest[2:].split("/", 1)[0]
-                if name == root_name:
-                    tries.append((start + 2 + len(name) + 1, frozenset({ws.root}), "@"))
-            # A site-relative or home-relative path is also read by its names alone, unless it is a path outside the
-            # workspace: one from the home folder, or from an operating system's own top folder, with no workspace
-            # folder in it. That leads out of the workspace, so a project that ends the same way is none of its business.
-            if not (not tries and _outside_workspace(ws, idx, rest)):
-                tries.append((start + (2 if rest.startswith("~/") else 1), None, ""))
-        elif rest.startswith(("./", "../")):
-            base, pos = source.parent, start
-            while True:
-                part = text[pos:pos + 3]
-                if part.startswith("./"):
-                    pos += 2
-                elif part.startswith("../"):
-                    base, pos = base.parent, pos + 3
-                else:
-                    break
-            if base in idx.owner:
-                tries.append((pos, frozenset({base}), "@" + str(base)))
-        else:
-            tries.append((start, None, ""))
-        group: List[Tuple[Path, bool]] = []
-        for pos, here, ctx in tries:
-            reached, count, goes_on = _run(idx, text, pos, end, here, ctx)
-            if reached and goes_on:
-                for folder in reached:
-                    project = idx.owner.get(folder)
-                    if project is not None:
-                        # It names the project when it is read from a fixed place, or its names reach the project's folder.
-                        names = bool(ctx) or count >= len(folder.relative_to(project).parts) + 1
-                        if not names and folder.parent == project and folder.name.lower() in LAYOUT_FOLDERS:
-                            continue  # `Deliverables/…` from any project: its own folder, made or not yet
-                        if not names and folder in idx.hidden:
-                            continue  # a copy or a build git ignores: a path that only ends the same way does not lead into it
-                        group.append((folder, names))
-        if group:
-            found.append(group)
-    return found
 
 
 def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
@@ -5685,86 +5314,9 @@ def project_file_tags(ws: Workspace, project: Path, path: Path) -> set:
 
 # Paths every project holds by Garrick's own layout: written by themselves they
 # name no project, whoever else holds one.
-SHARED_PROJECT_PATHS = ("deliverables/published",)
 
 
 # What a path under a harness folder may name without naming a subject: the files and folders the harness itself defines.
-HARNESS_VOCABULARY = frozenset({"settings.json", "settings.local.json", "skills", "agents", "commands", "hooks",
-                                "config.toml", "agents.md", "claude.md", "skill.md", "\u2026"})
-
-
-def harness_path(ws: Workspace, source: Path, target: str) -> bool:
-    """Is `target`, written in the note `source`, a relative path whose first name is a folder every project may
-    hold (`.claude/settings.json`, `.agents/skills`), with no `..` in it, and does it mean the note's own? It does
-    when every name after the folder is the harness's own vocabulary (HARNESS_VOCABULARY), or when the note's
-    project, or the repository the note sits in, has that same path. Any other (`.claude/skills/<a subject>/…`) is
-    read as before: a name that is a walled project's is refused. A project's name before the folder, `./`, `../`,
-    `/`, `~`, a leading `\\` and any address leave it a path into that project (#423)."""
-    if re.match(r"(?i)^[a-z][a-z0-9+.-]*:", target) or target.startswith("\\"):
-        return False                  # an address (`obsidian:`, `file:`) is read from a vault or the disk, not the note
-    written = unquote(target).replace("\\", "/")
-    if written.startswith(("/", "./", "../", "~")):
-        return False
-    parts = [x for x in written.split("/") if x]
-    if not parts or parts[0].lower() not in HARNESS_FOLDERS or any(x in ("..", ".") for x in parts) or "%" in written:
-        return False
-    if all(x.lower() in HARNESS_VOCABULARY for x in parts[1:]):
-        return True
-    owner = project_of(ws, source)
-    if owner is None:
-        return False
-    project = owner[0]
-    bases = [project]
-    for up in source.parents:
-        if up == project or project not in up.parents:
-            break
-        if (up / ".git").exists():
-            bases.append(up)
-            break
-    stem = re.sub(r"(?i)\.md$", "", "/".join(parts))
-    return any(_held_by(base, rel) for base in bases for rel in ("/".join(parts), stem, stem + ".md"))
-
-
-def _held_by(base: Path, rel: str) -> bool:
-    """Is `rel` a file or folder of `base` itself: there, with no symbolic link on the way, and with its real path
-    inside the real path of `base`? A link that leads into another project is that project's, not `base`'s."""
-    here = base
-    try:
-        for name in rel.split("/"):
-            here = here / name
-            if here.is_symlink():
-                return False
-        if not here.exists():
-            return False
-        real = Path(os.path.realpath(here))
-        top = Path(os.path.realpath(base))
-        return real == top or top in real.parents
-    except (OSError, ValueError):
-        return False
-
-
-def names_project(ws: Workspace, target: str, hit: Path, project: Path) -> bool:
-    """Does `target`, a link or a path that lands on `hit`, a file of
-    `project`, say which project it means? It does when it is a path from the
-    top or from the note, when it reaches the project's folder, when it is
-    the project's hub, or when it reaches a thread no other project has a
-    thread of the same name for."""
-    if target.startswith(("/", "./", "../", "~")):
-        return True
-    written = target.split(":", 2)[2] if target.startswith("obsidian:") else target
-    depth = len([x for x in written.replace("\\", "/").split("/") if x and x != "."])
-    rel_parts = hit.relative_to(project).parts
-    if depth > len(rel_parts) or (len(rel_parts) == 1 and rel_parts[0].lower() == project.name.lower() + ".md"):
-        return True
-    if len(rel_parts) >= 3 and rel_parts[0].casefold() == "threads" and (
-            depth >= len(rel_parts) - 1 or Path(rel_parts[-1]).stem.lower() == rel_parts[1].lower()):
-        if ws.thread_owners is None:
-            ws.thread_owners = {}
-            for folder, _ in ws.projects:
-                for thread in visible_dirs(folder / "Threads"):
-                    ws.thread_owners.setdefault(thread.name.lower(), set()).add(folder)
-        return ws.thread_owners.get(rel_parts[1].lower()) == {project}
-    return False
 
 
 def vaults_of(ws: Workspace, path: Path) -> List[Path]:
@@ -5883,6 +5435,8 @@ def path_dests(ws: Workspace, target: str) -> List[Path]:
 def hidden_dests(ws: Workspace, source: Path, project: Path, target: str) -> List[Path]:
     """The files in a hidden folder (`.Quay/x`) a link names by its path. Obsidian opens none, but whoever follows
     the path does, so the walls read it: from the note's folder, the project's, its zone's and the workspace's."""
+    if target.startswith("obsidian:"):
+        target = target.split(":", 2)[2]
     written = target.split("#")[0].split("|")[0].replace("\\", "/")
     parts = [x for x in written.split("/") if x not in ("", ".")]
     if not parts or ".." in parts or not any(x.startswith(".") for x in parts):
@@ -5915,570 +5469,34 @@ def link_dests(ws: Workspace, source: Path, target: str) -> List[Path]:
 
 
 # ---------------------------------------------------------------------------
-# The tokens that name a Meetings page
+# What a note points at
 # ---------------------------------------------------------------------------
 #
-# Forms were once matched one at a time: a slash path, a path from `./`, a bare
-# name. Each new form found a way past. Now every token, however it is written
-# and wherever (a code span, a code line, a link), goes through one function
-# that turns it into its plain form (plain_forms), and one resolver answers
-# whether the plain form names a page of the Meetings wiki (PageNames.named): by
-# its whole path, by any tail of it, or by its name alone. The index holds every
-# page of every kind (sources, people, entities, decisions, questions, answers,
-# raw records) in every grade (live, dormant/, archive/). A token that names a
-# page across a wall is refused whatever its form.
-
-_COMMAND_RE = re.compile(r"^[A-Za-z][\w.+-]*$")
-_OPTION_RE = re.compile(r"^(-[\w-]*|\d+)$")
-_WRAP = "\"'`<>() \t"       # what may wrap a token; brackets and braces may be a glob's (see _unbracket)
-_PUNCT = ".,;:"
-_SIGILS = "@!$*#~"
-# What may follow a name and is not part of it: a position or a range (`:3`,
-# `:3-5`, `:L3`), a section (`::Heading`), a line (`@3`) or a backup's `~`.
-_SUFFIX_RE = re.compile(r"(?:::[^/]*|:L?\d+(?:[-:]L?\d+)*:?|@\d+(?:-\d+)?|~|\^[\w-]+)$")
-_QUERY_RE = re.compile(r"\?(?=[\w.%-]*=)")
-_REPEATS = ((re.compile(r"(?:\./)+"), "./"), (re.compile(r"\A(?:\.\./){2,}"), "../"), (re.compile(r"(?<![:/])/{2,}"), "/"))
-_LOOKALIKE = str.maketrans({**{c: "/" for c in "⁄∕⧸╱╲／⼃"},
-                            **{c: "." for c in "․‧．。܁܂"},
-                            **{c: "-" for c in "‐‑‒–—―−﹘﹣－"}})
-_GLOBS = set("*?[")
-# `HEAD:` or `host:` in front of a name, but not a position after it (`kai-ross:3`, `:L3`, `:3-5`).
-_WORD_PREFIX = r"^[A-Za-z][\w.+-]*:(?!/|L?\d+(?:[-:]L?\d+)*:?$)"
-MAX_READ = 4096  # characters of one token read in one go; a longer one is read in bounded parts
-# Default_Ignorable_Code_Point, the ones outside the categories dropped by name, and the blank braille cell.
-_IGNORABLE = ({0x34f, 0xad, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x3164, 0xffa0, 0x2800}
-              | set(range(0x180b, 0x1810)) | set(range(0xfe00, 0xfe10)) | set(range(0xe0100, 0xe01f0))
-              | set(range(0x2060, 0x2070)) | set(range(0x200b, 0x2010)))
-_COMMENT_RE = re.compile(r"(?s)<!--.*?-->|%%.*?%%")
-_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9]*(?:\s[^<>]*)?/?>")
-_WORDY = re.compile(r"[A-Za-z]")
-
-
-def _clean(text: str) -> str:
-    """`text` without what a reader does not see: control characters (a tab or
-    a line break is a space), format characters, combining marks and every
-    default-ignorable character."""
-    if text.isascii() and text.isprintable():
-        return text
-    text = text.replace("\t", " ").replace("\n", " ").replace("\r", " ")
-    return "".join(c for c in text if ord(c) not in _IGNORABLE and unicodedata.category(c) not in ("Cc", "Cf", "Mn", "Me"))
-
-
-_FOLD_SEPARATORS = re.compile(r"[-_\s]+")
-
-
-@lru_cache(maxsize=1 << 16)
-def fold_name(part: str) -> str:
-    """A name as the index and a token both fold it: Unicode compatibility and
-    case folded, invisible characters gone, lookalike slashes, dots and dashes
-    plain, and `-`, `_` and spaces one. Printable ASCII takes a short path with
-    the same result: NFKC leaves it as it is, it holds nothing invisible, and
-    its case folds as `lower()`."""
-    if part.isascii() and part.isprintable():
-        text = part.translate(_LOOKALIKE).lower()
-    else:
-        text = _clean(unicodedata.normalize("NFKC", part)).translate(_LOOKALIKE).casefold()
-    return _FOLD_SEPARATORS.sub("-", text)
-
-
-def _wrapper(c: str) -> bool:
-    """May `c` wrap a token at either end? An ASCII quote, backtick, angle bracket
-    or parenthesis, a space, or any opening or closing punctuation (a curly
-    quote, a guillemet, a corner bracket) but a bracket or a brace, which a glob
-    may use."""
-    return c in _WRAP or (c not in "[]{}" and unicodedata.category(c) in ("Pi", "Pf", "Ps", "Pe"))
-
-
-def _strip_wrap(text: str) -> str:
-    start, end = 0, len(text)
-    while start < end and _wrapper(text[start]):
-        start += 1
-    while end > start and _wrapper(text[end - 1]):
-        end -= 1
-    return text[start:end]
-
-
-def _unbracket(text: str) -> str:
-    """`text` without brackets that wrap all of it (`[[x]]`, `[x]`); `[k]ai`
-    is a glob's, and stays."""
-    m = re.fullmatch(r"\[+([^\[\]]*)\]+", text.strip())
-    return _strip_wrap(m.group(1)) if m else text
-
-
-def render(text: str) -> str:
-    """`text` as a reader sees it: HTML entities undone and inline tags gone."""
-    if "&" in text or "<" in text or "%%" in text or "~~" in text or "==" in text:
-        text = _COMMENT_RE.sub("", html.unescape(text))
-        text = _TAG_RE.sub("", text).replace("~~", "").replace("==", "")
-    return text
-
-
-def plain_forms(raw: str) -> List[str]:
-    """The plain forms a token may mean (see _plain), folded to compare."""
-    return list(_plain(raw, True))
-
-
-def plain_cased(raw: str) -> List[str]:
-    """The same forms, as the token spells them, to look for a file by."""
-    return list(_plain(raw, False))
-
-
-def _dots(raw: str) -> str:
-    """`raw`, a path, with its `.` and `..` names settled over the whole of it, in
-    one pass: `a/b/../c` is `a/c`. A `..` with nothing before it goes."""
-    out: List[str] = []
-    for seg in raw.split("/"):
-        if seg == ".":
-            continue
-        if seg == "..":
-            if out and out[-1] not in ("", ".."):
-                out.pop()
-            continue
-        out.append(seg)
-    return "/".join(out)
-
-
-def _parts(raw: str) -> List[str]:
-    """`raw` in parts of at most MAX_READ characters: itself if short; else its first
-    and its last MAX_READ characters, and each stretch between `#`, `?`, `:` and
-    white space, those too long cut the same way. No head or tail is dropped."""
-    if len(raw) <= MAX_READ:
-        return [raw]
-    out = [raw[:MAX_READ], raw[-MAX_READ:]]
-    settled = _dots(raw) if "/" in raw else raw        # the whole token, `.` and `..` settled, read first
-    if settled != raw:
-        out += _parts(settled) if len(settled) <= MAX_READ else [settled[:MAX_READ], settled[-MAX_READ:]]
-    for piece in re.split(r"[#?:]+", raw)[:5000] + re.split(r"\s+", raw)[:5000]:
-        if len(piece) > MAX_READ:
-            out += [piece[:MAX_READ], piece[-MAX_READ:]]
-        elif piece:
-            out.append(piece)
-    segs = settled.split("/") if "/" in settled else []
-    for i in range(0, min(len(segs), 20000), 4):        # the middle of a long path: windows of eight names
-        out.append("/".join(segs[i:i + 8]))
-    return list(dict.fromkeys(out))
-
-
-def _texts(raw: str) -> List[str]:
-    """`raw` as the text to read: normalised, and read again with its HTML
-    entities undone and its tags gone, if it holds any."""
-    for pattern, plain in _REPEATS:
-        raw = pattern.sub(plain, raw)
-    seen = _parts(raw)
-    seen += [render(x) for x in seen if "&" in x or "<" in x or "%%" in x or "~~" in x or "==" in x]
-    out = []
-    for text in seen:
-        text = plain_text(text)
-        text = re.sub(r"[ªº]+$", "", text)                 # NFKC would make them letters
-        text = _clean(unicodedata.normalize("NFKC", text)).translate(_LOOKALIKE)
-        if text not in out:
-            out.append(text)
-    return out
-
-
-# Bold round a folder's name. Two or three stars, a name that starts with a letter or digit and holds no glob
-# character, and the same stars again. a pattern that starts with `**/`, and `*.md`, are globs and stay so.
-EMPHASIS_RE = re.compile(r"(\*{2,3})([A-Za-z0-9][^*?\[\]{}]*/)\1")
-
-
-@lru_cache(maxsize=1 << 18)
-def _plain(raw: str, fold: bool) -> Tuple[str, ...]:
-    """Every plain form `raw`, a token as written, may mean as a path: each
-    reading of it that is not certain. Its text is normalised (Unicode folded, a
-    full-width slash is a slash, invisible characters gone, HTML entities
-    undone and tags dropped, a percent escape decoded); then, whichever are
-    possible, with a backslash read as `/` or dropped before a mark, with a
-    leading `*` kept as a glob or taken off, with trailing marks kept (a glob's
-    `*`, `?`) or taken off, and with a `word:` in front (`HEAD:`, `host:`) kept
-    or taken off. Each is read by _reading. Bounded: runs of `./` collapse
-    first, and only the last 4096 characters are read."""
-    out: List[str] = []
-    web = re.match(r"(?i)\s*[<(\[\"'`]*https?://", raw) is not None
-    if len(raw) <= MAX_READ and not (web and not re.search(r"(?i)/(?:wiki|raw|wikis)/", raw)):   # the name as written first: a page's may hold `#`, `%`, `(`
-        said = _strip_wrap(raw.replace("\\", "/"))
-        bold = EMPHASIS_RE.fullmatch(said)
-        said = bold.group(2) if bold else said        # bold round a folder's name is emphasis, not a glob
-        literal = _trim(said, False)
-        parts = [x for x in literal.split("/") if x not in ("", ".")]
-        if parts:
-            out.append("/".join(fold_name(x) for x in parts) if fold else "/".join(parts))
-        shown = _SUFFIX_RE.sub("", said.rstrip("/"))
-        shown = re.sub(r"(?i)\.(?:md|markdown)$", "", shown)
-        raw_parts = [x for x in shown.split("/") if x not in ("", ".")]
-        if raw_parts:                                                # and with nothing taken off it (`Delta+`)
-            form = "/".join(fold_name(x) for x in raw_parts) if fold else "/".join(raw_parts)
-            if form not in out:
-                out.append(form)
-    for text in _texts(raw):
-        stripped = _strip_wrap(text)
-        modes = [(bs, star, tail, pref)
-                 for bs in ((0, 1) if "\\" in text else (0,))
-                 for star in ((0, 1) if stripped.lstrip(_SIGILS.replace("*", "")).startswith("*") else (0,))
-                 for tail in ((0, 1) if any(c in stripped for c in "*?]}") else (0,))
-                 for pref in ((0, 1) if re.match(_WORD_PREFIX, stripped) else (0,))]
-        for mode in modes:
-            for form in _reading(text, fold, *mode):
-                if form not in out:
-                    out.append(form)
-    return tuple(out)
-
-
-def _trim(head: str, keep_glob: bool) -> str:
-    """`head` without what trails a name and is not part of it: any mark or symbol
-    (a glob's `*`, `?`, `]` and `}` kept when `keep_glob`), a position, `.md`,
-    a possessive."""
-    for _ in range(8):
-        before = head
-        end = len(head)
-        while end and (head[end - 1] in "/ \t" or (unicodedata.category(head[end - 1])[0] in "PS"
-                                                    and not (keep_glob and head[end - 1] in "*?]}"))):
-            end -= 1
-        head = _SUFFIX_RE.sub("", head[:end])
-        head = re.sub(r"['’]s$", "", head)
-        if head.lower().endswith(".md"):
-            head = head[:-3]
-        elif head.lower().endswith(".markdown"):
-            head = head[:-9]
-        if head == before:
-            break
-    return head
-
-
-def _reading(text: str, fold: bool, bs: int, star: int, tail: int, pref: int) -> List[str]:
-    """The plain forms one reading gives: quotes and brackets off, `file:`,
-    `path:` and a web address's host off, a sigil (`@ ! $ * # ~`) before it
-    off, `#heading`, `?query=` and `|alias` off, a leading command and its
-    options off, every leading `./` off, `//` read as `/`, a trailing `/` off,
-    a position (`:3`, `:3-5`, `:L3`, `@3`, `::Heading`, a trailing `~`) off and
-    `.md` off. The token as it stands comes back too: a page's name may hold a
-    space (a decision's). With `fold`, each form is lower case and its names
-    fold (fold_name); its segments are joined by `/`. A web address names a
-    page only by a path with a `wiki`, `raw` or `Wikis` segment."""
-    if bs == 0:
-        text = re.sub(r"\\([^A-Za-z0-9])", r"\1", text)
-    text = text.replace("\\", "/")
-    text = _strip_wrap(text)
-    text = re.sub(r"^(?:~~|==|%%)+|(?:~~|==|%%)+$", "", text)         # strike, highlight, comment marks
-    text = re.sub(r"^(\*{1,3}|_{1,3})(.+)\1$", r"\2", text)       # bold or italic
-    text = _unbracket(text)
-    text = re.sub(r"(?i)^(?:file|path):(?://[^/]*)?", "", text)
-    web = bool(re.match(r"(?i)^https?://", text))
-    text = _strip_wrap(re.sub(r"(?i)^[a-z][a-z0-9+.-]*://[^/]*", "", text))
-    sigils = _SIGILS.replace("*", "") if star else _SIGILS
-    text = text.lstrip(sigils)
-    if pref:
-        text = re.sub(_WORD_PREFIX, "", text)
-    text = _QUERY_RE.split(text, 1)[0]
-    for mark in ("#", "|"):
-        text = text.split(mark, 1)[0]
-    text = _strip_wrap(text)
-    if not text:
-        return []
-    words = text.split()
-    heads = [text]
-    for i in range(1, min(len(words), 4)):
-        if _COMMAND_RE.match(words[0]) and all(_OPTION_RE.match(w) for w in words[1:i]):
-            heads.append(" ".join(words[i:]))
-    out: List[str] = []
-    for head in heads:
-        head = _unbracket(_strip_wrap(head)).lstrip(sigils)
-        head = _trim(head, bool(tail))
-        parts: List[str] = []
-        for part in head.split("/"):
-            if part in ("", "."):
-                continue
-            if part == "..":
-                if parts:
-                    parts.pop()
-                continue
-            parts.append(part.strip())
-        if web and not {p.lower() for p in parts} & {"wiki", "raw", "wikis"}:
-            continue
-        for shown in (parts, [_unmark(x) for x in parts]):       # `*x*` is emphasis or a glob: both
-            form = "/".join(fold_name(p) for p in shown) if fold else "/".join(shown)
-            if form and form not in out:
-                out.append(form)
-    return out
-
+# A token is a reference only when the vault resolves it, and nothing is read as
+# anything else (docs/principles.md, One memory, walled use). Four rules: a link
+# that resolves (link_references); a token that is the exact path of a file
+# (reference_tokens, exact_files); a name from the Parties, People or Aliases
+# tables (name_forms); eight words in a row shared with a walled file (runs).
+# A glob, a folder, a bare word and a path with an entity or an escape in it
+# resolve to nothing, so they are text.
 
 LINK_ATTRS = {"href", "src", "srcset", "data", "xlink:href", "poster", "background", "action", "cite", "longdesc"}
 
 
-def _link_like(written: str) -> bool:
-    """Is a link, as written, one a reader follows? An attribute of an HTML tag
-    that is no address (`id="status"`) is not."""
-    m = re.match(r"<[^\s>]+\s+([\w:.-]+)=", written)
-    return m is None or m.group(1).lower() in LINK_ATTRS
-
-
-def _unmark(part: str) -> str:
-    """A name without emphasis marks round it (`_kai-ross_`, `~~x~~`, `==x==`,
-    `**x**`). A `*` at one end alone is a glob's."""
-    lead = re.match(r"(?:\*+|_+|~~|==)", part)
-    trail = re.search(r"(?:\*+|_+|~~|==)$", part[lead.end():] if lead else part)
-    if lead and lead.group(0).startswith("*") and not trail:
-        lead = None
-    rest = part[lead.end():] if lead else part
-    trail = re.search(r"(?:\*+|_+|~~|==)$", rest)
-    if trail and (lead or not trail.group(0).startswith("*")):
-        rest = rest[:trail.start()]
-    return rest or part
-
-
-def distinctive(name: str) -> bool:
-    """Is a bare name distinctive enough to name a page: does it hold anything
-    but letters (a digit, a separator, a `#`)? A plain word (`status`) is not."""
-    return not name.isalpha()
-
-
-def body_tokens(body: str, runs, first_words=frozenset()) -> List[str]:
-    """The tokens one code body may hold: all of it, each quoted string, each
-    word, and with `runs` each run of up to eight words that starts after a
-    command, at a path or at a date (a decision's name has spaces in it). A
-    body is read whole however long it is."""
-    candidates = [body.strip()]
-    candidates += [a or b for a, b in QUOTED_RE.findall(body)]
-    shell = body.replace("\\ ", "\0")
-    candidates += [t.replace("\0", " ") for t in CODE_TOKEN_RE.findall(shell)]
-    if runs:
-        for segment in SHELL_BREAK_RE.split(shell.replace("=", " ")):
-            for words in ([w.strip("\"'`()").replace("\0", " ") for w in segment.split()],
-                          [w.strip("\"'`").replace("\0", " ") for w in segment.split()]):    # and with the brackets kept
-                for i in range(len(words)):
-                    if i < 4 or "/" in words[i] or (len(words[i]) == 6 and words[i].isdigit()) or (
-                            first_words and fold_name(words[i]) in first_words):
-                        for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS) + 1):
-                            candidates.append(" ".join(words[i:j]))
-    return [c for c in dict.fromkeys(candidates) if c]
-
-
-HTML_CODE_RE = re.compile(r"(?is)<(code|pre)\b[^>]*>(.*?)</\1\s*>|<!--(.*?)-->")
-
-
-def other_code_texts(text: str, indented: bool = True) -> List[Tuple[str, str]]:
-    """(as written, what it holds) for code a reader sees that code_texts does
-    not read: an indented code block (four spaces or a tab, each line), HTML
-    `<code>` and `<pre>` and a comment (each line)."""
-    out = []
-    for line in text.split("\n") if indented else ():
-        if line[:4] == "    " or line[:1] == "\t":
-            if line.strip():
-                out.append((line.strip(), line))
-    for m in HTML_CODE_RE.finditer(text):
-        body = m.group(2) if m.group(2) is not None else m.group(3)
-        for line in (body or "").split("\n"):
-            if line.strip():
-                out.append((line.strip(), line))
-    return out
-
-
-def code_names(text: str, runs: bool = False, first_words=frozenset(), indented: bool = True) -> List[Tuple[str, str]]:
-    """(as written, token) for every token that code may hold which may name a
-    Meetings page, with or without a slash: in a code span of any length, a
-    code line, an indented block, `<code>`, `<pre>` and a comment. One code
-    text is read once. With `indented` false (a file of markup or data, which
-    has no indented code block) an indented line is not code."""
-    out: List[Tuple[str, str]] = []
-    done = set()
-    for written, body in code_texts(text, None) + other_code_texts(text, indented):
-        if (written, body) in done:
-            continue
-        done.add((written, body))
-        out += [(written, c) for c in body_tokens(body, runs, first_words)]
-    return out
-
-
 AUTOLINK_RE = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\s]*)>")
-PROSE_WORD_RE = re.compile(r"[^\s`<>()\[\]\"'|;,{}]+")
-PROSE_START_RE = re.compile(r"(?i)(?:^|[^\w])(?:wikis|wiki|raw|meetings|dormant|archive|decisions|questions|answers|sources|people|entities)/")
-# A key of a note's own frontmatter says what the note is, not what it names.
-OWN_KEYS = {"party", "parties", "zone", "type", "status", "created", "updated", "date", "pinned"}
-WIKILINK_ANY_RE = re.compile(r"\[\[((?:[^\[\]\n]|\[[^\[\]\n]*\])+?)\]\]")   # with a glob's [class] in it
-BROKEN_DEST_RE = re.compile(r"\]\(\s*([^()<>\n]*\n[^()<>]{0,300}?)\s*\)")
-
-
-def markdown_targets(text: str) -> List[Tuple[str, str]]:
-    """(as written, target) for every Markdown link, by reference too, as it
-    stands: a target that opens with something like a scheme (`kai-ross:3`) is
-    read as a name with a line suffix, not left as a web address, unless it is
-    one (`://`, `mailto:`). An `obsidian://` address is left to uri_targets."""
-    out = []
-    for regex in (MDLINK_RE, REFDEF_RE):
-        for m in regex.finditer(text):
-            plain = next((g for g in m.groups() if g is not None), "").strip()
-            if "%" in plain and not plain.startswith("#"):          # a name may hold `%`: as written too
-                out.append((m.group(0).strip(), plain))
-            found = unquote(plain)
-            if found and not found.startswith("#") and not re.match(r"(?i)^(?:obsidian://|mailto:|tel:)", found) and (
-                    not re.match(r"(?i)^[a-z][a-z0-9+.-]*://", found) or re.match(r"(?i)^https?://", found)):
-                out.append((m.group(0).strip(), found))
-    for m in BROKEN_DEST_RE.finditer(text):                    # a destination broken over lines
-        out.append((m.group(0).strip(), re.sub(r"\s+", "", m.group(1))))
-    return out
-
-
-def uri_targets(text: str) -> List[Tuple[str, str]]:
-    """Every `obsidian://` address in the text, as it stands: named reads all
-    its query values."""
-    return [(u, u) for u in dict.fromkeys(URI_RE.findall(text))]
-
-
-FM_OPEN_RE = re.compile(r"\A﻿?---[ \t]*\r?\n")
-FM_CLOSE_RE = re.compile(r"(?m)^(?:---|\.\.\.)[ \t]*$")
-FM_KEY_RE = re.compile(r"""^(?:\?\s*)?(?:"([^"]*)"|'([^']*)'|([^:#"'][^:]*?))\s*:(?:\s+(.*))?$""")
-FM_SPLIT_RE = re.compile(r"[\s,;\[\]{}()\"'|>]+")
-
-
-_YAML_ESC = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "a": "\a", "b": "\b", "e": "\x1b", "f": "\f", "v": "\v",
-             "N": "\x85", "_": "\xa0", "L": "\u2028", "P": "\u2029", " ": " ", '"': '"', "/": "/", "\\": "\\"}
-YAML_DQ_RE = re.compile(r'"((?:[^"\\]|\\.)*)"', re.S)
-YAML_SQ_RE = re.compile(r"'((?:[^']|'')*)'", re.S)
-
-
-def _yaml_double(m) -> str:
-    """A double-quoted YAML scalar as YAML reads it: a line break and the white
-    space round it one space, and `\\xNN`, `\\uNNNN`, `\\UNNNNNNNN` and the
-    one-letter escapes decoded."""
-    body = re.sub(r"\\\n\s*", "", m.group(1))                  # an escaped line break joins the lines
-    body = re.sub(r"[ \t]*\n\s*", " ", body)
-
-    def esc(e):
-        t = e.group(1)
-        if len(t) > 1:
-            try:
-                return chr(int(t[1:], 16))
-            except (ValueError, OverflowError):
-                return e.group(0)
-        return _YAML_ESC.get(t, t)
-    return re.sub(r"\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)", esc, body)
-
-
-def _yaml_single(m) -> str:
-    return re.sub(r"[ \t]*\n\s*", " ", m.group(1).replace("''", "'"))
-
-
-def frontmatter_names(text: str) -> List[Tuple[str, str]]:
-    """(as written, token) for every scalar of a note's frontmatter, at any
-    depth and in any shape (a nested map, a list, a flow map, a block scalar,
-    a quoted key, a key with a space, an explicit `?` key, JSON): the whole
-    value, each quoted string in it, and each of its words, split at `,`, `;`
-    and spaces. Only the values of the note's own keys (OWN_KEYS), at the left
-    margin, are left out."""
-    m = FM_OPEN_RE.match(text)
-    if m:
-        blocks, body = [], text[m.end():]
-        for _ in range(8):                     # a document after the first is read too
-            end = FM_CLOSE_RE.search(body)
-            blocks.append(body[:end.start()] if end else body[:20000])
-            body = body[end.end():].lstrip("\n") if end else ""
-            again = FM_OPEN_RE.match(body)
-            if not again:
-                break
-            body = body[again.end():]
-        block = "\n".join(blocks)
-    elif text.lstrip("﻿ \t\r\n").startswith("{"):
-        block = text.lstrip("﻿ \t\r\n")[:20000]
-    else:
-        return []
-    out: List[Tuple[str, str]] = []
-    decoded = YAML_SQ_RE.sub(_yaml_single, YAML_DQ_RE.sub(_yaml_double, block)) if ('"' in block or "'" in block) else block
-    for variant in dict.fromkeys([block, decoded]):
-        out += _frontmatter_lines(variant)
-    return list(dict.fromkeys(out))
-
-
-def _frontmatter_lines(block: str) -> List[Tuple[str, str]]:
-    out: List[Tuple[str, str]] = []
-    skipping = False
-    for line in block.split("\n")[:2000]:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        indent = len(line) - len(line.lstrip())
-        if skipping and (indent > 0 or stripped.startswith("-")):
-            continue
-        skipping = False
-        key = FM_KEY_RE.match(stripped)
-        if key:
-            name = (key.group(1) or key.group(2) or key.group(3) or "").strip().lower()
-            value = (key.group(4) or "").strip()
-            if indent == 0 and name in OWN_KEYS:
-                skipping = True
-                continue
-        else:
-            value = re.sub(r"^(?:[-?:]\s+)+", "", stripped)
-        if key and name not in OWN_KEYS and len(name) <= 200:     # a key may be a page's name
-            out.append((name, name))
-        pieces = [value] + [a or b for a, b in QUOTED_RE.findall(value)] + re.split(r"[,;{}\[\]()\"'|>]+\s*|:\s+", value) + FM_SPLIT_RE.split(value)
-        out += [(p, p) for p in dict.fromkeys(x.strip() for x in pieces) if p]
-    return out
-
-
-def _slashy(word: str) -> bool:
-    """Does a word hold a slash, in any form a path is written: `/`, a lookalike,
-    `%2F`, `%5C`, or a backslash?"""
-    if "/" in word or "\\" in word:
-        return True
-    if "%" in word and ("/" in unquote(word) or "\\" in unquote(word)):
-        return True
-    return not word.isascii() and "/" in unicodedata.normalize("NFKC", word).translate(_LOOKALIKE)
-
-
-def prose_paths(text: str, spaced: bool = False) -> List[Tuple[str, str]]:
-    """(as written, word) for every word of the text, anywhere, that holds a
-    slash: a path in plain prose. Only one that names a Meetings page by its
-    whole path or by a tail of two names or more is refused (PageNames.named
-    with `min_parts`), so a bare name in prose stays unread. With `spaced`, a
-    word that starts a path into a wiki is also read with the up to eight words
-    after it, since a decision's name has spaces in it."""
-    text = text[:1 << 22]
-    words = PROSE_WORD_RE.findall(text)
-    out = [(w, w) for w in dict.fromkeys(words) if _slashy(w)]
-    for w in dict.fromkeys(words):             # `harvest-co—the page`, `harvest-co:yes`: each side of a dash or colon
-        if _slashy(w) and re.search("[\u2013\u2014:!?]", w) and not re.match(r"(?i)[a-z][a-z0-9+.-]*://", w):
-            out += [(w, piece) for piece in re.split("[\u2013\u2014:!?]+", w) if piece and _slashy(piece)]
-    if spaced:
-        for i, word in enumerate(words):
-            if PROSE_START_RE.search(word) or PROSE_START_RE.search(unquote(word)):
-                for j in range(i + 2, min(len(words), i + MAX_RUN_WORDS + 1) + 1):
-                    run = " ".join(words[i:j])
-                    out.append((run, run))
-                    if re.search("[\u2013\u2014:!?]", words[j - 1]):
-                        out.append((run, " ".join(words[i:j - 1] + [re.split("[\u2013\u2014:!?]+", words[j - 1])[0]])))
-    return out
-
-
-GLOB_FILE_MAX = 5000  # distinct globs one file may hold; a file with more cannot be read
 
 
 class PageNames:
-    """Every page and record of the Meetings wiki, indexed once a run for
-    tokens that name one: by the last part of each place it stands at. A page
-    is found at its own place and at the places it stands in the other grades
-    (grade_places): a token written before it faded or woke still names it.
-    Only the names are read to build it; the parties a page is written for
-    (`tags_of`) are read when a token names it. `kinds` says what to call a
-    page that is no meeting page. Names fold (fold_name)."""
+    """Every page and record of the Meetings wiki that is not a meeting page, by
+    what to call it (`kinds`), and the parties each one is written for
+    (`tags_of`), read when a reference resolves to it."""
 
     def __init__(self, ws: Workspace):
         self.ws = ws
         self.kinds: Dict[Path, str] = {}
-        self.by_last: Dict[str, List[Tuple[Tuple[str, ...], Path]]] = {}
-        self.entries: List[Tuple[Tuple[str, ...], Path]] = []
         self._tags: Dict[Path, set] = {}
-        self._globs: Dict[str, List[Path]] = {}
-        self.globs_read: set = set()         # the distinct globs this file holds; walls_for_file sets it again
-        self._tails: Optional[Dict[int, Dict[str, List[Path]]]] = None
-        self._trigrams: Optional[Dict[str, set]] = None
-        self._paths: List[str] = []
-        self._budget = GLOB_FILE_MAX
-        self._full: Optional[Dict[int, Dict[str, List[Path]]]] = None
-        self.spaced = False                # does any page's name hold a space? (a decision's does)
-        self.first_words: set = set()      # the first word of each such name, folded
         self._raw_tags: Optional[Dict[Path, set]] = None
         self._entities: Optional[Dict[Path, dict]] = None
-        for page in ws.meetings:
-            self._add(page, None)
         # Every other page of the wiki, in any grade: `.md` in any case, and `.markdown`.
         wiki = ws.root / "Wikis" / "Meetings"
         for here, dirs, files in os.walk(wiki):
@@ -6490,38 +5508,11 @@ class PageNames:
                         or page.is_symlink():
                     continue
                 inside = [x.lower() for x in page.relative_to(wiki).parts[:-1]]
-                self._add(page, "person page" if "people" in inside else "entity page" if "entities" in inside else "wiki page")
+                self.kinds[page] = "person page" if "people" in inside else "entity page" if "entities" in inside else "wiki page"
         for paths in raw_records(ws).values():
             for record in paths:
                 if record not in ws.meetings:
-                    self._add(record, "raw record")
-
-    def _add(self, page: Path, kind: Optional[str]) -> None:
-        if kind:
-            self.kinds[page] = kind
-        for at in [page] + grade_places(self.ws, page):
-            have = tuple(Path(rel(self.ws, at)).parts)
-            names = [have]
-            low = have[-1].lower()
-            if low.endswith(".md"):
-                names = [have[:-1] + (have[-1][:-3],)]
-            elif low.endswith(".markdown"):
-                names = [have[:-1] + (have[-1][:-9],)]
-            elif "." in have[-1]:
-                names.append(have[:-1] + (have[-1].rsplit(".", 1)[0],))
-            for name in names:
-                # the name as written, folded; and as a token of it is read (punctuation and sigils off)
-                lasts = {fold_name(name[-1])}
-                read = _reading(_texts(name[-1])[0], True, 0, 0, 0, 0) if name[-1] else []
-                if read:
-                    lasts.add(read[0].rsplit("/", 1)[-1])
-                for last in lasts:
-                    full = tuple(fold_name(x) for x in name[:-1]) + (last,)
-                    self.by_last.setdefault(full[-1], []).append((full, page))
-                    self.entries.append((full, page))
-                if " " in page.name:
-                    self.spaced = True
-                    self.first_words.add(fold_name(page.name.split()[0]))
+                    self.kinds[record] = "raw record"
 
     def tags_of(self, page: Path) -> set:
         """The parties a page or record is written for; none when it is
@@ -6570,169 +5561,6 @@ class PageNames:
                         self._raw_tags.setdefault(found, set()).update(mine)
         return self._raw_tags.get(record, set())
 
-    def _may_match(self, form: str) -> bool:
-        """Does the glob `form` match a page? Only a glob that does counts towards GLOB_FILE_MAX, so a file of code,
-        full of `*` and `[`, is not refused for them. Every literal stretch of its last name (three letters or more)
-        must lie in the path of one page, which a trigram index of the paths tests at once; what survives is matched
-        for real (_glob). A glob whose stretches cannot rule it out, or whose class may span names (`entities[/]harvest-co`),
-        is matched for real."""
-        if "{" in form and ("[" in form or "]" in form):
-            return self._matches(form)
-        # A brace list is read as a `*`, which is at least as wide. A bracket class that can match a `/` (it holds one,
-        # spans one in a range, or is negated) spans names and keeps the glob; any other class matches one character.
-        # A `[` never closed and a `]` outside a class are plain characters.
-        flat = original = form
-        while "{" in flat:
-            wider = re.sub(r"\{[^{}]*\}", "*", flat)
-            if wider == flat:
-                break
-            flat = wider
-        form, flat, i = flat, "", 0
-        while i < len(form):
-            if form[i] != "[":
-                flat += form[i]
-                i += 1
-                continue
-            j = i + 1
-            if form[j:j + 1] in ("!", "^"):
-                j += 1
-            if form[j:j + 1] == "]":
-                j += 1
-            end = form.find("]", j)
-            if end < 0:
-                flat += form[i:]
-                break
-            body = form[i + 1:end]
-            if body[:1] in ("!", "^") or "/" in body or any(
-                    body[k] == "-" and body[k - 1] <= "/" <= body[k + 1] for k in range(1, len(body) - 1)):
-                return self._matches(original)
-            flat += "?"
-            i = end + 1
-        last = flat.rsplit("/", 1)[-1]
-        stretches = [t.lower() for t in re.split(r"[*?]", last) if len(t) >= 3]
-        if not stretches:
-            return self._matches(original)
-        if self._trigrams is None:
-            self._paths = ["/".join(have).lower() for have, _ in self.entries]
-            self._trigrams = {}
-            for i, path in enumerate(self._paths):
-                for k in {path[j:j + 3] for j in range(len(path) - 2)}:
-                    self._trigrams.setdefault(k, set()).add(i)
-        lists = []
-        for stretch in stretches:
-            for k in {stretch[j:j + 3] for j in range(len(stretch) - 2)}:
-                found = self._trigrams.get(k)
-                if not found:
-                    return False
-                lists.append(found)
-        lists.sort(key=len)
-        near = set(lists[0])
-        for more in lists[1:]:
-            near &= more
-            if not near:
-                return False
-        if not any(all(t in self._paths[i] for t in stretches) for i in near):
-            return False
-        return self._matches(original)
-
-    def _matches(self, form: str) -> bool:
-        """Does the glob match a page, matched for real? Each such matching of a glob not yet matched is paid from a
-        budget of GLOB_FILE_MAX, the work the limit has always allowed; past it a glob counts without being matched."""
-        if form in self._globs or self._budget > 0:
-            if form not in self._globs:
-                self._budget -= 1
-            return bool(self._glob(form))
-        return True
-
-    def _glob(self, form: str) -> List[Path]:
-        """The pages a glob (`kai-*`, `wiki/*/x`, `kai-{ross,x}`, `[kj]ai-r?ss`)
-        matches by full path, by tail or by name, fnmatch's way. A glob whose
-        own letters, its wildcards and extension left out, number fewer than
-        three names every page and so none."""
-        if form in self._globs:
-            return self._globs[form]
-        literal = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", re.sub(r"[*?\[\]{},]", "", form))
-        found: Dict[Path, None] = {}
-        if sum(c.isalpha() for c in literal) >= 3:
-            if self._tails is None:
-                self._tails, self._full = {}, {}
-                for have, page in self.entries:
-                    for n in range(1, len(have) + 1):
-                        self._tails.setdefault(n, {}).setdefault("/".join(have[-n:]), []).append(page)
-                    self._full.setdefault(len(have), {}).setdefault("/".join(have), []).append(page)
-            patterns = [form]
-            cut = False
-            for _ in range(12):            # the brace lists, expanded exactly while that stays small
-                more = [p[:m.start()] + alt + p[m.end():] for p in patterns
-                        for m in [re.search(r"\{([^{}]*)\}", p)] if m for alt in m.group(1).split(",")]
-                if not more:
-                    break
-                patterns = more
-                if len(patterns) > 512:
-                    cut = True
-                    break
-            if any("{" in p for p in patterns[:512]):
-                cut = True
-            if cut:                        # cut short: every brace list as a `*` instead, an over-approximation
-                wild = form
-                for _ in range(12):
-                    wild = re.sub(r"\{[^{}]*\}", "*", wild)
-                own = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", re.sub(r"[*?\[\]{},]", "", wild))
-                patterns = patterns[:512] + ([wild] if sum(c.isalpha() for c in own) >= 3 else [])
-            for pattern in patterns:
-                cut = pattern.split("/")
-                k = len(cut)
-                for n in sorted({k} | {n for n in self._full if n < k}):
-                    # a page whose whole path is n names long is matched by the last n names of a longer glob
-                    pool = (self._tails.get(k) if n == k else self._full.get(n)) or {}
-                    want = pattern if n == k else "/".join(cut[-n:])
-                    for key in _safe_fnmatch(pool, want):
-                        found.update(dict.fromkeys(pool[key]))
-        if len(self._globs) > 50000:
-            self._globs.clear()
-        self._globs[form] = list(found)
-        return self._globs[form]
-
-    def named(self, token: str, min_parts: int = 1, bare: bool = True) -> List[Path]:
-        """The pages a token names, whatever its form: by name when it is one
-        name, or when its last two names are a page's last two. With
-        `min_parts`, a token of fewer names than that names none. With `bare`
-        false, one name alone names a page only if it is distinctive (see
-        distinctive): a single plain word is not read as a page's name."""
-        tokens = [token]
-        if token.lower().startswith("obsidian://"):
-            parts = urlsplit(html.unescape(token))
-            tokens = [unquote(v) for q in (parts.query, parts.fragment) for values in parse_qs(q).values() for v in values]
-            min_parts, bare = 1, True
-        elif token.lower().startswith("obsidian:"):
-            rest = token[9:].lstrip("/")
-            query = parse_qs(urlsplit("x://x/?" + re.split("[?#]", rest, 1)[1]).query) if re.search("[?#]", rest) else {}
-            tokens = [rest] + [unquote(v) for values in query.values() for v in values]
-            if token.count(":") >= 2:
-                tokens.append(token.split(":", 2)[2])
-            min_parts, bare = 1, True
-        found: Dict[Path, None] = {}
-        explicit = any(re.search(r"(?i)\.(?:md|markdown)(?:[^\w.]|$)", t) for t in tokens)   # `quartz.md` names that file
-        for form in [f for t in tokens for f in plain_forms(t)]:
-            want = tuple(form.split("/"))
-            if len(want) < min_parts:
-                continue
-            if not (len(want) == 1 and not bare and not explicit and not distinctive(want[0])):
-                for have, page in self.by_last.get(want[-1], ()):        # the name itself first, whatever it holds
-                    if len(want) == 1 or (len(have) >= 2 and have[-2:] == want[-2:]):
-                        found[page] = None
-            if _GLOBS & set(form) or "{" in form:
-                # A glob with fewer than three letters of its own names no page (see _glob): `*`, `?:` or `[0]` in a
-                # stylesheet or a script is code, and it does not count towards the limit.
-                if sum(c.isalpha() for c in re.sub(r"\.[A-Za-z0-9]{1,5}$", "", re.sub(r"[*?\[\]{},]", "", form))) < 3:
-                    continue
-                if not self._may_match(form):
-                    continue                   # a run of words from code that holds a `*` or a `[`: it names no page (#422)
-                self.globs_read.add(form)
-                if len(self.globs_read) <= GLOB_FILE_MAX:
-                    found.update(dict.fromkeys(self._glob(form)))
-        return list(found)
-
 
 def page_party_tags(ws: Workspace, fm: dict) -> set:
     """The parties a page's `party:` and `parties:` name, as the Parties table
@@ -6767,26 +5595,6 @@ def page_names(ws: Workspace) -> PageNames:
     if ws.page_names is None:
         ws.page_names = PageNames(ws)
     return ws.page_names
-
-
-def own_file(ws: Workspace, note: Path, project: Path, token: str) -> bool:
-    """Does `token` name a file of the note's own project, read from the note's
-    folder, its thread's or the project's? Then it is that file, not a page of
-    the Meetings wiki that shares its name."""
-    thread = next((p for p in note.parents if p.parent.name == "Threads" and norm_path(project) in map(norm_path, p.parents)), None)
-    for form in plain_cased(token):
-        for base in (note.parent, thread, project):
-            if base is None:
-                continue
-            for name in (form, form + ".md"):
-                try:
-                    one = base / name
-                    if one.is_file() and not one.is_symlink() and norm_path(Path(os.path.realpath(project))) in map(norm_path, Path(os.path.realpath(one)).parents):
-                        if ws.index_files is None or os.path.realpath(one).casefold() in ws.index_files:
-                            return True
-                except (OSError, ValueError):
-                    continue
-    return False
 
 
 def symlink_finding(ws: Workspace, project: Path, ptags: set, path: Path) -> Optional[Finding]:
@@ -6830,12 +5638,130 @@ def walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: s
                         % (e.strerror or type(e).__name__), "A note in %s holds a path too long to be read" % project.name)]
 
 
+# What an honest writer puts at the edge of a path: quotes, brackets, bold marks, a comma or a full stop.
+EDGE = "\"'`<>()[]{}*,;:!?|\u201c\u201d\u2018\u2019\u00ab\u00bb"
+MAX_TOKEN = 1024      # a path is not longer than this
+MAX_SPACED = 8        # words a path with spaces in it may span
+
+
+def _key(path: str) -> str:
+    return unicodedata.normalize("NFC", path).casefold()
+
+
+def reference_index(ws: Workspace) -> Dict[str, List[Path]]:
+    """Every file a note may point at, by its path: the files of the projects, the pages of the wikis, and for a
+    wiki page the places it stands at in the other grades (grade_places). Built once a run."""
+    if ws.ref_files is None:
+        found: Dict[str, List[Path]] = {}
+
+        def add(at: Path, page: Path) -> None:
+            here = found.setdefault(_key(str(at)), [])
+            if page not in here:
+                here.append(page)
+
+        for f in project_index(ws).items:
+            add(f, f)
+        for f in ws.wiki_files:
+            add(f, f)
+        for zone in ws.zones:             # what a zone put away: a project's files keep the hub's label (#438)
+            for folder in sorted(d for d in visible_dirs(zone) if d.name.lower() == "archive"):
+                for f in walk_files(folder, nested=True):
+                    add(f, f)
+        for page in list(ws.meetings) + list(page_names(ws).kinds):
+            add(page, page)
+            for at in grade_places(ws, page):
+                add(at, page)
+        ws.ref_files = found
+        wikis = ws.root / "Wikis"
+        ws.ref_wikis = sorted(d for d in wikis.iterdir() if d.is_dir() and not d.name.startswith(".")) if wikis.is_dir() else []
+    return ws.ref_files
+
+
+def exact_files(ws: Workspace, note: Path, token: str) -> List[Path]:
+    """Rule 2: the files of the workspace that `token` is the exact path of, with `.md` or without. Read from the
+    note's own folder first, then from the top of the vault, then from the top of each wiki; an absolute path is
+    read as it is. One lookup in the index, with no reading of the token."""
+    if token.endswith("/") or "//" in token.lstrip("/") or "/./" in token or "\\" in token:
+        return []                              # a folder, or a spelling that is not the path itself
+    found = reference_index(ws)
+    if token.startswith("~"):
+        token = os.path.expanduser(token)
+    if token.startswith("/"):
+        top = str(ws.root.resolve())
+        if token == top or token.startswith(top + "/"):
+            token = str(ws.root) + token[len(top):]
+        bases: List[Optional[Path]] = [None]
+    elif token.startswith(("./", "../")):
+        bases = [note.parent]
+    else:
+        zone = ws.root / "Zones" / note.relative_to(ws.root).parts[1] if note.is_relative_to(ws.root / "Zones") and len(note.relative_to(ws.root).parts) > 1 else ws.root
+        bases = [note.parent, zone, *vaults_of(ws, note), ws.root, *ws.ref_wikis]
+    for base in bases:
+        at = os.path.normpath(token if base is None else os.path.join(base, token))
+        hits: List[Path] = []
+        for form in (at, at + ".md"):
+            hits += [h for h in found.get(_key(form), []) if h not in hits]
+        if hits:
+            return hits
+    return []
+
+
+def reference_tokens(text: str) -> List[str]:
+    """Every stretch of `text` that could be the path of a file (rule 2): a word, a word cut at the marks that wrap
+    one, a code span or a line of a fenced block whole, a frontmatter value whole, and from each word that holds a
+    slash on, a run of up to MAX_SPACED words, for a name with spaces. Only a token with a slash is kept: a name
+    with none is in the note's own folder."""
+    seen: Dict[str, None] = {}
+
+    def add(token: str) -> None:
+        token = token.lstrip(EDGE).rstrip(EDGE + ".")
+        if "/" in token and len(token) <= MAX_TOKEN:
+            seen.setdefault(token)
+
+    for word in re.split(r"\s+", text):
+        add(word)
+    for word in re.split(r"[\s\"'`<>()\[\]{}|,;=\u201c\u201d\u2018\u2019\u00ab\u00bb]+", text):
+        add(word)
+    spans = [body for _, body in code_texts(text)]
+    if FRONT_OPEN_RE.match(text):
+        block = text.split("\n---", 1)[0]
+        spans += [re.sub(r"^\s*(?:-\s+|[^:\n]*:\s+)", "", line).strip().strip("\"'") for line in block.split("\n")[1:]]
+    for span in spans:
+        add(span)
+        words = span.split()
+        for i, word in enumerate(words):
+            if "/" in word:
+                for j in range(i + 2, min(len(words), i + MAX_SPACED) + 1):
+                    add(" ".join(words[i:j]))
+    return list(seen)
+
+
+FRONT_OPEN_RE = re.compile(r"\A﻿?---[ \t]*\r?\n")
+
+
+def link_references(ws: Workspace, note: Path, text: str, meetings: "PathIndex") -> List[Tuple[str, List[Path]]]:
+    """Rule 1: (as written, files) for each link that resolves: a wikilink, a Markdown link, an embed, an HTML
+    attribute, an autolink or an `obsidian://open?file=` URI, as Obsidian resolves it. A link to a page of the
+    Meetings wiki also lands where the page stood in another grade."""
+    links = extract_links(text)
+    links += [("<%s>" % t, f) for t in AUTOLINK_RE.findall(text) for f in _link_forms(unquote(t))]
+    project = project_of(ws, note)
+    out = []
+    for written, target in dict.fromkeys(links):
+        hits = list(link_dests(ws, note, target))
+        if project is not None:
+            hits += [h for h in hidden_dests(ws, note, project[0], target) if h not in hits]
+        hits += [h for h in resolve(ws, note, target, meetings) if h not in hits]
+        if hits:
+            out.append((written, hits))
+    return out
+
+
 def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
     if ws.meeting_links is None:
         ws.meeting_links = meeting_index(ws)
-    meetings = ws.meeting_links
     tags, where = file_tags(ws, project, ptags, path)
     r = rel(ws, path)
     zone = project.parent.name
@@ -6845,267 +5771,107 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     if linked is not None:
         out.append(linked)
 
-    # Links, and paths written as code (code_paths), which whoever reads the
-    # note follows just the same.
-    def exact_file(target: str) -> bool:
-        # A slash-ended token with no extension is a file only when a regular
-        # file has exactly that path (no `.md` added, no bare name), or when a
-        # segment of it names a project's folder (0.56.0's rule, unchanged).
-        if target.startswith(("/", "~")):
-            try:
-                if Path(os.path.expanduser(target)).is_file():
-                    return True
-            except (OSError, ValueError):
-                pass
-        parts = [x.lower() for x in target.replace("\\", "/").split("/") if x and x not in (".", "..")]
-        named = {project.name.lower() for project, _ in ws.projects}
-        for project, _ in ws.projects:
-            try:
-                named |= {e.name.lower() for e in os.scandir(project / "Threads") if e.is_dir()}
-            except OSError:
-                pass
-        if set(parts) & {"wikis", "wiki", "raw"}:
-            return True  # a path into a wiki
-        stems = {_strip_md(Path(rel(ws, f)).parts)[-1].lower() for f in ws.wiki_files
-                 if "Meetings" in Path(rel(ws, f)).parts[:3]}
-        stems |= {page.stem.lower() for page in ws.meetings}
-        if parts and parts[-1] in stems:
-            return True  # it names a Meetings page, whatever its type or grade
-        if set(parts) & named:
-            return True  # a segment names a project's or a thread's folder: read as before, never as a bare folder name
-        if not parts:
-            return False
-        if target.startswith(("/", "~")):  # read from where it reaches the workspace, as a path from outside is
-            starts = [i + 1 for i, x in enumerate(parts) if x == ws.root.name.lower()]
-            starts += [i for i, x in enumerate(parts) if x in ("zones", "wikis") and i > 0]
-            tails = [parts[i:] for i in starts if i < len(parts)]
-        else:
-            tails = [parts]
-        project_index(ws)
-        known = ws.project_files or {}
-        for f in known:
-            have = [x.lower() for x in Path(rel(ws, f)).parts]
-            if any(have[-len(t):] == t for t in tails if t and len(t) <= len(have)):
-                return True
-        return False
-
-    targets = [("links", w, t) for w, t in extract_links(text)] + [("writes the path", w, t) for w, t in code_paths(text, exact_file)]
-    seen = set()
-    # Every token, from a link or from code, with a slash or without, is also
-    # read by name (plain_forms, PageNames): whatever its form, one that names a
-    # page of the Meetings wiki is read against that page's parties.
+    # What the note points at is what the vault resolves: a link (rule 1), or a token that is the exact path of a
+    # file (rule 2). Whatever it points at is read by the party the file is written for.
     names = page_names(ws)
-    names.globs_read = set()
-    resolved = set(targets)
-    told: set = set()                          # tokens that have a finding
-    last, prev = len(out), None
-    seen_tokens = set()
-    # (verb, as written, token, names at least, whether one bare name will do): a
-    # link may be to a bare name; code, frontmatter and prose read one only if
-    # it is distinctive.
-    named = [(v, w, t, 1, v == "links" and _link_like(w)) for v, w, t in targets]
-    named += [("writes the path", w, t, 1, False) for w, t in code_names(text, names.spaced, names.first_words, path.suffix.lower() not in MARKUP_SUFFIXES)]
-    shown = render(text)
-    for body in dict.fromkeys([text, shown]):
-        named += [("links", w, t, 1, True) for w, t in markdown_targets(body)]
-        named += [("links", m.group(0), m.group(1), 1, True) for m in WIKILINK_ANY_RE.finditer(body)
-                  if not m.group(1).lstrip().startswith("#")]
-        named += [("links", "<%s>" % t, t, 1, True) for t in AUTOLINK_RE.findall(body)]
-        named += [("links", w, t, 1, True) for w, t in uri_targets(body)]
-        named += [("writes the path", w, t, 2, False) for w, t in prose_paths(body, names.spaced)]
-    before = {n[1:] for n in named}
-    named += [("links", w, t, 1, False) for w, t in frontmatter_names(text)]
-    named = [n for n in named if not (n[1:] in seen_tokens or seen_tokens.add(n[1:]))]
-    # A spaced display name in a frontmatter value (`Dana Whitlock`) is a name, not a pointer to a person's page: names are
-    # tested by the People rule, and a person known on both sides of a wall has no side to take. Its reading with the
-    # spaces joined by hyphens only happens to equal a slug. A token written with the slug's own hyphens, a path and a
-    # link are read as before, and so is a slug a line fold has split (`kai- ross`).
-    fm_bare = {n[1:] for n in named if n[1:] not in before and not re.search(r"[/\\]", n[2]) and re.search(r"\s", n[2])
-               and not re.search(r"[-_\u2010-\u2015]\s|\s[-_\u2010-\u2015]", n[2])}
-    for verb, written, target, parts, bare in named if names.by_last else []:
-        found = list(resolve(ws, path, target, meetings)) if meetings.items and (verb, written, target) in resolved else []
-        named_pages = names.named(target, parts, bare)
-        if (written, target, parts, bare) in fm_bare:
-            named_pages = [p for p in named_pages if names.kinds.get(p) != "person page"]
-        if named_pages and not found and own_file(ws, path, project, target):
-            continue                           # it is a file of this project, not a page that shares its name
-        found += sorted((p for p in named_pages if p not in found),
-                        key=lambda p: (p not in ws.meetings, ("person page", "entity page", "wiki page", "raw record").index(names.kinds.get(p, "raw record"))
-                                       if p not in ws.meetings else 0))
-        for page in found:
-            if any(f.severity == ERROR for f in out[last:]):
+    refs = [("links", w, hits) for w, hits in link_references(ws, path, text, ws.meeting_links)]
+    refs += [("writes the path", "`%s`" % t, hits) for t in reference_tokens(text) for hits in [exact_files(ws, path, t)] if hits]
+    named: Dict[Tuple[str, Path], int] = {}  # (written, project) -> its finding's place in out, for a file of a project
+    seen: set = set()
+    told: set = set()                          # files a finding names already: one finding for a file, whichever way it was written
+    prev, mark = None, len(out)
+    for verb, written, hits in refs:
+        for hit in hits:
+            if len(out) > mark and prev is not None:
                 told.add(prev)
-            last, prev = len(out), written
-            key = (written, page)
-            if key in seen:
+            prev, mark = hit, len(out)
+            if hit in told or (written, hit) in seen:
                 continue
-            seen.add(key)
-            if page in reported and (verb, written, target) not in resolved:
-                continue                       # a reading of the token the older readings have told already
-            if page not in ws.meetings and written in told:
-                continue                       # one finding for a token: the first page it names, a record after its page
-            mfm = ws.meetings.get(page)
-            synthesized = mfm is None
-            if mfm is None:                    # a person page, an entity page or a raw record: its parties, in its place
-                if not names.tags_of(page):
-                    if "raw" in page.relative_to(ws.root).parts[:4] and "Meetings" in page.parts:
-                        # a raw record no page cites has no label: nobody's confidence is ever safe to assume
-                        reported.add(page)
-                        out.append(Finding(ERROR, "walls", r,
-                                           "uses %s, a raw record that no page cites, so nothing says whose it is" % page.stem,
-                                           "A note in %s uses a raw record with no label" % where))
-                    continue                   # nobody's
-                mfm = {"parties": sorted(names.tags_of(page)), "zone": zone}
-            # labels, not `parties:` alone: a page whose `party:` and `parties:` disagree reads as neither
-            label = frozenset(strip_tag(t) for t in as_list(mfm.get("parties"))) if synthesized else meeting_labels(mfm, ws.context.get("pending") is not None)
-            mtags = sorted(label) if label else []
-            if not mtags or not mfm.get("zone"):
-                reported.add(page)
-                noun = meeting_noun(ws, page, "meeting page")
-                why = ("frontmatter that is not plain key: value lines, so its parties cannot be read"
-                       if page in ws.misread else "no zone or parties")
-                out.append(Finding(ERROR, "walls", r,
-                                   "uses %s, an unfinished %s (%s)" % (page.stem, noun, why),
-                                   "A note in %s uses an unfinished %s" % (where, noun)))
+            seen.add((written, hit))
+            if hit in ws.meetings or hit in names.kinds:
+                # A page or record of the Meetings wiki.
+                mfm = ws.meetings.get(hit)
+                synthesized = mfm is None
+                if mfm is None:                    # a person page, an entity page or a raw record: its parties, in its place
+                    if not names.tags_of(hit):
+                        if "raw" in hit.relative_to(ws.root).parts[:4] and "Meetings" in hit.parts:
+                            # a raw record no page cites has no label: nobody's confidence is ever safe to assume
+                            reported.add(hit)
+                            out.append(Finding(ERROR, "walls", r,
+                                               "uses %s, a raw record that no page cites, so nothing says whose it is" % hit.stem,
+                                               "A note in %s uses a raw record with no label" % where))
+                        continue                   # nobody's
+                    mfm = {"parties": sorted(names.tags_of(hit)), "zone": zone}
+                # labels, not `parties:` alone: a page whose `party:` and `parties:` disagree reads as neither
+                label = frozenset(strip_tag(t) for t in as_list(mfm.get("parties"))) if synthesized else meeting_labels(mfm, ws.context.get("pending") is not None)
+                mtags = sorted(label) if label else []
+                noun = meeting_noun(ws, hit, "meeting page")
+                if not mtags or not mfm.get("zone"):
+                    reported.add(hit)
+                    why = ("frontmatter that is not plain key: value lines, so its parties cannot be read"
+                           if hit in ws.misread else "no zone or parties")
+                    out.append(Finding(ERROR, "walls", r, "uses %s, an unfinished %s (%s)" % (hit.stem, noun, why),
+                                       "A note in %s uses an unfinished %s" % (where, noun)))
+                    continue
+                noun = meeting_noun(ws, hit)
+                if not tags:
+                    out.append(Finding(ERROR, "walls", r,
+                                       "uses %s %s, but the project has no party to check the walls against" % (noun, hit.stem),
+                                       "A note in %s uses a %s before the project has a party" % (where, noun)))
+                    continue
+                hit_walled = sorted(blocked(ws.context, tags, mtags))
+                if hit_walled:
+                    b = hit_walled[0]
+                    reported |= {b, hit}
+                    out.append(Finding(ERROR, "walls", r,
+                                       "%s %s, a %s with %s; %s is walled and this project does not name it" % (verb, written, noun, b, b),
+                                       "A note in %s uses a %s with %s" % (where, noun, party_name(ws, b))))
+                elif mfm.get("zone") != zone:
+                    out.append(Finding(WARNING, "walls", r,
+                                       "uses %s %s from zone %s; cross-zone work happens only when asked" % (noun, hit.stem, mfm.get("zone")),
+                                       "A note in %s uses a %s from the %s zone" % (where, noun, mfm.get("zone"))))
                 continue
             if not tags:
-                out.append(Finding(ERROR, "walls", r,
-                                   "uses %s %s, but the project has no party to check the walls against"
-                                   % (meeting_noun(ws, page), page.stem),
-                                   "A note in %s uses a %s before the project has a party" % (where, meeting_noun(ws, page))))
                 continue
-            hits = sorted(blocked(ws.context, tags, mtags))
-            if hits:
-                b = hits[0]
-                reported |= {b, page}
-                out.append(Finding(ERROR, "walls", r,
-                                   "%s %s, a %s with %s; %s is walled and this project does not name it"
-                                   % (verb, written, meeting_noun(ws, page), b, b),
-                                   "A note in %s uses a %s with %s" % (where, meeting_noun(ws, page), party_name(ws, b))))
-            elif mfm.get("zone") != zone:
-                out.append(Finding(WARNING, "walls", r,
-                                   "uses %s %s from zone %s; cross-zone work happens only when asked"
-                                   % (meeting_noun(ws, page), page.stem, mfm.get("zone")),
-                                   "A note in %s uses a %s from the %s zone" % (where, meeting_noun(ws, page), mfm.get("zone"))))
-
-    if len(names.globs_read) > GLOB_FILE_MAX:
-        out.append(Finding(ERROR, "walls", r,
-                           "holds more than %d distinct globs (`*`, `?`, `[..]`), so it cannot be read; write the names "
-                           "out or take the globs out" % GLOB_FILE_MAX, "A note in %s holds too many globs to be read" % where))
-
-    # Links and paths into a project's files, this one's included, whose
-    # parties are walled from this file's: a thread of this project may be
-    # written for a party walled from this thread's.
-    #
-    # A link is read as Obsidian reads it, in the vault the note is in
-    # (obsidian_dest): when the file it opens is across a wall, it is
-    # refused. A path written as code is followed by a reader, not by
-    # Obsidian: one that lands in this project means it; one that lands on a
-    # single file, or only on files across a wall, or that names the far
-    # project, is refused; one that lands across a wall and also on a wiki
-    # page or a project with no wall, a path every project may hold such as
-    # `Deliverables/published.md`, is a warning.
-    # Folders: a path that leads into a folder of a project across a wall and
-    # goes on past it with a name is refused, whatever the name, since a name
-    # that cannot be read plainly (a `;`, a space, a glob, a `%20`, a long run of
-    # words) cannot be told from a file there. A path that ends at the folder
-    # is a path to a folder, which is not read.
-    folders = [("writes the path", w, b, False) for w, b in code_texts(text) if "/" in b or "file:" in b.lower()]
-    folders += [("links", w, b, False) for w, b in tag_texts(text) if "/" in b or "file:" in b.lower()]
-    folders += [("links", w, t, True) for w, t in extract_links(text) if not w.startswith("[[")]
-    if tags and (targets or folders):
-        index = project_index(ws)
-        named: Dict[Tuple[str, Path], int] = {}  # (written, project) -> its finding's place in out
-
-        def record(severity: str, verb: str, written: str, what: str, ear: str, b: str, other: Path) -> None:
-            # One finding for each (written, project), the worst of its readings:
-            # a warning never stands in for the refusal of another.
-            key = ("<tag>" if written.startswith("<") else written, other)  # a tag is one finding, however it was read
-            earlier = named.get(key)
-            if earlier is not None and (severity == WARNING or out[earlier].severity == ERROR):
-                return
-            if severity == ERROR:
-                reported.add(b)  # a warning must not stand in for the name check's refusal
-            found = Finding(severity, "walls", r, "%s %s%s; %s is walled and this project does not name it" % (verb, written, what, b),
-                            "A note in %s uses %s" % (where, ear))
-            if earlier is None:
-                named[key] = len(out)
-                out.append(found)
+            # A file of a project, or of a zone or the Knowledge wiki that no project holds.
+            owner = project_of(ws, hit)
+            if ((owner is None or owner[0] != project) and (ws.root / "Zones" in hit.parents
+                                                             or ws.root / "Wikis" / "Knowledge" in hit.parents)
+                    and unlabelled_target(ws, owner, hit)) \
+                    or (owner is not None and owner[0] == project and notes_disagree(ws, project, hit)):
+                # a file of the zones with no label (a zone's own file, a folder of dots, a project that names no
+                # party): nothing says whose it is, so no project may link or embed it
+                if hit not in unlabelled_hits:
+                    unlabelled_hits.add(hit)
+                    out.append(Finding(ERROR, "walls", r,
+                                       "%s %s, a file that names no party, so nothing says whose it is" % (verb, written),
+                                       "A note in %s uses a file with no label" % where))
+                continue
+            if owner is None:
+                # not a project's: a wiki page or System's, or a file a zone put away, which keeps its hub's label
+                got = labels(ws.root, hit, ws.context, ws.label_cache) if ws.root / "Zones" in hit.parents else None
+                pair = sorted(blocked(ws.context, tags, got)) if got else []
+                other = hit.parent
             else:
-                out[earlier] = found
-
-        for verb, written, target in targets:
-            if harness_path(ws, path, target):
-                continue  # `.claude/settings.json` from any project: its own, made or not yet (#423)
-            code = verb != "links"
-            hits = resolve(ws, path, target, index) if code else link_dests(ws, path, target)
-            if not code:
-                hits = hits + [h for h in hidden_dests(ws, path, project, target) if h not in hits]
-            far_hits, near = [], []
-            for hit in hits:
-                owner = project_of(ws, hit)
-                if ((owner is None or owner[0] != project) and (ws.root / "Zones" in hit.parents
-                                                                 or ws.root / "Wikis" / "Knowledge" in hit.parents)
-                        and unlabelled_target(ws, owner, hit)) \
-                        or (owner is not None and owner[0] == project and notes_disagree(ws, project, hit)):
-                    # a file of the zones with no label (a zone's own file, a folder of dots, a project that names no
-                    # party): nothing says whose it is, so no project may link or embed it
-                    if hit not in unlabelled_hits:
-                        unlabelled_hits.add(hit)
-                        out.append(Finding(ERROR, "walls", r,
-                                           "%s %s, a file that names no party, so nothing says whose it is"
-                                           % (verb, written),
-                                           "A note in %s uses a file with no label" % where))
-                    continue
-                if owner is None:
-                    continue  # not a project's: a wiki page or System's, which the meeting check reads
                 other = owner[0]
-                if verb == "links" and other == project and path == project / (project.name + ".md") \
-                        and hit.parent.parent == project / "Threads" and hit.name == hit.parent.name + ".md":
-                    continue        # the hub lists its own threads: a link to a thread note is navigation, nothing else is
+            if owner is not None and other == project and path == project / (project.name + ".md") \
+                    and hit.parent.parent == project / "Threads" and hit.name == hit.parent.name + ".md":
+                continue        # the hub lists its own threads: a link to a thread note is navigation, nothing else is
+            if owner is not None:
                 pair = sorted(blocked(ws.context, tags, project_file_tags(ws, other, hit)))
-                if pair:
-                    far_hits.append((hit, other, pair[0]))
-                else:
-                    near.append((hit, other))
-            if not far_hits:
+            if not pair:
                 continue
-            severity = ERROR
-            if code:
-                if any(o == project for _, o in near):
-                    continue  # it means a file of this project
-                if ws.wiki_links is None:
-                    ws.wiki_links = PathIndex(ws, ws.wiki_files)
-                elsewhere = bool(near) or bool(resolve(ws, path, target, ws.wiki_links)) or \
-                    "/".join(_strip_md(tuple(x.lower() for x in target.replace("\\", "/").split("/") if x and x != "."))) in SHARED_PROJECT_PATHS
-                if elsewhere and not any(names_project(ws, target, h, o) for h, o, _ in far_hits):
-                    severity = WARNING
-            hit, other, b = far_hits[0]
+            b = pair[0]
+            key = (written, other)
+            if key in named:
+                continue
+            reported.add(b)
             noun = "note" if hit.suffix.lower() == ".md" else "file"
-            record(severity, verb, written, ", a %s of %s" % (noun, b), "a %s of %s" % (noun, party_name(ws, b)), b, other)
-        # The folder reading: the backstop for what the readings above could not tell.
-        for verb, written, body, whole in folders:
-            for group in dir_crossings(ws, path, body, whole):
-                far_dirs: Dict[Path, tuple] = {}
-                elsewhere = own = False
-                for folder, names in group:
-                    other = project_dir_index(ws).owner.get(folder)
-                    if other is None:
-                        continue
-                    pair = sorted(blocked(ws.context, tags, project_file_tags(ws, other, folder / "_")))
-                    if pair:
-                        prev = far_dirs.get(other)
-                        far_dirs[other] = (pair[0], names or (prev[1] if prev else False))
-                    elif other == project:
-                        own = True
-                    else:
-                        elsewhere = True
-                if own:
-                    continue  # it means a folder of this project
-                for other, (b, names) in far_dirs.items():
-                    record(WARNING if elsewhere and not names else ERROR, verb, written,
-                           ", a path that leads into a project of %s" % b, "a path into a project of %s" % party_name(ws, b),
-                           b, other)
+            named[key] = len(out)
+            out.append(Finding(ERROR, "walls", r,
+                               "%s %s, a %s of %s; %s is walled and this project does not name it" % (verb, written, noun, b, b),
+                               "A note in %s uses a %s of %s" % (where, noun, party_name(ws, b))))
+
     far = {t for t in ws.context["parties"] if tags and decide(tags, {t}, "write", ws.context) == "deny"}
 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
@@ -7442,6 +6208,38 @@ def check_walls(ws: Workspace) -> List[Finding]:
     out.extend(organisation_walls(ws, person_pages(ws)))
     out.extend(form_findings(ws, [(p, None) for p in form_candidates(ws)]))
     out.extend(nested_repositories(ws))
+    out.extend(archive_labels(ws))
+    return out
+
+
+def archive_labels(ws: Workspace) -> List[Finding]:
+    """A project put away in a zone's `archive/` keeps its hub's `party:`, so its files stay labelled; any other file
+    there has no label by design (#438). Warn where a file has the label the rule says it should not, or lacks the
+    one it should: a loose file that carries a party of its own, and a put-away project whose hub names none."""
+    out = []
+    known = set(ws.context["parties"])
+    for zone in ws.zones:
+        for folder in (d for d in visible_dirs(zone) if d.name.lower() == "archive"):
+            for entry in sorted(folder.iterdir()):
+                if entry.name.startswith("."):
+                    continue
+                hub = entry / (entry.name + ".md")
+                if entry.is_dir() and hub.is_file():
+                    if labels(ws.root, hub, ws.context, ws.label_cache) is None:
+                        out.append(Finding(WARNING, "walls", rel(ws, hub),
+                                           "is the hub of a project put away in %s, but names no party the Parties table holds, so "
+                                           "its files carry no label; set `party:` to a tag from the table" % rel(ws, folder),
+                                           "A project put away in the %s zone has no party" % zone.name))
+                    continue
+                for path in ([entry] if entry.is_file() else walk_files(entry)):
+                    if path.suffix.lower() != ".md":
+                        continue
+                    tags = note_party_tags(note_frontmatter(ws, path)) & known
+                    if tags:
+                        out.append(Finding(WARNING, "walls", rel(ws, path),
+                                           "carries `party: %s`, but a file in a zone's `archive/` that is no project's has no label by "
+                                           "design; move it into a project, or take the party out" % ", ".join(sorted(tags)),
+                                           "A loose file in the %s zone's archive names a party" % zone.name))
     return out
 
 
@@ -8832,7 +7630,7 @@ PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
 
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
-    check_hooks,
+    check_hooks, check_cmux,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates,

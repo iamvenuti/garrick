@@ -412,13 +412,14 @@ class TestThePage(Panel):
 
 
 class TestTheMenu(unittest.TestCase):
-    """The Questions row (decision 8): under Catch Up in File, in the menu bar's menu and in the edge panel."""
+    """The Questions row (decision 8): under Ask Garrick in File, in the menu bar's menu and in the edge panel."""
 
     def setUp(self):
         self.swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
 
-    def test_file_menu_has_it_under_catch_up(self):
-        self.assertRegex(self.swift, r'item\("Catch Up…".*\n\s*item\("Context", #selector\(openQuestions\(_:\)\), ""\)')
+    def test_file_menu_has_it_under_ask_garrick(self):
+        self.assertRegex(self.swift, r'\n\s*ask,\n\s*item\("Context", #selector\(openQuestions\(_:\)\), ""\)')
+        self.assertNotIn("Catch Up", self.swift)                      # the prompt is the only way in (#441)
 
     def test_the_menu_and_the_panel_have_a_row_with_the_count_of_the_zones_they_show(self):
         self.assertIn("if text.isEmpty, let questions = questionsItem()", self.swift)

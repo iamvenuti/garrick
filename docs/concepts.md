@@ -76,11 +76,7 @@ One way to save a thread's place, and one way back. A wrap (also said "I'm being
 
 ### Catch up
 
-"Catch me up": what changed in a zone's threads over a period, from their history, their notes and the Todo list, one section per thread that moved, each statement linked to the record it rests on. `System/tools/briefing.py` gathers it and decides nothing; the `threads` skill writes it. Shown, not saved, unless it covers one project and you say yes to saving it. See [Opening and wrapping](commands.md#opening-and-wrapping).
-
-### `System/briefing.md`
-
-What a catch-up raises first, says in a line, and leaves out, in plain words: "a decision, with who took it and why" comes first, a commit that only tidied the Todo list is left out. Garrick's, replaced by each update; yours goes in `System/briefing.local.md`, which wins.
+"Catch me up": what changed in a zone's threads over a period, from their history, their notes and the Todo list, one section per thread that moved, each statement linked to the record it rests on. `System/tools/briefing.py` gathers it and carries the judgment of what deserves attention; the `threads` skill writes it. Shown, not saved: say "save that" to keep it. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### What's next
 

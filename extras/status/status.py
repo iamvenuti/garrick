@@ -7262,136 +7262,6 @@ window.GarrickWait={changed:function(){return changed},request:request,saved:fun
 # ---- end of Settings › While you wait ---------------------------------------------
 
 
-# ---- Catch up (#27) ------------------------------------------------------------------
-# "Catch me up", asked from the page: a button beside Settings opens a small
-# dialog that picks the period (the last day, unless a "catch-up" key in the
-# settings file says otherwise) and, if wanted, the projects and threads of
-# one zone, then hands the request to the default assistant at the workspace
-# root, as Ask Garrick and Process the Inbox do, or copies it in a browser.
-# System/tools/briefing.py owns the periods, their words and the check; this
-# block only draws them. Settings, the menu bar's menu and the panel offer no
-# Catch up of their own (#226): the button, File › Catch Up… and Obsidian's
-# command reach this dialog. Without briefing.py, all of it is left out.
-_CATCH: Dict[Path, object] = {}
-
-
-def catch_lib(ws: Path):
-    """System/tools/briefing.py, found as wait_lib() finds next_up.py. None
-    when there is none, and then the page offers no Catch up."""
-    key = Path(ws)
-    if key not in _CATCH:
-        found = None
-        for src in (key / "System" / "tools" / "briefing.py", Path(__file__).resolve().parent.parent / "tools" / "briefing.py",
-                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "briefing.py"):
-            if not src.is_file():
-                continue
-            try:
-                spec = importlib.util.spec_from_file_location("garrick_status_briefing", str(src))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            if callable(getattr(mod, "settings", None)) and hasattr(mod, "PERIODS"):
-                found = mod
-                break
-        _CATCH[key] = found
-    return _CATCH[key]
-
-
-CATCH_ICON = ('<svg viewBox="0 0 20 20" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" '
-              'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="M3.6 10a6.4 6.4 0 1 0 1.9-4.5M3.4 3.2v2.9h2.9'
-              'M10 6.4V10l2.6 1.6"/></svg>')
-
-
-def catch_button(ws: Path) -> str:
-    return ('<button class="cog" type="button" id="open-catchup" aria-label="Catch up" '
-            'title="Catch up">%s</button>' % CATCH_ICON
-            if catch_lib(ws) is not None else "")
-
-
-def catch_dialog(ws: Path, T: Dict[str, dict], desk: bool) -> str:
-    """The dialog the button opens: the period, the zone, and the projects
-    and threads of that zone to narrow it to, none ticked to mean the whole
-    zone. Each box carries the name a request says: a project by its name,
-    a thread as "Project, Thread". Live work only: a parked thread is named
-    by asking for it."""
-    lib = catch_lib(ws)
-    if lib is None:
-        return ""
-    chosen = lib.settings(ws)["period"]
-    zones = [z for z, data in T.items() if data["rows"]]
-    periods = "".join('<label class="cuperiod"><input type="radio" name="cu-period" value="%s" data-words="%s"%s> %s</label>'
-                      % (E(k), E(words), " checked" if k == chosen else "", E(label)) for k, label, words in lib.PERIODS)
-    lists = ""
-    for zone in zones:
-        groups: Dict[str, list] = {}
-        for r in T[zone]["rows"]:
-            groups.setdefault(r["project"], []).append(r)
-        items = ""
-        for project, rs in sorted(groups.items(), key=lambda kv: kv[0].casefold()):
-            threads_in = sorted((r["thread"] for r in rs if r["note"] != r["hub"]), key=str.casefold)
-            items += ('<li><label><input type="checkbox" data-cu="%s"> %s</label>%s</li>'
-                      % (E(project), E(project), '<ul>%s</ul>' % "".join(
-                          '<li><label><input type="checkbox" data-cu="%s" data-cup="%s"> %s</label></li>'
-                          % (E("%s, %s" % (project, t)), E(project), E(t)) for t in threads_in) if threads_in else ""))
-        lists += '<ul class="cuz" data-zone="%s"%s>%s</ul>' % (E(zone), "" if zone == zones[0] else " hidden", items)
-    pick = ('<label class="cuzone">Zone <select id="cu-zone">%s</select></label>'
-            % "".join('<option value="%s">%s</option>' % (E(z), E(z)) for z in zones)) if len(zones) > 1 else ""
-    return ('<dialog id="catchup" class="catchup" aria-labelledby="catchup-title" data-root="%s" data-default="%s" data-zone="%s"%s>'
-            '<h2 id="catchup-title">Catch up</h2>'
-            '<fieldset class="cuperiods"><legend>Since</legend>%s</fieldset>%s%s'
-            '<p class="cusaid">Asks: <q id="cu-said"></q></p>'
-            '<div class="gacts"><button class="act primary" type="button" id="cu-go">Catch up</button>'
-            '<button class="act" type="button" id="cu-cancel">Cancel</button></div></dialog>'
-            % (E(str(ws)), E(chosen), E(zones[0] if zones else ""), ' data-dk="1"' if desk else "", periods, pick, lists))
-
-
-CATCH_CSS = r"""
-/* Catch up (#27): the dialog beside Settings */
-dialog.catchup{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:460px;width:calc(100% - 32px);
-padding:20px 22px;box-shadow:var(--shadow);max-height:calc(100vh - 48px);overflow:auto}dialog.catchup::backdrop{background:rgba(0,0,0,.35)}
-dialog.catchup h2{margin:0 0 12px;font:600 20px/1.2 var(--display)}
-.cuperiods{border:0;margin:0 0 12px;padding:0;display:flex;flex-wrap:wrap;gap:4px 14px}.cuperiods legend{font-size:12px;font-weight:600;color:var(--muted);margin-bottom:4px}
-.cuperiod{font-size:13px;display:flex;align-items:center;gap:6px}.cuperiod input,.cuz input{accent-color:var(--accent)}
-.cuzone{display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 10px}.cuzone select{font:inherit;font-size:13px;color:var(--ink);
-background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 8px}
-.cuz{list-style:none;margin:0 0 10px;padding:0;font-size:13px;max-height:260px;overflow:auto}.cuz ul{list-style:none;margin:0;padding-left:22px}
-.cuz label{display:flex;align-items:center;gap:6px;padding:2px 0}.cusaid{margin:0 0 4px;font-size:12.5px;color:var(--ink2)}
-"""
-
-# The dialog. The request's words are said in one place, phrase(), so what the dialog
-# shows under "Asks" is exactly what the assistant is handed. It goes to JS's
-# GarrickAssistant(), the one rule for which assistant a request opens.
-CATCH_JS = r"""
-(function(){var dlg=document.getElementById('catchup'),host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
-if(!dlg)return;var said=document.getElementById('cu-said'),zone=document.getElementById('cu-zone');
-var LABEL={claude:'Claude',codex:'Codex',cmux:'cmux'};
-function shown(){return zone?zone.value:dlg.dataset.zone}
-function list(){return dlg.querySelector('.cuz[data-zone="'+String(shown()).replace(/"/g,'\\"')+'"]')}
-/* the names ticked in the zone shown: a project ticked stands for its threads */
-function names(){var l=list(),out=[];if(!l)return out;var whole={};
-l.querySelectorAll('input[data-cu]:not([data-cup]):checked').forEach(function(b){whole[b.dataset.cu]=1;out.push(b.dataset.cu)});
-l.querySelectorAll('input[data-cup]:checked').forEach(function(b){if(!whole[b.dataset.cup])out.push(b.dataset.cu)});return out}
-function and(a){return a.length<2?a.join(''):a.slice(0,-1).join(' and ')+' and '+a[a.length-1]}
-function phrase(){var n=names(),p=dlg.querySelector('input[name=cu-period]:checked');
-return'catch me up'+(n.length?' on '+and(n):shown()?' on '+shown():'')+' '+(p?p.dataset.words:'since yesterday')}
-function paint(){dlg.querySelectorAll('.cuz').forEach(function(u){u.hidden=u.dataset.zone!==shown()});said.textContent=phrase()}
-dlg.addEventListener('change',paint);
-function open(){dlg.returnValue='';var d=dlg.querySelector('input[name=cu-period][value="'+dlg.dataset.default+'"]');if(d)d.checked=true;
-dlg.querySelectorAll('input[data-cu]').forEach(function(b){b.checked=false});paint();if(!dlg.open)dlg.showModal()}
-function say(s){if(window.GarrickSay)GarrickSay(s)}
-dlg.addEventListener('close',function(){if(dlg.returnValue!=='go')return;var p=phrase(),a=host&&window.GarrickAssistant&&GarrickAssistant();
-if(a){var m={launch:a,folder:dlg.dataset.root,phrase:p};if(a==='cmux'&&dlg.dataset.dk)m.dk=1;host.postMessage(m);
-say('Opening '+LABEL[a]+' on “'+p+'”…');return}
-if(window.GarrickCopy)GarrickCopy(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')})});
-document.getElementById('cu-go').onclick=function(){dlg.close('go')};document.getElementById('cu-cancel').onclick=function(){dlg.close('')};
-var b=document.getElementById('open-catchup');if(b)b.onclick=open;
-window.GarrickCatchUp={open:open,phrase:phrase};
-})();
-"""
-# ---- end of Catch up ------------------------------------------------------------------
-
-
 # ---- Settings › About Garrick: Check for updates (#410) ----------------------------
 # The button asks page_action.py's `release-check`, which asks GitHub now: the click
 # is the consent for that one request. A newer release is applied at once, through
@@ -8464,8 +8334,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                          "All clear" if not attn else "%d %s attention" % (len(attn), "thing needs" if len(attn) == 1 else "things need")))
     controls = ('<div class="bacts">' + simple_bar + '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
-                '%s<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s%s</div>'
-                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, catch_button(ws), GEAR, THEME_SEG, desk_acts))
+                '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s%s</div>'
+                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, GEAR, THEME_SEG, desk_acts))
 
     # ---- hero and tiles
     if attn:
@@ -8886,11 +8756,11 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                      + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)
                                + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s%s</main>%s%s'
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s%s</main>%s'
             % (home_tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
                section("questions", True, questions_mod().body(qdata)) if qdata else "",
                section("parties", True, parties_mod().body(pdata)) if pdata else "",
-               section("guide", True, guide_body), menu, catch_dialog(ws, T, bool(DK))))
+               section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
     # still hears what its menu lists.
@@ -8900,12 +8770,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, CATCH_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", parties_mod().JS if pdata else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", parties_mod().JS if pdata else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + CATCH_CSS + (questions_mod().CSS if qdata else "") + (parties_mod().CSS if pdata else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (parties_mod().CSS if pdata else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),

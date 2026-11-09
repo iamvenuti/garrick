@@ -2017,14 +2017,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		openInbox(act)
 	}
 
-	// MARK: catch up (#27)
-	// File › Catch Up… opens the page's own dialog, which picks the period and
-	// the projects or threads. The menu and the panel leave it out (#226): a
-	// row with nothing of its own to show takes a line from the rows that do.
-	@objc func openCatchUp(_ sender: Any?) { web.evaluateJavaScript("window.GarrickCatchUp && window.GarrickCatchUp.open()") }
-
 	// MARK: questions (#224, #384)
-	// The Context row, under Catch Up in File and beside the inbox in the menu and the panel: it
+	// The Context row, under Ask Garrick in File and beside the inbox in the menu and the panel: it
 	// brings the window forward on the page's Context tab. The page sends the open count of each
 	// group (menuData "questions", "g"): a zone no wall divides is one group, a zone whose parties a wall
 	// divides is one group per party. The row names each group with its own count and never adds two
@@ -3463,7 +3457,6 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		askMenuItem = ask
 		sub("File", [
 			ask,
-			item("Catch Up…", #selector(openCatchUp(_:)), ""),     // the page's Catch up, period and threads (#27)
 			item("Context", #selector(openQuestions(_:)), ""),   // the page's Context tab (#224, #433)
 			item("Open in Browser", #selector(openInBrowser(_:)), "o"),
 			.separator(),

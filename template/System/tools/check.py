@@ -4428,7 +4428,7 @@ def body_of(text: str) -> str:
 
 
 def without_party_field(text: str) -> str:
-    """The file's text with its own frontmatter `party:` field blanked out."""
+    """The file's text with its own frontmatter `party:` and `zone:` fields blanked out: structure, not prose (#465)."""
     if not text.startswith("---"):
         return text
     lines = text.split("\n")
@@ -4436,7 +4436,7 @@ def without_party_field(text: str) -> str:
     for i, line in enumerate(lines[1:], 1):
         if line.rstrip("\r") in ("---", "..."):        # a `---` alone at the margin ends it, as for YAML
             break
-        if re.match(r"party\s*:", line):
+        if re.match(r"(?:party|zone)\s*:", line):
             lines[i], in_party = "", True
         elif in_party and (line[:1].isspace() or line.startswith("-")):
             lines[i] = ""
@@ -4976,6 +4976,12 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
             common |= found
             if knowledge not in path.parents:
                 beyond |= found
+    # Wording that the files of three or more projects for different parties hold, such as the text of one hub
+    # template, belongs to no single project's confidence (#465).
+    for h, held in owners.items():
+        if len(held) >= 3 and h not in common and all(o in projects for o in held) \
+                and len({projects[o] for o in held}) >= 3 and len({tags[o] for o in held}) >= 3:
+            common.add(h)
     ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
     if ws.cache is not None:
         ws.cache.whole = True

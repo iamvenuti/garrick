@@ -179,5 +179,66 @@ class FalsePositiveTest(unittest.TestCase):
             self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), (text, found))
 
 
+class HubsAreNotRefusedForWhatTheyShareTest(unittest.TestCase):
+    """#465: a project hub is not refused for its own zone name, for the wording hubs made from one template share,
+    or for a relative path of its own."""
+
+    CONTEXT_ZONE = ("| Work | Client work | | walled |\n| Cedar | A company's affairs and its clients | | walled |")
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        ctx = self.root / "System" / "context.md"
+        text = ctx.read_text(encoding="utf-8").replace("| Work | Client work | | walled |", self.CONTEXT_ZONE)
+        text = text.replace("| Birch & Co |", "| Cedar | The company itself | Cedar | `cedar` | yes | |\n| Maple Ltd | A client | Cedar | `maple` | yes | |\n| Birch & Co |", 1)
+        ctx.write_text(text, encoding="utf-8")
+        self.cedar = self.root / "Zones" / "Cedar"
+        self.hub = self.cedar / "Maple" / "Maple.md"
+
+    def hub_says(self, hub, text):
+        write(hub, text)
+        ws = check.discover(self.root)
+        project = hub.parent
+        found = check.walls_for_file(ws, project, {"maple"}, hub, text)
+        return [f.message for f in found if f.severity == "error" and f.check == "walls"]
+
+    def test_the_zone_key_is_structure_and_the_same_name_in_prose_is_not(self):
+        text = project_hub("Cedar", "Maple", "maple")
+        self.assertEqual([], self.hub_says(self.hub, text))
+        found = self.hub_says(self.hub, text + "\nCedar asked for the figures.\n")
+        self.assertTrue(any("names Cedar" in m for m in found), found)
+
+    def test_wording_that_three_hubs_for_three_parties_share_is_common(self):
+        template = "\n## Contents\n\n| Folder | Holds |\n|---|---|\n| `Sources/` | what the party sent, kept as received |\n| `Notes/` | working notes of the team |\n"
+        for name, party in (("Maple", "maple"), ("Elm", "cedar"), ("Fir", "acme")):
+            write(self.cedar / name / (name + ".md"), project_hub("Cedar", name, party) + template)
+        ws = check.discover(self.root)
+        for name, party in (("Maple", "maple"), ("Elm", "cedar")):
+            hub = self.cedar / name / (name + ".md")
+            found = check.walls_for_file(ws, hub.parent, {party}, hub, hub.read_text(encoding="utf-8"))
+            self.assertEqual([], [f.message for f in found if f.severity == "error"], name)
+
+    def test_eight_words_copied_from_one_hub_into_another_are_still_refused(self):
+        own = project_hub("Cedar", "Elm", "cedar") + "\n### Resume here\n\nThe lender wants the amended schedule before the quarter closes, so hold the draft.\n"
+        write(self.cedar / "Elm" / "Elm.md", own)
+        copied = project_hub("Cedar", "Maple", "maple") + "\nNote: the lender wants the amended schedule before the quarter closes.\n"
+        found = self.hub_says(self.hub, copied)
+        self.assertTrue(any("repeats wording" in m for m in found), found)
+
+    def test_a_relative_path_in_the_hub_resolves_in_its_own_project_first(self):
+        write(self.cedar / "Maple" / "Papers" / "ledger-brief.docx", "maple brief\n")
+        write(self.cedar / "Elm" / "Elm.md", project_hub("Cedar", "Elm", "cedar"))
+        write(self.cedar / "Elm" / "Papers" / "ledger-brief.docx", "elm brief\n")
+        text = project_hub("Cedar", "Maple", "maple") + "\nThe brief is `Papers/ledger-brief.docx`.\n"
+        self.assertEqual([], self.hub_says(self.hub, text))
+        note = self.cedar / "Elm" / "Notes.md"
+        write(note, "# Notes\n\nSee `../Maple/Papers/ledger-brief.docx`.\n")
+        ws = check.discover(self.root)
+        found = check.walls_for_file(ws, note.parent, {"cedar"}, note, note.read_text(encoding="utf-8"))
+        self.assertTrue([f for f in found if f.severity == "error"], found)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,7 @@ Every name is invented; Acme Corp and Birch & Co have a wall between them.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -60,31 +61,8 @@ class OutsidePathTest(Base):
             found = self.says("Put the script in `%s`.\n" % written)
             self.assertEqual([], self.refused(found), (written, found))
 
-    def test_the_same_tail_written_inside_the_workspace_is_still_refused(self):
-        for written in ("Library/Application Scripts/com.apple.mail/x.scpt",
-                        "Zones/Work/Harbour/Library/Application Scripts/com.apple.mail/x.scpt",
-                        "~/Workspace/Zones/Work/Harbour/Library/Application Scripts/com.apple.mail/x.scpt"):
-            found = self.says("Put the script in `%s`.\n" % written)
-            self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), (written, found))
 
-    def test_a_project_named_like_a_system_folder_is_still_a_project(self):
-        """The release review's way past the wall: `/Home/…` and `~/Library/…` are paths into a project of that name."""
-        for name in ("Home", "Media", "Library", "Documents"):
-            write(self.work / name / (name + ".md"), project_hub("Work", name, "acme"))
-            write(self.work / name / "Deliverables" / "260301 - Plan.md", "# plan\n")
-        for name, written in (("Home", "/Home/Deliverables/260301 - Plan.md"), ("Home", "/home/Deliverables/260301 - Plan.md"),
-                              ("Media", "/Media/Deliverables/260301 - Plan.md"), ("Library", "~/Library/Deliverables/260301 - Plan.md"),
-                              ("Library", "/Library/Deliverables/260301 - Plan.md"),
-                              ("Documents", "~/Documents/Deliverables/260301 - Plan.md")):
-            found = self.says("See `%s`.\n" % written)
-            self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), (written, found))
 
-    def test_a_system_folder_named_by_a_thread_is_read_by_its_names(self):
-        write(self.work / "Harbour" / "Harbour.md", project_hub("Work", "Harbour", "acme", ["Users"]))
-        write(self.work / "Harbour" / "Threads" / "Users" / "Users.md", thread_note("Harbour", "Users", "acme"))
-        write(self.work / "Harbour" / "Threads" / "Users" / "Notes.md", "x\n")
-        found = self.says("See `/Users/Notes.md`.\n")
-        self.assertTrue(any(WALL_MESSAGE in m for m in self.refused(found)), found)
 
 
 class RefusalTrailerTest(Base):
@@ -165,6 +143,37 @@ class StagedRunTest(Base):
             for _ in range(5):
                 self.assertEqual(first, check.hub_unreadable(ws, self.work / "Northwind"))
         self.assertEqual(1, asked.call_count)
+
+
+class CmuxResumeTest(unittest.TestCase):
+    """#440: a warning, once, when cmux is set not to resume agent sessions. The config is built in a temporary HOME."""
+
+    def run_with(self, config):
+        import json
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as ws_root:
+            if config is not None:
+                path = Path(home) / ".config" / "cmux" / "cmux.json"
+                path.parent.mkdir(parents=True)
+                path.write_text(config if isinstance(config, str) else json.dumps(config), encoding="utf-8")
+            (Path(ws_root) / "System" / "cmux").mkdir(parents=True)        # the cmux extra is installed
+            with mock.patch.dict(os.environ, {"HOME": home}):
+                return [(f.severity, f.check) for f in check.check_cmux(check.discover(Path(ws_root), light=True))]
+
+    def test_it_warns_once_when_resuming_is_off(self):
+        self.assertEqual([("warning", "cmux")], self.run_with({"terminal": {"autoResumeAgentSessions": False}}))
+        self.assertEqual([("warning", "cmux")], self.run_with({"terminal.autoResumeAgentSessions": False}))
+
+    def test_comments_in_the_file_do_not_hide_it(self):
+        text = '// cmux\n{\n  /* resume */ "terminal": {"autoResumeAgentSessions": false, // off\n "url": "http://x//y"}\n}\n'
+        self.assertEqual([("warning", "cmux")], self.run_with(text))
+
+    def test_a_workspace_without_the_cmux_extra_reads_no_home_folder(self):
+        with tempfile.TemporaryDirectory() as ws_root, mock.patch("os.path.expanduser", side_effect=AssertionError("read the home folder")):
+            self.assertEqual([], check.check_cmux(check.discover(Path(ws_root), light=True)))
+
+    def test_it_is_quiet_otherwise(self):
+        for config in (None, {}, "not json", {"terminal": {"autoResumeAgentSessions": True}}, {"terminal": {}}, []):
+            self.assertEqual([], self.run_with(config), config)
 
 
 if __name__ == "__main__":

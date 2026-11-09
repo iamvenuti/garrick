@@ -705,6 +705,16 @@ class TestOneQuestionManyStores(AnswerCase):
     def paths(self, found):
         return [r["path"].rsplit("/", 1)[-1] for r in found]
 
+    def test_a_docs_page_with_a_party_key_in_any_case_is_labelled_not_published(self):
+        docs = self.root / "System" / "garrick-docs"
+        write(docs / "plain.md", "# Plain\n\nDOCMARKPLAIN pallet\n")
+        for name, front in (("upper.md", "Party: acme"), ("parties.md", "Parties: [acme]"), ("nested.md", "meta:\n  party: acme"),
+                            ("quoted.md", '"party": acme'), ("zone.md", "ZONE: Work")):
+            write(docs / name, "---\n%s\n---\n\n# P\n\nDOCMARK%s pallet\n" % (front, name[:-3].upper()))
+        (docs / "bom.md").write_text("\ufeff---\nParty: acme\n---\n\n# P\n\nDOCMARKBOM pallet\n", encoding="utf-8")   # a byte order mark
+        found, _, _ = self.read({"route": "docs", "words": ["pallet"]})
+        self.assertEqual(["plain.md"], self.paths(found))
+
     def test_a_meeting_filed_today_is_cited_for_a_project_whose_notes_are_older(self):
         self.meeting("261105-acme-call.md", "[acme]", "Acme agreed the pallet plan.")
         found, _, _ = self.read({"route": "thread", "project": "Acme Review", "words": ["acme"]}, "recent")

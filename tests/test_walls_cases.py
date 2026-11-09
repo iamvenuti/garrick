@@ -77,6 +77,17 @@ class EnforcementPoints(unittest.TestCase):
         self.addCleanup(lambda: path.exists() and path.unlink())
         return path
 
+    def docs_party_key(self):
+        write(self.root / "System" / "garrick-docs" / "labelled.md", "---\nParty: acme\n---\n\n# L\n\nDOCMARK pallet\n")
+        where = ask_scope.Scope("docs", None, None, None, ["pallet"], set())
+        found = ask_scope.search(self.root, where, self.ctx, self.lib)
+        return "permitted" if any(r["path"].endswith("labelled.md") for r in found) else "refused"
+
+    def put_away(self, name, party):
+        write(self.work / "archive" / name / (name + ".md"), project_hub("Work", name, party))
+        write(self.work / "archive" / name / "Notes.md", "# Notes\n")
+        return self.check_note("Northwind", "Pricing", "# N\n\nSee [[archive/%s/Notes]].\n" % name)
+
     def check_note(self, project, thread, text):
         path = self.note(project, thread, text)
         where = path.relative_to(self.root).as_posix()
@@ -322,7 +333,7 @@ class EnforcementPoints(unittest.TestCase):
             "e25": lambda: self.binary("Orchard"),
             "e26": lambda: self.staged(self.work / "Northwind" / "tool.py", "# Ask Theo Marsh at Birch & Co\n"),
             "e27": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Todo]].\n"),
-            "e28": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260319-orphan-call]].\n"),
+            "e28": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260319-orphan-call.txt]].\n"),
             "e29": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260315-split]].\n"),
             "e30": lambda: self.asked(set(), self.place("Northwind", "Pricing")),
             "e31": lambda: self.asked({"none"}, self.place("Northwind", "Pricing")),
@@ -364,6 +375,9 @@ class EnforcementPoints(unittest.TestCase):
             "e64": lambda: self.hub_links_thread("[[Reed/Threads/Notes/Plan]]"),
             "e65": self.flip_asks,
             "e66": self.one_thread_changes_no_other_file,
+            "e67": lambda: self.put_away("Tern", "birch"),
+            "e68": lambda: self.put_away("Lark", "acme"),
+            "e69": self.docs_party_key,
             "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),

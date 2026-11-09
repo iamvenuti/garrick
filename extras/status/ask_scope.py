@@ -882,9 +882,8 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             text = _text(ws, path, False)
             if text is None:
                 continue
-            fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
-            if any(fm.get(k) for k in ("parties", "party", "zone")):
-                continue
+            if path.suffix.lower() == ".md" and lib_._party_like_key(path):
+                continue                        # a party key in any case or nesting: labelled, not published (#439)
             consider(path, [], text, 1, public=True)
     elif sc.route == "knowledge":
         knowledge(1)

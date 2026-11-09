@@ -855,20 +855,37 @@ def plain_name(cell: str) -> str:
 NAME_PARTICLES = frozenset("de di da del della van von der den la le du dos das bin al".split())
 
 
+NAME_TITLES = frozenset("dr mr mrs ms mx prof professor sir dame lord lady jr sr".split())
+NOT_PARTICLES = frozenset("and of the at for in on with to or a an".split())
+
+
 def _owner(lines: List[str]) -> Optional[dict]:
-    """The owner of the workspace, from the first sentence of `## Me`, up to its first full stop: `{"name", "first"}`.
-    None when the sentence does not look like a person's name: one to four tokens, each starting with an upper-case
-    letter (a name particle such as `de` or `van` may be lower case), no digits. A placeholder in angle brackets
-    (`<Your name>`) and a sentence about the work are no owner."""
+    """The owner of the workspace, from the first sentence of `## Me`, up to its first full stop that is neither an
+    initial's nor a title's (`J. Example.`, `Dr. Jo Example.`): `{"name", "first"}`. None when the sentence does not
+    look like a person's name: one to eight tokens, each starting with an upper-case letter, or a short lower-case
+    particle between two names (`de`, `van`, `ten`), no digits. A title is dropped, an initial is no first name. A
+    placeholder in angle brackets (`<Your name>`) and a sentence about the work are no owner."""
     first = next((l.strip() for l in lines if l.strip()), "")
-    sentence = re.split(r"\.(?:\s|$)", first, maxsplit=1)[0]
+    sentence = first
+    for m in re.finditer(r"\.(?:\s|$)", first):
+        last = first[:m.start()].split()[-1:] or [""]
+        word = plain_name(last[0])
+        if len(word) == 1 or word.lower() in NAME_TITLES:
+            continue
+        sentence = first[:m.start()]
+        break
     tokens = [t for t in (plain_name(t) for t in plain_name(sentence).split()) if t]
-    if not 1 <= len(tokens) <= 4 or tokens[0].lower() in NAME_PARTICLES:
+    while tokens and tokens[0].rstrip(".").lower() in NAME_TITLES:
+        tokens = tokens[1:]
+    if not 1 <= len(tokens) <= 8 or tokens[0].lower() in NAME_PARTICLES:
         return None
-    for t in tokens:
-        if any(c.isdigit() for c in t) or not (t[0].isalpha() and t[0].isupper() or t in NAME_PARTICLES):
+    for i, t in enumerate(tokens):
+        particle = t in NAME_PARTICLES or (0 < i < len(tokens) - 1 and t.isalpha() and t.islower()
+                                           and len(t) <= 4 and t not in NOT_PARTICLES)
+        if any(c.isdigit() for c in t) or not (t[0].isalpha() and t[0].isupper() or particle):
             return None
-    return {"name": " ".join(tokens), "first": tokens[0]}
+    head = tokens[0].rstrip(".")
+    return {"name": " ".join(tokens), "first": head if len(head) > 1 else ""}
 
 
 def _col(row: Dict[str, str], *names: str) -> str:

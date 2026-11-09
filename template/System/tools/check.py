@@ -5029,12 +5029,21 @@ def _in_near_side(form: str, near_side: set) -> bool:
     return any(padded in (" %s " % ns) for ns in near_side)
 
 
-def owner_keys(ws: Workspace) -> set:
-    """The owner's full name and first name as word forms: never a walled party's or person's name to the check."""
+def owner_keys(ws: Workspace, first: bool = False) -> set:
+    """The owner's full name as a word form, never a walled party's or person's name to the check; with `first`,
+    their first name too, which only a person's first name gives way to (a party named like it is still a name)."""
     owner = ws.context.get("owner")
     if not owner:
         return set()
-    return {k for k in (" ".join(words(owner["name"])), " ".join(words(owner["first"]))) if k}
+    return {k for k in (" ".join(words(owner["name"])), " ".join(words(owner["first"])) if first else "") if k}
+
+
+def without_owner(ws: Workspace, text: str) -> str:
+    """`text` with the owner's full name taken out: it names the owner, whatever walled party shares a word of it."""
+    owner = ws.context.get("owner")
+    if not owner or len(owner["name"].split()) < 2:
+        return text
+    return re.sub(r"(?i)\b%s\b" % r"\s+".join(re.escape(w) for w in owner["name"].split()), " ", text)
 
 
 def everyday_tag(ws: Workspace, tag: str) -> bool:
@@ -5044,12 +5053,10 @@ def everyday_tag(ws: Workspace, tag: str) -> bool:
     if not key:
         return False
     zones = {" ".join(words(z)) for z in {z.name for z in ws.zones} | set(ws.context["zones"])}
-    if key in owner_keys(ws):
-        return True
     # A tag that is the party's own name ("Page", `page`) is the name too: matched in prose, as before.
     if key == " ".join(words(ws.context["parties"].get(tag, {}).get("party") or "")):
         return False
-    return key in zones or key in STOPWORDS or key in COMMON_WORD_NAMES
+    return key in owner_keys(ws, True) or key in zones or key in STOPWORDS or key in COMMON_WORD_NAMES
 
 
 def tag_only_forms(ws: Workspace, walled_tags: set) -> Dict[str, Tuple[bool, str]]:
@@ -5083,6 +5090,7 @@ def tag_scope_text(text: str) -> str:
 def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, str]]]:
     ctx = ws.context
     owner = owner_keys(ws)
+    owner_first = owner_keys(ws, True)
     forms: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
     firsts: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
     means: Dict[str, str] = {}
@@ -5125,7 +5133,7 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
                  if f not in near_side and not _in_near_side(f, both) and f not in skip]
         found += [(True, f) for f in sorted(firsts[tag])
                   if f.lower() not in near_side and not _in_near_side(f.lower(), both) and f.lower() not in forms[tag]
-                  and f.lower() not in owner]
+                  and f.lower() not in owner_first]
         # Longest first. Which form a finding names decides whether it reads as
         # a tag hit or a name hit, so it must be the most telling form the text
         # holds and not whichever one the alphabet put first.
@@ -5845,7 +5853,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
     if far and not in_sources:
-        scanned = fold_format(without_party_field(text)) + "\n" + path.name
+        scanned = without_owner(ws, fold_format(without_party_field(text)) + "\n" + path.name)
         padded = padded_words(scanned)
         named_forms = name_forms(ws, far)
         only = tag_only_forms(ws, far)

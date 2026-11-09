@@ -166,5 +166,50 @@ class PlainNamesTest(unittest.TestCase):
             self.assertEqual(garrick_lib.plain_name(cell), "Acme Corp", cell)
 
 
+class OwnerFormsTest(unittest.TestCase):
+    """The 0.60.1 later items: an owner with an initial or a title, a long or unusual name, and a first name shared
+    with a walled party."""
+
+    def owner(self, me):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = build(Path(tmp))
+            text = CONTEXT.replace("**Jo Example**. Independent advisor.", me)
+            (root / "System" / "context.md").write_text(text, encoding="utf-8")
+            return garrick_lib.load_context(root)["owner"]
+
+    def test_an_initial_or_a_title_does_not_end_the_name(self):
+        self.assertEqual(self.owner("J. Example. Independent advisor."), {"name": "J. Example", "first": ""})
+        self.assertEqual(self.owner("Dr. Jo Example. Independent advisor."), {"name": "Jo Example", "first": "Jo"})
+        self.assertEqual(self.owner("Prof. J. R. Example. Advisor."), {"name": "J. R. Example", "first": ""})
+        self.assertEqual(self.owner("Jo Example. Independent advisor."), {"name": "Jo Example", "first": "Jo"})
+
+    def test_a_long_name_or_an_unlisted_particle_still_gives_an_owner(self):
+        self.assertEqual(self.owner("Maria de la Cruz Lopez Ortega. Advisor.")["name"], "Maria de la Cruz Lopez Ortega")
+        self.assertEqual(self.owner("Ludwig ten Brink. Advisor.")["first"], "Ludwig")
+        self.assertEqual(self.owner("Anna Maria Beatrix Van Der Berg Smit. Advisor.")["first"], "Anna")
+        for me in ("Emp sales engineer. Works on pricing.", "Birch and Co. Works alone."):
+            self.assertIsNone(self.owner(me), me)
+
+    def test_the_owners_first_name_does_not_clear_a_walled_party_of_that_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = build(Path(tmp))
+            text = CONTEXT.replace("**Jo Example**. Independent advisor.", "Max Smith. Independent advisor.")
+            text = text.replace("| Acme Corp | Client |", "| Max | A client named Max | Clients | `max` | yes | |\n| Acme Corp | Client |", 1)
+            text = text.replace("| **Jo Smith** | `emp` | Colleague |", "| **Jo Smith** | `emp` | Colleague |\n| Max Brown | `emp` | Colleague |")
+            (root / "System" / "context.md").write_text(text, encoding="utf-8")
+            ws = check.discover(root)
+            ws.quick = True
+            project = root / "Zones" / "Clients" / "Acme Review"
+            note = project / "Threads" / "Pricing" / "Notes.md"
+
+            def refused(body):
+                found = check.walls_for_file(ws, project, {"acme"}, note, body)
+                return any(f.severity == "error" and f.check == "walls" for f in found)
+
+            self.assertTrue(refused("# Notes\n\nMax asked for the figures.\n"))
+            self.assertFalse(refused("# Notes\n\nMax Smith asked for the figures.\n"))
+            self.assertTrue(refused("# Notes\n\nMax Brown asked for the figures.\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

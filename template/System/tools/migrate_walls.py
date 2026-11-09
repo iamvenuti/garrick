@@ -24,7 +24,6 @@ The policy the Walls table wrote is kept here under names that start with
 """
 
 import json
-import re
 import shutil
 import subprocess
 import sys

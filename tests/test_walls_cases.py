@@ -77,6 +77,12 @@ class EnforcementPoints(unittest.TestCase):
         self.addCleanup(lambda: path.exists() and path.unlink())
         return path
 
+    def docs_party_key(self):
+        write(self.root / "System" / "garrick-docs" / "labelled.md", "---\nParty: acme\n---\n\n# L\n\nDOCMARK pallet\n")
+        where = ask_scope.Scope("docs", None, None, None, ["pallet"], set())
+        found = ask_scope.search(self.root, where, self.ctx, self.lib)
+        return "permitted" if any(r["path"].endswith("labelled.md") for r in found) else "refused"
+
     def put_away(self, name, party):
         write(self.work / "archive" / name / (name + ".md"), project_hub("Work", name, party))
         write(self.work / "archive" / name / "Notes.md", "# Notes\n")
@@ -371,6 +377,7 @@ class EnforcementPoints(unittest.TestCase):
             "e66": self.one_thread_changes_no_other_file,
             "e67": lambda: self.put_away("Tern", "birch"),
             "e68": lambda: self.put_away("Lark", "acme"),
+            "e69": self.docs_party_key,
             "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),

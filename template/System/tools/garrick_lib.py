@@ -1584,6 +1584,7 @@ def _party_like_key(path: Path) -> bool:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return True
+    text = text.lstrip("\ufeff")
     if not text.startswith("---"):
         return False
     block = re.split(r"(?m)^---[ \t]*$", text, maxsplit=2)

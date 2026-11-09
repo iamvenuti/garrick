@@ -711,6 +711,7 @@ class TestOneQuestionManyStores(AnswerCase):
         for name, front in (("upper.md", "Party: acme"), ("parties.md", "Parties: [acme]"), ("nested.md", "meta:\n  party: acme"),
                             ("quoted.md", '"party": acme'), ("zone.md", "ZONE: Work")):
             write(docs / name, "---\n%s\n---\n\n# P\n\nDOCMARK%s pallet\n" % (front, name[:-3].upper()))
+        (docs / "bom.md").write_text("\ufeff---\nParty: acme\n---\n\n# P\n\nDOCMARKBOM pallet\n", encoding="utf-8")   # a byte order mark
         found, _, _ = self.read({"route": "docs", "words": ["pallet"]})
         self.assertEqual(["plain.md"], self.paths(found))
 

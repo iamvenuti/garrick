@@ -72,7 +72,8 @@ A zone's own `AGENTS.md` adds to this skill and wins where it says so.
 
 Where the `desk` skill is installed (the cmux extra), "open X", "close X" and
 "close for the day" go to it first: it opens, wraps or closes each thread in
-its own tab, and the session in that tab runs this skill.
+its own tab, and the session in that tab runs this skill. "Close for the day"
+has every session used today wrap its own thread (see its section).
 
 ## The rules behind the commands
 
@@ -97,7 +98,7 @@ here, word for word. The commands below carry them out.
 - **Names are the names the work already has.** Zones, projects and threads take letters and digits, spaces, hyphens, apostrophes, `&`, and a full stop inside an acronym: Q4 Planning, ISO 27001, Birch & Co. Nothing else, since the rest either cannot be stored as a folder or is a separator the spoken grammar uses, such as the comma in "Acme, pricing". Siblings must not sound alike.
 - **A name that does not say how it is said carries a spoken form.** `spoken:` in the note's frontmatter is what is heard for it (Q4 Planning, `spoken: fourth quarter planning`), and a request matches it alongside the name itself. A year standing as a word of its own needs none: Summit 2027 is said "twenty twenty-seven". A zone has no note, so a zone name has to say how it is said.
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.
-- **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
+- **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: every session used today wraps its own thread, one at a time.
 - **"I'm being interrupted"**, **"hold this"** and **"hold X"** run the wrap, as "wrap it" does. **"Back"** or **"where was I"** opens the thread whose note was written most recently and is not finished or parked; **"back to X"** opens X. Nothing to resume: say so, and offer the most recent thread.
 - **"Finish X" or "X is done"**: close the thread for good (see Threads).
 - **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back; so does "open X" on a parked thread. **"What's parked"**: name the parked threads. **"Rename X to Y"** moves the note and every link to it; **"delete X"**, for what should never have existed, lists what would go and acts only on the name said again.
@@ -699,8 +700,9 @@ focus, as under *No name given*). Then:
     ```sh
     python3 System/tools/wrap_lock.py end "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
     ```
-    The note's last write is the record that the wrap landed: "back" and the
-    band read the time of that write, and nothing else.
+    `end` also writes the time the wrap finished (`wrap-<note>.done`). That
+    record, not the note's last write, is what says a wrap landed: the band and
+    Close read it.
 
 Spoken, when the wrap runs in the background: "Acme pricing is being wrapped.
 Say back when you're done." When it runs in the foreground, or when the
@@ -788,7 +790,8 @@ into an app's window, and never use computer use to reach a session.
    - A session that is mid-turn or waiting on a question is skipped and
      named. Do not ask it twice.
    - This session last, as Wrap does it, for the thread it worked on.
-   - A thread that is done or parked is not wrapped.
+   - Skip threads marked done or parked: neither is live, and a wrap would
+     rewrite what finishing or parking left in place.
 4. **Report one line per session**: wrapped, with its thread and its next
    action (read from the thread note's Resume here block); skipped, with why;
    or not reachable, with its app and folder, so the user wraps it by hand.
@@ -1295,8 +1298,8 @@ Written form: the spoken answer on top, then the detail each command lists.
   names: a done line is done, and it is kept in `archive/`.
 - **A wrap is not a sweep.** It does not expire, reorder or tidy `Todo.md`
   beyond that archive, audit memories, check other threads, or ingest
-  meetings. "Close for the day" wraps the threads that
-  changed today and no others.
+  meetings. "Close for the day" asks each session used
+  today to wrap its own thread, and no others.
 - **It never crosses zones** unless the user asks, and then only for that
   request. It never commits two zones together.
 - **It never guesses a name.** Two candidates means one question.

@@ -108,7 +108,7 @@ MAP = [
     ("voice: more than one match", "**When a name matches more than one thing**, or a heard name is close to two entries", "rules"),
     ("voice: never guess", "ask in one line, naming the candidates. Never guess.", "rules"),
     ("voice: open X", "**\"Open X\"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.", "threads"),
-    ("voice: close or wrap", "**\"Close X\" or \"wrap X\"**, or **\"wrap it\"** for the thread in hand: rewrite its Resume here block and add the dated entry. **\"Close for the day\"**: do that for every thread worked on today.", "threads"),
+    ("voice: close or wrap", "**\"Close X\" or \"wrap X\"**, or **\"wrap it\"** for the thread in hand: rewrite its Resume here block and add the dated entry. **\"Close for the day\"**: every session used today wraps its own thread, one at a time.", "threads"),
     ("voice: interrupted", "**\"I'm being interrupted\"**, **\"hold this\"** and **\"hold X\"** run the wrap, as \"wrap it\" does.", "threads"),
     ("voice: back", "**\"Back\"** or **\"where was I\"** opens the thread whose note was written most recently and is not finished or parked; **\"back to X\"** opens X. Nothing to resume: say so, and offer the most recent thread.", "threads"),
     ("voice: desk", "Where the desk skill is installed (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation.", "desk"),

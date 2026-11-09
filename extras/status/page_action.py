@@ -1978,7 +1978,8 @@ def walls_study(ws: Path) -> dict:
     prop = found["prop"]
     return {"say": "A walls migration is pending: %d flag%s proposed, %d flow%s change." % (
                 len(prop["flags"]), "" if len(prop["flags"]) == 1 else "s", len(found["items"]), "" if len(found["items"]) == 1 else "s"),
-            "pending": True, "text": found["text"], "changes": len(found["items"]), "refused": len(found["refused"]),
+            "pending": True, "text": found["text"], "changes": len(found["items"]),
+            "refused": None if found["refused"] is None else len(found["refused"]),
             "flags": [{"tag": t, "walled": bool(w), "rename": prop.get("renames", {}).get(t, "")} for t, w in sorted(prop["flags"].items())]}
 
 
@@ -1995,7 +1996,7 @@ def walls_migrate(ws: Path, req: dict) -> dict:
     lib, tool = walls_context(ws)
     context = ws / "System" / "context.md"
     with held("page-action-context.lock", busy="another change to the parties is still running"):
-        found = tool.study(ws, lib)
+        found = tool.study(ws, lib, refused=False)       # the refusal list is the study's; the lock is not held for it
         if found is None:
             return {"say": "No walls migration is pending, so nothing was written.", "ask": False, "written": False, "pending": False}
         try:

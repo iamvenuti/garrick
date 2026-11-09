@@ -1532,7 +1532,7 @@ def walls_migration(root, answer, apply_changes=True, as_json=False):
         return "", False, None
     data = {"flags": study["prop"]["flags"], "zone_party": study["prop"]["zone_party"],
             "zone_default": study["prop"]["zone_default"], "renames": study["prop"].get("renames", {}),
-            "changes": len(study["items"]), "refused": len(study["refused"])}
+            "changes": len(study["items"]), "refused": None if study["refused"] is None else len(study["refused"])}
     out = [study["text"], ""]
     if not apply_changes:
         out.append("Nothing is written. Run python3 System/tools/release.py update --apply, and answer at the terminal "

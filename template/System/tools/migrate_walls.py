@@ -24,6 +24,7 @@ The policy the Walls table wrote is kept here under names that start with
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -227,12 +228,17 @@ def propose(root, lib, ctx):
             if LEGACY_PUBLIC in (hub or set()) or any(LEGACY_PUBLIC in (t or set()) for t in threads.values()):
                 notes.append("project %s names the reserved tag `public`, which is no longer a party: it will "
                              "label nothing until its note names a party." % name)
-    owner = ctx.get("owner")   # load_context(): the first sentence of `## Me`, or None
+    owner = ctx.get("owner")
     renames = {}
+    taken = {(r.get("party") or "").strip().casefold() for r in parties.values()}
     for tag, row in parties.items():
         if owner and (row.get("party") or "").strip().casefold() == owner["name"].casefold():
-            taken = {(r.get("party") or "").strip().casefold() for r in parties.values()}
             label = OWN_LABEL if OWN_LABEL.casefold() not in taken else "%s (%s)" % (OWN_LABEL, row.get("zone") or tag)
+            n = 2
+            while label.casefold() in taken:
+                label = "%s (%s) %d" % (OWN_LABEL, row.get("zone") or tag, n)
+                n += 1
+            taken.add(label.casefold())
             renames[tag] = label
             notes.append("`%s` is named after you, %s. Its name would be read as a walled party's in every note that "
                          "says it, so it is proposed renamed to %s, a label of what it holds." % (tag, owner["name"], label))
@@ -504,17 +510,18 @@ def walls_check(root):
 def refused_with(root, prop):
     """What the walls check, as it stands, refuses in the workspace once the proposed flags are written: [message].
     It runs on a temporary workspace of links to the real folders, with a copy of System/context.md that holds the
-    flags, so nothing is written here. Names are in it, not only the verdicts of labelled records. The check could
-    not run: []."""
+    flags, so nothing is written here. Names are in it, not only the verdicts of labelled records. It runs the
+    check.py that ships beside this file, the Garrick being installed, so a report agrees with what the write
+    then checks. The check could not run: None, which is not the same as no file."""
     root = Path(root)
-    tool = root / "System" / "tools" / "check.py"
+    tool = Path(__file__).resolve().parent / "check.py"
     path = root / "System" / "context.md"
     try:
         text = rewrite(path.read_text(encoding="utf-8"), prop)
     except OSError:
-        return []
+        return None
     if text is None or not tool.is_file():
-        return []
+        return None
     tmp = Path(tempfile.mkdtemp(prefix="garrick-walls-")).resolve()
     try:
         for entry in root.iterdir():
@@ -529,14 +536,16 @@ def refused_with(root, prop):
         r = subprocess.run([sys.executable, str(tool), "--root", str(tmp), "--walls-only", "--json"],
                            capture_output=True, text=True, timeout=1800)
         found = json.loads(r.stdout).get("findings", [])
-    except (OSError, ValueError, subprocess.TimeoutExpired):
-        return []
+    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
+        return None
     finally:
         shutil.rmtree(str(tmp), ignore_errors=True)
     return sorted({"%s: %s" % (f.get("path"), f.get("message")) for f in found if f.get("severity") in ("error", "warning")})
 
 
 def say_refused(found):
+    if found is None:
+        return "The walls check could not run, so the files these flags would refuse are not known. Run System/tools/check.py --walls-only after."
     if not found:
         return "The walls check, run with these flags, refuses no file."
     out = ["The walls check, run with these flags, would refuse %d thing%s that is committed today (a name in a note "
@@ -547,15 +556,18 @@ def say_refused(found):
     return "\n".join(out)
 
 
-def study(root, lib):
-    """Everything the user is shown before a yes: {"prop", "items", "text"}; None when nothing is pending."""
+def study(root, lib, refused=True):
+    """Everything the user is shown before a yes: {"prop", "items", "refused", "text"}; None when nothing is pending.
+    `refused` False skips the whole-workspace check, which can take several minutes on a large workspace: "refused"
+    is then None and the text says nothing of it."""
     if not pending(root, lib):
         return None
     ctx = lib.load_context(root)
     prop = propose(root, lib, ctx)
     items = flows(root, lib, ctx, prop)
-    refused = refused_with(root, prop)
+    found = refused_with(root, prop) if refused else None
     text = "\n".join([
         "Walls are now a flag on each party (walled or open), not pairs of parties.",
-        "", say_proposal(prop, ctx), "", say_flows(items), "", say_refused(refused)])
+        "", say_proposal(prop, ctx), "", say_flows(items)] + (["", say_refused(found)] if refused else []))
+    refused = found
     return {"prop": prop, "items": items, "refused": refused, "text": text}

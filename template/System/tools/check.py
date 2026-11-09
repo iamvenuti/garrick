@@ -165,6 +165,7 @@ CHECKS = [
     ("memory", "Learned entries"),
     ("zones", "Zones"),
     ("hooks", "Commit hooks"),
+    ("cmux", "cmux"),
     ("skills", "Skills"),
     ("names", "Names"),
     ("projects", "Projects"),
@@ -201,6 +202,7 @@ EAR_GROUP = {
     "memory": "{n} learned entries do not say where they came from, or came only from outside",
     "zones": "the zone folders have {n} gaps",
     "hooks": "git skips the hooks of {n} repositories",
+    "cmux": "cmux does not resume the tabs of agent sessions",
     "skills": "{n} things need fixing in the skills",
     "names": "{n} names are hard to say or sound alike",
     "projects": "{n} things need fixing in project hub notes",
@@ -1646,6 +1648,28 @@ def project_repos(ws: Workspace) -> List[Tuple[Path, Path, dict]]:
 
 def has_remote(repo: Path) -> bool:
     return bool((_git(["remote"], repo) or "").strip())
+
+
+CMUX_CONFIG = (".config", "cmux", "cmux.json")
+
+
+def check_cmux(ws: Workspace) -> List[Finding]:
+    """cmux resumes the agent sessions of its tabs itself when it reopens (`terminal.autoResumeAgentSessions`, on by
+    default). Warn once when `~/.config/cmux/cmux.json` turns it off: nothing resumes the tabs then (#440)."""
+    path = Path(os.path.expanduser("~")).joinpath(*CMUX_CONFIG)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    nested = data.get("terminal") if isinstance(data, dict) else None
+    value = nested.get("autoResumeAgentSessions") if isinstance(nested, dict) else None
+    if isinstance(data, dict) and "terminal.autoResumeAgentSessions" in data:
+        value = data["terminal.autoResumeAgentSessions"]
+    if value is not False:
+        return []
+    return [Finding(WARNING, "cmux", "~/" + "/".join(CMUX_CONFIG),
+                    "turns `terminal.autoResumeAgentSessions` off, so cmux does not resume the agent sessions of its tabs "
+                    "when it reopens; set it to true, or delete the key", "cmux does not resume the tabs of agent sessions")]
 
 
 def check_hooks(ws: Workspace) -> List[Finding]:
@@ -7606,7 +7630,7 @@ PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
 
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
-    check_hooks,
+    check_hooks, check_cmux,
     check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_sources, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates,

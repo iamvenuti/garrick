@@ -8,6 +8,7 @@ Every name is invented; Acme Corp and Birch & Co have a wall between them.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -142,6 +143,28 @@ class StagedRunTest(Base):
             for _ in range(5):
                 self.assertEqual(first, check.hub_unreadable(ws, self.work / "Northwind"))
         self.assertEqual(1, asked.call_count)
+
+
+class CmuxResumeTest(unittest.TestCase):
+    """#440: a warning, once, when cmux is set not to resume agent sessions. The config is built in a temporary HOME."""
+
+    def run_with(self, config):
+        import json
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as ws_root:
+            if config is not None:
+                path = Path(home) / ".config" / "cmux" / "cmux.json"
+                path.parent.mkdir(parents=True)
+                path.write_text(config if isinstance(config, str) else json.dumps(config), encoding="utf-8")
+            with mock.patch.dict(os.environ, {"HOME": home}):
+                return [(f.severity, f.check) for f in check.check_cmux(check.discover(Path(ws_root), light=True))]
+
+    def test_it_warns_once_when_resuming_is_off(self):
+        self.assertEqual([("warning", "cmux")], self.run_with({"terminal": {"autoResumeAgentSessions": False}}))
+        self.assertEqual([("warning", "cmux")], self.run_with({"terminal.autoResumeAgentSessions": False}))
+
+    def test_it_is_quiet_otherwise(self):
+        for config in (None, {}, "not json", {"terminal": {"autoResumeAgentSessions": True}}, {"terminal": {}}, []):
+            self.assertEqual([], self.run_with(config), config)
 
 
 if __name__ == "__main__":

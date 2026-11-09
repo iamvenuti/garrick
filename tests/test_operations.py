@@ -170,7 +170,7 @@ class TestCheckpointDeclared(unittest.TestCase):
 #   1. object literals in the page's own script (MANAGE_JS, PANEL_JS, TODO_JS,
 #      WORK_JS): `{verb:'park',…}`, and the fields added after it as `q.x=…`;
 #   2. `data-act` attributes assembled in Python with json.dumps, which is
-#      where startup, shutdown and run come from;
+#      where run comes from;
 #   3. `data-act` attributes built by the desk() helper for the cmux verbs,
 #      and the one built in JS with JSON.stringify(q) in the dialogs — both
 #      object literals, so scanner 1 finds them, and REGIONS below asserts
@@ -347,7 +347,7 @@ SHAPES = {
     "openIn: 'note-open'": {"note-open": ()},
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
-PY_SHAPES = {'"startup"': ("startup",), '"shutdown"': ("shutdown",), '"run"': ("run",),
+PY_SHAPES = {'"run"': ("run",),
              # the simple home (#175): Continue, a Needs you answer and Not now, the example's two links
              '"continue"': ("continue",), '"answer"': ("answer",), '"later"': ("later",), '"example"': ("example",),
              # a `check` chip's Fix on the Threads card (#179)

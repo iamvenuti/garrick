@@ -322,7 +322,7 @@ class EnforcementPoints(unittest.TestCase):
             "e25": lambda: self.binary("Orchard"),
             "e26": lambda: self.staged(self.work / "Northwind" / "tool.py", "# Ask Theo Marsh at Birch & Co\n"),
             "e27": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Todo]].\n"),
-            "e28": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260319-orphan-call]].\n"),
+            "e28": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260319-orphan-call.txt]].\n"),
             "e29": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260315-split]].\n"),
             "e30": lambda: self.asked(set(), self.place("Northwind", "Pricing")),
             "e31": lambda: self.asked({"none"}, self.place("Northwind", "Pricing")),

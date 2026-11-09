@@ -1,21 +1,17 @@
-"""Compare the wall check's verdicts with a release's: the gate for the token reading and for the flag model.
+"""Compare the wall check's verdicts with a release's: the gate for the way the check reads a reference.
 
-    python3 tests/wall_diff.py v0.59.1
+    python3 tests/wall_diff.py v0.60.1
 
 Takes `check.py` and `garrick_lib.py` of the tag with `git show` into a temporary
-folder, runs the generated table of `tests/test_wall_forms.py` through the tag's
-check and through the working tree's, and prints three counts (the rows whose keys hold the temporary root are compared with it taken out, and counted as a group of their own): rows refused in
-both, rows passed in both, and rows whose verdict changed, split into
-refused -> passed and passed -> refused by page kind and wrapper.
-
-The tag declares walls as pairs and this tree as a flag on each party, so the
-fixture's context is written for the tag with a Walls table of every pair of
-walled parties (`legacy_walls`). A refused -> passed row is then one of three
-kinds: *by design*, a token that does not resolve (the threat model of 0.58.0);
-*by the design*, a flow the flag model allows on purpose (an open party's
-material into a walled scope; a source of two walled parties into a scope
-naming both); or *other*. Exits 1 when *other* is not 0. `--full` runs every row (the default runs the rows the test
-runs). `diff(tag)` returns the same numbers as a dict, for a test or a session.
+folder, runs the rows of `tests/test_wall_forms.py` (one for each link form and
+page kind, and each case of `tests/walls/forms/`) through the tag's check and
+through the working tree's, and prints the rows whose verdict changed. A
+refused -> passed row is one of three kinds: *by design*, a row whose token does
+not resolve (a case file says `far: by design`; see docs/principles.md); *by the
+design*, a flow the flag model allows on purpose (an open party's material into
+a walled scope; a source of two walled parties into a scope naming both); or
+*other*. Exits 1 when *other* is not 0. `diff(tag)` returns the same numbers as
+a dict, for a test or a session.
 
 Each side runs in a process of its own, so that two copies of `check` never
 share a module table.
@@ -25,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -40,32 +37,10 @@ TOOLS = REPO / "template" / "System" / "tools"
 FILES = ("check.py", "garrick_lib.py")
 
 
-def legacy_walls(root: Path) -> None:
-    """Add to the fixture's System/context.md the Walls table a release before the flag model reads: a row for
-    every pair of walled parties, and for no other."""
-    path = Path(root) / "System" / "context.md"
-    walled, header = [], None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("|"):
-            header = None
-            continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if header is None:
-            header = [c.lower() for c in cells]
-        elif "tag" in header and "walled" in header and not set(line) <= set("|-: "):
-            tag = cells[header.index("tag")].strip("`")
-            if cells[header.index("walled")].lower() == "yes":
-                walled.append(tag)
-    walled = sorted(walled)
-    rows = ["| `%s` | `%s` | pair |" % (a, b) for i, a in enumerate(walled) for b in walled[i + 1:]]
-    path.write_text(path.read_text(encoding="utf-8").rstrip("\n") + "\n\n## Walls\n\n| Between | And | Why |\n|---|---|---|\n"
-                    + "\n".join(rows) + "\n", encoding="utf-8")
-
-
-def verdicts(tools: Path, full: bool = False, legacy: bool = False) -> dict:
-    """{(project, party, label): "refused" | "passed"} for the table run through
-    the check in `tools`. Runs in this process: the check in `tools` must be the
-    first one imported (`worker` arranges that)."""
+def verdicts(tools: Path, full: bool = False) -> dict:
+    """{"rows": {(project, party, label): "refused" | "passed"}, "by_design": [label, ...]} for the rows run through
+    the check in `tools`; the labels are those the working tree's case files call by design. Runs in this process:
+    the check in `tools` must be the first one imported (`worker` arranges that)."""
     import tempfile as _tempfile
     import check  # the check in `tools`, already first on the path
     import test_wall_forms as forms
@@ -73,15 +48,6 @@ def verdicts(tools: Path, full: bool = False, legacy: bool = False) -> dict:
     assert Path(check.__file__).resolve().parent == Path(tools).resolve(), check.__file__
     with _tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp).resolve() / "Workspace"
-        if legacy:
-            built = forms.build
-
-            def build_with_pairs(where):
-                pages = built(where)
-                legacy_walls(where)
-                return pages
-
-            forms.build = build_with_pairs
         table = forms.Table(tools=check, root=root)
         real = table.verdict
 
@@ -93,41 +59,51 @@ def verdicts(tools: Path, full: bool = False, legacy: bool = False) -> dict:
 
         table.verdict = verdict
         out = table.run(full=full)
+        design = sorted(k[2] for k, v in table.expected().items() if v == "by design")
     # A warning is not a refusal.
-    return {k: ("refused" if v == "refused" else "passed") for k, v in out.items()}
+    return {"rows": {k: ("refused" if v == "refused" else "passed") for k, v in out.items()}, "by_design": design}
 
 
-def worker(tools: Path, full: bool, legacy: bool = False) -> None:
-    """Child process: the check in `tools` first, then the table; JSON on stdout."""
+def worker(tools: Path, full: bool) -> None:
+    """Child process: the check in `tools` first, then the rows; JSON on stdout."""
     sys.path.insert(0, str(HERE))
     sys.path.insert(0, str(tools))
-    out = verdicts(tools, full, legacy)
-    json.dump([[*k, v] for k, v in sorted(out.items())], sys.stdout)
+    out = verdicts(tools, full)
+    json.dump({"rows": [[*k, v] for k, v in sorted(out["rows"].items())], "by_design": out["by_design"]}, sys.stdout)
 
 
-def start(tools: Path, full: bool, legacy: bool = False) -> subprocess.Popen:
-    cmd = [sys.executable, "-I", str(Path(__file__).resolve()), "--worker", str(tools)] + (["--full"] if full else []) \
-        + (["--legacy"] if legacy else [])
+def start(tools: Path, full: bool) -> subprocess.Popen:
+    cmd = [sys.executable, "-I", str(Path(__file__).resolve()), "--worker", str(tools)] + (["--full"] if full else [])
     return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(HERE))
 
 
-# The fixture's root, as a run of the table names it in a row's label: a temporary folder, new each run.
-TEMP_ROOT_RE = re.compile(r"(?:/private)?/(?:var/folders/[^/]+/[^/]+/T|var/tmp|tmp)/tmp[^/\s]*/Workspace")
+def temp_bases() -> list:
+    """Every folder a run's temporary root may be under: the system's, `TMPDIR`, the folders every Mac and Linux
+    keeps, and a pytest or tempfile root, each as written and as the disk resolves it."""
+    found = {"/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", tempfile.gettempdir(), os.path.realpath(tempfile.gettempdir()),
+             os.environ.get("TMPDIR", ""), os.path.realpath(os.environ.get("TMPDIR") or "/tmp")}
+    return sorted((b.rstrip("/") for b in found if b.strip("/")), key=len, reverse=True)
+
+
+# The fixture's root, as a run of the rows names it in a label: a path under any temporary folder, new each run.
+TEMP_ROOT_RE = re.compile(r"(?:%s|(?:/private)?/var/folders/[^/\s]+/[^/\s]+/T|[^\s]*?/pytest-of-[^/\s]+)(?:/[^/\s]+)*?/Workspace"
+                          % "|".join(re.escape(b) for b in temp_bases()))
 TEMP = "<temp>/Workspace"
 
 
 def finish(proc: subprocess.Popen) -> dict:
-    """{key: verdict} for the table's rows; a row whose key holds the temporary path has that path replaced by
-    TEMP, so that the two runs' rows meet, and its key's label starts with TEMP_MARK."""
+    """{"rows": {key: verdict}, "by_design": set of labels}; a row whose label holds a temporary path has that path
+    replaced by TEMP, so that the two runs' rows meet, and its label starts with TEMP_MARK."""
     out, err = proc.communicate()
     if proc.returncode:
-        raise RuntimeError("the table did not run:\n" + err[-2000:])
+        raise RuntimeError("the rows did not run:\n" + err[-2000:])
+    loaded = json.loads(out)
     rows = {}
-    for p, q, label, v in json.loads(out):
+    for p, q, label, v in loaded["rows"]:
         if TEMP_ROOT_RE.search(label):
             label = TEMP_MARK + TEMP_ROOT_RE.sub(TEMP, label)
         rows[(p, q, label)] = v
-    return rows
+    return {"rows": rows, "by_design": set(loaded["by_design"])}
 
 
 TEMP_MARK = "[temp path] "
@@ -146,9 +122,9 @@ def tag_tools(tag: str, into: Path) -> Path:
 
 
 def split(label: str):
-    """(page kind, wrapper) of a row label `kind/grade/wrapper: token`."""
-    kind, _, rest = label.partition("/")
-    return kind, rest.split("/", 1)[-1].split(":", 1)[0]
+    """(page kind, link form) of a row label `kind/grade/form`; a case file's row is `form/<round>/<n> <name>`."""
+    parts = label.split("/", 2)
+    return parts[0], parts[-1]
 
 
 def flags() -> dict:
@@ -164,10 +140,9 @@ def flags() -> dict:
         return {t: e["walled"] for t, e in garrick_lib.load_context(root)["parties"].items()}
 
 
-def by_design(label: str) -> bool:
-    """Is a refused -> passed row one whose token does not resolve? The table's rows all name a page that is
-    there, so none is; the threat model's rows would be listed here."""
-    return False
+def by_design(label: str, design: set) -> bool:
+    """Is a refused -> passed row one whose token does not resolve? The case files say so: `far: by design`."""
+    return label in design
 
 
 def by_the_design(party: str, scope: str, walled: dict) -> bool:
@@ -181,8 +156,9 @@ def diff(tag: str, full: bool = False) -> dict:
     "refused_to_passed": {"total", "by_kind", "by_wrapper", "rows"}, "passed_to_refused": {...}}."""
     with tempfile.TemporaryDirectory() as tmp:
         old_tools = tag_tools(tag, Path(tmp) / "tag")
-        procs = (start(old_tools, full, legacy=True), start(TOOLS, full))
-        old, new = finish(procs[0]), finish(procs[1])
+        procs = (start(old_tools, full), start(TOOLS, full))
+        old, now_run = finish(procs[0]), finish(procs[1])
+    old, new, design = old["rows"], now_run["rows"], now_run["by_design"]
     temp = {k for k in new if k[2].startswith(TEMP_MARK)}
     result = {"tag": tag, "rows": len(new) - len(temp), "refused_both": 0, "passed_both": 0}
     moved = {"refused_to_passed": [], "passed_to_refused": []}
@@ -212,7 +188,7 @@ def diff(tag: str, full: bool = False) -> dict:
         kinds = {"by_design": [], "by_the_design": [], "other": []}
         for key in keys:
             project, party, label = key
-            kind = "by_design" if by_design(label) else "by_the_design" if by_the_design(party, scopes[project], walled) else "other"
+            kind = "by_design" if by_design(label, design) else "by_the_design" if by_the_design(party, scopes[project], walled) else "other"
             kinds[kind].append(key)
         return kinds
 
@@ -268,13 +244,12 @@ def report(result: dict, show: int = 20) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("tag", nargs="?", help="the release tag to compare with, such as v0.58.1")
+    ap.add_argument("tag", nargs="?", help="the release tag to compare with, such as v0.60.1")
     ap.add_argument("--full", action="store_true", help="run every row, not the rows the test runs")
     ap.add_argument("--worker", help=argparse.SUPPRESS)
-    ap.add_argument("--legacy", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     if args.worker:
-        worker(Path(args.worker), args.full, args.legacy)
+        worker(Path(args.worker), args.full)
         return 0
     if not args.tag:
         ap.error("name a tag")

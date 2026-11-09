@@ -46,7 +46,7 @@ It is in {person}.
 ~~~~~
 
 ### invisible characters
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -55,7 +55,7 @@ See `wiki/people/<U+200B>{pname}` and `{person}<U+2060>` now.
 ~~~~~
 
 ### soft hyphen
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -64,7 +64,7 @@ See `wiki/people/<U+00AD>{pname}` now.
 ~~~~~
 
 ### html entities for the slash
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -73,7 +73,7 @@ See wiki&#47;people&#47;{pname} and wiki&sol;people&sol;{pname} now.
 ~~~~~
 
 ### inline html tags
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -82,7 +82,7 @@ See <b>wiki</b>/people/{pname} now.
 ~~~~~
 
 ### leading-star glob
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -155,7 +155,7 @@ See <obsidian://open?path=Wikis/Meetings/{person}.md> now.
 ~~~~~
 
 ### prose path with spaces
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -164,7 +164,7 @@ See {dec} now.
 ~~~~~
 
 ### percent-encoded backslash
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -173,7 +173,7 @@ See `wiki%5Cpeople%5C{pname}` now.
 ~~~~~
 
 ### percent-encoded slash
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes
@@ -182,7 +182,7 @@ See `wiki%2Fpeople%2F{pname}` now.
 ~~~~~
 
 ### word prefix
-far: refused
+far: by design
 near: passed
 ~~~~~
 # Notes

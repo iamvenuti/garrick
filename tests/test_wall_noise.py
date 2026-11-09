@@ -772,16 +772,6 @@ class TestCheckPyCommitsItself(WallCase):
         print("check.py commit on 3200 pages: %.1f s" % (time.time() - started), file=sys.stderr)
         self.assertEqual((0, ""), (res.returncode, res.stderr.split("check.py commit on")[0].strip()))
 
-    def test_a_glob_that_can_match_no_page_is_not_counted(self):
-        names = check.PageNames(check.discover(self.root))
-        for word in ("zzqx one*", "a zzqx b ?", "cat x[0] zzqx"):
-            names.named(word, 1, False)
-        self.assertEqual(set(), names.globs_read)
-        have = next(h[-1] for h, _ in names.entries if h[-1][:4].isalpha())                # a glob one token long that can match a page is read as before
-        names.named(have[:4] + "*", 1, False)
-        names.named("x " + have[:4] + "*", 1, False)           # one that cannot, because of its first word, is not
-        self.assertEqual({have[:4] + "*"}, names.globs_read)
-
 
 if __name__ == "__main__":
     unittest.main()

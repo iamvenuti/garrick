@@ -116,7 +116,7 @@ const CLOSING = ' This wrap closes the session: run it in the foreground and do 
 
 // --- One slot that follows the record (#367) -----------------------------------
 // Wrap, Resume or nothing, decided with no model call from three facts: the time
-// the thread note was last written, the time the session's last turn began, and
+// the last wrap of the thread finished (wrap_lock.py end writes it), the time the session's last turn began, and
 // a lock the wrap holds in System/generated/ while it runs (System/tools/wrap_lock.py).
 
 // A lock older than this counts as gone: a wrap that died must not block the thread for good.
@@ -124,6 +124,20 @@ export const WRAP_LOCK_MS = 10 * 60 * 1000
 
 // The lock's file name for a note given by its path from the workspace root: wrap_lock.py's.
 export const lockFile = (rel: string) => 'wrap-' + rel.replace(/^\/+|\/+$/g, '').split('/').join('__') + '.lock'
+
+// The record a finished wrap leaves beside the lock: wrap_lock.py's name for it.
+export const doneFile = (rel: string) => lockFile(rel).replace(/\.lock$/, '.done')
+
+// When the wrap finished, from the JSON the record holds; null when it does not read.
+export function doneFinished(text: string | null | undefined): number | null {
+  try {
+    const t = Date.parse(JSON.parse(String(text)).finished)
+
+    return Number.isFinite(t) ? t : null
+  } catch {
+    return null
+  }
+}
 
 // When the lock was taken, from the JSON it holds; null when it does not read.
 export function lockStart(text: string | null | undefined): number | null {
@@ -140,28 +154,22 @@ export function lockStart(text: string | null | undefined): number | null {
 export const lockRunning = (startedMs: number | null, nowMs: number): boolean =>
   startedMs !== null && Math.abs(nowMs - startedMs) < WRAP_LOCK_MS
 
-// Work since the note was last written: Wrap. The note current, from a wrap just
-// done or a session with no turn yet: Resume. A thread not live: nothing. A wrap
-// that is running shows as such, and offers no second start. A note whose time
-// cannot be read is taken as not current: Wrap is safe to offer twice, the lock stops a second run.
-export function bandSlot(s: { live: boolean; wrapping: boolean; noteMs: number | null; turnMs: number | null }): Slot {
+// A turn begun since the last wrap finished: Wrap. A wrap that finished after
+// the last turn began, or a session with no turn yet: Resume. A thread not live:
+// nothing. A wrap that is running shows as such, and offers no second start.
+// A write to the note by any other route is no wrap and changes nothing. No
+// record of a wrap is taken as none ran: Wrap is safe to offer twice, the lock stops a second run.
+export function bandSlot(s: { live: boolean; wrapping: boolean; doneMs: number | null; turnMs: number | null }): Slot {
   if (!s.live) return null
   if (s.wrapping) return 'wrapping'
   if (s.turnMs === null) return 'resume'
-  if (s.noteMs === null) return 'wrap'
+  if (s.doneMs === null) return 'wrap'
 
-  return s.noteMs >= s.turnMs ? 'resume' : 'wrap'
+  return s.doneMs >= s.turnMs ? 'resume' : 'wrap'
 }
 
 // A thread the slot is about: it has a block, and is neither finished nor set aside.
 export const liveNote = (n: Note | null): n is Note => n !== null && (n.resume !== null || n.threads.length > 0) && n.status !== 'done' && n.status !== 'parked'
-
-// The most recent modification time, in ms, of the files given; null when none reads.
-export function newestMs(stdout: string): number | null {
-  const times = stdout.split('\n').map(line => Number.parseFloat(line.trim()) * 1000).filter(t => Number.isFinite(t) && t > 0)
-
-  return times.length === 0 ? null : Math.max(...times)
-}
 
 // The Resume block for the pane: wikilinks become links to the file they name,
 // or their label where none matches, so the renderer draws them as text a
@@ -688,8 +696,8 @@ async function waitLater($: any): Promise<string> {
 // It fails closed: only a wrap that ended cleanly, with the Resume here block
 // rewritten, lets the session go, and a turn that is running is never cut off.
 //
-// The session counts as wrapped when its last main-loop turn rewrote the block
-// and no turn has run since. The module keeps that, so a reload forgets it and
+// The session counts as wrapped when a wrap finished (wrap_lock.py end) after
+// its last main-loop turn began, and no turn has run since. The module keeps that, so a reload forgets it and
 // Close then wraps once more, which is safe.
 
 // The text a wrap is judged by: the Resume here block, or at a project kept in
@@ -720,7 +728,7 @@ async function hostOf($: any): Promise<Host> {
 
 let closing: 'queued' | 'starting' | 'wrapping' | 'closing' | null = null
 let wrapTurn: string | null = null          // the turn the wrap runs in, once it starts
-let wrapped = false                         // the last turn rewrote the block, and none has run since
+let wrapped = false                         // a wrap finished during the last turn, and none has run since
 let before: string | null = null            // the block as the running turn found it
 let asked = false                           // the running turn put a question to the person
 let turnMs: number | null = null            // when the session's last main-loop turn began
@@ -730,8 +738,22 @@ let poller: { cancel: () => void } | null = null
 
 const rels = (n: Note) => (n.resume !== null ? [n.rel] : n.threads.map(t => t.rel))
 
-// The slot for the thread the band shows, from the note's time, the last turn's
-// time and the lock. No model: two file reads and one stat.
+// When the newest wrap of the thread finished, from the records beside the locks; null when none reads.
+async function finishedMs($: any, n: Note): Promise<number | null> {
+  const root = rootOf(n)
+  let newest: number | null = null
+  for (const rel of rels(n)) {
+    const path = `${root}/System/generated/${doneFile(rel)}`
+    if (!(await $.fs.exists(path).catch(() => false))) continue
+    const t = doneFinished(await $.fs.read(path).catch(() => null))
+    if (t !== null && (newest === null || t > newest)) newest = t
+  }
+
+  return newest
+}
+
+// The slot for the thread the band shows, from the last wrap's time, the last turn's
+// time and the lock. No model: file reads only.
 async function slotFor($: any, n: Note | null): Promise<Slot> {
   if (!liveNote(n)) return null
   const root = rootOf(n)
@@ -742,19 +764,13 @@ async function slotFor($: any, n: Note | null): Promise<Slot> {
     if (!(await $.fs.exists(path).catch(() => false))) continue
     if (lockRunning(lockStart(await $.fs.read(path).catch(() => null)), now)) wrapping = true
   }
-  let noteMs: number | null = null
-  try {
-    const r = await $.process.run(['/usr/bin/stat', '-f', '%Fm', ...rels(n).map(rel => `${root}/${rel}`)], { timeoutMs: 5_000 })
-    noteMs = r.exitCode === 0 ? newestMs(String(r.stdout ?? '')) : null
-  } catch {
-    noteMs = null
-  }
+  const doneMs = await finishedMs($, n).catch(() => null)
 
-  return bandSlot({ live: true, wrapping, noteMs, turnMs })
+  return bandSlot({ live: true, wrapping, doneMs, turnMs })
 }
 
 // Looks again and keeps the answer for the band. While a wrap runs it looks every
-// few seconds, so Resume appears when the lock is gone and the note has landed.
+// few seconds, so Resume appears when the lock is gone and the wrap's record has landed.
 async function evaluate($: any): Promise<Slot> {
   const slot = await slotFor($, await noteOf($).catch(() => null)).catch(() => null)
   await update($, slotAtom, () => slot)
@@ -797,7 +813,7 @@ async function startWrap($: any, n: Note): Promise<boolean> {
     // A prompt that never went must not leave the band saying Wrapping, nor the lock standing.
     asking = false
     askStage = null
-    if (lock === 'taken') await $.process.run(['python3', `${rootOf(n)}/System/tools/wrap_lock.py`, 'end', n.rel]).catch(() => undefined)
+    if (lock === 'taken') await $.process.run(['python3', `${rootOf(n)}/System/tools/wrap_lock.py`, 'end', '--abandon', n.rel]).catch(() => undefined)
     await evaluate($).catch(() => undefined)
     throw err
   }
@@ -978,7 +994,8 @@ export const register: Register = on => {
     await evaluate($).catch(() => undefined)
     if (e.agentId === undefined) {
       const rewrote = before !== null && signature(found) !== before
-      wrapped = e.reason === 'answer' && rewrote
+      const doneMs = liveNote(found) ? await finishedMs($, found).catch(() => null) : null
+      wrapped = e.reason === 'answer' && doneMs !== null && turnMs !== null && doneMs >= turnMs
       if (closing === 'wrapping' && e.turnId === wrapTurn) {
         const fault = wrapFault(e.reason, e.answer, rewrote, asked)
         wrapTurn = null

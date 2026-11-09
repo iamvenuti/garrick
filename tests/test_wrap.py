@@ -59,6 +59,30 @@ class LockTest(unittest.TestCase):
         self.assertTrue(wl.start(self.root, NOTE))
         self.assertTrue(wl.start(self.root, "Zones/Work/Acme/Threads/Terms/Terms.md"))
 
+    def test_end_records_when_the_wrap_finished_beside_the_lock(self):
+        wl.start(self.root, NOTE)
+        self.assertIsNone(wl.finished(wl.done_path(self.root, NOTE)))
+        wl.end(self.root, NOTE, now=1_700_000_000.25)
+        done = wl.done_path(self.root, NOTE)
+        self.assertEqual(done.parent, self.lock().parent)
+        self.assertEqual(done.name, "wrap-Zones__Work__Acme__Threads__Pricing__Pricing.md.done")
+        self.assertAlmostEqual(wl.finished(done), 1_700_000_000.25, places=2)
+        self.assertEqual(json.loads(done.read_text())["note"], NOTE)
+        self.assertFalse(self.lock().exists())
+
+    def test_end_abandon_records_nothing(self):
+        wl.start(self.root, NOTE)
+        wl.end(self.root, NOTE, abandon=True)
+        self.assertFalse(self.lock().exists())
+        self.assertFalse(wl.done_path(self.root, NOTE).exists())
+
+    def test_a_record_that_does_not_read_is_no_record(self):
+        done = wl.done_path(self.root, NOTE)
+        done.parent.mkdir(parents=True)
+        for bad in ("", "not json", "{}", '{"finished": "soon"}'):
+            done.write_text(bad)
+            self.assertIsNone(wl.finished(done))
+
     def test_end_removes_it_and_a_second_wrap_may_start(self):
         wl.start(self.root, NOTE)
         wl.end(self.root, NOTE)

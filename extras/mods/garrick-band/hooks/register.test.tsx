@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { bandSlot, buildIndex, endsWithQuestion, fileHref, foldersUp, FULL, label, launcherSettings, linkify, liveNote, lockFile, lockRunning, lockStart, lookup, MARK, markCells, newestMs, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, WRAP_LOCK_MS, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
+import { bandSlot, buildIndex, doneFile, doneFinished, endsWithQuestion, fileHref, foldersUp, FULL, label, launcherSettings, linkify, liveNote, lockFile, lockRunning, lockStart, lookup, MARK, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, WRAP_LOCK_MS, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -964,7 +964,8 @@ describe('Close', () => {
   // one, lets `rewrite` change the note while it runs, and completes it.
   async function closer($: any, on: any, o: Options = {}) {
     const clock = mock.clock(on)
-    const state = { text: o.note ?? NOTE }
+    const state = { text: o.note ?? NOTE, done: null as number | null }
+    const doneAt = `${ROOT}/System/generated/${doneFile('Zones/Work/Acme/Acme.md')}`
     const submitted: string[] = []
     const ran: string[][] = []
     const exits: string[] = []
@@ -997,17 +998,19 @@ describe('Close', () => {
     on('session.surfaces', async () => ({ value: (o.surfaces ?? ['terminal']) as any }))
     on('env.get', async (_$: any, e: any) => ({ value: e.name === 'CMUX_SURFACE_ID' ? (o.cmux ? 'surface-1' : undefined) : '/Users/someone' }))
     on('fs.exists', async (_$: any, e: any) => ({
-      value: [`${ROOT}/System/rules.md`, ...(cwd.endsWith('/System') ? [] : [`${cwd}/${cwd.slice(cwd.lastIndexOf('/') + 1)}.md`]), '/usr/bin/open'].includes(e.path),
+      value: [`${ROOT}/System/rules.md`, ...(cwd.endsWith('/System') ? [] : [`${cwd}/${cwd.slice(cwd.lastIndexOf('/') + 1)}.md`]), '/usr/bin/open', ...(state.done === null ? [] : [doneAt])].includes(e.path),
     }))
-    on('fs.read', async () => ({ value: state.text }))
+    on('fs.read', async (_$: any, e: any) => ({ value: e.path === doneAt ? JSON.stringify({ note: 'Zones/Work/Acme/Acme.md', finished: new Date(state.done!).toISOString() }) : state.text }))
     on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
     on('turn.complete', async () => ({ text: '' }))
     let n = 0
-    // One turn of the main loop; `rewrite` is the note as the turn leaves it.
-    const turn = async (answer: string, rewrite?: string, reason: 'answer' | 'error' | 'aborted' = 'answer') => {
+    // One turn of the main loop; `rewrite` is the note as the turn leaves it, and
+    // `wrapped` says a wrap ran in it (wrap_lock.py end wrote its record).
+    const turn = async (answer: string, rewrite?: string, reason: 'answer' | 'error' | 'aborted' = 'answer', wrapped = false) => {
       const turnId = `t${++n}`
       await $.turn.start({ text: 'x', turnId } as any)
       if (rewrite !== undefined) state.text = rewrite
+      if (wrapped) state.done = Date.now() + 1
       await $.turn.complete({ answer, durationMs: 1, isAborted: reason === 'aborted', turnId, reason } as any)
     }
     await turn('')
@@ -1096,7 +1099,7 @@ describe('Close', () => {
     await c.close()
     await c.clock.advance(100)
     expect(c.submitted).toHaveLength(2)
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.clock.advance(10_000)
     expect(c.desks()).toEqual([DESK])
   })
@@ -1143,7 +1146,7 @@ describe('Close', () => {
   // Wrapped, or nothing to wrap: no second wrap.
   test('right after a wrap, Close closes with no second wrap', async ($, on) => {
     const c = await closer($, on, { cmux: true })
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.close()
     await c.clock.advance(10_000)
     expect(c.submitted).toEqual([])
@@ -1152,8 +1155,17 @@ describe('Close', () => {
 
   test('a turn since the wrap makes the session unwrapped again', async ($, on) => {
     const c = await closer($, on, { cmux: true })
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.turn('Here is the table.')
+    await c.close()
+    await c.clock.advance(100)
+    expect(c.submitted).toHaveLength(1)
+    expect(c.desks()).toEqual([])
+  })
+
+  test('a turn that rewrote the block without a wrap does not count as wrapped: Close wraps first (#453)', async ($, on) => {
+    const c = await closer($, on, { cmux: true })
+    await c.turn('Built the deck.', NOTE2)                  // the block changed, wrap_lock.py end never ran
     await c.close()
     await c.clock.advance(100)
     expect(c.submitted).toHaveLength(1)
@@ -1187,7 +1199,7 @@ describe('Close', () => {
   // The command each host gets.
   test('cmux: desk closes this session\'s tab, with --yes', async ($, on) => {
     const c = await closer($, on, { cmux: true })
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.close()
     await c.clock.advance(10_000)
     expect(c.desks()).toEqual([['desk', 'close', '--session', 'sess-1', '--yes']])
@@ -1196,7 +1208,7 @@ describe('Close', () => {
 
   test('cmux: a desk that refuses leaves the session open and says why', async ($, on) => {
     const c = await closer($, on, { cmux: true, desk: [{ exitCode: 1, stderr: 'desk: no open tab runs session sess-1\n' }] })
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.close()
     await c.clock.advance(10_000)
     expect(c.toasts.at(-1)).toBe('Wrapped, but not closed: desk: no open tab runs session sess-1')
@@ -1205,7 +1217,7 @@ describe('Close', () => {
   test('cmux: desk still sees the turn as running, so the band tries again', async ($, on) => {
     const busy = { exitCode: 1, stderr: 'desk: Acme is mid-turn or waiting on a question; let it finish first' }
     const c = await closer($, on, { cmux: true, desk: [busy, busy, { exitCode: 0 }] })
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.close()
     await c.clock.advance(30_000)
     expect(c.desks()).toHaveLength(3)
@@ -1216,7 +1228,7 @@ describe('Close', () => {
     const c = await closer($, on, { surfaces: ['desktop'] })
     await c.close()
     await c.clock.advance(100)
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.clock.advance(10_000)
     expect(c.toasts.at(-1)).toBe('Wrapped. Archive this session from the sidebar.')
     expect(c.desks()).toEqual([])
@@ -1225,7 +1237,7 @@ describe('Close', () => {
 
   test('a plain terminal: /exit', async ($, on) => {
     const c = await closer($, on)
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.close()
     await c.clock.advance(10_000)
     expect(c.exits).toEqual(['exit'])
@@ -1234,7 +1246,7 @@ describe('Close', () => {
 
   test('a terminal that will not run /exit says to type it', async ($, on) => {
     const c = await closer($, on, { exit: 'rejects' })
-    await c.turn('Wrapped.', NOTE2)
+    await c.turn('Wrapped.', NOTE2, 'answer', true)
     await c.close()
     await c.clock.advance(10_000)
     expect(c.toasts.at(-1)).toBe('Wrapped. Type /exit to close this session.')
@@ -1262,9 +1274,9 @@ describe('Close', () => {
   })
 })
 
-// One slot that follows the record (#367): Wrap after work since the note was
-// written, Resume once it is current, nothing on a thread that is not live, and
-// a running wrap shown as such. No model is asked: the note's time, the time of
+// One slot that follows the record (#367, #453): Wrap after work since the last wrap
+// finished, Resume once one has, nothing on a thread that is not live, and
+// a running wrap shown as such. No model is asked: the time the last wrap finished, the time of
 // the last turn and a lock decide.
 describe('the one slot', () => {
   const MIN = 60_000
@@ -1272,14 +1284,14 @@ describe('the one slot', () => {
 
   test('the state logic, from the three facts', () => {
     const live = { live: true, wrapping: false }
-    expect(bandSlot({ ...live, noteMs: 1000, turnMs: 2000 })).toBe('wrap')        // work since the note was written
-    expect(bandSlot({ ...live, noteMs: 3000, turnMs: 2000 })).toBe('resume')      // the wrap landed after the last turn began
-    expect(bandSlot({ ...live, noteMs: 2000, turnMs: 2000 })).toBe('resume')
-    expect(bandSlot({ ...live, noteMs: 1000, turnMs: null })).toBe('resume')      // a fresh session
-    expect(bandSlot({ ...live, noteMs: null, turnMs: 2000 })).toBe('wrap')        // a time that cannot be read: Wrap, which the lock keeps single
-    expect(bandSlot({ live: true, wrapping: true, noteMs: 1000, turnMs: 2000 })).toBe('wrapping')
-    expect(bandSlot({ live: true, wrapping: true, noteMs: 3000, turnMs: 2000 })).toBe('wrapping')
-    expect(bandSlot({ live: false, wrapping: true, noteMs: 1000, turnMs: 2000 })).toBeNull()
+    expect(bandSlot({ ...live, doneMs: 1000, turnMs: 2000 })).toBe('wrap')        // work since the last wrap finished
+    expect(bandSlot({ ...live, doneMs: 3000, turnMs: 2000 })).toBe('resume')      // the wrap finished after the last turn began
+    expect(bandSlot({ ...live, doneMs: 2000, turnMs: 2000 })).toBe('resume')
+    expect(bandSlot({ ...live, doneMs: 1000, turnMs: null })).toBe('resume')      // a fresh session
+    expect(bandSlot({ ...live, doneMs: null, turnMs: 2000 })).toBe('wrap')        // no wrap on record: Wrap, which the lock keeps single
+    expect(bandSlot({ live: true, wrapping: true, doneMs: 1000, turnMs: 2000 })).toBe('wrapping')
+    expect(bandSlot({ live: true, wrapping: true, doneMs: 3000, turnMs: 2000 })).toBe('wrapping')
+    expect(bandSlot({ live: false, wrapping: true, doneMs: 1000, turnMs: 2000 })).toBeNull()
   })
 
   test('a thread that is finished, parked or without a block offers nothing', () => {
@@ -1303,9 +1315,10 @@ describe('the one slot', () => {
     expect(lockRunning(null, taken)).toBe(false)
   })
 
-  test('the newest modification time of the notes stat printed', () => {
-    expect(newestMs('1700000000.5\n1700000100.25\n')).toBe(1700000100250)
-    for (const none of ['', 'stat: no such file\n', '0\n']) expect(newestMs(none)).toBeNull()
+  test('a finished wrap leaves a record named for the lock, with its time', () => {
+    expect(doneFile('Zones/Work/Acme/Threads/Pricing/Pricing.md')).toBe('wrap-Zones__Work__Acme__Threads__Pricing__Pricing.md.done')
+    expect(doneFinished('{"note": "x", "finished": "2026-11-05T10:00:00.250Z"}')).toBe(Date.parse('2026-11-05T10:00:00.250Z'))
+    for (const bad of [null, '', 'not json', '{}', '{"finished": "soon"}']) expect(doneFinished(bad)).toBeNull()
   })
 
   // A thread note whose time the test sets, a lock it can plant, and the
@@ -1313,12 +1326,13 @@ describe('the one slot', () => {
   // submitted is recorded, and the band must submit none by itself.
   async function slotted($: any, on: any, o: { note?: string; lock?: string | null; script?: boolean; reject?: boolean } = {}) {
     const clock = mock.clock(on)
-    const state = { noteMs: Date.now() - 60 * MIN, lock: o.lock ?? null as string | null, text: o.note ?? NOTE }
+    const state = { done: null as number | null, lock: o.lock ?? null as string | null, text: o.note ?? NOTE }
     const submitted: string[] = []
     const toasts: string[] = []
     const ran: string[][] = []
     const cwd = `${ROOT}/Zones/Work/Acme`
     const lockPath = `${ROOT}/System/generated/${lockFile('Zones/Work/Acme/Acme.md')}`
+    const donePath = `${ROOT}/System/generated/${doneFile('Zones/Work/Acme/Acme.md')}`
     on('ui.render', ENGINE)
     on('ui.toast', async (_$: any, e: any) => { toasts.push(e.text); return { value: undefined } as any })
     on('prompt.submit', async (_$: any, e: any) => {
@@ -1328,17 +1342,16 @@ describe('the one slot', () => {
     })
     on('process.run', async (_$: any, e: any) => {
       ran.push([...e.argv])
-      const stdout = e.argv[0] === '/usr/bin/stat' ? `${state.noteMs / 1000}\n` : ''
 
-      return { value: { exitCode: 0, stdout, stderr: '' } } as any
+      return { value: { exitCode: 0, stdout: '', stderr: '' } } as any
     })
     on('session.root', async () => ({ value: cwd }))
     on('session.cwd', async () => ({ value: cwd }))
     on('env.get', async () => ({ value: '/Users/someone' }))
     on('fs.exists', async (_$: any, e: any) => ({
-      value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, ...(o.script ? [`${ROOT}/System/tools/wrap_lock.py`] : []), ...(state.lock === null ? [] : [lockPath])].includes(e.path),
+      value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`, ...(o.script ? [`${ROOT}/System/tools/wrap_lock.py`] : []), ...(state.lock === null ? [] : [lockPath]), ...(state.done === null ? [] : [donePath])].includes(e.path),
     }))
-    on('fs.read', async (_$: any, e: any) => ({ value: e.path === lockPath ? state.lock : state.text }))
+    on('fs.read', async (_$: any, e: any) => ({ value: e.path === lockPath ? state.lock : e.path === donePath ? JSON.stringify({ note: 'Zones/Work/Acme/Acme.md', finished: new Date(state.done!).toISOString() }) : state.text }))
     on('turn.start', async (_$: any, e: any) => ({ turnId: e.turnId }))
     on('turn.complete', async () => ({ text: '' }))
     let n = 0
@@ -1363,17 +1376,35 @@ describe('the one slot', () => {
     const w = await slotted($, on)
     await w.turn()                                          // work, and the note is an hour old
     expect((await w.keys()).out).toEqual(['wrap'])
-    // The wrap's own turn began, then the note was written after it began: the turn's end finds it current.
+    // The wrap's own turn began, then the wrap finished after it began: the turn's end finds it current.
     await $.turn.start({ text: 'Wrap Acme', turnId: 'wrap' } as any)
-    w.state.noteMs = Date.now() + 5_000
+    w.state.done = Date.now() + 5_000
     await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 'wrap', reason: 'answer' } as any)
     expect((await w.keys()).out).toEqual(['resume'])
     expect(w.submitted).toEqual([])                         // deciding asked no model
   })
 
+  test('a turn that writes the note without a wrap leaves Wrap on offer (#453)', async ($, on) => {
+    const w = await slotted($, on)
+    w.state.text = NOTE.replace('6 October', '7 October')
+    await w.turn()                                          // the note changed, no wrap ran: no record
+    expect((await w.keys()).out).toEqual(['wrap'])
+    w.state.done = Date.now() - 60 * MIN                    // a wrap from an hour ago does not count either
+    await w.turn()
+    expect((await w.keys()).out).toEqual(['wrap'])
+  })
+
+  test('a session with no turn yet shows Resume', async ($, on) => {
+    const w = await slotted($, on)
+    on('command.register', async () => ({ value: undefined }) as any)
+    on('session.start', async (_$: any, e: any) => ({ cwd: e.cwd ?? `${ROOT}/Zones/Work/Acme` }) as any)
+    await $.session.start({ cwd: `${ROOT}/Zones/Work/Acme` } as any)
+    expect((await w.keys()).out).toEqual(['resume'])
+  })
+
   test('a new turn after the wrap brings Wrap back', async ($, on) => {
     const w = await slotted($, on)
-    w.state.noteMs = Date.now() - 1000
+    w.state.done = Date.now() - 1000
     await w.turn()
     expect((await w.keys()).out).toEqual(['wrap'])
   })
@@ -1412,7 +1443,7 @@ describe('the one slot', () => {
     await w.turn()
     expect((await w.keys()).out).toEqual(['wrapping'])
     w.state.lock = null
-    w.state.noteMs = Date.now() + 5_000
+    w.state.done = Date.now() + 5_000
     await w.clock.advance(6_000)                     // the band looks again while a wrap runs
     expect((await w.keys()).out).toEqual(['resume'])
     expect(w.submitted).toEqual([])

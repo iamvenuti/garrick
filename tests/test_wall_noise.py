@@ -28,12 +28,12 @@ from garrick_lib import (CHECKPOINT_KINDS, CHECKPOINT_ONE, CHECKPOINT_SAID,  # n
 
 
 class TestZoneArchive(WallCase):
-    """#23: a zone's `archive/` holds retired material, not a project."""
+    """#23: a zone's `archive/` holds retired material, not a live project; a project put away keeps its hub's party (#438)."""
 
     def retired(self, folder):
         write(folder / "Todo 2026-09.md",
               "# Done in September\n\n- [x] Read the notes of [[260312-birch-kickoff]] with Theo Marsh\n")
-        write(folder / "Old Lane" / "Old Lane.md", "# Old Lane\n\nMoved here when it closed.\n")
+        write(folder / "Old Lane" / "Old Lane.md", "---\ntitle: Old Lane\ntype: project\nparty: acme\n---\n\n# Old Lane\n\nMoved here when it closed.\n")
 
     def found_in(self, folder):
         prefix = check.rel(check.discover(self.root), folder) + "/"
@@ -51,6 +51,16 @@ class TestZoneArchive(WallCase):
                 self.assertIn(("walls", "error"), [(f.check, f.severity) for f in found])
                 self.assertIn(("projects", "error"), [(f.check, f.severity) for f in found])
                 shutil.rmtree(retired)
+
+    def test_a_file_put_away_with_a_party_has_the_label_the_rule_gives_it(self):
+        folder = self.root / "Zones" / "Work" / "archive"
+        self.retired(folder)
+        self.assertEqual([], self.found_in(folder))
+        write(folder / "Todo 2026-09.md", "---\nparty: acme\n---\n\n# Loose\n")        # no project's: no label, by design
+        write(folder / "Bare Lane" / "Bare Lane.md", "---\ntitle: Bare Lane\ntype: project\n---\n\n# Bare\n")   # a project with no party
+        found = [(f.severity, f.path) for f in self.found_in(folder)]
+        self.assertEqual([("warning", "Zones/Work/archive/Bare Lane/Bare Lane.md"), ("warning", "Zones/Work/archive/Todo 2026-09.md")],
+                         sorted(found, key=lambda x: x[1]))
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_committing_the_archive_passes_the_hook(self):

@@ -77,6 +77,11 @@ class EnforcementPoints(unittest.TestCase):
         self.addCleanup(lambda: path.exists() and path.unlink())
         return path
 
+    def put_away(self, name, party):
+        write(self.work / "archive" / name / (name + ".md"), project_hub("Work", name, party))
+        write(self.work / "archive" / name / "Notes.md", "# Notes\n")
+        return self.check_note("Northwind", "Pricing", "# N\n\nSee [[archive/%s/Notes]].\n" % name)
+
     def check_note(self, project, thread, text):
         path = self.note(project, thread, text)
         where = path.relative_to(self.root).as_posix()
@@ -364,6 +369,8 @@ class EnforcementPoints(unittest.TestCase):
             "e64": lambda: self.hub_links_thread("[[Reed/Threads/Notes/Plan]]"),
             "e65": self.flip_asks,
             "e66": self.one_thread_changes_no_other_file,
+            "e67": lambda: self.put_away("Tern", "birch"),
+            "e68": lambda: self.put_away("Lark", "acme"),
             "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),

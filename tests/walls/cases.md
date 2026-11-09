@@ -186,6 +186,8 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e64 | check | a hub that links another file of that thread | refused | only the thread note itself is navigation |
 | e65 | scaffold | `party --tag` flipping a walled party to open, without a yes | asked | it names the files it releases and writes nothing |
 | e66 | labels | a thread's party changed, then another file of its project | permitted | a change to one thread changes no other file's labels |
+| e67 | check | a Northwind note that links a file of a project put away in the zone's `archive/`, whose hub names `far` | refused | a put-away project keeps its hub's party, so its files stay labelled |
+| e68 | check | the same link to a project put away whose hub names `near` | permitted | the same rule, on the near side |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
 | e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; a row decide() does not admit is not in the scope index, so it ranks nothing;  ranking statistics computed over walled rows |

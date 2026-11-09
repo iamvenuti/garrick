@@ -5625,6 +5625,10 @@ def reference_index(ws: Workspace) -> Dict[str, List[Path]]:
             add(f, f)
         for f in ws.wiki_files:
             add(f, f)
+        for zone in ws.zones:             # what a zone put away: a project's files keep the hub's label (#438)
+            for folder in sorted(d for d in visible_dirs(zone) if d.name.lower() == "archive"):
+                for f in walk_files(folder, nested=True):
+                    add(f, f)
         for page in list(ws.meetings) + list(page_names(ws).kinds):
             add(page, page)
             for at in grade_places(ws, page):
@@ -5806,12 +5810,17 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
                                        "A note in %s uses a file with no label" % where))
                 continue
             if owner is None:
-                continue  # not a project's: a wiki page or System's
-            other = owner[0]
-            if other == project and path == project / (project.name + ".md") \
+                # not a project's: a wiki page or System's, or a file a zone put away, which keeps its hub's label
+                got = labels(ws.root, hit, ws.context, ws.label_cache) if ws.root / "Zones" in hit.parents else None
+                pair = sorted(blocked(ws.context, tags, got)) if got else []
+                other = hit.parent
+            else:
+                other = owner[0]
+            if owner is not None and other == project and path == project / (project.name + ".md") \
                     and hit.parent.parent == project / "Threads" and hit.name == hit.parent.name + ".md":
                 continue        # the hub lists its own threads: a link to a thread note is navigation, nothing else is
-            pair = sorted(blocked(ws.context, tags, project_file_tags(ws, other, hit)))
+            if owner is not None:
+                pair = sorted(blocked(ws.context, tags, project_file_tags(ws, other, hit)))
             if not pair:
                 continue
             b = pair[0]
@@ -6161,6 +6170,38 @@ def check_walls(ws: Workspace) -> List[Finding]:
     out.extend(organisation_walls(ws, person_pages(ws)))
     out.extend(form_findings(ws, [(p, None) for p in form_candidates(ws)]))
     out.extend(nested_repositories(ws))
+    out.extend(archive_labels(ws))
+    return out
+
+
+def archive_labels(ws: Workspace) -> List[Finding]:
+    """A project put away in a zone's `archive/` keeps its hub's `party:`, so its files stay labelled; any other file
+    there has no label by design (#438). Warn where a file has the label the rule says it should not, or lacks the
+    one it should: a loose file that carries a party of its own, and a put-away project whose hub names none."""
+    out = []
+    known = set(ws.context["parties"])
+    for zone in ws.zones:
+        for folder in (d for d in visible_dirs(zone) if d.name.lower() == "archive"):
+            for entry in sorted(folder.iterdir()):
+                if entry.name.startswith("."):
+                    continue
+                hub = entry / (entry.name + ".md")
+                if entry.is_dir() and hub.is_file():
+                    if labels(ws.root, hub, ws.context, ws.label_cache) is None:
+                        out.append(Finding(WARNING, "walls", rel(ws, hub),
+                                           "is the hub of a project put away in %s, but names no party the Parties table holds, so "
+                                           "its files carry no label; set `party:` to a tag from the table" % rel(ws, folder),
+                                           "A project put away in the %s zone has no party" % zone.name))
+                    continue
+                for path in ([entry] if entry.is_file() else walk_files(entry)):
+                    if path.suffix.lower() != ".md":
+                        continue
+                    tags = note_party_tags(note_frontmatter(ws, path)) & known
+                    if tags:
+                        out.append(Finding(WARNING, "walls", rel(ws, path),
+                                           "carries `party: %s`, but a file in a zone's `archive/` that is no project's has no label by "
+                                           "design; move it into a project, or take the party out" % ", ".join(sorted(tags)),
+                                           "A loose file in the %s zone's archive names a party" % zone.name))
     return out
 
 

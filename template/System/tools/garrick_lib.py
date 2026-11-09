@@ -1677,7 +1677,13 @@ def _labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
                 return None
             out |= got
         return frozenset(out)
-    if len(parts) >= 3 and parts[0] == "Zones" and parts[2] != "Inbox" and not parts[2].startswith("."):
+    put_away = len(parts) >= 5 and parts[0] == "Zones" and parts[2].casefold() == "archive" and not parts[3].startswith(".")
+    if put_away and (root / "Zones" / parts[1] / parts[2] / parts[3] / (parts[3] + ".md")).is_file():
+        # A project put away in a zone's archive/ keeps its hub's party: its files stay labelled (#438). Any other
+        # file there, and anything under a hidden folder, belongs to no project and has no label.
+        parts = ("Zones", parts[1], parts[2] + "/" + parts[3]) + parts[4:]
+    if len(parts) >= 3 and parts[0] == "Zones" and parts[2] != "Inbox" and not parts[2].startswith(".") \
+            and (parts[2].casefold() != "archive" or put_away):
         project = root / "Zones" / parts[1] / parts[2]
         if not project.is_dir():
             return None

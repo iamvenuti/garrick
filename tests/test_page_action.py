@@ -1514,6 +1514,8 @@ class TestWallsMigrationCard(ActionCase):
         self.assertIn('id="walls-ask"', text)
         self.assertEqual(1, script.count("verb:'walls-migrate'"))        # sent from the Yes button alone
         self.assertLess(script.index("wgo.onclick"), script.index("verb:'walls-migrate'"))
+        self.assertIn("'The walls migration is done.'", script)           # the heading no longer says pending
+        self.assertIn("several minutes", script)
 
 
 class TestPartyFlag(ActionCase):

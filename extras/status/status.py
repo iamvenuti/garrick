@@ -4250,7 +4250,7 @@ def walls_card(pending: bool) -> str:
     """The pending walls migration as a card in Settings › About Garrick (#455), in the app only. Shown when one is
     pending at build, and by RELEASE_JS when an update has just left one. Show the changes reads the proposal;
     Write the flags asks once, inline (the app's web view shows no confirm box), and only its yes writes."""
-    return ('<div class="setrelbox" id="walls-card"%s><p><b>The walls migration is pending.</b> Walls are now a flag on each party. '
+    return ('<div class="setrelbox" id="walls-card"%s><p><b id="walls-head">The walls migration is pending.</b> Walls are now a flag on each party. '
             'Until the flags are written, the old pairs keep deciding and the check warns.</p>'
             '<p class="setrelrow"><button type="button" class="act" id="walls-show">Show the changes</button>'
             '<span class="hint" id="walls-line" role="status"></span></p>'
@@ -7440,7 +7440,7 @@ function done(){busy=false;btn.disabled=false}
 var card=document.getElementById('walls-card'),wbtn=document.getElementById('walls-show'),wline=document.getElementById('walls-line'),wbody=document.getElementById('walls-body'),
 wtext=document.getElementById('walls-text'),wwrite=document.getElementById('walls-write'),wask=document.getElementById('walls-ask'),wgo=document.getElementById('walls-yes'),wno=document.getElementById('walls-no');
 function wput(t){wline.textContent=t}
-function wstudy(){if(!host){wput('Only the Garrick app can show the changes.');return}wbtn.disabled=true;wput('Reading the workspace\u2026 this can take a minute.');
+function wstudy(){if(!host){wput('Only the Garrick app can show the changes.');return}wbtn.disabled=true;wput('Reading the workspace\u2026 on a large workspace the check can take several minutes.');
 host.postMessage({act:{verb:'walls-study'}})}
 if(card){wbtn.onclick=function(){wstudy()};
 wwrite.onclick=function(){wask.hidden=false;wwrite.disabled=true};
@@ -7458,7 +7458,7 @@ put(u.line);show(u);done();if(u.walls&&card){card.hidden=false;wstudy()}return}
 if(q&&q.verb==='walls-study'&&card){wbtn.disabled=false;if(!(out&&out.ok)){wput((out&&out.say)||'Could not read the workspace. Nothing was changed.');return}
 if(!out.pending){card.hidden=true;return}wput(out.say);wtext.textContent=out.text||'';wbody.hidden=false;return}
 if(q&&q.verb==='walls-migrate'&&card){wgo.disabled=false;wno.disabled=false;wask.hidden=true;wwrite.disabled=false;
-if(!(out&&out.ok)){wput((out&&out.say)||'Nothing was written.');return}wput(out.say);if(out.written){wbody.hidden=true;wbtn.hidden=true}return}
+if(!(out&&out.ok)){wput((out&&out.say)||'Nothing was written.');return}wput(out.say);if(out.written){wbody.hidden=true;wbtn.hidden=true;document.getElementById('walls-head').textContent='The walls migration is done.'}return}
 if(prev)return prev(q,out)};
 window.GarrickRelease={changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};
 })();

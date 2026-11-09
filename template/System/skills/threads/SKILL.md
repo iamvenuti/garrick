@@ -749,55 +749,58 @@ silence: it reads as a fault. **X is not a thread:** treat "back to X" as "open 
 
 ## Close for the day: "close for the day", "I'm done for today"
 
-Wrap every thread worked on today, then give one summary.
+Every session used today wraps its own thread, one at a time, wherever the
+session runs. This session runs the procedure: it asks the others and waits.
+It quits nothing: quitting cmux or an app stays the user's Cmd+Q. Never type
+into an app's window, and never use computer use to reach a session.
 
-1. **Find today's threads.** For each zone folder under `Zones/` (skip one
-   whose name starts with `_`):
-   ```sh
-   git -C "Zones/<Zone>" log --since=midnight --name-only --format=
-   git -C "Zones/<Zone>" status --porcelain --untracked-files=all
-   ```
-   The first lists files committed today, the second files changed and not yet
-   committed (drop the two status characters and the space; strip the double
-   quotes git puts round a path with spaces, as every dated deliverable has;
-   for a rename, take the path after `->`). Map each path, which is relative
-   to the zone:
-   - `<Project>/Threads/<Thread>/…` → that thread;
-   - `<Project>/<Project>.md`, `<Project>/Deliverables/…`, `<Project>/Sources/…`
-     → the project's live thread if it has one; if it has several, ask which,
-     once, for all such files together;
-   - `Todo.md`, `archive/…` → no thread;
-   - a path through a folder whose name starts with `_` → not part of the
-     work; ignore it.
+1. **Find every live session used today**, merged by session id. Each source
+   adds to the list and never replaces another.
+   - **cmux tabs**, where the `desk` skill is installed:
+     `desk status --today --json` gives each tab's session id, assistant,
+     folder, state and thread note.
+   - **Claude sessions outside cmux**, the Claude desktop app's included:
+     the `ListAgents` tool lists the peer sessions, and `SendMessage` reaches
+     one. A peer whose session id is already on the list is the same session.
+     The peer list has left out cmux tabs, so it is never the only source.
+   - **Codex app sessions** have no channel Garrick can rely on: the app
+     answers on its own socket, and Garrick has found no way to ask it to wrap
+     and to know when it has. They are listed, not reached, by folder:
+     ```sh
+     find ~/.codex/sessions -name 'rollout-*.jsonl' -newermt "$(date +%Y-%m-%d)" -exec sh -c 'head -n1 "$1"' _ {} \;
+     ```
+     Each first line holds `payload.id`, `payload.cwd` and `payload.originator`.
+     Keep those whose `originator` is `Codex Desktop` and whose id is not on
+     the list already. The Codex tabs in cmux are `desk`'s.
+   - **This session**, if it worked on a thread today.
+2. **Say the list before asking**, in one line: "Four today: two tabs, one
+   Claude app session, this one; one Codex session I cannot reach." Go ahead
+   unless the user stops you.
+3. **Ask each one to wrap, one at a time**, and wait until its wrap has
+   finished before the next, because two wraps at once collide on `Todo.md`
+   and the hub. Finished means the wrap lock is gone and
+   `System/generated/wrap-<note>.done` is newer than the request.
+   - A cmux tab: `desk wrap --session <id> --yes` asks it, waits, and says
+     whether the record was written. Exit 3 means the tab was mid-turn or
+     waiting on a question: it was typed nothing.
+   - A Claude peer: `SendMessage` with "Wrap it: close for the day, no
+     question; this session stays open", then wait for the record.
+   - A session that is mid-turn or waiting on a question is skipped and
+     named. Do not ask it twice.
+   - This session last, as Wrap does it, for the thread it worked on.
+   - A thread that is done or parked is not wrapped.
+4. **Report one line per session**: wrapped, with its thread and its next
+   action (read from the thread note's Resume here block); skipped, with why;
+   or not reachable, with its app and folder, so the user wraps it by hand.
+   Then anything that failed. A thread with files changed today and no
+   session on the list is named, not wrapped from the day's changes: its
+   session is the one that knows.
 
-   Add any thread this conversation worked on that left no file behind. Skip
-   threads marked done or parked: neither is live, and a wrap would rewrite
-   what finishing or parking left in place. Skip a thread already wrapped in
-   this session with nothing changed since that wrap; name it in the summary
-   as already wrapped.
+Spoken, three sentences at most: "Wrapped three: Acme pricing, Birch launch
+plan and roof repair. One Codex session in Birch is not reachable; wrap it
+there. First thing tomorrow is the Acme second draft, due Friday."
 
-   A zone that is not a git repository: fall back to
-   `find "Zones/<Zone>" -type f -newermt "$(date +%Y-%m-%d)"`, and say that is
-   where the list came from.
-2. **Say the list before wrapping**, in one line: "Three today: Acme pricing,
-   Birch launch plan, roof repair. Wrapping them." Go ahead unless the user
-   stops you.
-3. **Wrap each thread** as above, one at a time, one commit per thread.
-   For a thread this session did not work on, the day's changes are the only
-   evidence. Write what they show and nothing more: no decisions, no status the
-   files do not bear out. Mark the dated entry "reconstructed from the day's
-   changes". Where the evidence is too thin to rewrite the Resume here block
-   truthfully, add the dated entry listing what changed, leave the block as it
-   is, and say so. If another session is still open on a thread, that session
-   should wrap it; tell the user.
-4. **One summary**, one line per thread, then anything that failed or was held
-   back.
-
-Spoken, three sentences at most: "Wrapped three: Acme pricing, Birch launch plan
-and roof repair. First thing tomorrow is the Acme second draft, due Friday."
-
-Written: one line per thread (short name, next action, commit hash), then
-anything that failed or was held back.
+Written: one line per session, as step 4 says.
 
 ## Finish: "finish X", "X is done"
 

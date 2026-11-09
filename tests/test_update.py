@@ -1482,6 +1482,39 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertEqual(self.root / "System/cmux/desk.py", Path(os.readlink(str(bin_ / "desk"))))
         self.assertEqual([], [w for w, _ in update.next_steps(self.root, self.plan())])     # done: nothing left
 
+    def desk_settings(self, data):
+        (self.root / "System").mkdir(exist_ok=True)
+        (self.root / "System" / "desk.json").write_text(json.dumps(data))
+
+    def test_before_quit_commands_move_into_the_nightly_local_file(self):
+        self.install_extra("jobs")
+        self.desk_settings({"agent": "codex", "before_quit": ["git -C 'Zones/Work' status", ["python3", "backup.py", "--all"]]})
+        report = self.report_of(self.plan())
+        self.assertIn("Move before_quit in System/desk.json into System/jobs/nightly.local", report)
+        result = self.apply()
+        local = self.root / "System" / "jobs" / "nightly.local"
+        self.assertTrue(os.access(str(local), os.X_OK))
+        self.assertEqual(local.read_text().splitlines()[-2:], ["git -C 'Zones/Work' status", "python3 backup.py --all"])
+        self.assertEqual({"agent": "codex"}, json.loads((self.root / "System" / "desk.json").read_text()))
+        self.assertTrue(any("Moved the before_quit commands" in line for line in result["then"]))
+        self.assertEqual([], [w for w, _ in update.next_steps(self.root, self.plan()) if "before_quit" in w])
+
+    def test_before_quit_with_a_nightly_local_of_its_own_only_warns(self):
+        self.install_extra("jobs")
+        local = self.root / "System" / "jobs" / "nightly.local"
+        local.write_text("#!/bin/sh\necho mine\n")
+        self.desk_settings({"before_quit": ["backup.sh"]})
+        self.apply()
+        self.assertEqual("#!/bin/sh\necho mine\n", local.read_text())
+        self.assertIn("before_quit", (self.root / "System" / "desk.json").read_text())
+        self.assertTrue([w for w, fn in update.next_steps(self.root, self.plan()) if "backup.sh" in w and fn is None])
+
+    def test_before_quit_without_the_jobs_extra_only_warns(self):
+        self.desk_settings({"before_quit": ["backup.sh"]})
+        steps = update.next_steps(self.root, self.plan())
+        self.assertTrue([w for w, fn in steps if "jobs extra is not installed" in w and fn is None])
+        self.assertFalse((self.root / "System" / "jobs" / "nightly.local").exists())
+
     def test_a_zone_guard_run_from_an_older_copy_is_named(self):
         guard = self.base / "kept" / "zone_guard.py"
         guard.parent.mkdir(parents=True)

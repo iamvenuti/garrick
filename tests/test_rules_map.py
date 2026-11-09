@@ -113,7 +113,7 @@ MAP = [
     ("voice: back", "**\"Back\"** or **\"where was I\"** opens the thread whose note was written most recently and is not finished or parked; **\"back to X\"** opens X. Nothing to resume: say so, and offer the most recent thread.", "threads"),
     ("voice: desk", "Where the desk skill is installed (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation.", "desk"),
     ("voice: desk close", "\"Close X\" has that session wrap X, then closes the tab; \"close the X tab\" closes it without a wrap.", "desk"),
-    ("voice: desk day", "\"Close for the day\" wraps each tab used today in its own session, then quits cmux. \"Shut everything down\" quits without wrapping. \"Start the day\" or \"restore my tabs\" brings them back, and \"what tabs are open\" lists them.", "desk"),
+    ("voice: desk day", "\"Close for the day\" has every session used today wrap its own thread, and quits nothing. \"Start the day\" is opening cmux, which resumes its tabs itself, and \"what tabs are open\" lists them.", "desk"),
     ("voice: finish", "**\"Finish X\" or \"X is done\"**: close the thread for good (see Threads).", "threads"),
     ("voice: park and wake", "**\"Park X\"**: set the thread aside without finishing it. **\"Wake X\"** or **\"unpark X\"**: bring it back; so does \"open X\" on a parked thread. **\"What's parked\"**: name the parked threads.", "threads"),
     ("voice: rename and delete", "**\"Rename X to Y\"** moves the note and every link to it; **\"delete X\"**, for what should never have existed, lists what would go and acts only on the name said again.", "threads"),

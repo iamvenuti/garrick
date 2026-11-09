@@ -29,14 +29,11 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 from fixtures import project_hub, thread_note, write  # noqa: E402
-from test_status import REPO, StatusCase, cards, graph_data, stamp, status  # noqa: E402
+from test_status import REPO, StatusCase, attention_text, cards, graph_data, stamp, status, trouble  # noqa: E402
 
 
 def attention(html):
-    if 'id="attention"' not in html:
-        return ""
-    start = html.index('id="attention"')
-    return html[start:html.index("</details>", start)]
+    return attention_text(html)
 
 
 def flags(root, **on):
@@ -977,9 +974,7 @@ class TestCheckReuse(StatusCase):
         (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % found, encoding="utf-8")
 
         def attention(page):
-            m = re.search(r'id="attention".*?<div class="attn">(.*?)</div>', page, re.S)
-            self.assertIsNotNone(m, "no Needs attention card")
-            return re.findall(r"<span>([^<]*)</span>", m.group(1))
+            return [t[2] for t in trouble(page)]
 
         def tile(page):
             m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Checks</div><div class="val">(.*?)</div>'

@@ -4277,7 +4277,7 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
             % (set_head("About Garrick", "about"), help_text("about", 'These open GitHub in your browser. Nothing is sent '
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
-               'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and in Needs attention, and never updates.'),
+               'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and on the Repositories card, and never updates.'),
                E(version), release_controls(*release_choice(ws), walls=walls_pending(ws)) if ws is not None else "", rows))
 
 
@@ -4832,7 +4832,7 @@ def card(id_: str, title: str, meta: str, body: str, open_: bool = True, fixed: 
     """A folding card. Unless fixed, its header has a grip to drag it elsewhere
     and a button to hide it; the browser remembers both."""
     tools = "" if fixed else ('<span class="tools"><span class="grip" draggable="true" title="Drag to move" aria-hidden="true">%s</span>'
-                              '<button class="totab" type="button" title="Move to the other tab" aria-label="Move %s to the other tab">%s</button>'
+                              '<button class="totab" type="button" title="Move to…" aria-label="Move %s to another tab" aria-haspopup="menu">%s</button>'
                               '<button class="hide" type="button" title="Hide this card" aria-label="Hide %s">%s</button></span>'
                               % (GRIP, E(title), MOVE, E(title), CLOSE))
     return ('<details class="card" id="%s"%s><summary class="head">%s<h2>%s</h2><span class="meta">%s</span>%s</summary>'
@@ -6637,6 +6637,9 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .stack .zones{grid-template-columns:1fr}[hidden]{display:none!important}
 .head .tools{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .12s;margin-left:2px}
 .head:hover .tools,.head:focus-within .tools{opacity:1}
+.moveto{position:absolute;z-index:30;min-width:150px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:4px;display:flex;flex-direction:column}
+.moveto button{font:inherit;font-size:13px;color:var(--ink);background:none;border:0;border-radius:6px;padding:6px 10px;text-align:left;cursor:pointer}.moveto button:hover{background:var(--wash)}
+.tabs .dot.tr,.unhide .dot.tr{display:inline-block;margin-left:6px;vertical-align:middle}
 .grip,.hide,.totab{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:6px;color:var(--muted);border:0;background:none;padding:0;cursor:pointer}
 .grip{cursor:grab}.grip:hover,.hide:hover,.totab:hover{background:var(--wash);color:var(--ink)}.grip svg,.hide svg,.totab svg{width:14px;height:14px}
 .dragging .slot{display:flex!important;min-height:64px;border-radius:14px;outline:2px dashed var(--grid);outline-offset:4px}
@@ -7697,17 +7700,29 @@ if(L&&L.v===2){Object.keys(L.c||{}).forEach(function(k){var s=slots[k];if(s)(L.c
 (L.h||[]).forEach(function(id){var el=document.getElementById(id);if(inSlot(el))el.hidden=true})}
 function save(){var c={};Object.keys(slots).forEach(function(k){c[k]=Array.prototype.slice.call(slots[k].children).filter(function(e){return e.classList.contains('card')}).map(function(e){return e.id})});
 st.set(KEY,JSON.stringify({v:2,c:c,h:cards().filter(function(e){return e.hidden}).map(function(e){return e.id})}));sync()}
-function sync(){var h=cards().filter(function(e){return e.hidden});
-cards().forEach(function(c){var b=c.querySelector('.totab'),sec=c.closest('section.tab');if(!b||!sec)return;
-var to=sec.id==='tab-status'?'Overview':'Status';b.title='Move to '+to;b.setAttribute('aria-label','Move '+c.querySelector('h2').textContent+' to '+to)});
+function sync(){var h=cards().filter(function(e){return e.hidden});dots(h);
 var n=document.getElementById('hidden-cards');if(n){n.hidden=!h.length;n.innerHTML=h.length?'<p class="hint">Hidden cards</p><div class="gacts">'+h.map(function(c){
 var t=c.querySelector('h2').textContent.replace(/[&<>"]/g,function(x){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[x]});
-return'<button class="act unhide" type="button" data-card="'+c.id+'" title="Show '+t+' again">'+t+'</button>'}).join('')+'</div>':''}}
+return'<button class="act unhide" type="button" data-card="'+c.id+'" title="Show '+t+' again">'+t+(sev(c)?'<span class="dot tr '+sev(c)+'" title="needs attention"></span>':'')+'</button>'}).join('')+'</div>':''}}
+/* Trouble sits on the card that shows it, hidden or not: a tab carries a dot for the cards it holds, worst first (#443) */
+var TR=[];try{TR=JSON.parse(document.getElementById('trouble-data').textContent)}catch(e){}
+function sev(c){var w='';TR.forEach(function(t){var el=document.getElementById(t[1]);if(el&&(el===c||c.contains(el))&&w!=='critical')w=t[0]});return w}
+function dots(){var w={};TR.forEach(function(t){var el=document.getElementById(t[1]),sec=el&&el.closest('section.tab');if(sec&&w[sec.id]!=='critical')w[sec.id]=t[0]});
+document.querySelectorAll('.tabs [data-tab]').forEach(function(b){var d=b.querySelector('.dot.tr'),s=w['tab-'+b.dataset.tab];if(d&&!s)d.remove();
+else if(s){if(!d){d=document.createElement('span');b.appendChild(d)}d.className='dot tr '+s;d.title=s==='critical'?'something failed':'needs attention'}})}
+/* Move to…: a short menu of the other tabs that have slots, under the button; the card goes to that tab's left slot */
+function closeMove(){var o=document.querySelector('.moveto');if(o)o.remove()}
+function moveMenu(b){var c=b.closest('.card'),here=c.closest('section.tab'),was=document.querySelector('.moveto'),again=was&&was.dataset.card===c.id;closeMove();if(again)return;
+var o=document.createElement('div');o.className='moveto';o.setAttribute('role','menu');o.dataset.card=c.id;
+document.querySelectorAll('main>section.tab').forEach(function(t){var tb=document.querySelector('.tabs [data-tab="'+t.id.slice(4)+'"]');if(t===here||!tb||!t.querySelector('[data-slot]'))return;
+var i=document.createElement('button');i.type='button';i.setAttribute('role','menuitem');i.dataset.to=t.id;i.textContent=tb.firstChild.textContent;o.appendChild(i)});
+var r=b.getBoundingClientRect();o.style.top=(r.bottom+window.scrollY+4)+'px';o.style.left=Math.max(8,r.right+window.scrollX-150)+'px';document.body.appendChild(o)}
 function toast(t){var el=document.getElementById('toast');if(!el)return;el.textContent=t;el.style.opacity=1;setTimeout(function(){el.style.opacity=0},2600)}
 document.addEventListener('click',function(e){
-var m=e.target.closest('.head .totab');if(m){e.preventDefault();e.stopPropagation();var mc=m.closest('.card'),ms=mc.closest('section.tab');
-var to=ms&&ms.id==='tab-status'?'overview':'status',slot=document.querySelector('#tab-'+to+' [data-slot$="left"]');
-if(slot){slot.appendChild(mc);save();toast(mc.querySelector('h2').textContent+' moved to '+(to==='status'?'Status':'Overview')+'.')}return}
+var m=e.target.closest('.head .totab');if(m){e.preventDefault();e.stopPropagation();moveMenu(m);return}
+var pick=e.target.closest('.moveto [data-to]');if(pick){e.preventDefault();e.stopPropagation();var mc=document.getElementById(pick.parentNode.dataset.card),sl=document.querySelector('#'+pick.dataset.to+' [data-slot$="left"]');
+if(mc&&sl){sl.appendChild(mc);save();toast(mc.querySelector('h2').textContent+' moved to '+pick.textContent+'.')}closeMove();return}
+closeMove();
 var b=e.target.closest('.head .hide,.head .grip');if(b){e.preventDefault();e.stopPropagation();
 if(b.classList.contains('hide')){var c=b.closest('.card');c.hidden=true;save();toast(c.querySelector('h2').textContent+' hidden. Bring it back from Settings, or Reset view.')}return}
 var u=e.target.closest('.unhide');if(u){var uc=document.getElementById(u.dataset.card),ud=u.closest('dialog');if(ud)ud.close();if(uc){uc.hidden=false;uc.open=true;save();
@@ -8281,6 +8296,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                                                        "file": f["file"]} if f["both"] else None}))
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
+    # Where each trouble shows (#443): on its own card, so a tab carries a dot for the cards it holds. A newer Garrick
+    # and a drifted shared file show at the head of the Repositories card; a thread's row, on its own.
+    troubled = [(k, "repos" if isinstance(h, dict) or h.startswith("https://") else h.lstrip("#"), t) for k, t, h in attn]
 
     live = sum(len(z["rows"]) for z in T.values())
     parked_n = sum(len(z["parked"]) for z in T.values())
@@ -8334,8 +8352,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
 
     # ---- hero and tiles
     if attn:
-        hero = '<a class="hero go" id="summary" href="#attention"><div class="fig">%s%d</div><div class="lbl">%s attention</div></a>' % (
-            ICON[worst], len(attn), "thing needs" if len(attn) == 1 else "things need")
+        hero = '<a class="hero go" id="summary" href="#%s"><div class="fig">%s%d</div><div class="lbl">%s attention</div></a>' % (
+            troubled[0][1], ICON[worst], len(attn), "thing needs" if len(attn) == 1 else "things need")
     else:
         hero = '<div class="hero" id="summary"><div class="fig" style="font-size:38px">%sAll clear</div><div class="lbl">Nothing failing, waiting or broken.</div></div>' % ICON["good"]
     # Each tile leads to the card that explains it, in whichever tab that card sits.
@@ -8354,13 +8372,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     top = '<div class="top" style="--tiles:%d">%s%s</div>' % (len(tiles), hero, "".join(
         '<a class="tile go" href="#%s"><div class="lbl">%s</div><div class="val">%s</div><div class="sub">%s</div></a>' % (h, E(a), b, E(c))
         for a, b, c, h in tiles))
-
-    # ---- attention
-    attn_card = ""
-    if attn:
-        attn_card = '<div class="full">%s</div>' % card("attention", "Needs attention", "%d item%s" % (len(attn), "" if len(attn) == 1 else "s"),
-                                                       '<div class="attn">%s</div>' % "".join(attn_row(k, t, h) for k, t, h in attn),
-                                                       fixed=True)
 
     # ---- threads, one column per zone: a row per project, its threads folding
     # under it; a project with no thread notes is a thread row of its own. With
@@ -8633,9 +8644,11 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         ICON["warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none"], E(r["name"]),
         "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
     changed = sum(1 for r in R if r["dirty"])
+    notices = "".join(attn_row(k, t, h) for k, t, h in attn if isinstance(h, dict) or h.startswith("https://"))
     repos_card = card("repos", "Repositories", "%d with changes" % changed if changed else "",
-                      ('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
-                      if rr else '<p class="muted">No git repositories found.</p>')
+                      ('<div class="attn" id="notices">%s</div>' % notices if notices else "")
+                      + (('<div class="tiles">%s</div>%s' % (rr, "".join(repo_changes(ws, r) for r in R if r["dirty"])))
+                         if rr else '<p class="muted">No git repositories found.</p>'))
     def newest(w):
         if not w["when"]:
             return LOG_NOT_READ if w.get("unread") else "nothing logged yet"
@@ -8687,7 +8700,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # be moved between Overview and Status from their headers, and Reset view
     # puts them back; the Guide holds no cards. The figures at the top count
     # the machinery's state, so they open the Status tab.
-    machinery = [c for c in (jobs_card, calls_card, checks_card, repos_card, wikis_card) if c]
+    on_context = bool(qdata and checks_card)           # Checks sits under the findings it explains (#443)
+    here = [checks_card] if on_context else []
+    machinery = [c for c in (jobs_card, calls_card, None if on_context else checks_card, repos_card, wikis_card) if c]
+    def slots(name, left="", right=""):
+        return ('<div class="grid"><div class="slot stack left" data-slot="%s-left">%s</div>'
+                '<div class="slot stack right" data-slot="%s-right">%s</div></div>' % (name, left, name, right))
     def section(name, hidden, body):
         return '<section class="tab" id="tab-%s"%s>%s</section>' % (name, " hidden" if hidden else "", body)
     # The Overview opens on the Threads card: each live thread with at most
@@ -8706,19 +8724,18 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
                        '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, todo_card, inbox_card, graph_card))
-    # Needs attention leads the Status tab: what it lists is the machinery's.
-    status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid">%s<div class="slot stack left" data-slot="status-left">%s</div>'
+    # Every tab with content has a left and a right slot below its own content (#443).
+    status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
-                         % (top, attn_card, "".join(machinery[0::2]), "".join(machinery[1::2])))
+                         % (top, "".join(machinery[0::2]), "".join(machinery[1::2])))
     late = sum(z["late"] for z in lists)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or (C.get("failed") and not C.get("pending")))) or bool(L and L["refused_today"])
     tabs = ('<div class="tabs" role="tablist">' + ('<button type="button" role="tab" data-tab="home">Home</button>' if simple else "")
             + '<button type="button" role="tab" data-tab="overview">Overview</button>%s'
-            '<button type="button" role="tab" data-tab="status">Status%s</button>%s'
+            '<button type="button" role="tab" data-tab="status">Status</button>%s'
             '%s<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
-               '<span class="dot critical" title="something failed"></span>' if trouble else "",
                questions_mod().tab_button() if qdata else "", parties_mod().tab_button(pdata) if pdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
@@ -8728,6 +8745,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         md["intake"] = {"n": "Process the Inbox", "w": "process the inbox", "f": str(ws), "c": sum(n for _, _, n in IB),
                         "b": [[name, n] for name, _, n in IB if n]}   # what waits where, Meetings included
     menu = '<script type="application/json" id="menu-data">%s</script>' % script_json(md)
+    menu += '<script type="application/json" id="trouble-data">%s</script>' % script_json([list(t) for t in troubled])
     # What RELOAD_JS compares a button's expectation with: the parked threads
     # and, with the cmux extra, the folders a session is open in.
     folders = {f for z in T.values() for r in z["rows"] + z["parked"] for f in (r["note"].parent, (r["hub"] or r["note"]).parent)}
@@ -8752,8 +8770,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                                + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s%s</main>%s'
-            % (home_tabs, overview, section("todo", True, todo_tab) if todo_tab else "", status_tab,
-               section("questions", True, questions_mod().body(qdata)) if qdata else "",
+            % (home_tabs, overview, section("todo", True, todo_tab + slots("todo")) if todo_tab else "", status_tab,
+               section("questions", True, questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "",
                section("parties", True, parties_mod().body(pdata)) if pdata else "",
                section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error

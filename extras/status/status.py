@@ -183,8 +183,8 @@ def load_agent(ws: Path):
 
 # The cmux extra's library, beside this folder as System/cmux/ is beside
 # System/status/. With it, the page shows which projects and threads have a
-# session open, and in the app offers Open and Close session, Start up and
-# Shut down, which the desk carries out. Without it, none of that is drawn.
+# session open, and in the app offers Open and Close session, which the desk
+# carries out. Without it, none of that is drawn.
 CMUXLIB = Path(__file__).resolve().parent.parent / "cmux" / "cmuxlib.py"
 
 
@@ -2388,7 +2388,6 @@ var S={parked:[],live:[]};try{S=JSON.parse(document.getElementById('state-data')
 var i=w.x.indexOf(':'),want=w.x.slice(0,i),key=w.x.slice(i+1),now;
 if(want==='parked'||want==='active')now=(S.parked||[]).indexOf(key)>=0?'parked':'active';
 else if(want==='named')now=(S.notes||[]).indexOf(key)>=0?'named':'none';     /* a rename (#184): the page has the new note */
-/* live: or none: with no folder (Start up, Shut down) asks about every folder */
 else now=(S.live||[]).some(function(f){return f===key||f.indexOf(key+'/')===0})?'live':'none';
 if(now===want||!(Date.now()<w.until)){try{localStorage.removeItem('garrick-expect')}catch(e){}return}
 if(w.q)window.GarrickRedo=w.q;
@@ -6687,7 +6686,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.lef
 .cols b{display:block;width:100%;max-width:22px;background:var(--accent);border-radius:4px 4px 0 0;min-height:0}
 .cols em{position:absolute;top:-16px;font-style:normal;font-size:11px;color:var(--ink2)}
 .ticks{display:flex;gap:2px;font-size:10px;color:var(--muted);margin-top:4px}.ticks span{flex:1;text-align:center}
-.desk-acts{display:flex;gap:6px;margin-left:6px}.act.armed{background:var(--critical);border-color:var(--critical);color:#fff}
+.act.armed{background:var(--critical);border-color:var(--critical);color:#fff}
 @media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.left{grid-column:span 12}}
 @media (max-width:820px){main{padding:16px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
@@ -8319,12 +8318,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # move between the work and the machinery, the cards are open on the page,
     # and the Status tab's own figures say whether anything needs attention.
     # With the cmux extra and cmux, the desk's buttons: Open
-    # in cmux and Close session on cards, Start up and Shut down here, in the app only.
+    # in cmux and Close session on cards, in the app only.
     DK = S is not None and acting and desk_ready()
-    desk_acts = ('<span class="desk-acts apponly"><button class="act" type="button" data-act="%s" data-expect="live:" data-say="Starting up…">Start up</button>'
-                 '<button class="act stop" type="button" data-act="%s" data-expect="none:" data-confirm="Click again to shut down" '
-                 'data-say="Shutting down: each session wraps, then cmux quits…">Shut down</button></span>'
-                 % (E(json.dumps({"verb": "startup"})), E(json.dumps({"verb": "shutdown"})))) if DK else ""
     simple_bar = ""
     if simple:
         simple_bar = ('<button class="sh-dot" type="button" data-more="status" title="%s">'
@@ -8334,8 +8329,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                          "All clear" if not attn else "%d %s attention" % (len(attn), "thing needs" if len(attn) == 1 else "things need")))
     controls = ('<div class="bacts">' + simple_bar + '<button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
-                '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s%s</div>'
-                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, GEAR, THEME_SEG, desk_acts))
+                '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s</div>'
+                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, GEAR, THEME_SEG))
 
     # ---- hero and tiles
     if attn:

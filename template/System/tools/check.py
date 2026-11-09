@@ -5063,14 +5063,6 @@ def owner_keys(ws: Workspace, first: bool = False) -> set:
     return {k for k in (" ".join(words(owner["name"])), " ".join(words(owner["first"])) if first else "") if k}
 
 
-def without_owner(ws: Workspace, text: str) -> str:
-    """`text` with the owner's full name taken out: it names the owner, whatever walled party shares a word of it."""
-    owner = ws.context.get("owner")
-    if not owner or len(owner["name"].split()) < 2:
-        return text
-    return re.sub(r"(?i)\b%s\b" % r"\s+".join(re.escape(w) for w in owner["name"].split()), " ", text)
-
-
 def everyday_tag(ws: Workspace, tag: str) -> bool:
     """Is a party's tag an everyday word: a zone's name, a word of the stop-word or everyday-name lists, or the
     owner's name? Such a tag is matched only as a tag (tag_only_forms), never as a prose word."""
@@ -5878,7 +5870,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
     if far and not in_sources:
-        scanned = without_owner(ws, fold_format(without_party_field(text)) + "\n" + path.name)
+        scanned = fold_format(without_party_field(text)) + "\n" + path.name
         padded = padded_words(scanned)
         named_forms = name_forms(ws, far)
         only = tag_only_forms(ws, far)

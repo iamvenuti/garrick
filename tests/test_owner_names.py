@@ -190,6 +190,25 @@ class OwnerFormsTest(unittest.TestCase):
         for me in ("Emp sales engineer. Works on pricing.", "Birch and Co. Works alone."):
             self.assertIsNone(self.owner(me), me)
 
+    def test_a_walled_name_that_contains_the_owners_name_stays_matched_in_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = build(Path(tmp))
+            text = CONTEXT.replace("| Acme Corp | Client |", "| Jo Example Holdings | A client | Clients | `jex` | yes | |\n| Acme Corp | Client |", 1)
+            text = text.replace("| **Jo Smith** | `emp` | Colleague |", "| **Jo Smith** | `emp` | Colleague |\n| Jo Example Bianchi | `emp` | CFO |")
+            (root / "System" / "context.md").write_text(text, encoding="utf-8")
+            ws = check.discover(root)
+            ws.quick = True
+            project = root / "Zones" / "Clients" / "Acme Review"
+            note = project / "Threads" / "Pricing" / "Notes.md"
+
+            def refused(body):
+                found = check.walls_for_file(ws, project, {"acme"}, note, body)
+                return any(f.severity == "error" and f.check == "walls" for f in found)
+
+            self.assertTrue(refused("# Notes\n\nJo Example Holdings signed the order.\n"))
+            self.assertTrue(refused("# Notes\n\nJo Example Bianchi signed the order.\n"))
+            self.assertFalse(refused("# Notes\n\nJo Example signed the order.\n"))
+
     def test_the_owners_first_name_does_not_clear_a_walled_party_of_that_name(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = build(Path(tmp))
@@ -207,7 +226,7 @@ class OwnerFormsTest(unittest.TestCase):
                 return any(f.severity == "error" and f.check == "walls" for f in found)
 
             self.assertTrue(refused("# Notes\n\nMax asked for the figures.\n"))
-            self.assertFalse(refused("# Notes\n\nMax Smith asked for the figures.\n"))
+            self.assertTrue(refused("# Notes\n\nMax Smith asked for the figures.\n"))       # a walled party named Max is still matched
             self.assertTrue(refused("# Notes\n\nMax Brown asked for the figures.\n"))
 
 

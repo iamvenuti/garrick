@@ -60,7 +60,7 @@ A new tab starts the assistant `agent` names only when its command is installed:
 
 When desk is asked to open a folder with a prompt and a tab there is idle, the prompt goes to that tab; if it is mid-turn, nothing is sent; if desk cannot read its state, as with a session cmux remembers whose transcript is gone, a new tab starts on the prompt.
 
-With the extra in `System/cmux/`, beside the Garrick App in `System/status/`, the [Garrick App](status-page.md)'s buttons can open and close a thread's tab, and close for the day, through `System/status/page_action.py`. Those buttons run desk from outside cmux, which cmux turns away until its socket is in password mode.
+With the extra in `System/cmux/`, beside the Garrick App in `System/status/`, the [Garrick App](status-page.md)'s buttons can open and close a thread's tab through `System/status/page_action.py`. "Close for the day" is said to a session, not pressed. Those buttons run desk from outside cmux, which cmux turns away until its socket is in password mode.
 
 Once the page says the desk is ready (the extra and cmux), everything in Garrick.app that opens cmux goes through desk, so the tab starts the assistant instead of waiting at a prompt with the phrase on the clipboard:
 

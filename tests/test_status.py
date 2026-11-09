@@ -4056,65 +4056,32 @@ class TestContextDebt(StatusCase):
             self.assertNotIn('id="debt"', self.page())
 
 
-class TestReviewContext(StatusCase):
-    """#258: Review context on the Checks card hands Nurture's guided review
-    to the assistant, and says from the review record's frontmatter alone when
-    the last review was done and whether one is unfinished."""
+class TestContextLink(StatusCase):
+    """#433: the Checks card has no Review context button. One link to the Context tab replaces
+    Nurture and Review context, with what each group holds open."""
 
     def setUp(self):
         super().setUp()
         shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
                         ignore=shutil.ignore_patterns("__pycache__"))
-        self.record = self.root / "System" / "nurture-review.md"
 
-    def block(self, html):
-        start = html.index('<div class="gacts review" id="review">')
-        return html[start:html.index("</div>", start)]
+    def test_the_link_names_each_group_with_its_open_count(self):
+        data = {"menu_groups": {"Work": [{"h": "Work · Acme Corp", "n": 2}, {"h": "Work · Birch & Co", "n": 0}], "Home": [{"h": "Home", "n": 1}]},
+                "menu_findings": {"Work": {"Work · Acme Corp": 3, "Work · Birch & Co": 0}, "Home": {"Home": 0}}}
+        b = status.context_link(data)
+        self.assertIn('<a class="act" href="#qp">Answer in Context</a>', b)
+        self.assertIn("Home: 1 question; Work · Acme Corp: 2 questions, 3 findings.", b)
+        self.assertNotIn("Birch", b)                                         # a group with nothing open is not named
+        self.assertIn("Nothing is open.", status.context_link({"menu_groups": {"Work": [{"h": "Work", "n": 0}]}}))
+        self.assertEqual("", status.context_link(None))                      # no tab, no link
 
-    def checks(self, html):
-        start = html.index('id="checks"')
-        return html[start:html.index("</details>", start)]
-
-    def test_the_button_hands_over_the_request(self):
-        b = self.block(self.checks(self.page()))
-        self.assertIn('<button class="act" type="button" data-request="review the context with me" data-folder="%s"' % self.root, b)
-        self.assertIn(">Review context</button>", b)
-        self.assertIn("No review done yet.", b)                               # no record: nothing that looks measured
-        self.assertNotIn("unfinished", b)
-
-    def test_the_dates_and_the_unfinished_flag_come_from_the_record(self):
-        write(self.record, "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n"
-                           "limit: 15 minutes\n---\n# Context review\n\n| Id | Source | Decision | Reason | Date |\n|---|---|---|---|---|\n"
-                           "| 3f2a9c1d0b4e | check.py | deferred to 2026-03-21 | waiting on someone | 2026-03-14 |\n"
-                           "| drift.py | drift.py | source failed | source did not run | 2026-03-14 |\n")
+    def test_the_card_has_no_review_button_and_reads_no_record(self):
+        write(self.root / "System" / "nurture-review.md",
+              "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n---\n")
         html = self.page()
-        b = self.block(html)
-        self.assertIn("Last review Sat 07 Mar 2026 · one unfinished, started Sat 14 Mar 2026.", b)
-        for item in ("3f2a9c1d0b4e", "deferred to", "waiting on someone", "source did not run", "15 minutes"):
-            self.assertNotIn(item, html)                                               # nothing of its items
-        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n---\n")
-        b = self.block(self.page())
-        self.assertIn("Last review Sat 14 Mar 2026.", b)
-        self.assertNotIn("unfinished", b)
-
-    def test_left_out_without_nurture(self):
-        (self.root / "System" / "tools" / "nurture.py").unlink()
-        self.assertNotIn('id="review"', self.page())
-
-    def test_it_says_what_it_does_and_what_the_latest_review_decided(self):
-        b = self.block(self.page())
-        self.assertIn("A short session through what is left, across the workspace, up to a limit you choose", b)
-        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n"
-                           "fixed: 6\nanswered: 3\ndeferred: 2\n---\n")
-        self.assertIn("Last review Sat 14 Mar 2026: 6 fixed, 3 answered, 2 deferred.", self.block(self.page()))
-        write(self.record, "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n"
-                           "fixed: 4\nanswered: 0\ndeferred: 1\n---\n")
-        self.assertIn("one unfinished, started Sat 14 Mar 2026: 4 fixed, 0 answered, 1 deferred so far.", self.block(self.page()))
-        write(self.record, "---\ntype: nurture-review\nstatus: done\nstarted: 2026-03-14\nlast_completed: 2026-03-14\n"
-                           "fixed: the Cedar floor\n---\n")
-        b = self.block(self.page())
-        self.assertIn("Last review Sat 14 Mar 2026.", b)                   # a count that is not a number is not shown
-        self.assertNotIn("Cedar", b)
+        self.assertNotIn("Review context", html)
+        self.assertNotIn("review the context with me", html)
+        self.assertNotIn("Last review", html)
 
 
 class TestChecksCardActs(StatusCase):

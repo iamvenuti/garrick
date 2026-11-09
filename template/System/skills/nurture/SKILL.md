@@ -7,9 +7,8 @@ description: >
   it, and report the rest. Use when the user says "nurture the context",
   "nurture Work", "nurture Acme", "nurture the meetings", "nurture the
   library", or "what needs nurturing", and when, during one, the user corrects a
-  value written down. Also a guided review in a short session, which goes on
-  where the last one stopped: "review the context with me", "review the
-  latest audit with me". Also graded oblivion, old pages fading out of working
+  value written down. Also "review the context with me" and "review the
+  latest audit with me", which open the status page's Context tab. Also graded oblivion, old pages fading out of working
   memory: "fade the meetings", "fade the library", "what would fade", and
   "keep X" for a wiki page. The jobs extra can apply the mechanical kind
   nightly; nothing ever fades overnight.
@@ -33,7 +32,7 @@ own: a new kind of problem gets a check in `check.py` first.
 | What it reads | `check.py --json`, `wiki_lint.py --json` for each wiki, `drift.py --json` |
 | A correction | `System/tools/correct.py`, the `threads` skill's own, which `nurture.py correct` calls |
 | Each day's report | `System/generated/nurture/<YYYY-MM-DD>.md`, never committed |
-| The review record | `System/nurture-review.md`, committed in the workspace root's repository |
+| The Context tab | the status page's tab for answering what Nurture leaves; its *Later* rows are in `System/generated/nurture/later.json` |
 | The shared-file comparison last saved | `System/generated/drift.json`, from `drift.py --save` |
 | What would fade, and why | `System/tools/fade.py`; its proposal in `System/generated/fade/<Wiki>.md` |
 | The judgment the numbers can't hold | `System/retention.md`, and `System/retention.local.md`, which wins |
@@ -168,184 +167,24 @@ and `correct --yes` is refused with nobody watching.
 
 ## Review: "review the context with me", "review the latest audit with me"
 
-A short, regular session through what the checks left for a person. It uses
-the kinds and the steps above, sets their order, stops at a limit the user
-chooses, and keeps a record, so the next session goes on where this one
-stopped. A weekly review is a use of this procedure: nothing schedules it,
-and it needs no job of its own.
+The guided review is the status page's **Context** tab. It lists what the
+nightly run leaves, in the order walls, attribution, then judgment: an
+attribution row is answered where it stands, *Later* puts a row off to a day,
+and a judgment row has *Open in Claude* (and *Open in Codex* where installed),
+which hands that one finding to a session with its path, the check and its
+line. The day's report records each answer, so the next build knows.
 
-### The review record
+On either phrase, open the tab, filtered to the scope the user named, and
+stop. Where the page is not at hand, run *Gather* and read the list out, one
+kind at a time, as *Nurture* does; no session limit, and no file of
+decisions is kept. A wall is named by its file and its two parties, never
+quoted, and is fixed or left, never put off. Say that fading still needs its
+own written proposal and a yes.
 
-One file for the workspace, `System/nurture-review.md`. It must survive
-between sessions, so it is outside `System/generated/`, which the tools
-rebuild and nobody commits. It is committed in the workspace root's
-repository, on its own. The request to review is the yes to write it.
-
-```markdown
----
-type: nurture-review
-status: open
-started: 2026-03-14
-last_completed: 2026-03-07
-limit: 15 minutes
-fixed: 0
-answered: 1
-deferred: 1
----
-# Context review
-
-| Id | Source | Decision | Reason | Date |
-|---|---|---|---|---|
-| 3f2a9c1d0b4e | check.py | answered | | 2026-03-14 |
-| 9b07e4a2c6d1 | wiki_lint.py | skipped | not now | 2026-03-14 |
-| c4d8e0f1a2b3 | check.py | deferred to 2026-03-21 | another session holds the file | 2026-03-14 |
-| drift.py | drift.py | source failed | source did not run | 2026-03-14 |
-```
-
-- **`status:`** is `open` while a review has items with no decision, and
-  `done` once every item has one. **`started:`** is the day the review
-  started, **`last_completed:`** the day the last one was done, and empty
-  until then. **`limit:`** is the one the user chose. **`fixed:`**,
-  **`answered:`** and **`deferred:`** count the items this review has
-  given each decision so far, whole numbers and nothing else: the status
-  page shows them.
-- **An item** is one finding. Its **Id** is the finding's `key`, as
-  `nurture.py --json` gives it: twelve hex digits that say nothing of the
-  file, the check or the material. Two findings on one file have two keys,
-  and the same finding has the same key in the next session. A source that
-  did not run is an item of its own, and its Id is the tool's name, such as
-  `drift.py`. An item that only an audit report holds has no key and gets no
-  row: the next audit names it again while it stands.
-- **Source** names the tools that found it: `check.py`, `wiki_lint.py`,
-  `drift.py`, `fade.py`, and `audit` for the audit report, with a comma
-  between two.
-- **Decision** is one of: `fixed` and the commit, `answered`, `deferred to`
-  a date, `skipped`, or `source failed`. It never holds the answer. An
-  answer goes into the files it changes, never into the record.
-- **Reason** is empty, or one of these, the nearest to what the user said:
-  "another session holds the file", "waiting on someone", "needs the user's
-  own records", "source did not run", "not now". Never the user's own words.
-  **Date** is the day of the decision.
-- **Each session finds an item again by its key.** The record names no
-  file, so run *Gather* and match each item's `key` to an Id. An Id that
-  Gather no longer gives is a finding that is gone.
-- **What is settled stays settled.** An item `fixed` or `answered` is never
-  asked again while Gather gives its key. A `deferred` item waits until its
-  date. A `skipped` item comes back in the next review.
-- **A wall item is never settled.** It is asked in every review while its
-  finding stands. Its only decisions are `fixed` and the commit, or
-  `deferred to` a date; never `answered`, never `skipped`.
-- **It holds decisions, never material.** No path, no quote, no answer, no
-  question as it was asked. A wall item names no wall. The record sits in
-  the root repository, which no wall hook checks, and `check.py` warns about
-  a row outside this form, by its number. The status page reads only the
-  frontmatter: the date of the last review completed, and whether one is
-  unfinished.
-- **It stays short.** When a review is done, take out each row whose key
-  Gather no longer gives. Git holds the rows taken out.
-
-### The review
-
-1. **Open the record.** When its status is `open`, say so and go on from it:
-   "The review from Saturday is unfinished. Go on with it?" Otherwise start
-   a new one: `status: open`, `started:` today, and `fixed:`, `answered:`
-   and `deferred:` at 0.
-2. **Prepare from the current record**, changing nothing:
-   - Run Nurture's *Gather* for the whole workspace, or for the scope the
-     user named. It runs `check.py`, `wiki_lint.py` for each wiki and
-     `drift.py` now. Offer each wiki's reading pass; do not run it unasked.
-   - When `drift.py` cannot read a share, it is a source that failed. Read
-     the comparison it last saved, `System/generated/drift.json`, and say its
-     date: what it holds is an older observation, not a current finding.
-   - **The latest audit report**, when the workspace keeps one: a report
-     about the workspace that a job of its own or a person wrote, where
-     `System/rules.local.md` or an `AGENTS.local.md` says it is kept. Read
-     the newest one, and say its date and where it came from. "Review the
-     latest audit with me" starts from it; with none found, say so and ask
-     where it is, in one line.
-   - **Recheck before you propose.** Each finding from a report, the audit
-     or an earlier Nurture report, is a lead: read the file now. Only a
-     finding that still stands is proposed. One that no longer stands is
-     named as gone, once, and never proposed.
-   - **One finding, one item.** The same file and the same problem from two
-     sources is one item, with both sources named. It has a row for each
-     key, all with the same decision.
-   - **Three groups, never mixed:** current findings, older observations
-     that no recheck confirmed, and sources that failed. For a source that
-     failed, say what it covers: the review cannot vouch for that part.
-   - Match each finding's `key` to the record's Ids. Leave out every item
-     the record has settled, and each deferred item whose date has not
-     come. A wall item is settled only by its fix.
-3. **The limit.** Once the items are gathered, ask once: "Fifteen minutes
-   or ten questions?" No answer is the default, fifteen minutes or ten
-   questions, whichever comes first. Write it in `limit:`. The mechanical
-   batch counts as one question. At the limit, finish the item in hand and
-   go to step 6.
-4. **The order.**
-   1. **Walls**, as *Nurture* step 4, and **what failed**: a source that did
-      not run, and a scheduled job whose last run failed, as the status
-      page's *Scheduled jobs* card shows it. Those first, since they decide
-      how far the rest can be trusted.
-   2. **One batch of mechanical fixes**, as *Nurture* step 3: say how many,
-      of what kinds, and ask once.
-   3. **Attribution, corrections and judgment**, one decision at a time. Give
-      the evidence (the file, the line, what the check says, which source),
-      a proposed answer when the record supports one, and the files that
-      answer would change. Do not ask what you can settle from the record:
-      look it up, as *Nurture* step 5 does, and propose it.
-   4. **Behind the share** last, as *Nurture* step 6: named, and never
-      fixed.
-
-   The user can say "skip" or "later", and why: write the nearest reason
-   from the record's list. "Later" asks for a date, with next week as the
-   default. A wall is fixed or deferred, never skipped. Write each decision
-   in the record as it is made, not at the end, as its key and the fixed
-   words above.
-5. **Apply through the owning procedures.** Each answer goes through the
-   step above that owns its kind: a correction through *A correction*, a
-   wiki page through its wiki's skill, each commit through its repository's
-   wall check.
-   - **An audit report alone never allows an edit.** Only a finding rechecked
-     now, and the user's yes on it.
-   - **A raw record is never edited.**
-   - **A file another session has changes in is held**, as `nurture.py`
-     holds it. Defer the item, with the reason "another session holds the
-     file".
-   - **Walled material stays where its party is named.** Never move, merge or quote material from
-     a walled party into a file whose scope does not name that party. When an answer would need
-     it, change nothing, and say the sentence *Zones and walls* in
-     `System/rules.md` gives, word for word: "A wall holds some material back
-     from this project, so I have not used it. Nothing was written." Nothing
-     else about it.
-   - **A shared-file difference never causes an overwrite**, in either
-     direction. Name it, and change nothing.
-   - **An attribution finding can be answered in the Questions panel; it
-     never becomes a thread's Needs you question.** Technical findings stay
-     on the Checks card. The panel's Nurture page writes each answer as the
-     chat does and records it in the day's report
-     (`System/generated/nurture/<date>.json`, its `answered` list, by path),
-     so an item answered there counts as `answered` here: read that list
-     before asking, and do not ask again. The questions a wiki keeps in its
-     `questions/` folder are not part of this review; the panel answers them.
-6. **Show what remains.** Run *Gather* again, so the count is the one after
-   the changes. Update the record: each decision made, each source that
-   failed, and the three counts. When every item has a decision, set
-   `status: done` and `last_completed:` today, and take out the rows whose
-   key Gather no longer gives.
-   Commit the record alone:
-   ```sh
-   git add -- System/nurture-review.md
-   git commit -m "Nurture: context review, <done or unfinished>"
-   ```
-   Then say what was fixed, with the commits; what was answered; what was
-   deferred, and why; and what is left, by kind, with its source. Never say
-   the context is right because the count fell: a check finds only what it
-   looks for.
-
-Spoken: "Two things first: one wall, and the shared files did not read.
-Then six fixes ready and four questions. Fifteen minutes or ten questions?"
-At the end: "Stopped at the limit. Six fixed, three answered, two deferred.
-Five left for next time."
+If `System/nurture-review.md` is there, an older release left it. Run
+`python3 System/tools/nurture.py import-review`: it reads the record once,
+turns each row deferred to a coming day into a *Later* row, and removes the
+file in a commit of its own. The nightly run does the same.
 
 ## Fading: "fade the meetings", "fade the library", "what would fade"
 
@@ -471,8 +310,7 @@ name.
 - **It never commits two repositories together**, never stages what it did
   not change, and never pushes.
 - **It keeps no score.** It counts findings by kind, and weighs none.
-- **A review is not a job.** It runs only when the user asks, and nothing of
-  it runs overnight. A report it reads is a lead, never permission to edit.
+- **A report is a lead**, never permission to edit.
 - **It never fades a page on its own**, and never without a written
   proposal the user could read. It never deletes a page, never edits a raw
   record, and never moves a page anywhere but its own wiki's `dormant/` or

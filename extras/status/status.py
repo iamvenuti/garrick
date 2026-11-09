@@ -1353,14 +1353,21 @@ def sorted_finding(ws: Path, lib, f: dict) -> List[Tuple[str, Tuple[str, str], s
     return out
 
 
-# Review context (#258), under the debt: the button that hands Nurture's
-# guided review to the assistant, and from the review record's frontmatter
-# alone the day the last review was done and whether one is unfinished.
-# Nothing of its items is read: they are the user's decisions, across zones.
-REVIEW_RECORD = ("System", "nurture-review.md")
-REVIEW_REQUEST = "review the context with me"
-REVIEW_SAID = "A short session through what is left, across the workspace, up to a limit you choose; the next goes on where it stopped."
-REVIEW_COUNTS = ("fixed", "answered", "deferred")
+def context_link(qdata: Optional[dict]) -> str:
+    """The line under the debt that sends the user to the Context tab (#433),
+    where Nurture's findings are answered, with what each group holds open: its
+    wiki questions and its findings. A tab that is not there has no link."""
+    if not qdata:
+        return ""
+    said = []
+    for zone in sorted(qdata.get("menu_groups") or {}):
+        for g in qdata["menu_groups"][zone]:
+            n, f = int(g.get("n") or 0), int(((qdata.get("menu_findings") or {}).get(zone) or {}).get(g["h"]) or 0)
+            if n or f:
+                said.append("%s: %s" % (g["h"], ", ".join(x for x in ("%d question%s" % (n, "" if n == 1 else "s") if n else "",
+                                                                    "%d finding%s" % (f, "" if f == 1 else "s") if f else "") if x)))
+    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a><span class="hint">%s</span></div>'
+            % E("Nurture runs every night; what it leaves is answered in the Context tab. " + ("; ".join(said) + "." if said else "Nothing is open.")))
 
 
 def refusals_block(ws: Path) -> str:
@@ -1375,33 +1382,6 @@ def refusals_block(ws: Path) -> str:
     days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
     return ('<div class="hint" id="refusals">Wall refusals, 30 days: %s. Days: %s. Overridden: %d.</div>'
             % (E(kinds), E(days), got["overridden"]))
-
-
-def review_block(ws: Path) -> str:
-    """The Review context line for the Checks card; "" in a workspace with
-    no nurture.py, since the review is Nurture's."""
-    if not ws.joinpath("System", "tools", "nurture.py").is_file():
-        return ""
-    record = ws.joinpath(*REVIEW_RECORD)
-    fm = frontmatter(record, ws) if record.is_file() else {}
-
-    def day(key):
-        try:
-            return dt.date.fromisoformat(str(fm.get(key) or "").strip()[:10])
-        except ValueError:
-            return None
-    done, started = day("last_completed"), day("started")
-    # The decisions the latest review has made so far (#278), as the skill counts them in its frontmatter.
-    made = ", ".join("%s %s" % (str(fm[k]).strip(), k) for k in REVIEW_COUNTS
-                     if re.fullmatch(r"\d+", str(fm.get(k) or "").strip(), re.ASCII))
-    unfinished = str(fm.get("status") or "").strip().lower() == "open"
-    said = ["Last review %s" % done.strftime("%a %d %b %Y") if done else "No review done yet"]
-    if unfinished:
-        said.append("one unfinished" + (", started %s" % started.strftime("%a %d %b %Y") if started else ""))
-    tail = (": %s so far" if unfinished else ": %s") % made if made and (unfinished or done) else ""
-    return ('<div class="gacts review" id="review">%s<span class="hint">%s</span></div>'
-            % (request_button("Review context", REVIEW_REQUEST, ws),
-               E(REVIEW_SAID + " " + " · ".join(said) + tail + ".")))
 
 
 DEBT_CSS = r"""
@@ -8369,7 +8349,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
-    qdata = questions_data(ws, C, now.date(), link)        # the Questions panel (#224), None where it cannot be placed
+    qdata = questions_data(ws, C, now.date(), link)        # the Context tab (#224), None where it cannot be placed
     pdata = parties_data(ws, link)                         # the Parties tab (#447), None without a Parties table
 
     # ---- what needs attention, worst first
@@ -8690,7 +8670,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
-    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + refusals_block(ws) + review_block(ws) + body)
+    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + refusals_block(ws) + context_link(qdata) + body)
 
     # ---- open actions and inboxes
     tb = ""

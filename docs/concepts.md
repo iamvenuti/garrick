@@ -72,7 +72,7 @@ Every hub and thread note carries `status:` in its frontmatter, with one of thre
 
 ### Wrap and Resume
 
-One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks one line, "Anything only in your head?", then rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. For the same reason, Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. A wrap still running holds a lock file in `System/generated/` for as long as it runs, so it cannot be started twice. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks one line, "Anything only in your head?", then rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### Catch up
 
@@ -293,7 +293,7 @@ The skill that comes with the cmux extra: one cmux tab per thread, opened, wrapp
 
 ### The Garrick band
 
-A Claude Code mod, optional: two lines above the prompt, with the current thread, its status and how full the context is, and one slot that follows the record, *Wrap* after work since the note was last written and *Resume* once it is current, then *Clear*, *Close* (wraps the thread if it needs it, then closes the session where it runs) and *Finder*, with *Obsidian* where it is offered; and file paths in replies you can Cmd-click. It shows what the notes already say and enforces nothing. See [the Garrick band](../extras/mods/README.md).
+A Claude Code mod, optional: two lines above the prompt, with the current thread, its status and how full the context is, and one slot that follows the record, *Wrap* after a turn since the last wrap finished and *Resume* once a wrap has finished, then *Clear*, *Close* (wraps the thread if it needs it, then closes the session where it runs) and *Finder*, with *Obsidian* where it is offered; and file paths in replies you can Cmd-click. It shows what the notes already say and enforces nothing. See [the Garrick band](../extras/mods/README.md).
 
 ## Updates
 

@@ -1384,10 +1384,68 @@ def next_steps(root, p, done=None):
                 steps.append(("Point the desk command, %s, at the workspace's %s, in place of %s" % (link, DESK, target),
                               lambda link=link: relink(link, mine)))
 
+    steps.extend(before_quit_steps(root))
+
     for what, path in outside_copies(root):
         steps.append(("%s runs from %s, which differs from this Garrick's. Point your assistant's settings at a newer "
                       "Garrick you keep outside the workspace" % (what[0].upper() + what[1:], path), None))
     return steps
+
+
+# The commands `desk shutdown` ran before quitting cmux (the `before_quit` setting in
+# System/desk.json) have no desk to run them: "close for the day" quits nothing. They go
+# into System/jobs/nightly.local, which the jobs extra's nightly run executes from the
+# workspace root, or the update says why they could not (#442).
+DESK_JSON = "System/desk.json"
+NIGHTLY_LOCAL = "System/jobs/nightly.local"
+
+
+def before_quit_commands(root):
+    """[(command line)] from before_quit in System/desk.json; None when there are none or the file does not read."""
+    try:
+        given = json.loads((root / DESK_JSON).read_text(encoding="utf-8")).get("before_quit")
+    except (OSError, ValueError, AttributeError):
+        return None
+    if not isinstance(given, list):
+        return None
+    out = []
+    for c in given:
+        if isinstance(c, str) and c.strip():
+            out.append(c.strip())
+        elif isinstance(c, list) and c and all(isinstance(a, str) for a in c):
+            out.append(shlex.join(c))
+    return out or None
+
+
+def before_quit_steps(root):
+    lines = before_quit_commands(root)
+    if not lines:
+        return []
+    where = "before_quit in %s" % DESK_JSON
+    if not (root / "System" / "jobs" / "nightly.py").is_file():
+        return [("desk no longer runs %s, and the jobs extra is not installed: run %s yourself, or install the jobs "
+                 "extra and put them in %s" % (where, "; ".join(lines), NIGHTLY_LOCAL), None)]
+    if (root / NIGHTLY_LOCAL).exists():
+        return [("desk no longer runs %s. %s is yours and is left as it is: add %s to it, then delete the setting" % (
+            where, NIGHTLY_LOCAL, "; ".join(lines)), None)]
+    return [("Move %s into %s, which the jobs extra's nightly run executes, and delete the setting" % (where, NIGHTLY_LOCAL),
+             lambda: move_before_quit(root, lines))]
+
+
+def move_before_quit(root, lines):
+    target, config = root / NIGHTLY_LOCAL, root / DESK_JSON
+    try:
+        given = json.loads(config.read_text(encoding="utf-8"))
+        body = ("#!/bin/sh\n# Moved from before_quit in System/desk.json: the commands \"close for the day\" used to run\n"
+                "# before quitting cmux. The jobs extra's nightly run executes this file from the workspace root.\n"
+                + "\n".join(lines) + "\n")
+        target.write_text(body, encoding="utf-8")
+        os.chmod(str(target), 0o755)
+        del given["before_quit"]
+        config.write_text(json.dumps(given, indent=2) + "\n", encoding="utf-8")
+    except (OSError, ValueError, KeyError) as exc:
+        return "The before_quit commands were not moved: %s. Put them in %s by hand." % (exc, NIGHTLY_LOCAL)
+    return "Moved the before_quit commands into %s; commit it with %s." % (NIGHTLY_LOCAL, DESK_JSON)
 
 
 def say_make_app(cmd):

@@ -72,7 +72,8 @@ A zone's own `AGENTS.md` adds to this skill and wins where it says so.
 
 Where the `desk` skill is installed (the cmux extra), "open X", "close X" and
 "close for the day" go to it first: it opens, wraps or closes each thread in
-its own tab, and the session in that tab runs this skill.
+its own tab, and the session in that tab runs this skill. "Close for the day"
+has every session used today wrap its own thread (see its section).
 
 ## The rules behind the commands
 
@@ -97,7 +98,7 @@ here, word for word. The commands below carry them out.
 - **Names are the names the work already has.** Zones, projects and threads take letters and digits, spaces, hyphens, apostrophes, `&`, and a full stop inside an acronym: Q4 Planning, ISO 27001, Birch & Co. Nothing else, since the rest either cannot be stored as a folder or is a separator the spoken grammar uses, such as the comma in "Acme, pricing". Siblings must not sound alike.
 - **A name that does not say how it is said carries a spoken form.** `spoken:` in the note's frontmatter is what is heard for it (Q4 Planning, `spoken: fourth quarter planning`), and a request matches it alongside the name itself. A year standing as a word of its own needs none: Summit 2027 is said "twenty twenty-seven". A zone has no note, so a zone name has to say how it is said.
 - **"Open X"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.
-- **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: do that for every thread worked on today.
+- **"Close X" or "wrap X"**, or **"wrap it"** for the thread in hand: rewrite its Resume here block and add the dated entry. **"Close for the day"**: every session used today wraps its own thread, one at a time.
 - **"I'm being interrupted"**, **"hold this"** and **"hold X"** run the wrap, as "wrap it" does. **"Back"** or **"where was I"** opens the thread whose note was written most recently and is not finished or parked; **"back to X"** opens X. Nothing to resume: say so, and offer the most recent thread.
 - **"Finish X" or "X is done"**: close the thread for good (see Threads).
 - **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back; so does "open X" on a parked thread. **"What's parked"**: name the parked threads. **"Rename X to Y"** moves the note and every link to it; **"delete X"**, for what should never have existed, lists what would go and acts only on the name said again.
@@ -699,8 +700,9 @@ focus, as under *No name given*). Then:
     ```sh
     python3 System/tools/wrap_lock.py end "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
     ```
-    The note's last write is the record that the wrap landed: "back" and the
-    band read the time of that write, and nothing else.
+    `end` also writes the time the wrap finished (`wrap-<note>.done`). That
+    record, not the note's last write, is what says a wrap landed: the band and
+    Close read it.
 
 Spoken, when the wrap runs in the background: "Acme pricing is being wrapped.
 Say back when you're done." When it runs in the foreground, or when the
@@ -749,55 +751,53 @@ silence: it reads as a fault. **X is not a thread:** treat "back to X" as "open 
 
 ## Close for the day: "close for the day", "I'm done for today"
 
-Wrap every thread worked on today, then give one summary.
+Every session used today wraps its own thread, one at a time, wherever the
+session runs. This session runs the procedure: it asks the others and waits.
+It quits nothing: quitting cmux or an app stays the user's Cmd+Q. Never type
+into an app's window, and never use computer use to reach a session.
 
-1. **Find today's threads.** For each zone folder under `Zones/` (skip one
-   whose name starts with `_`):
-   ```sh
-   git -C "Zones/<Zone>" log --since=midnight --name-only --format=
-   git -C "Zones/<Zone>" status --porcelain --untracked-files=all
-   ```
-   The first lists files committed today, the second files changed and not yet
-   committed (drop the two status characters and the space; strip the double
-   quotes git puts round a path with spaces, as every dated deliverable has;
-   for a rename, take the path after `->`). Map each path, which is relative
-   to the zone:
-   - `<Project>/Threads/<Thread>/…` → that thread;
-   - `<Project>/<Project>.md`, `<Project>/Deliverables/…`, `<Project>/Sources/…`
-     → the project's live thread if it has one; if it has several, ask which,
-     once, for all such files together;
-   - `Todo.md`, `archive/…` → no thread;
-   - a path through a folder whose name starts with `_` → not part of the
-     work; ignore it.
+1. **Find every live session used today**, merged by session id. Each source
+   adds to the list and never replaces another.
+   - **cmux tabs**, where the `desk` skill is installed:
+     `desk status --today --json` gives each tab's session id, assistant,
+     folder, state and thread note.
+   - **Peer sessions outside cmux**, a desktop app's included, where this
+     assistant can list its peer sessions and send one a message. A peer
+     whose session id is already on the list is the same session. A peer list
+     can leave out cmux tabs, so it is never the only source.
+   - **Sessions of an app with no channel** to ask them: listed, not reached,
+     by folder, from the app's own session files where `docs/extras/cmux.md`
+     names them. Keep those whose id is not on the list already.
+   - **This session**, if it worked on a thread today.
+2. **Say the list before asking**, in one line: "Four today: two tabs, one
+   app session, this one; one session I cannot reach." Go ahead unless the
+   user stops you.
+3. **Ask each one to wrap, one at a time**, and wait until its wrap has
+   finished before the next, because two wraps at once collide on `Todo.md`
+   and the hub. Finished means the wrap lock is gone and
+   `System/generated/wrap-<note>.done` is newer than the request.
+   - A cmux tab: `desk wrap --session <id> --yes` asks it, waits, and says
+     whether the record was written. Exit 3 means the tab was mid-turn or
+     waiting on a question: it was typed nothing.
+   - A peer session: send it "Wrap it: close for the day, no question; this
+     session stays open", then wait for the record.
+   - A session that is mid-turn or waiting on a question is skipped and
+     named. Do not ask it twice.
+   - This session last, as Wrap does it, for the thread it worked on.
+   - Skip threads marked done or parked: neither is live, and a wrap would
+     rewrite what finishing or parking left in place.
+4. **Report one line per session**: wrapped, with its thread and its next
+   action (read from the thread note's Resume here block); skipped, with why;
+   or not reachable, with its app and folder, so the user wraps it by hand.
+   Then anything that failed. A thread with files changed today and no
+   session on the list is named, not wrapped from the day's changes: its
+   session is the one that knows.
 
-   Add any thread this conversation worked on that left no file behind. Skip
-   threads marked done or parked: neither is live, and a wrap would rewrite
-   what finishing or parking left in place. Skip a thread already wrapped in
-   this session with nothing changed since that wrap; name it in the summary
-   as already wrapped.
+Spoken, three sentences at most: "Wrapped three: Acme pricing, Birch launch
+plan and roof repair. One app session in Birch is not reachable; wrap it
+there. First thing tomorrow is the Acme second draft, due Friday."
 
-   A zone that is not a git repository: fall back to
-   `find "Zones/<Zone>" -type f -newermt "$(date +%Y-%m-%d)"`, and say that is
-   where the list came from.
-2. **Say the list before wrapping**, in one line: "Three today: Acme pricing,
-   Birch launch plan, roof repair. Wrapping them." Go ahead unless the user
-   stops you.
-3. **Wrap each thread** as above, one at a time, one commit per thread.
-   For a thread this session did not work on, the day's changes are the only
-   evidence. Write what they show and nothing more: no decisions, no status the
-   files do not bear out. Mark the dated entry "reconstructed from the day's
-   changes". Where the evidence is too thin to rewrite the Resume here block
-   truthfully, add the dated entry listing what changed, leave the block as it
-   is, and say so. If another session is still open on a thread, that session
-   should wrap it; tell the user.
-4. **One summary**, one line per thread, then anything that failed or was held
-   back.
-
-Spoken, three sentences at most: "Wrapped three: Acme pricing, Birch launch plan
-and roof repair. First thing tomorrow is the Acme second draft, due Friday."
-
-Written: one line per thread (short name, next action, commit hash), then
-anything that failed or was held back.
+Written: one line per session, as step 4 says.
 
 ## Finish: "finish X", "X is done"
 
@@ -1292,8 +1292,8 @@ Written form: the spoken answer on top, then the detail each command lists.
   names: a done line is done, and it is kept in `archive/`.
 - **A wrap is not a sweep.** It does not expire, reorder or tidy `Todo.md`
   beyond that archive, audit memories, check other threads, or ingest
-  meetings. "Close for the day" wraps the threads that
-  changed today and no others.
+  meetings. "Close for the day" asks each session used
+  today to wrap its own thread, and no others.
 - **It never crosses zones** unless the user asks, and then only for that
   request. It never commits two zones together.
 - **It never guesses a name.** Two candidates means one question.

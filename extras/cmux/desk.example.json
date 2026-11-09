@@ -4,6 +4,5 @@
   "skip": ["archive", "Archive", "Inbox"],
   "aliases": {"pricing sheet": "Pricing"},
   "agent": "claude",
-  "before_quit": [],
   "socket_password_file": "~/Library/Logs/garrick-jobs/cmux-socket.password"
 }

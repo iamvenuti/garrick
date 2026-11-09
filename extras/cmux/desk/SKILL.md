@@ -1,14 +1,14 @@
 ---
 name: desk
 description: >
-  Open, close, wrap and bring back the cmux tabs the user works in, one per
-  thread, by voice. Installed with the cmux extra. Use when the user says
-  "open X", "start a session on X", "new tab for X", "close X", "close the X
-  tab", "close for the day", "I'm done for today", "shut everything down",
-  "start the day", "restore my tabs", "bring everything back", "what tabs are
-  open", "new workspace X", or asks to take up where they left off. Where this
-  skill is installed it takes these phrases first; the session in each tab
-  runs the threads skill.
+  Open, close and wrap the cmux tabs the user works in, one per thread, by
+  voice. Installed with the cmux extra. Use when the user says "open X",
+  "start a session on X", "new tab for X", "close X", "close the X tab",
+  "close for the day", "I'm done for today", "shut everything down", "start
+  the day", "restore my tabs", "bring everything back", "what tabs are open",
+  "new workspace X", or asks to take up where they left off. Where this skill
+  is installed it takes these phrases first; the session in each tab runs the
+  threads skill.
 ---
 
 # Desk
@@ -26,10 +26,13 @@ desk open X --agent codex        # Codex instead of the default assistant
 desk close X [--wrap] [--yes]    # close X's tab; --wrap has it wrap its thread first
 desk workspace NAME              # a new workspace in cmux's sidebar
 desk colour [ZONE...]            # each zone's workspace in its colour from the status page's Settings
-desk end [--yes]                 # check nothing is busy, then quit cmux
-desk shutdown [--yes]            # wrap each tab used today, one at a time, then quit cmux
-desk start                       # start or restore cmux, resume tabs that came back empty
+desk status --today --json       # the tabs used today, for a script: session id, folder, thread note
+desk wrap X [--yes]              # X's session wraps its thread; the tab stays open
 ```
+
+desk quits nothing and restores nothing. cmux resumes each tab's agent session
+itself when it reopens (its setting `terminal.autoResumeAgentSessions`, on by
+default).
 
 If `desk` is not on the PATH, run `python3 <garrick>/extras/cmux/desk.py`
 with the same arguments, where `<garrick>` is the Garrick download.
@@ -41,18 +44,17 @@ with the same arguments, where `<garrick>` is the Garrick download.
 | "open X", "start a session on X" | `desk open X --prompt "open X"` | The session in the tab answers in two sentences. Already open: desk brings it forward and sends the phrase only if the tab is idle. Say which tab it was. |
 | "close X" | `desk close X --wrap`, read it back, then `desk close X --wrap --yes` | X's own session wraps the thread, then the tab closes. |
 | "close the X tab" | `desk close X`, read it back, then `--yes` | Closes without a wrap. |
-| "close for the day", "I'm done for today" | `desk shutdown`, read it back, then `desk shutdown --yes` | Each tab used today wraps its own thread, then cmux quits. It ends this session too. The wrap is the threads skill's, run in front in each tab. |
+| "close for the day", "I'm done for today" | The threads skill's *Close for the day* | Each session used today wraps its own thread, one at a time. The cmux tabs come from `desk status --today --json` and are asked with `desk wrap --session ID --yes`; sessions outside cmux are the threads skill's step. Nothing is quit. |
 | "back", "where was I", "back to X" | The threads skill's Back, then `desk open "<its folder>" --prompt "open X"` | The threads skill picks the live thread whose note was written most recently; its tab comes forward and the session there reads back where the user was. |
-| "shut everything down" | `desk end`, read it back, then `desk end --yes` | Quits without wrapping. Every tab comes back on `start`. |
-| "start the day", "restore my tabs", "bring everything back" | `desk start` | Read back what came back and anything it did not resume, with the reason. |
+| "shut everything down" | Nothing to run | Say that Cmd+Q quits cmux, and that every tab comes back in its session when cmux opens. To wrap first, "close for the day". |
+| "start the day", "restore my tabs", "bring everything back" | Nothing to run | Open cmux: each tab that ran an agent comes back in that agent's session. A tab at a bare prompt means cmux never quit (its process survived Cmd+Q): check with `pgrep -l cmux`, quit it for real, and open it again. |
 | "what tabs are open" | `desk status` | Spoken: how many, then the busy ones by name. |
 | "new workspace X" | `desk workspace X` | |
 
-**The tabs, in the rules' words.** Where the desk skill is installed (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation. "Open X" opens or brings forward X's tab, and the session there answers. "Close X" has that session wrap X, then closes the tab; "close the X tab" closes it without a wrap. "Close for the day" wraps each tab used today in its own session, then quits cmux. "Shut everything down" quits without wrapping. "Start the day" or "restore my tabs" brings them back, and "what tabs are open" lists them.
+**The tabs, in the rules' words.** Where the desk skill is installed (the cmux extra), each thread has a tab of its own and the session in it holds the thread's conversation. "Open X" opens or brings forward X's tab, and the session there answers. "Close X" has that session wrap X, then closes the tab; "close the X tab" closes it without a wrap. "Close for the day" has every session used today wrap its own thread, and quits nothing. "Start the day" is opening cmux, which resumes its tabs itself, and "what tabs are open" lists them.
 
 `--yes` and `--force` are the user's to give, never yours. Read the dry run
-back first, and say everything you need to say before a quit: it lands three
-seconds after `--yes` and takes this session with it.
+back first.
 
 **"Close X" from X's own tab.** This session is mid-turn while it runs `desk`,
 so desk refuses to close it. Wrap here with the `threads` skill, then tell the
@@ -84,44 +86,22 @@ Claude Code ends a turn with a `turn_duration` or `stop_hook_summary` record
 unreadable is `?`. The exception is `empty`: a Claude Code tab with no
 prompt since it started or was cleared with `/clear`, which has no
 transcript yet and which Claude Code's own session record shows idle. It
-counts as idle with nothing to wrap: `close` and `shutdown` close it
-without a wrap, `close --wrap` refuses it, and it is left out of the
-restore list.
+counts as idle with nothing to wrap: `close` closes it without a wrap,
+`close --wrap` and `wrap` refuse or skip it, and `status --today` leaves it out.
 
 - `close` refuses a tab that is busy or `?`, and closes nothing when it does.
-- `shutdown` refuses while any tab is busy or `?`. With `--yes` it wraps one
-  tab at a time, because wraps write shared files. Each wrap has 90 seconds to
-  start and 15 minutes to finish; one that does not stops the shutdown with
-  cmux still running, and a notification says which tab.
+- `wrap` wraps one tab at a time, because wraps write shared files. The wrap
+  has 90 seconds to start and 15 minutes to finish, and desk waits for the
+  turn to end and for the wrap's lock to go. It says whether the thread's
+  wrap record (`System/generated/wrap-<note>.done`) was written.
 - Each tab is checked again the moment its wrap is sent. One that has started
   a turn since, or stopped on a question, gets nothing typed into it: the
-  wrap's Enter would answer the question. `shutdown` wraps the rest, then stops
-  with cmux still running and names the tab; `close --wrap` leaves it open.
-  After the wraps, the commands
-  under `before_quit` in `System/desk.json` run, in order, from the workspace
-  root, such as a backup. Progress goes to `desk-shutdown.log` in the jobs
-  folder.
-- `end` refuses a busy or `?` tab unless the user says `--force`.
-
-## Bringing tabs back
-
-Quitting keeps every tab in cmux's restore set; closing one takes it out. cmux
-does not always bring the assistant back inside a tab, so every quit writes
-`desk-snapshot.json` in the jobs folder: which session sat in which tab. `start`
-waits until cmux has stopped reopening sessions, then types the assistant's own
-resume command into each recorded tab that came back at a bare prompt.
-
-It types only into a tab that this `start` brought back, by launching cmux or
-restoring its tabs, and only when cmux shows a shell alone in that tab's
-foreground: never into an editor, a database client, a password prompt or an
-assistant. With cmux already running and sessions open, it resumes nothing. The
-record is used once, renamed `desk-snapshot.used.json`, and it is ignored when
-cmux has started a session since it was written. A tab it did not resume is
-listed with the reason; its resume command is in the used record.
+  wrap's Enter would answer the question. `wrap` skips it, names it and exits
+  3; `close --wrap` leaves it open.
 
 ## Settings
 
 `System/desk.json`, all optional (`desk.example.json` beside the script shows
 each): `workspaces` (the cmux workspace for each zone, and `neutral` for
 System and the wikis), `skip` (folder names to pass over), `aliases`, `agent`
-(`claude` or `codex`), `before_quit` and `socket_password_file`.
+(`claude` or `codex`) and `socket_password_file`. `before_quit` is retired: `update` moves its commands into `System/jobs/nightly.local`.

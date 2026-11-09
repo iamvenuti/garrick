@@ -852,15 +852,23 @@ def plain_name(cell: str) -> str:
     return (cell or "").strip().strip("*_` \t").strip()
 
 
+NAME_PARTICLES = frozenset("de di da del della van von der den la le du dos das bin al".split())
+
+
 def _owner(lines: List[str]) -> Optional[dict]:
-    """The owner of the workspace, from the first sentence of `## Me`, up to its first full stop: `{"name", "first"}`,
-    or None when the section holds no name, or only a placeholder in angle brackets (`<Your name>`)."""
+    """The owner of the workspace, from the first sentence of `## Me`, up to its first full stop: `{"name", "first"}`.
+    None when the sentence does not look like a person's name: one to four tokens, each starting with an upper-case
+    letter (a name particle such as `de` or `van` may be lower case), no digits. A placeholder in angle brackets
+    (`<Your name>`) and a sentence about the work are no owner."""
     first = next((l.strip() for l in lines if l.strip()), "")
     sentence = re.split(r"\.(?:\s|$)", first, maxsplit=1)[0]
-    name = plain_name(re.sub(r"[*_`]", "", sentence))
-    if not name or re.search(r"[<>\[\]|:@]", name) or len(name.split()) > 5:
+    tokens = [t for t in (plain_name(t) for t in plain_name(sentence).split()) if t]
+    if not 1 <= len(tokens) <= 4 or tokens[0].lower() in NAME_PARTICLES:
         return None
-    return {"name": name, "first": name.split()[0]}
+    for t in tokens:
+        if any(c.isdigit() for c in t) or not (t[0].isalpha() and t[0].isupper() or t in NAME_PARTICLES):
+            return None
+    return {"name": " ".join(tokens), "first": tokens[0]}
 
 
 def _col(row: Dict[str, str], *names: str) -> str:

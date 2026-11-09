@@ -5069,7 +5069,12 @@ def everyday_tag(ws: Workspace, tag: str) -> bool:
     if not key:
         return False
     zones = {" ".join(words(z)) for z in {z.name for z in ws.zones} | set(ws.context["zones"])}
-    return key in zones or key in STOPWORDS or key in COMMON_WORD_NAMES or key in owner_keys(ws)
+    if key in owner_keys(ws):
+        return True
+    # A tag that is the party's own name ("Page", `page`) is the name too: matched in prose, as before.
+    if key == " ".join(words(ws.context["parties"].get(tag, {}).get("party") or "")):
+        return False
+    return key in zones or key in STOPWORDS or key in COMMON_WORD_NAMES
 
 
 def tag_only_forms(ws: Workspace, walled_tags: set) -> Dict[str, Tuple[bool, str]]:

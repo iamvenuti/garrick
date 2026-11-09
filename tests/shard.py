@@ -56,7 +56,7 @@ TOUCH_MAP = {
     "template/System/tools/check.py": ["test_wall_false_positives", "test_wall_forms", "test_wall_gaps",
                                        "test_wall_noise", "test_wall_cache",
                                        "test_walls_cases", "test_walls_deterministic", "test_staged_paths",
-                                       "test_pathspec_commit", "test_decide"],
+                                       "test_pathspec_commit", "test_decide", "test_owner_names"],
     "tests/walls/cases.md": ["test_walls_cases"],
     "extras/status/questions_panel.py": ["test_questions_panel", "test_questions_panel_all",
                                          "test_panel_hardening", "test_decisions",

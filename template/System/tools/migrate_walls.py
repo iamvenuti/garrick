@@ -24,7 +24,6 @@ The policy the Walls table wrote is kept here under names that start with
 """
 
 import json
-import re
 import shutil
 import subprocess
 import sys
@@ -187,27 +186,6 @@ def _projects(root, lib):
     return out
 
 
-def _owner(root):
-    """{"name", "first"} of the workspace's owner: the first sentence of `## Me` in System/context.md, up to its
-    first full stop, Markdown taken off. A placeholder in angle brackets, or no sentence, is no owner: {}.
-    garrick_lib's load_context() gives the same as ctx["owner"] in a Garrick that has it."""
-    try:
-        text = (Path(root) / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return {}
-    start = re.search(r"(?mi)^##\s+me\s*$", text)
-    if not start:
-        return {}
-    body = re.split(r"(?m)^##\s", text[start.end():], maxsplit=1)[0]
-    body = " ".join(l.strip() for l in body.splitlines() if l.strip())
-    name = body.split(".", 1)[0]
-    name = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", name)
-    name = re.sub(r"[*_`]", "", name).strip()
-    if not name or "<" in name or ">" in name:
-        return {}
-    return {"name": name, "first": name.split()[0]}
-
-
 def propose(root, lib, ctx):
     """The flags and the zone columns the Walls table implies, as a dict:
     flags {tag: True when walled}, zone_party {zone: tag or ""}, zone_default {zone: "walled" | "open"},
@@ -249,7 +227,7 @@ def propose(root, lib, ctx):
             if LEGACY_PUBLIC in (hub or set()) or any(LEGACY_PUBLIC in (t or set()) for t in threads.values()):
                 notes.append("project %s names the reserved tag `public`, which is no longer a party: it will "
                              "label nothing until its note names a party." % name)
-    owner = ctx.get("owner") or _owner(root)
+    owner = ctx.get("owner")   # load_context(): the first sentence of `## Me`, or None
     renames = {}
     for tag, row in parties.items():
         if owner and (row.get("party") or "").strip().casefold() == owner["name"].casefold():

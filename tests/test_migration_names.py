@@ -33,12 +33,13 @@ class TestOwnerNamedParty(test_update.Case):
         return migrate_walls.study(self.root, test_update.update.install.lib())
 
     def test_the_owner_is_the_first_sentence_of_me(self):
-        import migrate_walls
-        self.assertEqual({"name": "Sam Rivera", "first": "Sam"}, migrate_walls._owner(self.root))
+        lib = test_update.update.install.lib()
+        owner = lambda: lib.load_context(self.root)["owner"]
+        self.assertEqual({"name": "Sam Rivera", "first": "Sam"}, owner())
         self.context.write_text(self.context.read_text().replace("Sam Rivera. Independent", "<Your name>. Independent"))
-        self.assertEqual({}, migrate_walls._owner(self.root))
+        self.assertIsNone(owner())
         self.context.write_text(self.context.read_text().replace("<Your name>. Independent", "**Sam Rivera**. Independent"))
-        self.assertEqual("Sam Rivera", migrate_walls._owner(self.root)["name"])
+        self.assertEqual("Sam Rivera", owner()["name"])
 
     def test_a_party_named_after_the_owner_is_proposed_renamed(self):
         found = self.study()

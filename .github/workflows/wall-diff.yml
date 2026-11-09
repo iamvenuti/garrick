@@ -1,7 +1,8 @@
 name: Wall diff
 
 # A change to how the wall check reads a token is released only when no row of the
-# generated table goes from refused to passed against the newest release. The counts
+# case files and end-to-end rows goes from refused to passed against the newest release,
+# other than by design (a token that does not resolve). The counts
 # go in the job summary. tests/wall_diff.py has the rest.
 on:
   pull_request:

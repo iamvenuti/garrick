@@ -71,7 +71,7 @@ and sends nothing about your workspace." On a yes, write
 other key there, and commit it alone in the workspace's own repository:
 `git add -- System/garrick-settings.json && git commit -m "Settings: release notice on"`.
 On "stop telling me", set it to `false` the same way. The status page then
-names a newer release under Needs attention, and `check.py --version` adds
+names a newer release on its Repositories card, and `check.py --version` adds
 the same line.
 
 ## "Update Garrick"

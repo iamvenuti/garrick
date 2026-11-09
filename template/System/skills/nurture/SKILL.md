@@ -178,7 +178,11 @@ On either phrase, open the tab, filtered to the scope the user named, and
 stop. Where the page is not at hand, run *Gather* and read the list out, one
 kind at a time, as *Nurture* does; no session limit, and no file of
 decisions is kept. A wall is named by its file and its two parties, never
-quoted, and is fixed or left, never put off. Say that fading still needs its
+quoted, and is fixed or left, never put off. When an answer would need walled
+material in a file whose scope does not name its party, change nothing and say
+the sentence *Zones and walls* in `System/rules.md` gives, word for word: "A wall
+holds some material back from this project, so I have not used it. Nothing was
+written." Say that fading still needs its
 own written proposal and a yes.
 
 If `System/nurture-review.md` is there, an older release left it. Run

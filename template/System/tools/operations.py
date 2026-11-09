@@ -295,8 +295,6 @@ DECLARED: Dict[str, Op] = {
     # `agent`: the assistant the tab starts, for this open only (#307).
     "open": _op(("zone", "project", "thread", "folder", "prompt", "agent"), ("project", "thread", "folder"), "machine"),
     "close": _op(("zone", "project", "thread"), ("project", "thread"), "machine"),
-    "startup": _op((), (), "machine"),
-    "shutdown": _op((), (), "machine"),
     # The checkpoint a session writes into a thread note as the work happens,
     # sent as one JSON object to scaffold.py. The one declared verb the page
     # cannot send: confirming a checkpoint is a wrap, and the page has no

@@ -89,6 +89,12 @@ zone's repository, as the skills would:
                 the running version is older than it by semantic comparison;
                 a build that is not older, or that cannot be read, is refused
                 with the reason. The report comes back as counts and lists
+    walls-study  the pending walls migration (#455): the flags migrate_walls.py
+                proposes and the grouped diff; it only reads
+    walls-migrate  writes them: {"yes": true}, after the page's one inline
+                question; without it the reply is the question and nothing is
+                written. The same checks as release.py update --apply --yes:
+                the study still pending, the commit through the wall check
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -282,7 +288,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag")
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag", "walls-study", "walls-migrate")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -1439,6 +1445,13 @@ def release_update(ws: Path) -> dict:
     else:
         out["state"] = "updated"
         out["line"] = "Updated to %s from %s." % (state["latest"], state["running"])
+        try:        # an update from the page has no terminal to answer the walls migration's yes (#455)
+            lib, tool = walls_context(ws)
+            out["walls"] = bool(tool.pending(ws, lib))
+        except Refused:
+            out["walls"] = False
+        if out["walls"]:
+            out["line"] += " The walls migration is pending: read its changes below, then write the flags."
     return {"say": out["line"], "release": out}
 
 
@@ -1927,6 +1940,79 @@ def party_flag(ws: Path, req: dict):
             return {"say": said_all(said), "ask": not req.get("yes") and "--yes" in said, "written": False}
         commit(ws, context, before, "Party %s: %s" % (tag, flag), wall=wall_refusal(ws))
     return {"say": said_all(said), "ask": False, "written": True}
+
+
+def walls_tool(ws: Path):
+    """The workspace's own System/tools/migrate_walls.py, or None: the one-time step from pairs of parties to flags.
+    Loaded afresh each time, so the study is the file's as it stands."""
+    src = ws / "System" / "tools" / "migrate_walls.py"
+    if not src.is_file():
+        return None
+    try:
+        with tools_path(ws):
+            spec = importlib.util.spec_from_file_location("garrick_page_migrate_walls", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["garrick_page_migrate_walls"] = mod
+            spec.loader.exec_module(mod)
+    except Exception:
+        return None
+    finally:
+        sys.modules.pop("garrick_page_migrate_walls", None)
+    return mod if all(callable(getattr(mod, n, None)) for n in ("study", "rewrite", "pending", "walls_check")) else None
+
+
+def walls_context(ws: Path):
+    lib, tool = prefs().lib(ws), walls_tool(ws)
+    if lib is None or tool is None:
+        raise Refused("this workspace has no migrate_walls.py or garrick_lib.py that can read the walls, so nothing was done")
+    return lib, tool
+
+
+def walls_study(ws: Path) -> dict:
+    """The walls migration, when one is pending (#455): the flags it proposes and the grouped diff, as migrate_walls.py's
+    study() reads them, the same the update prints. It only reads; nothing is written."""
+    lib, tool = walls_context(ws)
+    found = tool.study(ws, lib)
+    if found is None:
+        return {"say": "No walls migration is pending.", "pending": False}
+    prop = found["prop"]
+    return {"say": "A walls migration is pending: %d flag%s proposed, %d flow%s change." % (
+                len(prop["flags"]), "" if len(prop["flags"]) == 1 else "s", len(found["items"]), "" if len(found["items"]) == 1 else "s"),
+            "pending": True, "text": found["text"], "changes": len(found["items"]), "refused": len(found["refused"]),
+            "flags": [{"tag": t, "walled": bool(w), "rename": prop.get("renames", {}).get(t, "")} for t, w in sorted(prop["flags"].items())]}
+
+
+def walls_migrate(ws: Path, req: dict) -> dict:
+    """Write the flags (#455), with update.py's own checks: the study must still find the migration pending, the
+    columns go into System/context.md and the Walls table out, the file is committed through the wall check or
+    put back, and the whole workspace is checked after. Nothing is written without `yes`: a request without it
+    comes back as the question (`ask`)."""
+    if req.get("yes") not in (None, True, False):
+        raise Refused("not an answer: %r" % (req.get("yes"),))
+    if not req.get("yes"):
+        return {"say": "Write the party flags and take out the Walls table? Nothing is written until you say yes.",
+                "ask": True, "written": False}
+    lib, tool = walls_context(ws)
+    context = ws / "System" / "context.md"
+    with held("page-action-context.lock", busy="another change to the parties is still running"):
+        found = tool.study(ws, lib)
+        if found is None:
+            return {"say": "No walls migration is pending, so nothing was written.", "ask": False, "written": False, "pending": False}
+        try:
+            before = context.read_bytes()
+        except OSError:
+            raise Refused("System/context.md is missing")
+        text = tool.rewrite(before.decode("utf-8"), found["prop"])
+        if text is None:
+            raise Refused("System/context.md has no Parties table, so nothing was written")
+        context.write_bytes(text.encode("utf-8"))
+        commit(ws, context, before, "Garrick: party flags in System/context.md, the Walls table out", wall=wall_refusal(ws))
+    refused = tool.walls_check(ws)
+    say = "Wrote the party flags and took out the Walls table."
+    if refused:
+        say += " The walls check now refuses %d thing%s that was committed before: %s" % (
+            len(refused), "" if len(refused) == 1 else "s", "; ".join(refused[:5]) + (" ..." if len(refused) > 5 else ""))
+    return {"say": say, "ask": False, "written": True, "pending": False, "refused": refused}
 
 
 def asks_how(ws: Path, args: list) -> None:
@@ -5280,6 +5366,10 @@ def act(ws: Path, req, today=None, now=None):
         return memory_preview(ws, req)
     if req["verb"] == "party-flag":
         return party_flag(ws, req)
+    if req["verb"] == "walls-study":
+        return walls_study(ws)
+    if req["verb"] == "walls-migrate":
+        return walls_migrate(ws, req)
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":

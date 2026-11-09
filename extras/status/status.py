@@ -4231,7 +4231,38 @@ def release_choice(ws: Optional[Path]) -> Tuple[bool, int]:
         return False, 1
 
 
-def release_controls(on: bool, every: int) -> str:
+def walls_pending(ws: Optional[Path]) -> bool:
+    """Whether the walls migration still waits (#455): System/context.md has no Walled column. Read through the
+    workspace's own migrate_walls.py; any fault says no."""
+    try:
+        lib, src = workspace_lib(ws), ws / "System" / "tools" / "migrate_walls.py"
+        if lib is None or not src.is_file():
+            return False
+        spec = importlib.util.spec_from_file_location("garrick_status_migrate_walls", str(src))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return bool(mod.pending(ws, lib))
+    except Exception:
+        return False
+
+
+def walls_card(pending: bool) -> str:
+    """The pending walls migration as a card in Settings › About Garrick (#455), in the app only. Shown when one is
+    pending at build, and by RELEASE_JS when an update has just left one. Show the changes reads the proposal;
+    Write the flags asks once, inline (the app's web view shows no confirm box), and only its yes writes."""
+    return ('<div class="setrelbox" id="walls-card"%s><p><b>The walls migration is pending.</b> Walls are now a flag on each party. '
+            'Until the flags are written, the old pairs keep deciding and the check warns.</p>'
+            '<p class="setrelrow"><button type="button" class="act" id="walls-show">Show the changes</button>'
+            '<span class="hint" id="walls-line" role="status"></span></p>'
+            '<div id="walls-body" hidden><pre id="walls-text" class="wallstext"></pre>'
+            '<p class="setrelrow"><button type="button" class="act" id="walls-write">Write the flags</button></p>'
+            '<p class="setrelrow" id="walls-ask" hidden><span>Write these flags and take out the Walls table?</span> '
+            '<button type="button" class="act" id="walls-yes">Yes, write them</button> '
+            '<button type="button" class="act" id="walls-no">Cancel</button></p></div></div>'
+            % ("" if pending else " hidden"))
+
+
+def release_controls(on: bool, every: int, walls: bool = False) -> str:
     """Settings › About Garrick's Check for updates button and its switch
     (#410), in the app only. The button asks GitHub now, which is the
     click's consent; the switch and its cadence are saved when Settings
@@ -4240,11 +4271,11 @@ def release_controls(on: bool, every: int) -> str:
     option = lambda days, label: '<option value="%d"%s>%s</option>' % (days, " selected" if every == days else "", label)
     return ('<div class="setrel apponly" id="release-settings"><p class="setrelrow"><button type="button" class="act" '
             'id="rel-check">Check for updates</button><span class="hint" id="rel-line" role="status"></span></p>'
-            '<div class="setrelbox" id="rel-detail" hidden></div>'
+            '<div class="setrelbox" id="rel-detail" hidden></div>%s'
             '<p class="setrelrow"><label><input type="checkbox" id="rel-on"%s> <span>Check for a newer Garrick</span></label> '
             '<select id="rel-every" aria-label="How often"%s>%s%s</select></p>'
             '</div>'
-            % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
+            % (walls_card(walls), " checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
 
 
 def about_garrick(version: str, ws: Optional[Path] = None) -> str:
@@ -4268,7 +4299,7 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
                'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and in Needs attention, and never updates.'),
-               E(version), release_controls(*release_choice(ws)) if ws is not None else "", rows))
+               E(version), release_controls(*release_choice(ws), walls=walls_pending(ws)) if ws is not None else "", rows))
 
 
 # Each row of Opening a thread carries the icon its way carries on Explore's
@@ -6789,7 +6820,7 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 .setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:5px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
 .setrel{margin:8px 0}.setrelrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:6px 0}.setrelrow .hint{margin:0}
 .setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
-.setrelbox a{color:var(--accent)}
+.setrelbox a{color:var(--accent)}.wallstext{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
 /* Settings › Notifications: the five notices, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
@@ -7406,6 +7437,15 @@ items('Instruction files you changed, left as they are (Split):',r.split);
 items('Skipped:',r.skipped,function(x){return x[0]+': '+x[1]});
 items('Left for you:',r.then);items('The check found:',r.problems)}
 function done(){busy=false;btn.disabled=false}
+var card=document.getElementById('walls-card'),wbtn=document.getElementById('walls-show'),wline=document.getElementById('walls-line'),wbody=document.getElementById('walls-body'),
+wtext=document.getElementById('walls-text'),wwrite=document.getElementById('walls-write'),wask=document.getElementById('walls-ask'),wgo=document.getElementById('walls-yes'),wno=document.getElementById('walls-no');
+function wput(t){wline.textContent=t}
+function wstudy(){if(!host){wput('Only the Garrick app can show the changes.');return}wbtn.disabled=true;wput('Reading the workspace\u2026 this can take a minute.');
+host.postMessage({act:{verb:'walls-study'}})}
+if(card){wbtn.onclick=function(){wstudy()};
+wwrite.onclick=function(){wask.hidden=false;wwrite.disabled=true};
+wno.onclick=function(){wask.hidden=true;wwrite.disabled=false;wput('Nothing was written.')};
+wgo.onclick=function(){wgo.disabled=true;wno.disabled=true;wput('Writing\u2026');host.postMessage({act:{verb:'walls-migrate',yes:true}})}}
 btn.onclick=function(){if(busy)return;if(!host){put('Only the Garrick app can ask GitHub.');return}busy=true;btn.disabled=true;box.hidden=true;put('Asking GitHub\u2026');
 host.postMessage({act:{verb:'release-check'}})};
 sec.addEventListener('change',function(e){if(e.target===on||e.target===every){changed=true;every.disabled=!on.checked}});
@@ -7414,7 +7454,11 @@ if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){put
 if(r.state==='newer'){put('Updating from '+r.running+' to '+r.latest+'\u2026 this takes a minute.');host.postMessage({act:{verb:'release-update'}});return}
 put(r.line+at(r));done();return}
 if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update could not start. Nothing was changed.');done();return}
-put(u.line);show(u);done();return}
+put(u.line);show(u);done();if(u.walls&&card){card.hidden=false;wstudy()}return}
+if(q&&q.verb==='walls-study'&&card){wbtn.disabled=false;if(!(out&&out.ok)){wput((out&&out.say)||'Could not read the workspace. Nothing was changed.');return}
+if(!out.pending){card.hidden=true;return}wput(out.say);wtext.textContent=out.text||'';wbody.hidden=false;return}
+if(q&&q.verb==='walls-migrate'&&card){wgo.disabled=false;wno.disabled=false;wask.hidden=true;wwrite.disabled=false;
+if(!(out&&out.ok)){wput((out&&out.say)||'Nothing was written.');return}wput(out.say);if(out.written){wbody.hidden=true;wbtn.hidden=true}return}
 if(prev)return prev(q,out)};
 window.GarrickRelease={changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};
 })();

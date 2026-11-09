@@ -1531,10 +1531,12 @@ def walls_migration(root, answer, apply_changes=True, as_json=False):
     if study is None:
         return "", False, None
     data = {"flags": study["prop"]["flags"], "zone_party": study["prop"]["zone_party"],
-            "zone_default": study["prop"]["zone_default"], "changes": len(study["items"])}
+            "zone_default": study["prop"]["zone_default"], "renames": study["prop"].get("renames", {}),
+            "changes": len(study["items"]), "refused": len(study["refused"])}
     out = [study["text"], ""]
     if not apply_changes:
-        out.append("Nothing is written. Run the update with --apply; answer with --yes, or at a terminal.")
+        out.append("Nothing is written. Run python3 System/tools/release.py update --apply, and answer at the terminal "
+                   "or add --yes; or press Write the flags on the status page (Settings, About Garrick).")
         return "\n".join(out), False, data
     if not answer and sys.stdin.isatty() and sys.stdout.isatty() and not as_json:
         print("\n".join(out))
@@ -1542,7 +1544,8 @@ def walls_migration(root, answer, apply_changes=True, as_json=False):
         answer = input("Write these flags and take out the Walls table? [y/N] ").strip().lower() in ("y", "yes")
     if not answer:
         out.append("Nothing was written. The Walls table stays and keeps "
-                   "deciding every flow as before; the check warns until the flags are written. Answer with --yes once you have read the changes above.")
+                   "deciding every flow as before; the check warns until the flags are written. Once you have read the changes above, run "
+                   "python3 System/tools/release.py update --apply --yes, or press Write the flags on the status page.")
         return "\n".join(out), False, data
     path = root / "System" / "context.md"
     text = migrate_walls.rewrite(path.read_text(encoding="utf-8"), study["prop"])

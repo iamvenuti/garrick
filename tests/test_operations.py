@@ -99,7 +99,7 @@ class TestDeclared(unittest.TestCase):
             if spec.commits:
                 # a zone's repository, or, for the Nurture answers (#224), the wikis and zones the answers touch
                 # party-flag writes System/context.md at the workspace root, so its scope is the workspace
-                wide = verb.startswith("nurture-") or verb == "party-flag"
+                wide = verb.startswith("nurture-") or verb in ("party-flag", "walls-migrate")
                 self.assertIn(spec.scope, ("zone", "workspace") if wide else ("zone",), verb)
 
     def test_only_the_six_the_page_sends_under_the_lock_keep_a_record(self):
@@ -339,6 +339,9 @@ SHAPES = {
     # RELEASE_JS (#410): Settings › About Garrick's Check for updates, and the update it starts when a newer release is found
     "btn.onclick: 'release-check'": {"release-check": ()},
     "window.GarrickActed: 'release-update'": {"release-update": ()},
+    # the walls migration's card (#455): the study only reads, the write carries the page's one yes
+    "wstudy: 'walls-study'": {"walls-study": ()},
+    "wgo.onclick: 'walls-migrate'": {"walls-migrate": ()},
     # NOTE_JS (#206): a note read for Explore's Preview, which only reads, and opened in its own app
     "read: 'note-read'": {"note-read": ()},
     "openIn: 'note-open'": {"note-open": ()},
@@ -366,7 +369,8 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'", "renameReq: 'suggestion'", "ownReq: 'answer'"},
            "WHERE_JS": {"poll: 'files-progress'", "vreq: 'files-stop'", "vreq: 'work-file'"},
            "MEMORY_JS": {"ask: 'memory-preview'"},
-           "RELEASE_JS": {"btn.onclick: 'release-check'", "window.GarrickActed: 'release-update'"},
+           "RELEASE_JS": {"btn.onclick: 'release-check'", "window.GarrickActed: 'release-update'",
+                          "wstudy: 'walls-study'", "wgo.onclick: 'walls-migrate'"},
            "NOTE_JS": {"read: 'note-read'", "openIn: 'note-open'"}}
 
 

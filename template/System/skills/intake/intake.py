@@ -237,7 +237,7 @@ def suggest(ctx: dict, zone: str, mail: dict) -> dict:
     forwarded or quoted inline count like the rest. The hint says to ask when
     nothing matches, when a domain belongs to two parties, when two parties on
     the mail are both walled, or when a party belongs to another
-    zone. It never picks one side of a wall, and never says where the mail goes.
+    zone. It never picks a walled party, and never says where the mail goes.
 
     The user's own addresses (the Me section of context.md) carry mail; they
     do not say whose it is. Their plus tags still count, but their domains

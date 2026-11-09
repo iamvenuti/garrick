@@ -596,6 +596,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {v for v in page_action.VERBS if v.startswith("nurture-")}
         # The Parties tab's flip edits the workspace's own context under its own lock (#447).
         unzoned.add("party-flag")
+        # The walls migration's card: a read, and a write to the same context file (#455).
+        unzoned |= {"walls-study", "walls-migrate"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

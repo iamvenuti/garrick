@@ -255,8 +255,8 @@ def ensure_person(root: Path, name: str, party: str, today: str, organisation: s
     goes by, as garrick_lib's organisation_named() finds it: never made
     here. Without, the entity page of its party, when exactly one entity
     page names that party (organisation_link). Nothing otherwise: the link
-    is identity alone, and both leave it out across a wall, such as for a
-    name the People table places on both sides of one. Why a named entity
+    is identity alone, and both leave it out where a walled party is not named, such as for a
+    name the People table places under two parties, one of them walled. Why a named entity
     page was not linked goes into `why`, when given.
     """
     path = meetings_root(root) / "wiki" / "people" / ("%s.md" % person_slug(name))

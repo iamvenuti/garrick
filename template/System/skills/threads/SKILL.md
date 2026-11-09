@@ -761,23 +761,17 @@ into an app's window, and never use computer use to reach a session.
    - **cmux tabs**, where the `desk` skill is installed:
      `desk status --today --json` gives each tab's session id, assistant,
      folder, state and thread note.
-   - **Claude sessions outside cmux**, the Claude desktop app's included:
-     the `ListAgents` tool lists the peer sessions, and `SendMessage` reaches
-     one. A peer whose session id is already on the list is the same session.
-     The peer list has left out cmux tabs, so it is never the only source.
-   - **Codex app sessions** have no channel Garrick can rely on: the app
-     answers on its own socket, and Garrick has found no way to ask it to wrap
-     and to know when it has. They are listed, not reached, by folder:
-     ```sh
-     find ~/.codex/sessions -name 'rollout-*.jsonl' -newermt "$(date +%Y-%m-%d)" -exec sh -c 'head -n1 "$1"' _ {} \;
-     ```
-     Each first line holds `payload.id`, `payload.cwd` and `payload.originator`.
-     Keep those whose `originator` is `Codex Desktop` and whose id is not on
-     the list already. The Codex tabs in cmux are `desk`'s.
+   - **Peer sessions outside cmux**, a desktop app's included, where this
+     assistant can list its peer sessions and send one a message. A peer
+     whose session id is already on the list is the same session. A peer list
+     can leave out cmux tabs, so it is never the only source.
+   - **Sessions of an app with no channel** to ask them: listed, not reached,
+     by folder, from the app's own session files where `docs/extras/cmux.md`
+     names them. Keep those whose id is not on the list already.
    - **This session**, if it worked on a thread today.
 2. **Say the list before asking**, in one line: "Four today: two tabs, one
-   Claude app session, this one; one Codex session I cannot reach." Go ahead
-   unless the user stops you.
+   app session, this one; one session I cannot reach." Go ahead unless the
+   user stops you.
 3. **Ask each one to wrap, one at a time**, and wait until its wrap has
    finished before the next, because two wraps at once collide on `Todo.md`
    and the hub. Finished means the wrap lock is gone and
@@ -785,8 +779,8 @@ into an app's window, and never use computer use to reach a session.
    - A cmux tab: `desk wrap --session <id> --yes` asks it, waits, and says
      whether the record was written. Exit 3 means the tab was mid-turn or
      waiting on a question: it was typed nothing.
-   - A Claude peer: `SendMessage` with "Wrap it: close for the day, no
-     question; this session stays open", then wait for the record.
+   - A peer session: send it "Wrap it: close for the day, no question; this
+     session stays open", then wait for the record.
    - A session that is mid-turn or waiting on a question is skipped and
      named. Do not ask it twice.
    - This session last, as Wrap does it, for the thread it worked on.
@@ -800,7 +794,7 @@ into an app's window, and never use computer use to reach a session.
    session is the one that knows.
 
 Spoken, three sentences at most: "Wrapped three: Acme pricing, Birch launch
-plan and roof repair. One Codex session in Birch is not reachable; wrap it
+plan and roof repair. One app session in Birch is not reachable; wrap it
 there. First thing tomorrow is the Acme second draft, due Friday."
 
 Written: one line per session, as step 4 says.

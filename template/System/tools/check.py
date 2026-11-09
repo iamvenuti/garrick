@@ -1653,12 +1653,19 @@ def has_remote(repo: Path) -> bool:
 CMUX_CONFIG = (".config", "cmux", "cmux.json")
 
 
+def _without_json_comments(text: str) -> str:
+    """`text` with `//` and `/* */` comments taken out, outside strings: cmux.json may be JSONC."""
+    return re.sub(r'"(?:[^"\\]|\\.)*"|//[^\n]*|/\*.*?\*/', lambda m: m.group(0) if m.group(0)[0] == '"' else " ", text, flags=re.S)
+
+
 def check_cmux(ws: Workspace) -> List[Finding]:
     """cmux resumes the agent sessions of its tabs itself when it reopens (`terminal.autoResumeAgentSessions`, on by
     default). Warn once when `~/.config/cmux/cmux.json` turns it off: nothing resumes the tabs then (#440)."""
+    if not (ws.root / "System" / "cmux").is_dir():
+        return []                                # only a workspace with the cmux extra: no other run reads the home folder
     path = Path(os.path.expanduser("~")).joinpath(*CMUX_CONFIG)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(_without_json_comments(path.read_text(encoding="utf-8")))
     except (OSError, ValueError):
         return []
     nested = data.get("terminal") if isinstance(data, dict) else None

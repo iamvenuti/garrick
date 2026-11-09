@@ -155,12 +155,21 @@ class CmuxResumeTest(unittest.TestCase):
                 path = Path(home) / ".config" / "cmux" / "cmux.json"
                 path.parent.mkdir(parents=True)
                 path.write_text(config if isinstance(config, str) else json.dumps(config), encoding="utf-8")
+            (Path(ws_root) / "System" / "cmux").mkdir(parents=True)        # the cmux extra is installed
             with mock.patch.dict(os.environ, {"HOME": home}):
                 return [(f.severity, f.check) for f in check.check_cmux(check.discover(Path(ws_root), light=True))]
 
     def test_it_warns_once_when_resuming_is_off(self):
         self.assertEqual([("warning", "cmux")], self.run_with({"terminal": {"autoResumeAgentSessions": False}}))
         self.assertEqual([("warning", "cmux")], self.run_with({"terminal.autoResumeAgentSessions": False}))
+
+    def test_comments_in_the_file_do_not_hide_it(self):
+        text = '// cmux\n{\n  /* resume */ "terminal": {"autoResumeAgentSessions": false, // off\n "url": "http://x//y"}\n}\n'
+        self.assertEqual([("warning", "cmux")], self.run_with(text))
+
+    def test_a_workspace_without_the_cmux_extra_reads_no_home_folder(self):
+        with tempfile.TemporaryDirectory() as ws_root, mock.patch("os.path.expanduser", side_effect=AssertionError("read the home folder")):
+            self.assertEqual([], check.check_cmux(check.discover(Path(ws_root), light=True)))
 
     def test_it_is_quiet_otherwise(self):
         for config in (None, {}, "not json", {"terminal": {"autoResumeAgentSessions": True}}, {"terminal": {}}, []):

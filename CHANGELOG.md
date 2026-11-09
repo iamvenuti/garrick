@@ -4,6 +4,24 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.60.1] - 2026-11-09
+
+The walls migration can be finished from the app, and a migrated workspace can commit notes that name its owner.
+
+**Upgrading.** If an update to 0.60.0 left the walls migration pending, the status page now shows it in Settings › About Garrick. Press *Show the changes*, read them, then *Write the flags*. From a terminal, `python3 System/tools/release.py update --apply --yes` does the same on a workspace that already runs the release.
+
+### Fixed
+
+- **The owner's own name is no longer refused outside the employer's zone** ([#458](https://github.com/iamvenuti/garrick/issues/458)). The check reads the owner's name from the first sentence of `## Me` in `System/context.md` and never matches it, or the first name alone, as a walled party's or person's name. A walled person who shares the owner's first name is matched by the full name only. A walled party's tag that is an everyday word, such as the name of the zone it lives in, is matched only as a tag (in `parties:`, a code span or a fenced block), unless it is also the party's own name. The migration proposes renaming a party named after the owner to a label of what it holds, and the installer names that party the same way.
+- **An update from the app can finish the walls migration** ([#455](https://github.com/iamvenuti/garrick/issues/455)). The page shows the pending migration as a card, with the proposed flags, the changed flows and the files the new flags would refuse, and writes nothing until you say yes, inline. `release.py update` takes `--yes`, and with the release already installed and a migration pending, `--apply` runs it instead of saying "Up to date". The update's message names a command that exists. Before the yes, the report lists every file the check would refuse with the proposed flags, and says so plainly when the check could not run.
+- **The Parties tab asks before making a walled party open** ([#456](https://github.com/iamvenuti/garrick/issues/456)). The question appears in the party's card, with the count of files the change releases, a *Make it open* button and *Cancel*. The Mac app never showed the browser dialog the tab used before, so the change could not be made there.
+- **Party and person names are read without their Markdown** ([#457](https://github.com/iamvenuti/garrick/issues/457)). A bold name in the Parties or People table shows plain on the Parties tab and in `scaffold.py party`, and a bold name and a plain one are the same name to the two-hats check.
+
+### Changed
+
+- **The verdict diff compares every row** ([#459](https://github.com/iamvenuti/garrick/issues/459)). `tests/wall_diff.py` takes the run's temporary folder out of each key before it pairs the rows, and reports those rows as a group of their own. Before, they had no twin and were left out without a word: 15,472 of 80,450 rows on the 0.60.0 release.
+- **Docs and skills describe walls in 0.60.0's terms** ([#460](https://github.com/iamvenuti/garrick/issues/460)): a walled party, and a scope that names it or does not. "Across a wall" and "the far side" are gone from the pages that describe the current model.
+
 ## [0.60.0] - 2026-11-08
 
 Walls become a flag on the party. Every party is either walled or open: a walled party's material goes only into work that names that party, and an open party's material may go anywhere. The table of walled pairs, the reserved tag `public` and `scaffold.py party --walled-from` are gone, and one rule in `decide()` answers for every enforcement point.

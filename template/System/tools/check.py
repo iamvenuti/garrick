@@ -5054,8 +5054,60 @@ def _in_near_side(form: str, near_side: set) -> bool:
     return any(padded in (" %s " % ns) for ns in near_side)
 
 
+def owner_keys(ws: Workspace) -> set:
+    """The owner's full name and first name as word forms: never a walled party's or person's name to the check."""
+    owner = ws.context.get("owner")
+    if not owner:
+        return set()
+    return {k for k in (" ".join(words(owner["name"])), " ".join(words(owner["first"]))) if k}
+
+
+def everyday_tag(ws: Workspace, tag: str) -> bool:
+    """Is a party's tag an everyday word: a zone's name, a word of the stop-word or everyday-name lists, or the
+    owner's name? Such a tag is matched only as a tag (tag_only_forms), never as a prose word."""
+    key = " ".join(words(tag))
+    if not key:
+        return False
+    zones = {" ".join(words(z)) for z in {z.name for z in ws.zones} | set(ws.context["zones"])}
+    if key in owner_keys(ws):
+        return True
+    # A tag that is the party's own name ("Page", `page`) is the name too: matched in prose, as before.
+    if key == " ".join(words(ws.context["parties"].get(tag, {}).get("party") or "")):
+        return False
+    return key in zones or key in STOPWORDS or key in COMMON_WORD_NAMES
+
+
+def tag_only_forms(ws: Workspace, walled_tags: set) -> Dict[str, Tuple[bool, str]]:
+    """For each walled party whose tag is an everyday word, the form of that tag (name_forms leaves it out)."""
+    out = {}
+    for tag in walled_tags:
+        entry = ws.context["parties"].get(tag)
+        if entry is not None and everyday_tag(ws, tag):
+            out[tag] = (False, " ".join(words(tag)))
+    return out
+
+
+def tag_scope_text(text: str) -> str:
+    """The parts of a note where an everyday-word tag counts: its `parties:` field, its code spans and its fenced blocks."""
+    parts = [body for _, body in code_texts(text, None)]
+    if text.startswith("---"):
+        in_field = False
+        for line in text.split("\n")[1:]:
+            if line.rstrip("\r") in ("---", "..."):
+                break
+            if re.match(r"parties\s*:", line):
+                in_field = True
+                parts.append(line)
+            elif in_field and (line[:1].isspace() or line.startswith("-")):
+                parts.append(line)
+            else:
+                in_field = False
+    return "\n".join(parts)
+
+
 def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, str]]]:
     ctx = ws.context
+    owner = owner_keys(ws)
     forms: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
     firsts: Dict[str, set] = {tag: set() for tag in ctx["parties"]}
     means: Dict[str, str] = {}
@@ -5092,10 +5144,13 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
         if tag not in forms:
             continue
         both = near_people & forms[tag]
+        tag_key = " ".join(words(tag))
+        skip = owner | ({tag_key} if everyday_tag(ws, tag) else set())
         found = [(False, f) for f in sorted(forms[tag])
-                 if f not in near_side and not _in_near_side(f, both)]
+                 if f not in near_side and not _in_near_side(f, both) and f not in skip]
         found += [(True, f) for f in sorted(firsts[tag])
-                  if f.lower() not in near_side and not _in_near_side(f.lower(), both) and f.lower() not in forms[tag]]
+                  if f.lower() not in near_side and not _in_near_side(f.lower(), both) and f.lower() not in forms[tag]
+                  and f.lower() not in owner]
         # Longest first. Which form a finding names decides whether it reads as
         # a tag hit or a name hit, so it must be the most telling form the text
         # holds and not whichever one the alphabet put first.
@@ -7058,10 +7113,19 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     if far and not in_sources:
         scanned = fold_format(without_party_field(text)) + "\n" + path.name
         padded = padded_words(scanned)
-        for b, forms in name_forms(ws, far).items():
-            if b in reported or not forms:
+        named_forms = name_forms(ws, far)
+        only = tag_only_forms(ws, far)
+        scoped = None
+        for b in sorted(set(named_forms) | set(only)):
+            if b in reported:
                 continue
-            hit = name_hit(scanned, forms, padded)
+            forms = named_forms.get(b, [])
+            hit = name_hit(scanned, forms, padded) if forms else None
+            if hit is None and b in only:
+                # An everyday-word tag counts as a tag: in `parties:`, a code span or a fenced block.
+                if scoped is None:
+                    scoped = fold_format(tag_scope_text(text))
+                hit = name_hit(scoped, [only[b]])
             if hit is None:
                 continue
             reported.add(b)

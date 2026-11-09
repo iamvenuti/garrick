@@ -310,6 +310,21 @@ class TestContext(unittest.TestCase):
         self.assertEqual({}, ctx["zone_parties"])
 
 
+class TestPlainNames(unittest.TestCase):
+    """A name cell is read as plain text, once, in load_context (#457)."""
+
+    def test_a_bold_and_a_plain_name_are_one_name_to_the_two_hats_check(self):
+        text = CONTEXT.replace("## Parties", "## Parties\n\n| Party | What it is | Zone | Tag | Walled | Domains |\n"
+                               "|---|---|---|---|---|---|\n"
+                               "| **Acme Corp** | Technology partnership | Work | `acme-oem` | yes | |\n"
+                               "| Acme Corp | Advisory | Personal | `acme-adv` | yes | |\n\n## Parties (fixture)", 1)
+        with tempfile.TemporaryDirectory() as tmp:
+            write(Path(tmp) / "System" / "context.md", text)
+            ctx = lib.load_context(tmp)
+        self.assertEqual(ctx["parties"]["acme-oem"]["party"], "Acme Corp")
+        self.assertEqual(lib.hats_of(ctx, {"acme-oem", "acme-adv"}), [("acme-adv", "acme-oem")])
+
+
 class TestWorkspaceRoot(unittest.TestCase):
     def test_walks_up(self):
         with tempfile.TemporaryDirectory() as tmp:

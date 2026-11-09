@@ -7,6 +7,7 @@
     python3 System/tools/release.py update              download the newest release and say what an update would change
     python3 System/tools/release.py update --apply      ... and make the changes
     python3 System/tools/release.py update --tag v0.16.0 --apply --only System/tools/check.py
+    python3 System/tools/release.py update --apply --yes     ... and answer the walls migration's yes (a pending one is finished even when the release is installed)
     python3 System/tools/release.py update --split      move your text out of Garrick's instruction files
 
 The release notice is off until System/garrick-settings.json says
@@ -283,8 +284,20 @@ def ahead_of_release(root: Path) -> bool:
     return any(part.lower().startswith("[unreleased]") and re.search(r"(?m)^- ", part) for part in waiting)
 
 
+def walls_pending(root: Path) -> bool:
+    """Whether the walls migration (migrate_walls.py) still waits: System/context.md has no Walled column. An
+    update that left it pending, because nobody could answer its yes, is finished with the release already
+    installed, so the same release is then run again."""
+    try:
+        import garrick_lib
+        import migrate_walls
+        return bool(migrate_walls.pending(root, garrick_lib))
+    except Exception:
+        return False
+
+
 def update(root: Path, tag: str = "", apply: bool = False, only: str = "", as_json: bool = False,
-           split: bool = False) -> int:
+           split: bool = False, yes: bool = False) -> int:
     """Download the release `tag`, the newest when empty, and run its update
     on this workspace, or with `split` its split of the instruction files.
     Returns the update's exit code. Never a release older than the workspace
@@ -299,7 +312,7 @@ def update(root: Path, tag: str = "", apply: bool = False, only: str = "", as_js
         if older or (same and ahead_of_release(root)):
             raise ReleaseError("This workspace runs %s%s, so %s would take it back. Update from a newer Garrick." % (
                 current, " and changes from main after it" if same else "", tag))
-        if same and not named and not split:
+        if same and not named and not split and not walls_pending(root):
             print("Up to date: Garrick %s is the newest release, and this workspace runs it." % current)
             return 0
     repo = release_repository(root)
@@ -321,6 +334,7 @@ def update(root: Path, tag: str = "", apply: bool = False, only: str = "", as_js
         cmd += ["--only", only] if only else []
         cmd += ["--json"] if as_json else []
         cmd += ["--split"] if split else []
+        cmd += ["--yes"] if yes else []
         return subprocess.run(cmd, cwd=str(tmp)).returncode
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -356,6 +370,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     up.add_argument("--tag", default="", help="the release, such as v0.16.0 (default: the newest)")
     up.add_argument("--apply", action="store_true", help="make the changes; without it, only say what they would be")
     up.add_argument("--only", default="", help="comma-separated paths, as the report lists them")
+    up.add_argument("--yes", action="store_true",
+                    help="answer yes to the walls migration: write the party flags (needs --apply)")
     up.add_argument("--json", action="store_true", help="the update's report as JSON")
     up.add_argument("--split", action="store_true",
                     help="move your own text out of Garrick's instruction files, into the local file beside each")
@@ -381,7 +397,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if args.command == "update":
         try:
-            return update(root, args.tag, args.apply, args.only, args.json, args.split)
+            return update(root, args.tag, args.apply, args.only, args.json, args.split, args.yes)
         except ReleaseError as exc:
             print(exc, file=sys.stderr)
             return 1

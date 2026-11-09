@@ -252,6 +252,10 @@ DECLARED: Dict[str, Op] = {
     # A party's flag from the Parties tab (#447): scaffold.py's `party --walled | --open`, committed in the
     # workspace's own repository. `yes` answers the question a walled-to-open change asks first.
     "party-flag": _op(("tag", "flag", "yes"), ("tag", "flag"), "workspace", True),
+    # The walls migration's card in Settings › About Garrick (#455): the study only reads; the write answers `yes`,
+    # and commits System/context.md in the workspace's own repository, as party-flag does.
+    "walls-study": _op((), (), "none", retry="safe"),
+    "walls-migrate": _op(("yes",), (), "workspace", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
     # `suggested` asks a first look's suggested request instead (#182).

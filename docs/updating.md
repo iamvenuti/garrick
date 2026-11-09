@@ -84,6 +84,15 @@ Before 0.60.0 a workspace kept a list of pairs of parties in `System/context.md`
 2. It prints what that changes. It does not compare parties; it runs the old rule and the new one over every record and every project in your workspace and prints each flow whose answer differs, grouped as refused before and allowed after, allowed before and refused after, and asked about. A flow that only exists for a record with two walled parties on it shows up here and in no table of parties.
 3. It writes only on your yes. `--apply --yes` answers for a scripted update, and at a terminal it asks. A run with nobody to answer prints the changes and writes nothing. On a yes it writes the columns, takes out the old list of pairs, and runs the walls check over the whole workspace, naming what the flags now refuse that was committed before.
 
+The report in step 2 also does two things for a name. If a party is named after you (the first sentence of `## Me` in `System/context.md`), it proposes renaming it to a label of what it holds, such as *Own affairs*, as part of the same yes: your own name is said in most notes, and a walled party's name is refused wherever the scope does not name that party. And it runs the walls check, as it stands, over the workspace with the proposed flags, and lists each file that check would refuse, a name in a note as well as a changed verdict, so you read them before you answer.
+
+### Finishing a migration an update from the app left pending
+
+*Check for updates* in *Settings* runs the update with no terminal, so nobody can answer the yes. The update itself goes through; the migration waits, the old pairs keep deciding, and the check warns. Finish it either way:
+
+- **On the page.** *Settings*, *About Garrick*, shows a card, *The walls migration is pending*, as soon as the update ends, or whenever you open the page while one waits. *Show the changes* reads the proposed flags, the grouped changes and the files a name would refuse. *Write the flags* asks once, in the page, and only *Yes, write them* writes: the same checks as the command line, and the change committed through the wall check or put back.
+- **In a terminal.** Run `python3 System/tools/release.py update --apply`, and answer at the prompt, or add `--yes` once you have read the report. With the release already installed and a migration waiting, the command runs the migration instead of saying "Up to date". Without `--apply` it only prints the report.
+
 Until you answer, the old list of pairs stays in force and decides every flow as it did before, so an update you did not answer changes no verdict; the workspace's check warns until the flags are written. A second run finds nothing to do.
 
 ## Your rules, and Garrick's

@@ -1242,8 +1242,8 @@ Knowledge wiki needs no check: it carries nobody's confidence.
 **The same check runs again before every commit, whenever git runs the
 hook.** Each zone's pre-commit hook runs
 `System/tools/check.py --staged --walls-only` on the files being committed. A
-link to a walled meeting, the name of a party, person or alias on the far
-side of a wall, or eight words in a row lifted from a walled meeting page,
+link to a walled meeting, the name of a walled party, person or alias the project does not
+name, or eight words in a row lifted from a walled meeting page,
 its transcript, a meeting page still missing its parties, or a walled
 project's own files stops the commit, with one line naming the file and the
 wall.

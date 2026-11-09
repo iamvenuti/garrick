@@ -146,6 +146,7 @@ CSS = r"""
 .pp-party header{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}.pp-party header .act{margin-left:auto}
 .pp-party ul,.pp-warn ul{margin:6px 0 0;padding-left:18px;font-size:13px}.pp-party p{margin:6px 0 0;font-size:13px}
 .pp-flagless{border-color:var(--critical)}.pp-none{color:var(--warning)}.pp-walled{background:var(--raise)}.pp-open{box-shadow:inset 0 0 0 1px var(--good)}
+.pp-ask{margin:8px 0 0;padding:8px 12px;border:1px solid var(--warning);border-radius:8px}.pp-ask p{margin:0 0 8px}.pp-ask-opts{display:flex;gap:8px}
 .pp-warn{border:1px solid var(--warning);border-radius:10px;padding:10px 14px;margin:0 0 10px}.pp-warn h3{margin:0 0 4px;font-size:15px}
 """
 
@@ -158,8 +159,18 @@ if(window.GarrickCopy)GarrickCopy(w).then(function(){say('A browser cannot chang
 if(!(window.GarrickAct&&GarrickAct(q,said)))host.postMessage({act:q});say(said)}
 root.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-flip]');if(!b)return;
 send({verb:'party-flag',tag:b.dataset.tag,flag:b.dataset.flip},'Making '+b.dataset.name+' '+b.dataset.flip+'…')});
-/* the command says what a walled-to-open change releases and writes nothing until it is told yes: ask once, then send it again */
+/* the command says what a walled-to-open change releases and writes nothing until it is told yes: the panel asks inline
+(a web view shows no browser dialog), and only its button sends the request again with yes */
+function drop(){var o=root.querySelector('.pp-ask');if(o)o.remove()}
+function ask(q,out){drop();var card=root.querySelector('[data-tag="'+q.tag+'"]');if(!card)return;
+var box=document.createElement('div');box.className='pp-ask';box.setAttribute('role','group');
+var t=document.createElement('p');t.textContent=out.say;box.appendChild(t);
+var row=document.createElement('div');row.className='pp-ask-opts';
+var go=document.createElement('button');go.type='button';go.className='act primary';go.textContent='Make it '+q.flag;
+var no=document.createElement('button');no.type='button';no.className='act';no.textContent='Cancel';
+go.onclick=function(){drop();send(Object.assign({},q,{yes:true}),'Making '+q.tag+' '+q.flag+'…')};no.onclick=drop;
+row.appendChild(go);row.appendChild(no);box.appendChild(row);card.appendChild(box);go.focus()}
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
-if(q&&q.verb==='party-flag'&&out&&out.ok&&out.ask&&!q.yes){if(window.confirm(out.say+'\n\nGo ahead?'))send(Object.assign({},q,{yes:true}),'Making '+q.tag+' '+q.flag+'…');else say('Nothing changed.');return}
+if(q&&q.verb==='party-flag'&&out&&out.ok&&out.ask&&!q.yes){ask(q,out);return}
 if(prev)return prev(q,out)}})();
 """

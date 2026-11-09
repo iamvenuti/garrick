@@ -665,6 +665,65 @@ class TestParties(StatusCase):
     def test_a_rebuilt_page_is_the_same_page(self):
         self.assertEqual(self.tab(self.page()), self.tab(self.page()))
 
+    def test_no_panel_script_opens_a_browser_dialog(self):
+        # the Mac app's web view shows none: a confirm answers false at once, an alert and a prompt say nothing (#456)
+        dialog = re.compile(r"(?<![\w.$])(?:window\.)?(?:confirm|alert|prompt)\(")
+        found = []
+        for path in sorted((REPO / "extras" / "status").rglob("*")):
+            if path.suffix not in (".py", ".js") or "node_modules" in path.parts:
+                continue
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if line.lstrip().startswith(("def ", "#")):
+                    continue
+                if dialog.search(line):
+                    found.append("%s:%d" % (path.relative_to(REPO), number))
+        self.assertEqual([], found)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_make_it_open_asks_inline_and_only_the_button_sends_yes(self):
+        harness = r"""
+        const vm = require("vm");
+        const [js, choice] = JSON.parse(process.argv[1]);
+        function el(tag) { return { tag, children: [], dataset: {}, className: "", textContent: "",
+          setAttribute() {}, focus() {}, remove() { this.gone = true; if (this.parent) this.parent.children = this.parent.children.filter(c => c !== this); },
+          appendChild(c) { c.parent = this; this.children.push(c); return c; },
+          find(cls) { for (const c of this.children) { if (c.className === cls) return c; const d = c.find(cls); if (d) return d; } return null; },
+          all(tag) { return this.children.flatMap(c => (c.tag === tag ? [c] : []).concat(c.all(tag))); } }; }
+        const card = el("article"), root = el("div");
+        root.appendChild(card);
+        root.querySelector = s => s === ".pp-ask" ? root.find("pp-ask") : s === '[data-tag="acme"]' ? card : null;
+        root.addEventListener = () => {};
+        const sent = [], said = [];
+        const ctx = { JSON, Object, GarrickSay: s => said.push(s), document: { getElementById: () => root, createElement: el } };
+        ctx.window = { webkit: { messageHandlers: { garrick: { postMessage: m => sent.push(m) } } }, GarrickSay: s => said.push(s) };
+        vm.createContext(ctx);
+        vm.runInContext(js, ctx);
+        const q = { verb: "party-flag", tag: "acme", flag: "open" };
+        ctx.window.GarrickActed(q, { ok: true, ask: true, say: "Making Acme open releases 3 files." });
+        const box = root.find("pp-ask");
+        const buttons = box.all("button");
+        const out = { text: box.children[0].textContent, labels: buttons.map(b => b.textContent), sentBefore: sent.length };
+        buttons[choice].onclick();
+        out.sent = sent; out.said = said; out.boxGone = !!box.gone;
+        process.stdout.write(JSON.stringify(out));
+        """
+        pp = status.parties_mod()
+
+        def run(choice):
+            done = subprocess.run(["node", "-e", harness, json.dumps([pp.JS, choice])], capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, done.returncode, done.stderr)
+            return json.loads(done.stdout)
+
+        yes = run(0)
+        self.assertEqual("Making Acme open releases 3 files.", yes["text"])      # the command's own sentence, with its count
+        self.assertEqual(["Make it open", "Cancel"], yes["labels"])
+        self.assertEqual(0, yes["sentBefore"])                                   # asking writes nothing
+        self.assertEqual([{"act": {"verb": "party-flag", "tag": "acme", "flag": "open", "yes": True}}], yes["sent"])
+        self.assertTrue(yes["boxGone"])
+        no = run(1)
+        self.assertEqual([], no["sent"])                                         # Cancel sends nothing
+        self.assertTrue(no["boxGone"])
+
 
 class TestGuide(StatusCase):
     """#133: the Guide tab shows the docs the workspace was installed with,

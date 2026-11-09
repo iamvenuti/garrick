@@ -991,7 +991,7 @@ class PageVerbTest(CmuxCase):
     def test_refused_without_the_extra_or_without_cmux(self):
         with patch.object(pa, "CMUX_EXTRA", self.tmp / "nothing"):
             with self.assertRaisesRegex(pa.Refused, "need the cmux extra"):
-                self.act({"verb": "startup"})
+                self.act({"verb": "open", "zone": "Work", "project": "Acme Review"})
         with patch.dict(os.environ, {"GARRICK_CMUX": str(self.tmp / "no-cmux")}):
             with self.assertRaisesRegex(pa.Refused, "not installed"):
                 self.act({"verb": "open", "zone": "Work", "project": "Acme Review"})
@@ -1082,26 +1082,6 @@ class PageVerbTest(CmuxCase):
         self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
         self.assertIn("Acme Review", self.act({"verb": "close", "zone": "Work", "project": "Acme Review"}))
         self.assertIn("close-surface", self.verbs())
-
-    def test_shutdown_runs_the_dry_run_here_and_the_rest_detached(self):
-        self.state({"sessions": [self.session("a", self.pricing, claude_rows(done=False))]})
-        with patch.object(pa, "desk_detached") as spawn:
-            with self.assertRaisesRegex(pa.Refused, "mid-turn or waiting"):
-                self.act({"verb": "shutdown"})
-            spawn.assert_not_called()
-        self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
-        with patch.object(pa, "desk_detached") as spawn:
-            self.assertEqual(self.act({"verb": "shutdown"}), "Shutting down: wrapping 1 tab, then cmux quits")
-        spawn.assert_called_once_with(self.ws, "shutdown", "--yes")
-
-    def test_startup_goes_on_detached_in_a_session_of_its_own(self):
-        with patch.object(pa, "desk_detached") as spawn:
-            self.assertIn("Starting cmux", self.act({"verb": "startup"}))
-        spawn.assert_called_once_with(self.ws, "start", "--notify")
-        with patch.object(pa.subprocess, "Popen") as popen:
-            pa.desk_detached(self.ws, "start", "--notify")
-        self.assertEqual(popen.call_args.args[0][-4:], ["--workspace", str(self.ws), "start", "--notify"])
-        self.assertTrue(popen.call_args.kwargs["start_new_session"])
 
     def test_the_reply_is_json_from_the_command_line(self):
         done = subprocess.run([sys.executable, str(REPO / "extras" / "status" / "page_action.py"), "--workspace", str(self.ws)],

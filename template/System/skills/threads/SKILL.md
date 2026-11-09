@@ -364,79 +364,40 @@ Written: the first pick's line, then the next two, each on its own line.
 
 What changed while the user was away, thread by thread, from the records
 alone: the zone's history, the thread notes and the Todo list. Read-only: it
-answers in the conversation and writes a file only on a yes to saving it
-(step 7). It runs when asked and at no other time. "Brief me for X" is the
-`meetings` skill's, a brief for a meeting; this is not that.
+answers in the conversation and writes nothing; "save that" is a separate
+ask. "Brief me for X" is the `meetings` skill's.
 
 1. **What it covers.** X is a zone, a project, a thread, or several joined by
-   "and": "catch me up on Acme, pricing and Birch launch". Resolve each name
-   as in *Resolving a name*, and a zone by its name. No X: the zone of the
-   thread in focus, or of the folder the session started in; at the workspace
-   root, with more than one zone, ask which in one line. One zone at a time;
-   more only when the user names them. Never pick between zones.
-2. **The period.** "Since Monday", "since the 19th": from that day, the most
-   recent one before today, as `--since`. "Since yesterday": `--days 1`.
-   "This week": `--period week`, since Monday. "The last five days":
-   `--days 5`. "The last two weeks": `--period 14-days`. Nothing said: leave
-   all three out, and the tool takes the last day, or the period
-   `"catch-up"` in `System/garrick-settings.json` names.
+   "and". Resolve each name as in *Resolving a name*. No X: the zone of the
+   thread in focus, or of the folder the session started in; at the root with
+   more than one zone, ask which in one line. One zone at a time, never a
+   pick between zones.
+2. **The period**, as `--since <day>` ("since Monday", the most recent one
+   before today), `--days N` ("since yesterday" is 1), or `--period week` or
+   `14-days`. Nothing said: leave all three out, and the tool takes the last
+   day, or `"catch-up"` in `System/garrick-settings.json`.
 3. **Gather**, with the folder names the names resolved to:
    ```sh
    python3 System/tools/briefing.py --zone Work --project "Birch Entry" --thread "Acme/Pricing" --since 2026-10-19
    ```
    It prints JSON and changes nothing: per thread that changed, newest first,
-   its commits with their messages, its Resume here block now (`resume.now`,
-   its rows in `resume.rows`) and as it stood when the period began
-   (`resume.before`), the dated entries added, a waiting checkpoint, its Todo
-   lines split into `added`, `ticked` and `open`, and the meeting pages its
-   note links (`meetings`). `quiet` names the live threads that did not
-   change; `parked_left_out` counts the parked ones nobody named; `unmatched`
-   names what the tool found no thread for, which you say.
-4. **Read the judgment** before writing: `System/briefing.md`, then
-   `System/briefing.local.md`, which wins. `guidance` in the JSON names the
-   ones there are. They say what to raise, what to say in a line and what to
-   leave out.
-5. **Write the briefing** from the JSON and nothing else.
-   - **An overview first**: what changed, how many threads, the one or two
-     things that need the user, and how many were quiet. Three sentences at
-     most.
-   - **Then one section per thread listed**, in the order given: what changed
-     and why it matters; the decisions, with their reasons, and the questions
-     still open; what to look at before continuing; its open actions, the
-     overdue first, then what was added and what was ticked; and where it
-     stands now, with its Next action.
-   - **Each statement links the record it rests on**: the thread note, a
-     commit by its short hash, the zone's `Todo.md`. A meeting page appears
-     only as a link the note already holds, never quoted, summarised or
-     opened for this. Nothing is read from the Meetings wiki for a catch-up,
-     so the walls hold exactly as they do for *Open*.
-   - **A gap is said as a gap**: commits with no dated entry to say why,
-     `history` false (no record of what changed, only what is there now),
-     `resume.changed` null, a line marked `either` (it could be another
-     thread's of the same name), a checkpoint that is `stale` or not `valid`.
-     A checkpoint is said as unconfirmed, as *Open* says it.
-   - **Nothing changed**: say so in one line, with how many threads were
-     quiet. "Nothing moved in Work since yesterday; six threads are quiet."
-6. **Offer to save it, only when it covers one project**: end with one
-   question, "Save it in Acme's deliverables?" A catch-up across several
-   projects or a whole zone offers nothing: there is no one project to hold
-   it.
-7. **Save it only on a yes**, as the `meetings` skill's *Prep*, step 7, saves
-   a brief: `Zones/<Zone>/<Project>/Deliverables/YYMMDD - Catch-up since
-   <D Month>.md`, dated the day it was first made; with a thread of that
-   project in focus, add the file to its Live artifact row beside what the
-   row names; commit it in the zone's repository so the pre-commit hook runs
-   the wall check, and never with `--no-verify`. Saving is not sending.
+   its commits, its Resume here block now and as the period began, the dated
+   entries added, a waiting checkpoint, its Todo lines (`added`, `ticked`,
+   `open`) and the meeting pages its note links. `quiet` names the threads
+   that did not change, `parked_left_out` counts the parked ones, `unmatched`
+   names what found no thread: say it. `judgment` is what to raise, say in a
+   line and leave out; `guidance` names `System/briefing.local.md`, when it
+   exists, which wins.
+4. **Write the briefing** from the JSON and nothing else: an overview of
+   three sentences at most, then a section per thread in the order given.
+   Each statement links its record (the thread note, a commit by its short
+   hash, `Todo.md`). A meeting appears only as a link the note already
+   holds, never opened, quoted or summarised, so the walls hold as for
+   *Open*. A gap (commits with no dated entry, `history` false, a line
+   marked `either`, a checkpoint that is `stale` or not `valid`) is said as
+   a gap. Nothing changed: one line, with how many threads were quiet.
 
-Spoken: the overview alone, then offer the detail, "Want it thread by
-thread?" For one project the save offer takes that place, since the saved
-file holds the detail. "Since yesterday in Work, two threads moved. Acme
-pricing: the sheet went to Dana and tier two stays; chasing her volumes is
-next, and sending the sheet is eight days late. Birch launch has one new
-action. Save it in Acme's deliverables?"
-
-Written: the overview, then a section per thread, each statement with its
-link, and the save offer, where there is one, as the last line.
+Spoken: the overview alone, then offer the detail.
 
 ## Find: "is there a thread on X", "find X"
 

@@ -29,14 +29,11 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 from fixtures import project_hub, thread_note, write  # noqa: E402
-from test_status import REPO, StatusCase, cards, graph_data, stamp, status  # noqa: E402
+from test_status import REPO, StatusCase, attention_text, cards, graph_data, stamp, status, trouble  # noqa: E402
 
 
 def attention(html):
-    if 'id="attention"' not in html:
-        return ""
-    start = html.index('id="attention"')
-    return html[start:html.index("</details>", start)]
+    return attention_text(html)
 
 
 def flags(root, **on):
@@ -624,12 +621,9 @@ class TestSessions(StatusCase):
     def test_the_desks_buttons(self):
         with self.lib():
             html = self.page()
-        self.assertIn('data-act="{&quot;verb&quot;: &quot;startup&quot;}"', html)
-        self.assertIn('data-act="{&quot;verb&quot;: &quot;shutdown&quot;}" data-expect="none:" data-confirm="Click again to shut down"', html)
-        self.assertIn('<span class="desk-acts apponly">', html)                # the app only
-        self.assertIn('data-expect="none:" data-confirm', html)                 # the page waits for every session to close
-        with self.lib(FAKE_CMUXLIB.replace("return True", "return False")):
-            self.assertNotIn('class="desk-acts', self.page())                  # no cmux on this Mac
+        self.assertNotIn('class="desk-acts', html)                              # no Start up or Shut down on the page (#440, #442)
+        self.assertNotIn('&quot;startup&quot;', html)
+        self.assertNotIn('&quot;shutdown&quot;', html)
         for js in ("var q={verb:v,zone:o.dk[0],project:o.dk[1]};if(o.dk[2])q.thread=o.dk[2]",
                    "if(k==='cmux'&&o.dk)", "desk(o,'close')"):
             self.assertIn(js, status.PANEL_JS)
@@ -639,7 +633,6 @@ class TestSessions(StatusCase):
         with self.lib("def sessions_by_folder(ws):\n    raise RuntimeError('no socket')\n"):           # no installed(): taken at its word
             self.assertEqual({}, status.sessions(self.root))
             html = self.page()
-        self.assertIn('class="desk-acts', html)
         self.assertNotIn('<span class="live', html.split("<script>")[0])
 
 
@@ -981,9 +974,7 @@ class TestCheckReuse(StatusCase):
         (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % found, encoding="utf-8")
 
         def attention(page):
-            m = re.search(r'id="attention".*?<div class="attn">(.*?)</div>', page, re.S)
-            self.assertIsNotNone(m, "no Needs attention card")
-            return re.findall(r"<span>([^<]*)</span>", m.group(1))
+            return [t[2] for t in trouble(page)]
 
         def tile(page):
             m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Checks</div><div class="val">(.*?)</div>'

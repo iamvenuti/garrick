@@ -76,11 +76,7 @@ One way to save a thread's place, and one way back. A wrap (also said "I'm being
 
 ### Catch up
 
-"Catch me up": what changed in a zone's threads over a period, from their history, their notes and the Todo list, one section per thread that moved, each statement linked to the record it rests on. `System/tools/briefing.py` gathers it and decides nothing; the `threads` skill writes it. Shown, not saved, unless it covers one project and you say yes to saving it. See [Opening and wrapping](commands.md#opening-and-wrapping).
-
-### `System/briefing.md`
-
-What a catch-up raises first, says in a line, and leaves out, in plain words: "a decision, with who took it and why" comes first, a commit that only tidied the Todo list is left out. Garrick's, replaced by each update; yours goes in `System/briefing.local.md`, which wins.
+"Catch me up": what changed in a zone's threads over a period, from their history, their notes and the Todo list, one section per thread that moved, each statement linked to the record it rests on. `System/tools/briefing.py` gathers it and carries the judgment of what deserves attention; the `threads` skill writes it. Shown, not saved: say "save that" to keep it. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### What's next
 
@@ -136,7 +132,7 @@ What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live cop
 
 When an ingest or a lint finds something only you can answer, such as who decides, or which of two figures holds, it writes the question as a file in the wiki's `questions/` folder, `<YYMMDD> - <slug>.md`, and adds no line to the page. A question has the form of a [*Needs you*](extras/simple-home.md#needs-you) question, plus `origin:`, the raw record that raised it, and `pages:`, the pages the answer would change. A Meetings question also carries the zone and parties of the pages it comes from, and the walls read it as they read a page. A Knowledge question carries neither, as nothing in Knowledge does. The schemas are in each wiki's `AGENTS.md`.
 
-You answer in your own words, in one line, and pick one of four outcomes. The **Questions panel** in the Garrick App does it (see [the status page](extras/status-page.md#the-questions-panel)), and so does the command line, with `page_action.py` in `System/status/`. Either way each write is one transaction: after it, `check.py` and the wiki lint are counted again, and if any count is worse every file goes back as it was, byte for byte, and a file the write made is removed:
+You answer in your own words, in one line, and pick one of four outcomes. The **Context tab** in the Garrick App does it (see [the status page](extras/status-page.md#the-context-tab)), and so does the command line, with `page_action.py` in `System/status/`. Either way each write is one transaction: after it, `check.py` and the wiki lint are counted again, and if any count is worse every file goes back as it was, byte for byte, and a file the write made is removed:
 
 - **Answer** (`question-answer`) files your sentence first, word for word, with the question and the date, as `raw/answers/<YYMMDD> - <slug>.md` in the same wiki. Only then does the question say `status: answered` and `answer:` point at that record. A raw answer is never edited, and a name already taken is never written over: the next free one is used, or the action refuses. If the question cannot be updated after the record is filed, the record stays and the error is said.
 - **Later** (`question-later`) puts it off to a day you give, `status: later` and `later:`.

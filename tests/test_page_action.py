@@ -1612,11 +1612,8 @@ class TestFlag(ActionCase):
         real = pa.CMUX_EXTRA
         pa.CMUX_EXTRA = Path(self._tmp.name) / "no-cmux-extra"       # never the real desk
         try:
-            # each verb in the shape the table declares for it: startup and
-            # shutdown carry nothing, so they cannot be asked about a project
             for req in ({"verb": "open", "zone": "Nowhere", "project": "Acme Review"},
-                        {"verb": "close", "zone": "Nowhere", "project": "Acme Review"},
-                        {"verb": "startup"}, {"verb": "shutdown"}):
+                        {"verb": "close", "zone": "Nowhere", "project": "Acme Review"}):
                 with self.assertRaisesRegex(pa.Refused, "need the cmux extra", msg=req["verb"]):
                     pa.act(self.root, req)
         finally:

@@ -810,6 +810,48 @@ class DebtLineTest(unittest.TestCase):
         self.assertEqual(self.TODAY, got[-1][0])
 
 
+class ReviewRecordTest(Base):
+    """#433: a review record an older release left is read once, its deferred rows become Later rows
+    and the file is removed, in one commit where git holds it."""
+
+    def record(self, rows):
+        head = "---\ntype: nurture-review\nstatus: open\nstarted: 2026-10-10\nlast_completed:\n---\n# Context review\n\n" \
+               "| Id | Source | Decision | Reason | Date |\n|---|---|---|---|---|\n"
+        write(self.root / "System" / "nurture-review.md", head + "".join("| %s |\n" % r for r in rows))
+
+    def pick(self):
+        _, out = self.run_tool("list")
+        return next(i for i in out["items"] if i["kind"] in ("attribution", "judgment"))
+
+    def test_deferred_rows_become_later_rows_and_the_record_is_removed_in_a_commit(self):
+        item = self.pick()
+        git(self.root, "init", "-q")
+        self.record(["%s | check.py | deferred to 2026-11-01 | not now | 2026-10-10" % item["key"],
+                     "0123456789ab | check.py | answered | | 2026-10-10",
+                     "ba9876543210 | check.py | deferred to 2026-10-01 | not now | 2026-09-20"])
+        git(self.root, "add", "-A")
+        git(self.root, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "record")
+        code, out = self.run_tool("import-review")
+        self.assertEqual(0, code)
+        self.assertTrue(out["read"])
+        self.assertEqual(1, out["later"])
+        self.assertFalse((self.root / "System" / "nurture-review.md").exists())
+        later = json.loads((self.root / "System" / "generated" / "nurture" / "later.json").read_text())
+        self.assertEqual({item["key"]: {"until": "2026-11-01", "path": item["path"]}}, later)
+        self.assertEqual("Nurture: the review record is read and removed; its deferred rows are Later rows",
+                         git(self.root, "log", "-1", "--format=%s").strip())
+        self.assertEqual(out["commit"], git(self.root, "rev-parse", "--short", "HEAD").strip())
+
+    def test_a_record_git_does_not_hold_is_removed_and_a_second_run_does_nothing(self):
+        self.record(["%s | check.py | skipped | not now | 2026-10-10" % self.pick()["key"]])
+        _, out = self.run_tool("import-review")
+        self.assertTrue(out["read"])
+        self.assertEqual(0, out["later"])
+        self.assertEqual("", out["commit"])
+        self.assertFalse((self.root / "System" / "nurture-review.md").exists())
+        self.assertFalse(self.run_tool("import-review")[1]["read"])
+
+
 class NightlyTest(Base):
     def setUp(self):
         super().setUp()

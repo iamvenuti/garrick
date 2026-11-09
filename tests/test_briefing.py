@@ -79,7 +79,6 @@ def workspace(root: Path) -> Path:
         write(root / "System" / "tools" / tool, (REPO / "template" / "System" / "tools" / tool).read_text(encoding="utf-8"))
     write(root / "System" / "skills" / "todo" / "todo.py",
           (REPO / "template" / "System" / "skills" / "todo" / "todo.py").read_text(encoding="utf-8"))
-    write(root / "System" / "briefing.md", "# Briefing\n")
     write(root / "Wikis" / "Meetings" / "wiki" / "sources" / "2026-10-20 Acme call.md", "---\nzone: Work\n---\n# Call\n")
     work = root / "Zones" / "Work"
     acme = work / "Acme"
@@ -279,10 +278,15 @@ class BriefingTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.gather(zones=["Home"])
 
-    def test_names_the_guidance_there_is(self):
-        self.assertEqual(["System/briefing.md"], self.gather()["guidance"])
+    def test_the_judgment_is_in_the_tool_and_the_workspaces_own_is_named_when_there(self):
+        got = self.gather()
+        self.assertEqual([], got["guidance"])
+        self.assertEqual({"raise_first", "say_in_a_line", "leave_out", "never"}, set(got["judgment"]))
+        self.assertTrue(all(got["judgment"].values()))
+        self.assertFalse((self.root / "System" / "briefing.md").exists())          # one place sets it (#441)
         write(self.root / "System" / "briefing.local.md", "# Mine\n")
-        self.assertEqual(["System/briefing.md", "System/briefing.local.md"], self.gather()["guidance"])
+        self.assertEqual(["System/briefing.local.md"], self.gather()["guidance"])
+        self.assertNotIn("—", json.dumps(br.JUDGMENT, ensure_ascii=False))
 
     # ---- the command line ----
 

@@ -2017,15 +2017,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		openInbox(act)
 	}
 
-	// MARK: catch up (#27)
-	// File › Catch Up… opens the page's own dialog, which picks the period and
-	// the projects or threads. The menu and the panel leave it out (#226): a
-	// row with nothing of its own to show takes a line from the rows that do.
-	@objc func openCatchUp(_ sender: Any?) { web.evaluateJavaScript("window.GarrickCatchUp && window.GarrickCatchUp.open()") }
-
 	// MARK: questions (#224, #384)
-	// The Questions row, under Catch Up in File and beside the inbox in the menu and the panel: it
-	// brings the window forward on the page's Questions panel. The page sends the open count of each
+	// The Context row, under Ask Garrick in File and beside the inbox in the menu and the panel: it
+	// brings the window forward on the page's Context tab. The page sends the open count of each
 	// group (menuData "questions", "g"): a zone no wall divides is one group, a zone whose parties a wall
 	// divides is one group per party. The row names each group with its own count and never adds two
 	// groups, in a zone or across the zones the menu shows: it cannot tell that no wall stands between
@@ -2046,9 +2040,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	func questionsTitle() -> String? {
 		guard let groups = questionGroups() else { return nil }
-		if groups.isEmpty { return "Questions" }
-		if groups.count == 1 { return "Questions · \(groups[0].1) open" }
-		return "Questions · " + groups.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
+		if groups.isEmpty { return "Context" }
+		if groups.count == 1 { return "Context · \(groups[0].1) open" }
+		return "Context · " + groups.map { "\($0.0) \($0.1)" }.joined(separator: " · ")
 	}
 
 	@objc func openQuestions(_ sender: Any? = nil) {
@@ -2062,7 +2056,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		item.identifier = NSUserInterfaceItemIdentifier("questions")
 		item.target = self
 		show(item, symbol("questionmark.bubble"))
-		item.toolTip = "Opens the Questions panel"
+		item.toolTip = "Opens the Context tab"
 		return item
 	}
 
@@ -2090,7 +2084,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			})
 		}
 		m.questions = questionsTitle().map { title in
-			PanelInbox(title: title, places: "", why: "Opens the Questions panel", run: { [weak self] in
+			PanelInbox(title: title, places: "", why: "Opens the Context tab", run: { [weak self] in
 				guard let self else { return }
 				if checking { return self.heard.append("panel:questions") }
 				self.openQuestions()
@@ -3463,8 +3457,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		askMenuItem = ask
 		sub("File", [
 			ask,
-			item("Catch Up…", #selector(openCatchUp(_:)), ""),     // the page's Catch up, period and threads (#27)
-			item("Questions", #selector(openQuestions(_:)), ""),   // the page's Questions panel (#224)
+			item("Context", #selector(openQuestions(_:)), ""),   // the page's Context tab (#224, #433)
 			item("Open in Browser", #selector(openInBrowser(_:)), "o"),
 			.separator(),
 			item("Close Window", #selector(NSWindow.performClose(_:)), "w"),

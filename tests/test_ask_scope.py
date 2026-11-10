@@ -1803,10 +1803,6 @@ class TestTheWindowCites(unittest.TestCase):
             self.assertNotIn("obsidian", self.body(fn).lower())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def dated_meeting(date: str, title: str, body: str, parties: str = "[acme]", zone: str = "Work") -> str:
     return ("---\ntitle: %s\ntype: meeting\ndate: %s\nzone: %s\nparties: %s\n---\n\n# %s\n\n%s\n"
             % (title, date, zone, parties, title, body))
@@ -1854,6 +1850,19 @@ class TestTheNewestFirst(AnswerCase):
                 self.assertEqual([{"text": "The last meeting with Acme Corp was on 20 April.", "ids": ["r1"]}], out["claims"])
                 a.stop()
                 Path(str(self.args) + ".msgs").unlink()
+
+    def test_lately_cites_the_newest_page_though_older_ones_hold_more_of_the_words(self):
+        """#475: the find leaves `order` out and the question says "lately": by date all the same."""
+        said = cites(("The latest meeting with Acme Corp was on 20 April.", ["r1"]))
+        self.haiku(json.dumps({"say": "", "find": dict(route="meetings", zone="Work", words=["Acme Corp", "AcmeCorp"])}),
+                   [["lately", said]])
+        a = self.asker()
+        a.ask("Have I had any meeting with Acme Corp lately?")
+        (sent,) = [m for m in self.msgs() if "<records " in m]
+        self.assertEqual(self.NEWEST, re.search(r'<record id="r1" path="([^"]+)"', sent).group(1))
+        self.assertNotIn("OLDESTMARK", sent)
+        self.assertIn('order="recent"', sent)
+        a.stop()
 
     def test_without_order_the_page_that_names_it_most_comes_first(self):
         self.haiku(find("meetings", ["Acme Corp"], zone="Work"), [])
@@ -2552,3 +2561,32 @@ class TestOneZone(AnswerCase):
             self.assertEqual(["open Acme Review"], [r for r, _ in a.session.history])
         finally:
             ask.agent().run = real
+
+
+
+class TestWantsRecent(unittest.TestCase):
+    """#475: every way of asking about time is ranked by date; look-alike words are not."""
+
+    def test_each_form_of_time(self):
+        sc = ask.scope_lib()
+        for text in ("Any meeting with Acme lately?", "any recent calls with Acme?", "What happened recently?",
+                     "what is going on these days", "Did we meet yesterday?", "anything today?",
+                     "What happened this week?", "this month", "in the past week", "past quarter",
+                     "last month", "Anything so far?", "anything new with Acme", "any news on Pricing",
+                     "the latest", "the newest", "the most recent", "since Monday", "the last call",
+                     "What's new with Acme?", "whats new", "what is new on Pricing", "any updates from Acme?",
+                     "Any update on the deal", "what happened this morning", "a few days ago", "two day ago"):
+            with self.subTest(text=text):
+                self.assertTrue(sc.wants_recent(text))
+
+    def test_look_alikes_stay_false(self):
+        sc = ask.scope_lib()
+        for text in ("sincere thanks", "lastly", "recenter the map", "newsletter", "this weekend",
+                     "anything newer", "so farther", "a todays", "the new pricing", "software updates policy",
+                     "what is newsworthy", "this mourning", "holidays agony", "", None):
+            with self.subTest(text=text):
+                self.assertFalse(sc.wants_recent(text))
+
+
+if __name__ == "__main__":
+    unittest.main()

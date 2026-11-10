@@ -207,7 +207,6 @@ class ClassificationTest(Base):
                 ("Wikis/Meetings/wiki/people/kit.md", "people", "no `organisation:` link to the entity page of its party"),
                 ("Wikis/Meetings/wiki/people/kit.md", "people", "no `party`"),
                 ("Wikis/Meetings/wiki/entities/larch.md", "meetings", "no `party:`"),
-                ("System/context.md", "context", "Kit is listed by one word, which a note refuses only beside the party's name"),
                 ("Zones/Work/Acme Review/Acme Review.md", "projects", "no `party`")):
             item = self.wall_item(message, check=check, path=path)
             self.assertNotEqual("attribution", item.kind, (check, message))
@@ -575,7 +574,8 @@ class CorrectionTest(Base):
             self.assertNotIn(self.OLD, f.read_text())
         # The raw record is the record: untouched. The page resting on it says so.
         self.assertEqual(self.raw_before, self.raw.read_bytes())
-        self.assertIn("superseded:", self.page.read_text())
+        self.assertIn("corrected:", self.page.read_text())              # its own text held the old value, and was fixed
+        self.assertNotIn("superseded:", self.page.read_text())
         # Another session's work stays exactly as it was, uncommitted.
         status = git(self.work, "status", "--porcelain")
         self.assertEqual(2, len(status.strip().splitlines()), status)

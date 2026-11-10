@@ -78,6 +78,10 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import garrick_lib as gl  # noqa: E402
+try:
+    import history as hist  # noqa: E402
+except ImportError:                  # a tools folder without it: moved entries are read, their links not compared
+    hist = None
 
 KEY = "catch-up"
 # Each period a catch-up can cover by default: its key, how the dialog names it,
@@ -288,9 +292,29 @@ def as_date(text: str) -> Optional[datetime.date]:
     return None
 
 
+LINK_LINE = re.compile(r"^\*Older entries: .*\*$")
+
+
+def dated(lines: List[str]) -> List[dict]:
+    """The dated entries in `lines`, as written: each opens with `**27 September 2026.**` and runs to the next,
+    or to a heading of the first two levels. The line that links a note's history files is no part of an entry."""
+    out: List[dict] = []
+    for line in lines:
+        if re.match(r"^#{1,2} ", line):
+            break
+        m = DATED.match(line.strip())
+        if m:
+            day = as_date(m.group(1))
+            out.append({"date": day.isoformat() if day else None, "said": m.group(1), "text": line.strip()})
+        elif out and not LINK_LINE.match(line.strip()):
+            out[-1]["text"] = (out[-1]["text"] + "\n" + line).rstrip()
+    for e in out:
+        e["text"] = e["text"].strip()
+    return out
+
+
 def entries(text: str) -> List[dict]:
-    """The dated entries under the rule below Resume here, newest first as
-    written: each opens with `**27 September 2026.**` and runs to the next."""
+    """The dated entries under the rule below Resume here, newest first as written (see `dated`)."""
     lines = text.splitlines()
     start = next((i for i, l in enumerate(lines) if l.strip().lower() == gl.RESUME_HEADING.lower()), -1)
     if start < 0:
@@ -298,19 +322,29 @@ def entries(text: str) -> List[dict]:
     rule = next((i for i in range(start + 1, len(lines)) if lines[i].strip() == "---"), -1)
     if rule < 0:
         return []
-    out: List[dict] = []
-    for line in lines[rule + 1:]:
-        if re.match(r"^#{1,2} ", line):
-            break
-        m = DATED.match(line.strip())
-        if m:
-            day = as_date(m.group(1))
-            out.append({"date": day.isoformat() if day else None, "said": m.group(1), "text": line.strip()})
-        elif out:
-            out[-1]["text"] = (out[-1]["text"] + "\n" + line).rstrip()
-    for e in out:
-        e["text"] = e["text"].strip()
-    return out
+    return dated(lines[rule + 1:])
+
+
+def history_files(note: Path) -> List[Path]:
+    """The history files beside a note (history.py), the newest quarter first."""
+    folder = note.parent / "history"
+    if not folder.is_dir() or folder.is_symlink() or note.parent.resolve() not in folder.resolve().parents:
+        return []                    # a link, or a folder that leads outside the note's own: never read
+    return sorted((p for p in folder.glob("*.md") if not p.is_symlink()), reverse=True)
+
+
+def history_entries_of(text: Optional[str]) -> List[str]:
+    """The lines of a history file's entries: what follows its heading."""
+    lines = (text or "").splitlines()
+    return lines[next((i + 1 for i, l in enumerate(lines) if l.startswith("# ")), len(lines)):]
+
+
+def history_entries(path: Path) -> List[dict]:
+    """The entries of one history file."""
+    try:
+        return dated(history_entries_of(path.read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        return []
 
 
 def resume(text: Optional[str]) -> Optional[dict]:
@@ -480,9 +514,14 @@ def thread(root: Path, zone: Path, row: dict, since: datetime.date, today: datet
     history = commits(zone, rel_folder, since)
     then, known = before(zone, rel_note, since)
     now_block, then_block = resume(text), resume(then)
-    now_entries = entries(text)
+    held = history_files(row["note"])
+    now_entries = entries(text) + [e for f in held for e in history_entries(f)]    # a moved entry is still an entry
     if known:
         old = {e["text"] for e in entries(then or "")}
+        old |= {hist.rewrite_links(t) for t in old} if hist else set()                    # a moved entry's relative links lead one folder up
+        for f in held:
+            was, _ = before(zone, f.relative_to(zone).as_posix(), since)
+            old |= {e["text"] for e in dated(history_entries_of(was))}
         added = [e for e in now_entries if e["text"] not in old]
     else:
         added = [e for e in now_entries if e["date"] and e["date"] >= since.isoformat()]

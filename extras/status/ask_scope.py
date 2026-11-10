@@ -61,9 +61,14 @@ HERE = Path(__file__).resolve().parent
 ROUTES = ("meetings", "knowledge", "thread", "docs", "actions")
 ORDERS = ("recent",)        # a find's `order`: the newest first, for a question about the last or since (#315)
 # A question about time, in the user's own words: the last, the latest, the
-# most recent or newest, or what happened since. Read when the session's find
-# leaves `order` out, so such a question is ranked by date all the same.
-RECENT = re.compile(r"\b(?:last|latest|most\s+recent(?:ly)?|newest|since)\b", re.I)
+# most recent or newest, what happened since a date, lately, recently, these
+# days, yesterday or today, this, past or last week, month or quarter, so far,
+# anything new, any news, what's new, any updates, this morning, days ago. Read when the session's find leaves `order` out, so
+# such a question is ranked by date all the same (#315, #475).
+RECENT = re.compile(
+    r"\b(?:last|latest|newest|since|lately|recent(?:ly)?|most\s+recent(?:ly)?|these\s+days|yesterday|today"
+    r"|(?:this|past)\s+(?:week|month|quarter)|so\s+far|anything\s+new|any\s+news"
+    r"|what(?:['\u2019]s|s|\s+is)\s+new|any\s+updates?|this\s+morning|days?\s+ago)\b", re.I)
 MAX_WORDS = 8               # words a find may look for
 MAX_RECORDS = 8             # records one answer is given
 PASSAGE = 1500              # characters of one record an answer is given
@@ -459,7 +464,7 @@ class Scope:
 
 
 def wants_recent(text: str) -> bool:
-    """Whether a request asks about the last, the latest or since (#315)."""
+    """Whether a request asks about time: the last, the latest, since, lately, recently, today and the rest of RECENT (#315, #475)."""
     return bool(RECENT.search(str(text or "")))
 
 

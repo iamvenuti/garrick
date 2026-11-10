@@ -64,7 +64,7 @@ The row of the Resume here block that names the single next thing, small enough 
 
 ### Keep in mind
 
-The row for what is only in your head: a decision half made and why, a doubt, or nothing. It is what a cold resume would otherwise lose. A wrap asks for it with its one question, "Anything only in your head?", and Enter skips it.
+The row for what is only in your head: a decision half made and why, a doubt, or nothing. It is what a cold resume would otherwise lose. A wrap writes it from the session, and from what you say with the request ("wrap it, I doubt the second option"); it asks nothing.
 
 ### Status
 
@@ -72,7 +72,11 @@ Every hub and thread note carries `status:` in its frontmatter, with one of thre
 
 ### Wrap and Resume
 
-One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks one line, "Anything only in your head?", then rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
+
+### History file
+
+`history/<Note> history <YYYY>-Q<n>.md`, beside a hub or thread note. It holds the dated entries the note moved out, whole and unchanged, one file for each calendar quarter, under a heading and its frontmatter (`type: history`, no `status:`). The note keeps its newest five entries and one line that links the files. `history.py` moves them, at the wrap and when a thread is parked. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### Catch up
 
@@ -120,7 +124,7 @@ Something one session wrote down and later sessions read as fact: a memory entry
 
 ### Correction
 
-What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live copy of the wrong value and on your one yes fixes them all, one commit per repository. A raw record is never edited: the page that rests on it gets `superseded:`. See [Correcting a value](commands.md#correcting-a-value).
+What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live copy of the wrong value and on your one yes fixes them all, one commit per repository. A raw record is never edited: the page that rests on it gets `corrected:`, with the date and the right value, when its own text was fixed, and `superseded:` when the correction could not fix it. A corrected page fades and wakes by the ordinary rules, and what pins it still holds. See [Correcting a value](commands.md#correcting-a-value).
 
 ## The two wikis
 
@@ -144,6 +148,10 @@ You answer in your own words, in one line, and pick one of four outcomes. The **
 - **Record as a decision** (`question-decide`) is for an answer that settles something. In one transaction it files your sentence as the raw answer, then writes a decision page, `wiki/decisions/<YYMMDD> - <slug>.md` in the Meetings wiki, with `status: valid`, your words under *Decision*, and the question's zone and parties copied exactly, never widened. A decision page has four sections: *Decision*, *Assumptions*, *Options turned down* and *Revisit when*. The assistant may fill in the assumptions and the options it can see, each marked as proposed, and may flag a decision whose revisit condition may be met, with its reason. It never changes `status:`: only you mark a decision `superseded` or `withdrawn`, and a later rewrite reads a settled decision as settled. `check.py` warns when a commit changes a decision's `status:` with no raw answer dated the same day. A Knowledge question has no zone and no parties, so it cannot be recorded as a decision.
 
 Nothing else changes. The pages change in a step of their own: say "work in the questions", and the `meetings` or `knowledge` skill reads each answered question (`question-work`), changes the pages in its `pages:`, cites the raw answer, and sets `status: done` (`question-done`). A Meetings page is changed only if it is in the question's own zone: one in another walled zone, one with no zone or not readable plainly is not changed, and the answer says that a wall held something back, in the rule's words, without naming it. A question whose pages sit in two walled zones is refused with the same sentence, and nothing is written. A Knowledge question has no zone, so every page it names may change. A Meetings raw answer carries its question's zone, and the walls read it as they read the question.
+
+### Concise page
+
+A meeting or mail page in one shape: one line on who was there and how long, `## Key points` as short bullets, `## Actions`. About 350 words. The raw record keeps the rest.
 
 ### `raw/`
 

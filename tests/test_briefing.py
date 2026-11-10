@@ -75,7 +75,7 @@ def workspace(root: Path) -> Path:
     (quiet), Rebate (parked, changed), Old Terms (done, quiet); Birch
     Entry with Launch (changed only on its Todo line). Personal, untouched."""
     write(root / "System" / "rules.md", "# Rules\n")
-    for tool in ("briefing.py", "next_up.py", "garrick_lib.py"):
+    for tool in ("briefing.py", "next_up.py", "garrick_lib.py", "history.py"):
         write(root / "System" / "tools" / tool, (REPO / "template" / "System" / "tools" / tool).read_text(encoding="utf-8"))
     write(root / "System" / "skills" / "todo" / "todo.py",
           (REPO / "template" / "System" / "skills" / "todo" / "todo.py").read_text(encoding="utf-8"))
@@ -238,6 +238,55 @@ class BriefingTest(unittest.TestCase):
         self.assertFalse(pricing["history"])
         self.assertEqual(["2026-10-21"], [x["date"] for x in pricing["entries"]])
         self.assertIsNone(pricing["resume"]["changed"])                  # no history to tell
+
+    # ---- entries moved to history files (#502) ----
+
+    def long_pricing(self):
+        """Pricing with eight entries more, all added in the period and committed; its path."""
+        work = self.root / "Zones" / "Work"
+        pricing = work / "Acme" / "Threads" / "Pricing" / "Pricing.md"
+        extra = "".join("**%d October 2026.** Extra entry %d, with some more words in it to count.\n\n" % (13 + i, i)
+                        for i in range(8))
+        text = pricing.read_text(encoding="utf-8")
+        marker = "**12 October 2026.**"
+        write(pricing, text.replace(marker, extra + marker, 1))
+        commit(work, "Pricing: eight entries", "2026-10-22T09:00:00")
+        return pricing
+
+    def move(self, pricing):
+        """What a wrap does when the note is over its cap: the oldest entries go to history files."""
+        import history
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"note-max-words": 120}))
+        res = history.apply(self.root, pricing, dt.date(2026, 10, 23))
+        self.assertTrue(res.done, res.error)
+        self.assertTrue(res.plan.moves)
+        commit(self.root / "Zones" / "Work", "Pricing: older entries moved to history", "2026-10-22T10:00:00")
+
+    def test_catching_up_over_a_period_that_includes_moved_entries_reports_the_same_entries(self):
+        pricing = self.long_pricing()
+        before = self.by_name(self.gather(days=7))["Pricing"]["entries"]
+        self.move(pricing)
+        self.assertTrue(list((pricing.parent / "history").glob("*.md")))
+        after = self.by_name(self.gather(days=7))["Pricing"]["entries"]
+        self.assertEqual(sorted((e["date"], e["text"]) for e in before), sorted((e["date"], e["text"]) for e in after))
+        self.assertGreater(len(after), 5)
+
+    def test_an_entry_moved_before_the_period_is_not_reported_as_new(self):
+        pricing = self.long_pricing()
+        self.move(pricing)
+        found = [t for t in self.gather(since=dt.date(2026, 10, 23), today=TODAY, projects=["Acme"], threads=["Pricing"])["threads"]
+                 if t["thread"] == "Pricing"][0]
+        self.assertEqual([], found["entries"])
+
+    def test_the_link_line_is_no_part_of_the_last_entry(self):
+        text = note(entries=("**21 October 2026.** One.", "**12 October 2026.** Two.")) + "\n*Older entries: [[T history 2026-Q2]].*\n"
+        self.assertEqual("**12 October 2026.** Two.", br.entries(text)[-1]["text"])
+
+    def test_a_history_file_is_no_thread(self):
+        self.move(self.long_pricing())
+        names = {(t["thread"] or "") for t in br.notes(self.root / "Zones" / "Work")}
+        self.assertFalse([n for n in names if "history" in n])
+        self.assertEqual({"Pricing", "Freight", "Rebate", "Old Terms", "Launch"}, names - {""})
 
     # ---- the period ----
 

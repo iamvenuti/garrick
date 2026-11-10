@@ -13,14 +13,23 @@ cmux desk, and the session hooks. Notices go to this Mac and nowhere else
 kept under `notifications` in System/garrick-settings.json, committed with
 the workspace:
 
-    {"tell": {"needs-you": true, "finished": true, "todo-summary": true, "job-failed": true, "release": true},
+    {"tell": {"needs-you": true, "finished": true, "waiting": true, "todo-summary": true, "job-failed": true,
+              "release": true},
      "after": 2,
      "quiet": {"on": true, "from": "22:00", "to": "07:00"}}
 
-**Events** (EVENTS) are what happened. Settings offers five of them (TELL),
+**Events** (EVENTS) are what happened. Settings offers six of them (TELL),
 each on or off, and the minutes a turn must run before Finished is sent.
-Job idle and the Desk (FOLLOW) are sent whenever any of the five is on, so
-five boxes left empty mean no notice at all; Todo refreshed is never sent.
+Job idle and the Desk (FOLLOW) are sent whenever any of the six is on, so
+six boxes left empty mean no notice at all; Todo refreshed is never sent.
+
+**Waiting on you** is the one event no hook sends. The status extra's
+agents_working.py reads the sessions once a minute and hands the waiting ones
+to `waiting()` (`notifications.py waiting`, on standard input), which sends
+one notice for each wait and records it in System/generated/notifications/,
+so a wait is told once, never repeated, and a session that waits again later is
+told again. The notice names the thread and what it waits for ("a question",
+"an approval for Bash"), never the question's text.
 
 A notice from a session running in cmux lands on that session's own tab,
 through cmux's own notification; anything else, or a cmux that will not
@@ -90,6 +99,7 @@ STATE = ("System", "generated", "notifications")
 EVENTS = (
     ("needs-you", "Needs you", "A session is waiting: a permission to give, a question, an idle prompt"),
     ("finished", "Finished", "A session has ended its turn, after running longer than the minutes set"),
+    ("waiting", "Waiting on you", "A session has stopped on a question or an approval; sent once for each wait"),
     ("todo-refreshed", "Todo refreshed", "The nightly sweep has run: lines added, folded, expired"),
     ("todo-summary", "Todo summary", "Each zone's morning digest from the sweep: what is late and what is due today"),
     ("job-failed", "Job failed or recovered", "A scheduled job fails or works again, and a line a job sends of its own"),
@@ -102,12 +112,12 @@ LABELS = {e[0]: e[1] for e in EVENTS}
 SESSION_EVENTS = ("needs-you", "finished")       # from a session: cmux takes the Mac's place
 # What Settings offers, in its order and its words: each event on or off.
 TELL = (("needs-you", "a session needs me"), ("finished", "a long task finishes"),
-        ("todo-summary", "the morning Todo summary is ready"), ("job-failed", "a scheduled job fails"),
+        ("waiting", "a session is waiting on me"), ("todo-summary", "the morning Todo summary is ready"), ("job-failed", "a scheduled job fails"),
         ("release", "a newer Garrick is out"))
 TELL_NAMES = tuple(e for e, _ in TELL)
 FOLLOW = ("job-idle", "desk")                    # sent while any of TELL is on
 QUIET_CHOICES = ("send", "hold", "drop")
-QUIET = {"needs-you": "send", "finished": "drop", "todo-refreshed": "hold", "todo-summary": "hold",
+QUIET = {"needs-you": "send", "finished": "drop", "waiting": "hold", "todo-refreshed": "hold", "todo-summary": "hold",
          "job-failed": "hold", "job-idle": "hold", "desk": "send", "release": "hold"}
 # job.py's kinds, as GARRICK_NOTIFY_KIND has always carried them, and the event each is.
 KINDS = {"failed": "job-failed", "recovered": "job-failed", "message": "job-failed", "idle": "job-idle",
@@ -619,6 +629,48 @@ def hook(payload: dict, ws: Optional[Path] = None, env=None, now: Optional[float
                   "message": "%s: done, after %s." % (label, took(now - began)), "zone": zone}, ws, env, detach, now)
 
 
+def waiting(rows, ws: Optional[Path] = None, env=None, now: Optional[dt.datetime] = None) -> int:
+    """Tell the sessions that began to wait since the last call, once each.
+    `rows` are agents_working.py's --json rows. What was told is kept in
+    System/generated/notifications/waiting.json as {session id: since}; a
+    session that stopped waiting is forgotten, so its next wait is told. Only
+    the thread and what it waits for are said, never a question's text.
+    Returns how many were sent."""
+    env = os.environ if env is None else env
+    if env.get("GARRICK_HEADLESS") == "1" or background(env):
+        return 0
+    ws = ws or workspace(None, env)
+    if ws is None or not isinstance(rows, list):
+        return 0
+    waits = {str(r.get("id") or ""): r for r in rows if isinstance(r, dict) and r.get("state") == "waiting" and r.get("id")}
+    file = state_dir(ws) / "waiting.json"
+    told = _read_json(file, {})
+    told = told if isinstance(told, dict) else {}
+    kept = {sid: since for sid, since in told.items() if sid in waits}      # one that stopped waiting is forgotten
+    sent = 0
+    for sid, r in sorted(waits.items(), key=lambda kv: str(kv[1].get("since") or "")):
+        since = str(r.get("since") or "")
+        if kept.get(sid) == since:
+            continue
+        what = str(r.get("waiting_for") or "")
+        if not re.fullmatch(r"a question|an approval for [A-Za-z0-9_.:-]{1,40}|an approval for the plan", what):
+            what = "an answer"                  # only the shapes agents_working.py writes: never free text
+        place_said = re.sub(r"[\x00-\x1f\x7f]", " ", str(r.get("thread") or r.get("folder") or "A session"))[:80]
+        where = place(ws, str(r.get("folder") or ""))
+        zone = where[1] if where else None
+        kept[sid] = since
+        if override(env) and not zone:
+            continue                    # a sender's own command is told a zone; with none known it is not run for this event
+        send("waiting", "Waiting on you", "%s: waiting on you, for %s." % (place_said, what), zone, root=ws, env=env, now=now)
+        sent += 1
+    if kept != told:
+        try:
+            _write_json(file, kept)
+        except OSError:
+            pass
+    return sent
+
+
 def prune(folder: Path, now: float) -> None:
     """Turns begun over TURN_DAYS ago whose Stop never came."""
     try:
@@ -739,6 +791,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     t.add_argument("channel", choices=("mac", "cmux"))
     sub.add_parser("flush", help="send what quiet hours held, if they are over")
     sub.add_parser("hook", help="one hook event from Claude Code or Codex, on standard input")
+    w = sub.add_parser("waiting", help="tell the sessions that began to wait, from agents_working.py --json on standard input")
+    w.add_argument("--root", help="the workspace; default the one this file is in, or GARRICK_WORKSPACE")
     d = sub.add_parser("deliver")                # the hook's own sender, a notice on standard input
     d.add_argument("--workspace", required=True)
     h = sub.add_parser("hooks", help="the Needs you and Finished hooks for Claude Code and Codex")
@@ -755,6 +809,14 @@ def main(argv: Optional[List[str]] = None) -> int:
             hook(payload)
         except Exception:
             pass                # a hook never stops a session
+        return 0
+    if a.cmd == "waiting":
+        try:
+            data = json.loads(sys.stdin.read() or "{}")
+            rows = data.get("sessions") if isinstance(data, dict) else data
+            waiting(rows, workspace(a.root))
+        except Exception:
+            pass                # a poll never stops anything
         return 0
     if a.cmd == "deliver":
         try:

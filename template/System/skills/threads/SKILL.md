@@ -104,7 +104,7 @@ here, word for word. The commands below carry them out.
 - **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back; so does "open X" on a parked thread. **"What's parked"**: name the parked threads. **"Rename X to Y"** moves the note and every link to it; **"delete X"**, for what should never have existed, lists what would go and acts only on the name said again.
 - **"Where am I" or "what's open"**: name the live threads, most recent first; at most five when the user is listening.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.
-- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on one yes fixes them all, one commit per repository. Live files keep only the new value, with no trail of the old: git holds it. A raw record is never edited; the page resting on it says it was superseded.
+- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on one yes fixes them all, one commit per repository. Live files keep only the new value, with no trail of the old: git holds it. A raw record is never edited; the page resting on it is marked `corrected:` or `superseded:`.
 
 **Files**
 
@@ -439,15 +439,13 @@ thread per wrap: the one named, and nothing else.
 **How it runs.** Resolve X first ("hold this" or no name at all: the thread in
 focus, as under *No name given*). Then:
 
-- **Ask the one question, in the foreground, before anything starts**:
-   "Anything only in your head?" Enter, "no", "skip" or silence skips it. Take
-   the answer as said and never ask a follow-up. What the user already said
-   ("hold this, I was leaning towards the lower tier") is the answer, and is not
-   asked again. The answer goes into *Keep in mind*; a skipped question leaves
-   *Keep in mind* as the session knows it, or `nothing`. When the wrap is part of
-   closing the day, or for the band's *Close*, which waits for the note before
-   it ends the session, do not ask and do not run in the background: the wrap
-   runs in the foreground, each thread in turn.
+- **Ask nothing.** The wrap starts at once, with no question first. What the
+   user said with the request ("hold this, I was leaning towards the lower
+   tier") goes into *Keep in mind* as said; with nothing said, *Keep in mind*
+   is written from the session, or `nothing`. When the wrap is part of closing
+   the day, or for the band's *Close*, which waits for the note before it ends
+   the session, do not run in the background: the wrap runs in the foreground,
+   each thread in turn.
 - **Take the lock**, unless the request says the band has taken it already,
    so a second wrap of this thread cannot start while one is running, and so
    the band can show it:
@@ -467,7 +465,7 @@ focus, as under *No name given*). Then:
    the steps need, since it has not seen it: the thread note's path, what this
    session did and decided, the files it touched, the actions to file and the
    lines to tick, any deliverable that left the workspace and who edits it
-   next, and the answer to the question word for word. The brief carries the
+   next, and what the user said with the request, word for word. The brief carries the
    walls too, since a cold run knows none: the project's zone and whether
    it is walled (the Walled column of the Zones table in
    `System/context.md`), and any material in this session that a wall held
@@ -544,7 +542,7 @@ focus, as under *No name given*). Then:
    **Keep in mind** holds what no file can tell a cold resume: the decision
    half made and which way you were leaning and why, a doubt about a figure,
    a thing noticed and not yet acted on. Write it from what was said in this
-   session and from the answer to the question, not from the files; `nothing`
+   session and from what the user said with the request, not from the files; `nothing`
    is a valid answer, and the usual one for a thread that is simply waiting.
    A block written before this row existed is still whole; the row is added at
    its next wrap.
@@ -558,7 +556,9 @@ focus, as under *No name given*). Then:
    and by whom, quoting where the wording was the point. What you decided that
    they did not, marked as yours. What was left out on purpose, and why.>
    ```
-   Never edit or compress earlier entries. They are the record.
+   Never edit or compress earlier entries. They are the record. A wrap never
+   moves one by hand: step 12 hands the old ones to `history.py`, which moves
+   them whole.
 8. **Actions go to the zone's `Todo.md`**, not the note. Re-read it right
    before editing. Append new actions for this thread under `## Inbox` as
    `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the list's
@@ -634,8 +634,33 @@ focus, as under *No name given*). Then:
     ```
     Create it if missing, leave it if present, and add the two keys to one
     that has neither. No memory, no step.
-12. **Commit in the zone's repository.** First move the lines ticked before
-    today out of the list:
+12. **Commit in the zone's repository.** First keep the note short. Run
+    the history mover on the note the wrap wrote, after the new dated entry
+    and `updated:` are in:
+    ```sh
+    python3 System/tools/history.py apply "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
+    ```
+    It moves each dated entry older than `history-months` (6), and then the
+    oldest ones until the note is under `note-max-words` (4,000), to
+    `history/<Note> history <YYYY>-Q<n>.md` beside the note, unchanged, and
+    leaves one line under the last entry that links them. The newest five
+    entries always stay. It checks that every line it removed is in a history
+    file before it says it is done, and puts the note back if one is not. It
+    changes nothing for a note with nothing to move, and nothing for one it
+    cannot read for certain, which it reports in a line: say that line in the
+    reply and carry on. The files it wrote go in this wrap's commit below, with
+    the thread's own files: the `history/` folder beside the note. Then run
+    `python3 System/tools/history.py resume "<note>"`, which prints the
+    block's words and the limit as JSON; if it says `"over": true` (the block is
+    over `resume-max-words`, 400), offer the shrink in
+    one line after the wrap: "The Resume block is 920 words, over its 400.
+    Want a shorter one?" On a yes, show the proposed block as a diff before
+    writing it: *Where it stands* says now, *Keep in mind* loses what is
+    settled or has shipped, a durable fact moves to a working note with a link
+    left in its place, and a section that has grown into working material moves
+    to a working note with a link. Nothing changes without the yes, and a
+    shrink is never run overnight. The dated entry for it says what moved where.
+    Then move the lines ticked before today out of the list:
     ```sh
     python3 System/skills/todo/todo.py archive --zone <Zone>
     ```
@@ -648,8 +673,8 @@ focus, as under *No name given*). Then:
     commits that list there; with no list touched, there is nothing to
     archive.
     Then stage by name only what this wrap touched and this thread's own
-    changed files: the thread folder, the hub if edited, `Todo.md` if edited
-    or archived, `archive/` when the archive moved a line, and any
+    changed files: the thread folder, with its `history/` folder, the hub if
+    edited, `Todo.md` if edited or archived, `archive/` when the archive moved a line, and any
     `Deliverables/` or `Sources/` file this session made for the thread.
     Never `git add -A`.
     ```sh
@@ -810,11 +835,23 @@ Written: the outcome paragraph, the files changed, the commit hash.
 ## Park: "park X", "put X aside"; wake: "wake X", "unpark X"
 
 Parking sets a thread aside without finishing it, so the lists stay short. It
-moves nothing: the folder, the Resume here block, the links and the history
+moves nothing but the oldest dated entries, which go to history files beside
+the note, unchanged (step 2): the folder, the Resume here block and the links
 stay exactly where they are.
 
 1. **Resolve X.** Parked threads resolve like any other.
-2. **Run the executor** (*Running an action*), from the workspace root. It
+2. **Move the old entries first**, so a parked note is short when it is
+   woken. From the workspace root:
+   ```sh
+   python3 System/tools/history.py apply "Zones/Work/Acme/Threads/Pricing/Pricing.md" --commit "Acme, Pricing: older entries moved to history"
+   ```
+   It is the wrap's move (*Wrap*, step 12): entries older than `history-months`,
+   then the oldest until the note fits `note-max-words`, the newest five kept,
+   committed on its own through the wall check. The Resume here block stays as
+   it is. A note with nothing to move, or one it cannot read for certain,
+   changes nothing: say its line and park anyway. For a whole project, name
+   the hub note (`Zones/<Zone>/<Project>/<Project>.md`).
+   **Run the executor** (*Running an action*), from the workspace root. It
    sets `status: parked`, or `status: active` for `wake`, and `updated:`
    today, adds the dated entry, "Parked." or "Woken.", and leaves the Resume
    here block as it is: it still says where the work stood. It commits the
@@ -1094,7 +1131,7 @@ tomorrow. When the user says "that's wrong, it's Y", "no, it's Y" or
    python3 System/tools/correct.py --old "<X>" --new "<Y>" --apply --why "<why>"
    ```
    It writes Y in place of X in every file listed, re-reading each first;
-   marks each page that rests on a raw record holding X with `superseded:`
+   marks each page that rests on a raw record holding X with `corrected:` (its own text fixed) or `superseded:`
    and one line at its end, since the record itself is never edited;
    rebuilds the Meetings index, and the status page where there is one; and
    commits once per repository, the files it changed and nothing else. A

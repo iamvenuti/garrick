@@ -123,7 +123,7 @@ MAP = [
     ("voice: mangled, ask", "If a heard name is close to two entries, ask.", "rules"),  # tighter: folded into the ambiguity bullet, see below
     ("voice: aliases", "**Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.", "rules"),
     ("voice: that's wrong", "**\"That's wrong, it's Y\"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy and on one yes fixes them all", "rules"),
-    ("voice: that's wrong, raw", "A raw record is never edited; the page resting on it says it was superseded.", "rules"),
+    ("voice: that's wrong, raw", "A raw record is never edited; the page resting on it is marked `corrected:` or `superseded:`.", "rules"),
     ("voice: the ear", "**Answer for the ear when the user is listening**: when they say so, or the request came in by voice. The answer comes first, in three sentences at most. No tables, code, file paths or links read out; round the numbers. Offer the detail instead of giving it, and put anything long in a file and say where.", "rules"),
     # Files
     ("files: git holds history", "**Git holds the history.** Edit notes in place", "rules"),

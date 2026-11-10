@@ -40,7 +40,7 @@ updated: YYYY-MM-DD
 ---
 ```
 
-Then: what was decided, what each side said where the wording matters, and an actions table (what, who, by when).
+Then the body, in the concise shape the `meetings` skill sets (*A concise page*): who was there, `## Key points`, `## Actions`.
 
 A call that covers several projects can be split: a page per project, each `<slug>-<word>`, each keeping the same `raw:` and naming every other in `split-with: ["[[<slug>-<word>]]"]`, each with only its own section's `parties` and saying which part of the record it covers.
 
@@ -66,7 +66,7 @@ updated: YYYY-MM-DD
 ---
 ```
 
-A mail with a Message-ID also carries it as `source-id:`; a mail or a recording already filed, by its bytes or that ID, is refused a second page. Then: what it says or asks, the wording that matters, and an actions table. Attachments stay in the raw record and are listed on the page; one a project needs goes into its `Sources/` only after this page exists, and only if the project's zone may hold the page's.
+A mail with a Message-ID also carries it as `source-id:`; a mail or a recording already filed, by its bytes or that ID, is refused a second page. Then the same concise body. Attachments stay in the raw record and are listed on the page; one a project needs goes into its `Sources/` only after this page exists, and only if the project's zone may hold the page's.
 
 ## A person page
 
@@ -118,5 +118,6 @@ Then the question as one bold line, why it matters, and any options as `- [<labe
 - **`zone` and `parties` are required**, on a meeting page and a mail page alike. They are what the walls read. A page missing either is unfinished, and no project may use it until it is filled in. When the transcript or the addresses do not make them obvious, ask.
 - **Raw is the record.** Never edit a file in `raw/`. Correct the summary, not the source.
 - **Quote, do not smooth.** Where the exact words matter (a commitment, a number, a refusal), quote them from the transcript.
+- **A page is short.** `check.py` warns past `meeting-max-words` for a page filed after the user turned the concise format on; the `meetings` skill has the shape and "compact the meetings".
 - **Pages fade, and nothing is deleted.** A page leaves working memory by age, kind and use, into `dormant/` and later `archive/`, its raw record with it, and every link into it follows: `System/tools/fade.py` proposes it, and only a yes moves it. A page keeps its frontmatter wherever it goes. `pinned: true` keeps a page working for good; `superseded:` (a link to what replaces it, or a short reason) keeps it out of working memory, and it never comes back by use. A person page never moves: what faded is listed under its `## Earlier`.
 - **One page per person**, linked from every meeting they were in, as *A person page* says.

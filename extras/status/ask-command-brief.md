@@ -163,8 +163,10 @@ Rules:
   one") cannot be read from here, since you never saw the list: ask which
   thread it means, or send a "thread" find when it names one.
 - "order" is "recent" when the question is about the last, latest, most
-  recent or newest record, or about what happened since a date: "what's
-  the last meeting with Acme?", "anything new on Pricing since Monday?".
+  recent or newest record, or about what happened since a date, or about
+  time in other words (lately, recently, these days, yesterday, today, this
+  week, so far, anything new, what's new, any updates, this morning, days ago): "what's the last meeting with Acme?",
+  "anything new on Pricing since Monday?", "any meeting with Acme lately?".
   Garrick then reads the newest records first. Leave "order" out otherwise.
 - A request for what something holds or where it stands is a find however
   it is worded, an instruction as much as a question: "summarise X", "give

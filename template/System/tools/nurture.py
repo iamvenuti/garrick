@@ -565,6 +565,8 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
     """The one right fix for a finding, or None when it is not this kind's;
     Held when it would be, but the answer is not one."""
     path = ctx.root / item.path
+    if item.source == "check" and item.check in ("projects", "threads") and HISTORY_RE.match(item.message):
+        return history_fix(ctx, item)
     if item.source == "check" and item.check in ("projects", "threads"):
         m = STATUS_RE.match(item.message)
         if m:
@@ -601,6 +603,25 @@ def mechanical_fix(ctx: Ctx, item: Item) -> Optional[dict]:
         if item.message.startswith(NO_PARENT):
             return parent_fix(ctx, item)
     return None
+
+
+# A note over `note-max-words` (check.py, `history.NOTE_OVER`): its older entries move to history files, as the
+# threads skill's Wrap does. Steps 1 and 2 of #502 are mechanical and the nightly run may apply them; the Resume
+# here block over its limit (check "resume") is a rewrite, and stays judgment.
+HISTORY_RE = re.compile(r"^has [\d,]+ words, over the [\d,]+ of `note-max-words`")
+
+
+def history_fix(ctx: Ctx, item: Item) -> Optional[dict]:
+    import history
+    note = ctx.root / item.path
+    plan, files, why = history.compute(ctx.root, note, ctx.today)
+    if why:
+        raise Held(why)
+    if not plan.moves:
+        return None
+    item.touches = [item.path] + [ctx.rel(f) for f in sorted(files)]
+    item.where = [ctx.rel(note.parent)]
+    return {"op": "history", "moved": len(plan.moves), "before": plan.before, "after": plan.after}
 
 
 def date_fix(ctx: Ctx, item: Item, path: Path) -> dict:
@@ -883,12 +904,27 @@ def apply_parent(ctx: Ctx, item: Item, journal: "Journal") -> str:
     return "parent is now [[%s]]" % item.fix["thread"]
 
 
+def apply_history(ctx: Ctx, item: Item, journal: "Journal") -> str:
+    import history
+    note = ctx.root / item.path
+    plan, files, why = history.compute(ctx.root, note, ctx.today)
+    if why:
+        raise Held(why)
+    if not plan.moves:
+        raise Held("there is nothing to move any more")
+    for path, text in sorted(files.items()):
+        journal.write(path, text)
+    journal.write(note, plan.new_text)
+    return "%d older entries moved to history files, %d words down to %d" % (len(plan.moves), plan.before, plan.after)
+
+
 OPS: Dict[str, Callable[[Ctx, Item, "Journal"], str]] = {
     "status": apply_status, "list-thread": apply_list_thread, "date": apply_date, "relink": apply_relink,
-    "codelink": apply_codelink, "parent": apply_parent}
+    "codelink": apply_codelink, "parent": apply_parent, "history": apply_history}
 OP_WORDS = {"status": ("status word", "status words"), "list-thread": ("hub list", "hub lists"),
             "date": ("date prefix", "date prefixes"), "relink": ("link", "links"),
-            "codelink": ("path made a link", "paths made links"), "parent": ("parent link", "parent links")}
+            "codelink": ("path made a link", "paths made links"), "parent": ("parent link", "parent links"),
+            "history": ("note trimmed", "notes trimmed")}
 
 
 def apply_mechanical(ctx: Ctx, item: Item, journal: "Journal") -> str:
@@ -902,7 +938,9 @@ def say_mechanical(item: Item) -> str:
             "date": lambda: "rename it %s" % f["to"] if f.get("to") else "put its creation date in front of its name",
             "relink": lambda: "[[%s]] becomes [[%s]]" % (f.get("target"), f.get("to")),
             "codelink": lambda: "`%s` becomes [[%s]]" % (f.get("ref"), f.get("ref")),
-            "parent": lambda: 'add parent: "[[%s]]"' % f.get("thread")}.get(f.get("op"))
+            "parent": lambda: 'add parent: "[[%s]]"' % f.get("thread"),
+            "history": lambda: "move %s older entries to history files: %s words down to %s"
+                               % (f.get("moved"), f.get("before"), f.get("after"))}.get(f.get("op"))
     line = "%s: %s" % (item.path, item.said or (what() if what else item.message))
     return line + (" (held: %s)" % item.held if item.held and not item.said else "")
 
@@ -1098,7 +1136,7 @@ def say_correction(item: Item) -> str:
     if f.get("raw"):
         them = "them" if len(f["raw"]) > 1 else "it"
         line += "; %s kept as %s, %s" % (plural(len(f["raw"]), "raw record"), "they are" if them == "them" else "it is",
-                                         "the pages resting on %s marked superseded" % them if f.get("superseded")
+                                         "the pages resting on %s marked corrected or superseded" % them if f.get("superseded")
                                          else "no page rests on %s" % them)
     if item.said:
         line += "; %s" % item.said
@@ -1282,6 +1320,7 @@ class Journal:
 
     def write(self, path: Path, text: str) -> None:
         self.steps.append(("write", path, path.read_bytes() if path.exists() else None))
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
 
     def move(self, old: Path, new: Path) -> None:
@@ -1299,6 +1338,11 @@ class Journal:
             if what == "write":
                 if before is None:
                     path.unlink()
+                    if path.parent.name == "history":
+                        try:
+                            path.parent.rmdir()          # the folder a history file made, if nothing else is in it
+                        except OSError:
+                            pass
                 else:
                     path.write_bytes(before)
             else:
@@ -2096,7 +2140,7 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
         if out["wall"]:
             j["refusal"] = out["wall"]
         if done is not None:
-            j.update({"changed": done.changed, "superseded": done.superseded, "commits": done.commits,
+            j.update({"changed": done.changed, "corrected": done.corrected, "superseded": done.superseded, "commits": done.commits,
                       "uncommitted": done.uncommitted, "refused": done.refused, "rebuilt": done.rebuilt})
         print(json.dumps(j, indent=1, ensure_ascii=False))
         return code
@@ -2132,6 +2176,7 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
         lines += ["Committed %s in %s" % (sha, repo) for repo, sha in done.commits]
         lines += ["Not committed: %s (%s)" % u for u in done.uncommitted]
         lines += ["Refused in %s: %s" % r for r in done.refused]
+        lines += ["Marked corrected: %s" % p for p in done.corrected]
         lines += ["Marked superseded: %s" % p for p in done.superseded]
     if out["held"]:
         lines += ["Held:"] + ["  %s: %s" % (i.path, i.held) for i in out["held"]]

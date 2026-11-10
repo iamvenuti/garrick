@@ -368,7 +368,7 @@ class TestCorrectFaded(CorrectCase):
         correct.apply(self.root, WRONG, RIGHT, today=TODAY)
         text = self.page.read_text(encoding="utf-8")
         self.assertNotIn(WRONG, text)
-        self.assertIn(RIGHT, lib.parse_frontmatter_text(text)["superseded"])
+        self.assertIn(RIGHT, lib.parse_frontmatter_text(text)["corrected"])
         self.assertEqual(before, self.raw.read_bytes())
 
 
@@ -400,15 +400,16 @@ class TestCorrect(CorrectCase):
         self.assertIn("Dana Whitlock writes from dana.whitlock@%s." % RIGHT, (self.memory / "dana.md").read_text())
         self.assertIn("| %s |" % RIGHT, (self.root / "System" / "context.md").read_text())
 
-    def test_the_raw_record_stays_and_its_page_says_it_was_superseded(self):
+    def test_the_raw_record_stays_and_its_page_says_it_was_corrected(self):
         raw = self.meetings / "raw" / "261014-pallet-forecast.eml"
         correct.apply(self.root, WRONG, RIGHT, why="the domain has no hyphen", today=TODAY)
         self.assertEqual(self.before[raw], raw.read_bytes())
         page = self.meetings / "wiki" / "sources" / "261014-pallet-forecast.md"
         text = page.read_text(encoding="utf-8")
         fm = lib.parse_frontmatter_text(text)
-        self.assertIn(RIGHT, fm["superseded"])
-        self.assertIn("**Superseded, 17 October 2026.**", text)
+        self.assertIn(RIGHT, fm["corrected"])
+        self.assertNotIn("superseded", fm)
+        self.assertIn("**Corrected, 17 October 2026.**", text)
         self.assertNotIn(WRONG, text)
 
     def test_unrelated_entries_are_intact(self):

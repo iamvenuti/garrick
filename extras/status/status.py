@@ -767,7 +767,17 @@ FLAGS = {
     "while-you-wait": ("While you wait", "Parked: the Garrick band's line during a long turn in Claude Code, one thing worth doing "
                        "elsewhere, with /garrick next, open, tick and later, and its section in Settings. Off, neither shows; "
                        "\"what's next\" answers either way."),
+    "ask-agent": ("Ask: one session", "With Claude, Ask is one session that reads your notes with tools Garrick serves and checks, "
+                  "and it is on. Set \"ask-agent\": false in the file to go back to the fixed steps for now; this switch goes in "
+                  "the next release. Codex always uses the fixed steps."),
 }
+# A flag in this set is on unless the file says false: a feature that is released with an off switch for one release.
+ON_BY_DEFAULT = ("ask-agent",)
+
+
+def harness_name() -> str:
+    """The assistant Ask runs on, as agent.py names it: GARRICK_HARNESS, `claude` unless it says otherwise."""
+    return (os.environ.get("GARRICK_HARNESS", "claude").strip().lower() or "claude")
 
 
 def preview_flags(ws: Path) -> Dict[str, bool]:
@@ -775,7 +785,11 @@ def preview_flags(ws: Path) -> Dict[str, bool]:
         data = json.loads(ws.joinpath("System", "garrick-flags.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    return {k: isinstance(data, dict) and data.get(k) is True for k in FLAGS}
+    data = data if isinstance(data, dict) else {}
+    out = {k: (data.get(k) is not False) if k in ON_BY_DEFAULT else data.get(k) is True for k in FLAGS}
+    # The one session is what Ask does only with Ask on and Claude as the assistant (#476).
+    out["ask-agent"] = out["ask-agent"] and out["ask"] and harness_name() == "claude"
+    return out
 
 
 _PREFS = None
@@ -4373,12 +4387,17 @@ def follow_settings() -> str:
 def preview_section(flags: Dict[str, bool]) -> str:
     """Settings › Preview features: each flag's name and whether it is on,
     what it does as the row's tooltip (#227), since it is switched in a file."""
+    def chip(k: str, on: bool) -> str:
+        if k == "ask-agent" and harness_name() != "claude":
+            return "does not apply"             # Codex always answers through the fixed steps
+        return "on" if on else "off"
     rows = "".join('<div class="flagrow" title="%s"><b>%s</b><span class="chip%s">%s</span></div>'
-                   % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", "on" if on else "off") for k, on in flags.items())
+                   % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", chip(k, on)) for k, on in flags.items())
     return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
             % (set_head("Preview features", "preview", "Built but not released yet, and switched on in a file."), rows,
                help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Switch one on in '
                '<code>System/garrick-flags.json</code>, for example <code>{"effort": true}</code>, and rebuild the page. '
+               'One flag here, <b>Ask: one session</b>, is released and on until you set it to false. '
                'Point at a feature for what it does.')))
 
 
@@ -4716,7 +4735,7 @@ def notify_lib(ws: Path):
 
 def notify_settings(ws: Path, desk: bool = False) -> str:
     """Settings › Notifications (#110, #227): notices go to this Mac and
-    nowhere else, so the section is the five notices you can be told of,
+    nowhere else, so the section is the six notices you can be told of,
     each on or off, the minutes a long task takes, and quiet hours, with
     what they do in one sentence. A session in cmux gets its notice on its
     own tab, with no switch for it. In the app only: what is chosen goes to
@@ -4740,7 +4759,7 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
     rule = "At night only &#8220;a session needs me&#8221;%s get%s through." % ((" and the desk", "") if desk else ("", "s"))
     help_html = ('A notice names the zone or thread and what happened, never what a note or a meeting says. In cmux it lands on '
                  'the session&#39;s own tab. &#8220;A session needs me&#8221; and &#8220;a long task finishes&#8221; need hooks in '
-                 'Claude Code or Codex: ask your assistant to set up notifications. With all five off, Garrick sends nothing. '
+                 'Claude Code or Codex: ask your assistant to set up notifications. With every choice off, Garrick sends nothing. '
                  'A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way. '
                  'Saved in <code>%s</code> when you close Settings.' % E(prefs().FILE))
     return ('<section class="setsec apponly" id="notify-settings">%s%s<div class="nsimple"><div class="nsrow">'
@@ -5521,8 +5540,17 @@ def question_card(q: dict, w: dict) -> str:
             % (E(q["file"]), md_inline(ask), '<p>%s</p>' % md_inline(q["context"]) if q["context"] else "", buttons, later))
 
 
+def live_needs_row(r: dict, now: dt.datetime) -> str:
+    """A session waiting on you now, as one more row of Needs you, marked live (#474): the thread, what it waits
+    for and for how long, never the question's text. It goes when the wait ends."""
+    return ('<div class="sh-q sh-live" data-live="%s"><b>%s</b><p><span class="sh-livetag">Live</span> waiting on you for %s, %s</p></div>'
+            % (E(r["id"]), E(r.get("thread") or Path(r.get("folder") or "").name or "A session"),
+               E(r.get("waiting_for") or "an answer"), E(waited(r.get("since") or "", now) or "just now")))
+
+
 def home_section(W: List[dict], today: dt.date, example: Optional[str], local: Optional[str],
-                 yours: Optional[dict] = None) -> str:
+                 yours: Optional[dict] = None, live: Optional[List[dict]] = None,
+                 now: Optional[dt.datetime] = None) -> str:
     """The home: Ask something, Needs you, the note when local sessions are
     off, the work from a folder of the user's waiting to be started and the
     suggestions waiting for an answer (#182), Your work with Add your own
@@ -5531,10 +5559,13 @@ def home_section(W: List[dict], today: dt.date, example: Optional[str], local: O
     shown = [(q, w) for w in W for q in w["questions"] if q["shown"]]
     shown.sort(key=lambda qw: (qw[0]["asked"] or dt.date.min, qw[0]["file"]))
     put_off = sum(1 for w in W for q in w["questions"] if not q["shown"])
-    count = ("%d question%s" % (len(shown), "" if len(shown) == 1 else "s")) if shown else \
+    live = sorted(live or [], key=lambda r: (r.get("since") or "", r["id"]))
+    asked = len(shown) + len(live)
+    count = ("%d question%s" % (asked, "" if asked == 1 else "s")) if asked else \
         ("%d put off" % put_off if put_off else "")
-    needs = ("".join(question_card(q, w) for q, w in shown) if shown
-             else '<div class="sh-empty">Nothing needs you.</div>')
+    needs = ("".join(question_card(q, w) for q, w in shown)
+             + "".join(live_needs_row(r, now or dt.datetime.now(dt.timezone.utc)) for r in live)) if asked \
+        else '<div class="sh-empty">Nothing needs you.</div>'
     off = ('<div class="sh-card sh-warn" id="sh-off" role="status"><b>%s</b><p>%s</p></div>'
            % (E(handoff_mod().LOCAL_OFF_TITLE), E(handoff_mod().LOCAL_OFF))) if local else ""
     start = start_section([w for w in W if w["unstarted"]], any(w["discovered"] and w["first_look"] for w in W),
@@ -6791,7 +6822,7 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 .setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
 .setrelbox a{color:var(--accent)}.wallstext{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
-/* Settings › Notifications: the five notices, the minutes a long task takes, and quiet hours */
+/* Settings › Notifications: the six notices, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
 #notify-settings .nsimple{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px;font-size:13px}
 #notify-settings .nsrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
@@ -7117,7 +7148,7 @@ window.ThreadRows={bind:bindRow,chev:chev,close:tClose};
 """
 
 
-# Settings › Notifications (#110, #227), in the app: the five boxes, the
+# Settings › Notifications (#110, #227), in the app: the six boxes, the
 # minutes and quiet hours read into the shape notifications.py keeps, sent
 # with what else Settings changed when it closes (JS's sdReq), where
 # page_action.py checks them through notifications.py's clean().
@@ -8175,12 +8206,107 @@ document.addEventListener('click',function(e){if(!on()||!(e.target&&e.target.clo
 """
 
 
+# ---- Overview › Waiting on you now (#474) -----------------------------------------
+# The assistant sessions stopped on a question or an approval, oldest first. The
+# rows come from agents_working.py, the same read that keeps the Mac awake; the
+# app hands the page the same minute's result (window.GarrickWaiting), so the
+# card shows nothing older than a minute. A row names the thread the session's
+# folder belongs to (or the folder), what it waits for and for how long, and
+# never the question's text: agents_working.py does not read it.
+
+def waiting_mod():
+    spec = importlib.util.spec_from_file_location("garrick_agents_working", str(Path(__file__).resolve().parent / "agents_working.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def waiting_rows(ws: Path) -> List[dict]:
+    """The waiting sessions now, oldest first; none where the transcripts cannot be read."""
+    try:
+        rows = waiting_mod().rows_json(Path(os.environ.get("GARRICK_HOME") or Path.home()), ws)
+    except Exception:
+        return []
+    return [r for r in rows if r.get("state") == "waiting"]
+
+
+def waited(since: str, now: dt.datetime) -> str:
+    """How long a session has waited, in words: 3 min, 2 h."""
+    try:
+        t = dt.datetime.strptime(since, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    except (TypeError, ValueError):
+        return ""
+    s = max(0, (now.astimezone(dt.timezone.utc) - t).total_seconds()) if now.tzinfo else \
+        max(0, (dt.datetime.now(dt.timezone.utc) - t).total_seconds())
+    return "less than a minute" if s < 60 else "%d min" % (s // 60) if s < 3600 else "%d h" % round(s / 3600) if s < 86400 * 2 \
+        else "%d days" % round(s / 86400)
+
+
+def waiting_row(r: dict, now: dt.datetime) -> str:
+    """One waiting session. Go to it only for a session in a cmux tab; the desktop app and any other
+    terminal get the app and the folder named, since bringing a running session forward is not
+    something they offer."""
+    where = r.get("where")
+    app = "Codex" if r.get("agent") == "codex" else "Claude Code"
+    go = ('<button class="act apponly" type="button" data-wgo="%s">Go to it</button>' % E(r["id"])) if where == "cmux" else \
+        '<span class="wwhere">%s</span>' % E("%s, in %s" % ("Claude's desktop app" if where == "desktop" else app,
+                                                         Path(r.get("folder") or "").name or "a folder"))
+    return ('<div class="wrow" data-id="%s"><span class="wname">%s</span><span class="wwhat">%s</span>'
+            '<span class="wfor" data-since="%s">%s</span>%s</div>'
+            % (E(r["id"]), E(r.get("thread") or Path(r.get("folder") or "").name or "A session"), E(r.get("waiting_for") or "an answer"),
+               E(r.get("since") or ""), E(waited(r.get("since") or "", now)), go))
+
+
+def waiting_card(rows: List[dict], now: dt.datetime) -> str:
+    """The Waiting on you now card: one row per waiting session, oldest first."""
+    rows = sorted(rows, key=lambda r: (r.get("since") or "", r["id"]))
+    body = ("".join(waiting_row(r, now) for r in rows)) or '<p class="muted wnone">No session is waiting on you.</p>'
+    return card("waiting-now", "Waiting on you now", "%d session%s" % (len(rows), "" if len(rows) == 1 else "s") if rows else "",
+                '<div class="wrows" id="wrows" aria-live="polite">%s</div>' % body)
+
+
+WAITING_CSS = r"""
+.sh-livetag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:8px;font-size:11px;font-weight:600;background:var(--wash);color:var(--accent)}
+.wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
+.wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:12.5px}
+.wrow .act{margin-left:auto}
+"""
+
+WAITING_JS = r"""
+(function(){var box=document.getElementById('wrows');if(!box)return;var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+function since(s){var t=Date.parse(s);if(!t)return'';var m=Math.max(0,Math.floor((Date.now()-t)/60000));return m<1?'less than a minute':m<60?m+' min':m<2880?Math.round(m/60)+' h':Math.round(m/1440)+' days'}
+function span(c,t){var e=document.createElement('span');e.className=c;e.textContent=t;return e}
+function row(r){var d=document.createElement('div');d.className='wrow';d.dataset.id=r.id;
+var name=r.thread||(r.folder||'').split('/').pop()||'A session',app=r.agent==='codex'?'Codex':'Claude Code';
+d.appendChild(span('wname',name));d.appendChild(span('wwhat',r.waiting_for||'an answer'));
+var f=span('wfor',since(r.since));f.dataset.since=r.since||'';d.appendChild(f);
+if(r.where==='cmux'){var b=document.createElement('button');b.type='button';b.className='act apponly';b.dataset.wgo=r.id;b.textContent='Go to it';d.appendChild(b)}
+else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app)+', in '+((r.folder||'').split('/').pop()||'a folder')));
+return d}
+function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
+box.textContent='';if(!rows.length){var p=document.createElement('p');p.className='muted wnone';p.textContent='No session is waiting on you.';box.appendChild(p)}
+rows.forEach(function(r){box.appendChild(row(r))});
+var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=rows.length?rows.length+(rows.length===1?' session':' sessions'):'';needs(rows)}
+function needs(rows){var n=document.getElementById('sh-needs');if(!n||!n.querySelectorAll)return;
+n.querySelectorAll('.sh-live').forEach(function(e){e.remove()});var e0=n.querySelector('.sh-empty');
+rows.forEach(function(r){if(e0)e0.remove();e0=null;var d=document.createElement('div');d.className='sh-q sh-live';d.dataset.live=r.id;
+var b=document.createElement('b');b.textContent=r.thread||(r.folder||'').split('/').pop()||'A session';d.appendChild(b);
+var p=document.createElement('p'),t=document.createElement('span');t.className='sh-livetag';t.textContent='Live';p.appendChild(t);
+p.appendChild(document.createTextNode(' waiting on you for '+(r.waiting_for||'an answer')+', '+(since(r.since)||'just now')));d.appendChild(p);n.appendChild(d)});
+if(!n.querySelector('.sh-q')&&!n.querySelector('.sh-empty')){var m=document.createElement('div');m.className='sh-empty';m.textContent='Nothing needs you.';n.appendChild(m)}}
+box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
+setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
+window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
+})();
+"""
+
+
 def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = None,
           show_graph: bool = True, out: Optional[Path] = None,
           cmux: bool = False, flags: Tuple[str, ...] = (), launchers: Optional[Tuple[str, ...]] = None,
           also: Tuple[str, ...] = (), moved: Optional[Dict[str, str]] = None,
           managed: Optional[List[Path]] = None, cli: Optional[bool] = None, page_at: Optional[Path] = None,
-          reuse_check: Optional[float] = None) -> str:
+          reuse_check: Optional[float] = None, waiting_now: Optional[List[dict]] = None) -> str:
     """The page. `launchers` says what this machine has (main() asks
     launchers_installed()); `cmux=True` alone
     stands for launchers=("cmux",). `flags` go into the rebuild command as
@@ -8196,7 +8322,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     which a build given `reuse_check` shows, whatever its age, instead of
     running the check (#382), and what the effort ledger read
     of each transcript, so one unchanged is not read again (#260). Without it
-    nothing is kept, the check always runs and every transcript is read."""
+    nothing is kept, the check always runs and every transcript is read.
+    `waiting_now` is the sessions waiting on the user now (main() reads them with
+    waiting_rows()); without it the Overview's card is empty, so a build never
+    reads this Mac's transcripts by itself."""
     now = now or dt.datetime.now()
     _NURTURE.pop(ws, None)                    # what nurture.py reads, it reads afresh each build
     launch = tuple(launchers) if launchers is not None else (("cmux",) if cmux else ())
@@ -8696,7 +8825,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    lead = threads_card if anything else start_card() + threads_card
+    lead = waiting_card(waiting_now or [], now) + (threads_card if anything else start_card() + threads_card)
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
                        '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, todo_card, inbox_card, graph_card))
@@ -8741,7 +8870,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     guide_body, guide_pages = guide_tab(ws)
     home_tabs = ""
     if simple:
-        home_tabs = (section("home", False, home_section(HW, now.date(), example, local, your_work_data(ws)))
+        home_tabs = (section("home", False, home_section(HW, now.date(), example, local, your_work_data(ws), waiting_now, now))
                      + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)
                                + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
@@ -8758,12 +8887,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAITING_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),
@@ -8960,7 +9089,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                  flags=flags, also=tuple(args.also), moved=moved,
                  managed=handoff_mod().managed_places(), cli=handoff_mod().find_claude() is not None,
                  launchers=tuple(k for k in launchers_installed() if not (args.no_cmux and k == "cmux")),
-                 page_at=out, reuse_check=args.reuse_check)
+                 page_at=out, reuse_check=args.reuse_check, waiting_now=waiting_rows(ws))
     if STARTED is not None and own_stamp() != STARTED:
         return rerun(argv)                    # an update replaced this file meanwhile: the page is the new code's to draw
     write_page(out, page)

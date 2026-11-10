@@ -53,6 +53,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import importlib.util
+import inspect
 import json
 import os
 import re
@@ -225,7 +226,7 @@ class Conversation:
         """An id for an admitted record: only an id handed out here can be read."""
         self.count += 1
         rid = "r%d-%s" % (self.count, self.nonce)
-        self.handed[rid] = {k: d.get(k) or "" for k in ("path", "title", "date", "imported", "rid", "scope", "kind", "zone")}
+        self.handed[rid] = {k: d.get(k) or "" for k in ("path", "title", "date", "imported", "rid", "scope", "kind", "zone", "raw", "owner")}
         self.handed[rid]["zones"] = sorted(d.get("zones") or [])
         return rid
 
@@ -316,6 +317,8 @@ class Conversation:
         label = {"meetings": "Meetings", "library": "Library", "docs": "Garrick docs", "todo": "Todo list"}.get(
             d["kind"], d.get("zone") or "Thread")
         head = '[%s] %s · %s · "%s" · %s' % (rid, " · ".join(when), label, tidy(d["title"], 120), d["path"])
+        if d.get("raw"):
+            head += " · from the raw record"
         return head + ("\n    " + tidy(snippet, SNIPPET) if snippet else "")
 
     # ------------------------------------------------------------ places
@@ -456,7 +459,8 @@ class Conversation:
             return None, STOPPED
         return scopes[0], ""
 
-    def indexed(self, words: str, limit: int, place, wiki: Optional[str], after: Optional[str], kind: str = "all"):
+    def indexed(self, words: str, limit: int, place, wiki: Optional[str], after: Optional[str], kind: str = "all",
+                raw: bool = False):
         """(rows, scope, why): the scope index's results for the words, best first. rows is None when the index
         cannot be used (no recall, a recall without scopes, an error); scope is None with `why` when no scope fits."""
         rc = recall_for(self.ws)
@@ -467,7 +471,8 @@ class Conversation:
             scope, why = self.scope_for(rc, ctx, place, kind)
             if scope is None:
                 return [], None, why
-            rows = rc.search(words, project=None, root=self.ws, scope=scope, limit=limit, wiki=wiki, after=after)
+            more = {"raw": "always"} if raw and "raw" in inspect.signature(rc.search).parameters else {}
+            rows = rc.search(words, project=None, root=self.ws, scope=scope, limit=limit, wiki=wiki, after=after, **more)
         except Exception:
             return None, None, ""
         return list(rows or []), scope, ""
@@ -524,7 +529,7 @@ class Conversation:
             zone = place[0]
         wiki = {"meetings": "Meetings", "library": "Knowledge"}.get(kind)
         wide = 200 if order == "recent" else limit * OVERSAMPLE
-        rows, scope, why = (None, None, "") if kind == "docs" else self.indexed(words, wide, place, wiki, after, kind)
+        rows, scope, why = (None, None, "") if kind == "docs" else self.indexed(words, wide, place, wiki, after, kind, a.get("raw") is True)
         if scope is None and rows == []:
             return why                          # no scope fits: the words of a place that is not there, or the question
         terms = [sc._norm(w) for w in words.split() if len(w) >= sc.SHORTEST]
@@ -550,7 +555,7 @@ class Conversation:
         # It decides nothing about what is returned.
         for d in recs:
             if d["kind"] in ("meetings", "threads"):
-                z = lib.zone_of(self.ws, d["path"])
+                z = lib.zone_of(self.ws, d.get("owner") or d["path"])      # #478: for a raw record, its owner page
                 if z:
                     self.seen.add(z)
         lines = []
@@ -572,9 +577,12 @@ class Conversation:
         path = str(getattr(r, "path", "") or "")
         source = str(getattr(r, "source", "") or "")
         parts = path.split("/")
-        if parts[:3] == ["Wikis", "Meetings", "wiki"]:
+        owner = str(getattr(r, "owner", "") or "")
+        raw = getattr(r, "raw", False) is True and bool(owner) and parts[:2] in (["Wikis", "Meetings"], ["Wikis", "Knowledge"]) \
+            and len(parts) > 3 and parts[2] == "raw"         # #478: a chunk of a raw record, which lies in its owner page's zone
+        if parts[:3] == ["Wikis", "Meetings", "wiki"] or (raw and parts[1] == "Meetings"):
             kind, zn = "meetings", None
-        elif parts[:3] == ["Wikis", "Knowledge", "wiki"]:
+        elif parts[:3] == ["Wikis", "Knowledge", "wiki"] or (raw and parts[1] == "Knowledge"):
             kind, zn = "library", None
         elif len(parts) >= 4 and parts[0] == "Zones" and parts[2] != "Todo.md" and not parts[2].startswith("."):
             kind, zn = "threads", parts[1]
@@ -585,7 +593,8 @@ class Conversation:
         title = str(getattr(r, "title", "") or "") or Path(path).stem
         return {"path": path, "kind": kind, "zone": zn, "project": proj, "thread": thread, "title": title,
                 "date": str(getattr(r, "date", "") or ""), "imported": "", "snippet": str(getattr(r, "snippet", "") or ""),
-                "rid": str(getattr(r, "id", "") or ""), "scope": scope.key, "zones": []}
+                "rid": str(getattr(r, "id", "") or ""), "scope": scope.key, "zones": [],
+                "raw": raw, "owner": owner if raw else ""}
 
     @staticmethod
     def in_place(d: dict, place) -> bool:
@@ -869,7 +878,9 @@ def schemas() -> List[dict]:
                              "place": dict(s, description="a zone, a project, or a thread: Work, Acme Review, Acme Review/Pricing"),
                              "kind": {"type": "string", "enum": list(KINDS)},
                              "order": {"type": "string", "enum": list(ORDERS)},
-                             "limit": {"type": "integer"}, "after": dict(s, description="YYYY-MM-DD")}, ["words"])},
+                             "limit": {"type": "integer"}, "after": dict(s, description="YYYY-MM-DD"),
+                             "raw": {"type": "boolean", "description": "rank raw records beside the pages; "
+                                     "by default they come only when no page matches"}}, ["words"])},
         {"name": "read", "description": "The text of a record, by an id that search, thread_state or owed returned in this conversation.",
          "inputSchema": obj({"id": s}, ["id"])},
         {"name": "places", "description": "The projects and threads, with their status.",

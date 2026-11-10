@@ -4,7 +4,7 @@ The wall stands at the store, not at the result (#341, #358, #398).
 
     python3 System/tools/recall.py build [--root DIR] [--rebuild]
     python3 System/tools/recall.py search "words" [--scope S] [--after YYYY-MM-DD]
-                                         [--zone Z] [--wiki W] [--sessions] [--archived]
+                                         [--zone Z] [--wiki W] [--sessions] [--archived] [--raw]
                                          [--limit N] [--json]
     python3 System/tools/recall.py read ID [--scope S]
     python3 System/tools/recall.py stats [--scope S]
@@ -44,6 +44,15 @@ working folder at the root or in `System/` is refused. This is a wall for what
 Recall returns, not for a session that can read files itself.
 `read(id)` answers only for an id that is in the scope index, and answers an
 unknown id and a walled one the same way.
+
+A raw record (a transcript, a frozen report) is indexed as chunks, but a search
+ranks pages only, and goes to the raw chunks when no page matches, marking those
+results "from the raw record" (#478). `--raw` puts the chunks back in the ranking
+for one search. A wiki sets its own default in `Wikis/<Wiki>/schema.json`,
+`"recall": {"raw": "fallback" | "always" | "never"}`, with `fallback` the default:
+`always` for a wiki whose raw records are the only copy of the text. The chunks
+are rows of the same scope index, so a search over them admits exactly what the
+page search admits, and read() reads them as it reads a page.
 
 Other code (the Ask agent's `search` tool) calls `search()` and `read()`. The
 signature of `search()` and the fields of `Result` are stable.
@@ -95,6 +104,8 @@ SCHEMA_VERSION = "4"
 CHUNK_CHARS = 4000
 RRF_K = 60
 RAW_WEIGHT = 0.5
+RAW_MODES = ("fallback", "always", "never")    # a wiki's `"recall": {"raw": ...}`; the first is the default (#478)
+RAW_SAID = "from the raw record"
 RECENCY_DAYS = 180.0
 RECENCY_BONUS = 0.003          # one step of exp(-age/180) is worth about ten ranks at the top
 SUPERSEDED_FACTOR = 0.5
@@ -116,7 +127,9 @@ class Result:
     """One hit. `path` is relative to the workspace root, with forward slashes.
     `source` names where it came from: a zone ("Work"), a wiki ("Meetings",
     "Knowledge") or "sessions". `date` is YYYY-MM-DD or "". `grade` is
-    "working", "dormant" or "archived"; a dormant hit is "from older notes"."""
+    "working", "dormant" or "archived"; a dormant hit is "from older notes".
+    `raw` is True for a raw record's chunk, "from the raw record" (#478), and
+    `owner` then names the page that cites it: the record is in the zone that page is in."""
     id: str
     path: str
     title: str
@@ -125,6 +138,8 @@ class Result:
     snippet: str
     score: float
     grade: str = "working"
+    raw: bool = False
+    owner: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -835,8 +850,7 @@ class Refresher:
         page that names it as its `raw:`."""
         con = self.idx.con
         if rel.split("/")[1] == "Knowledge":
-            row = con.execute("SELECT page FROM claims WHERE raw=? ORDER BY page LIMIT 1", (rel,)).fetchone()
-            pages = [row[0]] if row else []
+            pages = sorted(self.claims().get(rel, []))      # every page that names it, an unadmitted one included
         else:
             cites = self.cites()
             if self.stem_count(Path(rel).stem.lower()) != 1:
@@ -851,6 +865,25 @@ class Refresher:
                 return None
             first = first or (page,) + tuple(row)
         return first
+
+    def claims(self) -> Dict[str, List[str]]:
+        """Each Knowledge raw record to the pages that name it as their `raw:`, at every grade and whether or not this
+        scope may read the page, made once a run: a page this scope may not read keeps its record out, as for Meetings."""
+        key = ("claims", str(self.root))
+        if key not in self.cache:
+            found: Dict[str, List[str]] = {}
+            pages, _ = wiki_entries(self.root, "Knowledge")
+            for rel, path in pages:
+                text = read_text(path)
+                fm = parse_frontmatter_text(text) if text is not None else {}
+                if not fm.get("raw"):
+                    continue
+                probe = fade.Page(rel, "Knowledge", grade_of(rel, "Knowledge"), "")
+                fade.find_raw(self.root / "Wikis" / "Knowledge", probe, fade.link_target(fm.get("raw")))
+                if probe.raw:
+                    found.setdefault(probe.raw, []).append(rel)
+            self.cache[key] = found
+        return self.cache[key]
 
     def cites(self) -> Dict[str, List[Path]]:
         """Each raw record's stem to the Meetings pages that cite it, at every grade, made once a run."""
@@ -891,7 +924,10 @@ class Refresher:
 
     def raw_derived(self, rel: str, path: Path) -> Optional[str]:
         owner = self.owner_row(rel)           # a record is read where the pages that cite it are: all of them admitted here
-        return None if owner is None else json.dumps([owner])
+        if owner is None:
+            return None
+        named = sorted(self.claims().get(rel, [])) if rel.split("/")[1] == "Knowledge" else []
+        return json.dumps([owner, named] if named else [owner])     # a new claimer, walled or not, changes the row
 
     def raw(self, rel: str, path: Path) -> bool:
         owner = self.owner_row(rel)
@@ -1075,7 +1111,8 @@ def term_tf(variants: List[str], title: List[str], body: List[str], cache: dict)
 
 
 def candidates(idx: Index, terms: List[List[str]], kind: str, grades: List[str], after: Optional[str],
-               sessions: bool, wiki: Optional[str], zone: Optional[str] = None) -> List[Hit]:
+               sessions: bool, wiki: Optional[str], zone: Optional[str] = None,
+               raw_homes: Optional[Iterable[str]] = None) -> List[Hit]:
     """Best rows of one list in the scope's index, best first. Every row in
     the index is one the scope may read, so the ranking (BM25) takes its
     document count, document frequencies and average length from rows that
@@ -1083,6 +1120,10 @@ def candidates(idx: Index, terms: List[List[str]], kind: str, grades: List[str],
     found nor in what order."""
     where = ["d.kind = ?", "d.grade IN (%s)" % ",".join("?" * len(grades))]
     args: list = [kind] + list(grades)
+    if kind == "chunk":
+        homes = sorted(raw_homes or ())         # a raw record's chunks only for the wikis this search may rank them in (#478)
+        where.append("(d.src != 'raw'" + (" OR d.home IN (%s))" % ",".join("?" * len(homes)) if homes else ")"))
+        args += homes
     if not sessions:
         where.append("d.src != 'session'")
     if wiki:
@@ -1237,6 +1278,17 @@ def purge_orphans(root: Path, ctx: dict) -> None:
                 pass
 
 
+def raw_mode_of(root: Path, wiki: str) -> str:
+    """How a wiki's raw records are searched, from `"recall": {"raw": ...}` in `Wikis/<wiki>/schema.json`:
+    `fallback` unless it reads as one of RAW_MODES (#478)."""
+    try:
+        data = json.loads((root / "Wikis" / wiki / "schema.json").read_text(encoding="utf-8"))
+        mode = data["recall"]["raw"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return RAW_MODES[0]
+    return mode if mode in RAW_MODES else RAW_MODES[0]
+
+
 def reach_of(root: Path) -> str:
     try:
         return fade.settings(root)["reach"]
@@ -1263,7 +1315,7 @@ def resolve(base: Path, ctx: dict, project: Optional[PathLike], scope: Optional[
 def search(words: str, *, project: Optional[PathLike], after: Optional[str] = None,
            zone: Optional[str] = None, wiki: Optional[str] = None, sessions: bool = False,
            limit: int = 10, root: Optional[PathLike] = None, archived: bool = False,
-           scope: Optional[Union[Scope, str]] = None) -> List[Result]:
+           scope: Optional[Union[Scope, str]] = None, raw: Optional[Union[str, bool]] = None) -> List[Result]:
     """Ranked hits for `words`, best first, at most `limit`.
 
     `project` is the folder of the project the session works in (absolute, or
@@ -1295,6 +1347,13 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
     person or alias in `System/context.md` is searched in every spelling the
     tables give, with and without spaces; a word the scope's rows do not have is
     widened to near spellings through a trigram table where SQLite carries one.
+
+    Raw records (#478): by default only pages are ranked, and the raw chunks of
+    a wiki are searched when no page matches, each result marked `raw` ("from
+    the raw record"). `raw` overrides every wiki's own setting, `"always"` (or
+    True) putting the chunks into the ranking, `"never"` leaving them out; None
+    follows each wiki's `"recall": {"raw": ...}`. The chunks are rows of the same
+    scope index, so what they may show is what the pages may show.
 
     Working pages are searched first. Dormant pages join only when the
     working ones return fewer than `limit` and the `reach` setting allows it;
@@ -1331,22 +1390,35 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
             tiers.append(["dormant"])
         if archived:
             tiers.append(["archived"])
-        found: List[Tuple[float, Hit]] = []
-        for number, grades in enumerate(tiers):
-            if number > 0 and grades == ["dormant"] and len(found) >= limit:
-                continue
-            lists: List[Tuple[float, List[Hit]]] = []
-            for kind, weight in (("note", 1.0), ("chunk", RAW_WEIGHT)):
-                hits = candidates(idx, terms, kind, grades, after, sessions, wiki,
-                                  zone if held.kind == "root" else None)
-                if hits:
-                    lists.append((weight, hits))
-            found += fuse(lists, today)
+        if raw is True:
+            raw = "always"
+        modes = {w.lower(): (raw if raw in RAW_MODES else raw_mode_of(base, w)) for w in WIKIS}
+        always = {w for w, m in modes.items() if m == "always"}
+        later = {w for w, m in modes.items() if m == "fallback"}
+
+        def ranked(homes: Set[str]) -> List[Tuple[float, Hit]]:
+            found: List[Tuple[float, Hit]] = []
+            for number, grades in enumerate(tiers):
+                if number > 0 and grades == ["dormant"] and len(found) >= limit:
+                    continue
+                lists: List[Tuple[float, List[Hit]]] = []
+                for kind, weight in (("note", 1.0), ("chunk", RAW_WEIGHT)):
+                    hits = candidates(idx, terms, kind, grades, after, sessions, wiki,
+                                      zone if held.kind == "root" else None, homes)
+                    if hits:
+                        lists.append((weight, hits))
+                found += fuse(lists, today)
+            return found
+        found = ranked(always)
+        if later and not found:
+            found = ranked(always | later)          # no page holds an answer: the raw record, marked (#478)
         out: List[Result] = []
         for value, h in found[:limit]:
             out.append(Result(id="%s:%s" % (h.label, h.path), path=h.path, title=h.title, date=h.date,
                               source=h.label if h.src != "session" else "sessions",
-                              snippet=snippet(idx, terms, h.rowid), score=round(value, 6), grade=h.grade))
+                              snippet=snippet(idx, terms, h.rowid), score=round(value, 6), grade=h.grade,
+                              raw=h.kind == "chunk" and h.src == "raw",
+                              owner=h.owner if h.kind == "chunk" and h.src == "raw" else ""))
         return out
     finally:
         idx.close()
@@ -1523,6 +1595,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     s.add_argument("--wiki")
     s.add_argument("--sessions", action="store_true")
     s.add_argument("--archived", action="store_true")
+    s.add_argument("--raw", action="store_true", help="rank raw records' chunks beside the pages, not only when no page matches")
     s.add_argument("--limit", type=int, default=10)
     s.add_argument("--json", action="store_true")
     r = sub.add_parser("read", help="the text of a search result, by its id")
@@ -1574,7 +1647,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(problem, file=sys.stderr)
     hits = search(args.words, project=None, after=args.after, zone=args.zone, wiki=args.wiki,
                   sessions=args.sessions, limit=args.limit, root=root, archived=args.archived,
-                  scope=held) if held is not None else []
+                  scope=held, raw="always" if args.raw else None) if held is not None else []
     if args.json:
         print(json.dumps([dataclasses.asdict(h) for h in hits], indent=2))
         return 0
@@ -1583,6 +1656,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                                     "; %d from older notes" % len(older) if older else ""))
     for n, h in enumerate(hits, 1):
         print("%d. %s  [%s%s%s]" % (n, h.title, h.source, ", " + h.date if h.date else "",
+                                  ", " + RAW_SAID if h.raw else
                                   ", from older notes" if h.grade == "dormant" else
                                   ", archived" if h.grade == "archived" else ""))
         print("   " + h.path)

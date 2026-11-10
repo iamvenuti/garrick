@@ -343,6 +343,14 @@ class TestContext(CheckCase):
         self._people_as("| Who | Role |\n|---|---|\n| Dana Whitlock | Procurement |")
         self.assertFinds("context", "warning", "the People table has no Name or Party column")
 
+    def test_a_one_word_name_is_fine(self):
+        """A People row is names only (#486, #497): no wall reads a name, so a name of one word has nothing to
+        say, and no finding in the context file speaks of a name that a note refuses."""
+        self._people_as("| Name | Party | Role |\n|---|---|---|\n| Dana Whitlock | `acme` | Head of procurement |\n"
+                        "| Kit | `acme` | Buyer |\n| Wren | `birch` | Planner |")
+        self.assertEqual([], [f.message for f in self.findings("context") if "Kit" in f.message or "Wren" in f.message])
+        self.assertEqual([], [f.message for f in self.findings() if "refuses" in f.message and "name" in f.message])
+
     def test_an_empty_section_says_nothing(self):
         self._people_as("")
         self.assertEqual([], [f for f in self.findings("context") if "People" in f.message])

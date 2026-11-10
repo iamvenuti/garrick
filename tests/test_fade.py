@@ -356,6 +356,67 @@ class ProposeTest(Base):
         self.assertNotIn("270501-acme-later.md", moves)            # one month old
         self.assertNotIn("dana-whitlock.md", moves)                # a person page never moves
 
+    def test_a_page_a_correction_fixed_stays_where_a_live_thread_pins_it(self):
+        """#499: a detail corrected in a pinned page is no reason to retire it."""
+        correct = load("correct", TOOLS / "correct.py")
+        src = self.meetings / "wiki" / "sources"
+        write(src / "260320-acme-pricing.md",
+              meeting("Acme pricing", "2026-03-20", body="Jo Lane sent the rates.\n", more='\nraw: "[[raw/260320-acme-pricing]]"'))
+        write(self.meetings / "raw" / "260320-acme-pricing.txt", "Jo Lane: the rates.\n")
+        pricing = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        write(pricing, self.text(pricing) + "\nRates are in [[260320-acme-pricing]].\n")
+        self.commit_all()
+        self.assertNotIn("260320-acme-pricing.md", [m["page"].rsplit("/", 1)[1] for m in self.propose()["moves"]])
+        done = correct.apply(self.root, "Jo Lane", "Jo Laine", today="2026-11-10", commit=False, rebuild=False)
+        page = src / "260320-acme-pricing.md"
+        self.assertEqual(["Wikis/Meetings/wiki/sources/260320-acme-pricing.md"], done.corrected)
+        self.assertEqual([], done.superseded)
+        fm = fade.parse_frontmatter_text(self.text(page))
+        self.assertIn("Jo Laine", fm["corrected"])
+        self.assertNotIn("superseded", fm)
+        self.commit_all()
+        out = self.propose()
+        self.assertNotIn("260320-acme-pricing.md", [m["page"].rsplit("/", 1)[1] for m in out["moves"]])
+        text = self.text(self.root / out["proposal"])
+        self.assertIn("## Old enough, but pinned", text)
+        self.assertIn("260320-acme-pricing.md", text.split("## Old enough, but pinned")[1])
+
+    def test_a_page_corrected_before_for_another_value_is_superseded_and_a_rerun_adds_no_line(self):
+        correct = load("correct", TOOLS / "correct.py")
+        src = self.meetings / "wiki" / "sources"
+        write(src / "260320-acme-pricing.md",
+              meeting("Acme pricing", "2026-03-20", body="Jo Lane sent the rates.\n", more='\nraw: "[[raw/260320-acme-pricing]]"'))
+        write(self.meetings / "raw" / "260320-acme-pricing.txt", "Jo Lane and Max Wall: the rates.\n")
+        page = src / "260320-acme-pricing.md"
+        correct.apply(self.root, "Jo Lane", "Jo Laine", today="2026-11-10", commit=False, rebuild=False)
+        again = correct.apply(self.root, "Jo Lane", "Jo Laine", today="2026-11-12", commit=False, rebuild=False)
+        self.assertEqual([], again.corrected + again.superseded)                   # a later day adds no second closing line
+        self.assertEqual(1, self.text(page).count("**Corrected,"))
+        done = correct.apply(self.root, "Max Wall", "Max Walls", today="2026-11-13", commit=False, rebuild=False)
+        self.assertEqual(([], 1), (done.corrected, len(done.superseded)))           # its own text never held this value
+        self.assertEqual(1, self.text(page).count("**Superseded,"))
+
+    def test_a_page_the_correction_could_not_fix_is_superseded(self):
+        correct = load("correct", TOOLS / "correct.py")
+        src = self.meetings / "wiki" / "sources"
+        write(src / "260320-acme-pricing.md",
+              meeting("Acme pricing", "2026-03-20", body="The rates.\n", more='\nraw: "[[raw/260320-acme-pricing]]"'))
+        write(self.meetings / "raw" / "260320-acme-pricing.txt", "Jo Lane: the rates.\n")
+        done = correct.apply(self.root, "Jo Lane", "Jo Laine", today="2026-11-10", commit=False, rebuild=False)
+        self.assertEqual([], done.corrected)
+        self.assertEqual(["Wikis/Meetings/wiki/sources/260320-acme-pricing.md"], done.superseded)
+        self.assertIn("superseded", fade.parse_frontmatter_text(self.text(src / "260320-acme-pricing.md")))
+
+    def test_the_proposal_names_the_pages_it_moves_for_superseded_apart(self):
+        text = self.text(self.root / self.propose()["proposal"])
+        self.assertIn("## Moving because of `superseded:`, 1", text)
+        apart = text[text.index("## Moving because of `superseded:`"):]
+        self.assertIn("260315-acme-draft.md", apart.split("\n## ")[0])
+        self.assertIn("superseded: [[260401-acme-review]], the figures were wrong", apart)
+        self.assertIn("remove `superseded:` from its frontmatter", apart)       # keep writes a pin, which such a page ignores
+        self.assertNotIn("say which to keep", apart)
+        self.assertNotIn("- `wiki/sources/260315-acme-draft.md`", text[:text.index("## Moving because of")])
+
     def test_the_written_proposal_names_each_pages_derived_copies(self):
         written = self.text(self.root / self.propose()["proposal"])
         review = written.split("`wiki/sources/260401-acme-review.md`", 1)[1].split("\n- `", 1)[0]

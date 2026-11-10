@@ -57,7 +57,7 @@ Tab commands, where the cmux extra is installed: the `desk` skill.
 - **When a name matches more than one thing**, or a heard name is close to two entries, ask in one line, naming the candidates. Never guess.
 - **Names arrive mangled.** Match every proper noun against Parties, People and Aliases in `System/context.md` before acting. Ignore noise; never correct the user's spelling.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.
-- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy and on one yes fixes them all. Live files keep only the new value. A raw record is never edited; the page resting on it says it was superseded.
+- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy and on one yes fixes them all. Live files keep only the new value. A raw record is never edited; the page resting on it is marked `corrected:` or `superseded:`.
 - **Answer for the ear when the user is listening**: when they say so, or the request came in by voice. The answer comes first, in three sentences at most. No tables, code, file paths or links read out; round the numbers. Offer the detail instead of giving it, and put anything long in a file and say where.
 
 ## Files

@@ -86,10 +86,10 @@ class Case(unittest.TestCase):
 class TestSettings(Case):
     def test_defaults(self):
         cfg = n.settings(self.ws)
-        self.assertEqual({"tell": {"needs-you": True, "finished": True, "todo-summary": True, "job-failed": True,
-                                    "release": True},
+        self.assertEqual({"tell": {"needs-you": True, "finished": True, "waiting": True, "todo-summary": True,
+                                    "job-failed": True, "release": True},
                           "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}}, cfg)
-        self.assertEqual(["needs-you", "finished", "todo-summary", "job-failed", "release"], list(n.TELL_NAMES))
+        self.assertEqual(["needs-you", "finished", "waiting", "todo-summary", "job-failed", "release"], list(n.TELL_NAMES))
         self.assertEqual("hold", n.QUIET["release"])                       # a newer Garrick waits for the morning
         self.assertEqual({"needs-you": "send", "finished": "drop", "desk": "send"},
                          {k: v for k, v in n.QUIET.items() if v != "hold"})
@@ -103,13 +103,13 @@ class TestSettings(Case):
         self.assertFalse({"test", "token", "find-chat"} & set(ops.DECLARED["settings"].fields))
 
     def test_clean_keeps_what_the_page_sends(self):
-        given = {"tell": {"needs-you": True, "finished": False, "todo-summary": True, "job-failed": False,
-                          "release": True},
+        given = {"tell": {"needs-you": True, "finished": False, "waiting": True, "todo-summary": True,
+                          "job-failed": False, "release": True},
                  "after": 5, "quiet": {"on": True, "from": "21:30", "to": "06:45"}}
         self.assertEqual(given, n.clean(given))
         self.assertEqual(n.normal(given), n.normal(n.clean(given)))
-        self.assertEqual({"needs-you": True, "finished": True, "todo-summary": True, "job-failed": True, "release": True},
-                         n.clean({})["tell"])
+        self.assertEqual({"needs-you": True, "finished": True, "waiting": True, "todo-summary": True, "job-failed": True,
+                          "release": True}, n.clean({})["tell"])
 
     def test_clean_refuses(self):
         for bad in ({"token": "x"},
@@ -136,11 +136,11 @@ class TestSettings(Case):
                           "todo-summary": {"to": ["telegram"]}, "job-failed": {"to": ["mac", "command"]}},
                "quiet": {"on": False, "from": "23:00", "to": "06:00"},
                "zones": {"Personal": {"to": ["telegram"], "chat": "777"}}}
-        self.assertEqual({"tell": {"needs-you": True, "finished": False, "todo-summary": False, "job-failed": True,
-                                    "release": True},
+        self.assertEqual({"tell": {"needs-you": True, "finished": False, "waiting": True, "todo-summary": False,
+                                    "job-failed": True, "release": True},
                           "after": 7, "quiet": {"on": False, "from": "23:00", "to": "06:00"}}, n.normal(old))
-        self.assertEqual({"needs-you": False, "finished": False, "todo-summary": False, "job-failed": False,
-                          "release": False},
+        self.assertEqual({"needs-you": False, "finished": False, "waiting": False, "todo-summary": False,
+                          "job-failed": False, "release": False},
                          n.normal(dict(old, channels={"mac": False}))["tell"])        # this Mac switched off: every notice off
         self.assertEqual(n.settings(self.ws)["tell"], n.normal({"events": {}})["tell"])
         self.save(old)
@@ -347,6 +347,63 @@ class TestHooks(Case):
         self.assertEqual(2, len(self.osascripts()))
 
 
+class TestWaiting(Case):
+    """Waiting on you (#474): told once for each wait, never with a question's text."""
+
+    ROW = {"id": "s1", "agent": "claude", "folder": "/x", "thread": "Acme Review, Pricing", "state": "waiting",
+           "waiting_for": "a question", "since": "2026-10-14T11:00:00Z", "where": "cmux"}
+
+    def told(self):
+        return [" ".join(a) for a in self.osascripts()]
+
+    def test_one_notice_for_a_wait_and_none_for_the_same_wait_again(self):
+        self.assertEqual(1, n.waiting([self.ROW], self.ws, env={}, now=NOON))
+        self.assertEqual(0, n.waiting([self.ROW], self.ws, env={}, now=NOON))
+        self.assertEqual(1, len(self.osascripts()))
+        said = " ".join(self.told())
+        self.assertIn("Acme Review, Pricing: waiting on you, for a question.", said)
+        self.assertIn("Waiting on you", said)
+
+    def test_a_session_that_stopped_waiting_is_told_again_at_its_next_wait(self):
+        n.waiting([self.ROW], self.ws, env={}, now=NOON)
+        n.waiting([dict(self.ROW, state="working")], self.ws, env={}, now=NOON)
+        self.assertEqual({}, json.loads((self.ws / "System" / "generated" / "notifications" / "waiting.json").read_text()))
+        self.assertEqual(1, n.waiting([dict(self.ROW, since="2026-10-14T12:00:00Z")], self.ws, env={}, now=NOON))
+        self.assertEqual(2, len(self.osascripts()))
+
+    def test_it_is_a_choice_in_settings_and_off_means_nothing_is_sent(self):
+        self.assertIn("waiting", n.TELL_NAMES)
+        self.save({"tell": {"waiting": False}})
+        n.waiting([self.ROW], self.ws, env={}, now=NOON)
+        self.assertEqual([], self.osascripts())
+
+    def test_the_text_of_a_question_is_never_in_a_notice_and_a_job_sends_none(self):
+        row = dict(self.ROW, question="Should we tell Birch about the discount?", waiting_for="a question\nBirch discount")
+        self.assertEqual(1, n.waiting([row], self.ws, env={}, now=NOON))
+        self.assertNotIn("discount", " ".join(self.told()))
+        self.assertEqual(0, n.waiting([dict(self.ROW, id="s2")], self.ws, env={"GARRICK_HEADLESS": "1"}, now=NOON))
+
+    def test_a_senders_own_command_is_told_the_zone_and_skipped_when_none_is_known(self):
+        env = {"GARRICK_NOTIFY_CMD": "/bin/true"}
+        folder = str(self.ws / "Zones" / "Work" / "Acme Review")
+        with mock.patch.object(n, "legacy", return_value=True) as legacy:
+            n.waiting([dict(self.ROW, folder=folder)], self.ws, env=env, now=NOON)
+            self.assertEqual("Work", legacy.call_args[0][0]["zone"])
+            n.waiting([dict(self.ROW, id="s2", folder="/elsewhere")], self.ws, env=env, now=NOON)
+            self.assertEqual(1, legacy.call_count)                           # no zone known: the command is not run
+
+    def test_quiet_hours_hold_it_for_the_morning(self):
+        self.assertEqual("hold", n.QUIET["waiting"])
+        n.waiting([self.ROW], self.ws, env={}, now=NIGHT)
+        self.assertEqual([], self.osascripts())
+
+    def test_the_command_reads_agents_workings_json_on_standard_input(self):
+        self.save({"quiet": {"on": False}})                                  # the command judges quiet hours by the clock
+        with mock.patch.object(n.sys, "stdin", io.StringIO(json.dumps({"ok": True, "sessions": [self.ROW]}))):
+            self.assertEqual(0, n.main(["waiting", "--root", str(self.ws)]))
+        self.assertEqual(1, len(self.osascripts()))
+
+
 class TestInstallHooks(Case):
     def setUp(self):
         super().setUp()
@@ -451,8 +508,8 @@ class TestPageAndSettings(Case):
         return html[start:html.index("</section>", start)]
 
     def page_request(self, **more):
-        return dict({"tell": {"needs-you": True, "finished": False, "todo-summary": True, "job-failed": True,
-                              "release": True},
+        return dict({"tell": {"needs-you": True, "finished": False, "waiting": True, "todo-summary": True,
+                              "job-failed": True, "release": True},
                      "after": 4, "quiet": {"on": True, "from": "22:30", "to": "07:00"}}, **more)
 
     def test_saved_with_the_other_settings_then_shown(self):
@@ -481,18 +538,18 @@ class TestPageAndSettings(Case):
             self.pa.save_settings(self.ws, {"verb": "settings", "test": "mac"})
         self.assertEqual([], self.run_.calls)
 
-    def test_five_choices_and_quiet_hours_and_nothing_else(self):
+    def test_six_choices_and_quiet_hours_and_nothing_else(self):
         sec = self.section()
         for words in ("Notices appear on this Mac.", "Tell me when", "a session needs me", "a long task finishes",
-                      "the morning Todo summary is ready", "a scheduled job fails", "a newer Garrick is out", "Quiet from"):
+                      "a session is waiting on me", "the morning Todo summary is ready", "a scheduled job fails", "a newer Garrick is out", "Quiet from"):
             self.assertIn(words, sec)
         self.assertIn('a long task finishes, <span class="nsafter">after <input type="number" id="n-after"', sec)
         self.assertIn('<p class="hint nsrule">At night only &#8220;a session needs me&#8221; and the desk get through.</p>', sec)
-        self.assertIn("With all five off, Garrick sends nothing.", sec)                      # behind the "?"
+        self.assertIn("With every choice off, Garrick sends nothing.", sec)                      # behind the "?"
         for gone in ("Telegram", "My phone", "More options", "data-nch", "n-chat", "A command of your own", "data-nzto",
                      "Send to", "Send a test", "custom", "data-naway", "nover"):
             self.assertNotIn(gone, sec)
-        self.assertEqual(5, sec.count('data-nt="'))
+        self.assertEqual(6, sec.count('data-nt="'))
 
     def test_the_jobs_that_override_are_not_a_line_of_state(self):
         agents = self.base / "LaunchAgents"

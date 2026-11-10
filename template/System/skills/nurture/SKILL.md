@@ -43,11 +43,11 @@ own: a new kind of problem gets a check in `check.py` first.
 
 | Kind | Examples | What this skill does |
 |---|---|---|
-| Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's | Lists them, and applies them all on one yes, one commit per repository |
+| Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's; a hub or thread note over `note-max-words` (4,000) or with dated entries older than `history-months` (6), its older entries moved whole to `history/` files beside it, the newest five kept | Lists them, with each note's words before and after, and applies them all on one yes, one commit per repository. The nightly run may apply this kind |
 | Correction | a value written down wrong, an address, an account, a name, which the user corrects | Lists every live copy as one finding, and corrects them all on one yes, one commit per repository |
 | Attribution and category | a meeting page with no zone; a mail domain no party has, asked as which zone it belongs to; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses which zone. It asks no more which party a person works for: there is no name check to feed |
 | Wall | a file that points into a walled zone other than its own: a link, an embed, a path or a file copied whole | Says which file and which zone, and its fix: take the reference out, or move the file into that zone. Names are not a crossing |
-| Judgment | a stale resume point, a published file drifted from its shared copy, an orphan page, two pages that disagree | Leaves the text alone and names the page to open |
+| Judgment | a stale resume point, a Resume here block over `resume-max-words` (400), a published file drifted from its shared copy, an orphan page, two pages that disagree | Leaves the text alone and names the page to open. For a block over its limit, offers a shorter one as a diff (*Where it stands* says now; *Keep in mind* loses what is settled or shipped; a durable fact moves to a working note, linked); it writes nothing without a yes, and never overnight |
 | Behind the share | a published file whose ledger row ends in `share`, and whose copy here differs from the shared one: colleagues edit it there, so the copy here is a snapshot | Names it last, as low urgency, and changes nothing |
 | Fading | meeting pages or reading old enough to leave working memory, or a faded page linked again | Says how many, per wiki, and what to say: "fade the meetings". Nothing moves without a written proposal and a yes on it; see *Fading* below |
 
@@ -149,7 +149,7 @@ value is found and replaced one way only.
    kept out with `--leave <path>`.
 4. **On the yes**, the same line with `--yes`, and `--why "<why>"` when the
    user gave a reason. `correct.py` writes each copy, marks the pages
-   resting on a raw record as superseded, and commits once per repository,
+   resting on a raw record corrected or superseded, and commits once per repository,
    only the files it changed. The day's report records the copies fixed,
    each commit, and the yes. Relay the commits, and anything held or
    refused, as *Correct* does.

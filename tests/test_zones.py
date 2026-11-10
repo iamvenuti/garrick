@@ -105,6 +105,16 @@ class ZoneFlags(unittest.TestCase):
         self.assertTrue(ctx["pending"])
         self.assertEqual({"Work": True, "Ventures": False, "Home": True, "Bare": True}, ctx["zone_walled"])
 
+    def test_an_open_default_zone_that_holds_a_walled_party_is_walled(self):
+        text = OLD.replace("| Ventures | published work | | open |", "| Ventures | published work | | open |\n| Clients | clients | | open |").replace(
+            "| Jo Example | own | Home | `jo` | yes | |", "| Jo Example | own | Home | `jo` | yes | |\n| Birch & Co | client | Clients | `birch` | yes | |\n| Cedar | venture | Ventures | `cedar` | no | |")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = workspace(tmp, text)
+            (root / "Zones" / "Clients").mkdir()
+            ctx = lib.load_context(root)
+        self.assertTrue(ctx["zone_walled"]["Clients"])           # open by default, but it holds a walled party
+        self.assertFalse(ctx["zone_walled"]["Ventures"])         # its only party is open
+
     def test_a_059_context_reads_every_zone_walled(self):
         with tempfile.TemporaryDirectory() as tmp:
             ctx = lib.load_context(workspace(tmp, OLD059))

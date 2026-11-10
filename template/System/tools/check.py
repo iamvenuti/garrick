@@ -3563,7 +3563,9 @@ def check_meeting_zones(ws: Workspace) -> List[Finding]:
                                "%s draws on two walled zones" % what))
         elif own == UNZONED and not fm.get("zone") and not ws.context["pending"]:       # until the migration, none is asked
             by_sources = {z for z in zones if z != UNZONED}
-            proposal = by_sources.pop() if len(by_sources) == 1 else party_zone(ws, fm) if not by_sources else UNZONED
+            # an open source forces no split: with one walled zone among the sources, it is that one
+            candidates = {z for z in by_sources if walled(ws.context, z)} or by_sources
+            proposal = next(iter(candidates)) if len(candidates) == 1 else party_zone(ws, fm) if not by_sources else UNZONED
             if proposal != UNZONED:
                 out.append(Finding(WARNING, "meetings", r,
                                    "no `zone:`; %s, so it takes %s" % (
@@ -3572,8 +3574,8 @@ def check_meeting_zones(ws: Workspace) -> List[Finding]:
                                    "%s has no zone" % what))
             else:
                 out.append(Finding(WARNING, "meetings", r,
-                                   "no `zone:`, and nothing says which: it cites no source and names no party of one zone; "
-                                   "give it the zone it belongs to", "%s has no zone" % what))
+                                   "no `zone:`, and nothing says which: its sources are in more than one zone and none is walled, "
+                                   "or it cites none and names no party of one zone; give it the zone it belongs to", "%s has no zone" % what))
     return out
 
 
@@ -3770,11 +3772,11 @@ def lexical_folder(ws: Workspace, parts) -> Path:
 # ---------------------------------------------------------------------------
 # Walls
 #
-# Three detectors, all deterministic, on every text file inside a project:
-#   links   a link to a meeting page whose parties are walled from the project's;
-#   names   a party, person or alias from the far side of a wall, by name;
-#   quotes  wording lifted from a walled meeting page or its raw transcript.
-# A finding names the file and the walled party, never the text it matched:
+# Detectors, all deterministic, on every text file inside a project:
+#   links   a link, an embed or a path to a file, or to a Meetings page, of another walled zone;
+#   copies  a staged file that is a whole copy of a file of another walled zone;
+#   quotes  eight words shared with a file or Meetings page of another walled zone.
+# No name is read. A finding names the file and the zone, never the text it matched:
 # the report must not itself carry what the wall kept out.
 # ---------------------------------------------------------------------------
 
@@ -4927,10 +4929,36 @@ def _in_sources(project: Path, path: Path) -> bool:
 COPY_MIN = 32   # below this many bytes, identical content proves nothing
 
 
+def shipped_hashes(ws: Workspace, zone: Optional[str]) -> set:
+    """The content hashes of the files Garrick ships, as installed: everything under System/templates/ of the workspace
+    (the zone, project and thread templates), and under the folder GARRICK_TEMPLATES_DIR names, which the update sets
+    to the release it is installing. Each is hashed as it is and with `{{ZONE}}` filled in as each zone's name, the way
+    the installer writes it. Such a file is the same in every zone, so it is never a copy from another one."""
+    folders = [ws.root.joinpath(*TEMPLATES)]
+    if os.environ.get("GARRICK_TEMPLATES_DIR"):
+        folders.append(Path(os.environ["GARRICK_TEMPLATES_DIR"]))
+    found = set()
+    for folder in folders:
+        for here, _, files in os.walk(folder):
+            for name in files:
+                try:
+                    data = (Path(here) / name).read_bytes()
+                except OSError:
+                    continue
+                found.add(hashlib.sha256(data).hexdigest())
+                for name_ in {z.name for z in ws.zones} | ({zone} if zone else set()):
+                    found.add(hashlib.sha256(data.replace(b"{{ZONE}}", name_.encode("utf-8"))).hexdigest())
+    return found
+
+
 def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Finding]:
     """A staged file whose bytes are those of a file of another walled zone, or of a Meetings page of one, is a copy
     made whole: the zone wall refuses it whatever it is called. Only the staged files are hashed, and a file of
-    another zone only when its size is one of theirs. A Knowledge page is a destination with no zone."""
+    another zone only when its size is one of theirs. A Knowledge page is a destination with no zone.
+
+    Not a copy: a file under COPY_MIN bytes (an empty `.gitkeep`), a file Garrick ships (shipped_hashes: the zone
+    template's files are identical in every zone), and content that a file of an open zone also holds, since open
+    material goes anywhere. Content held only by walled zones stays a copy, however many hold it."""
     want: Dict[int, List[Tuple[Path, str, Optional[str]]]] = {}
     for path, data in staged:
         dest = zone_of(ws.root, path)
@@ -4938,8 +4966,8 @@ def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Findi
             want.setdefault(len(data), []).append((path, hashlib.sha256(data).hexdigest(), dest))
     if not want:
         return []
-    out: List[Finding] = []
-    told: set = set()
+    hits: Dict[Path, Tuple[str, str, Optional[str]]] = {}        # staged file -> (hash, zone it copies, its own zone)
+    held: Dict[str, set] = {}                                    # hash -> the zones whose files have it
     tops = [z for z in ws.zones] + [ws.root / "Wikis" / "Meetings"]
     for top in tops:
         for here, dirs, files in os.walk(top):
@@ -4955,23 +4983,29 @@ def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Findi
                 there = hit_zone(ws, at)         # a raw record is in the zone of the pages that claim it
                 if there is None:
                     continue
-                digest = None
+                try:
+                    digest = hashlib.sha256(at.read_bytes()).hexdigest()
+                except OSError:
+                    continue
                 for path, sha, dest in want[size]:
-                    if path == at or path in told or may_flow(ws.context, there, dest):
+                    if path == at or digest != sha:
                         continue
-                    if digest is None:
-                        try:
-                            digest = hashlib.sha256(at.read_bytes()).hexdigest()
-                        except OSError:
-                            break
-                    if digest == sha:
-                        told.add(path)
-                        out.append(Finding(ERROR, "walls", rel(ws, path),
-                                           "is a copy, whole, of a file of %s; %s is walled and this file is in %s"
-                                           % (zone_name(there), "that zone" if there != UNZONED else "a page with no zone",
-                                              zone_name(dest) if dest is not None else "Knowledge"),
-                                           "A file in %s is a whole copy of a file of %s"
-                                           % (zone_name(dest) if dest is not None else "Knowledge", zone_name(there))))
+                    held.setdefault(sha, set()).add(there)
+                    if not may_flow(ws.context, there, dest) and path not in hits:
+                        hits[path] = (sha, there, dest)
+    out: List[Finding] = []
+    shipped: Dict[Optional[str], set] = {}
+    for path, (sha, there, dest) in sorted(hits.items()):
+        if dest not in shipped:
+            shipped[dest] = shipped_hashes(ws, dest)
+        if sha in shipped[dest] or any(not walled(ws.context, z) for z in held[sha]):
+            continue        # Garrick's own text, or held by an open zone, whose material goes anywhere
+        out.append(Finding(ERROR, "walls", rel(ws, path),
+                           "is a copy, whole, of a file of %s; %s is walled and this file is in %s"
+                           % (zone_name(there), "that zone" if there != UNZONED else "a page with no zone",
+                              zone_name(dest) if dest is not None else "Knowledge"),
+                           "A file in %s is a whole copy of a file of %s"
+                           % (zone_name(dest) if dest is not None else "Knowledge", zone_name(there))))
     return out
 
 
@@ -5245,18 +5279,6 @@ def canonical_path(ws: Workspace, path: Path) -> Path:
         if hit is not None:
             return hit[0].joinpath(*path.parts[len(parent.parts):])
     return path
-
-
-# ---------------------------------------------------------------------------
-# Mail behind a project's sources
-#
-# Mail is recorded in Meetings, where the walls can read its parties; what goes
-# into a project's Sources/ is an attachment. A file in Sources/ with the same
-# bytes as an attachment came from that mail, so the mail must be filed with a
-# finished page, and its parties must not be walled from the project's. The
-# same holds for a whole mail saved into Sources/, unless intake saved it there
-# as material: then its parties are in its own X-Garrick-Parties header.
-# ---------------------------------------------------------------------------
 
 
 def nested_repositories(ws: Workspace) -> List[Finding]:

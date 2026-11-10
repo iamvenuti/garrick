@@ -28,6 +28,7 @@ Jo Example. Independent advisor.
 | Work | Client work | yes |
 | Home | Everything else | yes |
 | Ventures | Published work | no |
+| Study | Courses | yes |
 
 ## Parties
 
@@ -66,7 +67,7 @@ def build(root: Path) -> Path:
     write(root / "AGENTS.md", "# Workspace\n")
     write(root / "System" / "rules.md", "# Rules\n")
     write(root / "System" / "context.md", CONTEXT)
-    for zone in ("Work", "Home", "Ventures"):
+    for zone in ("Work", "Home", "Ventures", "Study"):
         z = root / "Zones" / zone
         write(z / "AGENTS.md", "# %s zone\n" % zone)
         write(z / "Todo.md", "# %s: open actions\n\n## Inbox\n\n## Done\n" % zone)
@@ -81,6 +82,7 @@ def build(root: Path) -> Path:
     write(root / "Zones" / "Ventures" / "Orchard" / "Threads" / "Drafts" / "Plan.md", "Orchard plan: the trees go in rows, one row for each variety.\n")
     write(root / "Zones" / "Work" / "Harbour" / "Threads" / "Sizing" / "Plan.md", "Harbour plan: the quay works come first, then the sheds.\n")
 
+    write(root / "System" / "templates" / "zone" / "Todo.md", "# {{ZONE}}: open actions\n\n## Inbox\n\n## Done\n")
     meetings = root / "Wikis" / "Meetings"
     write(meetings / "AGENTS.md", "# Meetings\n")
     write(meetings / "wiki" / "index.md", "# Index\n")
@@ -104,6 +106,7 @@ def build(root: Path) -> Path:
     write(ents / "acme-corp.md", "---\ntitle: Acme Corp\ntype: entity\nzone: Work\nparty: acme\n---\n\n# Acme Corp\n\nSee [[260310-work-call]].\n")
     write(ents / "mixed.md", "---\ntitle: Mixed\ntype: entity\n---\n\n# Mixed\n\nSee [[260310-work-call]] and [[260311-home-call]].\n")
     write(ents / "mixed-open.md", "---\ntitle: Mixed open\ntype: entity\nzone: Work\n---\n\n# Mixed open\n\nSee [[260310-work-call]] and [[260312-ventures-call]].\n")
+    write(ents / "open-and-walled.md", "---\ntitle: Open and walled\ntype: entity\n---\n\n# Open and walled\n\nSee [[260310-work-call]] and [[260312-ventures-call]].\n")
     write(ents / "whole.md", "---\ntitle: Whole\ntype: entity\nzone: Work\n---\n\n# Whole\n\nSee [[260310-work-call]].\n")
     write(ents / "bare.md", "---\ntitle: Bare\ntype: entity\n---\n\n# Bare\n")
     write(ents / "party-only.md", "---\ntitle: Party only\ntype: entity\nparty: jo\n---\n\n# Party only\n")

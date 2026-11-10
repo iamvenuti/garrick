@@ -34,7 +34,8 @@ functions below keep their signatures:
     checkpoint_key(base, content) -> str
     write_if_unchanged(note, text, expect) -> bool
     same_action(line) -> str
-    install_wall_hook(zone) -> Path
+    install_wall_hook(zone) -> Path   (writes pre-commit, pre-merge-commit, post-merge and post-rewrite)
+    has_merge_hooks(zone) -> bool / missing_merge_hooks(zone) -> [str] / wall_hook_texts() -> {name: text}
     work_folder(root, value) -> Path or None
     has_wall_hook(zone) -> bool
     hooks_path(repo) -> str
@@ -177,6 +178,11 @@ __all__ = [
     "strip_tag",
     "install_wall_hook",
     "has_wall_hook",
+    "has_merge_hooks",
+    "MergeHookNotGarricks",
+    "missing_merge_hooks",
+    "wall_hook_texts",
+    "WALL_HOOKS",
     "hooks_path",
     "WALL_HOOK",
     "WALL_HOOK_NESTED",
@@ -2624,6 +2630,89 @@ def wiki_hook_text(root: Optional[PathLike] = None) -> str:
     return WALL_HOOK_WIKI % (WALL_HOOK_MARK, shlex.quote(str(root)) if root else "''")
 
 
+# The same check at the two other places git brings changes into a repository without `git commit` (#497).
+# `pre-merge-commit` runs when a merge completes on its own, with the merge result staged: the very check
+# `pre-commit` runs, so it refuses exactly what one commit of the same changes would be refused. `post-merge` (a
+# merge or fast-forward) and `post-rewrite` (a rebase or an amend) run after the commits are in: they cannot refuse,
+# so they only report the files that changed, say that the commits are in, and name how to undo them without running
+# it. They never exit non-zero, never reset, and write nothing outside `.git/`: the check they run reads only
+# (`--changed`), and bytecode is not written.
+MERGE_HOOK = "pre-merge-commit"
+POST_HOOKS = ("post-merge", "post-rewrite")
+WALL_HOOKS = ("pre-commit", MERGE_HOOK) + POST_HOOKS
+_STAGED_RUN = "--staged --walls-only"
+_POST_RUN = {"post-merge": "--changed ORIG_HEAD..HEAD",
+             "post-rewrite": '--changed "$@"'}
+
+
+def _post_hook(base: str, name: str) -> str:
+    """The post-merge or post-rewrite hook made from a pre-commit hook text `base`: the same way of finding the
+    workspace, no refusal anywhere in it, and at the end the report over what changed."""
+    lines = base.rstrip("\n").split("\n")
+    out = []
+    for line in lines:
+        if line.startswith("# %s:" % WALL_HOOK_MARK):
+            line = "# %s: say, after a %s, which files the commits it brought in would have been refused for." % (
+                WALL_HOOK_MARK, "merge or fast-forward" if name == "post-merge" else "rebase or amend")
+        elif line.startswith("# Installed by Garrick"):
+            line = "# Installed by Garrick. It cannot refuse, undo or write: the commits are in, and it only reports."
+        line = line.replace("Commit refused: ", "The wall check did not run: ")
+        line = line.replace(", or commit with --no-verify if you mean to skip it", "")
+        line = line.replace(" Put it back, or commit with --no-verify if you mean to skip it.", " Put it back.")
+        line = line.replace("exit 1", "exit 0")
+        out.append(line)
+    run = out.pop()
+    assert _STAGED_RUN in run, run
+    if name == "post-merge":
+        out.append("git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1 || exit 0")
+        args = _POST_RUN[name]
+    else:   # post-rewrite gets "old new" pairs on stdin: the new commits are what it reads
+        out.append('set -- $(while read -r old new rest; do echo "$new"; done)')
+        out.append('[ "$#" -gt 0 ] || exit 0')
+        args = _POST_RUN[name]
+    run = run.replace("exec python3", "PYTHONDONTWRITEBYTECODE=1 GIT_OPTIONAL_LOCKS=0 python3").replace(_STAGED_RUN, args)
+    out += [run, "exit 0"]
+    return "\n".join(out) + "\n"
+
+
+def wall_hook_texts(nested: bool = False, wiki: bool = False, root: Optional[PathLike] = None) -> Dict[str, str]:
+    """{hook name: text} of the four hooks, for a zone's repository, a nested one (`nested`) or a wiki's (`wiki`)."""
+    base = wiki_hook_text(root) if wiki else WALL_HOOK_NESTED if nested else WALL_HOOK
+    out = {"pre-commit": base, MERGE_HOOK: base}
+    for name in POST_HOOKS:
+        out[name] = _post_hook(base, name)
+    return out
+
+
+class MergeHookNotGarricks(FileExistsError):
+    """install_wall_hook found a merge hook (pre-merge-commit, post-merge or post-rewrite) that is not Garrick's. The
+    pre-commit hook and the others are written; this one is left as it is, and named in `names`."""
+
+    def __init__(self, message: str, names: List[str]):
+        super().__init__(message)
+        self.names = names
+
+
+def _hook_runs(hooks: Path, name: str) -> bool:
+    hook = hooks / name
+    try:
+        return WALL_HOOK_MARK in hook.read_text(encoding="utf-8", errors="replace") and os.access(hook, os.X_OK)
+    except OSError:
+        return False
+
+
+def has_merge_hooks(zone: PathLike) -> bool:
+    """Does this repository also run the wall check at a merge and after one (pre-merge-commit, post-merge, post-rewrite)?"""
+    hooks = _hooks_dir(zone)
+    return hooks is not None and all(_hook_runs(hooks, name) for name in WALL_HOOKS[1:])
+
+
+def missing_merge_hooks(zone: PathLike) -> List[str]:
+    """The merge hooks (pre-merge-commit, post-merge, post-rewrite) this repository does not run Garrick's check from."""
+    hooks = _hooks_dir(zone)
+    return [n for n in WALL_HOOKS[1:] if hooks is None or not _hook_runs(hooks, n)]
+
+
 def _hooks_dir(zone: PathLike) -> Optional[Path]:
     git_dir = Path(zone) / ".git"
     return git_dir / "hooks" if git_dir.is_dir() else None
@@ -2643,12 +2732,16 @@ def has_wall_hook(zone: PathLike) -> bool:
 
 def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False,
                       root: Optional[PathLike] = None) -> Path:
-    """Write the pre-commit wall check into a zone's repository, or with
-    `nested` into a repository inside a project, or with `wiki` into a wiki's,
-    which is told the workspace `root`, and return its path.
+    """Write the wall check into a zone's repository, or with `nested` into a
+    repository inside a project, or with `wiki` into a wiki's, which is told
+    the workspace `root`, and return the path of its pre-commit hook. Four
+    hooks are written (WALL_HOOKS): pre-commit, pre-merge-commit, post-merge
+    and post-rewrite. A second call changes nothing.
 
-    Refuses (FileExistsError) to replace a pre-commit hook Garrick did not write,
-    and (FileNotFoundError) a zone whose `.git` is not a folder."""
+    Refuses (FileExistsError) to replace a pre-commit hook Garrick did not
+    write, writing nothing; a merge hook that is not Garrick's is left alone,
+    the others written, and the error names it. (FileNotFoundError) for a zone
+    whose `.git` is not a folder."""
     hooks = _hooks_dir(zone)
     if wiki and (Path(zone) / ".git").exists() and (Path(zone) / ".git").is_symlink() or (
             wiki and (Path(zone) / ".git").is_file()):
@@ -2662,8 +2755,20 @@ def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False,
             raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
                                   "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
     hooks.mkdir(parents=True, exist_ok=True)
-    hook.write_text(wiki_hook_text(root) if wiki else WALL_HOOK_NESTED if nested else WALL_HOOK, encoding="utf-8")
-    hook.chmod(0o755)
+    foreign = []
+    for name, text in wall_hook_texts(nested, wiki, root).items():
+        path = hooks / name
+        if path.exists() and WALL_HOOK_MARK not in path.read_text(encoding="utf-8", errors="replace"):
+            foreign.append(name)         # not Garrick's: left alone, and named
+            continue
+        if not path.exists() or path.read_text(encoding="utf-8", errors="replace") != text:
+            path.write_text(text, encoding="utf-8")
+        if not os.access(path, os.X_OK):
+            path.chmod(0o755)
+    if foreign:
+        raise MergeHookNotGarricks("%s already has a %s hook that is not Garrick's, so it is left as it is; add the wall "
+                                   "check to it by hand, as the one in .git/hooks/pre-commit runs it" % (zone, ", ".join(foreign)),
+                                   foreign)
     return hook
 
 

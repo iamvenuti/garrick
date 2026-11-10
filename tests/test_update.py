@@ -666,6 +666,37 @@ class TestSafety(Case):
         hook.write_text("#!/bin/sh\necho mine\n")
         self.assertEqual([], self.plan()["hooks"])
 
+    def test_a_zone_with_garricks_pre_commit_alone_gets_the_merge_hooks(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        for name in ("pre-merge-commit", "post-merge", "post-rewrite"):          # as 0.63.0 left it
+            (hooks / name).unlink(missing_ok=True)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        self.apply()
+        lib = update.install.lib()
+        for name, text in lib.wall_hook_texts().items():
+            self.assertEqual(text, (hooks / name).read_text())
+            self.assertTrue(os.access(hooks / name, os.X_OK))
+        self.assertEqual([], self.plan()["hooks"])
+
+    def test_a_zone_with_no_wall_check_gets_no_merge_hooks(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        for name in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite"):
+            (hooks / name).unlink(missing_ok=True)
+        self.assertEqual([], self.plan()["hooks"])
+        self.apply()
+        self.assertEqual([], [n for n in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite") if (hooks / n).exists()])
+
+    def test_a_merge_hook_that_is_not_garricks_is_left_alone_and_named(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        (hooks / "pre-merge-commit").unlink(missing_ok=True)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        result = self.apply()
+        self.assertEqual("#!/bin/sh\necho mine\n", (hooks / "post-merge").read_text())
+        self.assertTrue((hooks / "pre-merge-commit").is_file())
+        self.assertIn("post-merge", " ".join(p for p, _ in result["skipped"]))
+        self.assertEqual([], self.plan()["hooks"])                                # not stale for a hook that is not ours
+
     def wiki_hook(self):
         return self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
 

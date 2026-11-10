@@ -395,18 +395,40 @@ def wiki_hook_state(root):
         return ""
     if lib.WALL_HOOK_MARK not in text:
         return "foreign"
-    return "refresh" if text != lib.wiki_hook_text(root) else ""
+    if text != lib.wiki_hook_text(root):
+        return "refresh"
+    for name, want in lib.wall_hook_texts(wiki=True, root=root).items():     # the merge hooks beside it (#497)
+        try:
+            have = (wikis / ".git" / "hooks" / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return "refresh"
+        if lib.WALL_HOOK_MARK in have and have != want:
+            return "refresh"
+    return ""
 
 
 def stale_hook(zone):
-    """A zone whose pre-commit hook is Garrick's wall check, but an older one."""
+    """A zone whose pre-commit hook is Garrick's wall check, but an older one, or one that has not the merge hooks
+    (pre-merge-commit, post-merge, post-rewrite) this Garrick writes beside it (#497). Only where Garrick's own
+    pre-commit is already there; a merge hook that is not Garrick's is left as it is and does not make it stale."""
     lib = install.lib()
-    hook = zone / ".git" / "hooks" / "pre-commit"
+    hooks = zone / ".git" / "hooks"
     try:
-        text = hook.read_text(encoding="utf-8", errors="replace")
+        text = (hooks / "pre-commit").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return lib.WALL_HOOK_MARK in text and text != lib.WALL_HOOK
+    if lib.WALL_HOOK_MARK not in text:
+        return False
+    if text != lib.WALL_HOOK:
+        return True
+    for name, want in lib.wall_hook_texts().items():
+        try:
+            have = (hooks / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return True                 # not there
+        if lib.WALL_HOOK_MARK in have and have != want:
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------- saying it
@@ -471,7 +493,7 @@ def report(p, applied=None):
                 continue
             lines += ["  " + path for path in paths]
     if p["hooks"]:
-        lines += ["", "Wall check: %d zone%s get%s the newer pre-commit check: %s." % (
+        lines += ["", "Wall check: %d zone%s get%s the newer pre-commit check and the merge hooks: %s." % (
             len(p["hooks"]), "" if len(p["hooks"]) == 1 else "s", "s" if len(p["hooks"]) == 1 else "",
             ", ".join(p["hooks"]))]
     wiki = p.get("wiki_hook")
@@ -678,7 +700,11 @@ def apply(root, p, only=None, today=None):
 
     hooks, added = [], []
     for zone in p["hooks"]:
-        lib.install_wall_hook(root / "Zones" / zone)
+        try:
+            lib.install_wall_hook(root / "Zones" / zone)
+        except lib.MergeHookNotGarricks as exc:      # the others are written; this one is left as it is, and named
+            skipped.append(("Zones/%s/.git/hooks/%s" % (zone, ", ".join(exc.names)),
+                            "not Garrick's, so it is left as it is; add the wall check to it by hand"))
         hooks.append(zone)
     if p.get("wiki_hook") in ("add", "refresh"):
         try:
@@ -686,6 +712,9 @@ def apply(root, p, only=None, today=None):
             hooks.append("Wikis")
             if p.get("wiki_hook") == "add":
                 added.append("Wikis")
+        except lib.MergeHookNotGarricks as exc:
+            skipped.append(("Wikis/.git/hooks/%s" % ", ".join(exc.names),
+                            "not Garrick's, so it is left as it is; add the wall check to it by hand"))
         except (FileExistsError, FileNotFoundError) as exc:
             skipped.append(("Wikis/.git/hooks/pre-commit", "the wikis' wall check was not installed: %s" % exc))
 

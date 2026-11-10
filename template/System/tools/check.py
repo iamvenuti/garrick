@@ -2082,6 +2082,41 @@ def check_history(ws: Workspace) -> List[Finding]:
     return out
 
 
+MEETING_MAX_WORDS = 450
+
+
+def check_concise_pages(ws: Workspace) -> List[Finding]:
+    """A meeting or mail page over `meeting-max-words` words of body (450 unless the settings say), for the pages
+    filed on or after the day `meetings-concise` names in System/garrick-settings.json, the day the user turned the
+    concise format on (#479). Without that key the check says nothing, and a page filed before it never counts. A
+    page's filed day is its `created:`."""
+    settings = read_settings(ws.root)
+    try:
+        start = datetime.date.fromisoformat(str(settings.get("meetings-concise") or "").strip())
+    except ValueError:
+        return []
+    limit = settings.get("meeting-max-words")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        limit = MEETING_MAX_WORDS
+    out: List[Finding] = []
+    for page, fm in sorted(ws.meetings.items()):
+        if fm.get("type") not in ("meeting", "email"):
+            continue
+        try:
+            filed = datetime.date.fromisoformat(str(fm.get("created") or "").strip())
+        except ValueError:
+            continue
+        if filed < start:
+            continue
+        words = len(body_of(read_text(page) or "").split())
+        if words > limit:
+            out.append(Finding(WARNING, "meetings", rel(ws, page),
+                               "its body is %d words, over the %d of `meeting-max-words`; a page is one line on who was there, "
+                               "`## Key points` and `## Actions`, about 350 words" % (words, limit),
+                               "A meeting page is %d words long, over its limit of %d" % (words, limit)))
+    return out
+
+
 RESUME_END_RE = re.compile(r"^(#{1,3} |---\s*$)")
 TICK_RE = re.compile(r"`([^`\n]+)`")
 PATHLIKE_RE = re.compile(r"^[\w./~ ()&',+-]+(\.[A-Za-z0-9]{1,5}|/)$")
@@ -6419,7 +6454,7 @@ PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
     check_hooks, check_cmux,
-    check_skills, check_names, check_projects, check_threads, check_history, check_resume, check_deliverables, check_anonymous,
+    check_skills, check_names, check_projects, check_threads, check_history, check_concise_pages, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates,
 ]

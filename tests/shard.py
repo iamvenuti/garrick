@@ -53,11 +53,8 @@ TIME_LINE = re.compile(r"shard-time (\w+) (\d+(?:\.\d+)?)")
 # map does not know fails closed. Release pull requests and main always run the full suite.
 TOUCH_MAP = {
     # The wall check: a change to it runs every module that tests a wall, not only test_check*.
-    "template/System/tools/check.py": ["test_wall_false_positives", "test_wall_forms", "test_wall_gaps",
-                                       "test_wall_noise", "test_wall_cache",
-                                       "test_walls_cases", "test_walls_deterministic", "test_staged_paths",
-                                       "test_pathspec_commit", "test_decide", "test_owner_names", "test_names",
-                                       "test_walls_allow"],
+    "template/System/tools/check.py": ["test_walls_cases", "test_staged_paths", "test_pathspec_commit", "test_decide",
+                                       "test_zones", "test_allow_ledger"],
     "tests/walls/cases.md": ["test_walls_cases"],
     "extras/status/questions_panel.py": ["test_questions_panel", "test_questions_panel_all",
                                          "test_panel_hardening", "test_decisions",
@@ -72,7 +69,7 @@ TOUCH_MAP = {
     "tests/shard-times.json": ["test_shard"],
     "docs/": ["test_docs", "test_docs_limits"],
     "template/System/skills/": ["test_skills", "test_docs"],
-    "tests/walls/": ["test_wall_form_files"],
+    "tests/walls/": ["test_walls_cases"],
 }
 # Modules no mapped path reaches: they check the whole repository, so only the full suite runs them.
 FULL_ONLY = {
@@ -83,10 +80,8 @@ FULL_ONLY = {
     "test_checkpoint", "test_cmux", "test_cmux_sidebar", "test_decide", "test_executor",
     "test_fetch", "test_knowledge_skill", "test_lib", "test_meetings", "test_memory_canary",
     "test_mod", "test_nested_checkout", "test_obsidian", "test_open_sections",
-    "test_party_flags", "test_pathspec_commit", "test_person_employer", "test_person_organisation", "test_reading", "test_refusals",
-    "test_staged_paths", "test_wall_cache", "test_wall_false_positives", "test_wall_forms",
-    "test_wall_gaps", "test_wall_noise", "test_walls_cases",
-    "test_walls_deterministic", "test_wiki_answers", "test_wrap",
+    "test_pathspec_commit", "test_reading", "test_refusals",
+    "test_staged_paths", "test_walls_cases", "test_wiki_answers", "test_wrap",
 }
 # A change here can break anything: the full suite runs.
 ALWAYS_FULL = (".github/", "tests/fixtures.py")

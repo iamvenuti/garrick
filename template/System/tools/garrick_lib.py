@@ -19,9 +19,8 @@ functions below keep their signatures:
     learned_cell(date, sources) -> str / parse_learned(cell) -> (date, [source]) or None
     learned_row(lines, rows, cells, learned) -> str
     memory_folders(root, value=None) -> [Path] / memory_entries(folders) -> [Path]
-    is_walled(context, tag) -> bool / blocked(context, scope, labels) -> {walled tags the scope lacks}
+    zone_of(root, path) -> zone name, UNZONED or None / walled(context, zone) -> bool / may_flow(context, src, dst) -> bool
     decide(scope, labels, action, context) -> permit | deny | confirm
-    labels(root, path, context=None, cache=None) -> frozenset or None
     workspace_root(start=None) -> Path
     nested_repo(folder) -> bool / is_checkout(folder) -> bool
     live_files(folder) -> [Path]
@@ -113,21 +112,13 @@ __all__ = [
     "memory_folders",
     "memory_entries",
     "knowledge_schema",
-    "blocked",
-    "is_walled",
-    "hats_of",
-    "meets_in",
     "decide",
     "always_asked",
-    "labels",
-    "meeting_labels",
     "wall_cases",
     "REFUSALS",
     "refusal_kind",
     "record_refusals",
     "refusal_counts",
-    "mail_labels",
-    "wall_roles",
     "run_wall_cases",
     "KNOWLEDGE",
     "MEETINGS_ENTITIES",
@@ -137,25 +128,15 @@ __all__ = [
     "entity_page",
     "entity_pages",
     "name_words",
-    "name_keys",
     "TODO_ALSO_RE",
-    "names_meet",
-    "person_forms",
-    "people_parties",
-    "short_form_parties",
-    "organisation_link",
     "org_words",
     "org_key",
     "entity_names",
     "name_group",
-    "entity_parties",
     "suspect_name",
     "entity_rel",
     "links_in",
-    "named_in",
     "first_line",
-    "organisation_named",
-    "organisation_proposal",
     "workspace_root",
     "SKIP_DIRS",
     "NOT_LIVE_DIR_RE",
@@ -840,8 +821,8 @@ def _table_header(lines: List[str]) -> Optional[List[str]]:
 # The sections of context.md read as tables: the columns each is written
 # with, and the ones the checks cannot do without.
 CONTEXT_TABLES = {
-    "zones": (("Zone", "Holds", "Party", "New parties"), ("zone",)),
-    "parties": (("Party", "What it is", "Zone", "Tag", "Walled", "Domains"), ("tag", "walled")),
+    "zones": (("Zone", "Holds", "Walled"), ("zone",)),
+    "parties": (("Party", "What it is", "Zone", "Tag", "Domains", "Learned"), ("tag",)),
     "people": (("Name", "Party", "Role"), ("name", "party")),
     "aliases": (("Heard", "Means"), ("heard", "means")),
 }
@@ -904,11 +885,12 @@ def load_context(root: PathLike) -> dict:
 
         {
           "parties": {tag: {"party": name, "what": ..., "zone": ..., "domains": [...], "walled": bool, "flag": the Walled cell as written}},
-          "zone_parties": {zone name: party tag, ...},   # the one party every file of a zone carries
-          "zone_default": {zone name: "walled" | "open"},   # what `scaffold.py party` proposes there
           "people":  [{"name", "party", "role"}, ...],
           "aliases": {heard (lower case): means},
           "zones":   {zone name: what it holds},
+          "zone_flags": {zone name: the Walled cell as written, lower case},   # empty while `pending`
+          "zone_walled": {zone name: bool},   # the zone wall: True when walled (see zone_of, walled, may_flow)
+          "pending": bool,   # True while the Zones table has no Walled column: the flags above were derived (#485)
           "me":      [your own addresses, lower case],
           "owner":   {"name": "Jo Example", "first": "Jo"}, or None,   # the first sentence of ## Me
           "learned": [{"table", "row", "cell"}, ...],
@@ -921,8 +903,8 @@ def load_context(root: PathLike) -> dict:
     Tags are lower-cased and stripped of backticks. A missing file gives
     empty collections.
     """
-    ctx = {"parties": {}, "zone_parties": {}, "zone_default": {}, "people": [], "aliases": {}, "zones": {}, "me": [], "owner": None, "tables": {},
-           "learned": [], "pending": None}
+    ctx = {"parties": {}, "people": [], "aliases": {}, "zones": {}, "me": [], "owner": None, "tables": {},
+           "learned": [], "pending": False, "zone_walled": {}, "zone_flags": {}}
     path = Path(root) / "System" / "context.md"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -987,8 +969,6 @@ def load_context(root: PathLike) -> dict:
         zone = _col(row, "zone")
         if zone:
             ctx["zones"][zone] = _col(row, "holds")
-            ctx["zone_parties"][zone] = strip_tag(_col(row, "party"))
-            ctx["zone_default"][zone] = "open" if _col(row, "new parties").strip().strip("`*").lower() == "open" else "walled"
 
     # A party's zone is compared with a zone's folder name, so it is written as that name: `**Work**` or `work` in
     # the Zone cell is Work, the folder under Zones/ first, then the Zones table. A zone neither knows is kept as
@@ -1001,48 +981,44 @@ def load_context(root: PathLike) -> dict:
     for row in ctx["parties"].values():
         written = row["zone"].replace("*", "").strip().strip("`").strip()
         row["zone"] = canon.get(written.casefold(), written)
-    for key in ("zone_parties", "zone_default"):
-        ctx[key] = {canon.get(z.casefold(), z): v for z, v in ctx[key].items()}
-    ctx["zone_parties"] = {z: t for z, t in ctx["zone_parties"].items() if t}
-    ctx["pending"] = _pending_pairs(sections)
+    ctx["zone_walled"], ctx["pending"] = _zone_flags(ctx, sections, canon)
     return ctx
 
 
-def _pending_pairs(sections: Dict[str, List[str]]) -> Optional[set]:
-    """The pairs of the old Walls table while the update's flag migration has not run: the Parties table has no
-    Walled column and a Walls table is there. Until the user says yes to the migration the old rule stays in
-    force, so a workspace updated without an answer changes no verdict (migrate_walls.py). None otherwise: a
-    context with a Walled column, or with neither table, is read by its flags."""
-    header = _table_header(sections.get("parties", [])) or []
-    if "walls" not in sections or not header or any(h.startswith("walled") for h in header):
-        return None
-    pairs = set()
-    for row in _table(sections["walls"]):
-        cells = list(row.values())
-        a = strip_tag(row.get("between") or (cells[0] if cells else ""))
-        b = strip_tag(row.get("and") or (cells[1] if len(cells) > 1 else ""))
-        if a and b:
-            pairs.add(frozenset((a, b)))
-    return pairs
-
-
-def _self():
-    """This module's own functions as the old rule needs them, however the module was loaded."""
-    import types
-    return types.SimpleNamespace(always_asked=always_asked, _labels_of=_labels_of, parse_frontmatter=parse_frontmatter)
-
-
-def _old_rule():
-    """migrate_walls.py, beside this file: the one place the pairs rule lives. Loaded by path, so a caller that
-    imported this file from elsewhere (the status page, Ask) finds it too."""
-    mod = sys.modules.get("garrick_migrate_walls")
-    if mod is None:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("garrick_migrate_walls", str(Path(__file__).with_name("migrate_walls.py")))
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["garrick_migrate_walls"] = mod
-        spec.loader.exec_module(mod)
-    return mod
+def _zone_flags(ctx: dict, sections: Dict[str, List[str]], canon: Dict[str, str]) -> Tuple[Dict[str, bool], bool]:
+    """`(zone_walled, pending)` of a context. With a Walled column on the Zones table the flags are read from it, and
+    only a plain `no` opens a zone: anything else, an empty cell included, is walled. Without one the table is
+    from before the zone wall (`pending` is True) and each flag is derived as #485 says: a zone is walled when its
+    own party is walled or its default for new parties is walled, and open when neither is; a zone with no cell to
+    read, and every zone of a context that has no party flags at all (0.59 and older), is walled."""
+    header = _table_header(sections.get("zones", [])) or []
+    column = next((h for h in header if h.startswith("walled")), None)
+    rows = _table(sections.get("zones", []))
+    flags: Dict[str, bool] = {}
+    if column is not None:
+        for row in rows:
+            zone = plain_name(_col(row, "zone"))
+            if zone:
+                cell = (row.get(column) or "").strip().strip("`*").strip().lower()
+                ctx["zone_flags"][canon.get(zone.casefold(), zone)] = cell
+                flags[canon.get(zone.casefold(), zone)] = cell != "no"
+        return flags, False
+    parties_header = _table_header(sections.get("parties", [])) or []
+    has_party_flags = any(h.startswith("walled") for h in parties_header)
+    for row in rows:
+        zone = plain_name(_col(row, "zone"))
+        if not zone:
+            continue
+        tag = strip_tag(_col(row, "party"))
+        default = _col(row, "new parties").strip().strip("`*").strip().lower()
+        known = ctx["parties"].get(tag)
+        party_walled = True if not has_party_flags or known is None else bool(known["walled"])
+        # the same rule as update.zone_flags (#485): walled when its party is, or when its default says so
+        flags[canon.get(zone.casefold(), zone)] = not (not (tag and party_walled) and default == "open"
+                                                       and (not tag or known is not None))
+    # GARRICK_ZONE_FLAGS_FINAL=1 reads the derived flags as the migration's yes would leave them: not pending. The
+    # update's study sets it to run this check as it will decide after the yes, so what would be newly refused shows.
+    return flags, os.environ.get("GARRICK_ZONE_FLAGS_FINAL") != "1"
 
 
 # ---------------------------------------------------------------------------
@@ -1298,55 +1274,14 @@ def knowledge_schema(root: PathLike) -> Tuple[dict, List[str]]:
 # Walls: one decision for every enforcement point (#398)
 # ---------------------------------------------------------------------------
 #
-# The policy is the Parties table of System/context.md (a Walled column, `yes`
-# or `no`) and the Zones table (the one party a zone's files carry). Every
-# point that enforces it (the pre-commit check, Ask, the status page's actions,
-# intake, Nurture, scaffold) asks decide() and holds no wall test of its own;
-# what a record's labels are, labels() says, once. A finding that names the
-# parties in the way asks blocked(), which decide() itself is made of.
+# The policy is the Walled column of the Zones table of System/context.md, `yes`
+# or `no`. Every point that enforces it (the pre-commit check, Ask, the status
+# page's actions, intake, Nurture, scaffold) asks decide() and holds no wall
+# test of its own; a file's zone is its path, or, in the Meetings wiki, its
+# `zone:` (zone_of). The rule itself is may_flow().
 
-KNOWLEDGE = "*knowledge"   # what labels() gives a Knowledge page with no party: read by every scope, takes only material with no party
+KNOWLEDGE = "*knowledge"   # what a Knowledge page is labelled: read by every scope, takes only material with no zone
 ACTIONS = ("read", "write", "file")
-
-
-def _tagset(value) -> set:
-    """A scope or a set of labels as plain tags: none of them empty."""
-    if value is None:
-        return set()
-    if isinstance(value, str):
-        value = [value]
-    return {t for t in (strip_tag(str(v)) for v in value) if t}
-
-
-def is_walled(context: dict, tag: str) -> bool:
-    """Is a party walled? A tag the Parties table lacks is, as is a row with no plain `no`."""
-    if context.get("pending") is not None:
-        return any(tag in pair for pair in context["pending"])
-    return bool((context.get("parties", {}).get(tag) or {}).get("walled", True))
-
-
-def blocked(context: dict, scope, labels) -> set:
-    """The walled tags in `labels` that `scope` lacks: what stops material
-    labelled `labels` from going into a record whose parties are `scope`."""
-    if context.get("pending") is not None:
-        return _old_rule().legacy_blocked(context, scope, labels)
-    held = _tagset(scope)
-    return {t for t in _tagset(labels) if t != KNOWLEDGE and t not in held and is_walled(context, t)}
-
-
-def meets_in(context: dict, tags, scope=None) -> bool:
-    """May material holding `tags` meet in one place? One walled party at most always may. Two or more may only
-    where the place is known and names every walled one of them: `scope`, the tags of the project at hand.
-    With no place known yet, two walled parties stop. Naming them on that project is the yes."""
-    walled_ = {t for t in _tagset(tags) if is_walled(context, t)}
-    return len(walled_) < 2 or (scope is not None and walled_ <= _tagset(scope))
-
-
-def hats_of(context: dict, tags) -> List[Tuple[str, str]]:
-    """The pairs of tags in `tags` whose Parties rows share a name: one company under two hats."""
-    tags = sorted(_tagset(tags))
-    return [(a, b) for i, a in enumerate(tags) for b in tags[i + 1:]
-            if always_asked(context, a) and always_asked(context, b) and _name(context, a) == _name(context, b)]
 
 
 def _name(context: dict, tag: str) -> str:
@@ -1360,51 +1295,151 @@ def always_asked(context: dict, tag: str) -> bool:
     return bool(name) and any(t != tag and _name(context, t) == name for t in context.get("parties", {}))
 
 
+def _zones(context: dict, value) -> set:
+    """The zones in `value`, a set or list of zone names (or KNOWLEDGE), as the Zones table writes them: matched
+    without regard to case, backticks taken off. A name the table lacks is kept as it is, and reads as walled."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        value = [value]
+    canon = {z.casefold(): z for z in (context.get("zone_walled") or {})}
+    names = {str(v).strip().strip("`").strip() for v in value}
+    return {canon.get(n.casefold(), n) for n in names if n}
+
+
 def decide(scope, labels, action: str, context: dict) -> str:
     """`permit`, `deny` or `confirm`: may `scope` use a record labelled `labels`?
 
-    One rule: material goes into a record whose parties are `scope` only when every walled party on it is one of
-    them. `scope` is None for a project not yet chosen (filing). `labels` is None when they cannot be derived: no
-    label, no permit (`deny` to read and write, `confirm` to file). A tag the Parties table lacks is `deny`.
-    A Knowledge page (KNOWLEDGE) is read by every scope and takes only material with no party. Filing asks
-    (`confirm`) on an item with no label or from a party that is always asked about, and before a project is
-    chosen on one with two walled parties.
+    One rule, the zone's: material of a walled zone goes only into a record of that zone, and material of an open
+    zone goes anywhere (may_flow). `scope` and `labels` are sets of zone names, one zone each; `scope` is None for a
+    project not yet chosen (filing). `labels` is None when the zone cannot be derived: no label, no permit (`deny`
+    to read and write, `confirm` to file). A zone the Zones table lacks is `deny`, as a scope and as a label. A
+    Knowledge page (KNOWLEDGE) is read by every scope and takes only material with no zone. Filing asks (`confirm`)
+    on an item with no label, and before a project is chosen on one with two walled zones.
     """
     if action not in ACTIONS:
         raise ValueError("action is read, write or file, not %r" % (action,))
-    if context.get("pending") is not None:
-        return _old_rule().legacy_decide(scope, labels, action, context, _self())
-    known = set(context.get("parties", {}))
-    mine, theirs = _tagset(scope), _tagset(labels)
+    known = set(context.get("zone_walled") or {})
+    mine, theirs = _zones(context, scope), _zones(context, labels)
     if (scope is not None and mine - known - {KNOWLEDGE}) or (labels is not None and theirs - known - {KNOWLEDGE}):
         return "deny"
     if labels is None:
         return "deny" if action != "file" else "confirm"
-    parties = theirs - {KNOWLEDGE}
-    asked = not theirs or any(always_asked(context, t) for t in parties)
+    material, there = theirs - {KNOWLEDGE}, mine - {KNOWLEDGE}
+    goes = all(may_flow(context, z, d) for z in material for d in there)
     if action == "read":
-        return "permit" if theirs and (not parties or (mine - {KNOWLEDGE} and not blocked(context, mine, parties))) else "deny"
+        return "permit" if theirs and (not material or (there and goes)) else "deny"
     if scope is None and action == "file":      # intake, before a project is chosen
-        return "confirm" if asked or sum(is_walled(context, t) for t in parties) > 1 else "permit"
+        return "confirm" if not theirs or sum(walled(context, z) for z in material) > 1 else "permit"
     if not mine:
-        return "deny"                           # a record with no party takes nothing
+        return "deny"                           # a record in no zone takes nothing
     if mine == {KNOWLEDGE}:
-        return "deny" if parties else "permit"
-    if blocked(context, mine, parties):
+        return "deny" if material else "permit"
+    if not goes:
         return "deny"
-    return "confirm" if action == "file" and asked else "permit"
+    return "confirm" if action == "file" and not theirs else "permit"
+
+
+# ---------------------------------------------------------------------------
+# The zone wall: a zone is walled or open, and nothing below a zone is walled
+# ---------------------------------------------------------------------------
+
+UNZONED = "<no zone>"   # a Meetings page with no `zone:`, or with more than one: walled, so it flows nowhere
+
+_ZONE_CACHE: Dict[str, Tuple[tuple, Dict[str, str]]] = {}
+
+
+def _zone_names(root: Path) -> Dict[str, str]:
+    """The zone names of a workspace by case-folded name, as `load_context` writes them: the folder under Zones/
+    as it is on disk first, then the Zones table. Kept while `System/context.md` and `Zones/` stay as they are."""
+    try:
+        stamp = (root / "System" / "context.md").stat().st_mtime_ns, (root / "Zones").stat().st_mtime_ns
+    except OSError:
+        stamp = (0, 0)
+    hit = _ZONE_CACHE.get(str(root))
+    if hit and hit[0] == stamp:
+        return hit[1]
+    names = {z.casefold(): z for z in load_context(root)["zones"]}
+    try:
+        names.update({d.name.casefold(): d.name for d in (root / "Zones").iterdir() if d.is_dir()})
+    except OSError:
+        pass
+    _ZONE_CACHE[str(root)] = (stamp, names)
+    return names
+
+
+def zone_of(root: PathLike, path: PathLike) -> Optional[str]:
+    """The zone a file belongs to.
+
+    `Zones/<Zone>/...` is `<Zone>`, the folder as it is on disk. `Wikis/Meetings/...` is the page's `zone:`
+    frontmatter, canonicalised to a zone of the Zones table: `UNZONED` when the page has none, names a zone the
+    table does not know, or names two. That holds for a record under `raw/` as well: it counts by its own `zone:`,
+    and one with none (a transcript in `raw/inbox/` waiting to be split) is `UNZONED`, so never open by default.
+    `Wikis/Knowledge/...`, `System/...`, the root and anything else are `None`: the wall reads no zone there.
+    A relative `path` is read from `root`."""
+    root_p = Path(os.path.abspath(str(root)))
+    full = Path(os.path.abspath(str(path) if os.path.isabs(str(path)) else os.path.join(str(root_p), str(path))))
+    try:
+        rel = full.relative_to(root_p)
+    except ValueError:
+        try:
+            rel = full.resolve().relative_to(root_p.resolve())
+            full = root_p / rel
+        except (ValueError, OSError):
+            return None
+    parts = rel.parts
+    if len(parts) >= 3 and parts[0] == "Zones":
+        return _zone_names(root_p).get(parts[1].casefold(), parts[1])
+    if len(parts) >= 2 and parts[0] == "Wikis" and parts[1] == "Meetings":
+        try:
+            fm = parse_frontmatter(full)
+        except Exception:
+            return UNZONED
+        return zone_from_frontmatter(root_p, fm)
+    return None
+
+
+def zone_from_frontmatter(root: PathLike, fm: dict) -> str:
+    """The zone a Meetings page's frontmatter names, canonicalised to a zone of the workspace: `UNZONED` when it
+    has no `zone:`, names a zone that is not one, or names two."""
+    known = _zone_names(Path(os.path.abspath(str(root))))
+    value = (fm or {}).get("zone")
+    items = value if isinstance(value, list) else re.split(r"\s*,\s*", str(value or ""))
+    zones = {known.get(re.sub(r"^\[\[|\]\]$", "", plain_name(str(i))).casefold()) for i in items if plain_name(str(i))}
+    return zones.pop() if len(zones) == 1 and None not in zones else UNZONED
+
+
+def walled(context: dict, zone: Optional[str]) -> bool:
+    """Is a zone walled? `None` (System, Knowledge, the root) is not. A zone of `context["zone_walled"]` is as its
+    flag says; any other zone, `UNZONED` included, is walled: a zone nobody declared fails closed."""
+    if zone is None:
+        return False
+    return bool((context.get("zone_walled") or {}).get(zone, True)) if zone != UNZONED else True
+
+
+def may_flow(context: dict, src_zone: Optional[str], dst_zone: Optional[str]) -> bool:
+    """May material of `src_zone` go into `dst_zone`? Material with no zone goes anywhere, and material of an open
+    zone goes anywhere (Knowledge's own rule, that it takes only material with no zone, is applied by the check on
+    top). Material of a walled zone goes only into its own zone, never into `None` or another zone. `UNZONED` is
+    walled and its own destination too: two pages that name no zone do not share one."""
+    if src_zone is None:
+        return True
+    if src_zone == dst_zone:
+        return src_zone != UNZONED
+    return not walled(context, src_zone)
 
 
 # What each wall refusal leaves behind, with no content (#437): when, where, and what kind of finding.
 REFUSALS = ("System", "generated", "walls", "refusals.jsonl")
-REFUSAL_KINDS = ("link", "name", "wording", "path", "unlabelled", "unreadable")
+REFUSAL_KINDS = ("link", "name", "wording", "path", "unlabelled", "unreadable", "copy")
 
 
 def refusal_kind(message: str) -> str:
     m = (message or "").lower()
-    for kind, words in (("wording", ("repeats wording",)),
+    for kind, words in (("copy", ("is a copy, whole",)),
+                        ("wording", ("repeats wording",)),
                         ("unreadable", ("cannot be read", "cannot read", "cannot be checked", "cannot be placed", "nul bytes")),
-                        ("unlabelled", ("names no party", "no party to check", "has a party", "unfinished", "no party")),
+                        ("unlabelled", ("names no zone", "names no party", "no party to check", "has a party", "unfinished", "no party")),
                         ("name", ("one of its people",)),
                         ("path", ("writes the path", "a path that leads"))):
         if any(w in m for w in words):
@@ -1482,7 +1517,7 @@ def refusal_counts(root: PathLike, now=None, days: int = 30) -> dict:
 ALLOW_LEDGER = ("System", "walls-allowed.json")
 ALLOW_VERSION = 1
 ALLOW_BY = ("terminal", "page")
-ALLOW_RULES = ("link", "name", "wording", "path", "unlabelled")      # the kinds an allowance may cover
+ALLOW_RULES = ("link", "name", "wording", "path", "unlabelled", "copy")      # the kinds an allowance may cover
 ALLOW_ID_LENGTH = 10
 ALLOW_KEYS = ("path", "id", "blob", "rule", "date", "by")
 
@@ -1641,56 +1676,28 @@ def wall_cases(text: str) -> Dict[str, List[List[str]]]:
     return out
 
 
-def mail_labels(context: dict, data: bytes) -> Tuple[Optional[frozenset], bool]:
-    """(the parties a saved mail is written for, whether its header and its
-    addresses disagree). The labels are the union of its `X-Garrick-Parties`
-    header and the parties of the domains it carries; a header tag that is
-    unknown or `none` makes them None. A mail with neither has none."""
-    known = set(context.get("parties", {}))
-    header = set(stamped_parties(data))
-    reserved = {"none", "public"} if context.get("pending") is not None else {"none"}      # pending: as v0.59.1
-    if header and (header - known or header & reserved):
-        return None, True
-    domains = set()
-    mail = parse_mail_bytes(data)
-    for key in ("from", "to", "cc"):
-        for _, addr in mail.get(key, []):
-            if not is_own_address(context, addr) and not is_webmail(addr.rpartition("@")[2]):
-                domains |= set(parties_for_domain(context, addr.rpartition("@")[2]))
-    union = header | domains
-    return (frozenset(union) if union else None), bool(header and domains and header != domains)
-
-
-def wall_roles(context: dict) -> Dict[str, str]:
-    """The tags that stand for the roles of the wall cases (tests/walls/cases.md)
-    in a Parties table: `near` and `far`, two walled parties that share no name;
-    `other`, an open party; `hat` and `hat2`, two walled parties of one name;
-    `zone`, the party a zone names; `ghost`, a tag the table lacks; `knowledge`.
-    A role the table has no tag for is left out."""
-    parties = sorted(context.get("parties", {}))
-    roles = {"ghost": "ghost-not-in-parties", "knowledge": KNOWLEDGE}
-    while roles["ghost"] in parties:
+def zone_roles(context: dict) -> Dict[str, str]:
+    """The zones that stand for the roles of the wall cases (tests/walls/cases.md) in a Zones table: `near` and
+    `far`, two walled zones; `open`, an open zone; `ghost`, a zone the table lacks; `unzoned` and `knowledge`.
+    A role the table has no zone for is left out."""
+    flags = context.get("zone_walled") or {}
+    roles = {"ghost": "ghost-zone", "knowledge": KNOWLEDGE, "unzoned": UNZONED}
+    while roles["ghost"] in flags:
         roles["ghost"] += "-x"
-    walled_ = [t for t in parties if is_walled(context, t)]
-    twins = [(a, b) for a in walled_ for b in walled_ if a < b and hats_of(context, [a, b])]
-    plain = [t for t in walled_ if not always_asked(context, t)]
-    if len(plain) >= 2:
-        roles["near"], roles["far"] = plain[:2]
-    open_ = [t for t in parties if not is_walled(context, t)]
-    if open_:
-        roles["other"] = open_[0]
-    if twins:
-        roles["hat"], roles["hat2"] = twins[0]
-    zoned = sorted(set(context.get("zone_parties", {}).values()) & set(parties))
-    if zoned:
-        roles["zone"] = zoned[0]
+    closed = sorted(z for z, w in flags.items() if w)
+    if len(closed) >= 2:
+        roles["near"], roles["far"] = closed[:2]
+    free = sorted(z for z, w in flags.items() if not w)
+    if free:
+        roles["open"] = free[0]
     return roles
 
 
 def run_wall_cases(context: dict, text: str) -> Tuple[int, List[str], List[str]]:
-    """The decide() rows of a wall-cases file, run against a Parties table with its own tags in place of the fixture's roles. Returns (rows run,
-    rows skipped because the table has no tag for a role, the rows that failed)."""
-    roles = wall_roles(context)
+    """The decide() rows of a wall-cases file, run against a Zones table with its own zones in place of the
+    fixture's roles. Returns (rows run, rows skipped because the table has no zone for a role, the rows that
+    failed)."""
+    roles = zone_roles(context)
     ran, skipped, failed = 0, [], []
     for ident, scope, labels_, action, expect, source in wall_cases(text).get("decide()", []):
         def tags(cell):
@@ -1713,25 +1720,6 @@ def run_wall_cases(context: dict, text: str) -> Tuple[int, List[str], List[str]]
     return ran, skipped, failed
 
 
-def _labels_of(fm: dict, alone: bool = False) -> Optional[set]:
-    """The tags a frontmatter names in `party:` and `parties:`; None when both
-    are there and disagree, which reads two ways and so reads as neither."""
-    one, many = tag_list(fm.get("party")), tag_list(fm.get("parties"))
-    if fm.get("party") is not None and fm.get("parties") is not None and set(one) != set(many):
-        return None
-    got = set(many or one)
-    if any(str(t).strip().strip("\"'").casefold() == KNOWLEDGE for t in got):
-        return None             # the sentinel is code's, never a tag a page may write: read as no label
-    return got
-
-
-def _note_labels(path: Path) -> set:
-    try:
-        return _labels_of(parse_frontmatter(path)) or set()
-    except OSError:
-        return set()
-
-
 _PARTY_KEY_RE = re.compile(r"(?im)^[ \t]*[\"']?[ \t]*(?:party|parties|zone)[ \t]*[\"']?[ \t]*:")
 
 
@@ -1747,149 +1735,6 @@ def _party_like_key(path: Path) -> bool:
         return False
     block = re.split(r"(?m)^---[ \t]*$", text, maxsplit=2)
     return bool(_PARTY_KEY_RE.search(block[1] if len(block) > 1 else text[:4000]))
-
-
-def meeting_labels(fm: dict, pending: bool = False) -> Optional[frozenset]:
-    """The parties a Meetings page's frontmatter names, or None when they
-    cannot all be stated: a finished page has a zone and a list of `parties:`; a
-    person or entity page may have its `party:` alone; `party:` and `parties:`
-    that disagree read two ways, so neither. While the migration is pending (`pending`), as v0.59.1 answered:
-    `public` is a project's choice, never a conversation's, so a page naming it has no labels."""
-    got = _labels_of(fm)
-    if not got or (pending and "public" in got):
-        return None
-    kind = str(fm.get("type") or "").strip().lower()
-    if kind in ("person", "entity") and fm.get("parties") is None:
-        return frozenset(got)
-    if fm.get("zone") and isinstance(fm.get("parties"), list):
-        return frozenset(got)
-    return None
-
-
-def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
-           cache: Optional[dict] = None) -> Optional[frozenset]:
-    """The parties a record is written for (see _labels), or None when they cannot be derived, or when they hold
-    two parties that share a name: one company under two hats never meets in one record."""
-    got = _labels(root, path, context, cache)
-    if got is not None and len(got) > 1:
-        context = context if context is not None else load_context(root)
-        if context.get("pending") is None and hats_of(context, got):      # pending: v0.59.1 had no such rule
-            return None
-    return got
-
-
-def _labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
-            cache: Optional[dict] = None) -> Optional[frozenset]:
-    """The parties a record is written for, derived here and nowhere else, or
-    None when they cannot be derived (decide() reads None as no label).
-
-    In this order: a Knowledge page's own `parties:` (a page with none is
-    KNOWLEDGE's, read by every scope); a Meetings page's own `parties:`
-    or `party:` (a finished page has a zone; a person or entity page may have
-    its `party:` alone); a raw record's, the pages that cite it; a mail in an
-    inbox, its `X-Garrick-Parties` header or the domains it carries; a file in
-    a project, its hub's and its thread note's (a project folder, every
-    thread's; a hub that names no party gives None). A record whose `party:`
-    and `parties:` both exist and disagree reads two ways: None. Pass a dict
-    as `cache` to derive each hub, thread note and citation index once per run.
-    """
-    root, path = Path(root), Path(path)
-    cache = {} if cache is None else cache
-    try:
-        parts = (path if path.is_absolute() else root / path).relative_to(root).parts
-    except ValueError:
-        return None
-    if any(p in ("..", "") for p in parts):
-        return None
-    if len(parts) >= 3 and parts[0] == "Zones":
-        # a folder as the disk spells it: another case or Unicode form (Finder's NFD, an ignorecase rename) is the same one
-        zone = _listed(root / "Zones", parts[1]) or parts[1]
-        project = _listed(root / "Zones" / zone, parts[2]) or parts[2]
-        rest = list(parts[3:])
-        if len(rest) >= 2 and rest[0].casefold() == "threads":
-            rest[0] = _listed(root / "Zones" / zone / project, rest[0]) or rest[0]
-            rest[1] = _listed(root / "Zones" / zone / project / rest[0], rest[1]) or rest[1]
-        parts = ("Zones", zone, project) + tuple(rest)
-    full = root.joinpath(*parts)
-    if len(parts) > 3 and parts[0] == "Wikis" and parts[2] in ("dormant", "archive"):
-        parts = parts[:2] + parts[3:]       # a faded page or record is labelled as the working one it was
-    if parts[:2] == ("Wikis", "Knowledge"):
-        fm = parse_frontmatter(full) if full.suffix == ".md" and full.is_file() else {}
-        if full.suffix == ".md" and full.is_file() and _party_like_key(full):
-            return None             # a page that carries a party key in any spelling is someone's, not published
-        got = _labels_of(fm)
-        context = context if context is not None else load_context(root)
-        none = _old_rule().LEGACY_PUBLIC if context.get("pending") is not None else KNOWLEDGE
-        return None if got is None else frozenset(got or {none})
-    if parts[:3] == ("Wikis", "Meetings", "wiki"):
-        if full.suffix != ".md" or not full.is_file():
-            return None
-        context = context if context is not None else load_context(root)
-        return meeting_labels(parse_frontmatter(full), context.get("pending") is not None)
-    if parts[:3] == ("Wikis", "Meetings", "raw"):
-        key = ("cites", str(root))
-        if key not in cache:
-            index: Dict[str, List[Path]] = {}
-            pages = []
-            for grade in ("", "dormant", "archive"):
-                wiki = root / "Wikis" / "Meetings" / grade / "wiki"
-                pages += sorted(wiki.rglob("*.md")) if wiki.is_dir() else []
-            for page in pages:
-                try:
-                    text = page.read_text(encoding="utf-8", errors="replace")
-                except OSError:
-                    continue
-                for stem in set(re.findall(r"\[\[(?:raw/)?([^\]|#]+?)(?:\.\w+)?(?:[|#][^\]]*)?\]\]", text)) | \
-                        set(re.findall(r"raw/([^\s\]|#)\"']+?)(?:\.\w+)?(?=[\s\]|#)\"']|$)", text)):
-                    index.setdefault(Path(stem).name.lower(), []).append(page)
-            cache[key] = index
-        pages = cache[key].get(full.stem.lower(), [])
-        if not pages:
-            return None
-        out: set = set()
-        for page in pages:
-            got = labels(root, page, context, cache)
-            if got is None:
-                return None
-            out |= got
-        return frozenset(out)
-    put_away = len(parts) >= 5 and parts[0] == "Zones" and parts[2].casefold() == "archive" and not parts[3].startswith(".")
-    if put_away and (root / "Zones" / parts[1] / parts[2] / parts[3] / (parts[3] + ".md")).is_file():
-        # A project put away in a zone's archive/ keeps its hub's party: its files stay labelled (#438). Any other
-        # file there, and anything under a hidden folder, belongs to no project and has no label.
-        parts = ("Zones", parts[1], parts[2] + "/" + parts[3]) + parts[4:]
-    if len(parts) >= 3 and parts[0] == "Zones" and parts[2] != "Inbox" and not parts[2].startswith(".") \
-            and (parts[2].casefold() != "archive" or put_away):
-        project = root / "Zones" / parts[1] / parts[2]
-        if not project.is_dir():
-            return None
-        context = context if context is not None else load_context(root)
-        if context.get("pending") is not None:
-            return _old_rule().legacy_project_labels(root, _self(), parts, cache)
-        hub = ("hub", str(project))
-        if hub not in cache:
-            fm = parse_frontmatter(project / (project.name + ".md"))
-            cache[hub] = _labels_of(fm)         # the note named after the folder, whatever its type, as the hook finds it
-        found = cache[hub]
-        if not found:
-            return None                         # a hub that names no party labels nothing
-        out = set(found)
-        if len(parts) >= 5 and parts[3].casefold() == "threads":      # a thread's file adds its thread note's parties, no other thread's
-            got = _labels_of(parse_frontmatter(project / parts[3] / parts[4] / (parts[4] + ".md")))
-            if got is None:
-                return None
-            out |= got
-        context = context if context is not None else load_context(root)
-        zone_party = context.get("zone_parties", {}).get(parts[1])
-        return frozenset(out | ({zone_party} if zone_party else set()))
-    if len(parts) >= 3 and parts[0] == "Zones" and parts[2] == "Inbox" and full.suffix.lower() == ".eml" and full.is_file():
-        try:
-            data = full.read_bytes()
-        except OSError:
-            return None
-        context = context if context is not None else load_context(root)
-        return mail_labels(context, data)[0]
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -2006,7 +1851,6 @@ def party_entities(root: PathLike) -> Dict[str, List[str]]:
 _NAME_FOLD = str.maketrans({"ø": "o", "æ": "ae", "œ": "oe", "ß": "ss", "đ": "d", "ð": "d", "þ": "th",
                             "ł": "l", "ı": "i", "ħ": "h", "ŋ": "n", "ĸ": "k", "ſ": "s"})
 _QUOTED = re.compile(r"[\"“”„«»(]([^\"“”„«»()]+)[\"“”„«»)]")
-_SIGNS_AS = re.compile(r"\bsigns as ([^;,()\"“”]+)", re.I)
 
 
 def name_words(name) -> List[str]:
@@ -2029,167 +1873,6 @@ def _fold_pairs(word: str) -> str:
     for a, b in _PAIRS:
         word = word.replace(a, b)
     return word
-
-
-def _name_readings(name) -> List[List[str]]:
-    """A name's words as written, and, where one comma splits it in two, read
-    the other way round too, so `Whitlock, Dana` is also `Dana Whitlock`.
-    Each word has its two-letter spellings of one letter folded (_PAIRS)."""
-    text = str(name or "")
-    out = [name_words(text)]
-    head, comma, tail = text.partition(",")
-    if comma and "," not in tail:
-        out.append(name_words(tail) + name_words(head))
-    return [[_fold_pairs(x) for x in w] for w in out if w]
-
-
-def name_keys(name) -> set:
-    """The keys a name is matched by, for names_meet(). Loose on purpose: it
-    errs toward finding a second hat, so a page that might be one of two
-    walled people links neither.
-
-    Exact keys, which meet the same key: all its words run together, and its
-    first and last words, so a middle name or initial does not keep two
-    spellings apart. Then keys that meet only their partner, `<` a short form
-    and `>` the full one it may stand for: a name of one word stands for any
-    name opening with that word (`Eli` for `Eli Cohen`), an initial and a
-    surname for a name with that initial and surname (`D. Whitlock`), and a
-    first name and an initial for one with that name and last initial
-    (`Dana W.`). Each reading of the name counts (_name_readings)."""
-    keys = set()
-    for w in _name_readings(name):
-        keys.add("all:" + "".join(w))
-        if len(w) == 1:
-            keys.add("<first:" + w[0])
-            continue
-        first, last = w[0], w[-1]
-        keys |= {"ends:%s|%s" % (first, last), ">first:" + first,
-                 ">init:%s|%s" % (first[0], last), ">linit:%s|%s" % (first, last[0])}
-        if len(first) == 1:
-            keys.add("<init:%s|%s" % (first, last))
-        if len(last) == 1:
-            keys.add("<linit:%s|%s" % (first, last))
-    return keys
-
-
-def names_meet(a: set, b: set) -> bool:
-    """Do two sets of name_keys() stand for one name? An exact key or a short
-    form both share, or a short form in one and its full form in the other.
-    Two full forms alone never meet: `David Whitlock` is not `Dana Whitlock`."""
-    if any(not k.startswith(">") for k in a & b):
-        return True
-    turn = {"<": ">", ">": "<"}
-    return any(turn[k[0]] + k[1:] in b for k in a if k[:1] in turn)
-
-
-def person_forms(context: dict, row: dict) -> List[str]:
-    """Every name a People row goes by: the name as written, without its
-    quoted nickname, the nickname alone, a `signs as` name in the row, and
-    each heard form in the Aliases table that means one of those."""
-    name = str(row.get("name") or "")
-    forms = [name, _QUOTED.sub(" ", name)] + _QUOTED.findall(name)
-    for cell in (name, str(row.get("role") or "")):
-        forms += [m.strip() for m in _SIGNS_AS.findall(cell)]
-    keys = set().union(*(name_keys(f) for f in forms))
-    forms += [heard for heard, means in context.get("aliases", {}).items() if names_meet(name_keys(means), keys)]
-    return [f for f in forms if name_words(f)]
-
-
-def people_parties(context: dict, names) -> set:
-    """The tags the People table gives any of `names`, a page's title and its
-    file name say, by every name each row goes by (person_forms), as
-    names_meet() matches them. A row found brings every row of the same name
-    with it, so a nickname or a `signs as` written on one hat's row alone
-    still finds the other hat. A name that is a short form of a person under
-    parties a wall keeps apart, which names_meet() does not read, brings both
-    hats (_short_of_two_hats)."""
-    return (_listed_parties(context, names) | _short_of_two_hats(context, names)) - {""}
-
-
-def short_form_parties(context: dict, names) -> set:
-    """The tags of a person under parties a wall keeps apart that `names` is
-    only a short form of (_short_of_two_hats) and people_parties() would not
-    have found otherwise: a page to ask about, not to link (#340)."""
-    return _short_of_two_hats(context, names) - _listed_parties(context, names) - {""}
-
-
-def _listed_parties(context: dict, names) -> set:
-    keys = set().union(set(), *(name_keys(n) for n in ([names] if isinstance(names, str) else names)))
-    if not keys:
-        return set()
-    rows = [(p, set().union(set(), *(name_keys(f) for f in person_forms(context, p)))) for p in context.get("people", [])]
-    hit = [i for i, (_, forms) in enumerate(rows) if names_meet(keys, forms)]
-    named = set().union(set(), *(name_keys(rows[i][0].get("name")) for i in hit))
-    found = {strip_tag(p.get("party") or "") for i, (p, _) in enumerate(rows)
-             if i in hit or names_meet(named, name_keys(p.get("name")))}
-    return found - {""}
-
-
-def _short_of_two_hats(context: dict, names) -> set:
-    """The tags of every person the People table has under parties a wall
-    keeps apart, when a page's name shares a word with their surname. Fail
-    closed (#340): names are folded (case, accents, `æ`, `ø`, `ß`, punctuation)
-    and split into words, and any page that holds a surname word of such a
-    person, in any order, with any title, initial or note beside it (`Blake`,
-    `Mr Blake`, `Blake Rowan`, `Rowan Blake (Birch)`), is read as that person:
-    it links neither hat's entity page and is asked about. The one exception
-    is a page whose whole folded name is another row of the People table. A
-    surname is the last word of each name a row goes by (person_forms)."""
-    pages = [name_words(n) for n in ([names] if isinstance(names, str) else names)]
-    pages = [w for w in pages if w]
-    if not pages:
-        return set()
-    persons: Dict[str, List[dict]] = {}
-    for p in context.get("people", []):
-        persons.setdefault(" ".join(name_words(p.get("name"))), []).append(p)
-    out = set()
-    for whole, rows in persons.items():
-        tags = {strip_tag(p.get("party") or "") for p in rows} - {""}
-        if not _any_wall(context, tags):
-            continue
-        surnames = {w[-1] for p in rows for f in person_forms(context, p) for w in [name_words(f)] if w}
-        for page in pages:
-            if " ".join(page) in persons and " ".join(page) != whole:
-                continue                     # another row of the table, exactly
-            if surnames & set(page):
-                out |= tags
-    return out
-
-
-def organisation_link(root: PathLike, context: dict, names, party,
-                      entities: Optional[Dict[str, List[str]]] = None,
-                      index: Optional[List[dict]] = None) -> str:
-    """The `organisation:` a person page carries by default, the entity page
-    of its own party, `[[wiki/entities/<rel>]]`, or "" when it carries none.
-    `names` is the person's name, or the names a page goes by (its title and
-    its file name). Where a page's first line or the user says where the
-    person works, organisation_proposal() and organisation_named() decide
-    instead (#330); this is what holds when nothing else is known. Fail
-    closed, at every step:
-
-    - the page names exactly one party, a tag in the Parties table, not `none`;
-    - where the People table has rows for the name, under any name the row
-      goes by and in any short form names_meet() reads as it, one of them is
-      that party, and no two of them are walled from each other: one page a
-      name shares between two hats links neither hat's entity page;
-    - exactly one entity page stands for that party alone;
-    - no entity page that goes by the same name (name_group) names a party
-      walled from it, or two parties walled from each other, names no party
-      at all, or goes by a name with letters name_words() cannot read.
-    """
-    tags = sorted(set(tag_list(party)))
-    if len(tags) != 1 or tags[0] == "none" or tags[0] not in context.get("parties", {}):
-        return ""
-    tag, rows = tags[0], people_parties(context, names)
-    if rows and (tag not in rows or _any_wall(context, rows)):
-        return ""
-    pages = (party_entities(root) if entities is None else entities).get(tag, [])
-    if len(pages) != 1:
-        return ""
-    group = name_group(entity_names(root) if index is None else index, [pages[0]])
-    if _unlinkable(context, group) or _any_wall(context, {tag} | rows | entity_parties(context, group)):
-        return ""
-    return "[[wiki/entities/%s]]" % pages[0]
 
 
 # ---------------------------------------------------------------------------
@@ -2290,75 +1973,6 @@ def name_group(index: List[dict], rels) -> List[dict]:
     return [e for e in index if e["rel"] in rels or e["keys"] & keys]
 
 
-_QUALIFIER = re.compile(r"[(\[]([^()\[\]]*)[)\]]")
-_LEADING = ("the",)
-
-
-def _party_names(context: dict, tag: str, row) -> List[Tuple[List[str], bool]]:
-    """The names a party goes by, each as org_words() and whether a page
-    opening with its first word is read as the party's: its cell in the
-    Parties table, without its markup; every name in brackets in it, read as
-    a name of its own whatever its lead word, so `**Seventh Gate**
-    (product Lanternfish)` is `Seventh Gate`, `Lanternfish` and, without its
-    first-word rule, `product Lanternfish`; each heard form the Aliases table
-    gives for one of those; and its tag."""
-    cell = str(row.get("party") if isinstance(row, dict) else row or "")
-    cell = cell.replace("*", " ").replace("`", " ")
-    strong = [_QUALIFIER.sub(" ", cell)]
-    weak = []
-    for q in _QUALIFIER.findall(cell):
-        words = q.split()
-        if len(words) > 1:
-            weak.append(q)
-            strong.append(" ".join(words[1:]))
-        elif words:
-            strong.append(q)
-    keys = {org_key(n) for n in strong + weak} - {""}
-    strong += [heard for heard, means in context.get("aliases", {}).items() if org_key(means) in keys]
-    strong.append(tag.replace("-", " "))
-    out = []
-    for n, first in [(n, True) for n in strong] + [(n, False) for n in weak]:
-        words = org_words(n)
-        while words and words[0] in _LEADING:
-            words = words[1:]
-        if words:
-            out.append((words, first))
-    return out
-
-
-def _named_after(name_words_: List[str], party: List[str], first: bool = True) -> bool:
-    """Is a page's name, as org_words(), named after a party's: the same run
-    together, holding all of the party name's words, or, where `first`,
-    opening with its first word (`Acme` and `Acme Corporation` for `Acme
-    Corp`)."""
-    words = list(name_words_)
-    while words and words[0] in _LEADING:
-        words = words[1:]
-    if not words:
-        return False
-    return ("".join(words) == "".join(party) or set(party) <= set(words) or (first and words[0] == party[0]))
-
-
-def entity_parties(context: dict, group: List[dict]) -> set:
-    """The parties a wall reads for a group of entity pages: each page's own
-    `party:` and `parties:` tags, and, for a page naming none (`party: none`
-    or no `party:` at all), every party it is named after (_named_after) by
-    any name it goes by: a page called `Acme`, `The Acme Corp` or `Acme Corp
-    Ltd` is Acme's whether or not it says so. A customer's page, named after
-    no party, is nobody's."""
-    out = set()
-    named: Optional[Dict[str, List[Tuple[List[str], bool]]]] = None
-    for e in group:
-        if e["parties"]:
-            out |= e["parties"]
-            continue
-        if named is None:
-            named = {tag: _party_names(context, tag, row) for tag, row in context.get("parties", {}).items()}
-        words = [org_words(n) for n in e["names"]]
-        out |= {tag for tag, forms in named.items() if any(_named_after(w, f, first) for w in words for f, first in forms)}
-    return out
-
-
 def _unlinkable(context: dict, group: List[dict]) -> str:
     """Why no tool links a person page to a group of entity pages, or "": one
     of its pages says no `party:` at all, names a tag the Parties table does
@@ -2371,36 +1985,6 @@ def _unlinkable(context: dict, group: List[dict]) -> str:
         if e.get("suspect"):
             return "wiki/entities/%s goes by a name with letters no tool reads; write the link by hand" % e["rel"]
     return ""
-
-
-def _any_wall(context: dict, tags: set) -> bool:
-    """Do `tags` hold two walled parties? A person or a page that stands for two of them is not told apart."""
-    return sum(is_walled(context, t) for t in set(tags)) > 1
-
-
-def named_in(line: str, index: List[dict], every: bool = False) -> List[str]:
-    """The rel of each entity page a line names, by any name it goes by, as
-    org_words() spell them, word for word or run together (`Birch-Co`). A
-    name inside a longer one named there gives way to it: `Acme Labs` is
-    not `Acme` as well. With `every`, those that gave way too, which the
-    walls read all the same."""
-    words = org_words(line)
-    spans = []
-    for e in index:
-        for key in e["keys"]:
-            for i in range(len(words)):
-                run = ""
-                for j in range(i, len(words)):
-                    run += words[j]
-                    if run == key:
-                        spans.append((i, j + 1, e["rel"]))
-                    if not key.startswith(run):
-                        break
-    if every:
-        return sorted({r for _, _, r in spans})
-    keep = {r for a, b, r in spans
-            if not any(x <= a and b <= y and y - x > b - a for x, y, _ in spans)}
-    return sorted(keep)
 
 
 def first_line(text: str) -> str:
@@ -2417,17 +2001,6 @@ def first_line(text: str) -> str:
         if said and not said.startswith("#") and not (said.startswith("<") and said.endswith(">")):
             return said
     return ""
-
-
-def _person_tags(context: dict, names, party) -> Optional[set]:
-    """The parties a person page answers to, or None when it may link
-    nothing: exactly one tag, `none` or one in the Parties table, and no two
-    of it and the People table's rows for the name walled from each other."""
-    tags = sorted(set(tag_list(party)))
-    if len(tags) != 1 or (tags[0] != "none" and tags[0] not in context.get("parties", {})):
-        return None
-    every = ({tags[0]} - {"none"}) | people_parties(context, names)
-    return None if _any_wall(context, every) else every
 
 
 _MD_LINK = re.compile(r"^\[[^\[\]]*\]\(\s*<?([^()<>]+?)>?\s*\)$")
@@ -2468,86 +2041,6 @@ def entity_rel(value) -> str:
     if parts and parts[-1].lower().endswith(".md"):
         parts[-1] = parts[-1][:-3].strip()
     return "/".join(parts) if parts and all(parts) else ""
-
-
-def _same_file(a: Path, b: Path) -> bool:
-    try:
-        return os.path.samefile(str(a), str(b))
-    except OSError:
-        return False
-
-
-def organisation_named(root: PathLike, context: dict, names, party, entity: str,
-                       index: Optional[List[dict]] = None) -> Tuple[str, str]:
-    """The `organisation:` for an entity the user named, as `ingest.py person
-    --organisation` takes it: its file name in `wiki/entities/` (`birch-co`),
-    its link, or a title or alias one page alone goes by. ("<link>", "") or
-    ("", why there is none). Never an entity page made here: one not found is
-    said so. Fail closed, as organisation_proposal() is, on the person's
-    party, on two hats, and on the entity's name group."""
-    index = entity_names(root) if index is None else index
-    value = entity_rel(entity) or entity.strip()
-    if not entity_rel(entity) and value.lower().endswith(".md"):
-        value = value[:-3].strip()                  # `birch-co.md`: the file, named without its folder
-    found = entity_page(root, value)
-    page = next((e for e in index if found is not None and _same_file(e["path"], found)), None)
-    if page is None:
-        hits = [e for e in index if org_key(value) and org_key(value) in e["keys"]]
-        if not hits:
-            return "", "no entity page in wiki/entities/ goes by %s; one is written by hand, never here" % entity
-        if len(hits) > 1:
-            return "", "%s could be %s; name one by its file name" % (
-                entity, " or ".join("wiki/entities/%s" % e["rel"] for e in hits))
-        page = hits[0]
-    group = name_group(index, [page["rel"]])
-    why = _unlinkable(context, [page] + [e for e in group if e is not page])
-    if why:
-        return "", why
-    every = _person_tags(context, names, party)
-    if every is None:
-        return "", "the page names no one known party, or the People table has the name on both sides of a wall"
-    if _any_wall(context, every | entity_parties(context, group)):
-        return "", "two walled parties meet between this person and that entity page"
-    return "[[wiki/entities/%s]]" % page["rel"], ""
-
-
-def organisation_proposal(root: PathLike, context: dict, names, party, text: str,
-                          entities: Optional[Dict[str, List[str]]] = None,
-                          index: Optional[List[dict]] = None) -> Tuple[str, List[str]]:
-    """What a person page with no `organisation:` is offered: ("<link>", [])
-    for one, ("", [rel, ...]) for the entity pages to ask between, or ("", [])
-    for nothing. From the page's first line (first_line), matched against
-    every entity page's names (named_in): one page, one proposal; two pages
-    named, or one name two pages go by, asked about. Where the line names
-    none, #319's default, the entity page of the page's party
-    (organisation_link). Nothing at all, and no question, when:
-
-    - the page names no party, several, or one not in the Parties table;
-    - the People table has the name under two walled parties, or under one
-      walled from the page's;
-    - any entity page the line names, a shorter name inside a longer one
-      included, or one going by the same name, names a party walled from the
-      person's, or two walled from each other, is named after one
-      (entity_parties), says no `party:` at all, or goes by a suspect_name();
-    - the line itself holds a suspect_name().
-    """
-    every = _person_tags(context, names, party)
-    if every is None:
-        return "", []
-    index = entity_names(root) if index is None else index
-    line = first_line(text)
-    if suspect_name(line):
-        return "", []
-    named = named_in(line, index)
-    if not named:
-        return organisation_link(root, context, names, party, entities, index), []
-    seen = name_group(index, named_in(line, index, every=True))   # those that gave way are read too
-    if _unlinkable(context, seen) or _any_wall(context, every | entity_parties(context, seen)):
-        return "", []
-    group = name_group(index, named)
-    if len(group) == 1:
-        return "[[wiki/entities/%s]]" % group[0]["rel"], []
-    return "", [e["rel"] for e in group]
 
 
 # ---------------------------------------------------------------------------

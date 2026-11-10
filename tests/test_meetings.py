@@ -589,7 +589,6 @@ class SplitAndExtractTest(unittest.TestCase):
             page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md")
             fixtures.write(page, fixtures.meeting_page("Work", "[%s]" % ", ".join(sorted(tags)), stem)
                            .replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
-            self.assertEqual(tags, set(lib.labels(self.root, dest.relative_to(self.root))))
 
     def test_a_cut_that_leaves_a_line_out_or_doubles_one_is_refused(self):
         for parts, why in ((["acme:1-2", "birch:3"], "belong to no cut"), (["acme:1-3", "birch:3-5"], "in two cuts"),
@@ -676,25 +675,3 @@ class SplitAndExtractTest(unittest.TestCase):
             ingest.extract(self.root, dest, "3-4", "birch", yes=True)
         with self.assertRaisesRegex(ingest.Refusal, "not a filed record"):
             ingest.extract(self.root, self.src, "1", "acme", yes=True)
-
-    def test_a_page_quoting_the_extract_is_not_refused_against_the_record(self):
-        """A birch project quoting a passage of the extract is not refused against the record it came from; a passage
-        only the record holds still is."""
-        slug, dest = self.filed()
-        plan, _ = ingest.extract(self.root, dest, "3-4", "birch", yes=True)
-        ex_slug, ex_dest = ingest.land(self.root, self.inbox / plan["name"], "2026-03-10", "birch part")
-        fixtures.write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (ex_slug + ".md"),
-                       fixtures.meeting_page("Work", "[birch]", "Birch part").replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % ex_slug))
-        note = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Notes.md"
-
-        def findings(text):
-            fixtures.write(note, text)
-            r = subprocess.run([sys.executable, str(REPO / "template" / "System" / "tools" / "check.py"), "--root", str(self.root),
-                                "--walls-only", "--json"], capture_output=True, text=True)
-            import json
-            return [f for f in json.loads(r.stdout)["findings"] if f["path"].endswith("Notes.md")]
-        text = "# Notes\n\nWe plan to enter the northern market with a partner chosen before autumn.\n"
-        self.assertEqual([], findings(text))
-        (self.root / "Wikis/Meetings/wiki/sources" / (ex_slug + ".md")).unlink()          # without the extract's page the record speaks
-        self.assertTrue(findings(text))
-        self.assertTrue(findings("# Notes\n\nWe agree to share the freight lanes from the harbour on a trial basis.\n"))

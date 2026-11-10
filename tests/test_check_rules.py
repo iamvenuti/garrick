@@ -114,10 +114,6 @@ class TestContextNames(CheckCase):
                                     "| Birch & Co | Client." % ("yes" if walled else "no"))
         ctx.write_text(text)
 
-    def test_shared_name_with_an_open_hat(self):
-        self.add_row(walled=False)
-        self.assertFinds("context", "warning", "both hats stay walled")
-
     def test_shared_name_with_both_hats_walled(self):
         self.add_row(walled=True)
         self.assertClean("context")
@@ -222,11 +218,6 @@ class TestHubIndex(CheckCase):
         note = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing"
         (note / "Market Sizing.md").rename(note / "Market Sizing-v3.md")
         self.assertFinds("threads", "error", "Market Sizing-v3.md is there")
-
-    def test_thread_with_unknown_party(self):
-        write(self.acme / "Threads" / "Pricing" / "Pricing.md", thread_note("Acme Review", "Pricing", party="cedar"))
-        self.assertFinds("threads", "error", "`party` cedar")
-
 
 class TestLayout(CheckCase):
     def hub(self, layout):
@@ -730,26 +721,9 @@ class TestLinks(CheckCase):
 
 
 class TestMeetingWalls(CheckCase):
-    def test_party_page_cites_across_a_wall(self):
-        page = self.meetings / "wiki" / "entities" / "acme-corp.md"
-        write(page, "---\ntitle: Acme Corp\ntype: entity\nparty: acme\nsources:\n  - \"[[wiki/sources/260310-acme-kickoff]]\"\n---\n")
-        self.assertClean("meetings")
-        page.write_text(page.read_text().replace("---\n\n", "") + "\nSee [[260312-birch-kickoff]].\n")
-        self.assertFinds("meetings", "warning", "260312-birch-kickoff, a meeting with birch",
-                         path="Wikis/Meetings/wiki/entities/acme-corp.md")
-        page.write_text(page.read_text().replace("party: acme", "party: none"))
-        self.assertClean("meetings")
-
     def test_two_walled_parties_on_a_page_are_allowed(self):
         write(self.meetings / "wiki" / "sources" / "260315-panel.md", meeting_page(parties="[acme, birch]"))
         self.assertClean("meetings")
-
-    def test_both_hats_of_a_company(self):
-        ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client.", "| Acme Corp | Second role | Work | `acme-board` | yes | |\n| Birch & Co | Client."))
-        write(self.meetings / "wiki" / "sources" / "260315-panel.md", meeting_page(parties="[acme, acme-board]"))
-        self.assertFinds("meetings", "warning", "one company in two hats")
-
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class TestRawAccepted(CheckCase):
@@ -819,17 +793,6 @@ class TestShipped(CheckCase):
 
 
 class TestQuick(CheckCase):
-    def test_quick_leaves_out_wording_only(self):
-        quote = "Dana confirmed the freight consolidation saves forty thousand pounds across the northern depots"
-        write(self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md",
-              meeting_page("Work", "[birch]", "Birch kick-off") + "\n%s.\n" % quote)
-        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\nTheo Marsh said so.\n" % quote)
-        full = [f.message for f in check.run_checks(self.root) if f.check == "walls"]
-        quick = [f.message for f in check.run_checks(self.root, quick=True) if f.check == "walls"]
-        self.assertTrue(any(m.startswith("repeats wording") for m in full), full)
-        self.assertFalse(any(m.startswith("repeats wording") for m in quick), quick)
-        self.assertTrue(any(m.startswith("names Birch") for m in quick), quick)
-
     def test_json_shape(self):
         buf = io.StringIO()
         with redirect_stdout(buf):

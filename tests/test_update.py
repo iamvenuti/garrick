@@ -45,7 +45,7 @@ class Case(unittest.TestCase):
         (base / "home").mkdir()
         gitconfig = base / "gitconfig"
         gitconfig.write_text("[user]\n\tname = Test Runner\n\temail = test@example.invalid\n"
-                             "[commit]\n\tgpgsign = false\n")
+                             "[commit]\n\tgpgsign = false\n[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n")
         # GARRICK_INSTALL_NO_PAGE: the status page is put in place, not built (#208).
         # GARRICK_CALLER_BUILDS_PAGE: scaffold.py starts no build of it in the
         # background, which would outlive the test and write into its folder (#243).
@@ -666,6 +666,37 @@ class TestSafety(Case):
         hook.write_text("#!/bin/sh\necho mine\n")
         self.assertEqual([], self.plan()["hooks"])
 
+    def test_a_zone_with_garricks_pre_commit_alone_gets_the_merge_hooks(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        for name in ("pre-merge-commit", "post-merge", "post-rewrite"):          # as 0.63.0 left it
+            (hooks / name).unlink(missing_ok=True)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        self.apply()
+        lib = update.install.lib()
+        for name, text in lib.wall_hook_texts().items():
+            self.assertEqual(text, (hooks / name).read_text())
+            self.assertTrue(os.access(hooks / name, os.X_OK))
+        self.assertEqual([], self.plan()["hooks"])
+
+    def test_a_zone_with_no_wall_check_gets_no_merge_hooks(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        for name in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite"):
+            (hooks / name).unlink(missing_ok=True)
+        self.assertEqual([], self.plan()["hooks"])
+        self.apply()
+        self.assertEqual([], [n for n in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite") if (hooks / n).exists()])
+
+    def test_a_merge_hook_that_is_not_garricks_is_left_alone_and_named(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        (hooks / "pre-merge-commit").unlink(missing_ok=True)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        result = self.apply()
+        self.assertEqual("#!/bin/sh\necho mine\n", (hooks / "post-merge").read_text())
+        self.assertTrue((hooks / "pre-merge-commit").is_file())
+        self.assertIn("post-merge", " ".join(p for p, _ in result["skipped"]))
+        self.assertEqual([], self.plan()["hooks"])                                # not stale for a hook that is not ours
+
     def wiki_hook(self):
         return self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
 
@@ -1044,6 +1075,61 @@ class TestZoneWallsStep(Case):
         with mock.patch.object(update, "run_wall_check", lambda c, r, final=False: seen.append(final) or real(c, r, final)):
             self.study(self.zone_rule())
         self.assertEqual([False, True], seen)                      # the installed check without the switch, the release's with it
+
+    RUN1 = "The harbour committee agreed to move the cedar pier budget into the second quarter plan."
+    RUN2 = "Maple street tenants will receive the revised lease schedule before the autumn inspection."
+    RUN3 = "Theo proposed a joint survey of the northern orchard boundaries during the spring."
+
+    def wording_fixture(self):
+        """The 0.62 refusals the zone rule words differently or releases, over real files of invented zones."""
+        z = self.root / "Zones"
+        pages = self.root / "Wikis/Meetings/wiki/sources"
+        self.write(pages / "260320-emp-budget.md", self.zones_meeting("Work", "[emp]") + "\n" + self.RUN1 + "\n")
+        self.write(z / "Advisory/BirchAdv/Threads/Entry/Budget.md", "# b\n\n" + self.RUN1 + "\n")
+        self.write(z / "Advisory/AcmeAdv/Threads/Review/Budget.md", "# b\n\n" + self.RUN1 + "\n")
+        self.write(z / "Work/Northwind/Threads/Pricing/Plan.md", "# p\n\n" + self.RUN2 + "\n")
+        self.write(z / "Home/Garden/Threads/Beds/Note.md", "# n\n\n" + self.RUN2 + "\n")
+        self.write(z / "Home/Garden/Threads/Beds/Extra.md", "# e\n\n" + self.RUN3 + "\n")
+        self.write(z / "Advisory/BirchAdv/Threads/Entry/Other.md", "# o\n\n" + self.RUN3 + "\n")
+
+    def zones_meeting(self, zone, parties):
+        sys.path.insert(0, str(REPO / "tests"))
+        from fixtures import meeting_page
+        return meeting_page(zone, parties, "Budget call")
+
+    def old_wording(self, rows):
+        found = [{"severity": "error", "check": "walls", "path": p, "message": m, "fid": "w%d" % i, "token": ""}
+                 for i, (p, m) in enumerate(self.OLD + rows)]
+        return self.stub("old_wording.py", "import json\nprint(json.dumps({'findings': %r}))\n" % (found,))
+
+    def wording_study(self, rows):
+        self.wording_fixture()
+        return update.walls_study(self.root, update.walls_pending(self.root), old_check=self.old_wording(rows))
+
+    OLD_MEETING = "repeats wording from meeting 260320-emp-budget, a meeting with %s; %s is walled and this project does not name it"
+    OLD_FILE = "repeats wording from %s, in project %s for %s; %s is walled and this project does not name it"
+
+    def test_wording_held_in_the_files_own_zone_is_inside_one_zone_and_printed_once(self):
+        rows = [("Zones/Advisory/BirchAdv/Threads/Entry/Budget.md", self.OLD_MEETING % ("emp", "emp")),
+                ("Zones/Advisory/BirchAdv/Threads/Entry/Budget.md", self.OLD_MEETING % ("mint", "mint")),
+                ("Zones/Advisory/AcmeAdv/Threads/Review/Budget.md", self.OLD_MEETING % ("emp", "emp"))]
+        study, text = self.wording_study(rows)
+        self.assertEqual({"inside": 2 + 2, "name": 1, "other": 0}, study["released"])  # 2 and 1 are the fixture's own; the second tag is one finding
+        self.assertNotIn("Budget.md", text[:text.index("Inside one zone")])      # neither newly refused nor anything else
+        self.assertEqual(2, text.count("Threads/Entry/Budget.md") + text.count("Threads/Review/Budget.md"))
+
+    def test_a_reworded_refusal_is_the_same_refusal_and_a_new_source_is_not(self):
+        plan = "Zones/Work/Northwind/Threads/Pricing/Plan.md"
+        rows = [("Zones/Home/Garden/Threads/Beds/Note.md", self.OLD_FILE % (plan, "Northwind", "emp", "emp")),
+                (plan, self.OLD_FILE % ("Zones/Home/Garden/Threads/Beds/Note.md", "Garden", "jo", "jo")),
+                # the old check had Extra.md copy from the Work file; the zone rule finds it copies a file of Advisory
+                ("Zones/Home/Garden/Threads/Beds/Extra.md", self.OLD_FILE % (plan, "Northwind", "emp", "emp"))]
+        study, text = self.wording_study(rows)
+        refused = text[text.index("NEWLY REFUSED"):text.index("Inside one zone")]
+        self.assertIn("Zones/Home/Garden/Threads/Beds/Extra.md", refused)        # a new source in another walled zone
+        self.assertNotIn("Beds/Note.md", refused)                                # the same refusal, reworded
+        self.assertNotIn("Pricing/Plan.md", refused)
+        self.assertEqual({"inside": 2, "name": 1, "other": 1}, study["released"])  # the fixture's own, and the one the zone rule no longer makes
 
     def test_a_check_that_does_not_run_stops_the_step(self):
         broken = self.stub("broken.py", "import sys\nsys.exit(3)\n")

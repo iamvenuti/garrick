@@ -555,6 +555,8 @@ def wiki_hook(root):
     since a wiki's hook is not worth an install that stops (#340). "" when done."""
     try:
         lib().install_wall_hook(Path(root) / "Wikis", wiki=True, root=root)
+    except lib().MergeHookNotGarricks as exc:
+        return str(exc)
     except FileExistsError:
         return ("Wikis already has a pre-commit hook that is not Garrick's, so it was left as it is and the "
                 "wikis do not check the walls before a commit. Add this line to it: "
@@ -818,11 +820,15 @@ def install(cfg, target, force=False, quiet=False):
               paths=("AGENTS.md", "System", ".gitignore", ".claude", ".agents"))
 
     # Each zone refuses a commit that would carry walled material into its history.
+    # It also checks a merge that completes on its own, and reports after a merge or a rebase (#497).
+    merge_hook_warnings = []
     for z in cfg["zones"]:
         zdir = root / "Zones" / z["name"]
         w._inside(zdir / ".git" / "hooks" / "pre-commit")
         try:
             pl.install_wall_hook(zdir)
+        except pl.MergeHookNotGarricks as exc:      # left as it is, and said; the others are written
+            merge_hook_warnings.append(str(exc))
         except (FileExistsError, FileNotFoundError) as exc:
             raise InstallError(f"Could not install the wall check: {exc}")
     # The wikis are read on every side of a wall, so a hand edit committed there is checked too (#340).
@@ -843,6 +849,8 @@ def install(cfg, target, force=False, quiet=False):
     walled = [p for p in cfg["parties"] if p["walled"]]
     say(f"  {count(cfg['parties'], 'party', 'parties')} ({len(walled)} walled) "
         f"and {count(cfg['people'], 'person', 'people')} in System/context.md.")
+    for warning in merge_hook_warnings:
+        say(f"  {warning}")
     if wiki_hook_warning:
         say(f"  {wiki_hook_warning}")
     if hooks_path:

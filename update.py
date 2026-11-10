@@ -395,18 +395,40 @@ def wiki_hook_state(root):
         return ""
     if lib.WALL_HOOK_MARK not in text:
         return "foreign"
-    return "refresh" if text != lib.wiki_hook_text(root) else ""
+    if text != lib.wiki_hook_text(root):
+        return "refresh"
+    for name, want in lib.wall_hook_texts(wiki=True, root=root).items():     # the merge hooks beside it (#497)
+        try:
+            have = (wikis / ".git" / "hooks" / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return "refresh"
+        if lib.WALL_HOOK_MARK in have and have != want:
+            return "refresh"
+    return ""
 
 
 def stale_hook(zone):
-    """A zone whose pre-commit hook is Garrick's wall check, but an older one."""
+    """A zone whose pre-commit hook is Garrick's wall check, but an older one, or one that has not the merge hooks
+    (pre-merge-commit, post-merge, post-rewrite) this Garrick writes beside it (#497). Only where Garrick's own
+    pre-commit is already there; a merge hook that is not Garrick's is left as it is and does not make it stale."""
     lib = install.lib()
-    hook = zone / ".git" / "hooks" / "pre-commit"
+    hooks = zone / ".git" / "hooks"
     try:
-        text = hook.read_text(encoding="utf-8", errors="replace")
+        text = (hooks / "pre-commit").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return lib.WALL_HOOK_MARK in text and text != lib.WALL_HOOK
+    if lib.WALL_HOOK_MARK not in text:
+        return False
+    if text != lib.WALL_HOOK:
+        return True
+    for name, want in lib.wall_hook_texts().items():
+        try:
+            have = (hooks / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return True                 # not there
+        if lib.WALL_HOOK_MARK in have and have != want:
+            return True
+    return False
 
 
 # --------------------------------------------------------------------------- saying it
@@ -471,7 +493,7 @@ def report(p, applied=None):
                 continue
             lines += ["  " + path for path in paths]
     if p["hooks"]:
-        lines += ["", "Wall check: %d zone%s get%s the newer pre-commit check: %s." % (
+        lines += ["", "Wall check: %d zone%s get%s the newer pre-commit check and the merge hooks: %s." % (
             len(p["hooks"]), "" if len(p["hooks"]) == 1 else "s", "s" if len(p["hooks"]) == 1 else "",
             ", ".join(p["hooks"]))]
     wiki = p.get("wiki_hook")
@@ -678,7 +700,11 @@ def apply(root, p, only=None, today=None):
 
     hooks, added = [], []
     for zone in p["hooks"]:
-        lib.install_wall_hook(root / "Zones" / zone)
+        try:
+            lib.install_wall_hook(root / "Zones" / zone)
+        except lib.MergeHookNotGarricks as exc:      # the others are written; this one is left as it is, and named
+            skipped.append(("Zones/%s/.git/hooks/%s" % (zone, ", ".join(exc.names)),
+                            "not Garrick's, so it is left as it is; add the wall check to it by hand"))
         hooks.append(zone)
     if p.get("wiki_hook") in ("add", "refresh"):
         try:
@@ -686,6 +712,9 @@ def apply(root, p, only=None, today=None):
             hooks.append("Wikis")
             if p.get("wiki_hook") == "add":
                 added.append("Wikis")
+        except lib.MergeHookNotGarricks as exc:
+            skipped.append(("Wikis/.git/hooks/%s" % ", ".join(exc.names),
+                            "not Garrick's, so it is left as it is; add the wall check to it by hand"))
         except (FileExistsError, FileNotFoundError) as exc:
             skipped.append(("Wikis/.git/hooks/pre-commit", "the wikis' wall check was not installed: %s" % exc))
 
@@ -1885,19 +1914,78 @@ def _subject(finding):
     return finding.get("fid") or finding.get("token") or message
 
 
-def _keys(finding):
+_WORDING = re.compile(r"repeats wording from (.+?), (?:an? |in project )")
+_MORE = re.compile(r"\s+and \d+ more of its files$")
+
+
+def _kind(finding):
+    """What sort of refusal a finding is, from the shape of its message: the library's own kinds (link, name,
+    wording, path, copy, ...). One reading for both checks, so a message that is reworded stays the same kind."""
+    message = finding.get("message") or ""
+    try:
+        return install.lib().refusal_kind(message)
+    except (AttributeError, install.InstallError):
+        return "wording" if "repeats wording" in message else "link"
+
+
+def _source(finding):
+    """The file a finding says its material comes from or points at, or "" when it names none (a name, a missing
+    zone). A wording finding names the page it repeats, by its stem, or the file, by its path; a link or path
+    finding names its target. Lower-cased, so the two releases' spellings agree."""
+    message = finding.get("message") or ""
+    kind = _kind(finding)
+    if kind == "wording":
+        hit = _WORDING.search(message)
+        if not hit:
+            return ""
+        head = _MORE.sub("", hit.group(1).strip())
+        if not head.startswith(("Zones/", "Wikis/")):
+            head = head.split()[-1] if head.split() else ""
+        return head.strip("`").lower()
+    if kind in ("link", "path"):
+        for pattern in _SUBJECT[:3]:
+            hit = pattern.search(message)
+            if hit:
+                return hit.group(1).strip("`").lower()
+    return ""
+
+
+def _ident(finding):
+    """One finding's identity: its file, its kind and its source file, or its subject when it names no source."""
     path = finding.get("path") or ""
+    return (path, _kind(finding), _source(finding) or _subject(finding))
+
+
+def _keys(finding):
+    """The keys a finding is matched on. With a source file: the file, the kind and the source, whatever the words
+    of the message or its id. Without one: the file and its id, or the file and what it is about."""
+    path = finding.get("path") or ""
+    source = _source(finding)
+    if source:
+        return {(path, _kind(finding), source)}
     return {(path, finding.get("fid") or ""), (path, _subject(finding))} - {(path, "")}
 
 
+def _once(findings):
+    """The findings with each identity kept once: the same finding under two party tags is one."""
+    seen, out = set(), []
+    for f in findings:
+        ident = _ident(f)
+        if ident not in seen:
+            seen.add(ident)
+            out.append(f)
+    return out
+
+
 def diff_findings(old, new):
-    """(released, newly refused): the findings only the old check has, and those only the new one has. A finding is
-    the same in both when its path and id agree, or its path and what it is about."""
+    """(released, newly refused): the findings only the old check has, and those only the new one has, each kept
+    once. A finding is the same in both when its file, its kind and its source file agree; one that names no source
+    file, when its file and id agree, or its file and what it is about."""
     seen_new = set().union(*[_keys(f) for f in new]) if new else set()
     seen_old = set().union(*[_keys(f) for f in old]) if old else set()
     released = [f for f in old if not (_keys(f) & seen_new)]
     refused = [f for f in new if not (_keys(f) & seen_old)]
-    return released, refused
+    return _once(released), _once(refused)
 
 
 def _meeting_stems(root):
@@ -1953,11 +2041,33 @@ def _target_zone(root, lib, finding, stems, parties, zones):
     return None
 
 
-def classify(root, lib, finding, stems, parties, zones):
+def near_wording(root, tools, findings):
+    """{(path, source)} of the released wording findings whose run of words the zone rule's own search also finds
+    in a file of the finding's own zone, so what the file repeats stays inside one zone however the old message
+    worded it. Asked of the release's check, which reads the workspace and writes nothing. Empty when it cannot be
+    run: a finding it cannot place is printed as other, never as inside one zone."""
+    pairs = sorted({(f.get("path") or "", _source(f)) for f in findings if _kind(f) == "wording" and _source(f)})
+    if not pairs:
+        return set()
+    program = ("import sys, json; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import check; "
+               "pairs = json.load(sys.stdin); got = check.near_wording(Path(sys.argv[2]), pairs); "
+               "print(json.dumps([p for p, g in zip(pairs, got) if g]))")
+    try:
+        r = subprocess.run([sys.executable, "-B", "-c", program, str(tools), str(root)], input=json.dumps(pairs),
+                           capture_output=True, text=True, timeout=WALL_TIMEOUT, cwd=str(root),
+                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        return {tuple(x) for x in json.loads(r.stdout)}
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        return set()
+
+
+def classify(root, lib, finding, stems, parties, zones, near=frozenset()):
     """"inside", "name" or "other" for a finding the zone rule releases."""
     src = lib.zone_of(root, finding.get("path") or "")
     target = _target_zone(root, lib, finding, stems, parties, zones)
     if src is not None and target == src:
+        return "inside"
+    if src is not None and (finding.get("path") or "", _source(finding)) in near:
         return "inside"
     if re.match(r"\s*names\b", finding.get("message") or "") or "one of its people" in (finding.get("message") or ""):
         return "name"
@@ -2006,8 +2116,9 @@ def walls_study(root, flags, old_check=None, new_check=None):
     text = (root / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
     stems, parties, zones = _meeting_stems(root), _party_zones(text), list(flags)
     kinds = {k: [] for k, _ in WALL_KINDS}
+    near = near_wording(root, Path(new_check).parent, released)
     for f in released:
-        kinds[classify(root, lib, f, stems, parties, zones)].append(f)
+        kinds[classify(root, lib, f, stems, parties, zones, near)].append(f)
     mixed = mixed_pages(root, lib, flags)
     study = {"flags": {z: w for z, (w, _) in flags.items()}, "released": {k: len(v) for k, v in kinds.items()},
              "newly_refused": len(refused), "mixed_pages": [p for p, _ in mixed], "old": len(old), "new": len(new)}

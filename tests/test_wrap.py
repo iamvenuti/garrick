@@ -187,7 +187,7 @@ class SkillTest(unittest.TestCase):
     def test_the_background_brief_carries_the_walls(self):
         wrap = self.text[self.text.index("## Wrap:"):self.text.index("## Back:")]
         brief = " ".join(wrap[wrap.index("Brief the subagent"):wrap.index("The last act of the wrap")].split())
-        for needed in ("`party`", "Walled column of the Parties table in `System/context.md`", 'named only as "held back"',
+        for needed in ("the project's zone and whether it is walled", "Walled column of the Zones table in `System/context.md`", 'named only as "held back"',
                        "wall check (*The wall check*, step 4 above) before it writes anything",
                        "write nothing it cannot place", "The foreground run needs none of this"):
             self.assertIn(needed, brief)

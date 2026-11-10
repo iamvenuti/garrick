@@ -2,7 +2,7 @@
 title: Birch market sizing review
 type: meeting
 date: 2026-09-16
-zone: Work
+zone: Birch
 parties: [birch]
 people: ["[[wiki/people/theo-marsh]]", "[[wiki/people/iris-bell]]"]
 raw: "[[raw/260916-birch-market-sizing-review]]"

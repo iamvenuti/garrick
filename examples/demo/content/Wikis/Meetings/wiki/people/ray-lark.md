@@ -1,6 +1,7 @@
 ---
 title: Ray Lark
 type: person
+zone: Personal
 party: lark
 created: 2026-09-10
 updated: 2026-09-10

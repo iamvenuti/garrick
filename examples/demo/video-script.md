@@ -24,13 +24,13 @@ Each beat gives what Sam says, what the assistant should say back, and what is o
 
 **Sam:** "Process the inbox."
 
-**Assistant:** "Five waiting: Theo's call and four mails. Filed the call with Theo: the board said yes to a March launch, and you owe him the draft by Friday the 9th. The newsletter went to the library, Dana's forecast and Owen's quotes are in Acme, but Marta's mail copies both Acme and Birch, who are walled: Acme, Birch, or both?"
+**Assistant:** "Five waiting: Theo's call and four mails. Filed the call with Theo: the board said yes to a March launch, and you owe him the draft by Friday the 9th. The newsletter went to the library, Dana's forecast and Owen's quotes are in Acme, but Marta's mail copies both Acme and Birch, who sit in two walled zones: Work or Birch?"
 
-**Sam:** "Both."
+**Sam:** "Work."
 
-**Assistant:** "Filed under both, so neither project can draw on it."
+**Assistant:** "Filed in Work, so the Birch zone cannot draw on it."
 
-**Screen:** the transcript leaves `raw/inbox/`, a new meeting page opens (zone Work, parties `birch`), and the Work to-do list gains its line. Then the four mails leave `Zones/Work/Inbox/`: the newsletter lands in the Knowledge wiki with no parties, Owen's sheet in Acme Review's `Sources/`, and the Cobalt mail's page shows parties `acme`, `birch` and `cobalt`. Caption: *Everything is filed where it belongs: conversations with their zone and parties, reading in the library, a client's file in its project. When a mail sits on both sides of a wall, it asks.*
+**Screen:** the transcript leaves `raw/inbox/`, a new meeting page opens (zone Birch, parties `birch`), and the Work to-do list gains its line. Then the four mails leave `Zones/Work/Inbox/`: the newsletter lands in the Knowledge wiki with no zone, Owen's sheet in Acme Review's `Sources/`, and the Cobalt mail's page shows zone Work and parties `acme`, `birch` and `cobalt`. Caption: *Everything is filed where it belongs: conversations with their zone and parties, reading in the library, a client's file in its project. When a mail sits on both sides of a wall, it asks.*
 
 ## 4. Prep me for Cobalt (1:20 to 1:55). The wall holds
 
@@ -38,7 +38,7 @@ Each beat gives what Sam says, what the assistant should say back, and what is o
 
 **Assistant:** "Cobalt: you last met Marta Quill on the 22nd, with Iris, and she quoted about 140 euros a pallet from March. You owe her Birch's volume forecast by Friday the 2nd. A wall holds some material back from this project, so I have not used it. Nothing was written."
 
-**Screen:** first the Meetings index with both Cobalt calls visible, *Cobalt Freight renewal, for Acme* and *Cobalt Freight northern lane, for Birch*, a week apart. Then the Walls table in `System/context.md`, with `acme` and `birch` on one row. Caption: *Sam met Cobalt twice, once for each client. Only one of those calls is Birch's to use.*
+**Screen:** first the Meetings index with both Cobalt calls visible, *Cobalt Freight renewal, for Acme* and *Cobalt Freight northern lane, for Birch*, a week apart. Then the Zones table in `System/context.md`, with Work and Birch both walled. Caption: *Sam met Cobalt twice, once for each client. Only one of those calls is Birch's to use.*
 
 The video is built around this beat. The brief is for Birch, because Launch Plan is the thread in focus. The Acme-side call is left out entirely: Cobalt's offer to Acme and what Marta said about northern capacity. The only trace is that last sentence, which never says what was held back or whose it was.
 
@@ -72,7 +72,7 @@ After the take, show what the check does when someone crosses a wall. Paste a li
 
     [[Meetings/wiki/sources/260915-cobalt-renewal-for-acme|the renewal call]]
 
-Then "run the check" again. It fails with one error under Walls, naming the Launch Plan note and the wall between `birch` and `acme`. Delete the line and it's all clear again.
+Then "run the check" again. It fails with one error under Walls, naming the Launch Plan note and the zone it links into. Delete the line and it's all clear again.
 
 ## Capture
 

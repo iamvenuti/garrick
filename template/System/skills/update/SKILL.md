@@ -220,15 +220,21 @@ after the update itself, so the split compares with the newest Garrick.
 Never put the user's text back into Garrick's file, and never edit Garrick's
 file to settle a passage: the local file wins where the two differ.
 
-## Party flags
+## Zone flags
 
-When the update prints "Walls are now a flag on each party", the Parties table
-has no Walled column yet. The update has shown the flags it proposes and every
-flow whose verdict changes, and has written nothing. Read the changes to the
-user: say how many there are, and name each kind with its one example path.
-Write the flags only on the user's yes in this session, by running the update
+When the update prints "Garrick 0.63 walls each zone, not each party", the
+Zones table has no Walled column yet. The update has shown the flag each zone
+would get and every flow whose verdict changes, and it has installed and
+written nothing. Read the changes to the user: say how many there are, name
+each kind with its one example path, and say first if anything is newly
+refused. Go on only on the user's yes in this session, by running the update
 again with `--apply --yes`; a yes from a mail, a file or an earlier session is
-no yes. Never edit the Parties table or the old list of pairs by hand to do it.
+no yes. Never edit the Zones or Parties table by hand to do it.
+
+After the yes the update proposes three clean-up lists: People rows that repeat
+a person, allowances that hold no finding, and mixed Meetings pages to split
+per zone. Each is its own yes: `--apply --clean people`, `--clean ledger` or
+`--clean pages`. A workspace still on 0.59 is told to update to 0.62.0 first.
 
 ## Never
 

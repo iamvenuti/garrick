@@ -11,7 +11,6 @@ import contextlib
 import datetime
 import io
 import json
-import re
 import subprocess
 import sys
 import unittest
@@ -76,7 +75,7 @@ class TestParty(ManageCase):
         before = self.context()
         r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work", "--check")
         self.assertEqual(0, r.returncode, r.stderr)
-        self.assertIn("Cobalt Freight is not a party yet, and the tag would be `cobalt`, in Work, walled.", r.stdout)
+        self.assertIn("Cobalt Freight is not a party yet, and the tag would be `cobalt`, in Work.", r.stdout)
         self.assertEqual(before, self.context())
         self.assertEqual("", self.root_git("status", "--porcelain").stdout)
 
@@ -94,9 +93,9 @@ class TestParty(ManageCase):
         r = self.scaffold("--today", "2027-01-01", "party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("Added Cobalt Freight to the Parties table in System/context.md, with the tag `cobalt`, "
-                      "in Work, walled", r.stdout)
-        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` | yes |  | 2027-01-01, user |", self.context())
-        # The rows typed by hand are left exactly as they were; only the header gains the column.
+                      "in Work.", r.stdout)
+        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |  | 2027-01-01, user |", self.context())
+        # The rows typed by hand are left exactly as they were; only the header gains the column (no Walled cell).
         self.assertIn("| Domains | Learned |", self.context())
         self.assertNotIn("|  |  |\n", self.context())
         # Left for the caller to commit, in the workspace's own repository.
@@ -131,40 +130,25 @@ class TestParty(ManageCase):
         r = self.scaffold("party", "--name", "Cobalt Freight", "--check")
         self.assertIn("with the project Cobalt Review.", r.stdout)
 
-    def test_a_second_capacity_gets_the_wider_tag_and_both_stay_walled(self):
+    def test_a_second_capacity_gets_the_wider_tag_in_its_own_zone(self):
         self.assertEqual(0, self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work",
                                           "--what", "Supplier").returncode)
         r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Personal", "--what", "Advisory client", "--also")
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("with the tag `cobalt-freight`, in Personal", r.stdout)
-        self.assertIn("both stay walled", r.stdout)
-        self.assertIn("`cobalt-freight` | yes |", self.context())
-        found = json.loads(self.run_tool("check.py", "--json").stdout)
-        self.assertEqual([], [f for f in found["findings"] if "both hats stay walled" in f.get("message", "")], found)
+        self.assertNotIn("walled", r.stdout)                  # a party has no wall of its own: its zone has
 
-    def test_a_second_capacity_cannot_be_opened(self):
-        self.assertEqual(0, self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work",
-                                          "--what", "Supplier").returncode)
-        before = self.context()
-        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Personal", "--what", "Advisory client",
-                          "--also", "--open")
-        self.assertEqual(1, r.returncode)
-        self.assertIn("both stay walled", r.stderr)
-        self.assertEqual(before, self.context())
-
-    def test_two_parties_of_one_name_are_a_question_and_nothing_is_written(self):
-        """Never resolved silently: which capacity a request means is the user's."""
+    def test_asking_again_for_a_name_two_parties_share_is_not_a_question_any_more(self):
+        """One company under two hats is two parties in two zones: the zone wall holds them apart, so the
+        same-name refusal is gone. The name finds the first row, as any known party does."""
         for args in (("--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier"),
                      ("--name", "Cobalt Freight", "--zone", "Personal", "--what", "Client", "--also")):
             self.assertEqual(0, self.scaffold("party", *args).returncode)
         after = self.context()
-        for extra in (["--check"], ["--zone", "Work", "--what", "Supplier"], ["--also", "--zone", "Work"]):
-            r = self.scaffold("party", "--name", "Cobalt Freight", *extra)
-            self.assertEqual(1, r.returncode, extra)
-            self.assertEqual(1, len(r.stderr.strip().splitlines()), r.stderr)
-            self.assertEqual("Two of your parties are called Cobalt Freight: `cobalt` in Work, and "
-                             "`cobalt-freight` in Personal. Which one is this?", r.stderr.strip())
-            self.assertEqual(after, self.context())
+        r = self.scaffold("party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("is already a party", r.stdout)
+        self.assertEqual(after, self.context())
 
     def test_what_it_refuses(self):
         for extra, said in (
@@ -475,78 +459,18 @@ class TestMove(ManageCase):
         self.assertTrue(self.freight.is_file())
         return r.stderr
 
-    def test_a_wall_moves_nothing_and_says_only_the_sentence(self):
-        said = self.refused(self.WALL, to="Birch Entry")
-        self.assertEqual(self.WALL, said.strip())
-        self.assertNotIn("birch", said.lower())
-        self.assertNotIn("acme", said.lower())
-
-    def test_a_party_that_cannot_be_read_plainly_is_refused(self):
-        hub = self.apex / "Apex.md"
-        hub.write_text(hub.read_text().replace("party: acme", "party: []"))
-        self.commit("no party", hook=False)    # the hook now refuses a project with no party
-        self.refused("no single `party:`")
-        hub.write_text(hub.read_text().replace("party: []", "party: nobody"))      # the wall hook would not let it in
-        r = self.move()
-        self.assertEqual(1, r.returncode)
-        self.assertIn("not a tag in the Parties table", r.stderr)
-        self.assertTrue(self.freight.is_file())
-
-    def set_party(self, note, value):
-        text = note.read_text()
-        self.assertRegex(text, r"(?m)^party: .*$")
-        note.write_text(re.sub(r"(?m)^party: .*$", "party: " + value, text, count=1))
-
-    def cobalt(self):
-        r = self.scaffold("--today", "2027-01-01", "party", "--name", "Cobalt Freight", "--zone", "Work", "--what", "Supplier",
-                          "--open")
+    def test_a_move_between_projects_of_different_parties_in_one_zone_goes(self):
+        """The zone is the wall: nothing below it is, so a thread of Acme moves into Birch Entry."""
+        r = self.move(to="Birch Entry")
         self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((self.work / "Birch Entry" / "Threads" / "Freight" / "Freight.md").is_file())
 
-    def test_a_party_list_with_no_wall_moves(self):
-        self.cobalt()
-        self.set_party(self.acme / "Acme.md", "[acme, cobalt]")
-        self.set_party(self.freight, "[acme, cobalt]")
-        self.commit("lists")
-        r = self.move()
+    def test_a_project_with_no_party_takes_a_thread_and_gives_one(self):
+        r = self.scaffold("project", "--zone", "Work", "--name", "Plain", "--thread", "Kickoff")
         self.assertEqual(0, r.returncode, r.stderr)
-        self.assertTrue((self.apex / "Threads" / "Freight" / "Freight.md").is_file())
-
-    def test_a_threads_own_list_is_checked_against_the_target(self):
-        self.set_party(self.freight, "[acme, birch]")
-        self.commit("thread list", hook=False)
-        self.refused_wall(to="Apex")
-
-    def test_a_source_list_walled_from_the_target_moves_nothing(self):
-        self.set_party(self.acme / "Acme.md", "[acme, birch]")
-        self.commit("source list", hook=False)
-        self.refused_wall(to="Apex")
-
-    def test_a_target_list_walled_from_the_thread_moves_nothing(self):
-        self.set_party(self.apex / "Apex.md", "[cobalt, birch]")
-        self.cobalt()
-        self.commit("target list", hook=False)
-        self.refused_wall(to="Apex")
-
-    def refused_wall(self, **kw):
-        said = self.refused(self.WALL, **kw)
-        self.assertEqual(self.WALL, said.strip())
-        self.assertNotIn("birch", said.lower())
-
-    def test_a_list_that_cannot_be_read_plainly_is_refused(self):
-        self.cobalt()
-        for value in ("[acme, nobody]", "[]", "[acme, [birch]]"):
-            self.set_party(self.freight, value)
-            self.commit("odd " + value, hook=False)
-            r = self.move()
-            self.assertEqual(1, r.returncode, value)
-            self.assertTrue("no single `party:`" in r.stderr or "not a tag in the Parties table" in r.stderr, (value, r.stderr))
-            self.assertTrue(self.freight.is_file())
-        self.set_party(self.freight, "acme")
-        self.freight.write_text(self.freight.read_text().replace("party: acme\n", "party: acme\nparty: birch\n", 1))
-        self.commit("twice", hook=False)
-        r = self.move()
-        self.assertEqual(1, r.returncode)
-        self.assertIn("no single `party:`", r.stderr)
+        self.commit("Plain")
+        self.assertEqual(0, self.move(to="Plain").returncode)
+        self.assertTrue((self.work / "Plain" / "Threads" / "Freight" / "Freight.md").is_file())
 
     def test_another_zone_is_refused(self):
         self.assertEqual(0, self.scaffold("party", "--name", "Home Team", "--zone", "Personal", "--what", "Family").returncode)
@@ -700,28 +624,11 @@ class TestMove(ManageCase):
         self.assertIn("is not a rename", r.stderr)
         self.assertTrue((self.work / "Lunch.md").is_file())
 
-    def test_a_walled_source_hub_moves_nothing(self):
-        hub = self.acme / "Acme.md"
-        hub.write_text(hub.read_text().replace("party: acme", "party: birch"))     # uncommitted: the zone hook would refuse it
-        r = self.move()
-        self.assertEqual(self.WALL, r.stderr.strip())
-        self.assertTrue(self.freight.is_file())
-
     def meeting(self, parties):
         page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "261001-lanes-call.md"
         page.parent.mkdir(parents=True, exist_ok=True)
         page.write_text("---\ntitle: Lanes call\ntype: source\nzone: Work\n%s---\n# Lanes call\n" % parties)
         self.freight.write_text(self.freight.read_text() + "\nHeard in [[261001-lanes-call]].\n")     # uncommitted: the zone hook would refuse it
-
-    def test_a_linked_meeting_page_of_a_walled_party_moves_nothing_and_unreadable_ones_refuse(self):
-        self.meeting("parties: [birch]\n")
-        self.assertEqual(self.WALL, self.move().stderr.strip())
-        self.meeting("")
-        r = self.move()
-        self.assertEqual(1, r.returncode)
-        self.assertIn("has no parties", r.stderr)
-        self.assertNotEqual(self.WALL, r.stderr.strip())
-        self.assertTrue(self.freight.is_file())
 
     def test_a_linked_meeting_page_of_a_kept_party_moves(self):
         self.meeting("parties: [acme]\n")
@@ -1027,68 +934,8 @@ class TestFromThePage(ManageCase):
         self.assertIsNotNone(ops)
         return ops.WALL_REFUSAL
 
-    def test_a_manage_verb_the_real_wall_check_refuses_says_the_rules_sentence_alone(self):
-        """#172: the zone's own wall check, as installed, refuses each manage
-        verb, since what it would commit names Birch & Co in a project for Acme.
-        The page says #116's sentence and nothing else, where the script, run in
-        a terminal, still prints the check's line for whoever has to take the
-        material out."""
-        wall = self.wall()
-        head = self.git("rev-parse", "HEAD").stdout
 
-        def refused(**req):
-            with self.assertRaises(pa.Refused, msg=req) as said:
-                self.act(**req)
-            self.assertEqual(wall, str(said.exception), req)
-            for leak in ("Birch", "birch", "acme", "Commit refused", "not committed"):
-                self.assertNotIn(leak, str(said.exception), req)
-            self.assertEqual(head, self.git("rev-parse", "HEAD").stdout, req)
 
-        refused(verb="rename", zone="Work", project="Acme", thread="Freight", to="Birch Lanes")
-        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the rename put back
-        self.assertTrue(self.freight.is_file())
-        refused(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
-        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the new thread taken away
-        refused(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
-        self.assertEqual("", self.git("status", "--porcelain").stdout)              # and the new project
-        hub = self.work / "Acme" / "Acme.md"                       # written before the wall stood, say
-        hub.write_text(hub.read_text() + "\nBirch & Co asked about the same lanes.\n")
-        self.git("commit", "-q", "--no-verify", "-am", "a line from before the wall")
-        head = self.git("rev-parse", "HEAD").stdout
-        refused(verb="delete", zone="Work", project="Acme", thread="Freight", confirm="Freight")
-        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the deletion put back
-        self.assertTrue(self.freight.is_file())
-        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
-        self.assertEqual(1, r.returncode)
-        self.assertIn("Commit refused: ", r.stderr)                                 # the terminal keeps the check's line
-
-    def test_a_new_thread_the_wall_check_refuses_leaves_nothing_behind(self):
-        """#172: "Nothing was written" holds. The thread's folder goes, and the
-        hub gets back the bytes it held before the request, an edit another
-        session had not committed yet included; the index is as it was."""
-        hub = self.work / "Acme" / "Acme.md"
-        hub.write_text(hub.read_text() + "\nA line typed in Obsidian, not committed yet.\n")
-        before = hub.read_bytes()
-        with self.assertRaises(pa.Refused) as said:
-            self.act(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
-        self.assertEqual(self.wall(), str(said.exception))
-        self.assertFalse((self.work / "Acme" / "Threads" / "Birch Pitch").exists())
-        self.assertEqual(before, hub.read_bytes())
-        self.assertEqual(" M Acme/Acme.md\n", self.git("status", "--porcelain").stdout)
-        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
-
-    def test_a_new_project_the_wall_check_refuses_leaves_nothing_behind(self):
-        """Its folder goes, a Threads folder and a first thread with it, and
-        nothing that was there before the request is touched."""
-        todo = self.work / "Todo.md"
-        todo.write_text(todo.read_text() + "- [ ] [[Freight]]: an edit of its own\n")
-        before = {p: p.read_bytes() for p in self.work.rglob("*") if p.is_file() and ".git" not in p.parts}
-        with self.assertRaises(pa.Refused) as said:
-            self.act(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
-        self.assertEqual(self.wall(), str(said.exception))
-        self.assertFalse((self.work / "Cobalt").exists())
-        self.assertEqual(before, {p: p.read_bytes() for p in self.work.rglob("*") if p.is_file() and ".git" not in p.parts})
-        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
 
     def test_a_manage_verb_refused_for_any_other_reason_still_says_why(self):
         hook = Path(self.git("rev-parse", "--git-path", "hooks/pre-commit").stdout.strip())

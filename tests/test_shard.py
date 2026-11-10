@@ -111,7 +111,7 @@ class Touched(unittest.TestCase):
     def test_the_questions_panel_alone_runs_its_mapped_modules(self):
         got = shard.touched(["extras/status/questions_panel.py"])
         self.assertIn("test_questions_panel", got)
-        self.assertIn("test_questions_panel_all", got)
+        self.assertIn("test_decisions", got)
         self.assertLess(len(got), len(shard.modules()) // 2)
 
     def test_these_run_the_full_suite(self):
@@ -228,7 +228,7 @@ class WallChecksAndGate(unittest.TestCase):
     def test_a_change_to_the_wall_check_runs_the_wall_modules(self):
         names = shard.modules()
         got = shard.touched(["template/System/tools/check.py"], names)
-        for m in ("test_wall_forms", "test_walls_cases", "test_wall_gaps", "test_staged_paths"):
+        for m in ("test_zones", "test_walls_cases", "test_decide", "test_staged_paths"):
             if m in names:
                 self.assertIn(m, got)
 

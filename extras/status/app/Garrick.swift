@@ -2020,10 +2020,9 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// MARK: questions (#224, #384)
 	// The Context row, under Ask Garrick in File and beside the inbox in the menu and the panel: it
 	// brings the window forward on the page's Context tab. The page sends the open count of each
-	// group (menuData "questions", "g"): a zone no wall divides is one group, a zone whose parties a wall
-	// divides is one group per party. The row names each group with its own count and never adds two
-	// groups, in a zone or across the zones the menu shows: it cannot tell that no wall stands between
-	// them. Knowledge carries no party and is named apart. A page that sent no groups has no row.
+	// group (menuData "questions", "g"): each zone is one group. The row names each group with its own
+	// count and never adds two groups across the zones the menu shows: it cannot tell that no wall stands
+	// between them. Knowledge carries no zone and is named apart. A page that sent no groups has no row.
 	func questionGroups() -> [(String, Int)]? {
 		guard let q = (menuState?["data"] as? [String: Any])?["questions"] as? [String: Any],
 		      let g = q["g"] as? [String: Any] else { return nil }

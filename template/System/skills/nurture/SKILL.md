@@ -3,7 +3,7 @@ name: nurture
 description: >
   Context Nurture: gather every finding the workspace's checks hold for a
   scope, sort them by what a fix needs, apply the mechanical ones on one yes,
-  ask about attribution one line at a time, name each wall without repeating
+  ask about attribution one line at a time, name each crossing without repeating
   it, and report the rest. Use when the user says "nurture the context",
   "nurture Work", "nurture Acme", "nurture the meetings", "nurture the
   library", or "what needs nurturing", and when, during one, the user corrects a
@@ -45,8 +45,8 @@ own: a new kind of problem gets a check in `check.py` first.
 |---|---|---|
 | Mechanical | a link broken by a rename with exactly one candidate; a deliverable without its date prefix; a thread missing from its hub's `## Threads`; a status synonym (`paused` for `parked`); a note path written as code that leads to exactly one live note, made a wikilink; a note in a thread's folder with no `parent:`, given its thread's | Lists them, and applies them all on one yes, one commit per repository |
 | Correction | a value written down wrong, an address, an account, a name, which the user corrects | Lists every live copy as one finding, and corrects them all on one yes, one commit per repository |
-| Attribution and category | a meeting page with no zone or parties; a person under no party; a person page in Meetings with no `organisation:`, for the one entity page its first line names or else its party's, asked one page at a time ("Does Theo Marsh work at AC Corp? (yes / no / another page)") and never a batch fix, since a name can stand for the wrong organisation however it is spelled; a person page whose first line could mean two entity pages ("Where does Kit Avery work: Birch & Co or Larch Partners?"); an entity page in Meetings with no `party:` that a person page's first line names, its party's link would reach, or a person page links by hand ("Whose is Larch Partners: none, or a party?"), which no tool links a person page to until it says; one nothing points at, such as a topic or an event, is not asked about; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there; a People row whose name is one word ("What is the full name of Kit of acme?"), since a one-word name is refused only beside its party's name or another of its people | Proposes an answer and asks in one line. Never guesses across a wall |
-| Wall | a project file that names, links or quotes a walled party the project does not name | Says which file and which wall, never the material, and offers to take it out |
+| Attribution and category | a meeting page with no zone; a mail domain no party has, asked as which zone it belongs to; a page in the wrong wiki or of the wrong `type`; a thread marked done with no outcome; an open action naming a thread that is not there | Proposes an answer and asks in one line. Never guesses which zone. It asks no more which party a person works for: there is no name check to feed |
+| Wall | a file that points into a walled zone other than its own: a link, an embed, a path or a file copied whole | Says which file and which zone, and its fix: take the reference out, or move the file into that zone. Names are not a crossing |
 | Judgment | a stale resume point, a published file drifted from its shared copy, an orphan page, two pages that disagree | Leaves the text alone and names the page to open |
 | Behind the share | a published file whose ledger row ends in `share`, and whose copy here differs from the shared one: colleagues edit it there, so the copy here is a snapshot | Names it last, as low urgency, and changes nothing |
 | Fading | meeting pages or reading old enough to leave working memory, or a faded page linked again | Says how many, per wiki, and what to say: "fade the meetings". Nothing moves without a written proposal and a yes on it; see *Fading* below |
@@ -63,7 +63,7 @@ thread whose name another note shares.
 1. **The scope.** "The context" is the whole workspace. Otherwise resolve
    the name as the `threads` skill's *Resolving a name* does, against zones,
    projects, threads, the two wikis ("the meetings", "the library") and the
-   Parties table. A party is every project whose `party` is its tag. Two
+   Parties table. A party is every project whose `party:` index names its tag. Two
    candidates mean one question; never pick one.
 2. **Gather**, changing nothing:
    ```sh
@@ -83,40 +83,28 @@ thread whose name another note shares.
    changed, each only after the walls check passes on what it staged, hook
    or no hook (a refusal puts the change back). Relay the commits, and any
    fix it held with the reason. A no leaves them for the report.
-4. **Walls.** For each, say the file and the wall ("the Pricing notes, the
-   wall between Acme and Birch") and nothing of what matched: not quoted,
-   not paraphrased, not summarised. Offer to take it out. On a yes, edit that
-   file alone, remove the material, and commit it in its repository through
-   the hook. Never move it anywhere else, and never decide alone.
+4. **Walls.** A wall finding is a reference into a walled zone. For each,
+   say the file and the zone it points into ("the Pricing notes, a link into
+   Personal") and nothing of what matched: not quoted, not paraphrased, not
+   summarised. Offer its fix: take the link, embed, path or copy out, or
+   move the file into that zone. On a yes, edit that file alone, and commit
+   it in its repository through the hook. Never move material into another
+   zone, and never decide alone.
 5. **Attribution**, one at a time. Each finding carries its question, and a
    proposal when the context file settles one. An answer that says a value
    written down is wrong is a correction: see *A correction* below. Add your
    own from the page's
    addresses, the People table and the page's text, as the `intake` skill
-   reads them; when the evidence points to two walled parties, propose
+   reads them; when the evidence points to two walled zones, propose
    nothing and ask. Ask in one line: "260310 Kick-off: Work, Acme?" On an
    answer, make the edit, commit it in its repository, and record it:
    ```sh
    python3 System/tools/nurture.py answered --path "<file>" --asked "<question>" --answer "<answer>"
    ```
-   A People row with a one-word name is asked the same way, one row at a time, with the full name of the one person
-   page of that party whose title starts with the word when there is exactly one. On the answer, change that row's
-   Name cell in `System/context.md` to the full name, put `<date>, user` in its Learned cell, commit it, and record
-   it with `answered`. With a full name the row refuses as every full-name row does; left at one word, it only warns.
-   "Skip" leaves the row as it is.
-   Where someone works is never edited by hand. On that page's own yes, or
-   on "another page" and the entity the user names, run, for that page alone:
-   ```sh
-   python3 System/tools/nurture.py organisation --path "<person page>" --yes [--entity "<entity>"]
-   ```
-   It works the link out again, refuses one to a walled party the page does not name, runs the walls
-   check on that page's change as staged and commits that page as the
-   check read it only if it passes, leaving what another session staged
-   alone, since `Wikis/` has
-   no commit hook unless you added one, and records the answer. It refuses a page whose frontmatter is not plain
-   `key: value` lines, or that has an organisation line already. Never batch
-   these, and never run it for a page the user has not said yes to.
-   "Skip" leaves it in the report. Never guess.
+   Attribution never asks which party a person works for, nor whose an
+   entity page is: a party is an index and no check reads it as a wall. The
+   one party question left is a mail domain no party has, asked as which
+   zone the mail belongs to, and answered with `intake.py learn`.
 6. **Judgment.** Name each with the page to open, and change nothing,
    unless the user answers one with the right value: that is a correction.
    **Behind the share** comes after it, apart: the shared copy is the one
@@ -151,10 +139,9 @@ value is found and replaced one way only.
    ```
    The scope is the pass's, none for the workspace. It lists what
    `correct.py` finds, by file and line, as one finding. With a scope, a
-   copy in a file whose scope does not name the walled party, or in one whose parties cannot be
-   told, is left out and left alone, and the tool prints the sentence
+   copy in a walled zone other than the scope's, or in a Meetings page with no zone, is left out and left alone, and the tool prints the sentence
    *Zones and walls* in `System/rules.md` gives. Say that sentence, word for
-   word, and nothing else about it: no file, no party, no count, not that a
+   word, and nothing else about it: no file, no zone, no count, not that a
    copy exists. A copy in a file another session has changes in is held. A
    raw record is listed and never edited.
 3. **Ask once**: "Five places have the old domain. Fix them all?" A hit
@@ -182,9 +169,9 @@ line. The day's report records each answer, so the next build knows.
 On either phrase, open the tab, filtered to the scope the user named, and
 stop. Where the page is not at hand, run *Gather* and read the list out, one
 kind at a time, as *Nurture* does; no session limit, and no file of
-decisions is kept. A wall is named by its file and its two parties, never
+decisions is kept. A wall is named by its file and its zone, never
 quoted, and is fixed or left, never put off. When an answer would need walled
-material in a file whose scope does not name its party, change nothing and say
+material in a file of another zone, change nothing and say
 the sentence *Zones and walls* in `System/rules.md` gives, word for word: "A wall
 holds some material back from this project, so I have not used it. Nothing was
 written." Say that fading still needs its
@@ -256,7 +243,7 @@ what faded.
    above the list: what the relationship was over those pages, in a
    sentence or two, from those pages alone. On a person page, only what any
    reader may see: who they met and when, never a figure or a position,
-   since a person page is read on both sides of every wall. Commit it in the
+   since a person page is read on every side. Commit it in the
    Wikis repository.
 
 Spoken: "Forty meeting pages would go dormant and nine to the archive.
@@ -288,9 +275,7 @@ only on "keep". A page carrying `superseded:` never wakes, whatever links it.
 
 The jobs extra's nightly job, `gr-nightly`, applies the mechanical
 kind with nobody watching, and nothing else: attribution, wall and judgment
-findings, and corrections, never change headless. Nor does a person page's
-`organisation:` link: it is a question, asked page by page, and its
-`organisation` action refuses to run headless. It commits only the files
+findings, and corrections, never change headless. It commits only the files
 it changed, by name, never `-a` or `git add .`, and leaves alone any file
 another session has changes in, since another session may have uncommitted
 work in the same repository. Its line in the morning digest says what was fixed first, then
@@ -302,7 +287,7 @@ the user asks what changed overnight, read the day's report.
 ## Listening mode
 
 As the `threads` skill's: the answer first, three sentences at most, no
-paths, round numbers. A wall is said as its two parties and the file's short
+paths, round numbers. A wall is said as its zone and the file's short
 name.
 
 ## What this skill does not do

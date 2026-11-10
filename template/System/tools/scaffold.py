@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Create a zone, a party, a project or a thread in this workspace.
 
-    python3 System/tools/scaffold.py zone "Garden" --holds "The house and the garden"
+    python3 System/tools/scaffold.py zone "Garden" --holds "The house and the garden" [--open]
+    python3 System/tools/scaffold.py zone --name Garden --walled | --open [--yes]
     python3 System/tools/scaffold.py party --name "Acme Corp" --zone Work --what "Supplier" [--check]
-    python3 System/tools/scaffold.py project --zone Work --name "Acme" --party acme --thread "Pricing"
+    python3 System/tools/scaffold.py project --zone Work --name "Acme" [--party acme] --thread "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing" --check
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "ISO 27001" --spoken "I S O twenty seven thousand one"
@@ -25,24 +26,29 @@ one. A zone has no note, so a zone name must say how it is said.
 
 A zone is made the way the installer makes one: its own folder and git repository
 with a first commit, its inbox, the skill links and the wall check, and a row in
-System/context.md, which is left for you to commit. A project always starts with its
-first thread. A thread inherits its project's party. `--check` applies every refusal
-and makes nothing, so a form can check a name as it is typed.
+System/context.md, which is left for you to commit. A new zone is walled unless it
+is made with `--open`. With `--walled` or `--open` on a zone that exists, the command
+changes its flag, the one place a wall is set: open to walled writes, runs the
+workspace's wall check and lists what now crosses; walled to open says how many files
+it releases and writes only with `--yes`. Both are refused, writing nothing, while the
+Zones table has no Walled column (the update to zone walls has not been accepted).
+A project always starts with its first thread. A thread inherits its project's party,
+if it has one: `--party` is optional, an index and never a wall. `--check` applies
+every refusal and makes nothing, so a form can check a name as it is typed.
 
 `party` adds a row to the Parties table in System/context.md and offers the tag
-itself, so nobody has to invent one. The row it adds carries the Walled flag, `yes` or `no`, which
-the zone's New parties column proposes and `--walled` or `--open` sets, and a
-Learned cell, `2026-10-16, user`, which says where it came from; the rows
-typed by hand are left as they are. It has to run, and its row be committed,
-before `project`: a project is refused with a tag System/context.md does not
+itself, so nobody has to invent one. The row it adds carries a Learned cell,
+`2026-10-16, user`, which says where it came from; the rows typed by hand are left
+as they are. A party routes mail (its domains) and holds the names that are heard;
+it is not walled, its zone is. It has to run, and its row be committed, before
+`project` names it: a project is refused with a tag System/context.md does not
 already carry, and that file is in the workspace's own repository while a project
 is in the zone's, so the two are separate commits. Running it again for a party
-already there changes nothing and says so. `party --check` answers one of three
-things and writes nothing: that the party is new and what its tag would be; that
+already there changes nothing and says so. `party --check` answers one of two
+things and writes nothing: that the party is new and what its tag would be, or that
 it is already there, with its tag, its zone and any project whose hub note names
-that tag; or, where two parties share the name, a refusal naming both and asking
-which is meant. `--also` adds a second row for an organisation already in Parties,
-in another capacity, with the wider tag that keeps the two apart; both stay walled.
+that tag. `--also` adds a second row for an organisation already in Parties, in
+another zone: one company under two hats is two parties in two zones.
 
 `park` sets a project or a thread aside and `wake` brings it back: `status:`,
 `updated:` today and a dated entry, "Parked." or "Woken.", in the note the
@@ -62,8 +68,6 @@ project of its zone, by the same machinery: the folder, every link to it and to
 the files inside it, its line in the hub (under the same heading), `project:`
 and `parent:`, and its rows in the project's `Deliverables/published.md`, in one
 commit that `undo` reverts. It refuses, and writes nothing, for another zone, a
-project walled from the thread's party (a `party:` list counts every tag; one it
-cannot read plainly is refused too), a
 thread of that name already there, a project that is parked or done, and files
 of the thread that sit outside its folder. `delete` without `--confirm` only says
 what would go; with it, the folder, the hub's line and the open Todo.md lines
@@ -146,19 +150,14 @@ from garrick_lib import (  # noqa: E402
     skill_links,
     spoken_clash,
     spoken_of,
-    frontmatter_form_problem,
     tag_list,
     status_command,
-    strip_tag,
     table_row,
     tag_for,
-    blocked,
-    decide,
-    hats_of,
-    is_walled,
-    labels,
     live_files,
     workspace_root,
+    walled as zone_flag,
+    zone_of,
     write_if_unchanged,
     zone_todo,
 )
@@ -308,14 +307,14 @@ def say_how(name, kind, spoken):
 
 def check_party(root, party, zone=None):
     """The party value for a note, if System/context.md holds every tag in it: one tag, or `[a, b]` for several
-    (`a,b` on the command line). For a new project, `zone` is the project's: a party that the table places in another
-    zone is refused, since its material would land in a zone it was never kept in. Two tags whose rows share a name are
-    refused: one company under two hats never meets on one note."""
+    (`a,b` on the command line); an empty value is no party, which a project may have. `party:` is an index of who
+    a note is about, never a wall: the wall is the zone. For a new project, `zone` is the project's: a party that the
+    table places in another zone is refused, since the index would point at a party of another zone."""
     ctx = load_context(root)
     parties = ctx.get("parties", {})
-    tags = [t for t in tag_list([x for x in re.split(r"[,\s]+", str(party).strip("[] ")) if x])]
+    tags = [t for t in tag_list([x for x in re.split(r"[,\s]+", str(party or "").strip("[] ")) if x])]
     if not tags:
-        raise Refusal("A party is needed.")
+        return ""
     for tag in tags:
         if tag not in parties:
             known = ", ".join(sorted(parties)) or "none yet"
@@ -324,38 +323,16 @@ def check_party(root, party, zone=None):
         if zone and there and there != zone:
             raise Refusal(f"{parties[tag].get('party') or tag} is a party of {there}, not of {zone}, so a project in {zone} "
                           "cannot be for it.")
-    refuse_hats(ctx, tags)
     return tags[0] if len(tags) == 1 else "[%s]" % ", ".join(tags)
 
 
-def refuse_hats(ctx, tags):
-    pair = next(iter(hats_of(ctx, tags)), None)
-    if pair:
-        raise Refusal("%s and %s are one company under two hats, and a note never names both. Name the one this is for."
-                      % pair)
-
-
-def refuse_hats_in_project(ctx, project_dir, hub_tags=None, thread=None, thread_tags=None):
-    """Two hats of one company never meet on a hub and its threads: the union of the hub's tags and each thread's
-    (with `hub_tags` or `thread_tags` standing in for the note being changed) is refused when it holds such a pair."""
-    hub = list(hub_tags) if hub_tags is not None else tag_list(parse_frontmatter(project_dir / f"{project_dir.name}.md").get("party"))
-    threads = project_dir / "Threads"
-    tags = {}
-    for t in (sorted(p.name for p in threads.iterdir() if p.is_dir()) if threads.is_dir() else []):
-        tags[t] = tag_list(parse_frontmatter(threads / t / f"{t}.md").get("party"))
-    if thread is not None:
-        tags[thread] = list(thread_tags)
-    for each in [hub] + list(tags.values()):
-        refuse_hats(ctx, set(hub) | set(each))
-
-
-def meet_sentence(ctx, tags):
-    """"Maple's and Harbour's material will meet in this project" where `tags` hold two walled parties, else ''."""
-    walled = [t for t in tags if is_walled(ctx, t)]
-    if len(walled) < 2:
-        return ""
-    names = [(ctx["parties"].get(t) or {}).get("party") or t for t in walled]
-    return "%s's and %s's material will meet in this project" % (", ".join(names[:-1]), names[-1])
+def drop_empty_party(note):
+    """A note made with no party has no `party:` line: the index is optional."""
+    if note.is_file():
+        text = note.read_text(encoding="utf-8")
+        new = re.sub(r"(?m)^party:[ \t]*\n", "", text, count=1)
+        if new != text:
+            note.write_text(new, encoding="utf-8")
 
 
 def link_thread_in_hub(hub, thread, today):
@@ -397,6 +374,8 @@ def make_thread(root, project_dir, name, party, today, spoken=None):
     note = target / f"{name}.md"
     if spoken and note.is_file():
         note.write_text(set_spoken(note.read_text(encoding="utf-8"), spoken), encoding="utf-8")
+    if not party:
+        drop_empty_party(note)
     return target
 
 
@@ -426,39 +405,146 @@ def zone_identity(root):
     return identity
 
 
-def list_zone(root, name, holds):
+def walled_column(header):
+    """The index of the Walled column of a table's header line, or None."""
+    cells = [h.strip().lower() for h in header.strip().strip("|").split("|")]
+    return next((i for i, h in enumerate(cells) if h.startswith("walled")), None)
+
+
+def zones_table(lines):
+    """(start, rows) of the Zones table: the index of its heading and the indexes of its table lines, header first."""
+    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## zones"), None)
+    if start is None:
+        return None, []
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return start, [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
+
+
+def list_zone(root, name, holds, walled=True):
     """Add the zone to the Zones table in System/context.md, as the installer would
-    have. False when the table already lists it, which is then left as it is."""
+    have. False when the table already lists it, which is then left as it is. A new zone is walled
+    unless it is made open. A table still in the 0.62 shape (Party and New parties columns, no Walled
+    column) gets a row in that shape, its New parties cell carrying the flag."""
     if name.lower() in (z.lower() for z in load_context(root)["zones"]):
         return False
     path = root / "System" / "context.md"
     lines = path.read_text(encoding="utf-8").splitlines()
-    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## zones"), None)
-    header = None
-    if start is not None:
-        header = next((l for l in lines[start + 1:] if l.lstrip().startswith("|")), None)
-    cells = [name, holds or f"<What {name} holds>"]
-    if header is None or "new parties" in header.lower():
-        cells += ["", "walled"]          # no zone party; a new party there is walled until its row says otherwise
-    row = table_row(cells)
+    start, rows = zones_table(lines)
+    flag = "yes" if walled else "no"
     if start is None:
         at = next((i for i, l in enumerate(lines) if l.strip().lower() == "## parties"), len(lines))
-        block = ["## Zones", "", "| Zone | Holds | Party | New parties |", "|---|---|---|---|", row, ""]
+        block = ["## Zones", "", "| Zone | Holds | Walled |", "|---|---|---|", table_row([name, holds or f"<What {name} holds>", flag]), ""]
         if at == len(lines) and lines and lines[-1].strip():
             block = [""] + block[:-1]
         lines[at:at] = block
     else:
-        end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
-        rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
-        if rows:
-            lines.insert(rows[-1] + 1, row)
+        header = lines[rows[0]] if rows else None
+        cells = [name, holds or f"<What {name} holds>"]
+        if header is None:
+            lines[start + 1:start + 1] = ["", "| Zone | Holds | Walled |", "|---|---|---|", table_row(cells + [flag])]
         else:
-            lines[start + 1:start + 1] = ["", "| Zone | Holds | Party | New parties |", "|---|---|---|---|", row]
+            if walled_column(header) is not None:
+                cells.append(flag)
+            else:
+                cells += ["", "walled" if walled else "open"]      # 0.62 shape: no zone party, and the new-parties default
+            lines.insert(rows[-1] + 1, table_row(cells))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return True
 
 
+def set_zone_flag(root, zone, walled):
+    """Write the Walled cell of one zone's row. The commit is the caller's. Refused while the Zones table has no
+    Walled column: the zone-walls migration has not run, and a flag written into a table that does not read it
+    would decide nothing."""
+    path = root / "System" / "context.md"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start, rows = zones_table(lines)
+    want = walled_column(lines[rows[0]]) if rows else None
+    if want is None:
+        raise Refusal("The Zones table of System/context.md has no Walled column: the update to zone walls has not been "
+                      "accepted yet, so no flag was changed.")
+    for i in rows[2:]:
+        cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+        if cells and cells[0].lower() == zone.lower() and len(cells) > want:
+            cells[want] = "yes" if walled else "no"
+            lines[i] = "| " + " | ".join(cells) + " |"
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return
+    raise Refusal(f"{zone} is not in the Zones table of System/context.md.")
+
+
+def files_in_zone(root, zone):
+    """How many files belong to a zone today: its own folder's live files, and the Meetings pages and raw records whose
+    `zone:` is this one. What making the zone open releases."""
+    root = Path(root)
+    n = 0
+    for folder in (root / "Zones" / zone, root / "Wikis" / "Meetings" / "wiki", root / "Wikis" / "Meetings" / "raw"):
+        for path in live_files(folder) if folder.is_dir() else []:
+            n += zone_of(root, path) == zone
+    return n
+
+
+def walls_violations(root):
+    """The files the whole-workspace walls check refuses now, as paths; None when the check could not run or finish."""
+    check = Path(root) / "System" / "tools" / "check.py"
+    try:
+        run = subprocess.run([sys.executable, str(check), "--root", str(root), "--walls-only", "--json"],
+                             capture_output=True, text=True, timeout=600)
+        found = json.loads(run.stdout).get("findings", [])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+    return sorted({f["path"] for f in found if f.get("severity") == "error" and f.get("path")})
+
+
+def flip_zone(root, args):
+    """`zone --name Z --walled | --open [--yes]` for a zone that exists. Walled to open releases history at once, so
+    it says how many files it releases and writes only on --yes. Open to walled writes, runs the whole-workspace walls
+    check and lists the files now in violation. System/context.md is changed and left for the caller to commit."""
+    ctx = load_context(root)
+    zone = next((z for z in ctx["zones"] if z.lower() == args.name.strip().lower()), None)
+    if zone is None:
+        raise Refusal(f"{args.name.strip()} is not a zone in System/context.md.")
+    if ctx.get("pending"):
+        raise Refusal("The Zones table of System/context.md has no Walled column: the update to zone walls has not been "
+                      "accepted yet, so no flag was changed.")
+    now = zone_flag(ctx, zone)
+    if now == bool(args.walled):
+        return f"{zone} is already {'walled' if args.walled else 'open'}. Nothing was changed."
+    if args.open:
+        n = files_in_zone(root, zone)
+        if not args.yes:
+            return (f"Opening {zone} releases {n} file{'s' if n != 1 else ''}: their material may go anywhere afterwards. "
+                    "Nothing was written. To go on, run it again with --yes.")
+        set_zone_flag(root, zone, False)
+        return (f"{zone} is open. {n} file{'s' if n != 1 else ''} released. System/context.md is changed; commit it on its own, "
+                "in the workspace's own repository.")
+    set_zone_flag(root, zone, True)
+    bad = walls_violations(root)
+    said = [f"{zone} is walled. System/context.md is changed; commit it on its own, in the workspace's own repository."]
+    if bad is None:
+        raise Refusal(said[0] + " The check could not run, so the files now in violation are not known: run "
+                      "`python3 System/tools/check.py --walls-only` before committing.")
+    if bad:
+        said.append("%d file%s now in violation:" % (len(bad), "s" if len(bad) != 1 else ""))
+        said += ["  " + b for b in bad[:20]] + (["  and %d more" % (len(bad) - 20)] if len(bad) > 20 else [])
+        said.append("Commits in their zones are refused until each is fixed.")
+    else:
+        said.append("No file is in violation.")
+    return "\n".join(said)
+
+
 def cmd_zone(root, args, today):
+    given = args.name or args.zone_name
+    if not given or not given.strip():
+        raise Refusal("Say the zone's name.")
+    args.name = given
+    if args.walled or args.open:
+        if any(z.lower() == given.strip().lower() for z in load_context(root)["zones"]):
+            return flip_zone(root, args)
+        if args.walled and args.open:
+            raise Refusal("Say --walled or --open, not both.")
+    if args.holds is None:
+        raise Refusal(f"{given.strip()} is not a zone yet. To make it, say what it holds: --holds \"<what it holds>\".")
     name, holds = args.name.strip(), " ".join(args.holds.split())
     zones = root / "Zones"
     check_name(name, children(zones), "zone", "the workspace", parent=zones, must_be_sayable=True)
@@ -493,8 +579,9 @@ def cmd_zone(root, args, today):
     said = [f"Created the {name} zone: its own folder and git history, an inbox, "
             "and the wall check before every commit."]
     to_commit = []
-    if list_zone(root, name, holds):
-        said.append(f"Added {name} to the Zones table in System/context.md.")
+    if list_zone(root, name, holds, walled=not args.open):
+        said.append(f"Added {name} to the Zones table in System/context.md, "
+                    f"{'open: what is in it may go anywhere' if args.open else 'walled: what is in it stays in it'}.")
         to_commit.append("System/context.md")
     else:
         said.append(f"System/context.md already lists {name}, so its row is unchanged.")
@@ -512,7 +599,7 @@ def cmd_zone(root, args, today):
     if elsewhere:
         said.append(f"git takes its hooks from {elsewhere}, so the wall check will not run before commits "
                     f"in {name}. To turn it on, run in Zones/{name}: git config core.hooksPath .git/hooks")
-    said.append(f'Next, say "new project <name> for <party> in {name}, first thread <name>". '
+    said.append(f'Next, say "new project <name> in {name}, first thread <name>". '
                 f"A party new to the workspace goes into System/context.md first, with {name} as its zone.")
     return "\n".join(said)
 
@@ -574,7 +661,7 @@ def party_zone(root, args, name, required=True):
     raise Refusal("Which zone is %s in? The zones are %s." % (name, ", ".join(zones) or "none yet"))
 
 
-def add_party_row(root, name, what, zone, tag, walled=True, today=None):
+def add_party_row(root, name, what, zone, tag, today=None):
     """The row in context.md's Parties table, written where the installer wrote
     its own, each cell under its header. The commit is the caller's, as a new
     zone's row is. With `today`, the row is a learned one, added on the user's
@@ -590,9 +677,10 @@ def add_party_row(root, name, what, zone, tag, walled=True, today=None):
     end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
     rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")]
     if len(rows) < 2:
-        lines[end:end] = ["| Party | What it is | Zone | Tag | Walled | Domains |", "|---|---|---|---|---|---|", ""]
+        lines[end:end] = ["| Party | What it is | Zone | Tag | Domains |", "|---|---|---|---|---|", ""]
         rows = [end, end + 1]
-    given = {"party": name, "what": what, "zone": zone, "tag": "`%s`" % tag, "walled": "yes" if walled else "no"}
+    # A table still in the 0.62 shape has a Walled column: a new row there is walled, until the update to zone walls drops it.
+    given = {"party": name, "what": what, "zone": zone, "tag": "`%s`" % tag, "walled": "yes"}
     header = [h.lower() for h in lines[rows[0]].strip().strip("|").split("|")]
     cells = [next((v for k, v in given.items() if h.strip().startswith(k)), "") for h in header]
     row = learned_row(lines, rows, cells, learned_cell(today, "user")) if today else table_row(cells)
@@ -600,117 +688,9 @@ def add_party_row(root, name, what, zone, tag, walled=True, today=None):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def party_flag(root, args, zone, hats):
-    """Whether the new party is walled: `--walled` or `--open`, else the zone's New parties column.
-    The second hat of a company is walled, whatever else is said."""
-    if hats:
-        if getattr(args, "open", False):
-            raise Refusal("The two hats of one company both stay walled, so --open is refused.")
-        return True
-    if getattr(args, "walled", False) or getattr(args, "open", False):
-        return bool(args.walled)
-    return load_context(root).get("zone_default", {}).get(zone, "walled") != "open"
-
-
-def files_labelled(root, tag):
-    """How many files carry `tag` today: the files of every project whose labels hold it, and the Meetings pages
-    and raw records that name it. What flipping the party to open, or taking it off a note, would release."""
-    root = Path(root)
-    ctx, cache, n = load_context(root), {}, 0
-    zones = root / "Zones"
-    projects = [p for z in sorted(zones.iterdir()) if z.is_dir() and not z.name.startswith(".")
-                for p in sorted(z.iterdir()) if p.is_dir() and not p.name.startswith((".", "_")) and p.name != INBOX] \
-        if zones.is_dir() else []
-    folders = projects + [root / "Wikis" / "Meetings" / sub for sub in ("wiki", "raw")]
-    for folder in folders:
-        for path in live_files(folder) if folder.is_dir() else []:
-            got = labels(root, path, ctx, cache)
-            n += bool(got and tag in got)
-    return n
-
-
-def walls_violations(root):
-    """The files the whole-workspace walls check refuses now, as paths; None when the check could not run or finish."""
-    check = Path(root) / "System" / "tools" / "check.py"
-    try:
-        run = subprocess.run([sys.executable, str(check), "--root", str(root), "--walls-only", "--json"],
-                             capture_output=True, text=True, timeout=600)
-        found = json.loads(run.stdout).get("findings", [])
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None
-    return sorted({f["path"] for f in found if f.get("severity") == "error" and f.get("path")})
-
-
-def set_flag(root, tag, walled):
-    """Write the Walled cell of one party's row. The commit is the caller's."""
-    path = root / "System" / "context.md"
-    lines = path.read_text(encoding="utf-8").splitlines()
-    start = next((i for i, l in enumerate(lines) if l.strip().lower() == "## parties"), None)
-    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines)) if start is not None else 0
-    rows = [i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")] if start is not None else []
-    if len(rows) < 2:
-        raise Refusal("System/context.md has no Parties table to change.")
-    header = [h.strip().lower() for h in lines[rows[0]].strip().strip("|").split("|")]
-    want = next((i for i, h in enumerate(header) if h.startswith("walled")), None)
-    at = next((i for i, h in enumerate(header) if h == "tag"), None)
-    if want is None or at is None:
-        raise Refusal("The Parties table has no Walled column. Run the update that adds it first.")
-    for i in rows[2:]:
-        cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
-        if len(cells) > max(want, at) and strip_tag(cells[at]) == tag:
-            cells[want] = "yes" if walled else "no"
-            lines[i] = "| " + " | ".join(cells) + " |"
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return
-    raise Refusal(f"{tag} is not a party tag in System/context.md.")
-
-
-def cmd_flip(root, args, today):
-    """`party --tag T --walled | --open [--yes]`: flip an existing party. Walled to open releases history at once, so
-    it says how many files it releases and writes only on --yes. Open to walled writes, runs the whole-workspace walls
-    check and lists the files now in violation. System/context.md is changed and left for the caller to commit."""
-    tag = strip_tag(args.tag)
-    ctx = load_context(root)
-    row = ctx.get("parties", {}).get(tag)
-    if row is None:
-        raise Refusal(f"{tag} is not a party tag in System/context.md. The tags are {', '.join(sorted(ctx['parties'])) or 'none yet'}.")
-    if not (args.walled or args.open):
-        raise Refusal("Say --walled or --open.")
-    name = row.get("party") or tag
-    stated = row.get("flag") == "yes" if args.walled else not row.get("walled", True)     # a blank cell reads as walled but is not yet written as so
-    if stated:
-        return f"{name} is already {'walled' if args.walled else 'open'}. Nothing was changed."
-    if args.open:
-        pair = next((p for p in hats_of(ctx, [tag] + [t for t in ctx["parties"] if t != tag]) if tag in p), None)
-        if pair:
-            raise Refusal(f"{name} is one of two hats of a company, and both hats stay walled.")
-        n = files_labelled(root, tag)
-        if not args.yes:
-            return (f"Opening {name} releases {n} file{'s' if n != 1 else ''}: their material may go anywhere afterwards. "
-                    "Nothing was written. To go on, run it again with --yes.")
-        set_flag(root, tag, False)
-        return (f"{name} is open. {n} file{'s' if n != 1 else ''} released. System/context.md is changed; commit it on its own, "
-                "in the workspace's own repository.")
-    set_flag(root, tag, True)
-    bad = walls_violations(root)
-    said = [f"{name} is walled. System/context.md is changed; commit it on its own, in the workspace's own repository."]
-    if bad is None:
-        raise Refusal(said[0] + " The check could not run, so the files now in violation are not known: run "
-                      "`python3 System/tools/check.py --walls-only` before committing.")
-    if bad:
-        said.append("%d file%s now in violation:" % (len(bad), "s" if len(bad) != 1 else ""))
-        said += ["  " + b for b in bad[:20]] + (["  and %d more" % (len(bad) - 20)] if len(bad) > 20 else [])
-        said.append("Commits in their zones are refused until each is fixed or its project names the party.")
-    else:
-        said.append("No file is in violation.")
-    return "\n".join(said)
-
-
 def cmd_party(root, args, today):
-    if getattr(args, "tag", None):
-        return cmd_flip(root, args, today)
     if not args.name:
-        raise Refusal("Say --name for a new party, or --tag with --walled or --open for an existing one.")
+        raise Refusal("Say --name for a new party.")
     return cmd_new_party(root, args, today)
 
 
@@ -729,12 +709,6 @@ def cmd_new_party(root, args, today):
         raise Refusal("A party needs a name.")
     same = parties_called(root, name)
     parties = load_context(root).get("parties", {})
-    if len(same) > 1:
-        each = ["`%s` in %s" % (tag, entry.get("zone") or "no zone") for tag, entry in same]
-        counts = {2: "Two", 3: "Three", 4: "Four"}
-        raise Refusal("%s of your parties are called %s: %s, and %s. Which one is this?"
-                      % (counts.get(len(same), str(len(same))), name,
-                         ", ".join(each[:-1]), each[-1]))
     if same and not args.also:
         tag, entry = same[0]
         where = entry.get("zone") or "no zone"
@@ -751,22 +725,17 @@ def cmd_new_party(root, args, today):
         raise Refusal("`none` is reserved: it says a page is nobody's, so it is never a party's tag. What should the tag be?")
     if not TAG_RE.match(tag):                     # the library offers only valid tags; belt and braces
         raise Refusal('"%s" will not work as a tag: it must be %s.' % (tag, TAG_RULE))
-    walled = party_flag(root, args, zone, bool(same))
     if args.check:
         where = ", in %s" % zone if zone else ""
-        return "%s is not a party yet, and the tag would be `%s`%s, %s." % (
-            name, tag, where, "walled" if walled else "open")
+        return "%s is not a party yet, and the tag would be `%s`%s." % (name, tag, where)
     what = " ".join((args.what or "").split()) or f"<What {name} is>"
-    add_party_row(root, name, what, zone, tag, walled, today)
-    said = [f"Added {name} to the Parties table in System/context.md, with the tag `{tag}`, in {zone}, "
-            f"{'walled: only a project that names it holds its material' if walled else 'open: its material may go anywhere'}."]
-    if same:
-        said.append("`%s` and `%s` are both %s, and both stay walled: a note never names the two together."
-                    % (same[0][0], tag, name))
+    add_party_row(root, name, what, zone, tag, today)
+    said = [f"Added {name} to the Parties table in System/context.md, with the tag `{tag}`, in {zone}. "
+            "A party routes mail and names what is said; the wall is its zone's."]
     said.append("Commit System/context.md on its own, in the workspace's own repository at its top folder: "
                 "a project is in its zone's repository, and one commit never spans the two.")
     said.append('Next, once that row is committed: scaffold.py project --zone %s --name "<Project>" '
-                '--party %s --thread "<Thread>", which is refused while the row is not there.' % (zone, tag))
+                '--party %s --thread "<Thread>" (the party is optional), which is refused while the row is not there.' % (zone, tag))
     return "\n".join(said)
 
 
@@ -780,9 +749,6 @@ def cmd_project(root, args, today):
     check_name(name, children(zone_dir), "project", zone_dir.name, spoken=spoken, parent=zone_dir)
     check_name(thread, [], "thread", name, spoken=thread_spoken)
     party = check_party(root, args.party, zone_dir.name)
-    meet = meet_sentence(load_context(root), tag_list(party.strip("[]").split(",")))
-    if meet and not getattr(args, "yes", False):
-        raise Refusal(f"{meet}. Nothing was written. To go on, run it again with --yes.")
     target = zone_dir / name
     if target.exists():
         raise Refusal(f"{target.relative_to(root)} already exists.")
@@ -795,6 +761,8 @@ def cmd_project(root, args, today):
     if spoken and hub.is_file():
         hub.write_text(set_spoken(hub.read_text(encoding="utf-8"), spoken), encoding="utf-8")
     make_thread(root, target, thread, party, today, thread_spoken)
+    if not party:
+        drop_empty_party(hub)
     link_thread_in_hub(hub, thread, today)
     return "\n".join([f"Created project {name} in {zone_dir.name}, with its first thread, {thread}."] + asked)
 
@@ -805,10 +773,7 @@ def cmd_thread(root, args, today):
     hub = project_dir / f"{project_dir.name}.md"
     if not hub.is_file():
         raise Refusal(f"{project_dir.name} has no hub note, {hub.name}.")
-    party = ",".join(tag_list(parse_frontmatter(hub).get("party")))
-    if not party:
-        raise Refusal(f"{project_dir.name} has no party in its hub note, so a thread cannot inherit one.")
-    party = check_party(root, party)
+    party = check_party(root, ",".join(tag_list(parse_frontmatter(hub).get("party"))))      # none: the thread has none either
     name = args.name.strip()
     spoken = (args.spoken or "").strip()
     asked = say_how(name, "thread", spoken)
@@ -826,75 +791,6 @@ def cmd_thread(root, args, today):
         said.append("Touched: " + json.dumps([target.relative_to(zone_dir).as_posix(),
                                               hub.relative_to(zone_dir).as_posix()], ensure_ascii=False))
     return "\n".join(said)
-
-
-# --------------------------------------------------------------------------- labels of a note
-
-LABEL_CHANGES = ("System", "generated", "label-changes.jsonl")
-
-
-def write_party_line(note, tags):
-    """`party:` of a hub or thread note set to `tags`: one tag, or a flow list. The rest of the note is untouched;
-    the item lines of a block-style list go with the line they belong to."""
-    text = note.read_text(encoding="utf-8")
-    value = tags[0] if len(tags) == 1 else "[%s]" % ", ".join(tags)
-    new, n = re.subn(r"(?m)^party:[^\n]*(?:\n[ \t]*-[ \t]+[^\n]*)*$", lambda m: "party: " + value, text, count=1)
-    if not n:
-        new, n = re.subn(r"(?m)^(zone:[^\n]*)$", lambda m: m.group(1) + "\nparty: " + value, text, count=1)
-    if not n:
-        raise Refusal(f"{note.name} has no `party:` line and no `zone:` line to put one after, so nothing was changed.")
-    note.write_text(new, encoding="utf-8")
-
-
-def cmd_label(root, args, today):
-    """`label --zone Z --project P [--thread T] --add TAG | --remove TAG [--yes]`: put a party on a hub or thread
-    note, or take one off. Two walled parties on one note say, before anything is written, that their material will
-    meet there; taking a party off names how many files lose the label. Both write only on --yes."""
-    zone_dir = find_zone(root, args.zone)
-    project_dir = find_child(zone_dir, args.project, "project")
-    if args.thread:
-        note_dir = find_child(project_dir / "Threads", args.thread, "thread")
-    else:
-        note_dir = project_dir
-    note = note_dir / f"{note_dir.name}.md"
-    if not note.is_file():
-        raise Refusal(f"{note.relative_to(root)} is missing.")
-    ctx = load_context(root)
-    now = tag_list(parse_frontmatter(note).get("party"))
-    tag = strip_tag(args.add or args.remove)
-    if tag not in ctx["parties"]:
-        raise Refusal(f"{tag} is not a party tag in System/context.md. The tags are {', '.join(sorted(ctx['parties']))}.")
-    if args.add:
-        if tag in now:
-            return f"{tag} is already on {note.name}. Nothing was changed."
-        new = now + [tag]
-        refuse_hats(ctx, new)
-        if args.thread:
-            refuse_hats_in_project(ctx, project_dir, thread=note_dir.name, thread_tags=new)
-        else:
-            refuse_hats_in_project(ctx, project_dir, hub_tags=new)
-        hub = tag_list(parse_frontmatter(project_dir / f"{project_dir.name}.md").get("party"))
-        meet = meet_sentence(ctx, sorted(set(new) | set(hub)))
-        if meet and not args.yes:
-            raise Refusal(f"{meet}. Nothing was written. To go on, run it again with --yes.")
-        write_party_line(note, new)
-        return f"Added {tag} to {note.name}." + (f" {meet}." if meet else "")
-    if tag not in now:
-        raise Refusal(f"{tag} is not on {note.name}.")
-    if len(now) == 1:
-        raise Refusal(f"{tag} is the only party on {note.name}. A hub with no party labels nothing, so nothing was changed.")
-    kept = [t for t in now if t != tag]
-    losing = files_labelled(root, tag)
-    if not args.yes:
-        return (f"Taking {tag} off {note.name} means files under {note_dir.relative_to(zone_dir)} no longer carry it "
-                f"(the workspace holds {losing} file{'s' if losing != 1 else ''} with that label today). Nothing was written. "
-                "To go on, run it again with --yes.")
-    write_party_line(note, kept)
-    log = Path(root).joinpath(*LABEL_CHANGES)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"note": note.relative_to(root).as_posix(), "dropped": [tag], "at": today}) + "\n")
-    return f"Took {tag} off {note.name}. The check will read the project under its new labels when you commit."
 
 
 # --------------------------------------------------------------------------- rename and delete
@@ -1271,40 +1167,6 @@ def hub_status(hub):
     return str(value).strip().lower() if isinstance(value, str) and value.strip() else "active"
 
 
-def party_tags(root, note, what):
-    """The party tags a note's `party:` names, read as check.py reads them: one
-    tag, or a list of them, each held in System/context.md's Parties table.
-    A Refusal where the value is empty, holds a tag nobody declared, or sits
-    in frontmatter that reads two ways. A move never guesses at a wall."""
-    try:
-        text = note.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        text = None
-    cannot = Refusal(f"The {what} has no single `party:` that can be read, so the move could not be checked "
-                     "against the walls. Nothing was moved.")
-    if text is None or frontmatter_form_problem(text, ("party",)):
-        raise cannot
-    value = parse_frontmatter(note).get("party")
-    if value is not None and not isinstance(value, (str, list)):
-        raise cannot
-    if isinstance(value, list) and not all(isinstance(v, str) for v in value):
-        raise cannot
-    tags = tag_list(value)
-    if not tags or (isinstance(value, list) and len(tags) != len(value)):
-        raise cannot
-    declared = load_context(root).get("parties", {})
-    if any(t not in declared for t in tags):
-        raise Refusal(f"The {what}'s `party:` is not a tag in the Parties table of System/context.md, so the move could "
-                      "not be checked against the walls. Nothing was moved.")
-    return tags
-
-
-def wall_between(ctx, left, right):
-    """Does a wall stand between any tag of one side and any tag of the other?
-    It is a wall for a thread moved into a project of `right`: decide() says."""
-    return bool(left and right) and decide(right, left, "file", ctx) == "deny"
-
-
 def item_end(lines, i):
     """The index after a list item and the indented lines that continue it."""
     indent = len(lines[i]) - len(lines[i].lstrip())
@@ -1447,58 +1309,6 @@ def md_relink(text, p_old, p_new, rel_old, rel_new, zone_dir, zone, name, unreso
     return MD_LINK.sub(one, text)
 
 
-def thread_material_walls(root, zone_dir, thread_dir, target_tags):
-    """Defence in depth for a move (#354), beside the zone's own wall check at
-    the commit: every link in the thread's notes is read for whose material it
-    leads to, and a link to a Meetings page or to another project's file is
-    refused when that page's parties, or that project's hub and thread party,
-    stand across a wall from the new project's. Something that cannot be read
-    plainly is a refusal too. Returns the reason, or None."""
-    ctx = load_context(root)
-    zone = zone_dir.name
-    projects = {c.lower(): zone_dir / c for c in children(zone_dir)}
-    meetings = {}
-    wiki = root / "Wikis" / "Meetings" / "wiki"
-    if wiki.is_dir():
-        for page in wiki.rglob("*.md"):
-            meetings.setdefault(page.stem.lower(), []).append(page)
-    link = re.compile(r"\[\[([^\]|#]+)")
-    for note in sorted(thread_dir.rglob("*.md")):
-        try:
-            text = note.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return "a note of the thread cannot be read as text, so its links could not be checked against the walls"
-        for m in link.finditer(text):
-            key = re.sub(r"\.md$", "", m.group(1).strip())
-            for head in (f"Zones/{zone}/", f"{zone}/"):
-                if key.startswith(head):
-                    key = key[len(head):]
-            parts = key.split("/")
-            tags = set()
-            if len(parts) > 1 and parts[0].lower() in projects:
-                owner = projects[parts[0].lower()]
-                hub = owner / f"{owner.name}.md"
-                tag = parse_frontmatter(hub).get("party") if hub.is_file() else None
-                tags = set(tag_list(tag))
-                if not tags:
-                    return "a project the thread links has no party that can be read, so the move could not be checked against the walls"
-                if len(parts) > 3 and parts[1] == "Threads":
-                    t = owner / "Threads" / parts[2] / f"{parts[2]}.md"
-                    tags |= set(tag_list(parse_frontmatter(t).get("party"))) if t.is_file() else set()
-            elif parts[-1].lower() in meetings and (len(parts) == 1 or parts[0].lower() not in projects):
-                for page in meetings[parts[-1].lower()]:
-                    body = page.read_text(encoding="utf-8", errors="replace")
-                    if frontmatter_form_problem(body):
-                        return "a meeting page the thread links has frontmatter that cannot be read plainly, so the move could not be checked against the walls"
-                    got = set(tag_list(parse_frontmatter(page).get("parties")))
-                    if not got:
-                        return "a meeting page the thread links has no parties, so the move could not be checked against the walls"
-                    tags |= got
-            if wall_between(ctx, tags, target_tags):
-                return "WALL"
-    return None
-
-
 STATE_MOVED = ("System", "generated", "moved.json")
 
 
@@ -1587,22 +1397,9 @@ def cmd_move(root, args, today):
     hub, target_hub = project_dir / f"{project_dir.name}.md", target / f"{target.name}.md"
     if not target_hub.is_file():
         raise Refusal(f"{target_hub.relative_to(root)} is missing, so {target.name} is not a project scaffold made.")
-    # The walls, before anything else is read or written: a wall is the one refusal that says nothing more.
+    # A move stays inside one zone, and a zone is the whole wall: nothing crosses one here.
     if not hub.is_file():
         raise Refusal(f"{hub.relative_to(root)} is missing, so the thread's line in its hub could not be moved.")
-    mine, theirs = party_tags(root, note, "thread"), party_tags(root, target_hub, "target project")
-    source = party_tags(root, hub, "project it leaves")
-    ctx = load_context(root)
-    ops = operations()
-    wall = getattr(ops, "WALL_REFUSAL", None) or WALL_SENTENCE
-    if wall_between(ctx, mine, theirs) or wall_between(ctx, source, theirs):
-        raise Refusal(wall)
-    refuse_hats_in_project(ctx, target, thread=name, thread_tags=mine)
-    why = thread_material_walls(root, zone_dir, thread_dir, theirs)
-    if why == "WALL":
-        raise Refusal(wall)
-    if why:
-        raise Refusal(f"Nothing was moved: {why}.")
     if hub_status(target_hub) != "active":
         raise Refusal(f"{target.name} is {hub_status(target_hub)}, and a thread moved into it would take that status. "
                       "Wake it first, or pick another project.")
@@ -2272,26 +2069,24 @@ def main(argv=None):
     ap.add_argument("--root", help="workspace folder (default: the one this script is in)")
     ap.add_argument("--today", help="YYYY-MM-DD to stamp instead of today")
     sub = ap.add_subparsers(dest="command", required=True)
-    z = sub.add_parser("zone", help="a new zone, with its own git repository")
-    z.add_argument("name", help="the zone's name, one that can be said aloud")
-    z.add_argument("--holds", required=True, help="what the zone holds, in a few words, for System/context.md")
+    z = sub.add_parser("zone", help="a new zone with its own git repository, or the wall of one that exists")
+    z.add_argument("zone_name", nargs="?", help="the zone's name, one that can be said aloud (or --name)")
+    z.add_argument("--name", help="the zone's name")
+    z.add_argument("--holds", help="what a new zone holds, in a few words, for System/context.md")
+    zflag = z.add_mutually_exclusive_group()
+    zflag.add_argument("--walled", action="store_true", help="walled: what is in the zone stays in it (the default for a new zone)")
+    zflag.add_argument("--open", action="store_true", help="open: what is in the zone may go anywhere")
+    z.add_argument("--yes", action="store_true", help="go on where opening a zone releases its files")
     y = sub.add_parser("party", help="a new party in System/context.md; commit it before the project")
     y.add_argument("--name", help="the party's name, as a person would say it")
-    y.add_argument("--tag", help="an existing party to flip, with --walled or --open (and --yes to open it)")
-    y.add_argument("--yes", action="store_true", help="go on where opening a party releases its files")
     y.add_argument("--zone", help="the zone it belongs to; needed where the workspace has more than one")
     y.add_argument("--what", help="what it is, in a few words, for the table")
     y.add_argument("--also", action="store_true",
                    help="a second row for an organisation already in Parties, in another capacity")
-    flag = y.add_mutually_exclusive_group()
-    flag.add_argument("--walled", action="store_true",
-                      help="walled: its material goes only into a project that names it (the zone's default is proposed)")
-    flag.add_argument("--open", action="store_true", help="open: its material may go anywhere")
     p = sub.add_parser("project", help="a new project, with its first thread")
     p.add_argument("--zone", required=True)
     p.add_argument("--name", required=True)
-    p.add_argument("--party", required=True, help="tag from Parties in System/context.md, or several separated by commas")
-    p.add_argument("--yes", action="store_true", help="go on where the project names two walled parties, whose material will meet")
+    p.add_argument("--party", help="tag from Parties in System/context.md, or several separated by commas; optional, an index")
     p.add_argument("--thread", required=True, help="name of the first thread")
     p.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
     p.add_argument("--thread-spoken", dest="thread_spoken",
@@ -2303,14 +2098,6 @@ def main(argv=None):
     t.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
     t.add_argument("--touched", action="store_true",
                    help="end with a line `Touched: [...]`, the paths from the zone it wrote, for a caller that commits them")
-    lb = sub.add_parser("label", help="put a party on a hub or thread note, or take one off")
-    lb.add_argument("--zone", required=True)
-    lb.add_argument("--project", required=True)
-    lb.add_argument("--thread", help="the thread note; without it, the hub")
-    which = lb.add_mutually_exclusive_group(required=True)
-    which.add_argument("--add", help="a party tag to put on the note")
-    which.add_argument("--remove", help="a party tag to take off the note")
-    lb.add_argument("--yes", action="store_true", help="go on where two walled parties will meet, or a label is lost")
     r = sub.add_parser("rename", help="rename a project or a thread, and every link to it in the zone")
     r.add_argument("--zone", required=True)
     r.add_argument("--project", required=True)
@@ -2360,7 +2147,7 @@ def main(argv=None):
             return 0 if reply.get("ok") else 1
         run = {"zone": cmd_zone, "party": cmd_party, "project": cmd_project, "thread": cmd_thread,
                "rename": cmd_rename, "move": cmd_move, "delete": cmd_delete, "undo": cmd_undo, "park": cmd_park,
-               "wake": cmd_park, "label": cmd_label}[args.command]
+               "wake": cmd_park}[args.command]
         print(run(root, args, today))
         ask_for_page(root, args)
     except Refusal as exc:

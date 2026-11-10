@@ -2,7 +2,7 @@
 title: Birch board paper review
 type: meeting
 date: 2026-09-25
-zone: Work
+zone: Birch
 parties: [birch]
 people: ["[[wiki/people/theo-marsh]]", "[[wiki/people/iris-bell]]", "[[wiki/people/lena-moss]]"]
 raw: "[[raw/260925-birch-board-paper-review]]"

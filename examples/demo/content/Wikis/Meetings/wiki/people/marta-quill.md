@@ -1,6 +1,7 @@
 ---
 title: Marta Quill
 type: person
+zone: Work
 party: cobalt
 created: 2026-09-15
 updated: 2026-09-15

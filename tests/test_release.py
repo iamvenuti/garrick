@@ -366,26 +366,15 @@ class TestTheDownload(ReleaseCase):
         self.assertEqual(["--update", str(self.root), "--apply", "--only", "System/tools/check.py"],
                          json.loads(self.record.read_text())["argv"])
 
-    def pending_walls(self):
-        """A context as 0.59 left it: a Parties table with no Walled column, and the migration beside it."""
-        shutil.copy(TOOLS / "migrate_walls.py", self.root / "System" / "tools" / "migrate_walls.py")
-        context = self.root / "System" / "context.md"
-        context.write_text("# Context\n\n## Me\n\nSam Rivera. Advisor.\n\n## Parties\n\n| Party | What it is | Zone | Tag |\n"
-                           "|---|---|---|---|\n| Acme Corp | Client | Work | `acme` |\n\n## Walls\n\n| Between | And |\n|---|---|\n"
-                           "| `acme` | `birch` |\n", encoding="utf-8")
+    def test_clean_reaches_the_update_even_on_the_release_the_workspace_runs(self):
+        self.net(answers={"https://api.github.com": latest("v0.15.2"),
+                          "https://github.com/iamvenuti/garrick/archive/refs/tags/v0.15.2.zip": self.zip})
+        with mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(0, release.main(["--root", str(self.root), "update", "--apply", "--clean", "people"]))
+        self.assertEqual(["--update", str(self.root), "--apply", "--clean", "people"],
+                         json.loads(self.record.read_text())["argv"])
 
-    def test_yes_reaches_the_update_and_finishes_a_pending_migration_on_the_release_already_installed(self):
-        self.pending_walls()
-        fake = self.net(answers={"https://api.github.com": latest("v0.15.2"),
-                                 "https://github.com/iamvenuti/garrick/archive/refs/tags/v0.15.2.zip": self.zip})
-        out = io.StringIO()
-        with mock.patch("sys.stdout", out):
-            self.assertEqual(0, release.main(["--root", str(self.root), "update", "--apply", "--yes"]))
-        self.assertNotIn("Up to date", out.getvalue())
-        self.assertEqual(["--update", str(self.root), "--apply", "--yes"], json.loads(self.record.read_text())["argv"])
-        self.assertEqual(2, len(fake.requests))                              # the question and the download
-
-    def test_the_release_already_installed_is_up_to_date_when_no_migration_waits(self):
+    def test_the_release_already_installed_is_up_to_date(self):
         self.net(answers={"https://api.github.com": latest("v0.15.2")})
         out = io.StringIO()
         with mock.patch("sys.stdout", out):

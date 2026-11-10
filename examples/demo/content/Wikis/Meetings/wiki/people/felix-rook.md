@@ -1,6 +1,7 @@
 ---
 title: Felix Rook
 type: person
+zone: Work
 party: acme
 created: 2026-09-21
 updated: 2026-09-21

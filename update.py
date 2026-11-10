@@ -62,10 +62,15 @@ Nothing is written without `--apply`, and nothing is ever deleted. Each
 repository the update touches gets one commit of its own, holding only the
 files the update wrote, `.new` files included, so `git revert` undoes it.
 `System/context.md` is never read or written, but for one step: when its
-Parties table has no Walled column, the update prints the flag each party would
-get and every flow in the workspace whose verdict changes, and writes the flags
-and takes out the Walls table only with a yes (`--yes`, or typed at a terminal;
-a run without one never answers). A local file beside an instruction file, such
+Zones table has no Walled column, the update runs before it installs anything.
+It prints the flag each zone would get, runs the workspace's own check (the
+rule in force) and this Garrick's (the zone rule) over the workspace, and prints
+every flow whose verdict changes, grouped by kind. It installs and writes only
+with a yes (`--yes`, or typed at a terminal; a run without one never answers and
+leaves the workspace as it was). On the yes it writes the Walled column, takes
+out the Party and New parties columns and the Parties table's Walled column,
+installs, and then proposes three clean-up lists, each on its own yes
+(`--clean people`, `--clean ledger`, `--clean pages`). A local file beside an instruction file, such
 as `System/rules.local.md`, is never read or written. The
 version stamp changes last, once everything picked has applied and the
 workspace's check finds no error in a file the update wrote. Running it twice
@@ -1579,51 +1584,714 @@ def release_hashes(repo=REPO):
 # --------------------------------------------------------------------------- main
 
 
-def walls_migration(root, answer, apply_changes=True, as_json=False):
-    """The walls step (migrate_walls.py): when System/context.md has no Walled column, print the flags it
-    proposes and every flow whose verdict changes; write on a yes. `answer` is True for --yes, False when
-    nobody can answer. Returns (text, written, data); text is "" when nothing is pending."""
-    lib = install.lib()
-    import migrate_walls        # System/tools of this Garrick, which install.lib() has put on the path
-    study = migrate_walls.study(root, lib)
-    if study is None:
-        return "", False, None
-    data = {"flags": study["prop"]["flags"], "zone_party": study["prop"]["zone_party"],
-            "zone_default": study["prop"]["zone_default"], "renames": study["prop"].get("renames", {}),
-            "changes": len(study["items"]), "refused": None if study["refused"] is None else len(study["refused"])}
-    out = [study["text"], ""]
-    if not apply_changes:
-        out.append("Nothing is written. Run python3 System/tools/release.py update --apply, and answer at the terminal "
-                   "or add --yes; or press Write the flags on the status page (Settings, About Garrick).")
-        return "\n".join(out), False, data
-    if not answer and sys.stdin.isatty() and sys.stdout.isatty() and not as_json:
-        print("\n".join(out))
-        out = []
-        answer = input("Write these flags and take out the Walls table? [y/N] ").strip().lower() in ("y", "yes")
-    if not answer:
-        out.append("Nothing was written. The Walls table stays and keeps "
-                   "deciding every flow as before; the check warns until the flags are written. Once you have read the changes above, run "
-                   "python3 System/tools/release.py update --apply --yes, or press Write the flags on the status page.")
-        return "\n".join(out), False, data
-    path = root / "System" / "context.md"
-    text = migrate_walls.rewrite(path.read_text(encoding="utf-8"), study["prop"])
-    if text is None:
-        return "\n".join(out + ["Nothing was written: System/context.md has no Parties table."]), False, data
-    why = commit_files(root, {"System/context.md": (text.encode("utf-8"), path.stat().st_mode & 0o777)},
-                       "Garrick: party flags in System/context.md, the Walls table out")
-    if why:
-        return "\n".join(out + ["Nothing was written: System/context.md: %s." % why]), False, data
-    out.append("Wrote the Walled column, the zones' Party and New parties columns, and took out the Walls table.")
-    found = migrate_walls.walls_check(root)
-    if found:
-        out.append("The walls check now refuses %d thing%s that was committed before:" % (len(found), "" if len(found) == 1 else "s"))
-        out += ["  " + f for f in found[:50]]
-        if len(found) > 50:
-            out.append("  ... and %d more; run System/tools/check.py --walls-only." % (len(found) - 50))
+# --------------------------------------------------------------------------- the walls step (#485)
+
+# From 0.63.0 a zone is walled or open and nothing below a zone is. A workspace that took 0.60.0 to 0.62.0 holds a
+# flag on each party and a party and a default on each zone. This is the one step that turns them into a flag on
+# each zone. It runs before the update installs anything: it runs the workspace's own check (the 0.62 rule) and this
+# Garrick's check (the zone rule, read only against the workspace), prints every flow whose verdict changes, and
+# asks. A no, or nobody to answer, stops the update with the workspace as it was. This module keeps no copy of the
+# 0.62 rule: the old verdicts are the workspace's own check.py, run as it is.
+
+WALL_TIMEOUT = 1800                 # seconds one check may take on a large workspace
+SHOWN = 12                          # findings printed for each kind
+WALL_KINDS = (("inside", "Inside one zone: the file and what it points at or names are in one zone"),
+              ("name", "Name only: a name, with no link, embed, path or copy"),
+              ("other", "Other: neither of the two above"))
+CLEAN_KINDS = ("people", "ledger", "pages")
+
+
+def _cells(line):
+    """The cells of a table line, outer bars off, an escaped bar kept."""
+    inner = line.strip()
+    inner = inner[1:] if inner.startswith("|") else inner
+    inner = inner[:-1] if inner.endswith("|") and not inner.endswith("\\|") else inner
+    return [c.strip() for c in re.split(r"(?<!\\)\|", inner)]
+
+
+def _row(cells):
+    return "|" + "|".join(" %s " % c if c else " " for c in cells) + "|" if cells else ""
+
+
+def _is_rule(line):
+    return bool(line.strip()) and set(line.replace("|", "").strip()) <= set("-: ")
+
+
+def _table_at(lines, title):
+    """(first, last + 1) of the first table under `## <title>`, or None."""
+    start = next((i for i, l in enumerate(lines) if l.startswith("## ") and l[3:].strip().lower() == title), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    first = next((i for i in range(start + 1, end) if lines[i].lstrip().startswith("|")), None)
+    if first is None:
+        return None
+    last = first
+    while last < end and lines[last].lstrip().startswith("|"):
+        last += 1
+    return first, last
+
+
+def _plain(cell):
+    return cell.replace("*", "").strip().strip("`").strip()
+
+
+def _table_rows(lines, title):
+    """(header names lower case, [cells of each row]) of a table, or (None, [])."""
+    span = _table_at(lines, title)
+    if span is None:
+        return None, []
+    first, last = span
+    header = [c.lower() for c in _cells(lines[first])]
+    rows = [_cells(l) for l in lines[first + 1:last] if not _is_rule(l)]
+    return header, rows
+
+
+def _column(header, *names):
+    return next((i for i, h in enumerate(header or []) if any(h.startswith(n) for n in names)), None)
+
+
+def zone_flags(text):
+    """What the 0.62 tables propose for each zone: {zone: (walled, why)}, in the order of the Zones table; None
+    when the Zones table already has its Walled column, or there is no Zones table to read. A zone is walled when
+    its party is walled, its default for new parties is walled, or a walled party's row sits in it, and open otherwise; a zone whose cells say
+    neither is walled (#485)."""
+    lines = text.splitlines()
+    zh, zrows = _table_rows(lines, "zones")
+    if not zrows or zh is None or _column(zh, "walled") is not None:
+        return None
+    ph, prows = _table_rows(lines, "parties")
+    tag_at, walled_at = _column(ph, "tag"), _column(ph, "walled")
+    flag, held = {}, {}
+    pzone_at = _column(ph, "zone")
+    for row in prows:
+        if tag_at is not None and len(row) > tag_at:
+            tag = _plain(row[tag_at]).lstrip("#").lower()
+            flag[tag] = (_plain(row[walled_at]).lower() != "no") if walled_at is not None and len(row) > walled_at else True
+            if flag[tag] and pzone_at is not None and len(row) > pzone_at:
+                held.setdefault(_plain(row[pzone_at]).casefold(), tag)      # the first walled party whose row sits in a zone
+    zone_at, party_at, default_at = _column(zh, "zone"), _column(zh, "party"), _column(zh, "new parties")
+    out = {}
+    for row in zrows:
+        name = _plain(row[zone_at]) if zone_at is not None and len(row) > zone_at else ""
+        if not name:
+            continue
+        party = _plain(row[party_at]).lstrip("#").lower() if party_at is not None and len(row) > party_at else ""
+        default = _plain(row[default_at]).lower() if default_at is not None and len(row) > default_at else ""
+        if party and flag.get(party, True):
+            out[name] = (True, "its party `%s` is walled" % party)
+        elif name.casefold() in held:
+            out[name] = (True, "it holds a walled party, `%s`" % held[name.casefold()])
+        elif default == "open" and (not party or party in flag):
+            out[name] = (False, "its party and its default for new parties are open" if party else "its default for new parties is open")
+        elif default == "open":
+            out[name] = (True, "its party `%s` has no row in the Parties table" % party)
+        else:
+            out[name] = (True, "its default for new parties is walled" if default == "walled" else "nothing says it is open")
+    return out
+
+
+def has_walls_table(text):
+    return any(l.startswith("## ") and l[3:].strip().lower() == "walls" for l in text.splitlines())
+
+
+def walls_pending(root):
+    """The flags the update proposes, {zone: (walled, why)}, while System/context.md has no Walled column on its
+    Zones table; None when nothing waits. A 0.59 workspace (a Walls table, no flags) is told to take 0.62 first."""
+    try:
+        text = (root / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    flags = zone_flags(text)
+    if flags is None:
+        return None
+    lines = text.splitlines()
+    ph, _ = _table_rows(lines, "parties")
+    if has_walls_table(text) and _column(ph, "walled") is None:
+        raise UpdateError("This workspace still holds the Walls table of Garrick 0.59, and this Garrick no longer "
+                          "reads it. Update to Garrick 0.62.0 first: run the update from that release "
+                          "(https://github.com/iamvenuti/garrick/releases/tag/v0.62.0), answer the walls question "
+                          "it asks, then run this update again. Nothing was changed.")
+    return flags
+
+
+def rewrite_tables(text, flags):
+    """`text` with the Zones table as `| Zone | Holds | Walled |` (other columns kept, Party and New parties gone)
+    and the Walled column off the Parties table. A table already in that shape is left as it is."""
+    lines = text.splitlines()
+    zones = _table_at(lines, "zones")
+    if zones is not None:
+        first, last = zones
+        header = _cells(lines[first])
+        low = [h.lower() for h in header]
+        keep = [i for i, h in enumerate(low) if not h.startswith(("party", "new parties"))]
+        zone_at = _column(low, "zone")
+        walled_at = _column(low, "walled")
+        holds_at = _column(low, "holds")
+        new = [[header[i] for i in keep]]
+        if walled_at is None:
+            new[0].insert((keep.index(holds_at) + 1) if holds_at in keep else len(keep), "Walled")
+        rows = [_cells(l) for l in lines[first + 2:last]]
+        for cells in rows:
+            cells += [""] * (len(header) - len(cells))
+            out = [cells[i] for i in keep]
+            if walled_at is None:
+                name = _plain(cells[zone_at]) if zone_at is not None else ""
+                walled = flags.get(name, flags.get(next((z for z in flags if z.casefold() == name.casefold()), ""), (True, "")))[0]
+                out.insert((keep.index(holds_at) + 1) if holds_at in keep else len(keep), "yes" if walled else "no")
+            new.append(out)
+        block = [_row(new[0]), "|" + "---|" * len(new[0])] + [_row(c) for c in new[1:]]
+        lines[first:last] = block
+    parties = _table_at(lines, "parties")
+    if parties is not None:
+        first, last = parties
+        header = _cells(lines[first])
+        at = _column([h.lower() for h in header], "walled")
+        if at is not None:
+            block = [_row([c for i, c in enumerate(header) if i != at]), "|" + "---|" * (len(header) - 1)]
+            for line in lines[first + 2:last]:
+                cells = _cells(line)
+                cells += [""] * (len(header) - len(cells))
+                block.append(_row([c for i, c in enumerate(cells) if i != at]))
+            lines[first:last] = block
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
+
+
+# Garrick 0.62.0's own prose in a context.md, word for word: the paragraphs that describe the party flags. On the yes
+# each one that is still exactly as shipped is replaced with the new template's wording; one the user changed stays.
+OLD_PROSE = {
+    "zones": ("A zone may name one party, which every file in the zone carries; leave it empty for none. New parties says what "
+              "`scaffold.py party` proposes for a party added in the zone: walled or open."),
+    "parties": ("Every organisation or person whose confidences you hold. The tag is what project and meeting frontmatter use.",
+                "Domains are optional: the part after the @ in their mail addresses. Mail from a listed domain files itself under that "
+                "party. Personal webmail, such as gmail.com, never names a party by itself.",
+                "Walled says whether a party is walled, `yes` or `no`. A walled party's material goes only into work that names that "
+                "party; an open party's material may go anywhere. The assistant checks this column before it uses a conversation in a project."),
+}
+
+
+def _intro(lines, title):
+    """(first, last + 1) of the lines between `## <title>` and its table, or None."""
+    start = next((i for i, l in enumerate(lines) if l.startswith("## ") and l[3:].strip().lower() == title), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("|") or lines[i].startswith("## ")), len(lines))
+    return start + 1, end
+
+
+def _paragraphs(lines):
+    out, cur = [], []
+    for l in lines:
+        if l.strip():
+            cur.append(l)
+        elif cur:
+            out.append(" ".join(x.strip() for x in cur))
+            cur = []
+    if cur:
+        out.append(" ".join(x.strip() for x in cur))
+    return out
+
+
+def refresh_prose(text):
+    """(text, notes): the 0.62 paragraphs about party flags replaced with the new template's, when they are Garrick's
+    own words exactly; a paragraph that says the old thing in other words stays, and a note names its section."""
+    try:
+        new = (TEMPLATE / "System" / "context.md").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return text, []
+    lines, notes = text.splitlines(), []
+    for title in ("zones", "parties"):
+        span, fresh = _intro(lines, title), _intro(new, title)
+        if span is None or fresh is None:
+            continue
+        old = OLD_PROSE[title]
+        old = (old,) if isinstance(old, str) else old
+        paras = _paragraphs(lines[span[0]:span[1]])
+        new_paras = _paragraphs(new[fresh[0]:fresh[1]])
+        kept, changed = [], False
+        for para in paras:
+            if para in old:
+                changed = True
+                continue
+            if re.search(r"may name one party|New parties|walled party's material|Walled says", para):
+                notes.append("The %s section of System/context.md still describes the party flags in your own words; edit it by hand." % title.capitalize())
+            kept.append(para)
+        if changed:
+            merged = new_paras + [p for p in kept if p not in new_paras]
+            block = [""]
+            for para in merged:
+                block += [para, ""]
+            lines[span[0]:span[1]] = block
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else ""), notes
+
+
+def duplicate_people(text):
+    """(the text without them, the rows taken out): a People row that repeats a name already listed above it. The
+    first row of a person stays; the Party cell was a wall's and is context now."""
+    lines = text.splitlines()
+    span = _table_at(lines, "people")
+    if span is None:
+        return text, []
+    first, last = span
+    name_at = _column([h.lower() for h in _cells(lines[first])], "name")
+    if name_at is None:
+        return text, []
+    seen, gone, keep = set(), [], []
+    for i in range(first, last):
+        cells = _cells(lines[i])
+        if i >= first + 2 and len(cells) > name_at:
+            key = _plain(cells[name_at]).casefold()
+            if key in seen:
+                gone.append(lines[i])
+                continue
+            seen.add(key)
+        keep.append(lines[i])
+    lines[first:last] = keep
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else ""), gone
+
+
+# ---- the two checks and their diff
+
+def run_wall_check(check, root, final=False):
+    """The walls findings of one check.py over `root`, each as its --json gives it. Raises UpdateError when it
+    does not run: a diff made of half its parts would say nothing was released."""
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    if final:       # the zone flags the tables would hold count as written: what the zone rule refuses after the yes
+        env["GARRICK_ZONE_FLAGS_FINAL"] = "1"
     else:
-        out.append("The walls check finds nothing the new flags refuse.")
+        env.pop("GARRICK_ZONE_FLAGS_FINAL", None)
+    try:
+        r = subprocess.run([sys.executable, "-B", str(check), "--root", str(root), "--walls-only", "--json"],
+                           capture_output=True, text=True, timeout=WALL_TIMEOUT, env=env, cwd=str(root))
+        data = json.loads(r.stdout)
+        found = data["findings"]
+    except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+        raise UpdateError("The walls check %s could not be run (%s), so the update cannot say what it would change. "
+                          "Nothing was changed." % (check, exc.__class__.__name__))
+    return [f for f in found if isinstance(f, dict) and f.get("check") == "walls" and f.get("severity") == "error"]
+
+
+_SUBJECT = (re.compile(r"\[\[([^\]|#]+)"), re.compile(r"\]\(([^)#\s]+)"), re.compile(r"the path (\S+)"),
+            re.compile(r"<([^<>\s]+)>"))
+
+
+def _subject(finding):
+    """What a finding is about, apart from how the check words it: its first link, path or tag."""
+    message = finding.get("message") or ""
+    for pattern in _SUBJECT:
+        hit = pattern.search(message)
+        if hit:
+            return hit.group(1).strip("`").lower()
+    return finding.get("fid") or finding.get("token") or message
+
+
+def _keys(finding):
+    path = finding.get("path") or ""
+    return {(path, finding.get("fid") or ""), (path, _subject(finding))} - {(path, "")}
+
+
+def diff_findings(old, new):
+    """(released, newly refused): the findings only the old check has, and those only the new one has. A finding is
+    the same in both when its path and id agree, or its path and what it is about."""
+    seen_new = set().union(*[_keys(f) for f in new]) if new else set()
+    seen_old = set().union(*[_keys(f) for f in old]) if old else set()
+    released = [f for f in old if not (_keys(f) & seen_new)]
+    refused = [f for f in new if not (_keys(f) & seen_old)]
+    return released, refused
+
+
+def _meeting_stems(root):
+    """{stem: [paths]} of every page of the Meetings wiki."""
+    base = root / "Wikis" / "Meetings"
+    stems = {}
+    if base.is_dir():
+        for path in base.rglob("*.md"):
+            stems.setdefault(path.stem.casefold(), []).append(path)
+    return stems
+
+
+def _party_zones(text):
+    """{tag: zone name} from the Parties table."""
+    header, rows = _table_rows(text.splitlines(), "parties")
+    tag_at, zone_at = _column(header, "tag"), _column(header, "zone")
+    out = {}
+    if tag_at is None or zone_at is None:
+        return out
+    for row in rows:
+        if len(row) > max(tag_at, zone_at):
+            out[_plain(row[tag_at]).lstrip("#").lower()] = _plain(row[zone_at])
+    return out
+
+
+def _target_zone(root, lib, finding, stems, parties, zones):
+    """The zone of what a finding points at or names: the file a link or path resolves to, else the zone of the
+    party it names. None when neither says."""
+    message = finding.get("message") or ""
+    found = set()
+    for pattern in _SUBJECT[:3]:
+        for target in pattern.findall(message):
+            target = target.strip("`").strip()
+            options = []
+            if target.startswith(("Zones/", "Wikis/")):
+                options += [root / target, root / (target + ".md")]
+            else:
+                options += [root / "Wikis" / "Meetings" / (target + ".md")]
+                stem = Path(target).name.casefold()
+                stem = stem[:-3] if stem.endswith(".md") else stem
+                if len(stems.get(stem, [])) == 1:
+                    options += stems[stem]
+            hit = next((p for p in options if p.is_file()), None)
+            if hit is not None:
+                found.add(lib.zone_of(root, hit))
+    if found:
+        return found.pop() if len(found) == 1 else None
+    tags = set(re.findall(r"<([^<>\s]+)>", message)) | set(re.findall(r"; (\S+) is walled", message))
+    known = {parties[t.lower()] for t in tags if t.lower() in parties}
+    if len(known) == 1:
+        zone = known.pop()
+        return next((z for z in zones if z.casefold() == zone.casefold()), zone)
+    return None
+
+
+def classify(root, lib, finding, stems, parties, zones):
+    """"inside", "name" or "other" for a finding the zone rule releases."""
+    src = lib.zone_of(root, finding.get("path") or "")
+    target = _target_zone(root, lib, finding, stems, parties, zones)
+    if src is not None and target == src:
+        return "inside"
+    if re.match(r"\s*names\b", finding.get("message") or "") or "one of its people" in (finding.get("message") or ""):
+        return "name"
+    return "other"
+
+
+def mixed_pages(root, lib, flags):
+    """The Meetings entity and people pages whose sources sit in two walled zones, as [(path, [zones])]."""
+    base = root / "Wikis" / "Meetings"
+    stems = _meeting_stems(root)
+    out = []
+    walled = {z.casefold() for z, (w, _) in flags.items() if w}
+    for kind in ("entities", "people"):
+        for page in sorted((base / "wiki" / kind).glob("*.md")) if (base / "wiki" / kind).is_dir() else []:
+            zones = page_source_zones(root, lib, page, stems)
+            hit = sorted({z for z in zones if z is not None and (z == lib.UNZONED or z.casefold() in walled)})
+            if len(hit) > 1:
+                out.append((page.relative_to(root).as_posix(), hit))
+    return out
+
+
+def page_source_zones(root, lib, page, stems):
+    try:
+        text = page.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return set()
+    zones = set()
+    for target in re.findall(r"\[\[([^\]|#]+)", text) + re.findall(r"\]\(([^)#\s]+)", text):
+        stem = Path(target.strip()).name.casefold()
+        stem = stem[:-3] if stem.endswith(".md") else stem
+        paths = stems.get(stem, [])
+        if len(paths) == 1 and paths[0] != page and "sources" in paths[0].parts:
+            zones.add(lib.zone_of(root, paths[0]))
+    return zones
+
+
+def walls_study(root, flags, old_check=None, new_check=None):
+    """Everything the yes would change, read only: the proposed flags, the two checks' findings and their diff,
+    the mixed Meetings pages, and the text that says so."""
+    lib = install.lib()
+    old_check = old_check or root / "System" / "tools" / "check.py"
+    new_check = new_check or TEMPLATE / "System" / "tools" / "check.py"
+    old = run_wall_check(old_check, root)
+    new = run_wall_check(new_check, root, final=True)
+    released, refused = diff_findings(old, new)
+    text = (root / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
+    stems, parties, zones = _meeting_stems(root), _party_zones(text), list(flags)
+    kinds = {k: [] for k, _ in WALL_KINDS}
+    for f in released:
+        kinds[classify(root, lib, f, stems, parties, zones)].append(f)
+    mixed = mixed_pages(root, lib, flags)
+    study = {"flags": {z: w for z, (w, _) in flags.items()}, "released": {k: len(v) for k, v in kinds.items()},
+             "newly_refused": len(refused), "mixed_pages": [p for p, _ in mixed], "old": len(old), "new": len(new)}
+    return study, say_study(flags, kinds, refused, mixed)
+
+
+def say_finding(f):
+    return "  %s: %s" % (f.get("path"), (f.get("message") or "").strip())
+
+
+def say_study(flags, kinds, refused, mixed):
+    out = ["Garrick 0.63 walls each zone, not each party. Each zone is either walled or open: what is in a walled zone "
+           "stays in that zone; what is in an open zone may go anywhere.", "",
+           "The flag each zone would get, from its party and its default for new parties:"]
+    out += ["  %-14s %-7s because %s" % (z, "walled" if w else "open", why) for z, (w, why) in flags.items()]
+    if refused:
+        out += ["", "NEWLY REFUSED: %d thing%s the zone rule refuses and the rule in force passes. Read these first; "
+                    "the release is meant to refuse nothing new." % (len(refused), "" if len(refused) == 1 else "s")]
+        out += [say_finding(f) for f in refused[:50]]
+        if len(refused) > 50:
+            out.append("  ... and %d more." % (len(refused) - 50))
+    total = sum(len(v) for v in kinds.values())
+    out += ["", "%d refusal%s of the rule in force %s released by the zone rule:" % (
+        total, "" if total == 1 else "s", "is" if total == 1 else "are")]
+    for key, title in WALL_KINDS:
+        found = kinds[key]
+        out.append("")
+        out.append("%s (%d)" % (title, len(found)))
+        out += [say_finding(f) for f in found[:SHOWN]]
+        if len(found) > SHOWN:
+            out.append("  ... and %d more." % (len(found) - SHOWN))
+    out += ["", "Meetings entity and people pages whose sources sit in two walled zones (%d):" % len(mixed)]
+    out += ["  %s: %s" % (p, ", ".join(z)) for p, z in mixed] or ["  none"]
+    return "\n".join(out)
+
+
+# ---- the clean-up lists
+
+def stale_allowances(root):
+    """The ledger entries that no longer hold a finding, as [entry]: the file is gone or has changed since, or the
+    zone rule's check, run with the ledger left out, has no finding of that id for it. Empty when that check cannot
+    be run: an entry that cannot be shown stale stays."""
+    path = root / "System" / "walls-allowed.json"
+    try:
+        entries = [e for e in json.loads(path.read_text(encoding="utf-8")).get("allowed", []) if isinstance(e, dict)]
+    except (OSError, ValueError, AttributeError):
+        return []
+    if not entries:
+        return []
+    program = ("import sys, json; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import check; "
+               "root = Path(sys.argv[2]); found = check.run_checks(root, walls_only=True, use_ledger=False); "
+               "print(json.dumps([[f.path, check.finding_id(f)] for f in found if f.check == 'walls']))")
+    try:
+        r = subprocess.run([sys.executable, "-B", "-c", program, str(TEMPLATE / "System" / "tools"), str(root)],
+                           capture_output=True, text=True, timeout=WALL_TIMEOUT, cwd=str(root),
+                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        live = {tuple(x) for x in json.loads(r.stdout)}
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        return []
+    stale = []
+    for e in entries:
+        if not (root / str(e.get("path", ""))).is_file() or (str(e.get("path")), str(e.get("id"))) not in live:
+            stale.append(e)
+    return stale
+
+
+def page_blocks(body):
+    """The blocks of a page body: each heading, each paragraph and each top-level list item with what continues it."""
+    blocks, current = [], []
+
+    def close():
+        if current:
+            blocks.append("\n".join(current))
+            current.clear()
+    for line in body.strip("\n").splitlines():
+        if not line.strip():
+            close()
+        elif line.lstrip().startswith("#") and not line.startswith((" ", "\t")):
+            close()
+            blocks.append(line)
+        elif re.match(r"^ {0,2}([-*]|\d+\.)\s", line):
+            close()
+            current.append(line)
+        else:
+            current.append(line)
+    close()
+    return blocks
+
+
+def split_page(root, lib, page, stems):
+    """The page cut per zone, {zone: text}, or None when a block of it cannot be placed in one walled zone: a
+    block that cites no source or sources of two zones is not guessed at. Each block is a run of lines up to a
+    blank line; the front matter goes with each zone's page, with `zone:` set and only that zone's sources."""
+    text = page.read_text(encoding="utf-8", errors="replace")
+    m = re.match(r"^---\n(.*?)\n---\n?(.*)$", text, re.S)
+    front, body = (m.group(1), m.group(2)) if m else ("", text)
+    order, placed = [], {}
+    for block in page_blocks(body):
+        zones = set()
+        for target in re.findall(r"\[\[([^\]|#]+)", block) + re.findall(r"\]\(([^)#\s]+)", block):
+            stem = Path(target.strip()).name.casefold()
+            stem = stem[:-3] if stem.endswith(".md") else stem
+            hit = stems.get(stem, [])
+            if len(hit) == 1 and "sources" in hit[0].parts:
+                zones.add(lib.zone_of(root, hit[0]))
+        if block.lstrip().startswith("#") and not zones:
+            order.append((None, block))
+            continue
+        if len(zones) != 1 or None in zones:
+            return None
+        zone = zones.pop()
+        placed.setdefault(zone, []).append(block)
+        order.append((zone, block))
+    if len(placed) < 2:
+        return None
+    out = {}
+    for zone in placed:
+        mine = [b for z, b in order if z in (None, zone)]
+        while mine and mine[-1].lstrip().startswith("#"):
+            mine.pop()
+        mine = [b for i, b in enumerate(mine) if not (b.lstrip().startswith("#") and i + 1 < len(mine) and mine[i + 1].lstrip().startswith("#"))]
+        lines = [l for l in front.splitlines() if not l.startswith("zone:")]
+        lines.append("zone: %s" % zone)
+        kept, skip = [], False
+        for line in lines:
+            if line.startswith("sources:"):
+                skip = True
+                kept.append(line)
+                continue
+            if skip and line.startswith((" ", "-")):
+                target = re.search(r"\[\[([^\]|#]+)", line)
+                stem = Path(target.group(1)).name.casefold() if target else ""
+                hit = stems.get(stem, [])
+                if len(hit) == 1 and lib.zone_of(root, hit[0]) == zone:
+                    kept.append(line)
+                continue
+            skip = False
+            kept.append(line)
+        text = ""
+        for i, b in enumerate(mine):
+            if i:
+                text += "\n" if re.match(r"^ {0,2}([-*]|\d+\.)\s", b) and re.match(r"^ {0,2}([-*]|\d+\.)\s", mine[i - 1]) else "\n\n"
+            text += b
+        out[zone] = "---\n" + "\n".join(kept) + "\n---\n\n" + text + "\n"
+    return out
+
+
+def apply_page_split(root, lib, page, parts):
+    """Write one page per zone beside `page`, take `page` out, commit in the Meetings repository. "" or why not."""
+    repo = root / "Wikis"
+    written = []
+    try:
+        for zone, text in parts.items():
+            slug = re.sub(r"[^a-z0-9]+", "-", zone.lower()).strip("-")
+            target = page.with_name("%s-%s.md" % (page.stem, slug))
+            if target.exists():
+                return "%s is already there" % target.name
+            target.write_text(text, encoding="utf-8")
+            written.append(target)
+        rels = [p.relative_to(repo).as_posix() for p in written] + [page.relative_to(repo).as_posix()]
+        git(repo, "rm", "-q", "--", page.relative_to(repo).as_posix())
+        git(repo, "add", "--", *rels[:-1])
+        git(repo, "commit", "-q", "-m", "Garrick: %s split per zone" % page.stem, "--", *rels)
+    except (OSError, UpdateError) as exc:
+        for p in written:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        git(repo, "reset", "-q", "HEAD", "--", page.relative_to(repo).as_posix(), check=False)
+        git(repo, "checkout", "--", page.relative_to(repo).as_posix(), check=False)
+        return str(exc)
+    return ""
+
+
+def ask(question, answers, tty):
+    """True on a yes: `answers` is True when the flag said so; a terminal is asked; no one to ask is a no."""
+    if answers:
+        return True
+    if not tty:
+        return False
+    return input(question + " [y/N] ").strip().lower() in ("y", "yes")
+
+
+def cleanups(root, clean, tty, as_json=False):
+    """The three lists, each on its own yes: `clean` names the lists answered yes with `--clean`, a terminal asks.
+    Returns (lines to print, data)."""
+    lib = install.lib()
+    out, data = [], {}
+    context = root / "System" / "context.md"
+    text = context.read_text(encoding="utf-8", errors="replace")
+    shown, gone = duplicate_people(text)
+    data["people"] = len(gone)
+    if gone:
+        out += ["", "People rows that repeat a person under a second party (%d):" % len(gone)] + ["  " + g for g in gone]
+        if ask("Take these rows out of the People table?", "people" in clean, tty and not as_json):
+            why = commit_files(root, {"System/context.md": (shown.encode("utf-8"), context.stat().st_mode & 0o777)},
+                               "Garrick: one People row for each person")
+            out.append("Took them out." if not why else "Nothing was written: System/context.md: %s." % why)
+        else:
+            out.append("Left as they are. To take them out: python3 System/tools/release.py update --apply --clean people")
+    stale = stale_allowances(root)
+    data["ledger"] = len(stale)
+    if stale:
+        out += ["", "Allowances whose finding no longer exists (%d):" % len(stale)] + ["  %s (%s)" % (e.get("path"), e.get("rule")) for e in stale]
+        if ask("Take these allowances out of the ledger?", "ledger" in clean, tty and not as_json):
+            ledger = root / "System" / "walls-allowed.json"
+            current = json.loads(ledger.read_text(encoding="utf-8"))
+            drop = {(e.get("path"), e.get("id"), e.get("blob")) for e in stale}
+            current["allowed"] = [e for e in current.get("allowed", []) if (e.get("path"), e.get("id"), e.get("blob")) not in drop]
+            why = commit_files(root, {"System/walls-allowed.json": ((json.dumps(current, indent=2, ensure_ascii=False) + "\n").encode("utf-8"),
+                                                                    ledger.stat().st_mode & 0o777)},
+                               "Garrick: take out the allowances that hold no finding")
+            out.append("Took them out." if not why else "Nothing was written: System/walls-allowed.json: %s." % why)
+        else:
+            out.append("Left as they are. To take them out: python3 System/tools/release.py update --apply --clean ledger")
+    flags = zone_flags_after(root)
+    stems = _meeting_stems(root)
+    pages = [(root / p, z) for p, z in mixed_pages(root, lib, flags)] if flags else []
+    data["pages"] = len(pages)
+    if pages:
+        out += ["", "Mixed Meetings pages, to split per zone, page by page (%d):" % len(pages)]
+        for page, zones in pages:
+            rel = page.relative_to(root).as_posix()
+            parts = split_page(root, lib, page, stems)
+            if parts is None:
+                out.append("  %s (%s): a block of it cites no source or sources of two zones, so it is split by hand "
+                           "or through the meetings skill" % (rel, ", ".join(zones)))
+                continue
+            out.append("  %s -> %s" % (rel, ", ".join("%s-%s.md" % (page.stem, re.sub(r"[^a-z0-9]+", "-", z.lower()).strip("-")) for z in parts)))
+            if ask("Split %s per zone?" % page.name, "pages" in clean, tty and not as_json):
+                why = apply_page_split(root, lib, page, parts)
+                out.append("    Split." if not why else "    Not split: %s." % why)
+            else:
+                out.append("    Left as it is. To split it: python3 System/tools/release.py update --apply --clean pages")
+    return out, data
+
+
+def zone_flags_after(root):
+    """{zone: (walled, why)} of a context with its Walled column, read from the table."""
+    try:
+        text = (root / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    header, rows = _table_rows(text.splitlines(), "zones")
+    zone_at, walled_at = _column(header, "zone"), _column(header, "walled")
+    if zone_at is None or walled_at is None:
+        return {}
+    return {_plain(r[zone_at]): (_plain(r[walled_at]).lower() != "no", "the Zones table") for r in rows if len(r) > max(zone_at, walled_at)}
+
+
+def walls_step(root, answer, apply_changes, as_json=False, only=False):
+    """The walls step, before the update installs anything. Returns (go, text, data): `go` is True when the update
+    may go on (nothing waits, or the yes was given and the tables were written), `text` what to print first, `data`
+    for --json. A no, and nobody to answer, stop it with the workspace as it was."""
+    flags = walls_pending(root)
+    if flags is None:
+        return True, "", None
+    study, said = walls_study(root, flags)
+    data = {"pending": True, **study}
+    if not apply_changes:
+        return False, said + "\n\nNothing is written. Run python3 System/tools/release.py update --apply, and answer at the " \
+                            "terminal or add --yes. Until you say yes the update installs nothing.", data
+    if only:
+        return False, "The walls step waits, so nothing is installed, not even the files named with --only. Run the " \
+                      "update again without --only to read it.", data
+    tty = sys.stdin.isatty() and sys.stdout.isatty() and not as_json
+    if not answer and tty:
+        print(said)
+        said = ""
+        answer = input("Write the zone flags, install this Garrick and take out what nothing reads? [y/N] ").strip().lower() in ("y", "yes")
+    if not answer:
+        return False, (said + "\n\n" if said else "") + "Nothing was installed and nothing was written. The 0.62 rule " \
+            "keeps deciding every flow, as it did. Once you have read the changes above, run " \
+            "python3 System/tools/release.py update --apply --yes (or answer yes at the terminal).", data
+    context = root / "System" / "context.md"
+    text, prose_notes = refresh_prose(rewrite_tables(context.read_text(encoding="utf-8"), flags))
+    why = commit_files(root, {"System/context.md": (text.encode("utf-8"), context.stat().st_mode & 0o777)},
+                       "Garrick: a Walled flag on each zone, in System/context.md")
+    if why:
+        return False, (said + "\n\n" if said else "") + "Nothing was installed and nothing was written: System/context.md: %s." % why, data
     data["written"] = True
-    return "\n".join(out), True, data
+    return True, (said + "\n\n" if said else "") + "Wrote the Walled column of the Zones table, and took the Party and New parties " \
+                                                    "columns and the Parties table's Walled column out." + "".join("\n" + n for n in prose_notes), data
 
 
 def find_workspace(path):
@@ -1650,7 +2318,10 @@ def main(argv=None):
     ap.add_argument("--only", default="", help="comma-separated paths, as the report lists them")
     ap.add_argument("--json", action="store_true", help="the report as JSON")
     ap.add_argument("--yes", action="store_true",
-                    help="answer yes to the walls migration: write the party flags (needs --apply)")
+                    help="answer yes to the walls step: write the zone flags, then install (needs --apply)")
+    ap.add_argument("--clean", action="append", default=[], choices=CLEAN_KINDS, metavar="LIST",
+                    help="answer yes to one clean-up list after the walls step: %s (needs --apply; repeat for more)"
+                         % ", ".join(CLEAN_KINDS))
     ap.add_argument("--split", action="store_true",
                     help="move your own text out of Garrick's instruction files, into the local file beside each")
     ap.add_argument("--today", help=argparse.SUPPRESS)
@@ -1673,7 +2344,7 @@ def main(argv=None):
             return split.main(root, p, args.apply, only, args.json)
         if not args.apply:
             p["then"] = [what for what, _ in next_steps(root, p)]
-            said, _, walls = walls_migration(root, False, apply_changes=False)
+            _, said, walls = walls_step(root, False, False)
             if args.json:
                 shown = {k: v for k, v in p.items() if k not in ("files", "recorded")}
                 if shown.get("allowlist"):      # its files hold bytes, as p["files"] does
@@ -1686,19 +2357,30 @@ def main(argv=None):
                 if said:
                     print("\n" + said)
             return 0
+        go, said, walls = walls_step(root, args.yes, True, as_json=args.json, only=only is not None)
+        if not go:
+            if args.json:
+                print(json.dumps({"walls": walls, "installed": False, "message": said}, indent=2))
+            else:
+                print(said)
+            return 0
         result = apply(root, p, only, args.today)
-        if only is None:
-            said, _, walls = walls_migration(root, args.yes, as_json=args.json)
-            if walls is not None:
-                result["walls"] = walls
-        else:
-            said = ""
+        migrated = walls is not None
+        tidy, tidy_data = ([], {})
+        if migrated or args.clean:
+            tidy, tidy_data = cleanups(root, set(args.clean), sys.stdin.isatty() and sys.stdout.isatty() and not args.json, args.json)
+            if args.json:
+                result["cleanup"] = tidy_data
+        if walls is not None:
+            result["walls"] = walls
         if args.json:
             print(json.dumps(result, indent=2))
         else:
             print(say_applied(p, result))
             if said:
                 print("\n" + said)
+            if tidy:
+                print("\n".join(tidy))
         return 1 if result["problems"] or result["unstamped"] else 0
     except (UpdateError, install.InstallError) as exc:
         print(exc, file=sys.stderr)

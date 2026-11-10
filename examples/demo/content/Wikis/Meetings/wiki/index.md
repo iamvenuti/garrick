@@ -21,6 +21,7 @@ Every page, newest first.
 | [[wiki/sources/260917-acme-weekly-check-in\|Acme weekly check-in]] | meeting | 2026-09-17 |
 | [[wiki/sources/260916-birch-market-sizing-review\|Birch market sizing review]] | meeting | 2026-09-16 |
 | [[wiki/people/marta-quill\|Marta Quill]] | person | 2026-09-15 |
+| [[wiki/people/marta-quill-birch\|Marta Quill]] | person | 2026-09-22 |
 | [[wiki/sources/260915-cobalt-renewal-for-acme\|Cobalt Freight renewal, for Acme]] | meeting | 2026-09-15 |
 | [[wiki/people/lena-moss\|Lena Moss]] | person | 2026-09-11 |
 | [[wiki/sources/260911-birch-sizing-assumptions\|Birch sizing assumptions]] | meeting | 2026-09-11 |

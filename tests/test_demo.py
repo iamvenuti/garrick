@@ -6,7 +6,7 @@ Builds Sam Rivera's workspace into a temporary folder and checks what the
 3-minute demo depends on: a clean check, one transcript waiting in the inbox,
 four mails waiting in the Work zone's Inbox (one to read, one conversation,
 one with a file for Acme Review, one that sits on both sides of the wall), and
-the wall between Acme and Birch holding around the two Cobalt Freight calls.
+the wall between the Acme and Birch zones holding around the two Cobalt Freight calls.
 Also that the month around them keeps the workspace's own rules: person pages
 say who someone is and nothing more, and every to-do line names its thread;
 and that the month is moved to end on the day it is built, by whole weeks.
@@ -34,10 +34,10 @@ TOOLS = REPO / "template" / "System" / "tools"
 if str(TOOLS) not in sys.path:
     sys.path.insert(0, str(TOOLS))
 
-from garrick_lib import load_context, parse_frontmatter, blocked  # noqa: E402
+from garrick_lib import load_context, parse_frontmatter  # noqa: E402
 
 ENV = dict(os.environ, PYTHONDONTWRITEBYTECODE="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")
-REPOS = (".", "Wikis", "Zones/Work", "Zones/Personal")
+REPOS = (".", "Wikis", "Zones/Work", "Zones/Birch", "Zones/Personal")
 
 
 def builder():
@@ -111,7 +111,7 @@ class DemoTest(unittest.TestCase):
         self.assertIn(Path(waiting[0]).suffix, {".txt", ".md", ".vtt"})
         # Dropped by a recorder, not yet committed: the only loose file in any repository.
         self.assertEqual(git(self.root, "Wikis", "status", "--porcelain").count("\n"), 0)
-        for repo in ("Zones/Work", "Zones/Personal", "."):
+        for repo in ("Zones/Work", "Zones/Birch", "Zones/Personal", "."):
             self.assertEqual(git(self.root, repo, "status", "--porcelain"), "", repo)
 
     def intake(self, root, *args):
@@ -119,7 +119,7 @@ class DemoTest(unittest.TestCase):
 
     def test_work_inbox_holds_four_mails(self):
         """A newsletter; Dana's forecast, placed by its domain; Owen's quote, with a file for Acme
-        Review; Cobalt's notice, which copies both sides of the wall, so it asks."""
+        Review; Cobalt's notice, which copies two walled zones, so it asks."""
         res = self.intake(self.root, "list")
         self.assertEqual(res.returncode, 0, res.stderr)
         waiting = [l.split("\t") for l in res.stdout.splitlines()]
@@ -143,8 +143,8 @@ class DemoTest(unittest.TestCase):
         self.assertEqual([a["name"] for a in quote["attachments"]], ["Seal kit quotes.csv"])
         notice = infos["Northern lane: winter booking window"]["suggested"]
         self.assertEqual(notice["parties"], ["acme", "birch", "cobalt"])
-        self.assertEqual(len(notice["ask"]), 1)
-        self.assertIn("wall", notice["ask"][0])
+        self.assertEqual(len(notice["ask"]), 2)        # two walled zones, and the Birch party in the Work inbox
+        self.assertIn("walled zones", notice["ask"][0])
         self.assertEqual(git(self.root, "Zones/Work", "status", "--porcelain", "--untracked-files=all"), "")
 
     def test_processing_the_mails_keeps_the_check_clean(self):
@@ -159,7 +159,7 @@ class DemoTest(unittest.TestCase):
             ("extract-attachment", "--mail", moved("260928-second-seal-kit-quote"), "--project", "Zones/Work/Acme Review",
              "--name", "Seal kit quotes.csv"),
             ("file-conversation", "--file", inbox + "Northern lane winter booking window.eml",
-             "--parties", "acme,birch,cobalt"),
+             "--parties", "acme,cobalt", "--confirmed"),            # copies two walled zones: Sam says Work, and it is split
         ]
         for step in steps:
             res = self.intake(copy, *step)
@@ -169,12 +169,12 @@ class DemoTest(unittest.TestCase):
         page = copy / "Wikis" / "Knowledge" / "wiki" / "sources" / "freight-ledger-weekly-winter-surcharges-arrive-early.md"
         self.assertNotIn("parties", parse_frontmatter(page))
         self.assertTrue((copy / "Zones/Work/Acme Review/Sources/Seal kit quotes.csv").is_file())
-        # The quote is Acme's: Birch Entry is walled from it, and the notice sits on both sides.
+        # The quote is Acme's: the Birch zone is walled from it, and the notice sits in both zones.
         for mail in (moved("260928-second-seal-kit-quote"), moved("260928-northern-lane-winter-booking-window")):
-            refused = self.intake(copy, "extract-attachment", "--mail", mail, "--project", "Zones/Work/Birch Entry",
+            refused = self.intake(copy, "extract-attachment", "--mail", mail, "--project", "Zones/Birch/Birch Entry",
                                   "--index", "1")
             self.assertEqual(refused.returncode, 1, refused.stdout)
-            self.assertIn("wall", refused.stderr)
+            self.assertIn("Zones never mix", refused.stderr)
         # The draft pages still hold what the assistant fills in; the walls and the sources are clean.
         report = json.loads(check(copy, "--json").stdout)
         self.assertEqual([], [f for f in report["findings"] if f["check"] in ("walls", "sources", "inbox", "knowledge")])
@@ -190,7 +190,7 @@ class DemoTest(unittest.TestCase):
             dates = [datetime.date.fromisoformat(d) for d in
                      git(self.root, repo, "log", "--format=%ad", "--date=short").splitlines()]
             self.assertTrue(all(start <= d <= TODAY for d in dates), (repo, dates))
-        for repo in ("Wikis", "Zones/Work", "Zones/Personal"):
+        for repo in ("Wikis", "Zones/Work", "Zones/Birch", "Zones/Personal"):
             self.assertGreaterEqual(len(git(self.root, repo, "log", "--format=%h").splitlines()), 5, repo)
 
     def test_dates_move_by_whole_weeks(self):
@@ -200,7 +200,7 @@ class DemoTest(unittest.TestCase):
         self.assertEqual(DAYS % 7, 0)
         written = [when for when, _, _, _ in B.PLAN]
         got = []
-        for repo in ("Wikis", "Zones/Work", "Zones/Personal", "."):
+        for repo in ("Wikis", "Zones/Work", "Zones/Birch", "Zones/Personal", "."):
             got += git(self.root, repo, "log", "--reverse", "--format=%ad", "--date=format:%Y-%m-%d %H:%M").splitlines()[1:]
         self.assertEqual(sorted(moved(w) for w in written), sorted(got))
         for w in written:
@@ -234,23 +234,13 @@ class DemoTest(unittest.TestCase):
         # Background stays put: last year's stoppages, and the months of next year's forecast.
         stoppages = (self.root / "Zones/Work/Acme Review/Sources/Pump line stoppages.csv").read_text(encoding="utf-8")
         self.assertIn("2025-03-10", stoppages)
-        forecast = (self.root / "Zones/Work/Birch Entry/Threads/Carrier Choice/Volume forecast.md").read_text(
+        forecast = (self.root / "Zones/Birch/Birch Entry/Threads/Carrier Choice/Volume forecast.md").read_text(
             encoding="utf-8")
         self.assertIn("| August |", forecast)
 
-    def test_prep_for_cobalt_holds_back_the_acme_call(self):
-        """Prep for Cobalt, on Birch's behalf: the Birch-side call passes, the Acme-side one is held back."""
-        ctx = load_context(self.root)
-        sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
-        cobalt = {p.stem: parse_frontmatter(p) for p in sources.glob("*.md")
-                  if "cobalt" in parse_frontmatter(p).get("parties", [])}
-        self.assertEqual(set(cobalt), {ACME_SIDE, BIRCH_SIDE})
-        passed = {slug for slug, fm in cobalt.items()
-                  if fm.get("zone") == "Work" and not blocked(ctx, {"birch"}, fm["parties"])}
-        self.assertEqual(passed, {BIRCH_SIDE})
 
     def test_no_birch_file_uses_the_acme_call(self):
-        birch = self.root / "Zones" / "Work" / "Birch Entry"
+        birch = self.root / "Zones" / "Birch" / "Birch Entry"
         users = [p for p in birch.rglob("*") if p.is_file() and ACME_SIDE in p.read_text(encoding="utf-8", errors="replace")]
         self.assertEqual(users, [])
         acme_note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Freight Terms" / "Freight Terms.md"
@@ -263,7 +253,7 @@ class DemoTest(unittest.TestCase):
         Obsidian Tasks fields at the end, where Tasks reads them."""
         ctx = load_context(self.root)
         names = {entry["party"] for entry in ctx["parties"].values()} | {person["name"] for person in ctx["people"]}
-        for zone in ("Work", "Personal"):
+        for zone in ("Work", "Birch", "Personal"):
             zdir = self.root / "Zones" / zone
             notes = {p.stem for p in zdir.rglob("*.md")}
             lines = [l for l in (zdir / "Todo.md").read_text(encoding="utf-8").splitlines() if l.startswith("- [")]
@@ -300,7 +290,7 @@ class DemoTest(unittest.TestCase):
     def test_check_catches_a_breach(self):
         copy = self.base / "breach"
         shutil.copytree(self.root, copy, symlinks=True)
-        note = copy / "Zones" / "Work" / "Birch Entry" / "Threads" / "Launch Plan" / "Launch Plan.md"
+        note = copy / "Zones" / "Birch" / "Birch Entry" / "Threads" / "Launch Plan" / "Launch Plan.md"
         with note.open("a", encoding="utf-8") as fh:
             fh.write("\nSee [[Meetings/wiki/sources/%s|the renewal call]].\n" % ACME_SIDE)
         res = check(copy, "--json")
@@ -311,16 +301,16 @@ class DemoTest(unittest.TestCase):
 
         # The zone's pre-commit hook refuses the same breach before it reaches history,
         # and lets it through only when overridden on purpose.
-        work = copy / "Zones" / "Work"
+        work = copy / "Zones" / "Birch"
         run(["git", "-C", work, "add", "-A"])
         refused = run(["git", "-C", work, "commit", "-q", "-m", "Launch plan: renewal call"])
         self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
         lines = [l for l in refused.stderr.splitlines() if l.startswith("Commit refused")]
         self.assertEqual(len(lines), 1, refused.stderr)
         self.assertIn("check.py allow", refused.stderr)             # and the command that lets it through once
-        self.assertIn("Commit refused: Zones/Work/Birch Entry/Threads/Launch Plan/Launch Plan.md", lines[0])
+        self.assertIn("Commit refused: Zones/Birch/Birch Entry/Threads/Launch Plan/Launch Plan.md", lines[0])
         self.assertNotIn("--no-verify", refused.stderr)            # no terminal: the check names the allow command instead
-        self.assertEqual(git(copy, "Zones/Work", "rev-parse", "HEAD"), git(self.root, "Zones/Work", "rev-parse", "HEAD"))
+        self.assertEqual(git(copy, "Zones/Birch", "rev-parse", "HEAD"), git(self.root, "Zones/Birch", "rev-parse", "HEAD"))
         forced = run(["git", "-C", work, "commit", "-q", "--no-verify", "-m", "Launch plan: renewal call"])
         self.assertEqual(forced.returncode, 0, forced.stderr)
 

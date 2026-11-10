@@ -12,27 +12,29 @@ My addresses: <you@work.example>, <you@personal.example>. Mail you forward from 
 
 ## Zones
 
-A zone may name one party, which every file in the zone carries; leave it empty for none. New parties says what `scaffold.py party` proposes for a party added in the zone: walled or open.
+Each zone is either **walled** or **open**. What is in a walled zone stays in that zone; what is in an open zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones is split before it is filed.
 
-| Zone | Holds | Party | New parties |
-|---|---|---|---|
-| Work | <Client work, employer work> | | walled |
-| Personal | <Everything that is yours alone> | | walled |
+Walled says which, `yes` or `no`. A new zone is walled. To change a flag, run `scaffold.py zone --walled` or `--open`; the assistant reads this column before it uses a conversation in a project.
+
+| Zone | Holds | Walled |
+|---|---|---|
+| Work | <Client work, employer work> | yes |
+| Personal | <Everything that is yours alone> | yes |
 
 ## Parties
 
-Every organisation or person whose confidences you hold. The tag is what project and meeting frontmatter use.
+Every organisation or person whose confidences you hold. The tag is what project and meeting frontmatter use as an optional index, so "what did Acme say" finds its pages. A party carries no wall; its zone does.
 
-Domains are optional: the part after the @ in their mail addresses. Mail from a listed domain files itself under that party. Personal webmail, such as gmail.com, never names a party by itself.
+Domains are optional: the part after the @ in their mail addresses. Mail from a listed domain files itself under that party's zone. Personal webmail, such as gmail.com, never names a party by itself.
 
-Walled says whether a party is walled, `yes` or `no`. A walled party's material goes only into work that names that party; an open party's material may go anywhere. The assistant checks this column before it uses a conversation in a project.
-
-| Party | What it is | Zone | Tag | Walled | Domains |
-|---|---|---|---|---|---|
-| Acme Corp | Client. Supply-chain review | Work | `acme` | yes | acmecorp.example |
-| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | yes | birchco.example |
+| Party | What it is | Zone | Tag | Domains |
+|---|---|---|---|---|
+| Acme Corp | Client. Supply-chain review | Work | `acme` | acmecorp.example |
+| Birch & Co | Client. Market-entry advice; competes with Acme | Work | `birch` | birchco.example |
 
 ## People
+
+One row for each person, by name. The Party cell is context for whoever reads it, and may be empty.
 
 | Name | Party | Role |
 |---|---|---|

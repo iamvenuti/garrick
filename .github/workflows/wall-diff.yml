@@ -1,16 +1,17 @@
 name: Wall diff
 
-# A change to how the wall check reads a token is released only when no row of the
-# case files and end-to-end rows goes from refused to passed against the newest release,
-# other than by design (a token that does not resolve). The counts
-# go in the job summary. tests/wall_diff.py has the rest.
+# A change to how the wall check reads a reference is released only when no row of the
+# case files and end-to-end rows changes its zone verdict against the newest release,
+# other than by design: refused to passed inside one zone, or a name hit with no link,
+# embed, path or copy. A row that goes from passed to refused, or any other change, fails
+# the job. The counts go in the job summary. tests/wall_diff.py has the rest.
 on:
   pull_request:
     paths:
       - template/System/tools/check.py
       - template/System/tools/garrick_lib.py
       - tests/wall_diff.py
-      - tests/test_wall_forms.py
+      - tests/walls_forms.py
   workflow_dispatch:
 
 permissions:
@@ -22,7 +23,7 @@ concurrency:
 
 jobs:
   diff:
-    name: Verdicts against the last release
+    name: Zone verdicts against the last release
     runs-on: macos-latest
     timeout-minutes: 30
     steps:

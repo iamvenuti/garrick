@@ -1,17 +1,15 @@
-"""The cases table, run against each enforcement point on a fixture workspace.
+"""The wall cases, run against the model, the check and the Meetings lint on a fixture workspace.
 
     cd tests && python3 -m unittest test_walls_cases
 
-`walls/cases.md` is the one table of what the points must answer. Its first
-table is run against decide() in test_decide; its third is run here, row by
-row, against the pre-commit check, Ask, intake and the scaffold tool. A row of
-the table with no handler here fails the test, so a new case is run before it
-is merged. Recall is not on `main`: its rows run against decide() alone.
+`walls/cases.md` is the one table of what the points must answer. Its first table is run against decide() in
+test_decide; the others are run here, row by row: the enforcement points against the pre-commit check, the Meetings
+rows against `zone_of()` and the lint. A row with no handler here fails the test, so a new case is run before it is
+merged. The allow ledger, which stays, is tested at the end.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shutil
 import sys
@@ -22,609 +20,271 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import HAVE_GIT, commit_all, git, project_hub, write  # noqa: E402
-from walls_fixture import build  # noqa: E402
+from fixtures import HAVE_GIT, commit_all, git, write  # noqa: E402
+from zone_fixture import HOME_SAYS, UNZONED_SAYS, build  # noqa: E402
 
 import check  # noqa: E402
 import garrick_lib as lib  # noqa: E402
-import scaffold  # noqa: E402
 
-REPO = Path(__file__).resolve().parent.parent
 CASES = Path(__file__).resolve().parent / "walls" / "cases.md"
+REPO = Path(__file__).resolve().parent.parent
 
 
-def load(name, path):
-    spec = importlib.util.spec_from_file_location(name, str(path))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-intake = load("garrick_intake_cases", REPO / "template" / "System" / "skills" / "intake" / "intake.py")
-ask_scope = load("garrick_ask_scope_cases", REPO / "extras" / "status" / "ask_scope.py")
-
-
-STAMPED = (b"X-Garrick-Parties: acme birch\nFrom: Dana <dana@acmecorp.example>\nTo: Theo <theo@birchco.example>\n"
-           b"Subject: Hi\nDate: Tue, 10 Mar 2026 10:00:00 +0000\nMessage-ID: <1@x>\n\nA mail body naming both firms.\n")
+def table(name):
+    return lib.wall_cases(CASES.read_text(encoding="utf-8"))[name]
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
-class EnforcementPoints(unittest.TestCase):
+class Cases(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
         cls.root = Path(cls._tmp.name).resolve() / "Workspace"
         build(cls.root)
         cls.work = cls.root / "Zones" / "Work"
-        shutil.rmtree(cls.work / ".git", ignore_errors=True)
         git(cls.work, "init", "-q")
         cls.env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
         cls.env.start()
         commit_all(cls.work, "start")
-        cls.ctx = lib.load_context(cls.root)
-        cls.lib = ask_scope.lib(REPO)
 
     @classmethod
     def tearDownClass(cls):
         cls.env.stop()
         cls._tmp.cleanup()
 
-    # -- the points -----------------------------------------------------------
-
-    def note(self, project, thread, text):
-        path = self.work / project / "Threads" / thread / "CaseNote.md"
-        write(path, text)
-        self.addCleanup(lambda: path.exists() and path.unlink())
-        return path
-
-    def docs_party_key(self):
-        write(self.root / "System" / "garrick-docs" / "labelled.md", "---\nParty: acme\n---\n\n# L\n\nDOCMARK pallet\n")
-        where = ask_scope.Scope("docs", None, None, None, ["pallet"], set())
-        found = ask_scope.search(self.root, where, self.ctx, self.lib)
-        return "permitted" if any(r["path"].endswith("labelled.md") for r in found) else "refused"
-
-    def put_away(self, name, party):
-        write(self.work / "archive" / name / (name + ".md"), project_hub("Work", name, party))
-        write(self.work / "archive" / name / "Notes.md", "# Notes\n")
-        return self.check_note("Northwind", "Pricing", "# N\n\nSee [[archive/%s/Notes]].\n" % name)
-
-    def check_note(self, project, thread, text):
-        path = self.note(project, thread, text)
-        where = path.relative_to(self.root).as_posix()
-        found = [f for f in check.run_checks(self.root, walls_only=True) if f.path == where]
-        return "refused" if any(f.severity == "error" for f in found) else "permitted"
-
-    def staged(self, path, text):
-        write(path, text)
-        self.addCleanup(lambda: path.exists() and path.unlink())
-        git(self.work, "add", "-A")
-        self.addCleanup(lambda: git(self.work, "reset", "-q"))
-        where = path.relative_to(self.root).as_posix()
-        found = [f for f in check.run_checks(self.root, staged=self.work) if f.path == where]
-        return "refused" if any(f.severity == "error" for f in found) else "permitted"
-
-    def asked(self, held, parties_of, extra=None):
-        """Ask: may a process holding `held` be given the record of a place or page?"""
-        record = {"parties": sorted(parties_of)}
-        if extra:
-            record.update(extra)
-        chosen, _ = ask_scope.pick([record], set(held), self.ctx, self.lib)
-        return "permitted" if chosen else "refused"
-
-    def place(self, project, thread):
-        return ask_scope.place_parties(self.root, "Work", project, thread, self.lib)
-
-    def inbox_item(self):
-        path = self.work / "Inbox" / "case-item.md"
-        write(path, "# Item\n")
-        self.addCleanup(lambda: path.exists() and path.unlink())
-        return path
-
-    def filed(self, project, tags):
-        try:
-            dest = intake.file_to_project(self.root, self.inbox_item(), "Zones/Work/" + project, tags)
-        except intake.Refusal:
-            return "refused"
-        self.addCleanup(lambda: dest.exists() and dest.unlink())
-        return "permitted"
-
-    def utf16_note(self):
-        path = self.work / "Northwind" / "Threads" / "Pricing" / "utf16.md"
-        path.write_bytes("Ask Theo Marsh".encode("utf-16"))
-        git(self.work, "add", "-A")
-        found = check.run_checks(self.root, staged=self.work)
-        return "refused" if any(f.severity == "error" and f.path.endswith("utf16.md") for f in found) else "permitted"
-
-    def renamed_folder(self):
-        import os
-        os.rename(self.work / "Harbour", self.work / "Harbour-tmp")
-        os.rename(self.work / "Harbour-tmp", self.work / "harbour")
-        self.addCleanup(lambda: (self.work / "harbour").exists() and os.rename(self.work / "harbour", self.work / "Harbour-b")
-                        and os.rename(self.work / "Harbour-b", self.work / "Harbour"))
-        write(self.work / "harbour" / "Threads" / "Sizing" / "Leak.md", "# n\n\nAsk Dana Whitlock of Acme Corp.\n")
-        git(self.work, "add", "-A")
-        found = check.run_checks(self.root, staged=self.work)
-        return "refused" if any(f.severity == "error" and f.path.lower().endswith("leak.md") for f in found) else "permitted"
-
-    def staged_bytes(self, rel, data):
-        path = self.work / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        git(self.work, "add", "-A")
-        found = check.run_checks(self.root, staged=self.work)
-        return "refused" if any(f.severity == "error" and f.path.endswith(Path(rel).name) for f in found) else "permitted"
-
-    def thread_parties(self):
-        note = self.work / "Northwind" / "Threads" / "Pricing" / "Pricing.md"
-        note.write_text(note.read_text(encoding="utf-8").replace("party: acme", "parties: [acme]"), encoding="utf-8")
-        git(self.work, "add", "-A")
-        found = check.run_checks(self.root, staged=self.work)
-        return "refused" if any(f.severity == "error" and f.path.endswith("Pricing.md") for f in found) else "permitted"
-
-    def knowledge_party_key(self):
-        page = self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "case-key.md"
-        write(page, "---\ntitle: K\nParties: [acme]\n---\n\n# K\n")
-        self.addCleanup(lambda: page.exists() and page.unlink())
-        labels = lib.labels(self.root, page, self.ctx)
-        return "refused" if lib.decide({"birch"}, labels, "read", self.ctx) == "deny" else "permitted"
-
-    def reserved_row(self, tag):
-        context = self.root / "System" / "context.md"
-        before = context.read_text(encoding="utf-8")
-        context.write_text(before.replace("| Cedar Ltd |", "| Nobody | None | Work | `%s` | yes | |\n| Cedar Ltd |" % tag), encoding="utf-8")
-        try:
-            write(self.work / "Northwind" / "Threads" / "Pricing" / "CaseNote.md", "# N\n\nPlain.\n")
-            git(self.work, "add", "-A")
-            found = check.run_checks(self.root, staged=self.work)
-            return "refused" if any(f.severity == "error" and f.path.endswith("context.md") for f in found) else "permitted"
-        finally:
-            context.write_text(before, encoding="utf-8")
-
-    def hats_refused(self):
-        try:
-            scaffold.check_party(self.root, "lumen,lumen-adv", "Work")
-        except scaffold.Refusal:
-            return "refused"
-        return "permitted"
-
-    def hats_across_hub_and_thread(self):
-        self.addCleanup(self.restore)
-        hub, thread = self.work / "Northwind" / "Northwind.md", self.work / "Northwind" / "Threads" / "Pricing" / "Pricing.md"
-        hub.write_text(hub.read_text(encoding="utf-8").replace("party: acme", "party: [acme, lumen-adv]"), encoding="utf-8")
-        try:
-            scaffold.refuse_hats_in_project(lib.load_context(self.root), self.work / "Northwind", thread="Pricing",
-                                            thread_tags=["acme", "lumen"])
-        except scaffold.Refusal:
-            return "refused"
-        return "permitted"
-
-    def hats_checked(self):
-        self.addCleanup(self.restore)
-        hub = self.work / "Hats" / "Hats.md"
-        found = [f for f in check.run_checks(self.root) if "one company under two hats" in f.message
-                 and f.severity == "error" and f.check in ("projects", "threads")]
-        return "refused" if found else "permitted"
-
-    def hub_links_thread(self, link):
-        self.addCleanup(self.restore)
-        hub, thread = self.work / "Reed" / "Reed.md", self.work / "Reed" / "Threads" / "Notes" / "Notes.md"
-        thread.write_text(thread.read_text(encoding="utf-8").replace("party: cedar", "party: [cedar, birch]"), encoding="utf-8")
-        write(self.work / "Reed" / "Threads" / "Notes" / "Plan.md", "# Plan\n")
-        hub.write_text(hub.read_text(encoding="utf-8") + "\nSee %s.\n" % link, encoding="utf-8")
-        found = [f for f in check.run_checks(self.root, walls_only=True) if f.path.endswith("Reed/Reed.md") and f.severity == "error"]
-        return "refused" if found else "permitted"
-
-    def flip_asks(self):
-        args = type("A", (), dict(tag="acme", walled=False, open=True, yes=False))()
-        said = scaffold.cmd_flip(self.root, args, "2026-11-06")
-        return "asked" if "releases" in said and "| `acme` | yes |" in (self.root / "System" / "context.md").read_text() else "permitted"
-
-    def one_thread_changes_no_other_file(self):
-        before = lib.labels(self.root, "Zones/Work/Northwind/Sources/x.md", self.ctx)
-        self.addCleanup(self.restore)
-        note = self.work / "Northwind" / "Threads" / "Pricing" / "Pricing.md"
-        note.write_text(note.read_text(encoding="utf-8").replace("party: acme", "party: [acme, cedar]"), encoding="utf-8")
-        after = lib.labels(self.root, "Zones/Work/Northwind/Sources/x.md", self.ctx)
-        return "permitted" if before == after == frozenset({"acme"}) else "refused"
-
-    def scaffold_none(self):
-        args = type("A", (), dict(name="None", zone="Work", what="x", also=None, walled=False, open=False,
-                                  check=False, spoken=None))()
-        try:
-            scaffold.cmd_party(self.root, args, "2026-11-06")
-        except scaffold.Refusal:
-            return "refused"
-        return "permitted"
-
-    def binary(self, project):
-        path = self.work / project / "blob.bin"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"\x00\x01plain weather\x00")
-        self.addCleanup(lambda: path.exists() and path.unlink())
-        git(self.work, "add", "-A")
-        self.addCleanup(lambda: git(self.work, "reset", "-q"))
-        found = check.run_checks(self.root, staged=self.work)
-        return "refused" if any(f.severity == "error" and f.path.endswith("blob.bin") for f in found) else "permitted"
-
-    def mail(self, **kw):
-        m = lib.parse_mail_bytes(b"", ".txt")
-        for key, addrs in kw.items():
-            m[key] = [("", a) for a in addrs]
-        return intake.suggest(self.ctx, "Work", m)
+    # -- the points ----------------------------------------------------------
 
     def restore(self):
         git(self.work, "reset", "-q", "--hard", "HEAD")
         git(self.work, "clean", "-fdq")
 
-    def flip_to_open(self):
+    def verdict(self, where, found):
+        return "refused" if any(f.severity == "error" and f.path == where for f in found) else "permitted"
+
+    def note(self, rel, text, suffix=".md", data=None):
+        path = self.work / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if data is not None:
+            path.write_bytes(data)
+        else:
+            path.write_text(text, encoding="utf-8")
         self.addCleanup(self.restore)
-        for rel in ("Northwind/Northwind.md", "Northwind/Threads/Pricing/Pricing.md"):
-            path = self.work / rel
-            path.write_text(path.read_text(encoding="utf-8").replace("party: acme", "party: cedar"), encoding="utf-8")
+        return path
+
+    def check_note(self, rel, text):
+        """The full walls check over a note written into Work."""
+        path = self.note(rel, text)
+        return self.verdict(path.relative_to(self.root).as_posix(), check.run_checks(self.root, walls_only=True))
+
+    def staged(self, rel, text=None, data=None):
+        """The commit hook's check over a file staged in Work."""
+        path = self.note(rel, text or "", data=data)
         git(self.work, "add", "-A")
-        found = check.run_checks(self.root, staged=self.work)
-        return "refused" if any(f.severity == "error" and f.path.endswith("Deal.md") for f in found) else "permitted"
+        return self.verdict(path.relative_to(self.root).as_posix(), check.run_checks(self.root, staged=self.work))
 
-    def hub_party_none(self):
-        self.addCleanup(self.restore)
-        path = self.work / "Orchard" / "Orchard.md"
-        path.write_text(path.read_text(encoding="utf-8").replace("status: active", "party: none\nstatus: active"), encoding="utf-8")
-        return self.staged(self.work / "Orchard" / "Threads" / "Drafts" / "CaseNote.md", "# N\n\nPlain.\n")
+    PRICING = "Northwind/Threads/Pricing/CaseNote.md"
 
-    def mail_filed(self, text, **kw):
-        path = self.work / "Inbox" / "case.eml"
-        write(path, text)
-        self.addCleanup(lambda: path.exists() and path.unlink())
-        try:
-            dest = intake.file_to_project(self.root, path, "Zones/Work/Northwind", ["acme"], as_material=True, **kw)
-        except intake.Confirm:
-            return "asked"
-        except intake.Refusal:
-            return "refused"
-        self.addCleanup(lambda: dest.exists() and dest.unlink())
-        return "permitted"
-
-    def nurture_from(self, source):
-        import nurture
-        ctx = nurture.Ctx(self.root)
-        return "refused" if nurture.across_wall(ctx, source, "Zones/Work/Northwind/Threads/Pricing/Notes.md") else "permitted"
-
-    def knowledge_link(self):
-        page = self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "case-link.md"
-        write(page, "---\ntitle: K\nParties: [acme]\n---\n\n# K\n")
-        self.addCleanup(lambda: page.exists() and page.unlink())
-        return self.check_note("Northwind", "Pricing", "# N\n\nSee [[case-link]].\n")
-
-    def nurture_across(self):
-        import nurture
-        ctx = nurture.Ctx(self.root)
-        return "refused" if nurture.across_wall(ctx, "Zones/Work/Orchard/x.md",
-                                                "Zones/Work/Northwind/Threads/Pricing/Notes.md") else "permitted"
-
-    SENTENCE = "The quarterly review covers pallet routing, supplier lead times and the harbour handover plan."
-    REFUSAL = ("Commit refused: Zones/Work/Reed/Threads/Notes/X.md names Acme Corp, or one of its people; acme is walled "
-               "and this project does not name it. Take it out and commit again; only if you mean it, git commit --no-verify.")
-
-    def template_sentence(self, held):
-        """A Reed note repeating a sentence that a Northwind note holds, and System/templates.local/ too when `held`."""
-        write(self.work / "Northwind" / "Threads" / "Pricing" / "Source.md", "# S\n\n%s\n" % self.SENTENCE)
-        mine = self.root / "System" / "templates.local" / "hub.md"
-        if held:
-            write(mine, "# Hub\n\n%s\n" % self.SENTENCE)
-        try:
-            return self.check_note("Reed", "Notes", "# N\n\n%s\n" % self.SENTENCE)
-        finally:
-            shutil.rmtree(mine.parent, ignore_errors=True)
-
-    def wording_in_a_refusal_shape(self):
-        said = "The board will cut the supplier panel from nine firms to three before the March tender closes."
-        write(self.work / "Northwind" / "Threads" / "Pricing" / "Source.md", "# S\n\n%s\n" % said)
-        return self.check_note("Reed", "Notes", "# N\n\nCommit refused: x.md repeats wording from a page: %s\n" % said)
-
-    # -- one handler per row ---------------------------------------------------
+    def pricing(self, text):
+        return self.check_note(self.PRICING, text)
 
     def handlers(self):
-        recall = lambda scope, labels: "Recall's" if lib.decide(scope, labels, "read", self.ctx) == "deny" else "WRONG"  # noqa: E731
+        garden = "Zones/Home/Garden/Threads/Beds/Notes.md"
         return {
-            "e01": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260312-birch-kickoff]].\n"),
-            "e02": lambda: self.check_note("Northwind", "Pricing", "# N\n\nAsk Theo Marsh.\n"),
-            "e03": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260310-acme-kickoff]].\n"),
-            "e04": lambda: self.staged(self.work / "Orchard" / "Threads" / "Drafts" / "CaseNote.md",
-                                       "# N\n\nSee [[260310-acme-kickoff]].\n"),
-            "e05": lambda: self.staged(self.work / "Orchard" / "Threads" / "Drafts" / "CaseNote.md", "# N\n\nPlain.\n"),
-            "e06": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk Dana Whitlock.\n"),
-            "e07": lambda: self.check_note("Reed", "Notes", "# N\n\nSee [[resilience]].\n"),
-            "e08": lambda: self.check_note("Reed", "Notes", "# N\n\nSee [[260310-acme-kickoff]].\n"),
-            "e09": lambda: self.staged(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n- [ ] call Jo\n\n## Done\n"),
-            "e10": lambda: self.asked({"acme"}, self.place("Harbour", "Sizing")),
-            "e11": lambda: self.asked({"acme"}, self.place("Northwind", "Pricing")),
-            "e12": lambda: self.asked({"acme"}, self.place("Orchard", "Drafts")),
-            "e13": lambda: self.asked({"acme"}, ask_scope.page_parties(
-                lib.parse_frontmatter(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260315-split.md"),
-                self.ctx, self.lib)),
-            "e14": lambda: self.asked({"birch"}, self.place("Reed", "Notes")),
-            "e15": lambda: self.filed("Northwind", ["birch"]),
-            "e16": lambda: "asked" if self.mail(**{"from": ["kai@birchco.example"], "cc": ["dana@acmecorp.example"],
-                                                  "to": ["jo@example.invalid"]})["confirm"] else "permitted",
-            "e17": lambda: "asked" if self.mail(**{"from": ["jo+lumen@elsewhere.example"]})["confirm"] else "permitted",
-            "e18": lambda: self.filed("Orchard", ["acme"]),
-            "e19": lambda: "refused" if scaffold.wall_between(self.ctx, {"birch"}, {"acme"}) else "permitted",
-            "e24": self.flip_to_open,
-            "e25": lambda: self.binary("Orchard"),
-            "e26": lambda: self.staged(self.work / "Northwind" / "tool.py", "# Ask Theo Marsh at Birch & Co\n"),
-            "e27": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Todo]].\n"),
-            "e28": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260319-orphan-call.txt]].\n"),
-            "e29": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[260315-split]].\n"),
-            "e30": lambda: self.asked(set(), self.place("Northwind", "Pricing")),
-            "e31": lambda: self.asked({"none"}, self.place("Northwind", "Pricing")),
-            "e32": lambda: self.mail_filed("From: Kai <kai@cedarltd.example>\nSubject: Hi\n\nHello.\n"),
-            "e33": lambda: self.mail_filed("X-Garrick-Parties: acme\nFrom: Kai <kai@birchco.example>\nSubject: Hi\n\nHello.\n",
-                                           confirmed=True),
-            "e35": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk Da\u200bna Whitlock.\n"),
-            "e36": self.nurture_across,
-            "e37": self.hub_party_none,
-            "e38": lambda: (write(self.work / ".Quay" / "x.md", "# x\n\nAsk Theo Marsh.\n"),
-                            self.check_note("Northwind", "Pricing", "# N\n\n![[.Quay/x]]\n"))[1],
-            "e39": self.utf16_note,
-            "e40": self.renamed_folder,
-            "e41": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Orchard/Threads/Drafts/Note]].\n")
-            if write(self.work / "Orchard" / "Threads" / "Drafts" / "Note.md", "# n\n") else None,
-            "e42": lambda: self.staged_bytes("Cedarwork/Sources/m.eml", STAMPED),
-            "e43": lambda: self.staged(self.work / "Reed" / "Sources" / "c.md", "Dana Whitlock agreed.\n"),
-            "e44": self.thread_parties,
-            "e45": self.knowledge_party_key,
-            "e46": lambda: self.reserved_row("none"),
-            "e47": self.scaffold_none,
-            "e48": lambda: self.check_note("Northwind", "Pricing", "# N\n\nSee [[Dis/Threads/T/Memo]].\n"),
-            "e49": lambda: self.nurture_from("Zones/Work/Orchard/Threads/Drafts/x.md"),
-            "e50": lambda: self.filed("Dis", ["acme"]),
-            "e51": lambda: "permitted" if ask_scope.admits(self.ctx, {"acme"}, {lib.KNOWLEDGE}, self.lib) else "refused",
-            "e52": self.knowledge_link,
-            "e53": lambda: self.check_note("Both", "T", "# N\n\nSee [[260310-acme-kickoff]] and [[260312-birch-kickoff]].\n"),
-            "e54": lambda: self.asked({"acme", "birch"}, self.place("Both", "T")),
-            "e55": lambda: self.filed("Both", ["acme", "birch"]),
-            "e56": lambda: "refused" if scaffold.wall_between(self.ctx, {"acme", "birch"}, {"acme", "birch"}) else "permitted",
-            "e57": lambda: "refused" if __import__("nurture").across_wall(
-                __import__("nurture").Ctx(self.root), "Zones/Work/Both/Threads/T/Notes.md",
-                "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md") else "permitted",
-            "e58": self.hats_refused,
-            "e60": lambda: "refused" if scaffold.wall_between(self.ctx, {"lumen"}, {"lumen-adv"}) else "permitted",
-            "e61": self.hats_across_hub_and_thread,
-            "e62": self.hats_checked,
-            "e63": lambda: self.hub_links_thread("[[Reed/Threads/Notes/Notes|Notes]]"),
-            "e64": lambda: self.hub_links_thread("[[Reed/Threads/Notes/Plan]]"),
-            "e65": self.flip_asks,
-            "e66": self.one_thread_changes_no_other_file,
-            "e67": lambda: self.put_away("Tern", "birch"),
-            "e68": lambda: self.put_away("Lark", "acme"),
-            "e69": self.docs_party_key,
-            "e70": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk Kit about the order.\n"),
-            "e71": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk Kit at Acme Corp.\n"),
-            "e72": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk [[kit]] about the order.\n"),
-            "e73": lambda: self.template_sentence(True),
-            "e74": lambda: self.template_sentence(False),
-            "e77": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk kitten about the order.\n"),
-            "e78": lambda: self.check_note("Reed", "Notes", "# N\n\nA note in passing: Acme Corp has agreed to the merger.\n"),
-            "e79": self.wording_in_a_refusal_shape,
-            "e75": lambda: self.check_note("Reed", "Notes", "# N\n\nThe hook said:\n\n%s\n" % self.REFUSAL),
-            "e76": lambda: self.check_note("Reed", "Notes", "# N\n\nThe hook said:\n\n%s Ask Dana Whitlock.\n" % self.REFUSAL),
-            "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
-            "e20": lambda: recall(set(), {"acme"}),
-            "e21": lambda: recall(set(), {"acme", "birch"}),
-            "e22": lambda: recall({"acme"}, {"birch"}),
-            "e23": lambda: "refused" if lib.decide({"acme"}, set(), "read", self.ctx) == "deny" else "permitted",
+            "e01": lambda: self.pricing("# N\n\nSee [[Zones/Home/Garden/Threads/Beds/Notes]].\n"),
+            "e02": lambda: self.pricing("# N\n\n![[Zones/Home/Garden/Threads/Beds/Plan.md]]\n"),
+            "e03": lambda: self.pricing("# N\n\nThe file is `%s`.\n" % garden),
+            "e04": lambda: self.pricing("# N\n\nSee [[Zones/Work/Harbour/Threads/Sizing/Notes]].\n"),
+            "e05": lambda: self.pricing("# N\n\nSee [[Zones/Ventures/Orchard/Threads/Drafts/Notes]].\n"),
+            "e06": lambda: self.open_note("# N\n\nSee [[Zones/Work/Northwind/Threads/Pricing/Notes]].\n"),
+            "e07": lambda: self.pricing("# N\n\nSee [[wiki/concepts/resilience]].\n"),
+            "e08": lambda: self.pricing("# N\n\nSee [[260311-home-call]].\n"),
+            "e09": lambda: self.pricing("# N\n\nSee [[260310-work-call]].\n"),
+            "e10": lambda: self.pricing("# N\n\nSee [[260312-ventures-call]].\n"),
+            "e11": lambda: self.pricing("# N\n\nSee [[260313-unzoned-call]].\n"),
+            "e12": lambda: self.pricing("# N\n\nSee [[260314-two-zones-call]].\n"),
+            "e13": lambda: self.pricing("# N\n\nThe record is `Wikis/Meetings/raw/260311-home-call.txt`.\n"),
+            "e14": lambda: self.pricing("# N\n\nThe record is `Wikis/Meetings/raw/260319-orphan-call.txt`.\n"),
+            "e15": lambda: self.pricing("# N\n\nAsk Jo Lane of Own affairs, and Pat.\n"),
+            "e16": lambda: self.pricing("# N\n\nGarden plan: the beds go along the south wall, spaced a metre apart, with a path between.\n"),
+            "e28": lambda: self.pricing("# N\n\nHarbour plan: the quay works come first, then the sheds.\n"),
+            "e29": lambda: self.pricing("# N\n\nOrchard plan: the trees go in rows, one row for each variety.\n"),
+            "e30": lambda: self.pricing("# N\n\n%s\n" % HOME_SAYS),
+            "e31": lambda: self.pricing("# N\n\n%s\n" % UNZONED_SAYS),
+            "e32": lambda: self.knowledge_says(),
+            "e37": lambda: self.staged("Northwind/Threads/Pricing/Todo.md", data=self.plan("Home/Todo.md")),
+            "e38": lambda: self.held_twice("Ventures"),
+            "e39": lambda: self.held_twice("Study"),
+            "e36": lambda: self.pricing("# N\n\nSee [[bare]].\n"),
+            "e33": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260310-work-call")),
+            "e34": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260312-ventures-call")),
+            "e35": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260311-home-call", fill=True)),
+            "e17": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Home/Garden/Threads/Beds/Plan.md")),
+            "e18": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Ventures/Orchard/Threads/Drafts/Plan.md")),
+            "e19": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Work/Harbour/Threads/Sizing/Plan.md")),
+            "e20": lambda: self.short_copy(),
+            "e21": lambda: self.knowledge_copy(),
+            "e22": lambda: self.symlink(),
+            "e23": lambda: self.zone_file(),
+            "e24": lambda: self.pricing("# N\n\nSee [[Sizing]].\n"),
+            "e25": lambda: self.party_key(),
+            "e26": lambda: self.staged("Northwind/Threads/Pricing/tool.py", "# see [[260311-home-call]]\n"),
+            "e27": lambda: self.staged("Northwind/Threads/Pricing/Blob.md", data=b"see\x00there"),
         }
 
-    def test_every_row_runs_against_its_point(self):
-        rows = lib.wall_cases(CASES.read_text(encoding="utf-8"))["Enforcement points"]
+    def raw(self, stem, fill=False):
+        path = self.root / "Wikis" / "Meetings" / "raw" / (stem + ".txt")
+        if fill:      # a record long enough to count as a copy
+            path.write_text("Jo: the beds are marked along the south wall, and the path is laid.\n", encoding="utf-8")
+        return path.read_bytes()
+
+    def held_twice(self, other):
+        text = ("Shared wording of a note kept by two zones (%s), held word for word in each of them.\n" % other).encode()
+        for zone in ("Home", other):
+            path = self.root / "Zones" / zone / ("Copy-%s.md" % other)
+            path.write_bytes(text)
+            self.addCleanup(path.unlink)
+        return self.staged("Northwind/Threads/Pricing/Copy.md", data=text)
+
+    def plan(self, rel):
+        return (self.root / "Zones" / rel).read_bytes()
+
+    def open_note(self, text):
+        path = self.root / "Zones" / "Ventures" / "Orchard" / "Threads" / "Drafts" / "CaseNote.md"
+        write(path, text)
+        self.addCleanup(lambda: path.exists() and path.unlink())
+        return self.verdict(path.relative_to(self.root).as_posix(), check.run_checks(self.root, walls_only=True))
+
+    def short_copy(self):
+        small = b"tiny\n"
+        (self.root / "Zones" / "Home" / "Garden" / "Tiny.md").write_bytes(small)
+        self.addCleanup(lambda: (self.root / "Zones" / "Home" / "Garden" / "Tiny.md").unlink())
+        return self.staged("Northwind/Threads/Pricing/Tiny.md", data=small)
+
+    def knowledge_copy(self):
+        ws = check.discover(self.root, None)
+        page = self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "copied.md"
+        found = check.copy_findings(ws, [(page, self.plan("Home/Garden/Threads/Beds/Plan.md"))])
+        return "refused" if found else "permitted"
+
+    def knowledge_says(self):
+        page = self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "says.md"
+        write(page, "# Says\n\n%s\n" % HOME_SAYS)
+        self.addCleanup(lambda: page.exists() and page.unlink())
+        found = [f for f in check.run_checks(self.root) if f.path == page.relative_to(self.root).as_posix()]
+        return "warned" if any(f.severity == "warning" for f in found) else "permitted"
+
+    def symlink(self):
+        link = self.work / "Northwind" / "Linked"
+        os.symlink(self.root / "Zones" / "Home" / "Garden", link)
+        self.addCleanup(lambda: link.unlink() if link.is_symlink() else None)
+        return self.verdict("Zones/Work/Northwind/Linked", check.run_checks(self.root, walls_only=True))
+
+    def zone_file(self):
+        path = self.work / "Todo.md"
+        path.write_text(path.read_text(encoding="utf-8") + "\nSee [[Zones/Home/Garden/Threads/Beds/Notes]].\n", encoding="utf-8")
+        self.addCleanup(self.restore)
+        return self.verdict("Zones/Work/Todo.md", check.run_checks(self.root, walls_only=True))
+
+    def party_key(self):
+        hub = self.work / "Northwind" / "Northwind.md"
+        hub.write_text(hub.read_text(encoding="utf-8").replace("party: acme", "party: [acme, jo]"), encoding="utf-8")
+        self.addCleanup(self.restore)
+        return self.pricing("# N\n\nSee [[Zones/Home/Garden/Threads/Beds/Notes]].\n")
+
+    def test_every_enforcement_row_has_a_handler_and_its_verdict(self):
+        rows = table("Enforcement points")
         handlers = self.handlers()
-        self.assertEqual(sorted(r[0] for r in rows), sorted(handlers), "a row has no handler, or a handler no row")
+        self.assertEqual(sorted(handlers), sorted(r[0] for r in rows))
         for ident, point, item, expect, source in rows:
-            with self.subTest(case=ident, point=point, item=item):
-                try:
-                    got = handlers[ident]()
-                finally:
-                    self.restore()          # one row never leaves its changes to the next
-                self.assertEqual(expect, got, source)
+            with self.subTest(case=ident, item=item):
+                self.assertEqual(handlers[ident](), expect, source)
 
-    def test_the_points_agree_with_decide(self):
-        """A point's verdict is decide()'s: the same two labels, the same answer."""
-        ours, theirs = self.place("Northwind", "Pricing"), self.place("Harbour", "Sizing")
-        self.assertEqual("deny", lib.decide(ours, theirs, "read", self.ctx))
-        self.assertEqual("deny", lib.decide(ours, theirs, "file", self.ctx))
-        self.assertEqual("deny", lib.decide(ours, theirs, "write", self.ctx))
+    # -- the Meetings wiki ------------------------------------------------------
 
-    def test_check_derives_the_labels_labels_does(self):
-        ws = check.discover(self.root)
-        for project, thread in (("Northwind", "Pricing"), ("Harbour", "Sizing"), ("Northwind", "Odd"), ("Hubnote", "T")):
-            folder = self.work / project
-            path = folder / "Threads" / thread / "Notes.md"
-            self.assertEqual(set(lib.labels(self.root, path, self.ctx)), check.project_file_tags(ws, folder, path))
+    def test_every_meetings_row_has_its_zone(self):
+        meetings = self.root / "Wikis" / "Meetings"
+        wiki = meetings / "wiki" / "sources"
+        extra = {
+            "m02": ("sources/260316-lower.md", "---\ntitle: x\nzone: work\n---\n"),
+            "m05": ("sources/260317-nowhere.md", "---\ntitle: x\nzone: Nowhere\n---\n"),
+        }
+        for rel, text in extra.values():
+            write(meetings / "wiki" / rel, text)
+        self.addCleanup(lambda: [(meetings / "wiki" / rel).unlink() for rel, _ in extra.values()])
+        where = {
+            "m01": wiki / "260310-work-call.md", "m02": meetings / "wiki" / extra["m02"][0],
+            "m03": wiki / "260313-unzoned-call.md", "m04": wiki / "260314-two-zones-call.md",
+            "m05": meetings / "wiki" / extra["m05"][0], "m06": meetings / "wiki" / "entities" / "acme-corp.md",
+            "m07": meetings / "raw" / "260310-work-call.txt", "m08": meetings / "raw" / "260315-both-call.txt",
+            "m09": meetings / "raw" / "260319-orphan-call.txt",
+            "m10": self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "resilience.md",
+            "m11": self.root / "System" / "rules.md",
+        }
+        want = {"Work": "Work", "unzoned": lib.UNZONED, "none": None}
+        rows = table("Meetings")
+        self.assertEqual(sorted(where), sorted(r[0] for r in rows))
+        ws = check.discover(self.root, None)
+        for ident, page, zone, source in rows:
+            with self.subTest(case=ident, page=page):
+                path = where[ident]
+                if path.suffix == ".md" and path.parent.name in ("sources", "entities") or ident in ("m10", "m11"):
+                    self.assertEqual(want[zone], lib.zone_of(self.root, path), source)
+                if ident in ("m07", "m08", "m09"):
+                    self.assertEqual(want[zone], check.page_names(ws).zone(path), source)
 
-    def test_intake_refuses_a_project_whose_party_is_none_or_a_ghost_and_files_nothing_on_confirm(self):
-        for name, party in (("Pnone", "none"), ("Pghost", "ghost"), ("Pempty", "")):
-            write(self.work / name / (name + ".md"), project_hub("Work", name, party))
-            self.addCleanup(shutil.rmtree, self.work / name, True)
-            with self.assertRaises(intake.Refusal, msg=name):
-                intake.file_to_project(self.root, self.inbox_item(), "Zones/Work/" + name, ["acme"])
-        write(self.work / "Third" / "Third.md", project_hub("Work", "Third", "lumen"))
-        self.addCleanup(shutil.rmtree, self.work / "Third", True)
-        self.assertEqual("asked", self.filed_or_asked("Third", ["lumen"]))
-        self.assertEqual("refused", self.filed_or_asked("Third", ["lumen-adv"]))
-        self.assertEqual([], list((self.work / "Third").glob("Sources/case-item*")))
+    # -- the Meetings lint (#481) -------------------------------------------------
 
-    def filed_or_asked(self, project, tags):
-        try:
-            intake.file_to_project(self.root, self.inbox_item(), "Zones/Work/" + project, tags)
-        except intake.Confirm:
-            return "asked"
-        except intake.Refusal:
-            return "refused"
-        return "filed"
+    def lint(self):
+        ws = check.discover(self.root, None)
+        return {f.path: f for f in check.check_meeting_zones(ws)}
 
-    def test_walls_cases_runs_the_table_against_the_workspaces_own_tags(self):
-        roles = lib.wall_roles(self.ctx)
-        self.assertEqual({"near": "acme", "far": "birch", "other": "cedar", "hat": "lumen", "hat2": "lumen-adv", "zone": "jo"},
-                         {k: v for k, v in roles.items() if k in ("near", "far", "other", "hat", "hat2", "zone")})
-        ran, skipped, failed = lib.run_wall_cases(self.ctx, CASES.read_text(encoding="utf-8"))
-        self.assertEqual(([], []), (skipped, failed))
-        self.assertGreaterEqual(ran, 45)
-        self.assertEqual(0, check.walls_cases(self.root))
+    def test_lint_rows(self):
+        found = self.lint()
+        rows = {r[0]: r for r in table("Meetings lint")}
+        base = "Wikis/Meetings/wiki/"
+        mixed = found.get(base + "entities/mixed.md")
+        self.assertIsNotNone(mixed, rows["l01"][1])
+        self.assertIn("split", mixed.message)
+        self.assertNotIn(base + "entities/mixed-open.md", found)                                        # l02
+        self.assertIn(base + "sources/260313-unzoned-call.md", found)                                   # l03
+        self.assertNotIn(base + "entities/whole.md", found)                                             # l04
+        both = found.get(base + "entities/open-and-walled.md")       # an open source forces no split: the walled zone is proposed
+        self.assertIsNotNone(both)
+        self.assertIn("takes Work", both.message)
+        pat = found.get(base + "people/pat.md")                                                         # l05
+        self.assertIsNotNone(pat)
+        self.assertIn("Home", pat.message)
 
-    def test_ask_takes_a_place_from_labels_and_reads_nothing_where_there_are_none(self):
-        write(self.work / "Twice" / "Twice.md", project_hub("Work", "Twice", "acme").replace("party: acme", "party: acme\nparties: [birch]"))
-        write(self.work / "Twice" / "Threads" / "T" / "Secret.md", "# s\n\nharbour pelican\n")
-        self.addCleanup(shutil.rmtree, self.work / "Twice", True)
-        self.assertEqual(frozenset(), self.place("Twice", "T"))
-        self.assertEqual(frozenset({"acme"}), self.place("Hubnote", "T"))
-        from types import SimpleNamespace as NS
-        with self.assertRaises(ask_scope.Refused):
-            ask_scope.scope(self.root, {"route": "thread", "zone": "Work", "project": "Twice", "thread": "T",
-                                        "words": ["pelican"]}, NS(places=[], parties=set()),
-                            {"Work": {"Twice": {"status": "active", "threads": {"T": "active"}}}}, self.ctx, self.lib)
+    def test_the_lint_finding_is_a_warning_of_the_meetings_kind(self):
+        for f in self.lint().values():
+            self.assertEqual(("warning", "meetings"), (f.severity, f.check))
 
-    def test_the_status_pages_actions_read_a_page_as_labels_does(self):
-        sys.path.insert(0, str(REPO / "extras" / "status"))
-        import page_action as pa
-        lib_ = pa.prefs().lib(self.root)
-        people = self.root / "Wikis" / "Meetings" / "wiki" / "people"
-        for fm, near in (("party: acme\n", True), ("parties: [acme]\n", False), ("party: acme\nparties: [cedar]\n", False),
-                         ("party: acme\nparties: [acme]\n", False)):
-            page = write(people / "t-case.md", "---\ntitle: X\ntype: person\n%s---\n\n# X\n" % fm)
-            self.addCleanup(lambda: page.exists() and page.unlink())
-            got = lib_.labels(self.root, page, self.ctx)
-            self.assertEqual(got is not None and lib_.decide({"acme"}, got, "write", self.ctx) == "permit",
-                             near, fm)
-            self.assertEqual(near, pa.page_party_tags(lib_, self.root, page) is not None, fm)
+    # -- the allow ledger stays ----------------------------------------------------
 
-    def test_walls_cases_exits_non_zero_when_no_wall_row_could_run(self):
-        import io
-        from contextlib import redirect_stdout
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d) / "W"
-            build(root)
-            context = root / "System" / "context.md"
-            text = context.read_text(encoding="utf-8")
-            context.write_text(text.replace("| `acme` | yes |", "| `acme` | no |").replace("| `birch` | yes |", "| `birch` | no |")
-                               .replace("| `jo` | yes |", "| `jo` | no |").replace("| `lumen` | yes |", "| `lumen` | no |")
-                               .replace("| `lumen-adv` | yes |", "| `lumen-adv` | no |"), encoding="utf-8")
-            out = io.StringIO()
-            with redirect_stdout(out):
-                code = check.walls_cases(root)
-        self.assertEqual(1, code)
-        self.assertIn("skipped d01 (no near)", out.getvalue())
-        self.assertIn("no wall row ran", out.getvalue())
+    def test_allowing_a_refusal_once_lets_that_file_through(self):
+        path = self.note(self.PRICING, "# N\n\nSee [[Zones/Home/Garden/Threads/Beds/Notes]].\n")
+        git(self.work, "add", "-A")
+        where = path.relative_to(self.root).as_posix()
+        found = [f for f in check.run_checks(self.root, staged=self.work) if f.path == where]
+        self.assertEqual(1, len(found))
+        self.assertTrue(check.allowable(found[0]))
+        blob = check.index_blobs(self.work)[path.relative_to(self.work).as_posix().casefold()]
+        gl_root = self.root
+        git(gl_root, "init", "-q") if not (gl_root / ".git").exists() else None
+        lib.allow_add(gl_root, where, check.finding_id(found[0]), blob, check.finding_rule(found[0]), "terminal")
+        lib.allow_commit(gl_root, "ledger")
+        self.addCleanup(lambda: shutil.rmtree(gl_root / ".git", ignore_errors=True))
+        self.assertEqual("permitted", self.verdict(where, check.run_checks(self.root, staged=self.work)))
 
-    def test_a_decision_that_lets_a_wall_through_fails_the_table(self):
-        with mock.patch.object(lib, "decide", return_value="permit"):
-            ran, skipped, failed = lib.run_wall_cases(self.ctx, CASES.read_text(encoding="utf-8"))
-        self.assertGreater(len(failed), 10)
-        self.assertTrue(any(line.startswith("d01") for line in failed), failed)
-
-    def test_no_enforcement_point_holds_a_wall_test_of_its_own(self):
-        """is_walled() is garrick_lib's, under decide() and blocked(). Recall asks decide() and labels() too, and holds none."""
-        import re
-        own = []
-        for top in ("template", "extras"):
-            for path in sorted((REPO / top).rglob("*.py")):
-                if path.name == "garrick_lib.py" or "__pycache__" in path.parts:
-                    continue
-                if re.search(r"\b(?:walled|crossings)\(", path.read_text(encoding="utf-8")):
-                    own.append(path.relative_to(REPO).as_posix())
-        self.assertEqual([], own)
-
-    def test_a_session_holding_nothing_is_admitted_to_a_one_party_group_as_in_0_59_1(self):
-        """Accepted, not new: v0.59.1's admits() took the scope from the records when nothing was held, and so does this one."""
-        self.assertTrue(ask_scope.admits(self.ctx, set(), {"acme"}, self.lib))
-        self.assertTrue(ask_scope.admits(self.ctx, set(), {"acme", "cedar"}, self.lib))
-        self.assertFalse(ask_scope.admits(self.ctx, {"acme"}, {"birch"}, self.lib))
-        self.assertFalse(ask_scope.admits(self.ctx, {"cedar"}, {"acme"}, self.lib))
+    # -- the table itself --------------------------------------------------------
 
     def test_the_shipped_table_is_the_tests_table(self):
         shipped = REPO / "template" / "System" / "tools" / "walls-cases.md"
         self.assertEqual(CASES.read_text(encoding="utf-8"), shipped.read_text(encoding="utf-8"))
 
-
-
-# ----------------------------------------------------------------------
-# merged from test_no_party.py
-# ----------------------------------------------------------------------
-# No label, no permit: a project whose hub names no party commits nothing (#398).
-# 
-#     cd tests && python3 -m unittest test_no_party
-# 
-# Orchard is a project of the Work zone whose hub names no party. The hook refuses
-# a commit of any file in it and names the hub as the fix; a zone's own files and
-# its Inbox belong to no project, and are not refused for it.
-
-
-import os
-import shutil
-import sys
-import tempfile
-import unittest
-from pathlib import Path
-from unittest import mock
-
-sys.dont_write_bytecode = True
-
-from fixtures import HAVE_GIT, commit_all, git, project_hub, thread_note, write  # noqa: E402
-from walls_fixture import build  # noqa: E402
-
-import check  # noqa: E402
-
-
-@unittest.skipUnless(HAVE_GIT, "git is not installed")
-class NoPartyTest(unittest.TestCase):
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self._tmp.cleanup)
-        self.root = Path(self._tmp.name).resolve() / "Workspace"
-        build(self.root)
-        self.work = self.root / "Zones" / "Work"
-        shutil.rmtree(self.work / ".git", ignore_errors=True)
-        git(self.work, "init", "-q")
-        env = mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"})
-        env.start()
-        self.addCleanup(env.stop)
-        commit_all(self.work, "start")
-
-    def staged(self):
-        git(self.work, "add", "-A")
-        return check.run_checks(self.root, staged=self.work)
-
-    def test_a_file_of_a_project_with_no_party_is_refused_and_the_hub_is_named(self):
-        write(self.work / "Orchard" / "Threads" / "Drafts" / "Notes.md", "# Notes\n\nPlain words.\n")
-        found = [f for f in self.staged() if f.path.endswith("Orchard/Threads/Drafts/Notes.md")]
-        self.assertTrue(found, "nothing was said about a file of a project with no party")
-        self.assertEqual({"error"}, {f.severity for f in found})
-        self.assertIn("Orchard/Orchard.md", found[0].message)
-        self.assertIn("`party:`", found[0].message)
-
-    def test_a_file_that_links_nothing_and_names_nobody_is_refused_all_the_same(self):
-        write(self.work / "Orchard" / "Deliverables" / "260301 - memo.md", "# Memo\n")
-        self.assertTrue([f for f in self.staged() if f.severity == "error" and "Orchard" in f.path])
-
-    def test_a_zone_file_and_an_inbox_file_belong_to_no_project(self):
-        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n- [ ] call Jo\n\n## Done\n")
-        write(self.work / "AGENTS.local.md", "# Work\n")
-        self.assertEqual([], [f for f in self.staged() if f.severity == "error"])
-
-    def test_once_the_hub_names_a_party_the_project_commits(self):
-        write(self.work / "Orchard" / "Orchard.md", project_hub("Work", "Orchard", "acme", ["Drafts"]))
-        write(self.work / "Orchard" / "Threads" / "Drafts" / "Drafts.md", thread_note("Orchard", "Drafts", "acme"))
-        write(self.work / "Orchard" / "Threads" / "Drafts" / "Notes.md", "# Notes\n\nPlain words.\n")
-        self.assertEqual([], [f for f in self.staged() if f.severity == "error"])
-
-    def test_a_project_with_no_party_is_not_read_as_public(self):
-        write(self.work / "Orchard" / "Threads" / "Drafts" / "Notes.md", "# Notes\n\nSee [[260312-birch-kickoff]].\n")
-        found = [f for f in self.staged() if f.path.endswith("Orchard/Threads/Drafts/Notes.md")]
-        self.assertTrue(any("no party" in f.message for f in found), [f.message for f in found])
-
-    def test_the_full_check_lists_each_hub_with_no_party(self):
-        found = [f for f in check.run_checks(self.root) if f.check == "projects" and "no `party`" in f.message]
-        self.assertEqual(["Zones/Work/Orchard/Orchard.md"], [f.path for f in found])
-        self.assertEqual(["error"], [f.severity for f in found])
+    def test_ids_are_unique(self):
+        ids = [r[0] for name in ("decide()", "Enforcement points", "Meetings", "Meetings lint") for r in table(name)]
+        self.assertEqual(len(ids), len(set(ids)))
 
 
 if __name__ == "__main__":

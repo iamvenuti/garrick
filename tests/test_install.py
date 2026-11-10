@@ -353,7 +353,8 @@ class InstallTest(unittest.TestCase):
         ctx = load_context(self.root)
         self.assertEqual(set(ctx["parties"]), {"acme", "birch"})
         self.assertEqual(ctx["parties"]["birch"]["party"], "Birch & Co")
-        self.assertEqual([True, True], [ctx["parties"][t]["walled"] for t in ("acme", "birch")])
+        self.assertEqual([True, True], [ctx["zone_walled"][z] for z in ("Work", "Personal")])      # a zone carries the wall
+        self.assertFalse(ctx["pending"])
         self.assertNotIn("walls", ctx)
         self.assertEqual(sorted(p["name"] for p in ctx["people"]), ["Dana Whitlock", "Theo Marsh"])
         self.assertEqual(ctx["aliases"]["birchen co"], "Birch & Co")
@@ -727,10 +728,10 @@ class InteractiveTest(unittest.TestCase):
             self.assertEqual({t: (p["party"], p["zone"], p["domains"]) for t, p in ctx["parties"].items()},
                              {"acme": ("Acme Corp", "Work", []), "birch": ("Birch & Co", "Personal", [])})
             self.assertEqual((ctx["people"], ctx["aliases"]), ([], {}))
-            self.assertTrue(all(p["walled"] for p in ctx["parties"].values()))      # a new party is walled until its row says otherwise
+            self.assertTrue(all(ctx["zone_walled"].values()))      # a new zone is walled until its row says otherwise
             text = (target / "System" / "context.md").read_text()
             # What each party is stays for the user, or their assistant, to fill in.
-            self.assertIn("| Acme Corp | <What it is> | Work | `acme` | yes |  |", text)
+            self.assertIn("| Acme Corp | <What it is> | Work | `acme` |  |", text)
             self.assertIn("| Personal | <What Personal holds> |", text)
         finally:
             box.close()
@@ -1032,8 +1033,8 @@ class ZoneTest(unittest.TestCase):
         said = self.made.stdout.strip().splitlines()
         self.assertEqual(said[0], f"Created the {self.name} zone: its own folder and git history, an inbox, "
                                   "and the wall check before every commit.")
-        self.assertIn(f"Added {self.name} to the Zones table in System/context.md.", said[1])
-        self.assertTrue(said[-1].startswith(f'Next, say "new project <name> for <party> in {self.name}'), said[-1])
+        self.assertIn(f"Added {self.name} to the Zones table in System/context.md, walled: what is in it stays in it.", said[1])
+        self.assertTrue(said[-1].startswith(f'Next, say "new project <name> in {self.name}'), said[-1])
 
     def test_made_as_the_installer_makes_a_zone(self):
         personal = self.root / "Zones" / "Personal"
@@ -1086,16 +1087,11 @@ class ZoneTest(unittest.TestCase):
         check = run([self.root / "System" / "tools" / "check.py", "--root", self.root], self.box.env)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
         self.assertIn("No problems found.", check.stdout)
-        # A project is for a party of its own zone (scaffold.py refuses another's), so acme is placed in the new zone
-        # for this test: the wall between acme and birch is by tag, whatever the zone.
-        context = self.root / "System" / "context.md"
-        kept = context.read_text()
-        context.write_text(re.sub(r"(?m)^(\| Acme Corp \|.*?\| )Work( \| `acme`)", r"\g<1>%s\2" % self.name, kept))
-        self.addCleanup(context.write_text, kept)
-        made = self.scaffold("project", "--zone", self.name, "--name", "Shed", "--party", "acme", "--thread", "Roof")
+        # The new zone is walled, and so is Work: a link from one into the other is refused at the commit.
+        made = self.scaffold("project", "--zone", self.name, "--name", "Shed", "--thread", "Roof")
         self.assertEqual(made.returncode, 0, made.stderr)
         note = self.zone / "Shed" / "Threads" / "Roof" / "Notes.md"
-        note.write_text("Theo Marsh says the roof will hold.\n")  # Birch's partner, behind the wall from acme
+        note.write_text("The roof quote is in [[Zones/Work/Todo]].\n")  # a file of another walled zone
         try:
             git(self.zone, "add", "-A")
             r = subprocess.run(["git", "-C", str(self.zone), "commit", "-q", "-m", "Shed"],

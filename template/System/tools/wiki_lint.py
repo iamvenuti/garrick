@@ -170,10 +170,12 @@ def open_sections(wiki: Path) -> List[dict]:
             zone = fm.get("zone")
             tags = fm.get("parties")
             tags = [str(t).strip() for t in (tags if isinstance(tags, list) else [tags]) if t is not None and str(t).strip()]
+            two_zones = isinstance(zone, list) and len([z for z in zone if str(z).strip()]) > 1
             zone = zone.strip() if isinstance(zone, str) else ""
-            if meetings and (not zone or not tags):
-                reason = "it has no %s, so it is an unfinished page" % (
-                    "zone or parties" if not zone and not tags else "zone" if not zone else "parties")
+            if meetings and two_zones:
+                reason = "it names more than one zone, so it is an unfinished page"
+            elif meetings and not zone:
+                reason = "it has no zone, so it is an unfinished page"
             elif not meetings and (zone or tags):
                 reason = "a Knowledge page carries no zone or parties, and this one does"
             parties = tags

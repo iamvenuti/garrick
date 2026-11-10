@@ -2,7 +2,7 @@
 title: Birch sizing assumptions
 type: meeting
 date: 2026-09-11
-zone: Work
+zone: Birch
 parties: [birch]
 people: ["[[wiki/people/iris-bell]]", "[[wiki/people/lena-moss]]"]
 raw: "[[raw/260911-birch-sizing-assumptions]]"

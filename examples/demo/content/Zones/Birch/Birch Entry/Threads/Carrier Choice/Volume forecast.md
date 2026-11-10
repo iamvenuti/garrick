@@ -13,7 +13,7 @@ What Marta asked for at the [[Meetings/wiki/sources/260922-cobalt-northern-lane-
 | July | to come |
 | August | to come |
 
-Arno's range is forty to sixty a month at first. [[Meetings/wiki/people/iris-bell|Iris]] confirms the numbers by 30 September; then it goes to [[Meetings/wiki/people/marta-quill|Marta]].
+Arno's range is forty to sixty a month at first. [[Meetings/wiki/people/iris-bell|Iris]] confirms the numbers by 30 September; then it goes to [[Meetings/wiki/people/marta-quill-birch|Marta]].
 
 - Send it as a forecast, not a commitment: nothing in it should read as a promise of volume ([[Knowledge/wiki/concepts/volume-commitments|volume commitments]]).
 - Northbound space stays tight until the spring ([[Knowledge/wiki/concepts/lane-capacity|lane capacity]]), so a late forecast puts the March start at risk.

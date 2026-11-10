@@ -2,9 +2,9 @@
 title: Cobalt Freight northern lane, for Birch
 type: meeting
 date: 2026-09-22
-zone: Work
+zone: Birch
 parties: [birch, cobalt]
-people: ["[[wiki/people/iris-bell]]", "[[wiki/people/marta-quill]]"]
+people: ["[[wiki/people/iris-bell]]", "[[wiki/people/marta-quill-birch]]"]
 raw: "[[raw/260922-cobalt-northern-lane-for-birch]]"
 created: 2026-09-22
 updated: 2026-09-22

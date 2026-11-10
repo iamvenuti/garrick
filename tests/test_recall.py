@@ -4,7 +4,9 @@ sessions, with the walls applied before anything is returned.
     cd tests && python3 -m unittest test_recall
 
 Each test below is a line of the issue's *Done when*, or a rule it states.
-Invented names only: Acme Corp and Birch & Co stand either side of a wall.
+Invented names only: Acme Corp (the Work zone) and Birch & Co (the Personal
+zone, which is walled too) stand either side of a wall; the zone is the wall,
+the party is only an index.
 """
 
 from __future__ import annotations
@@ -35,7 +37,7 @@ import recall  # noqa: E402
 import recall_sessions  # noqa: E402
 
 ACME = "Zones/Work/Acme Review"
-BIRCH = "Zones/Work/Birch Entry"
+BIRCH = "Zones/Personal/Birch Entry"
 
 
 def claude_line(kind, cwd, content, sid="s1", when="2026-09-01T10:00:00Z", **extra):
@@ -57,12 +59,13 @@ class Base(unittest.TestCase):
         self.addCleanup(lambda: __import__("shutil").rmtree(str(self.tmp), ignore_errors=True))
         self.root = build_workspace(self.tmp / "ws").resolve()
         meetings = self.root / "Wikis" / "Meetings"
+        __import__("shutil").move(str(self.root / "Zones" / "Work" / "Birch Entry"), str(self.root / BIRCH))
         write(meetings / "wiki" / "sources" / "260310-acme-kickoff.md",
               meeting_page("Work", "[acme]", "Acme kick-off").replace(
                   "---\n\n#", "raw: raw/260310-acme-kickoff.txt\n---\n\n#", 1).replace(
                   "Decisions.", "Decisions: the quokkaplan starts Monday."))
         write(meetings / "wiki" / "sources" / "260312-birch-kickoff.md",
-              meeting_page("Work", "[birch]", "Birch kick-off").replace("Decisions.", "Decisions: the wombatplan is on."))
+              meeting_page("Personal", "[birch]", "Birch kick-off").replace("Decisions.", "Decisions: the wombatplan is on."))
         write(meetings / "wiki" / "sources" / "260313-no-parties.md",
               meeting_page("Work", None, "No parties").replace("Decisions.", "Decisions: platypusplan."))
         write(meetings / "wiki" / "sources" / "260314-no-zone.md",
@@ -77,6 +80,43 @@ class Base(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("CLAUDE_PROJECT_DIR", None)
+
+    def set_flags(self, work=True, personal=True):
+        """System/context.md as 0.63 writes it: a Walled column on Zones, no flag on a party."""
+        flag = lambda w: "yes" if w else "no"
+        write(self.root / "System" / "context.md", """\
+            # Context
+
+            ## Me
+
+            Jo Example. Independent advisor.
+
+            ## Zones
+
+            | Zone | Holds | Walled |
+            |---|---|---|
+            | Work | Client work | %s |
+            | Personal | Everything else | %s |
+
+            ## Parties
+
+            | Party | What it is | Zone | Tag | Domains |
+            |---|---|---|---|---|
+            | Acme Corp | Client | Work | `acme` | acmecorp.example |
+            | Birch & Co | Client | Personal | `birch` | birchco.example |
+
+            ## People
+
+            | Name | Party | Role |
+            |---|---|---|
+            | Dana Whitlock | `acme` | Head of procurement |
+
+            ## Aliases
+
+            | Heard | Means |
+            |---|---|
+            | birch and co, birchen co | Birch & Co |
+            """ % (flag(work), flag(personal)))
 
     def cli(self, cwd, *args, root=True, env=None):
         """Run the command line as a process opened in `cwd` would: its scope
@@ -157,29 +197,40 @@ class WallTest(Base):
         self.assertEqual("0 results for 'wombatplan wombat'", out.strip())
         _, out, _ = self.cli(self.root / ACME, "stats")
         self.assertEqual(1, len(out.strip().splitlines()))           # one scope, one index
-        self.assertTrue(out.startswith("work/acme: "), out)
+        self.assertTrue(out.startswith("work: "), out)
 
     def test_stats_counts_only_what_the_project_may_read(self):
         acme = recall.stats(ACME, self.root)
         birch = recall.stats(BIRCH, self.root)
         root = recall.stats(None, self.root)
-        self.assertEqual(["work/acme"], [r["index"] for r in acme])
-        self.assertEqual(["work/birch"], [r["index"] for r in birch])
+        self.assertEqual(["work"], [r["index"] for r in acme])
+        self.assertEqual(["personal"], [r["index"] for r in birch])
         self.assertEqual(["root"], [r["index"] for r in root])
         # the count is the index file's own: a walled file is not in it to be counted
-        for rows, path in ((acme, self.root / "Zones/Work/.recall.sqlite-acme"),
-                           (birch, self.root / "Zones/Work/.recall.sqlite-birch")):
+        for rows, path in ((acme, self.root / "Zones/Work/.recall.sqlite"),
+                           (birch, self.root / "Zones/Personal/.recall.sqlite")):
             con = sqlite3.connect(str(path))
             self.assertEqual(rows[0]["files"], con.execute("SELECT COUNT(DISTINCT path) FROM docs").fetchone()[0])
             con.close()
         self.assertGreater(root[0]["files"], acme[0]["files"])
         self.assertGreater(root[0]["files"], birch[0]["files"])
 
-    def test_a_meetings_page_without_its_zone_or_parties_is_never_returned(self):
+    def test_a_meetings_page_without_its_zone_is_never_returned_and_one_without_parties_is_read_by_its_zone(self):
         for project in (ACME, BIRCH, None):
-            self.assertEqual([], self.find("platypusplan", project, sessions=True), project)
-            self.assertEqual([], self.find("echidnaplan", project, sessions=True), project)
-        self.assertEqual([], self.find("platypusplan", None, wiki="Meetings"))
+            self.assertEqual([], self.find("echidnaplan", project, sessions=True), project)       # no zone: in no scope, the root's too
+        self.assertEqual([], self.find("platypusplan", BIRCH))                                    # Work's page, from Personal
+        for project in (ACME, None):
+            self.assertEqual(1, len(self.find("platypusplan", project)), project)                  # `parties:` is an index only
+        self.assertEqual(1, len(self.find("platypusplan", None, wiki="Meetings")))
+
+    def test_a_meetings_page_naming_two_zones_or_one_the_table_does_not_know_is_in_no_scope(self):
+        m = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
+        write(m / "260316-two.md", meeting_page("Work", "[acme]", "Two").replace("zone: Work", "zone: [Work, Personal]").replace(
+            "Decisions.", "Decisions: lemurplan."))
+        write(m / "260317-unknown.md", meeting_page("Nowhere", "[acme]", "Unknown").replace("Decisions.", "Decisions: gibbonplan."))
+        for project in (ACME, BIRCH, None):
+            self.assertEqual([], self.find("lemurplan", project), project)
+            self.assertEqual([], self.find("gibbonplan", project), project)
 
     def test_a_meetings_page_of_another_zone_needs_the_zone_asked_for(self):
         write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260315-home.md",
@@ -188,21 +239,20 @@ class WallTest(Base):
         self.assertEqual([], self.find("capybaraplan", zone="Personal"))            # a scope never reaches past its zone
         self.assertEqual(1, len(self.find("capybaraplan", None, zone="Personal")))  # the root holds no party
 
-    def test_a_project_with_no_party_sees_no_meetings(self):
+    def test_a_project_with_no_party_reads_its_zone_like_any_other(self):
         write(self.root / "Zones/Work/Loose/Loose.md", fixtures.project_hub("Work", "Loose", ""))
         write(self.root / "Zones/Work/Loose/Notes.md", "# Notes\n\nquokkaplan notes\n")
-        # a project whose hub names no party holds no scope: it reads nothing, not even its own notes
-        self.assertEqual([], self.paths("quokkaplan", "Zones/Work/Loose"))
-        self.assertEqual([], self.paths("notes", "Zones/Work/Loose"))
-        self.assertIsNone(recall.scope_for_project(self.root, garrick_lib.load_context(self.root), "Zones/Work/Loose"))
+        self.assertIn("Zones/Work/Loose/Notes.md", self.paths("quokkaplan", "Zones/Work/Loose"))
+        self.assertEqual("work", recall.scope_for_project(self.root, garrick_lib.load_context(self.root), "Zones/Work/Loose").key)
+        self.assertEqual([], self.paths("quokkaplan notes wombatplan", "Zones/Work/Loose", wiki="Knowledge"))
 
     def test_cross_zone_search_applies_the_walls_too(self):
         write(self.root / "Zones/Personal/Home/Home.md", fixtures.project_hub("Personal", "Home", "birch"))
         write(self.root / "Zones/Personal/Home/Notes.md", "# Notes\n\nflamingoplan\n")
         self.assertEqual([], self.find("flamingoplan"))
         self.assertEqual([], self.find("flamingoplan", zone="Personal"))              # a scope never reaches past its zone
-        self.assertEqual([], self.find("flamingoplan", BIRCH, zone="Personal"))
-        self.assertEqual([], self.paths("flamingoplan", "Zones/Personal/Home"))       # birch is no party of Personal
+        self.assertEqual(["Zones/Personal/Home/Notes.md"], self.paths("flamingoplan", BIRCH, zone="Personal"))
+        self.assertEqual(["Zones/Personal/Home/Notes.md"], self.paths("flamingoplan", "Zones/Personal/Home"))
         self.assertEqual(["Zones/Personal/Home/Notes.md"], self.paths("flamingoplan", None, zone="Personal"))
 
     def test_knowledge_is_not_filtered(self):
@@ -211,8 +261,8 @@ class WallTest(Base):
                              self.paths("supply", project, wiki="Knowledge"))
 
     def test_the_walls_are_the_ones_the_commit_hook_reads(self):
-        self.assertIs(garrick_lib.decide, recall.decide)
-        self.assertIs(garrick_lib.labels, recall.labels)
+        self.assertIs(garrick_lib.may_flow, recall.may_flow)
+        self.assertIs(garrick_lib.zone_of, recall.zone_of)
         self.assertFalse(hasattr(recall, "walled"))          # no wall test of its own
 
 
@@ -236,7 +286,7 @@ class IndexTest(Base):
     def test_an_index_sits_inside_its_zone_and_wiki(self):
         self.find("quokkaplan")
         self.find("quokkaplan", None)
-        self.assertTrue((self.root / "Zones" / "Work" / (recall.INDEX_NAME + "-acme")).is_file())
+        self.assertTrue((self.root / "Zones" / "Work" / recall.INDEX_NAME).is_file())
         self.assertFalse((self.root / "System" / recall.INDEX_NAME).exists())     # the root scope has no file
         self.assertFalse((self.root / recall.INDEX_NAME).exists())
         self.assertFalse((self.root / "Wikis" / "Meetings" / recall.INDEX_NAME).exists())     # the wikis keep none
@@ -250,13 +300,15 @@ class IndexTest(Base):
         note.unlink()
         self.assertEqual([], self.paths("longer"))
 
-    def test_a_hub_party_changed_moves_its_files_across_the_wall(self):
+    def test_an_open_zone_is_read_from_the_other_zone_and_a_walled_one_is_not(self):
+        self.set_flags(work=True, personal=False)
+        self.assertTrue(self.find("wombat"))                          # Personal is open: Work reads it
+        self.assertEqual([], self.find("quokkaplan", BIRCH))          # Work is walled: Personal does not
+        self.set_flags(work=False, personal=False)
+        self.assertTrue(self.find("quokkaplan", BIRCH))
+        self.set_flags(work=True, personal=True)
         self.assertEqual([], self.find("wombat"))
-        hub = self.root / BIRCH / "Birch Entry.md"
-        hub.write_text(hub.read_text().replace("party: birch", "party: acme"))
-        note = self.root / BIRCH / "Threads" / "Market Sizing" / "Market Sizing.md"
-        note.write_text(note.read_text().replace("party: birch", "party: acme"))
-        self.assertTrue(self.find("wombat"))
+        self.assertEqual([], self.find("quokkaplan", BIRCH))
 
     def test_without_fts5_it_says_so_and_searches_plain_text(self):
         with mock.patch.object(recall, "fts5_available", return_value=False):
@@ -404,7 +456,8 @@ class SessionTest(Base):
         for left_out in ("TOOLOUTPUTWORD", "memoryindexword", "hosts"):
             self.assertNotIn(left_out, text)
         self.assertEqual(["Zones/Work/.sessions/260901 - s1.md"], self.paths("invoicexport", None, sessions=True))
-        self.assertEqual([], self.paths("invoicexport", ACME, sessions=True))   # Work has a wall inside: root only
+        self.assertEqual(["Zones/Work/.sessions/260901 - s1.md"], self.paths("invoicexport", ACME, sessions=True))   # its own zone reads it
+        self.assertEqual([], self.paths("invoicexport", BIRCH, sessions=True))   # Work is walled: not from Personal
         self.assertEqual([], self.paths("invoicexport"))                      # sessions only when asked
         self.assertEqual([], self.paths("memoryindexword", None, sessions=True))
         self.assertIn("exit 2", self.find("retry", None, sessions=True)[0].snippet + text)
@@ -430,8 +483,9 @@ class SessionTest(Base):
         self.assertTrue(everything)
         for secret in (secret_a, secret_b):
             self.assertNotIn(secret, everything)
-        # a past session has no project: it is read from the root only
-        self.assertEqual([], self.find("key", ACME, sessions=True))
+        # a past session takes its folder's zone: that zone's scope and the root read it, no other
+        self.assertTrue(self.find("key", ACME, sessions=True))
+        self.assertEqual([], self.find("key", BIRCH, sessions=True))
         found = self.find("key", None, sessions=True)
         self.assertTrue(found)
         for secret in (secret_a, secret_b):
@@ -479,19 +533,20 @@ class SessionTest(Base):
             self.assertEqual([], self.find("zebraword", project, sessions=True), project)
             self.assertEqual([], self.find("zebraword", project, sessions=True, zone="Personal"), project)
 
-    def test_a_session_of_one_party_is_walled_from_the_other(self):
+    def test_a_session_of_one_zone_is_walled_from_the_other(self):
         self.session(self.work, text="narwhal acmeonly", sid="a")
         self.extract()
-        self.assertEqual([], self.find("acmeonly", ACME, sessions=True))      # no project reads a past session
-        self.assertEqual([], self.find("acmeonly", BIRCH, sessions=True))     # so the other side of the wall cannot either
+        self.assertTrue(self.find("acmeonly", ACME, sessions=True))           # a project of its own zone reads it
+        self.assertEqual([], self.find("acmeonly", BIRCH, sessions=True))     # the other walled zone cannot
         self.assertTrue(self.find("acmeonly", None, sessions=True))
 
-    def test_a_session_opened_at_a_zones_top_is_read_only_there(self):
+    def test_a_session_opened_at_a_zones_top_is_that_zones(self):
         self.session(str(self.root / "Zones" / "Work"), text="topsecret zoneword", sid="z")
         self.extract()
-        self.assertEqual([], self.find("zoneword", ACME, sessions=True))
+        self.assertTrue(self.find("zoneword", ACME, sessions=True))
+        self.assertEqual([], self.find("zoneword", BIRCH, sessions=True))
         self.assertEqual([], self.find("zoneword", "Zones/Work", sessions=True))     # a zone's top holds no scope
-        self.assertTrue(self.find("zoneword", None, sessions=True))                  # only the root reads it
+        self.assertTrue(self.find("zoneword", None, sessions=True))
 
     def test_codex_sessions_are_read_too(self):
         write_jsonl(self.codex / "2026" / "09" / "01" / "rollout-x.jsonl", [
@@ -541,7 +596,7 @@ class ReviewFixesTest(Base):
         self.assertTrue(mine)
         for n in range(8):
             write(self.root / "Wikis/Meetings/wiki/sources" / ("2603%02d-w.md" % (22 + n)),
-                  meeting_page("Work", "[birch]", "W%d" % n).replace("Decisions.", "gammaword gammaword"))
+                  meeting_page("Personal", "[birch]", "W%d" % n).replace("Decisions.", "gammaword gammaword"))
             write(self.root / "Wikis/Meetings/raw" / ("2603%02d-w.txt" % (22 + n)), "gammaword deltaword " * 5)
         self.assertEqual(mine, self.snap("gammaword deltaword"))
         with mock.patch.object(recall, "fts5_available", return_value=False):
@@ -551,43 +606,25 @@ class ReviewFixesTest(Base):
 
     # -- 2: a party that is not a listed tag cannot be placed -----------------
 
-    def test_a_party_that_is_not_a_listed_tag_fails_closed(self):
-        forms = ["birch, acme", "acme birch", '"[acme, birch]"', "acme; birch", "[#acme, #birch]",
-                 "[acme and birch]"]
+    def test_parties_are_an_index_and_never_read_as_a_wall(self):
+        forms = ["birch, acme", "acme birch", '"[acme, birch]"', "acme; birch", "[#acme, #birch]", "[acme and birch]", "acme",
+                 "\n  - Acme", "[zzz]"]
         for n, form in enumerate(forms):
-            write(self.root / "Wikis/Meetings/wiki/sources" / ("26041%d-bad.md" % n),
-                  meeting_page("Work", form, "Bad %d" % n).replace("Decisions.", "Decisions: badpartyword%d." % n))
-            for project in (ACME, BIRCH, None):
-                self.assertEqual([], self.find("badpartyword%d" % n, project), (form, project))
-        for n, form in enumerate(["[Acme, ACME]", "[`acme`]"]):
-            write(self.root / "Wikis/Meetings/wiki/sources" / ("26042%d-ok.md" % n),
-                  meeting_page("Work", form, "Ok %d" % n).replace("Decisions.", "Decisions: okpartyword%d." % n))
-            self.assertEqual(1, len(self.find("okpartyword%d" % n)), form)
-        # a bare string where a list belongs cannot be read plainly: labels() has none for it
-        write(self.root / "Wikis/Meetings/wiki/sources/260422-ok.md",
-              meeting_page("Work", "acme", "Ok 2").replace("Decisions.", "Decisions: okpartyword2."))
-        self.assertEqual([], self.find("okpartyword2"))
-        write(self.root / "Wikis/Meetings/wiki/sources/260430-block.md",
-              meeting_page("Work", "\n  - Acme", "Block").replace("Decisions.", "Decisions: blockword."))
-        self.assertEqual(1, len(self.find("blockword")))
-        self.assertEqual([], self.find("blockword", BIRCH))
+            write(self.root / "Wikis/Meetings/wiki/sources" / ("26041%d-any.md" % n),
+                  meeting_page("Work", form, "Any %d" % n).replace("Decisions.", "Decisions: anypartyword%d." % n))
+            for project, want in ((ACME, 1), (BIRCH, 0), (None, 1)):
+                self.assertEqual(want, len(self.find("anypartyword%d" % n, project)), (form, project))
 
-    def test_a_hub_with_an_unlisted_party_has_no_party(self):
+    def test_a_hub_that_names_any_party_or_none_changes_nothing(self):
         write(self.root / BIRCH / "Notes.md", "# Notes\n\nbirchnotesword\n")
         write(self.root / ACME / "Notes.md", "# Notes\n\nacmenotesword\n")
         self.assertEqual([BIRCH + "/Notes.md"], self.paths("birchnotesword", BIRCH))
         hub = self.root / BIRCH / "Birch Entry.md"
-        hub.write_text(hub.read_text().replace("party: birch", "party: acme, birch"))
-        note = self.root / BIRCH / "Threads" / "Market Sizing" / "Market Sizing.md"
-        note.write_text(note.read_text().replace("party: birch", "party: acme, birch"))
-        # a hub that names no listed party holds no scope: nothing in it is read, by it or by anyone
-        self.assertEqual([], self.paths("birchnotesword", BIRCH))
-        self.assertEqual([], self.paths("birchnotesword", ACME))
-        self.assertEqual([], self.paths("quokkaplan", BIRCH))
+        hub.write_text(hub.read_text().replace("party: birch", "party: acme, zzz"))
+        self.assertEqual([BIRCH + "/Notes.md"], self.paths("birchnotesword", BIRCH))
+        self.assertEqual([BIRCH + "/Notes.md"], self.paths("birchnotesword", None))
+        self.assertEqual([], self.paths("birchnotesword", ACME))                   # the zone is the wall, not the hub's party
         self.assertEqual([], self.paths("acmenotesword", BIRCH))
-        write(self.root / ACME / "Odd.md", "---\nparty: birch, acme\n---\n\n# Odd\n\noddpartyword\n")
-        self.assertEqual([], self.paths("oddpartyword", ACME))
-        self.assertEqual([], self.paths("oddpartyword", BIRCH))
 
     # -- 3: a place no zone owns reads nothing --------------------------------
 
@@ -635,7 +672,7 @@ class ReviewFixesTest(Base):
         write(self.root / "Wikis/Knowledge/raw/o.txt", "kbirchrawword\n")
         self.assertEqual([], self.find("kbirchword", ACME))
         self.assertEqual([], self.find("kbirchrawword", ACME))
-        # labels() reads a Knowledge page with a party or zone key as someone's, not published:
+        # a Knowledge page with a party or zone key is someone's, not published:
         # it is in no scope's index, the root's included
         for project in (ACME, BIRCH, None):
             for word in ("kbirchword", "kbirchrawword", "kacmeword", "kpartyonlyword", "kzoneonlyword"):
@@ -646,12 +683,12 @@ class ReviewFixesTest(Base):
 
     # -- 6: an edit that keeps the size and the time still counts --------------
 
-    def test_a_same_size_same_time_edit_changes_the_parties(self):
+    def test_a_same_size_same_time_edit_changes_the_zone(self):
         page = self.root / "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md"
         self.assertTrue(self.find("wombatplan", BIRCH))
         self.assertEqual([], self.find("wombatplan", ACME))
         st = page.stat()
-        page.write_text(page.read_text().replace("[birch]", "[acme] "))
+        page.write_text(page.read_text().replace("zone: Personal", "zone: Work    "))
         os.utime(str(page), ns=(st.st_atime_ns, st.st_mtime_ns))
         self.assertEqual(st.st_size, page.stat().st_size)
         self.assertTrue(self.find("wombatplan", ACME))
@@ -659,12 +696,12 @@ class ReviewFixesTest(Base):
 
     # -- 8: a file at the zone's top is the zone's, not a project --------------
 
-    def test_a_zone_level_search_finds_nothing_of_the_zones_top(self):
+    def test_a_zone_level_search_finds_nothing_but_a_zones_top_file_is_the_zones(self):
         write(self.root / "Zones/Work/Todo.md", "# Todo\n\nzonetodoword\n")
-        # a zone's Todo.md mixes the parties of its projects and has no label: no scope reads it
-        self.assertEqual([], self.paths("zonetodoword", "Zones/Work"))
-        self.assertEqual([], self.paths("zonetodoword", ACME))
-        self.assertEqual([], self.paths("zonetodoword", None))
+        self.assertEqual([], self.paths("zonetodoword", "Zones/Work"))             # a zone's top is no project: no scope
+        self.assertEqual(["Zones/Work/Todo.md"], self.paths("zonetodoword", ACME))
+        self.assertEqual(["Zones/Work/Todo.md"], self.paths("zonetodoword", None))
+        self.assertEqual([], self.paths("zonetodoword", BIRCH))
         self.assertEqual("", recall.locate(self.root, self.root / "Zones/Work/Todo.md").project)
         self.assertEqual("Acme Review", recall.locate(self.root, self.root / ACME).project)
 
@@ -684,7 +721,7 @@ class ReviewFixesTest(Base):
 
     def test_an_index_in_use_is_not_deleted_and_files_are_private(self):
         self.find("quokkaplan")
-        path = self.root / "Zones/Work" / (recall.INDEX_NAME + "-acme")
+        path = self.root / "Zones/Work" / recall.INDEX_NAME
         self.assertEqual(0o600, path.stat().st_mode & 0o777)
         path.unlink()
         path.write_bytes(b"")                      # another process has just created it
@@ -721,14 +758,14 @@ class ReviewSessionFixesTest(Base):
     def extract(self):
         return recall_sessions.extract_all(self.root, str(self.claude), str(self.codex))
 
-    def test_a_session_that_began_at_the_zones_top_is_not_a_projects(self):
+    def test_a_session_that_began_at_the_zones_top_is_the_zones_and_names_no_project(self):
         write_jsonl(self.claude / "p" / "s1.jsonl", [
             claude_line("user", str(self.root / "Zones" / "Work"), "zonelevelword said", "s1"),
             claude_line("user", self.work, "then went into acme", "s1")])
         self.extract()
         text = next((self.root / "Zones/Work/.sessions").glob("*.md")).read_text()
         self.assertNotIn("project:", text)
-        self.assertEqual([], self.find("zonelevelword", ACME, sessions=True))
+        self.assertEqual(1, len(self.find("zonelevelword", ACME, sessions=True)))
         self.assertEqual([], self.find("zonelevelword", BIRCH, sessions=True))
         self.assertEqual([], self.find("zonelevelword", "Zones/Work", sessions=True))
         self.assertEqual(1, len(self.find("zonelevelword", None, sessions=True)))
@@ -743,7 +780,7 @@ class ReviewSessionFixesTest(Base):
         self.assertEqual(0, head.count("project:"))                       # a past session names no project, and the id forged none
         self.assertNotIn(BIRCH, head)
         self.assertEqual([], self.find("forgeword", BIRCH, sessions=True))
-        self.assertEqual([], self.find("forgeword", ACME, sessions=True))
+        self.assertEqual(1, len(self.find("forgeword", ACME, sessions=True)))
         self.assertEqual(1, len(self.find("forgeword", None, sessions=True)))
         s = recall_sessions.Session("a\rb c: d\nproject: q", "claude-code", turns=[("user", "t\nproject: z", None)])
         head = recall_sessions.render(s, ["Zones/Work/P\nx"], 1, 1).split("\n---", 2)[0].splitlines()
@@ -1016,7 +1053,7 @@ class IgnoreGuardTest(Base):
     def test_an_ignored_zone_gets_its_index(self):
         zone = self.zone_repo(True)
         self.assertTrue(self.find("quokkaplan"))
-        self.assertTrue((zone / (recall.INDEX_NAME + "-acme")).is_file())
+        self.assertTrue((zone / recall.INDEX_NAME).is_file())
 
     def test_no_ignore_line_means_no_session_file(self):
         zone = self.zone_repo(False)
@@ -1048,11 +1085,11 @@ class CheckTest(Base):
         write(zone / ".gitignore", garrick_lib.RECALL_IGNORES)        # the index is only written where it is ignored
         write(zone / ".sessions" / "260901 - s.md", "x")
         self.find("quokkaplan")
-        self.assertTrue((zone / (recall.INDEX_NAME + "-acme")).is_file())
+        self.assertTrue((zone / recall.INDEX_NAME).is_file())
         (zone / ".gitignore").unlink()
         commit_all(zone)                                              # no ignore file: everything is staged
         found = self.recall_findings()
-        self.assertEqual({"Zones/Work/.sessions/260901 - s.md", "Zones/Work/.recall.sqlite-acme"}, {f.path for f in found})
+        self.assertEqual({"Zones/Work/.sessions/260901 - s.md", "Zones/Work/.recall.sqlite"}, {f.path for f in found})
         self.assertEqual({"error"}, {f.severity for f in found})
 
     def test_an_ignored_index_is_clean(self):
@@ -1074,37 +1111,23 @@ class ScopeIndexTest(Base):
     def db(self, name):
         return sqlite3.connect(str(self.root / name))
 
-    def test_one_scope_index_per_zone_with_no_wall_and_one_per_side_otherwise(self):
+    def test_one_scope_index_per_zone_and_none_for_the_root(self):
         ctx = garrick_lib.load_context(self.root)
         scopes = recall.scopes_of(self.root, ctx)
-        self.assertEqual(["root", "personal", "work/acme", "work/birch"], [sc.key for sc in scopes])
-        self.assertEqual(1, len([sc for sc in scopes if sc.zone == "Personal"]))     # no wall inside it
-        self.assertEqual(2, len([sc for sc in scopes if sc.zone == "Work"]))         # acme | birch
+        self.assertEqual(["root", "personal", "work"], [sc.key for sc in scopes])
         recall.build(self.root)
         self.assertEqual(sorted(sc.file(self.root) for sc in scopes if sc.kind != "root"), self.indexes())
         self.assertFalse((self.root / "System" / recall.INDEX_NAME).exists())     # the root scope is made in memory
-        # two walled parties inside Personal split it in two; a zone with one walled party stays one
-        context = self.root / "System" / "context.md"
-        text = context.read_text(encoding="utf-8")
-        text = text.replace("| Acme Corp |", "| Lumen Ltd | Own venture | Personal | `lumen` | no | lumen.example |\n"
-                            "| Acme Corp |", 1)
-        text = text.replace("| Birch & Co |", "| Fern Ltd | Own venture | Personal | `fern` | no | fern.example |\n"
-                            "| Birch & Co |", 1)
-        context.write_text(text, encoding="utf-8")
-        self.assertEqual(["root", "personal", "work/acme", "work/birch"],
-                         [sc.key for sc in recall.scopes_of(self.root, garrick_lib.load_context(self.root))])
-        text = context.read_text(encoding="utf-8")
-        context.write_text(text.replace("`lumen` | no |", "`lumen` | yes |").replace("`fern` | no |", "`fern` | yes |"), encoding="utf-8")
-        keys = [sc.key for sc in recall.scopes_of(self.root, garrick_lib.load_context(self.root))]
-        self.assertEqual(["root", "personal/fern", "personal/lumen", "work/acme", "work/birch"], keys)
+        self.set_flags(work=False, personal=False)                                # a flag changes what a scope reads, not the scopes
+        self.assertEqual(["root", "personal", "work"], [sc.key for sc in recall.scopes_of(self.root, garrick_lib.load_context(self.root))])
 
     def test_a_walled_row_is_not_in_the_index_file_at_all(self):
         write(self.root / ACME / "A.md", "# A\n\nacmeonlyword here\n")
         write(self.root / BIRCH / "B.md", "# B\n\nbirchonlyword here\n")
         self.find("acmeonlyword")
         self.find("birchonlyword", BIRCH)
-        for name, mine, theirs in (("Zones/Work/.recall.sqlite-acme", "acme", "birch"),
-                                   ("Zones/Work/.recall.sqlite-birch", "birch", "acme")):
+        for name, mine, theirs in (("Zones/Work/.recall.sqlite", "acme", "birch"),
+                                   ("Zones/Personal/.recall.sqlite", "birch", "acme")):
             con = self.db(name)
             paths = [r[0] for r in con.execute("SELECT DISTINCT path FROM docs")]
             self.assertTrue(paths, name)
@@ -1120,17 +1143,16 @@ class ScopeIndexTest(Base):
             self.assertNotIn(b"wombat" if theirs == "birch" else b"quokka", data)
 
     def test_a_row_that_leaves_a_scope_leaves_no_bytes_of_it_in_the_file(self):
+        self.set_flags(work=True, personal=False)                       # Personal is open: Work's index holds its rows
         write(self.root / BIRCH / "B.md", "# B\n\nleavingmarkerword here\n")
-        self.assertTrue(self.find("leavingmarkerword", BIRCH))
-        path = self.root / "Zones/Work/.recall.sqlite-birch"
+        self.assertTrue(self.find("leavingmarkerword", ACME))
+        path = self.root / "Zones/Work/.recall.sqlite"
         self.assertIn(b"leavingmarkerword", path.read_bytes())
-        # the hub moves to the other side: the birch scope no longer admits the project
-        for f in (self.root / BIRCH / "Birch Entry.md", self.root / BIRCH / "Threads/Market Sizing/Market Sizing.md"):
-            f.write_text(f.read_text().replace("party: birch", "party: acme"))
-        self.assertEqual([], self.find("leavingmarkerword", None, scope="work/birch"))
+        self.set_flags(work=True, personal=True)                        # the flag flips: Work no longer admits Personal
+        self.assertEqual([], self.find("leavingmarkerword", ACME))
         self.assertNotIn(b"leavingmarkerword", path.read_bytes())
-        self.assertTrue(self.find("leavingmarkerword", BIRCH))           # it is in the acme scope now
-        self.assertIn(b"leavingmarkerword", (self.root / "Zones/Work/.recall.sqlite-acme").read_bytes())
+        self.assertTrue(self.find("leavingmarkerword", BIRCH))          # Personal still reads its own
+        self.assertIn(b"leavingmarkerword", (self.root / "Zones/Personal/.recall.sqlite").read_bytes())
 
     def test_read_checks_the_id_is_in_the_scope_index_and_a_walled_id_is_an_unknown_one(self):
         mine = self.find("quokkaplan")[0]
@@ -1169,21 +1191,21 @@ class ScopeIndexTest(Base):
         for n in range(8):
             write(self.root / BIRCH / ("W%d.md" % n), "# W\n\nalpha beta alpha quokkaplan renewal bands gammaword %d\n" % n)
             write(self.root / "Wikis/Meetings/wiki/sources" / ("2603%02d-w.md" % (20 + n)),
-                  meeting_page("Work", "[birch]", "W%d" % n).replace("Decisions.", "Decisions: gammaword quokkaplan alpha"))
+                  meeting_page("Personal", "[birch]", "W%d" % n).replace("Decisions.", "Decisions: gammaword quokkaplan alpha"))
         write(self.root / "System/.sessions/260901 - x.md", "# x\n\nalpha beta quokkaplan\n")
         self.assertEqual(before, snapshot())
         self.assertTrue(self.find("gammaword", BIRCH))                 # the other side does see them
 
-    def test_two_sides_of_one_zone_never_share_a_file(self):
+    def test_two_zones_never_share_a_file(self):
         self.find("quokkaplan")
         self.find("wombatplan", BIRCH)
-        acme, birch = (self.root / "Zones/Work/.recall.sqlite-acme"), (self.root / "Zones/Work/.recall.sqlite-birch")
+        acme, birch = (self.root / "Zones/Work/.recall.sqlite"), (self.root / "Zones/Personal/.recall.sqlite")
         self.assertNotEqual(acme, birch)
         for table, word in (("docs", "wombat"), ("docs", "quokka")):
             pass
-        self.assertEqual(0, self.db("Zones/Work/.recall.sqlite-acme").execute(
+        self.assertEqual(0, self.db("Zones/Work/.recall.sqlite").execute(
             "SELECT COUNT(*) FROM docs WHERE body LIKE '%wombat%'").fetchone()[0])
-        self.assertEqual(0, self.db("Zones/Work/.recall.sqlite-birch").execute(
+        self.assertEqual(0, self.db("Zones/Personal/.recall.sqlite").execute(
             "SELECT COUNT(*) FROM docs WHERE body LIKE '%quokka%'").fetchone()[0])
 
     # -- the four rounds of findings, as cases that are impossible by construction ------------------
@@ -1196,7 +1218,7 @@ class ScopeIndexTest(Base):
         for n in range(6):
             write(self.root / BIRCH / ("W%d.md" % n), "# W\n\nalpha secret stuff %d\n" % n)
         self.assertEqual(before, [(r.path, r.score) for r in self.find("alpha beta")])
-        self.assertEqual(0, self.db("Zones/Work/.recall.sqlite-acme").execute(
+        self.assertEqual(0, self.db("Zones/Work/.recall.sqlite").execute(
             "SELECT COUNT(*) FROM docs WHERE path LIKE '%Birch%'").fetchone()[0])
 
     def test_round_2_the_command_line_cannot_choose_its_scope(self):
@@ -1206,15 +1228,15 @@ class ScopeIndexTest(Base):
             code, out, _ = self.cli(acme, "search", "wombatplan", "--project", flag)
             self.assertNotEqual(0, code)
             self.assertEqual("", out)
-        for scope in ("root", "work/birch", "personal", "nowhere"):
+        for scope in ("root", "personal", "personal", "nowhere"):
             code, out, err = self.cli(acme, "search", "wombatplan", "--scope", scope)
             self.assertTrue(out.startswith("0 results"), (scope, out))
-        self.assertTrue(self.cli(acme, "search", "quokkaplan", "--scope", "work/acme")[1].startswith("1 result"))
+        self.assertTrue(self.cli(acme, "search", "quokkaplan", "--scope", "work")[1].startswith("1 result"))
         # the root may name any scope; that is narrowing, not widening
-        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work/birch", env=self.at_root)[1].startswith("1 result"))
-        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work/acme", env=self.at_root)[1].startswith("0 results"))
+        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "personal", env=self.at_root)[1].startswith("1 result"))
+        self.assertTrue(self.cli(self.root, "search", "wombatplan", "--scope", "work", env=self.at_root)[1].startswith("0 results"))
         # and the API holds the same line
-        self.assertEqual([], self.find("wombatplan", ACME, scope="work/birch"))
+        self.assertEqual([], self.find("wombatplan", ACME, scope="personal"))
         self.assertEqual([], self.find("wombatplan", ACME, scope="root"))
 
     def test_round_3_a_folder_or_a_variable_cannot_move_a_session_into_another_scope(self):
@@ -1224,15 +1246,15 @@ class ScopeIndexTest(Base):
         for folder in (self.root, self.root / "System", link):
             for word in ("wombatplan", "quokkaplan"):
                 self.assertTrue(self.cli(folder, "search", word)[1].startswith("0 results"), folder)   # no marker, no root
-            for env in ({recall.SCOPE_ENV: "work/acme"}, {recall.SCOPE_ENV: "root"}):
+            for env in ({recall.SCOPE_ENV: "work"}, {recall.SCOPE_ENV: "root"}):
                 self.assertTrue(self.cli(folder, "search", "quokkaplan", env=env)[1].startswith("0 results"), (folder, env))
         # a marker naming the root is the harness's record of a root session; the variable then only narrows
-        env = dict(self.at_root, **{recall.SCOPE_ENV: "work/acme"})
+        env = dict(self.at_root, **{recall.SCOPE_ENV: "work"})
         self.assertTrue(self.cli(self.root, "search", "quokkaplan", env=env)[1].startswith("1 result"))
         self.assertTrue(self.cli(self.root, "search", "wombatplan", env=env)[1].startswith("0 results"))
         # an Acme session cannot choose Birch or the root by the variable, by the marker or by moving
         acme = self.root / ACME
-        for pin in ("work/birch", "root"):
+        for pin in ("personal", "root"):
             out = self.cli(acme, "search", "wombatplan", env={recall.SCOPE_ENV: pin})
             self.assertTrue(out[1].startswith("0 results"), pin)
             self.assertIn("nothing was searched", out[2])
@@ -1243,42 +1265,38 @@ class ScopeIndexTest(Base):
         self.assertFalse((self.root / "System" / recall.INDEX_NAME).exists())
         self.assertNotIn(b"wombat", b"".join(p.read_bytes() for p in self.indexes() if p.name.endswith("acme")))
 
-    def test_round_4_a_session_that_worked_in_two_projects_across_a_wall_is_nobodys_but_the_roots(self):
-        """A session of a no-party project and a walled one was labelled with the first. Now it has the labels of all."""
+    def test_round_4_a_session_that_worked_in_two_zones_is_the_roots_only(self):
+        """A session of two zones is no zone's: only the root reads it."""
         sessions = self.root / "Zones/Work/.sessions"
         header = "---\nsession: s9\ntitle: mixed\nproject: %s\n---\n\n# mixed\n\nmixedsessionword said\n"
         write(sessions / "260901 - mixed.md", header % json.dumps([ACME, BIRCH]))
-        write(self.root / "Zones/Work/Loose/Loose.md", fixtures.project_hub("Work", "Loose", ""))
-        write(sessions / "260902 - loose.md", header % json.dumps(["Zones/Work/Loose", BIRCH]))
         write(sessions / "260903 - gone.md", header % json.dumps([ACME, "Zones/Work/Deleted"]))
-        for project in (ACME, BIRCH, "Zones/Work/Loose"):
+        write(sessions / "260905 - bad.md", header.replace("project: %s", "project: not a list"))
+        for project in (ACME, BIRCH):
             self.assertEqual([], self.find("mixedsessionword", project, sessions=True), project)
-        # the root holds no party, so it reads the one session it can place; a no-party project's and a
-        # deleted one's cannot be placed by anyone
-        self.assertEqual(["Zones/Work/.sessions/260901 - mixed.md"],
-                         [r.path for r in self.find("mixedsessionword", None, sessions=True)])
-        # one side alone is not readable from its side either: a past session is the root's only (0.59.0)
+        self.assertEqual(["Zones/Work/.sessions/260901 - mixed.md", "Zones/Work/.sessions/260903 - gone.md",
+                          "Zones/Work/.sessions/260905 - bad.md"],
+                         sorted(r.path for r in self.find("mixedsessionword", None, sessions=True)))
+        # one zone alone is readable from that zone, and from no other walled zone
         write(sessions / "260904 - acme.md", header % json.dumps([ACME]))
-        self.assertEqual([], self.find("mixedsessionword", ACME, sessions=True))
+        self.assertEqual(["Zones/Work/.sessions/260904 - acme.md"], [r.path for r in self.find("mixedsessionword", ACME, sessions=True)])
         self.assertEqual([], self.find("mixedsessionword", BIRCH, sessions=True))
-        con = self.db("Zones/Work/.recall.sqlite-birch")
+        con = self.db("Zones/Personal/.recall.sqlite")
         self.assertEqual(0, con.execute("SELECT COUNT(*) FROM docs WHERE src = 'session'").fetchone()[0])
 
-    def test_round_5_rows_the_walls_cannot_place_are_in_no_index_but_the_roots_for_a_known_tag(self):
-        """An unlisted tag, a conversation without a zone, a Knowledge page with a party: used nowhere."""
+    def test_round_5_rows_that_name_no_zone_the_table_knows_are_in_no_index(self):
+        """A conversation without a zone, a Knowledge page with a party, a zone nobody declared: used nowhere."""
         meetings = self.root / "Wikis/Meetings/wiki/sources"
-        write(meetings / "260330-ghost.md", meeting_page("Work", "[ghost]", "Ghost").replace("Decisions.", "Decisions: ghostword."))
+        write(meetings / "260330-ghost.md", meeting_page("Ghostland", "[acme]", "Ghost").replace("Decisions.", "Decisions: ghostword."))
         write(meetings / "260331-mixed.md", meeting_page("Work", "[acme, birch]", "Mixed").replace("Decisions.", "Decisions: crossword."))
         for project in (ACME, BIRCH, None):
             self.assertEqual([], self.find("ghostword", project), project)
-        for project in (ACME, BIRCH):
-            self.assertEqual([], self.find("crossword", project), project)       # a row across the wall: on neither side
-        self.assertEqual(1, len(self.find("crossword", None)))                    # the root holds no party
+        self.assertEqual(1, len(self.find("crossword", ACME)))                    # two parties, one zone: `parties:` is an index
+        self.assertEqual([], self.find("crossword", BIRCH))
+        self.assertEqual(1, len(self.find("crossword", None)))
         for path in self.indexes():
             con = sqlite3.connect(str(path))
             self.assertEqual(0, con.execute("SELECT COUNT(*) FROM docs WHERE body LIKE '%ghostword%'").fetchone()[0], path)
-            if path.name != ".recall.sqlite":
-                self.assertEqual(0, con.execute("SELECT COUNT(*) FROM docs WHERE body LIKE '%crossword%'").fetchone()[0], path)
             con.close()
 
 
@@ -1305,7 +1323,7 @@ class WallReviewTest(Base):
     # F1: a session chooses its own scope
     def test_f1_no_variable_folder_or_file_gives_a_session_a_wider_scope(self):
         acme = self.root / ACME
-        for env in ({recall.SCOPE_ENV: "work/birch"}, {recall.SCOPE_ENV: "root"}, {"CLAUDE_PROJECT_DIR": str(acme), recall.SCOPE_ENV: "root"}):
+        for env in ({recall.SCOPE_ENV: "personal"}, {recall.SCOPE_ENV: "root"}, {"CLAUDE_PROJECT_DIR": str(acme), recall.SCOPE_ENV: "root"}):
             self.assertTrue(self.cli(acme, "search", "wombatplan", env=env)[1].startswith("0 results"), env)
         # a bare working folder at the root or a zone is never the root scope
         for folder in (self.root, self.root / "Zones" / "Work", self.root / "System"):
@@ -1325,8 +1343,9 @@ class WallReviewTest(Base):
         self.extract_one(self.root / birch, [("user", "birch pricing floor narwhalsecret")])
         text = self.sessions()[0].read_text()
         self.assertNotIn("project:", text.split("\n---", 2)[0])            # a past session names no project
-        self.assertEqual([], self.find("narwhalsecret", "Zones/Work/Anvil", sessions=True))
-        self.assertEqual([], self.find("narwhalsecret", birch, sessions=True))
+        self.assertEqual(1, len(self.find("narwhalsecret", "Zones/Work/Anvil", sessions=True)))     # one zone: its projects read it
+        self.assertEqual(1, len(self.find("narwhalsecret", birch, sessions=True)))
+        self.assertEqual([], self.find("narwhalsecret", BIRCH, sessions=True))                      # the other walled zone does not
         self.assertEqual(1, len(self.find("narwhalsecret", None, sessions=True)))
         # a name with a `#` still reads back whole from a header that carries it
         probe = recall_sessions.Session("h", "claude-code", turns=[("user", "t", None)])
@@ -1338,7 +1357,7 @@ class WallReviewTest(Base):
             self.assertIsNone(recall.session_projects("---\n%s\n---\n" % bad), bad)
 
     # F3: paths read without changing folder
-    def test_f3_a_session_that_reads_another_projects_file_is_labelled_with_no_project(self):
+    def test_f3_a_session_that_reads_another_projects_file_names_no_project(self):
         a, b = self.hub("Anvil", "acme"), self.hub("Harbour2", "birch")
         write(self.root / b / "Threads/T/Secret.md", "# Secret\n\nfloor price.\n")
         self.extract_one(self.root / a, [
@@ -1348,15 +1367,16 @@ class WallReviewTest(Base):
         text = self.sessions()[0].read_text()
         self.assertEqual([], recall.session_projects(text))              # no project label, whatever it read
         for project in (a, b):
-            self.assertEqual([], self.find("quokkafloor", project, sessions=True), project)
+            self.assertEqual(1, len(self.find("quokkafloor", project, sessions=True)), project)       # both are Work's
+        self.assertEqual([], self.find("quokkafloor", BIRCH, sessions=True))
         self.assertEqual(1, len(self.find("quokkafloor", None, sessions=True)))
 
     def test_f3_an_absolute_or_spaced_path_in_a_turn_counts_and_an_unplaceable_one_drops_the_session(self):
         a = self.hub("Anvil", "acme")
         self.extract_one(self.root / a, [("user", "see %s/Acme Review/Notes.md please wordone" % (self.root / "Zones/Work"))], "s1")
         self.assertEqual([], recall.session_projects(self.sessions()[0].read_text()))
-        self.assertEqual([], self.find("wordone", a, sessions=True))
-        self.assertEqual([], self.find("wordone", "Zones/Work/Acme Review", sessions=True))
+        self.assertEqual(1, len(self.find("wordone", a, sessions=True)))
+        self.assertEqual([], self.find("wordone", BIRCH, sessions=True))
         self.assertEqual(1, len(self.find("wordone", None, sessions=True)))
         self.extract_one(self.root / a, [("user", "open Zones/Work/Ghost/Threads/x.md wordtwo")], "s2")
         self.assertEqual(1, len(self.sessions()))                         # the second was dropped
@@ -1364,30 +1384,21 @@ class WallReviewTest(Base):
         self.assertEqual(2, len(self.sessions()))                         # a placeholder and a zone-top file are not paths to a place
 
     # F4: stale files
-    def test_f4_a_file_that_is_no_scopes_is_removed_and_a_flipped_party_leaves_no_rows(self):
+    def test_f4_a_flipped_flag_leaves_no_rows_and_an_old_root_file_is_removed(self):
+        self.set_flags(work=True, personal=False)
         write(self.root / BIRCH / "Threads/Market Sizing/Secret.md", "# S\n\nzebrafinch here\n")
-        self.assertTrue(self.find("zebrafinch", BIRCH))
-        context = self.root / "System" / "context.md"
-        original = context.read_text(encoding="utf-8")
-        context.write_text(original.replace("| `acme` | yes |", "| `acme` | no |").replace("| `birch` | yes |", "| `birch` | no |"), encoding="utf-8")
-        self.assertTrue(self.find("zebrafinch", ACME))                    # no wall: one zone-wide file
-        self.assertTrue((self.root / "Zones/Work" / recall.INDEX_NAME).is_file())
-        context.write_text(original, encoding="utf-8")
+        self.assertTrue(self.find("zebrafinch", ACME))                    # Personal is open: in Work's index
+        self.set_flags(work=True, personal=True)
         self.find("quokkaplan")                                           # the wall is back
-        self.assertFalse((self.root / "Zones/Work" / recall.INDEX_NAME).exists())
-        self.assertEqual([], [p.name for p in self.indexes() if b"zebrafinch" in p.read_bytes() and p.name.endswith("acme")])
-        # a project flips side: build makes the file the row left again
-        hub = self.root / BIRCH / "Birch Entry.md"
-        thread = self.root / BIRCH / "Threads/Market Sizing/Market Sizing.md"
-        for f in (hub, thread):
-            f.write_text(f.read_text().replace("party: birch", "party: acme"))
-        recall.build(self.root)
-        self.assertNotIn(b"zebrafinch", (self.root / "Zones/Work" / (recall.INDEX_NAME + "-birch")).read_bytes())
-        # an old root file is removed by the next build
+        self.assertNotIn(b"zebrafinch", (self.root / "Zones/Work" / recall.INDEX_NAME).read_bytes())
+        # an old root file, and a file of a side of the party walls, are removed by the next build
         stale = self.root / "System" / recall.INDEX_NAME
         stale.write_bytes(b"x")
+        side = self.root / "Zones/Work" / (recall.INDEX_NAME + "-acme")
+        side.write_bytes(b"x")
         recall.build(self.root)
         self.assertFalse(stale.exists())
+        self.assertFalse(side.exists())
 
 
 class NamesAndSpellingTest(Base):
@@ -1407,7 +1418,7 @@ class NamesAndSpellingTest(Base):
     def test_a_near_misspelling_is_found_through_the_trigram_table(self):
         self.assertTrue(recall.trigram_available())
         self.assertEqual("Wikis/Meetings/wiki/sources/260310-acme-kickoff.md", self.find("quokaplan")[0].path)
-        con = sqlite3.connect(str(self.root / "Zones/Work/.recall.sqlite-acme"))
+        con = sqlite3.connect(str(self.root / "Zones/Work/.recall.sqlite"))
         self.assertTrue(con.execute("SELECT 1 FROM sqlite_master WHERE name = 'fts_tri'").fetchone())
         self.assertIn("trigram", con.execute("SELECT sql FROM sqlite_master WHERE name = 'fts_tri'").fetchone()[0])
         con.close()
@@ -1418,22 +1429,25 @@ class NamesAndSpellingTest(Base):
         with mock.patch.object(recall, "trigram_available", return_value=False):
             self.assertEqual([], self.find("quokaplan"))
             self.assertTrue(self.find("quokkaplan"))
-            con = sqlite3.connect(str(self.root / "Zones/Work/.recall.sqlite-acme"))
+            con = sqlite3.connect(str(self.root / "Zones/Work/.recall.sqlite"))
             self.assertIsNone(con.execute("SELECT 1 FROM sqlite_master WHERE name = 'fts_tri'").fetchone())
             con.close()
         self.assertTrue(self.find("quokaplan"))             # and back again: the index is made again with it
 
     def test_a_changed_flag_makes_the_index_again(self):
         self.assertTrue(self.find("quokkaplan"))
-        context = self.root / "System" / "context.md"
-        text = context.read_text(encoding="utf-8")
-        self.assertIn("| `acme` | yes |", text)
-        stamp = recall.policy_stamp(garrick_lib.load_context(self.root), recall.scopes_of(
-            self.root, garrick_lib.load_context(self.root))[2])
-        context.write_text(text.replace("| `acme` | yes |", "| `acme` | no |"), encoding="utf-8")
+        ctx = garrick_lib.load_context(self.root)
+        stamp = recall.policy_stamp(ctx, recall.scopes_of(self.root, ctx)[2])
+        self.set_flags(work=False, personal=True)
         ctx = garrick_lib.load_context(self.root)
         self.assertNotEqual(stamp, recall.policy_stamp(ctx, recall.scopes_of(self.root, ctx)[2]))
         self.assertTrue(self.find("quokkaplan"))
+        # a Parties-table edit alone does not make an index again
+        self.set_flags(work=False, personal=True)
+        before = recall.policy_stamp(garrick_lib.load_context(self.root), recall.scopes_of(self.root, ctx)[2])
+        context = self.root / "System" / "context.md"
+        context.write_text(context.read_text().replace("| Acme Corp | Client |", "| Acme Corp | A client |"), encoding="utf-8")
+        self.assertEqual(before, recall.policy_stamp(garrick_lib.load_context(self.root), recall.scopes_of(self.root, ctx)[2]))
 
 
 class NoWallTestOfItsOwnTest(unittest.TestCase):
@@ -1443,7 +1457,8 @@ class NoWallTestOfItsOwnTest(unittest.TestCase):
             text = (Path(fixtures.__file__).resolve().parent.parent / "template" / "System" / "tools" / name).read_text()
             self.assertIsNone(re.search(r"\bwalled\(", text), name)
         text = (Path(fixtures.__file__).resolve().parent.parent / "template" / "System" / "tools" / "recall.py").read_text()
-        self.assertIn("decide(", text)
+        self.assertIn("may_flow(", text)
+        self.assertNotIn("decide(", text)
         self.assertNotIn("allowed_pids", text)
         self.assertNotIn("admit=", text)
 

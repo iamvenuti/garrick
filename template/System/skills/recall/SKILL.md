@@ -51,9 +51,10 @@ python3 ../../../System/tools/recall.py search "retry flag" --sessions
 python3 ../../../System/tools/recall.py read "Meetings:Wikis/Meetings/wiki/sources/260310-kickoff.md"
 ```
 
-- `--sessions` adds past sessions, and only in a session opened at the
-  workspace root or in `System/`, which reads every zone's. From a zone or a
-  project it adds nothing: what a past session read cannot be known for sure.
+- `--sessions` adds past sessions. A session opened in a zone reads the past
+  sessions of that zone (and of open zones); a session opened at the workspace
+  root or in `System/` also reads the ones that span zones, which no zone's
+  session ever sees.
 - `--wiki Meetings` or `--wiki Knowledge` searches that wiki alone (with `--sessions`, the sessions too, and no notes).
 - `--zone Z` narrows to one zone's notes. A session of a zone can name its own
   zone and no other; a search never reaches past the session's scope. For work
@@ -73,17 +74,16 @@ python3 ../../../System/tools/recall.py read "Meetings:Wikis/Meetings/wiki/sourc
 ## Where the session was opened
 
 Only the workspace root and `System/` read as a root session. A session opened
-in a project or a thread of a project reads the scope of that project's hub. A
-zone's top level, a project whose hub names no party, and a place no zone owns
-(inside `Wikis/`, `Zones/` itself, outside the workspace) hold no scope the
-walls can be checked against, so the tool searches nothing and says so. Open
-the session in a project with a party, or at the root.
+in a project or a thread of a project reads its zone: that zone's notes and
+past sessions, every open zone's, Knowledge and System. A zone's top level and
+a place no zone owns (inside `Wikis/`, `Zones/` itself, outside the workspace)
+hold no scope, so the tool searches nothing and says so. Open the session in a
+project, or at the root.
 
-A `party:` or `parties:` that holds anything but tags from the Parties table
-(`birch, acme`, `acme and birch`) cannot be placed: a Meetings page like that
-is in no scope, and a project whose hub is like that holds no scope. A
-Knowledge page that names a zone or a party is not published and is in no
-zone scope.
+A Meetings page is read by its `zone:`. A page with no zone, two zones, or one
+the Zones table does not hold is in no scope. A Knowledge page that names a
+zone is not published and is in no zone scope. `party:` is an index and is
+never read as a wall.
 
 ## A result is a pointer
 
@@ -99,7 +99,7 @@ walled row is not in the file. The count in the header is what you may read,
 nothing more.
 Do not work around it: never grep a wiki or `.sessions/` folder to find what a
 search did not return. If the user asks why something is missing, say
-that a result list holds only what this project may read, and name nothing
+that a result list holds only what this zone may read, and name nothing
 else.
 
 ## When the index looks wrong

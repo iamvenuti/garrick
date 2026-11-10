@@ -57,16 +57,21 @@ class TestLint(OpenCase):
         self.assertIn("[[%s]]: Who signs the volume floor?" % ACME, text)
         self.assertEqual(before, snapshot(self.root))
 
-    def test_a_page_with_no_zone_or_no_parties_gets_none_and_the_reason(self):
+    def test_a_page_with_no_zone_or_two_zones_gets_none_and_the_reason(self):
         self.page(ACME, zone=None)
-        self.page(BIRCH, parties=None, title="Birch kick-off")
+        self.page(BIRCH, zone="[Work, Personal]", title="Birch kick-off")
         rows = wiki_lint.open_sections(self.meetings)
         self.assertTrue(rows and all(r["state"] == "skipped" for r in rows))
         reasons = {r["page"]: r["reason"] for r in rows}
         self.assertIn("no zone", reasons[ACME])
-        self.assertIn("no parties", reasons[BIRCH])
+        self.assertIn("more than one zone", reasons[BIRCH])
         text = wiki_lint.say(wiki_lint.lint(self.meetings))
         self.assertIn("no question for [[%s]]: it has no zone" % ACME, text)
+
+    def test_a_page_with_no_parties_still_gets_its_question_for_parties_are_an_index(self):
+        self.page(ACME, parties=None)
+        rows = wiki_lint.open_sections(self.meetings)
+        self.assertTrue(rows and all(r["state"] == "propose" for r in rows))
 
 
 class TestConversion(OpenCase):
@@ -125,14 +130,16 @@ class TestConversion(OpenCase):
             self.do("question-close", file=q.relative_to(self.meetings).as_posix())
         self.assertEqual(0, len([r for r in wiki_lint.open_sections(self.meetings) if r["state"] == "propose"]))
 
-    def test_a_page_lacking_a_field_gives_no_question_and_a_reason(self):
+    def test_a_page_with_no_zone_gives_no_question_and_only_the_sentence(self):
         self.page(ACME, zone=None)
         before = snapshot(self.root)
         say = self.run_verb(confirm=True)
         self.assertIn("Nothing to write", say)
         self.assertEqual([], self.files())
         self.assertEqual(before, snapshot(self.root))
-        self.assertIn("No question for %s: it has no zone" % ACME, self.run_verb())
+        say = self.run_verb()
+        self.assertIn(SENTENCE, say)             # only the rule's sentence, never why
+        self.assertNotIn("No question for", say)
 
     def test_a_knowledge_question_has_no_zone_and_no_parties(self):
         write(self.knowledge / "wiki" / "concepts" / "resilience.md", "# Resilience\n\n## Open issues\n\n- Is the 80% figure independent?\n")
@@ -169,61 +176,63 @@ class TestConversion(OpenCase):
 
 
 class TestWalls(OpenCase):
-    def test_the_question_carries_the_pages_parties_exactly_never_merged(self):
+    def test_the_question_carries_the_pages_zone_and_parties_exactly(self):
         self.page(ACME)
         write(self.meetings / (BIRCH + ".md"), meeting_page("Work", "[birch]", "Birch kick-off") + "\n## Open\n\n- Is the pilot paid?\n")
-        self.run_verb(confirm=True, pages=[ACME])
-        self.run_verb(confirm=True, pages=[BIRCH])
+        self.run_verb(confirm=True)
         seen = {}
         for q in self.files():
             text = q.read_text()
             origin = pa.re.search(r'origin: "\[\[(.+?)\]\]"', text).group(1)
-            seen[origin] = pa.re.search(r"parties: (.+)", text).group(1)
-            self.assertNotIn("birch" if origin == ACME else "acme", text.lower())
-        self.assertEqual({ACME: "[acme]", BIRCH: "[birch]"}, seen)
+            seen.setdefault(origin, set()).add(pa.re.search(r"parties: (.+)", text).group(1))
+            self.assertIn("zone: Work\n", text)
+        self.assertEqual({ACME: {"[acme]"}, BIRCH: {"[birch]"}}, seen)
 
-    def test_a_page_naming_two_walled_parties_gets_none_and_only_the_sentence(self):
-        self.page(ACME, parties="[acme, birch]")
+    def test_a_page_in_two_walled_zones_gets_none_and_only_the_sentence(self):
+        self.page(ACME, zone="[Work, Personal]")
         say = self.run_verb()
         self.assertIn(SENTENCE, say)
-        self.assertNotIn("birch", say.lower())
+        self.assertNotIn("personal", say.lower())
+        self.assertNotIn("No question for", say)
         self.assertIn("Nothing to write", self.run_verb(confirm=True))
         self.assertEqual([], self.files())
 
-    def test_an_unknown_party_or_zone_gets_none(self):
-        self.page(ACME, parties="[nobody]")
-        self.page(BIRCH, zone="Nowhere", parties="[birch]", title="Birch kick-off")
+    def test_an_unknown_zone_gets_none_and_only_the_sentence(self):
+        self.page(ACME, zone="Nowhere", parties="[acme]")
+        say = self.run_verb()
+        self.assertIn(SENTENCE, say)
+        self.assertNotIn("nowhere", say.lower())
         self.assertIn("Nothing to write", self.run_verb(confirm=True))
         self.assertEqual([], self.files())
 
     def test_a_page_filter_limits_what_is_written(self):
         self.page(ACME)
-        write(self.meetings / (BIRCH + ".md"), meeting_page("Work", "[birch]", "Birch kick-off") + "\n## Open\n\n- Is the pilot paid?\n")
+        write(self.meetings / (BIRCH + ".md"), meeting_page("Personal", "[birch]", "Birch kick-off") + "\n## Open\n\n- Is the pilot paid?\n")
         self.run_verb(confirm=True, pages=[BIRCH])
         (q,) = self.files()
-        self.assertIn("[birch]", q.read_text())
+        self.assertIn("zone: Personal", q.read_text())
 
 
 class TestGroups(OpenCase):
     def two(self):
         self.page(ACME)
-        write(self.meetings / (BIRCH + ".md"), meeting_page("Work", "[birch]", "Birch kick-off") + "\n## Open\n\n- Is the pilot paid?\n")
+        write(self.meetings / (BIRCH + ".md"), meeting_page("Personal", "[birch]", "Home visit") + "\n## Open\n\n- Is the pilot paid?\n")
 
-    def test_the_read_groups_by_zone_and_party_and_asks_once_per_group(self):
+    def test_the_read_groups_by_zone_and_asks_once_per_group(self):
         self.two()
         say = self.run_verb()
         self.assertIn("in 2 groups. Ask once per group, never for two together.", say)
-        self.assertEqual(["Group (Work, acme):", "Group (Work, birch):"], [l for l in say.splitlines() if l.startswith("Group")])
+        self.assertEqual(["Group (Personal):", "Group (Work):"], [l for l in say.splitlines() if l.startswith("Group")])
         lines = say.splitlines()
-        acme, birch = lines.index("Group (Work, acme):"), lines.index("Group (Work, birch):")
-        self.assertTrue(all("acme" in l or "Acme" in l or "volume" in l or "price" in l for l in lines[acme + 1:birch - 0] if l.startswith("  ")))
-        self.assertNotIn("Is the pilot paid?", "\n".join(lines[acme:birch]))
+        home, work = lines.index("Group (Personal):"), lines.index("Group (Work):")
+        self.assertIn("Is the pilot paid?", "\n".join(lines[home:work]))
+        self.assertNotIn("Is the pilot paid?", "\n".join(lines[work:]))
 
     def test_a_confirm_over_two_groups_is_refused_and_writes_nothing(self):
         self.two()
         before = snapshot(self.root)
         for kw in ({}, {"pages": [ACME, BIRCH]}, {"pages": "%s,%s" % (ACME, BIRCH)}):
-            with self.assertRaisesRegex(pa.Refused, "more than one zone and party group"):
+            with self.assertRaisesRegex(pa.Refused, "more than one zone"):
                 self.run_verb(confirm=True, **kw)
         self.assertEqual(before, snapshot(self.root))
 
@@ -234,9 +243,9 @@ class TestGroups(OpenCase):
         self.run_verb(confirm=True, pages=[BIRCH])
         self.assertEqual(3, len(self.files()))
 
-    def test_the_same_parties_on_two_pages_are_one_group(self):
+    def test_two_pages_of_one_zone_are_one_group_whatever_their_parties(self):
         self.page(ACME)
-        self.page("wiki/sources/260311-acme-second", title="Acme second")
+        self.page("wiki/sources/260311-acme-second", parties="[birch]", title="Acme second")
         self.assertIn("in 1 group.", self.run_verb())
         self.run_verb(confirm=True)
         self.assertEqual(4, len(self.files()))

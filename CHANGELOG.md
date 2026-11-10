@@ -4,6 +4,41 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-11-11
+
+With Claude, Ask now runs as one session by default. Recall reads pages before transcripts, long notes move their old entries into history files, and the status page shows which sessions are waiting on you.
+
+**Upgrading.**
+- Ask now uses the one session that reads your records with tools whenever Claude is your assistant. You no longer need `"ask-agent": true`. For this release `"ask-agent": false` in `System/garrick-flags.json` turns it off. The next release drops the flag. Codex keeps the fixed steps.
+- The first Wrap or Nurture on a long note moves its old dated entries into a `history/` folder beside it. Nurture lists every note it would trim, with the words before and after, before it moves anything.
+
+### Added
+
+- **History files for long notes** (#502). A hub or thread note moves its old dated entries, whole and unchanged, into quarterly files in `history/` beside it. The wrap does this after its new entry, in the same commit, and Park does it before parking. Entries older than six months go first, then the oldest ones until the note is under 4,000 words. The five newest always stay. The note keeps one line that links the files by their path, so a thread with the same name in another zone never gets in the way. Every move is checked line by line and undone if a line is missing, and running it again changes nothing. A history folder that is a link, or leads outside the note's folder, stops the move. `history-months`, `note-max-words` and `resume-max-words` in `garrick-settings.json` set the limits.
+- **Checks for long notes** (#502). `check.py` warns about a note over its word cap and a Resume here block over its limit, and names both counts. Nurture lists a long note as a mechanical fix, which the nightly run may apply. A long Resume block is a judgment: the wrap and Nurture offer a shorter one as a diff, and nothing changes without your yes.
+- **Catch-up, rename and correction read history files** (#502). A catch-up over a period that includes moved entries reports the same entries as before. Renaming a thread takes its history files along, and a correction reaches them.
+- **Concise Meetings pages** (#479). A meeting or mail page has one shape by default: who was there and for how long, key points, then actions, in about 350 words. The check warns about a longer page, but only for pages filed after you turn the format on with `meetings-concise`. "Compact the meetings" rewrites pages already filed, working from the page and never the transcript. It starts with a pilot of about ten pages for your yes, then goes on in batches with one commit each.
+- **Waiting on you now** (#474). A card on the Overview lists the assistant sessions stopped on a question or an approval, oldest first. Each row shows the thread, what the session waits for and for how long. It never shows the question's text. On the simple home each one is also a *Live* row of *Needs you*. In the Mac app a session in a cmux tab has *Go to it*, and the menu bar shows how many are waiting. A session in Claude's desktop app or another terminal names the app and the folder, with no button.
+- `agents_working.py` reports a third state, waiting, and `--json` prints one row per session (#474).
+- A Claude Code hook, `extras/hooks/waiting_hook.py`, marks a session that stops on a permission prompt, which the transcript does not record (#474).
+- *A session is waiting on me* in Settings › Notifications: one notice for each wait, never repeated (#474).
+- `desk focus --session ID` brings a cmux tab forward.
+
+### Changed
+
+- **Ask with Claude is the one session by default** (#476). Turning on `ask` is all it takes. A change to the setting restarts Ask on the next request and says so, unless a question is waiting for its answer. Settings shows the session as on only when Ask is on and Claude is your assistant.
+- **Recall ranks pages first** (#478). A transcript or other raw record answers only when no page matches, and it is marked "from the raw record". `--raw`, and Ask's `raw` option, put the raw records back beside the pages. A wiki can choose with `"recall": {"raw": "fallback" | "always" | "never"}` in its `schema.json`.
+- **A wrap asks nothing** (#491). "Wrap it", the band's *Wrap*, "hold this" and "I'm being interrupted" start at once. Whatever you say with the request goes into *Keep in mind*, and the session writes the rest.
+- **A correction marks a fixed page `corrected:`** (#499). When `correct.py` fixes a page's own text, the page is marked `corrected:` and fades and wakes by the usual rules, so a pin still holds. `superseded:` stays for a page it could not fix and for a page another one replaces. `fade.py propose` lists the pages it would move because of `superseded:` on their own, and says how to keep one. Running the same correction again on a later day adds no second closing line.
+- A session waiting on a question or an approval no longer counts as working for *Keep awake*. It stays on the waiting card for up to a day.
+- The principle now says an entry is never edited, rather than never moved.
+
+### Fixed
+
+- **Ask ranks by date for any question about time** (#475). Besides "last", "latest" and "since", it now understands lately, recently, these days, yesterday, today, this week, so far, anything new, what's new, any updates, this morning and days ago.
+- A Knowledge raw record is never found when any page that names it is outside your zone.
+- The check no longer warns about a People row with a one-word name (#497), and no text says a name refuses a commit.
+
 ## [0.63.1] - 2026-11-10
 
 The walls migration diff now groups findings the way the zone walls design says it should, and a merge into a zone runs the wall check.

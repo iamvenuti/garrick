@@ -1070,7 +1070,8 @@ def render_proposal(p: Plan, pid: str, derived: Dict[str, dict], today: datetime
     if replaced:
         out += ["## Moving because of `superseded:`, %d" % len(replaced), "",
                 "A page carrying `superseded:` leaves working memory whatever pins it. Each is named here with the "
-                "marker's reason, so you can leave one: say which to keep.", ""]
+                "marker's reason. A pin does not hold such a page, and keep cannot: to leave one where it is, "
+                "remove `superseded:` from its frontmatter.", ""]
         for m in sorted(replaced, key=lambda m: (("dormant", "archived", "working").index(m.to), m.page.kind,
                                                 m.page.date or datetime.date.min, m.page.path)):
             out.append("- `%s`, %s, %s, %s: %s" % (m.page.sub, m.page.title, m.page.date.isoformat() if m.page.date else "undated",

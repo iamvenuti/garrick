@@ -181,6 +181,9 @@ __all__ = [
     "has_merge_hooks",
     "MergeHookNotGarricks",
     "missing_merge_hooks",
+    "foreign_merge_hooks",
+    "merge_hook_advice",
+    "hook_slot",
     "wall_hook_texts",
     "WALL_HOOKS",
     "hooks_path",
@@ -2641,13 +2644,23 @@ MERGE_HOOK = "pre-merge-commit"
 POST_HOOKS = ("post-merge", "post-rewrite")
 WALL_HOOKS = ("pre-commit", MERGE_HOOK) + POST_HOOKS
 _STAGED_RUN = "--staged --walls-only"
-_POST_RUN = {"post-merge": "--changed ORIG_HEAD..HEAD",
-             "post-rewrite": '--changed "$@"'}
+
+# What a hook of the user's own needs added to it to run Garrick's check, by hook name: a line for a hook that is not
+# Garrick's, in the words a person pastes. The post hooks take `--changed`, never `--staged`.
+MERGE_HOOK_LINES = {
+    "pre-merge-commit": 'python3 <workspace>/System/tools/check.py --staged --walls-only',
+    "post-merge": 'python3 <workspace>/System/tools/check.py --changed ORIG_HEAD..HEAD',
+    "post-rewrite": 'python3 <workspace>/System/tools/check.py --changed "$@"   '
+                    '# after reading the new commits from stdin, as Garrick\'s own post-rewrite does',
+}
 
 
 def _post_hook(base: str, name: str) -> str:
     """The post-merge or post-rewrite hook made from a pre-commit hook text `base`: the same way of finding the
-    workspace, no refusal anywhere in it, and at the end the report over what changed."""
+    workspace, no refusal anywhere in it, and at the end the report over what changed. post-merge reports on
+    ORIG_HEAD..HEAD (nothing for a squash, which commits nothing). post-rewrite reads the new commits from stdin and
+    reports on what each changed; after a rebase also on ORIG_HEAD..HEAD, so what the rebase brought in from
+    upstream is read as well. It tells `--after` which, since an amend sets no ORIG_HEAD."""
     lines = base.rstrip("\n").split("\n")
     out = []
     for line in lines:
@@ -2663,15 +2676,21 @@ def _post_hook(base: str, name: str) -> str:
         out.append(line)
     run = out.pop()
     assert _STAGED_RUN in run, run
+    run = run.replace("exec python3", "PYTHONDONTWRITEBYTECODE=1 GIT_OPTIONAL_LOCKS=0 python3")
     if name == "post-merge":
+        out.append('[ "$1" = 1 ] && exit 0     # a squash commits nothing; what it staged is checked when it is committed')
         out.append("git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1 || exit 0")
-        args = _POST_RUN[name]
-    else:   # post-rewrite gets "old new" pairs on stdin: the new commits are what it reads
+        out.append(run.replace(_STAGED_RUN, "--after merge --changed ORIG_HEAD..HEAD"))
+    else:   # post-rewrite gets "how" ($1: amend or rebase) and "old new" pairs on stdin: the new commits are what it reads
+        out.append('how="$1"')
         out.append('set -- $(while read -r old new rest; do echo "$new"; done)')
         out.append('[ "$#" -gt 0 ] || exit 0')
-        args = _POST_RUN[name]
-    run = run.replace("exec python3", "PYTHONDONTWRITEBYTECODE=1 GIT_OPTIONAL_LOCKS=0 python3").replace(_STAGED_RUN, args)
-    out += [run, "exit 0"]
+        out.append('if [ "$how" = rebase ] && git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1; then')
+        out.append("  " + run.replace(_STAGED_RUN, '--after rebase --changed ORIG_HEAD..HEAD "$@"'))
+        out.append("else")
+        out.append("  " + run.replace(_STAGED_RUN, '--after "$how" --changed "$@"'))
+        out.append("fi")
+    out.append("exit 0")
     return "\n".join(out) + "\n"
 
 
@@ -2693,8 +2712,37 @@ class MergeHookNotGarricks(FileExistsError):
         self.names = names
 
 
+def hook_slot(path: Path) -> str:
+    """What is in a hook's place: "free" when nothing is, "ours" for a regular file that carries Garrick's mark, else
+    "foreign": a hook of the user's, a link (never written through) or anything that is not a file."""
+    if not os.path.lexists(str(path)):
+        return "free"
+    if path.is_symlink() or not path.is_file():
+        return "foreign"
+    try:
+        return "ours" if WALL_HOOK_MARK in path.read_text(encoding="utf-8", errors="replace") else "foreign"
+    except OSError:
+        return "foreign"
+
+
+def foreign_merge_hooks(zone: PathLike) -> List[str]:
+    """The merge hooks of a repository that are the user's own (or a link), where Garrick's would go."""
+    hooks = _hooks_dir(zone)
+    return [] if hooks is None else [n for n in WALL_HOOKS[1:] if hook_slot(hooks / n) == "foreign"]
+
+
+def merge_hook_advice(names: List[str]) -> str:
+    """What to do about a merge hook that is not Garrick's: the line to add to it, for each, and the comment that
+    tells the check the hook runs it."""
+    lines = "; ".join("%s: %s" % (n, MERGE_HOOK_LINES[n]) for n in names)
+    return ("add the wall check to it by hand: %s. Keep the words \"%s\" in a comment of the hook, which is how the "
+            "check knows it runs" % (lines, WALL_HOOK_MARK))
+
+
 def _hook_runs(hooks: Path, name: str) -> bool:
     hook = hooks / name
+    if hook.is_symlink() or not hook.is_file():
+        return False
     try:
         return WALL_HOOK_MARK in hook.read_text(encoding="utf-8", errors="replace") and os.access(hook, os.X_OK)
     except OSError:
@@ -2749,26 +2797,24 @@ def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False,
     if hooks is None:
         raise FileNotFoundError("%s is not a git repository with its own .git folder" % zone)
     hook = hooks / "pre-commit"
-    if hook.exists():
-        existing = hook.read_text(encoding="utf-8", errors="replace")
-        if WALL_HOOK_MARK not in existing:
-            raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
-                                  "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
+    if hook_slot(hook) == "foreign":
+        raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
+                              "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
     hooks.mkdir(parents=True, exist_ok=True)
     foreign = []
     for name, text in wall_hook_texts(nested, wiki, root).items():
         path = hooks / name
-        if path.exists() and WALL_HOOK_MARK not in path.read_text(encoding="utf-8", errors="replace"):
-            foreign.append(name)         # not Garrick's: left alone, and named
+        slot = hook_slot(path)
+        if slot == "foreign":
+            foreign.append(name)         # not Garrick's, or a link: left alone, never written through, and named
             continue
-        if not path.exists() or path.read_text(encoding="utf-8", errors="replace") != text:
+        if slot == "free" or path.read_text(encoding="utf-8", errors="replace") != text:
             path.write_text(text, encoding="utf-8")
         if not os.access(path, os.X_OK):
             path.chmod(0o755)
     if foreign:
-        raise MergeHookNotGarricks("%s already has a %s hook that is not Garrick's, so it is left as it is; add the wall "
-                                   "check to it by hand, as the one in .git/hooks/pre-commit runs it" % (zone, ", ".join(foreign)),
-                                   foreign)
+        raise MergeHookNotGarricks("%s already has a %s hook that is not Garrick's, so it is left as it is; %s" % (
+            zone, ", ".join(foreign), merge_hook_advice(foreign)), foreign)
     return hook
 
 

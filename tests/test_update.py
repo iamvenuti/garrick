@@ -697,6 +697,26 @@ class TestSafety(Case):
         self.assertIn("post-merge", " ".join(p for p, _ in result["skipped"]))
         self.assertEqual([], self.plan()["hooks"])                                # not stale for a hook that is not ours
 
+    def test_a_garrick_merge_hook_that_git_would_not_run_is_refreshed(self):
+        hook = self.root / "Zones" / "Work" / ".git" / "hooks" / "post-merge"
+        hook.chmod(0o644)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        self.apply()
+        self.assertTrue(os.access(hook, os.X_OK))
+        self.assertEqual([], self.plan()["hooks"])
+
+    def test_a_wiki_with_a_foreign_merge_hook_is_still_reported_under_the_hooks_installed(self):
+        hooks = self.root / "Wikis" / ".git" / "hooks"
+        (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        (hooks / "pre-merge-commit").unlink(missing_ok=True)
+        p = self.plan()
+        self.assertEqual("refresh", p["wiki_hook"])
+        self.assertIn("the merge hooks", update.report(p))
+        result = update.apply(self.root, p)
+        self.assertIn("Wikis", result["hooks"])
+        self.assertTrue((hooks / "pre-merge-commit").is_file())
+        self.assertIn("--changed ORIG_HEAD..HEAD", " ".join(w for _, w in result["skipped"]))
+
     def wiki_hook(self):
         return self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
 
@@ -1130,6 +1150,65 @@ class TestZoneWallsStep(Case):
         self.assertNotIn("Beds/Note.md", refused)                                # the same refusal, reworded
         self.assertNotIn("Pricing/Plan.md", refused)
         self.assertEqual({"inside": 2, "name": 1, "other": 1}, study["released"])  # the fixture's own, and the one the zone rule no longer makes
+
+    def test_a_page_stem_of_several_words_is_never_cut_to_its_last_word(self):
+        mine = lambda stem: {"path": "Zones/Advisory/BirchAdv/Threads/Entry/Budget.md",
+                             "message": "repeats wording from meeting page %s, a meeting with emp; emp is walled" % stem}
+        self.assertEqual("a sync", update._source(mine("A sync")))
+        released, refused = update.diff_findings([mine("A sync")], [mine("B sync")])
+        self.assertEqual((1, 1), (len(released), len(refused)))                # two pages, two findings
+        bare = {"path": "x.md", "message": "repeats wording from meeting notes, an unfinished meeting page (no zone or parties)"}
+        self.assertEqual("meeting notes", update._source(bare))
+        odd = {"path": "x.md", "message": "repeats wording from some odd words, a thing with emp; emp is walled"}
+        self.assertEqual("", update._source(odd))                              # unsure: today's key
+
+    def test_the_near_wording_test_is_for_wording_findings_only(self):
+        lib = update.install.lib()
+        path = "Zones/Advisory/BirchAdv/Threads/Entry/Budget.md"
+        link = {"path": path, "message": "links [[260320-emp-budget]], a meeting with emp; emp is walled"}
+        near = {(path, "260320-emp-budget")}
+        self.assertEqual("other", update.classify(self.root, lib, link, {}, {}, [], near))
+
+    def classify_text(self, message, path="Zones/Advisory/BirchAdv/Threads/Entry/Notes.md"):
+        lib = update.install.lib()
+        return update.classify(self.root, lib, {"path": path, "message": message, "fid": "x", "token": ""},
+                               update._meeting_stems(self.root), {}, list(self.zones.FLAGS))
+
+    def test_every_form_of_a_target_is_placed_by_the_zone_of_its_one_file(self):
+        hub = "AcmeAdv"
+        for message in (
+                "links [[%s]], a note of acme; acme is walled" % hub,                                    # a hub by name
+                "links [[%s/%s|the hub]], a note of acme; acme is walled" % (hub, hub),                  # a hub with its folder
+                "links [[Review]], a note of acme; acme is walled",                                      # a note by name
+                "links [x](obsidian://open?vault=Meetings&file=wiki%2Fsources%2F260310-acme-kickoff), a meeting",
+                "links [x](obsidian://open?vault=Garrick&file=Zones%2FAdvisory%2FAcmeAdv%2FAcmeAdv.md), a note",
+                "writes the path Zones/Advisory/AcmeAdv/AcmeAdv, a note of acme",
+                "repeats wording from Zones/Advisory/AcmeAdv/AcmeAdv.md, in project AcmeAdv for acme; acme is walled",
+                "repeats wording from meeting 260310-acme-kickoff, a meeting with acme; acme is walled"):
+            self.assertEqual("inside", self.classify_text(message), message)
+
+    def test_a_target_that_is_not_one_file_in_the_files_own_zone_stays_other(self):
+        for message in (
+                "links [[Northwind]], a note of emp; emp is walled",                                       # another zone
+                "links [[Notes]], a note; acme is walled",                                                # two files
+                "links [[Nowhere]], a note; acme is walled",                                              # no file
+                "links [[AcmeAdv]] and [[Nowhere]], a note; acme is walled",                              # one placed, one not
+                "links [[AcmeAdv]] and [[Northwind]], a note; acme is walled",                            # two zones
+                "links [x](obsidian://open?vault=Meetings&file=wiki%2Fsources%2F260312-emp-sync), a meeting",   # another zone
+                "links [x](obsidian://open?vault=Meetings&file=wiki%2Fsources%2Fnone), a meeting",
+                "repeats wording from meeting 260312-emp-sync, a meeting with emp; emp is walled"):
+            self.assertEqual("other", self.classify_text(message), message)
+
+    def test_a_wording_check_that_cannot_run_is_said_above_the_groups(self):
+        self.wording_fixture()
+        rows = [("Zones/Advisory/BirchAdv/Threads/Entry/Budget.md", self.OLD_MEETING % ("emp", "emp"))]
+        with mock.patch.object(update, "near_wording", lambda *a: None):
+            study, text = update.walls_study(self.root, update.walls_pending(self.root), old_check=self.old_wording(rows))
+        self.assertTrue(study["wording_unplaced"])
+        said = text.index("could not be run")
+        self.assertLess(said, text.index("Inside one zone"))
+        self.assertGreater(said, text.index("released by the zone rule"))
+        self.assertIn("Budget.md", text[text.index("Other:"):])
 
     def test_a_check_that_does_not_run_stops_the_step(self):
         broken = self.stub("broken.py", "import sys\nsys.exit(3)\n")

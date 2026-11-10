@@ -141,6 +141,70 @@ class MergeHooks(unittest.TestCase):
         self.assertIn("git reset --hard ORIG_HEAD", r.stderr)
         self.assertNotIn("Todo.md", r.stderr)                                   # only what the rewritten commits changed
 
+    def test_an_amend_says_how_to_undo_an_amend_not_orig_head(self):
+        """An amend sets no ORIG_HEAD, so `reset --hard ORIG_HEAD` would go to whatever an older operation left."""
+        write(self.zone / CROSS, "# Cross\n\nSee [[Zones/Personal/Quince/Threads/Rows/Rows]].\n")
+        git(self.zone, "add", "-A")
+        git(self.zone, "-c", "core.hooksPath=" + os.devnull, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "crossing")
+        r = run(["git", "commit", "--amend", "--no-verify", "-q", "-m", "reworded"], self.zone)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("Cross.md", r.stderr)
+        self.assertIn("git reset --soft HEAD@{1}", r.stderr)
+        self.assertNotIn("ORIG_HEAD", r.stderr)
+
+    def test_a_pull_with_rebase_reports_what_upstream_brought_in(self):
+        upstream = Path(self._tmp.name) / "upstream.git"
+        git(self.zone, "init", "-q", "--bare", str(upstream))
+        git(self.zone, "remote", "add", "origin", str(upstream))
+        git(self.zone, "push", "-q", "origin", self.main)
+        git(self.zone, "branch", "--set-upstream-to=origin/" + self.main)
+        clone = Path(self._tmp.name) / "other"
+        git(self.zone, "clone", "-q", str(upstream), str(clone))
+        write(clone / CROSS, "# Cross\n\nSee [[Zones/Personal/Quince/Threads/Rows/Rows]].\n")
+        commit_all(clone, "from elsewhere")
+        git(clone, "push", "-q", "origin", "HEAD:" + self.main)
+        self.diverge()                                                          # a local commit, so the pull rebases
+        r = run(["git", "pull", "--rebase", "-q"], self.zone)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("Cross.md", r.stderr)
+        self.assertIn("git reset --hard ORIG_HEAD", r.stderr)
+
+    def test_a_squash_merge_is_silent_and_never_names_a_stale_orig_head(self):
+        self.crossing()
+        r = run(["git", "merge", "--squash", "side"], self.zone)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertNotIn("ORIG_HEAD", r.stderr)
+
+    def test_a_foreign_hook_is_named_with_the_line_it_needs_and_install_hooks_still_succeeds(self):
+        hooks = self.zone / ".git/hooks"
+        (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        (hooks / "post-merge").chmod(0o755)
+        (hooks / "post-rewrite").unlink()
+        ws = check.discover(self.root)
+        found = [f for f in check.check_zones(ws) if f.path == "Zones/Work"]
+        self.assertEqual(1, len(found))
+        self.assertIn("--changed ORIG_HEAD..HEAD", found[0].message)
+        self.assertIn(lib.WALL_HOOK_MARK, found[0].message)
+        r = run(["python3", self.root / "System/tools/check.py", "--root", self.root, "--install-hooks"], self.root)
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)                  # pre-commit was written, only a hook was left
+        self.assertIn("post-merge", r.stdout)
+        self.assertIn("--changed ORIG_HEAD..HEAD", r.stdout)
+        self.assertEqual("#!/bin/sh\necho mine\n", (hooks / "post-merge").read_text())
+        self.assertTrue((hooks / "post-rewrite").is_file())                    # the others were written
+
+    def test_a_link_or_a_folder_in_a_hook_slot_is_left_alone_and_never_written_through(self):
+        hooks = self.zone / ".git/hooks"
+        target = Path(self._tmp.name) / "elsewhere.sh"
+        (hooks / "post-merge").unlink()
+        (hooks / "post-merge").symlink_to(target)                               # a dangling link
+        (hooks / "pre-merge-commit").unlink()
+        (hooks / "pre-merge-commit").mkdir()                                    # not a file
+        with self.assertRaises(lib.MergeHookNotGarricks) as why:
+            lib.install_wall_hook(self.zone)
+        self.assertEqual(["pre-merge-commit", "post-merge"], sorted(why.exception.names, reverse=True))
+        self.assertFalse(target.exists())
+        self.assertTrue((hooks / "pre-merge-commit").is_dir())
+
     def test_the_post_hooks_never_fail_a_merge(self):
         self.crossing()
         (self.root / "System" / "tools" / "check.py").unlink()

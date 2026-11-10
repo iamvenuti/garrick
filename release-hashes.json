@@ -82,7 +82,8 @@
   "v0.60.0",
   "v0.60.1",
   "v0.61.0",
-  "v0.62.0"
+  "v0.62.0",
+  "v0.63.0"
  ],
  "paths": {
   "AGENTS.md": [
@@ -205,7 +206,8 @@
    "ccfa5acb1350b936abc6d776b534c39cf5c6207988b2eb041a764369ff158073",
    "466e23ac685d19ece0da0cbfc5fb47efdf3cf5c7440f10e40d1ca2ea4d317472",
    "7ebd4e9e3edb9e96fc3413add32c6e12f4b3a12026a3d6e1d2f5cc55c51ce73d",
-   "0fb2bb6b3f6bbfa15036517807931c9b5d8bd87323b2bb6ec784955c4d77fd00"
+   "0fb2bb6b3f6bbfa15036517807931c9b5d8bd87323b2bb6ec784955c4d77fd00",
+   "d1678fe7cce8770763cb94e4163e649b88a937c7cfe56ce3b83c465173578785"
   ],
   "System/garrick-docs/architecture.md": [
    "fbec3ef6f66414a9e94772f1c9566372cee280794b87c70a7a66c80d0f7704aa",
@@ -222,7 +224,8 @@
    "e9f691814736a715bebe5e1e9a6d90d5fc52e0a1607606ae78a68d0a6c70efe0",
    "e7a11d6707a883474f361785d7c85c877840490a07cb73511efef33265a628fc",
    "ce7bb062d8688ce89266ded4e597210d7865e1630813e5bba4dea00ff0630822",
-   "54bf72e94c5bbb91fdd9de1cbcc8b2cce8fbf133d58551c9f4851443a5cab8d7"
+   "54bf72e94c5bbb91fdd9de1cbcc8b2cce8fbf133d58551c9f4851443a5cab8d7",
+   "d777c7a224ce86863c1ba303228452490a9080f6606e109619155a31ca2af3f4"
   ],
   "System/garrick-docs/assets/codex-app-project.png": [
    "b1c39f8b0c4ec97421ec05f3a76cd2a2373bc296acd709039c68e92152d7a3d7"
@@ -264,7 +267,8 @@
    "75c2c58aa14a3635f37ad9451db865bd3600d916563e6d5e0ec1e27904c71e68",
    "67011e5f6cd9a68d56ce10dc466b992dd50153b67b628f14714da2faccaff8a1",
    "a817c2d3f0846e33c5b916fe547785b4cf9a1fbbcc3dd396f7dcd00c24b15b1f",
-   "e486d6ede70c5220097be630b1e358f5ae3af8edbd7b2ccce3b2bdb6928230a9"
+   "e486d6ede70c5220097be630b1e358f5ae3af8edbd7b2ccce3b2bdb6928230a9",
+   "d8d34bd861287c02e73cf74c22a5f3a1af95e863d9de9bb942da5285d0773fe5"
   ],
   "System/garrick-docs/concepts.md": [
    "31c4fdfaedf64d3f1c749aeb5085a65a06bc9f8f2cd2cb315aae81668efd62a1",
@@ -280,7 +284,8 @@
    "bfd96bcca5d9725726e58ed9470e4bf76d57e81a755a29519dbe14503d946296",
    "e89c117ab272375878d3a7f5e3b4f7b30c2d0849a299ff4ed1cd6301b1048dec",
    "a904bb99c35af5c54ab47494ffcc7f84a75a4a527c19aa0251189b7c6c5c1067",
-   "7fdcb22a29f9c34061722ca431444bc3192d32e1483d84368b5a9d87688f186c"
+   "7fdcb22a29f9c34061722ca431444bc3192d32e1483d84368b5a9d87688f186c",
+   "8b523907f94bc19ea964e1cc2bbe2c3ab3e7d788fca0dfdb3071dbe9b317dc52"
   ],
   "System/garrick-docs/context.md": [
    "823acaa34fa576bab05151a6c0ec0755dd588d670b3ba6efdf98cd922c489a40",
@@ -288,7 +293,8 @@
    "8295a61df110950e4b36c3efda5aa58052af57c9bd7f0d88efe6cf123b257395",
    "56b1391e00a8d86c3d33e73721a2424a8447909d83dfecc5342199552952cbbb",
    "58c9120745cd377ac5f5148a47a0a3a7086e6beb8bda2443cf64909f4230aba8",
-   "8520b0a2eec90fdf235cc7aa7db50803552a5d1f932944d15206e10d0d54a8e6"
+   "8520b0a2eec90fdf235cc7aa7db50803552a5d1f932944d15206e10d0d54a8e6",
+   "b8b4321d6b4f6826508e48cca1cd08a9f7949ada0af516e4541516e0c337d13a"
   ],
   "System/garrick-docs/enforced.md": [
    "1e118e3f84c950f40bc5e946fe3386e274fb2d41c3519232bb377f7be8b18e1b",
@@ -312,7 +318,8 @@
    "46a2ce21ba1fdc4086df665a13cd5615fb27e6e7c06c57a7b5696b4a0de2763b",
    "02324cf4de1a4682e7682ce016d2f48f79d9271e3aea796a2b5680bfe332a642",
    "b2ed3d1675832d54157963b20d375b958b772f15db3c3e83c9057681504019bc",
-   "bda0c80f0785b2eda0c90ec42a7fa479349227c078f0d77efe8bcda3157b39a7"
+   "bda0c80f0785b2eda0c90ec42a7fa479349227c078f0d77efe8bcda3157b39a7",
+   "29b1d33bdfde025366efc7454d5e7b89cbc36651a0a428325c26b5139630bc02"
   ],
   "System/garrick-docs/example.md": [
    "ded4dd6bb2e361ae125e923b00bd4e5e78b442c0c1950c1b05d72b92f5aae139"
@@ -400,7 +407,8 @@
    "13e671cdbbb9f102cc56abd2ba45d8da845694cc48b3b0c75c64046afd9c0c0f",
    "b5fd624de8bb9d645a48224082b603f399da08b97ae37608b1595c0ba3d00f0c",
    "91d0bc9b010ba411e8fac3d91668fa88304955ed456fafd82ec4d89ef150bd88",
-   "1aa89865ad7086ea3e94c09b9e9d0c70fd42e011169ae76f5ad282789a993502"
+   "1aa89865ad7086ea3e94c09b9e9d0c70fd42e011169ae76f5ad282789a993502",
+   "9b540fdce869bf81a3304fdba9975e9519e4bf53843232d213b7b2a3814bca18"
   ],
   "System/garrick-docs/extras/simple-home.md": [
    "f29f3cad2d8794c24455852b210df09d12a5a68dfab1dfda025ae5118ac78ee0",
@@ -474,7 +482,8 @@
    "10fc0a1a792011854aa4ae63fa3622099e419e3dd64bd0a2570367e1afc8514d",
    "152cd29cc821513cc5d19f7d908229c2495cc7fe69d28ed660c185b69f5054f5",
    "83437f4bb2890a0744de70905f62a67b9f5ac855730ba904b49c1144539e61c2",
-   "9f8c09f58da2a38b2eb4f014befda0f6514614a4808dcd50babcb07431f1d8f6"
+   "9f8c09f58da2a38b2eb4f014befda0f6514614a4808dcd50babcb07431f1d8f6",
+   "183fd2f86343c6f975ad1645d8454a4b462908a66f2be10ded723b8959bc210c"
   ],
   "System/garrick-docs/extras/toolkit.md": [
    "0c2b32677ceea573b6cc7e021286aa28ca2be078a6d0267b563d04361397c4c8"
@@ -492,7 +501,8 @@
    "915cc29d26582edf9675d96c444ce2dcc3ae138c0866e4fa3de4288837b5bc3d",
    "043a9832643447198ede01d374b6e9b61e973a01a9ecacb9aaa6bf8005c4dce5",
    "c88c91cf418e99098c20ac101d7684f2657ee7a528b38c4a7aa0cec245fbaf79",
-   "3846303d159f70776843cff6dc66f5cc1e1efdbb286dbbfb2e8562bff76bc78f"
+   "3846303d159f70776843cff6dc66f5cc1e1efdbb286dbbfb2e8562bff76bc78f",
+   "f75cea4259b325b3fa05d48600e778f4488bbfe8069661c82608e33369bb20ed"
   ],
   "System/garrick-docs/first-steps.md": [
    "641167012cd49ee1821bdaee95726d2ebca63ecb58f73afb3a38401ea4883f31",
@@ -526,7 +536,8 @@
   ],
   "System/garrick-docs/guided-session.md": [
    "45ce861260f3b466f729acee3ac18f1be73ea25758c5fd5c15ccccd88cfae700",
-   "a59fc6034207c6fa936cfc04fdd64e03ab5028accd45b81c75335c1dc56f52a0"
+   "a59fc6034207c6fa936cfc04fdd64e03ab5028accd45b81c75335c1dc56f52a0",
+   "c6c61385a8ca2c6eb912c845d302e2e936af295403af2692ca3f37fb950ea7ad"
   ],
   "System/garrick-docs/harnesses.md": [
    "41c2dd332b6452483f08aceff17a2e912f3814dc65c4c5bf6e91e62862db8e03",
@@ -565,7 +576,8 @@
    "300aaba18f0a1ada48924a2abfd74ce0ba39dc109ae33e0c33dcb81f9e4ce122",
    "0a4404103df826e62d650d98d2dc0f7ee26a2f480d57c68bd5148f2268aff85f",
    "f39f8e72e869e49742e8b1e901e90e1d4de2a635a68883fa685c75231a154121",
-   "e0e51717c9bf52a90a51377006a4a611928e7d873b975b20e06b39468b214a5f"
+   "e0e51717c9bf52a90a51377006a4a611928e7d873b975b20e06b39468b214a5f",
+   "2b3f65bea8a4c53101da4b87a39861f6a9b90e431a659adce2866781d100d414"
   ],
   "System/garrick-docs/terminal-setup.md": [
    "e5a9f9a84035ac2417117be1efc0378a7f6ff15cf2cb432ca93029545996f750",
@@ -594,7 +606,8 @@
    "d274b379ebd49a1e40c508d44b2a5ded0946c75b2cf154f358df63e75464e379",
    "dc0431a6bbde5c186e65edadc9ecec6b751e15270e65f72e2565535a62c0a91e",
    "7d016927dc12a4c184275193e1d03cca92fc81fb703e97d04fc381e0a204a2f6",
-   "93a6d7a8ad42b0de59c9c0e0bf2eac0833680258f4a2fe9d9d13a818092a18fc"
+   "93a6d7a8ad42b0de59c9c0e0bf2eac0833680258f4a2fe9d9d13a818092a18fc",
+   "c163d8b0618a3c159adcfbce04ad1af16f0663eb16cef894291c67e0c7971199"
   ],
   "System/jobs/agent.py": [
    "daa36e5d296f62c69a3f2e9bedfed3c51879950c2b777537e668b31f613a545b",
@@ -709,7 +722,8 @@
    "a2936e6ad549698c66cbe82825d59e21c182dd7132bdab61655697195ab763fe",
    "4fad4f97b4dcad9bb50d1daae200e623664cbbfb604eb0409b373abf7eb746b9",
    "c9f6b90a5785fe7077a4cad6a6338780c79db430291ae898c59ccf6ea453e259",
-   "8cb8390e6d4bdfb6740e87eaaed2938327545d331a23d10ac98d693440a94a3f"
+   "8cb8390e6d4bdfb6740e87eaaed2938327545d331a23d10ac98d693440a94a3f",
+   "d4a2152db8b76ec5f6b8576e4acaf5d18e20fa0e4123420107246c7532ae0af2"
   ],
   "System/skills/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -732,7 +746,8 @@
    "eea6a20af50f34b15ae8ce079dcbc6ef3af95540e4cafac513349390f5fdfe32",
    "b8ae38c76cb46bceaff2bf061fac6f9d8ee4b52e4e0fcbdce61e4faf77149ebd",
    "f1edae3afebf88bfc068d86909829048ce15671a04613f44cc4101e7d620210c",
-   "0f22ccbdbdd877be2fe314e340903f34f4b24a8557b2c8a1a0e7ab721594180c"
+   "0f22ccbdbdd877be2fe314e340903f34f4b24a8557b2c8a1a0e7ab721594180c",
+   "b670760fb9f6e2846c44f6910b397979a3ca212cffc6116ad5d875c63511b6db"
   ],
   "System/skills/intake/intake.py": [
    "3f8a28871b14b6f63d5f86bc7db5d93628a98f812993285ed24b8cc6724d9f17",
@@ -744,7 +759,8 @@
    "d6b208f289915874882100c2c9cadba9607503ace0b2276b054bf51810bf8877",
    "1d0e6cfc2edbc26b75da95ffd8937609f97d6e895845340b1606ee589e9960fb",
    "5206e6c782839d15ff1d8015e2a61b2258af8f6971f7f6acb1fc0a2066be1237",
-   "1a1064ad562acb3afdf099549478d68ce2304478417d009957529d45e84ee54b"
+   "1a1064ad562acb3afdf099549478d68ce2304478417d009957529d45e84ee54b",
+   "0b780ebd705996f1e663db031eeeba6b8ba267700c6ed25bb18d845b12a2e094"
   ],
   "System/skills/interview/SKILL.md": [
    "21a6c77dbec49ac06c6af3f958a5005a4f754e3905de3d76ed8b292e3027b004",
@@ -789,7 +805,8 @@
    "24ef09df7a07404c7cbec32e71d7d795ca4b52caeffc5d777e26f5727f0ea183",
    "2cc014e3a8b2ad53174944d8c3ee9682d5a3a01ac8538f6b3e6589419842ef82",
    "6ed9c5a40806d543e142e82826f45ac5c6e01b98ddb40b3a0e9ff5ab7264d789",
-   "818d6147d044b6d92e08cbaf160dd575ebe36d00507e90292349f205d0ea9e0f"
+   "818d6147d044b6d92e08cbaf160dd575ebe36d00507e90292349f205d0ea9e0f",
+   "8bac2ec6b15ff0297fe10cf62c25eafd85e87172ab358ea726b63aa6ef61d4da"
   ],
   "System/skills/meetings/ingest.py": [
    "fd95c5762a86e1990e9d9a15285d574ac3fde77a6a5334ad314ea8d11ab1b5d7",
@@ -800,7 +817,8 @@
    "305393e344b25c11d80a878899b835579d5946b866db3812c0ee3b969c15bd78",
    "eb4f39cd3dd71fb2d2a76d20a5c044e85f909134872b2b82ef14f15051a11023",
    "236b037105c54ab3697f6a13f18734db76b36836b3c7a62670e95063530c2efb",
-   "995305d9a665b9fda0354de81a554eda8a4405c65454928b4cc862357841ee43"
+   "995305d9a665b9fda0354de81a554eda8a4405c65454928b4cc862357841ee43",
+   "a45da725eddf494adb5827f6174c70519cbd77ecb7de05ef4f075e4fadeb0db1"
   ],
   "System/skills/nurture/SKILL.md": [
    "73ec11580deacb632c0351e80ceeb431f125650897c182c449bbd3484489b089",
@@ -814,10 +832,12 @@
    "8fcd315b7efdbd1dd027a0f81482cc4e683c36b03c94ac7fbf2a9d652665307f",
    "a7aab3dbf2adbfcdbf9d012b77191a96b0d88ac273ccf5de0535c57b64566bc9",
    "62135405298d45b03c971040785421f06acf003bcbbec7251e1b5936d1254d3d",
-   "927dfc37147e9b3581528a17c8300caa704b38e30e327d8d89f59b6be2a6b326"
+   "927dfc37147e9b3581528a17c8300caa704b38e30e327d8d89f59b6be2a6b326",
+   "852fc9911c561a8ab826da576515bac2d833b9afa1577b9aef77a96e5fc640f6"
   ],
   "System/skills/recall/SKILL.md": [
-   "7993d47d56b19b870fe734a2d2ba828773bf5ef98a78768bf355a8045a6d0f51"
+   "7993d47d56b19b870fe734a2d2ba828773bf5ef98a78768bf355a8045a6d0f51",
+   "65fcb30f906235dc9562351240b2f6e2cb9e4308f04b1336b4d3f7282f28a32e"
   ],
   "System/skills/setup/SKILL.md": [
    "779320e6f49c4ba86731b7b83f410d4ca2dc0e44ba925682ea3caa4b5c74ae8c",
@@ -865,7 +885,8 @@
    "b838b45cd77494cf4bc1cb73c2c6557a9af873eccf1f58fe27b7deb418d64725",
    "f07876ca3f138eec166481164b9187dc0ce532f452ed39f8729919f1ff596144",
    "5ecc9856086cb4852679b8e1261f1244106022762faf5c913ccd81ebf90c10bc",
-   "9e4ccb80057c02d5a6d6feca0ca7194906f217a602e7eaeab17cdc60ccc42691"
+   "9e4ccb80057c02d5a6d6feca0ca7194906f217a602e7eaeab17cdc60ccc42691",
+   "6cc35d0d5aa0e62ed7b2bec1f234a534fd01f2438a15ff28dc2271e43da6e446"
   ],
   "System/skills/todo/SKILL.md": [
    "68b9930c1cba46362462c267f5ea7bc0891aaef86da8ac653e8369573735749b",
@@ -895,7 +916,8 @@
    "0b55db1717c8314e13f82c89a432beeb52fa7d7d3b944478dcb1e59f1e692b59",
    "e27d8390d1a21cdda268912c97adf83d7a6f0155bb1d4d8b6a76bc5ae7d5c71e",
    "cf1901362e3c5054e130f6edf57dfbf0c7f80030347191d56d9ac6b735c4656f",
-   "170cce277818a82fc70746ff922923f248db35109fca4e159bf34b134d0d19b3"
+   "170cce277818a82fc70746ff922923f248db35109fca4e159bf34b134d0d19b3",
+   "3b983370bb6fe3cf507210e8dc9ffaa25074e85237ac76a38fd4977ab70a4dd0"
   ],
   "System/status/agents_working.py": [
    "90621bdf4a8ced4bcfeda6daaa9fe3532fa0656d9841f1bc74e47a3435a5351e",
@@ -937,7 +959,8 @@
    "339a351914e62aa2734b3a3b0ee7f314fc33c6cd1cab7e8fdc67b7b5d4d033a0",
    "e41d87730fdd963b54bff901e73f078e4dbb57f8b836bc19402d7516cff5870c",
    "53bc1b344994d64f80e487068adf122d04273d88c17fa90eff24450ad8466a51",
-   "40ebc7ac7c280d5810f4f84a132103214a530ed11c3b07f4b6f2ded1ce1359aa"
+   "40ebc7ac7c280d5810f4f84a132103214a530ed11c3b07f4b6f2ded1ce1359aa",
+   "9e7e850ed180007fe107997886702d8cee6505fcf907a24332e7c55ca0d92b09"
   ],
   "System/status/app/GarrickFinder.swift": [
    "b3d0fc1696c8513fd6cba2957d1384f2413ea499e8beb36d4eaf30a266777884",
@@ -999,7 +1022,8 @@
    "85601468c01ea2c76cd116236ac33f321a98e74a89bc2d44c67090e7d488438e",
    "2071c57f41c615637dcf8a1fc1b10a9aa7ca42c5ac05b2a37214a70f7d1b0abe",
    "21f1ecf40b3112140163f753fb9769e7b126eb99909a638cc631a5e22d3ac865",
-   "30cfe16aaf24f27a50eb9c926f63351804970fb6b3197825e414c6791ab44a81"
+   "30cfe16aaf24f27a50eb9c926f63351804970fb6b3197825e414c6791ab44a81",
+   "55b30bdd39d6f11b7b372cdec024de9258ae1446db7f16dabd76bc71182404ef"
   ],
   "System/status/ask_scope.py": [
    "0869cd23b8e0febcc47daef6291d782eb7161727bd89215df1b31040477c37dd",
@@ -1011,11 +1035,13 @@
    "544533a53c820cb74ae5218d426e7905a433595af07c06444f2b6f8955ac9ed2",
    "a693e40a8e15ca86cb67d73cb370a6a8f088d898715ccad3f9b28a6a93365f1b",
    "7cf91ec4a8c7fb02c41aebfe580a89fd97ae387a95be96186c17c62d94b0cae7",
-   "819617bd47ef192eb3ea7254b0ab5e70845d609f9cae2f9b740eb4c73793f074"
+   "819617bd47ef192eb3ea7254b0ab5e70845d609f9cae2f9b740eb4c73793f074",
+   "cce50e01de45ca0c181435a7efabd414acfbf2dd30d6972cafe0625b77f007f2"
   ],
   "System/status/ask_tools.py": [
    "22182504365314be07d236eacb36cddbf33ad29ad2370d372c6cb718ec79dbfc",
-   "293a14ab96d77407bf8f12a60aaff9328326af14e1554d421d216d407dd8ab14"
+   "293a14ab96d77407bf8f12a60aaff9328326af14e1554d421d216d407dd8ab14",
+   "38cf99dada845ac0a4e5682f541172fc159e255cb3aba904cf82b5319a61adb4"
   ],
   "System/status/effort.py": [
    "04d6305220dc789485af6071bd06d207f0f668025b320670352f6d24f0b0f216",
@@ -1029,7 +1055,8 @@
   ],
   "System/status/guide.py": [
    "8a0e3789cb7d425b80ad3281cafd34378ecd64775cc465a047d78b7d86943507",
-   "6c7d309d80c9332f06145c52534d402727df2f7398aa7d470628c6dcef5298e9"
+   "6c7d309d80c9332f06145c52534d402727df2f7398aa7d470628c6dcef5298e9",
+   "631e4dd5ac0deba163e41e3dbaf092c1a2e00a2cb3e641215c4e834e4ac4d859"
   ],
   "System/status/handoff.py": [
    "da910539262a633f86a3503abf4dedb7bdcd6eb2537577eb46a517ce1158f85d",
@@ -1098,7 +1125,8 @@
    "e4123116223345bd2d2172760099fb0444555e2aae9821f1ac05d4bb589651cc",
    "b35437f3c86e4479e383afe8d4f6e4561f7637f47eda2ff4b447bbdc2c3ad23f",
    "e43995e7edce45ab29da11862eeb4d075abc77a5edf5ef036099b4d616119c49",
-   "1e81511029765d7bf5b285da1de1c5619f348487913bd58415c3ac744231a320"
+   "1e81511029765d7bf5b285da1de1c5619f348487913bd58415c3ac744231a320",
+   "74a99f5f2cac87b423dd62e28f218cf5f644ac54bd479ecaa6fdce1809a9552c"
   ],
   "System/status/parties_panel.py": [
    "6ed8253f652ddd87fc0b630978609f72b60cbce9cf827e440cc01e4ae446bdd9",
@@ -1115,7 +1143,8 @@
    "bee50be0da8211eb6e10697b714784eb97a34235ca69b668385b954d73fd4066",
    "e2aca0607389da7310dc1953136bdb6939a953b2a8dd53e91ad2e0b6b1517272",
    "b5287280233060d819798701b0b7928180335df3987b669dd457fbd0a772031f",
-   "f6eac0a7eec8bb4c18d33ca77772ea8ad71063e84ea771b4a65922328e43d953"
+   "f6eac0a7eec8bb4c18d33ca77772ea8ad71063e84ea771b4a65922328e43d953",
+   "40c6860bdcf12a25a5705fce49aa6224016491251e728ea0d0df743c92160bd5"
   ],
   "System/status/status.py": [
    "0b7d93f7e9e642e84e6434455a9a2219152e6444eb2ccc71d7a463972ebe4e36",
@@ -1180,7 +1209,8 @@
    "0325e53456a837a5ef706307144c6a9970733e87c351c96360155dc2fcb0a7b4",
    "61788f182c6bbfdc1b0ea69f54f9b75609e7d99dd8476d4bfb49c442c343611f",
    "81ffeb94b192b71d846535bcb734b764cce66905ea039c1924182d0ec7d89bf8",
-   "ee0e66bd600fcb863ff05b27666c8e7ff984a213b163b9c774430efdfa16384d"
+   "ee0e66bd600fcb863ff05b27666c8e7ff984a213b163b9c774430efdfa16384d",
+   "2a36570d579e2799e1a28c002ccfb283cf34a69f1d66d3c5e90bbbf8b11a972a"
   ],
   "System/status/todo_lines.py": [
    "eef73cd850bd8107cf983b45ea64668a069fea7149ab25c7927924a7a90e7a59",
@@ -1218,7 +1248,8 @@
   "System/templates/zone/AGENTS.md": [
    "83ba24e55f902a7efc11ff614cf26cb9b82f6bfe3f5c8423d59f6c1cfc64306b",
    "4044d3d115cc0f88da989acb49eeeab02530819c9a45b9d22f829154181f03ca",
-   "dce961fa6d3500a58cbdc3bce72e85cf43a8885c2ca5d16ebcd886717d9364d8"
+   "dce961fa6d3500a58cbdc3bce72e85cf43a8885c2ca5d16ebcd886717d9364d8",
+   "617a5fde2d2a63ff8f790e1b6bdef50eff50511920766628a029e57d63cc5477"
   ],
   "System/templates/zone/Inbox/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -1284,7 +1315,8 @@
    "0bdad59e139ca6865228533ad4b1aabe7f90d1f1424a04482281d4e907f081af",
    "1517095ed84706848f6f59f3cab4018bb3eca97ca42428733e82aa7771f20c13",
    "8ff08ea9cdc40eb7f30fd79c2ccdf8fcef1a5b35760b42d12ba61db94a2f14e2",
-   "8553bbbfa3e48bdf6a012878cc98f95d5b40e650770ae99be8c95572e34fd2cb"
+   "8553bbbfa3e48bdf6a012878cc98f95d5b40e650770ae99be8c95572e34fd2cb",
+   "f8fecdd8a213d7dd675b34ddfcbc00bc5aa85940abeccd80c5dae0bc7bc40651"
   ],
   "System/tools/correct.py": [
    "feef9c10f81fb8fb765b6fbf0f55f8cbb4881f6f9f439e97fa3b8897561766ad",
@@ -1360,7 +1392,8 @@
    "39f0a13ce11b1f1774ca8c8f858dfe63db83f6f776aad05da07f45beb3e1d84a",
    "844f658b4b8237cbb3e824676bf1dd0a330f760247d5a518c67bcdc47f7381b8",
    "77cafd5dff0412a7f89cf6d3b4e288303a998e635bd6677b9b74d35a20742e11",
-   "b1778b23717aff82c7cae6f216e3099436f310192c625c0822bdc43cb52e7be6"
+   "b1778b23717aff82c7cae6f216e3099436f310192c625c0822bdc43cb52e7be6",
+   "aa96034fce85ebd1a15e1b851cd98966bbe9614e7a5e62554667fc3ee9b46800"
   ],
   "System/tools/migrate_walls.py": [
    "98a56b659c08be653e610487d03366e4f31781da3d9237b96d90194787b0ace8",
@@ -1391,7 +1424,8 @@
    "783a96f502b471d5b125d23631033c73b170d3c84feeb22ab3a3b2b517e02287",
    "9c344dc40fe8a5804acbfb661dcddea29924ec2bfb86eb07afc220620b6f81c0",
    "0ca810aaa0d5b49d494d3056ba3a2343d30404ba6bbdbf54f9c582215782c647",
-   "b887b1aaf042fbf74b42cc0f52f7a92064238e7245e3b75d9ec4c9b5c3d59c3d"
+   "b887b1aaf042fbf74b42cc0f52f7a92064238e7245e3b75d9ec4c9b5c3d59c3d",
+   "899202d8f2a1e620990246f54f40e04f7d4d1b956d7a7b9bca1b1b9882939be6"
   ],
   "System/tools/operations.py": [
    "96ee9cc1ee7dffece435517c5a633f5803fcd53dea669c2033a37ae6bcb35050",
@@ -1417,7 +1451,8 @@
    "b7f622b7273c0f1e2470ac00b1285ac2e0f0b29cb70309952e6e7ba8ed1f66ca",
    "7ac2acf670944a0bccb3782d0871982a1e7d70440dc4c6e98d2b09411e58de23",
    "6e2d16fd533b64ff0dfb99112f5c71c3a2b89eafc6e00d159219fbc2ff8dbf46",
-   "04ffb8f9a8aac0d1db6cfbbf59f8f000b1cc361126b9ff8a3e24230e858bed20"
+   "04ffb8f9a8aac0d1db6cfbbf59f8f000b1cc361126b9ff8a3e24230e858bed20",
+   "2815ecae77c5de4fb0c1694a256729882ec53ed9c303ddb25399fd5a04870de9"
   ],
   "System/tools/probe.py": [
    "cf81236b20c6a525676de9e0f547412c83cbc094fa9a4831fa97c1746beafdbb",
@@ -1425,10 +1460,12 @@
   ],
   "System/tools/recall.py": [
    "90dfd63c4cbfac1367888cb14b7d04b6cd88cc91d49695b145f796f9e5f97167",
-   "8dee84bbece969fb858a615d073cd20ec32c5604bbc8b4b950860dec7d0800bd"
+   "8dee84bbece969fb858a615d073cd20ec32c5604bbc8b4b950860dec7d0800bd",
+   "fca62d337c150c98fe4b6532b639d85bb9317c184a4c9c9bbe6e6ad551b41966"
   ],
   "System/tools/recall_sessions.py": [
-   "8e8838ec5f5719211680821c989b7ffe6d84f9074408dc0ea5a2b1641aa2b695"
+   "8e8838ec5f5719211680821c989b7ffe6d84f9074408dc0ea5a2b1641aa2b695",
+   "946ccdc8ae4cfe1070bdc5c86c435e32186d9208a4cfa423e6f0b9ed8da7d3a2"
   ],
   "System/tools/release.py": [
    "ae7f5665749cdb5415cc9e17460ea6ce620d904a9cd363d3748bc5598f317f78",
@@ -1436,7 +1473,8 @@
    "f51012c66d2dde27dafc81ba28f620024de0608a5d635f13b6768a1d33264ded",
    "14a70a051afba8605b7b1077ba0dfa10880e87e2b222d2142f5915476f940c34",
    "074382bb16bc4d719b4fd139f3610feda06667e5bdaf5b71f1203a1ab2ecc3f2",
-   "85474454fc9851bcdd14f6c5b1b8dc0045a9745c969508710c67bf2582e0d4b4"
+   "85474454fc9851bcdd14f6c5b1b8dc0045a9745c969508710c67bf2582e0d4b4",
+   "433ed6d58f1f4e5d9ecf4429196bb64844247f44bec580e380148bc37e4f242d"
   ],
   "System/tools/scaffold.py": [
    "a749c79fc4a5df811dbeec4bb0f83da972c41500dc954ce084c765bd3e7d00fe",
@@ -1458,20 +1496,23 @@
    "941197494dcb04e7e660e70f108e0d1f965cacb05aec67275f78481f79924db4",
    "cd628b30623010ac2b283ce37b09eb36f1dd619b27d0496c3d7378cbe5134c12",
    "e899e183c082cc407d75fb72265933e7352327e07c5958c2fa2bdc57acc7e3da",
-   "377d988d6245ab411a7e670bda77f56027a97a42b6c3a8fca8ea8e9ecb8e5a11"
+   "377d988d6245ab411a7e670bda77f56027a97a42b6c3a8fca8ea8e9ecb8e5a11",
+   "d164a1b55ed6cd00d0b525607499ebcdf6ec02e4b7e681706dc6a5014ace89a1"
   ],
   "System/tools/walls-cases.md": [
    "83cddd3a0cffb244e16f7fa78cf995d29d17f28e83d03e749e4b8e113d715d69",
    "c70f9435424b1a7576bb14fa4e9120f3990a726fa6b122561976a6493d88870f",
    "1269e50db53cba7756de385500bf6b7ccbb2b3f88554ff029dd974310deeed3e",
    "e9524fc5f3866d534f315897a04e858f35bdb957db03d5756ad2fc2a2cd8469b",
-   "8981fa93824f67dc1b2741330f5c01678ab1839a0a09e9ff3b2904ddef507ebe"
+   "8981fa93824f67dc1b2741330f5c01678ab1839a0a09e9ff3b2904ddef507ebe",
+   "f0be77faf8dcfd9181cd0591f48fb5878930415d0d196bd54fde3ab9fbcc9d1b"
   ],
   "System/tools/wiki_lint.py": [
    "3ae93a8033a762351cec9b55543db55ef7b5d09e81a8538dee2308cb6db65dd7",
    "95e28f6e83838f5c50511883d6133686283da68dee05a5e93fb5ef2f536475dd",
    "66e99aac65ee587c8b47bfb8713a1453399da8b685a2b63351d94545f92c1c78",
-   "8251f281ae7f1858d88e01d40907e446e6868a925291b16c62a91288098d0651"
+   "8251f281ae7f1858d88e01d40907e446e6868a925291b16c62a91288098d0651",
+   "2ac3143ad1f32e13fd957ef8864ab6342747b04febd9692641453e9d87b5fd2e"
   ],
   "System/tools/wrap_lock.py": [
    "9fb2712af04e3a25f2e9f8ef61f9a45b54bb2dce80552a04a9edb05259bd54aa",
@@ -1521,7 +1562,8 @@
    "5613cb20d49e44c6f1af0233d82cd58bc95b8fd66fe57a0831de878822bac140",
    "452a3d98ade652ba1407cff548a92518c2639781afad857882572d28af765f77",
    "691cf42c2a63128a9fc20b8ebacf9b1c913a34b3a5fdbaf00762173b4461c565",
-   "184e3a08f33d158e76dbf58be50bc434a5066f56d71a60c2204b14f8d9a053a2"
+   "184e3a08f33d158e76dbf58be50bc434a5066f56d71a60c2204b14f8d9a053a2",
+   "d57bc13e5ae1330c222b1c47c2211ccfd246ca10842cfe5e6af2151d9076ba8f"
   ],
   "Wikis/Meetings/questions/.gitkeep": [
    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
@@ -1546,7 +1588,8 @@
   "AGENTS.md": [
    "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
    "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
-   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n"
+   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n",
+   "# {{ZONE}} zone\n\nPart of the workspace above. Before anything else, read `../../AGENTS.md`, `../../System/rules.md` and `../../System/context.md`: an assistant started in this folder may not load them on its own. Then this workspace's own additions, where they exist: `../../AGENTS.local.md`, `../../System/rules.local.md`, and `AGENTS.local.md` here, which holds what only this zone keeps, such as its own routing. Each adds to the Garrick file it sits beside and wins where the two differ. This zone is its own git repository: a commit never spans it and another zone.\n\n## Structure\n\nThree levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> [--party <tag>] --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.\n\n    {{ZONE}}/\n      Todo.md                 the only list of open actions in this zone\n      Inbox/                  mail and files waiting to be sorted; never a project\n      <Project>/\n        <Project>.md          hub note: what it is, who it is for, its threads\n        Sources/              material received\n        Deliverables/         what is made for the project, `YYMMDD - <name>.<ext>`\n        Threads/\n          <Thread>/\n            <Thread>.md       thread note, with the resume point\n            (working notes for this thread)\n\nEvery piece of work belongs to a thread, even when a project has only one. That keeps one kind of resume point in one kind of place.\n\n## Parties\n\nA project hub may name its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. It is an index, so that \"what did X say\" finds the project; no check reads it as a wall. The wall is this zone's: walled or open, as the Zones table says.\n\n## Inbox\n\nDrop anything for this zone into `Inbox/`: mail as a `.eml` file (or saved as `.txt` or `.md`), a document, a data file, an article. A script or your assistant's mail connector may put mail there too. Say \"process the inbox\" and the `intake` skill moves each item out, to where the *Ways in* rules in `System/rules.md` send it. `Inbox/` is left out of this zone's history.\n"
   ],
   "Inbox/.gitkeep": [
    ""

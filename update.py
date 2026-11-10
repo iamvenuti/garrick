@@ -101,7 +101,9 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
 sys.dont_write_bytecode = True
 
@@ -1915,6 +1917,9 @@ def _subject(finding):
 
 
 _WORDING = re.compile(r"repeats wording from (.+?), (?:an? |in project )")
+# What the check calls a file of the Meetings wiki in a wording finding (meeting_noun, PageNames.kinds). Longest first.
+_NOUNS = ("meeting page", "entity page", "person page", "wiki page", "raw record", "meeting", "reply", "question",
+          "decision")
 _MORE = re.compile(r"\s+and \d+ more of its files$")
 
 
@@ -1928,7 +1933,7 @@ def _kind(finding):
         return "wording" if "repeats wording" in message else "link"
 
 
-def _source(finding):
+def _source(finding, raw=False):
     """The file a finding says its material comes from or points at, or "" when it names none (a name, a missing
     zone). A wording finding names the page it repeats, by its stem, or the file, by its path; a link or path
     finding names its target. Lower-cased, so the two releases' spellings agree."""
@@ -1939,14 +1944,22 @@ def _source(finding):
         if not hit:
             return ""
         head = _MORE.sub("", hit.group(1).strip())
-        if not head.startswith(("Zones/", "Wikis/")):
-            head = head.split()[-1] if head.split() else ""
-        return head.strip("`").lower()
+        if head.startswith(("Zones/", "Wikis/")):
+            return head.strip("`") if raw else head.strip("`").lower()
+        if not message[hit.end(1):].startswith(", an unfinished "):     # that form names the stem alone
+            for noun in _NOUNS:                      # the noun the check puts before a page's stem, never part of it
+                if head.startswith(noun + " "):
+                    head = head[len(noun) + 1:]
+                    break
+            else:
+                if len(head.split()) != 1:           # not a noun it knows and not one word: unsure, so no source
+                    return ""
+        return head.strip("`") if raw else head.strip("`").lower()
     if kind in ("link", "path"):
         for pattern in _SUBJECT[:3]:
             hit = pattern.search(message)
             if hit:
-                return hit.group(1).strip("`").lower()
+                return hit.group(1).strip("`") if raw else hit.group(1).strip("`").lower()
     return ""
 
 
@@ -2011,28 +2024,74 @@ def _party_zones(text):
     return out
 
 
-def _target_zone(root, lib, finding, stems, parties, zones):
-    """The zone of what a finding points at or names: the file a link or path resolves to, else the zone of the
-    party it names. None when neither says."""
-    message = finding.get("message") or ""
-    found = set()
-    for pattern in _SUBJECT[:3]:
-        for target in pattern.findall(message):
-            target = target.strip("`").strip()
-            options = []
-            if target.startswith(("Zones/", "Wikis/")):
-                options += [root / target, root / (target + ".md")]
-            else:
-                options += [root / "Wikis" / "Meetings" / (target + ".md")]
-                stem = Path(target).name.casefold()
-                stem = stem[:-3] if stem.endswith(".md") else stem
-                if len(stems.get(stem, [])) == 1:
-                    options += stems[stem]
-            hit = next((p for p in options if p.is_file()), None)
-            if hit is not None:
-                found.add(lib.zone_of(root, hit))
-    if found:
+_OBSIDIAN = re.compile(r"obsidian://open\?[^\s)\]>]+")
+
+
+def _zone_stems(root):
+    """{stem: [paths]} of every note under Zones/."""
+    stems = {}
+    base = root / "Zones"
+    if base.is_dir():
+        for path in base.rglob("*.md"):
+            stems.setdefault(path.stem.casefold(), []).append(path)
+    return stems
+
+
+def _resolve(root, target, stems, zstems, meeting_only=False):
+    """The one file a link, path, Obsidian address or wiki name stands for, read only; None when it stands for no
+    file, or for more than one. A name is looked for among the Meetings pages and the notes under Zones/, a
+    `Project/Note` name by the end of its path."""
+    target = target.strip().strip("`").rstrip(",;").strip()
+    if target.lower().startswith("obsidian://"):
+        query = parse_qs(urlparse(target).query)
+        name, vault = (query.get("file") or [""])[0], (query.get("vault") or [""])[0]
+        if not name or ".." in Path(name).parts:
+            return None
+        bases = [root, root / "Wikis"] + ([root / "Wikis" / vault] if vault and ".." not in vault else [])
+        found = {(b / n).resolve() for b in bases for n in (name, name + ".md") if (b / n).is_file()}
         return found.pop() if len(found) == 1 else None
+    target = unquote(target)
+    if not target or ".." in Path(target).parts:
+        return None
+    if target.startswith(("Zones/", "Wikis/")):
+        found = {(root / n).resolve() for n in (target, target + ".md") if (root / n).is_file()}
+        return found.pop() if len(found) == 1 else None
+    stem = Path(target).name.casefold()
+    stem = stem[:-3] if stem.endswith(".md") else stem
+    found = {p.resolve() for p in stems.get(stem, [])}
+    direct = root / "Wikis" / "Meetings" / (target + ".md")
+    if direct.is_file():
+        found.add(direct.resolve())
+    if not meeting_only:
+        tail = "/" + (target if target.casefold().endswith(".md") else target + ".md").casefold()
+        found |= {p.resolve() for p in zstems.get(stem, [])
+                  if "/" not in target or ("/" + p.relative_to(root).as_posix().casefold()).endswith(tail)}
+    return found.pop() if len(found) == 1 else None
+
+
+def _target_zone(root, lib, finding, stems, parties, zones, zstems=None):
+    """The zone of what a finding points at or names: the one zone of the files its links, paths and Obsidian
+    addresses resolve to, and of the page or file a wording finding repeats. Every target must resolve to exactly
+    one file, else None: an unresolved or ambiguous target is never placed. With no target at all, the zone of the
+    party it names, when it names one."""
+    message = finding.get("message") or ""
+    zstems = _zone_stems(root) if zstems is None else zstems
+    targets = []
+    for pattern in _SUBJECT[:3]:
+        targets += [(t, False) for t in pattern.findall(message)]
+    targets += [(t, False) for t in _OBSIDIAN.findall(message) if t not in {x for x, _ in targets}]
+    if _kind(finding) == "wording":
+        source = _source(finding, raw=True)
+        if source:
+            targets.append((source, not source.startswith(("Zones/", "Wikis/"))))
+    if targets:
+        zones_found = set()
+        for target, meeting in targets:
+            hit = _resolve(root, target, stems, zstems, meeting_only=meeting)
+            if hit is None:
+                return None
+            zones_found.add(lib.zone_of(root, hit))
+        return zones_found.pop() if len(zones_found) == 1 else None
     tags = set(re.findall(r"<([^<>\s]+)>", message)) | set(re.findall(r"; (\S+) is walled", message))
     known = {parties[t.lower()] for t in tags if t.lower() in parties}
     if len(known) == 1:
@@ -2044,8 +2103,8 @@ def _target_zone(root, lib, finding, stems, parties, zones):
 def near_wording(root, tools, findings):
     """{(path, source)} of the released wording findings whose run of words the zone rule's own search also finds
     in a file of the finding's own zone, so what the file repeats stays inside one zone however the old message
-    worded it. Asked of the release's check, which reads the workspace and writes nothing. Empty when it cannot be
-    run: a finding it cannot place is printed as other, never as inside one zone."""
+    worded it. Asked of the release's check, which reads the workspace and writes nothing. None when it cannot be
+    run: a finding it cannot place is printed as other, never as inside one zone, and the study says why."""
     pairs = sorted({(f.get("path") or "", _source(f)) for f in findings if _kind(f) == "wording" and _source(f)})
     if not pairs:
         return set()
@@ -2053,21 +2112,24 @@ def near_wording(root, tools, findings):
                "pairs = json.load(sys.stdin); got = check.near_wording(Path(sys.argv[2]), pairs); "
                "print(json.dumps([p for p, g in zip(pairs, got) if g]))")
     try:
-        r = subprocess.run([sys.executable, "-B", "-c", program, str(tools), str(root)], input=json.dumps(pairs),
-                           capture_output=True, text=True, timeout=WALL_TIMEOUT, cwd=str(root),
-                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        with tempfile.TemporaryDirectory() as neutral:      # not the workspace: nothing there may shadow a module
+            r = subprocess.run([sys.executable, "-B", "-c", program, str(tools), str(root)], input=json.dumps(pairs),
+                               capture_output=True, text=True, timeout=WALL_TIMEOUT, cwd=neutral,
+                               env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        if r.returncode != 0:
+            return None
         return {tuple(x) for x in json.loads(r.stdout)}
     except (OSError, subprocess.SubprocessError, ValueError, TypeError):
-        return set()
+        return None
 
 
-def classify(root, lib, finding, stems, parties, zones, near=frozenset()):
+def classify(root, lib, finding, stems, parties, zones, near=frozenset(), zstems=None):
     """"inside", "name" or "other" for a finding the zone rule releases."""
     src = lib.zone_of(root, finding.get("path") or "")
-    target = _target_zone(root, lib, finding, stems, parties, zones)
+    target = _target_zone(root, lib, finding, stems, parties, zones, zstems)
     if src is not None and target == src:
         return "inside"
-    if src is not None and (finding.get("path") or "", _source(finding)) in near:
+    if src is not None and _kind(finding) == "wording" and (finding.get("path") or "", _source(finding)) in near:
         return "inside"
     if re.match(r"\s*names\b", finding.get("message") or "") or "one of its people" in (finding.get("message") or ""):
         return "name"
@@ -2115,21 +2177,23 @@ def walls_study(root, flags, old_check=None, new_check=None):
     released, refused = diff_findings(old, new)
     text = (root / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
     stems, parties, zones = _meeting_stems(root), _party_zones(text), list(flags)
+    zstems = _zone_stems(root)
     kinds = {k: [] for k, _ in WALL_KINDS}
     near = near_wording(root, Path(new_check).parent, released)
     for f in released:
-        kinds[classify(root, lib, f, stems, parties, zones, near)].append(f)
+        kinds[classify(root, lib, f, stems, parties, zones, near or frozenset(), zstems)].append(f)
     mixed = mixed_pages(root, lib, flags)
     study = {"flags": {z: w for z, (w, _) in flags.items()}, "released": {k: len(v) for k, v in kinds.items()},
-             "newly_refused": len(refused), "mixed_pages": [p for p, _ in mixed], "old": len(old), "new": len(new)}
-    return study, say_study(flags, kinds, refused, mixed)
+             "newly_refused": len(refused), "mixed_pages": [p for p, _ in mixed], "old": len(old), "new": len(new),
+             "wording_unplaced": near is None}
+    return study, say_study(flags, kinds, refused, mixed, near is None)
 
 
 def say_finding(f):
     return "  %s: %s" % (f.get("path"), (f.get("message") or "").strip())
 
 
-def say_study(flags, kinds, refused, mixed):
+def say_study(flags, kinds, refused, mixed, wording_unplaced=False):
     out = ["Garrick 0.63 walls each zone, not each party. Each zone is either walled or open: what is in a walled zone "
            "stays in that zone; what is in an open zone may go anywhere.", "",
            "The flag each zone would get, from its party and its default for new parties:"]
@@ -2143,6 +2207,9 @@ def say_study(flags, kinds, refused, mixed):
     total = sum(len(v) for v in kinds.values())
     out += ["", "%d refusal%s of the rule in force %s released by the zone rule:" % (
         total, "" if total == 1 else "s", "is" if total == 1 else "are")]
+    if wording_unplaced:
+        out += ["", "The check that says whether copied wording is also held inside the file's own zone could not be run, "
+                    "so wording refusals sit under Other; they may belong under Inside one zone."]
     for key, title in WALL_KINDS:
         found = kinds[key]
         out.append("")

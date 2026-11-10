@@ -1070,7 +1070,6 @@ def rename_history(zone_dir, moved, old, new):
         git_ok(["mv", path.relative_to(zone_dir).as_posix(), step.relative_to(zone_dir).as_posix()], zone_dir)
         git_ok(["mv", step.relative_to(zone_dir).as_posix(), target.relative_to(zone_dir).as_posix()], zone_dir)
         text = target.read_text(encoding="utf-8")
-        text = re.sub(r'(?m)^parent: "\[\[%s\]\]"$' % re.escape(old), lambda _: f'parent: "[[{new}]]"', text, count=1)
         text = re.sub(r"(?m)^# %s: history, " % re.escape(old), lambda _: f"# {new}: history, ", text, count=1)
         target.write_text(text, encoding="utf-8")
         out.append(target)
@@ -1150,7 +1149,9 @@ def cmd_rename(root, args, today):
                 if spoken or is_sayable(new)[0]:
                     changed = set_spoken(changed, spoken)
                 changed = re.sub(r"(?m)^# %s\s*$" % re.escape(old), f"# {new}", changed, count=1)
-                changed = re.sub(r"\[\[%s history (\d{4}-Q[1-4])\]\]" % re.escape(old), lambda m: f"[[{new} history {m.group(1)}]]", changed)
+                # the link line: relink moved each path with the folder; the file name and its label follow the note
+                changed = re.sub(r"\[\[([^\]|]*/history/)%s history (\d{4}-Q[1-4])\]\]" % re.escape(old),
+                                 lambda m: f"[[{m.group(1)}{new} history {m.group(2)}]]", changed)
                 changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
                 changed = dated_entry(changed, f"Renamed from {old}.", today)
             if changed != text:

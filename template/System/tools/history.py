@@ -14,7 +14,9 @@ as `**10 November 2026.**`, and every paragraph after it up to the next entry
 belongs to it. This tool moves entries, unchanged, to
 `history/<Note> history <YYYY>-Q<n>.md` in the note's own folder, one file for
 each calendar quarter of the entry's own date, and leaves one line under the
-last entry that links them: `*Older entries: [[<Note> history 2026-Q4]], ...*`.
+last entry that links them, each by its path from the project so that a same-named thread in
+another zone is never the one found: `*Older entries: [[Acme/Threads/Pricing/history/Pricing history 2026-Q4]], ...*`. A history file's `parent:` is the note's link in the same form,
+`[[Acme/Threads/Pricing/Pricing|Pricing]]`.
 
 **What moves.** Step 1: every entry older than `history-months` (6). Step 2:
 if the note is still longer than `note-max-words` (4,000), the oldest entries,
@@ -298,8 +300,22 @@ def resume_over(words: int, limit: int) -> str:
             "proposes a shorter one, and nothing changes without a yes" % (words, limit))
 
 
-def link_target_of(note: Path, quarter: str) -> str:
-    return "%s history %s" % (note.stem, quarter)
+def note_dir_ref(note: Path) -> str:
+    """The note's folder as a link reads it, from its project: `Northwind/Threads/Pricing` for a thread note,
+    `Northwind` for a hub. Written in full, a link finds this zone's file and no same-named one in another."""
+    parts = note.resolve().parts
+    return "/".join(parts[-4:-1] if note.resolve().parent.parent.name == "Threads" else parts[-2:-1])
+
+
+def note_link(note: Path) -> str:
+    """The wikilink to the note itself, by its path from the project, its plain name as the alias."""
+    return "[[%s/%s|%s]]" % (note_dir_ref(note), note.stem, note.stem)
+
+
+def history_link(note: Path, quarter: str) -> str:
+    name = "%s history %s" % (note.stem, quarter)
+    # No alias: the wording check reads a link's alias as words, and two zones' lines would then repeat each other.
+    return "[[%s/%s/%s]]" % (note_dir_ref(note), FOLDER, name)
 
 
 def link_line(note: Path, quarters) -> str:
@@ -307,7 +323,7 @@ def link_line(note: Path, quarters) -> str:
     names = sorted(set(quarters), key=lambda q: (int(q[:4]), int(q[-1])), reverse=True)
     if not names:
         return ""
-    return "*Older entries: %s.*" % ", ".join("[[%s]]" % link_target_of(note, q) for q in names)
+    return "*Older entries: %s.*" % ", ".join(history_link(note, q) for q in names)
 
 
 def existing_quarters(note: Path) -> List[str]:
@@ -430,7 +446,7 @@ def _fm_lines(text: str, keys: Tuple[str, ...]) -> List[str]:
 
 def header(note: Path, note_text: str, today: datetime.date, quarter: str) -> List[str]:
     kept = _fm_lines(note_text, ("project", "party", "zone"))
-    return (["---", "type: history", 'parent: "[[%s]]"' % note.stem] + kept + ["created: %s" % today.isoformat(), "---", "",
+    return (["---", "type: history", 'parent: "%s"' % note_link(note)] + kept + ["created: %s" % today.isoformat(), "---", "",
              "# %s: history, %s" % (note.stem, quarter), ""])
 
 
@@ -445,7 +461,7 @@ def read_history(path: Path, note: Path, quarter: str) -> Tuple[List[str], List[
     lines = text.split("\n")
     shut = body_start(lines)
     fm = lines[:shut]
-    if (not fm or "type: history" not in fm or 'parent: "[[%s]]"' % note.stem not in fm
+    if (not fm or "type: history" not in fm or 'parent: "%s"' % note_link(note) not in fm
             or any(l.startswith("status:") for l in fm)):
         raise Skip("%s exists and is not a history file of this note" % path.name)
     title = "# %s: history, %s" % (note.stem, quarter)

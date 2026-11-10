@@ -140,7 +140,7 @@ class Moving(Fixture):
         text = self.a.read_text(encoding="utf-8")
         lines = [l for l in text.split("\n") if l.startswith("*Older entries:")]
         self.assertEqual(1, len(lines))
-        self.assertRegex(lines[0], r"^\*Older entries: \[\[Pricing history 20\d\d-Q[1-4]\]\](, \[\[Pricing history 20\d\d-Q[1-4]\]\])*\.\*$")
+        self.assertRegex(lines[0], r"^\*Older entries: \[\[Northwind/Threads/Pricing/history/Pricing history 20\d\d-Q[1-4]\]\](, \[\[Northwind/Threads/Pricing/history/Pricing history 20\d\d-Q[1-4]\]\])*\.\*$")
         years = [int(q[:4]) for q in __import__("re").findall(r"(\d{4})-Q", lines[0])]
         self.assertEqual(sorted(years, reverse=True), years)
         kept = self.entries_of(self.a)
@@ -154,7 +154,7 @@ class Moving(Fixture):
         self.assertEqual("---", lines[0])
         shut = lines.index("---", 1)
         fm = lines[1:shut]
-        self.assertEqual(["type: history", 'parent: "[[Pricing]]"', 'project: "[[Northwind]]"', "party: acme"], fm[:4])
+        self.assertEqual(["type: history", 'parent: "[[Northwind/Threads/Pricing/Pricing|Pricing]]"', 'project: "[[Northwind]]"', "party: acme"], fm[:4])
         self.assertTrue(fm[4].startswith("created: "))
         self.assertFalse(any(l.startswith("status:") for l in fm))
         rest = [l for l in lines[shut + 1:] if l.strip()]

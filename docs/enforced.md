@@ -67,6 +67,34 @@ Garrick's own commits (the status page's actions, the scaffold tool and the sche
 
 Everything else in `System/rules.md`, and in your `System/rules.local.md`, is asked in the same way.
 
+## Allow once
+
+A refusal that is a false alarm can be let through for one finding of one file, and for as long as the file stays as it is. The user does it; an assistant never does. The allowance is kept in `System/walls-allowed.json`, in the workspace's own repository, so the history says what was let through and when.
+
+```json
+{
+  "version": 1,
+  "allowed": [
+    {
+      "path": "Zones/Work/Acme/Acme.md",
+      "id": "3f9a1c2b7d",
+      "blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "rule": "name",
+      "date": "2026-11-10",
+      "by": "terminal"
+    }
+  ]
+}
+```
+
+- `path`: the file's path from the workspace root, with forward slashes.
+- `id`: the first ten hex characters of SHA-1 over `path`, `rule` and the finding's matched text, joined by a NUL. The matched text is never stored, so the ledger names no party and no person.
+- `blob`: git's blob id of the file as allowed. The hook reads it from the index (`git ls-files -s`) and hashes nothing; a full run hashes only the files that have a finding. An edit changes the blob, so the finding comes back.
+- `rule`: the kind of the finding, one of `link`, `name`, `wording`, `path` or `unlabelled`. A finding that cannot be read, or a file waiting in an inbox, is never allowed.
+- `date`: the day it was written. `by`: `terminal` (typed in a terminal) or `page` (a click in the app).
+
+An entry covers a finding only when `path`, `id` and `blob` all match, so an allowance for one finding does not cover another in the same file. A ledger that is missing, unreadable or of another `version` holds no allowance, and every refusal stands as before. `allow_read` and `allow_add` in `System/tools/garrick_lib.py` read and write the file.
+
 ## The wall check's known gaps
 
 The check is for an honest writer's mistakes, as [the threat model](principles.md#the-threat-model) says. It does not catch everything. These are the gaps an honest writer could hit, by kind, and one line each.

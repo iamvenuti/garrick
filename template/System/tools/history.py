@@ -326,6 +326,21 @@ def link_line(note: Path, quarters) -> str:
     return "*Older entries: %s.*" % ", ".join(history_link(note, q) for q in names)
 
 
+def unsafe_history(note: Path) -> str:
+    """Why the `history` folder beside `note` is not a place to write, or "": a symbolic link, or a folder (or a file
+    in it) that resolves outside the note's own folder."""
+    folder = note.parent / FOLDER
+    if not os.path.lexists(folder):
+        return ""
+    base = note.parent.resolve()
+    try:
+        inside = [folder] + (sorted(folder.glob("*.md")) if folder.is_dir() else [])
+        bad = folder.is_symlink() or any(p.is_symlink() or base not in p.resolve().parents for p in inside)
+    except (OSError, RuntimeError):
+        bad = True
+    return "its history folder is a link or leads outside the note's folder" if bad else ""
+
+
 def existing_quarters(note: Path) -> List[str]:
     folder = note.parent / FOLDER
     prefix = "%s history " % note.stem
@@ -371,6 +386,10 @@ def plan(root, note: Path, today: Optional[datetime.date] = None) -> Plan:
         p.text = note.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as why:
         p.skipped = "it cannot be read (%s)" % type(why).__name__
+        return p
+    unsafe = unsafe_history(note)
+    if unsafe:
+        p.skipped = unsafe
         return p
     p.before = note_words(p.text)
     p.resume = resume_words(p.text)
@@ -511,14 +530,18 @@ def build_files(p: Plan, today: datetime.date) -> Dict[Path, str]:
             # keep the file's own header, including its created date
         else:
             head, held = header(p.note, p.text, today, quarter), []
-        have = {e.text for e in held}
+        # An entry already in the file as it was before this run (a move that stopped half way) is not added again,
+        # once for each time it is there; two identical entries of one run are two entries.
+        there: Dict[str, int] = {}
+        for e in held:
+            there[e.text] = there.get(e.text, 0) + 1
         for e in reversed(moved):                      # oldest position first, so equal dates keep their order
             body = Entry(rewrite_links(e.text).split("\n"), e.date, 0)
-            if body.text in have:
+            if there.get(body.text):
+                there[body.text] -= 1
                 continue
             at = next((i for i, h in enumerate(held) if h.date <= body.date), len(held))
             held.insert(at, body)
-            have.add(body.text)
         files[path] = history_text(head, held)
     return files
 
@@ -615,18 +638,25 @@ UNCONFIRMED = "a line that left"
 
 
 def unconfirmed(old: str, new: str, histories) -> str:
-    """"" when every line that left `old` to make `new` is in one of the history texts `histories`, else why not."""
-    held = set()
+    """"" when every line that left `old` to make `new` is in the history texts `histories`, each as many times as it
+    left, else why not. Counted, not looked up: two identical entries are two entries."""
+    held: Dict[str, int] = {}
     for text in histories:
-        held.update(text.split("\n"))
+        for line in text.split("\n"):
+            held[line] = held.get(line, 0) + 1
     left: Dict[str, int] = {}
     for line in old.split("\n"):
         left[line] = left.get(line, 0) + 1
     for line in new.split("\n"):
         if line in left:
             left[line] -= 1
+    need: Dict[str, int] = {}
     for line, count in left.items():
-        if count > 0 and line.strip() and not LINK_LINE_RE.match(line) and rewrite_links(line) not in held:
+        if count > 0 and line.strip() and not LINK_LINE_RE.match(line):
+            key = rewrite_links(line)
+            need[key] = need.get(key, 0) + count
+    for line, count in need.items():
+        if held.get(line, 0) < count:
             return "%s the note is in no history file, so nothing was moved" % UNCONFIRMED
     return ""
 

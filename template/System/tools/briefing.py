@@ -328,7 +328,9 @@ def entries(text: str) -> List[dict]:
 def history_files(note: Path) -> List[Path]:
     """The history files beside a note (history.py), the newest quarter first."""
     folder = note.parent / "history"
-    return sorted(folder.glob("*.md"), reverse=True) if folder.is_dir() else []
+    if not folder.is_dir() or folder.is_symlink() or note.parent.resolve() not in folder.resolve().parents:
+        return []                    # a link, or a folder that leads outside the note's own: never read
+    return sorted((p for p in folder.glob("*.md") if not p.is_symlink()), reverse=True)
 
 
 def history_entries_of(text: Optional[str]) -> List[str]:

@@ -3108,8 +3108,17 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		let out = Pipe()
 		p.standardOutput = out
 		p.standardError = FileHandle.nullDevice
+		// Read while it runs: a result over the pipe's 64 KB would otherwise block the child until the app waits forever.
+		let lock = NSLock()
+		var collected = Data()
+		out.fileHandleForReading.readabilityHandler = { h in
+			let chunk = h.availableData
+			lock.lock(); collected.append(chunk); lock.unlock()
+		}
 		p.terminationHandler = { [weak self] _ in
-			let data = out.fileHandleForReading.readDataToEndOfFile()
+			out.fileHandleForReading.readabilityHandler = nil
+			let rest = out.fileHandleForReading.readDataToEndOfFile()
+			lock.lock(); collected.append(rest); let data = collected; lock.unlock()
 			DispatchQueue.main.async {
 				guard let self else { return }
 				self.waitingRunning = false

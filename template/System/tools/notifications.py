@@ -655,9 +655,13 @@ def waiting(rows, ws: Optional[Path] = None, env=None, now: Optional[dt.datetime
         what = str(r.get("waiting_for") or "")
         if not re.fullmatch(r"a question|an approval for [A-Za-z0-9_.:-]{1,40}|an approval for the plan", what):
             what = "an answer"                  # only the shapes agents_working.py writes: never free text
-        place = re.sub(r"[\x00-\x1f\x7f]", " ", str(r.get("thread") or r.get("folder") or "A session"))[:80]
-        send("waiting", "Waiting on you", "%s: waiting on you, for %s." % (place, what), None, root=ws, env=env, now=now)
+        place_said = re.sub(r"[\x00-\x1f\x7f]", " ", str(r.get("thread") or r.get("folder") or "A session"))[:80]
+        where = place(ws, str(r.get("folder") or ""))
+        zone = where[1] if where else None
         kept[sid] = since
+        if override(env) and not zone:
+            continue                    # a sender's own command is told a zone; with none known it is not run for this event
+        send("waiting", "Waiting on you", "%s: waiting on you, for %s." % (place_said, what), zone, root=ws, env=env, now=now)
         sent += 1
     if kept != told:
         try:

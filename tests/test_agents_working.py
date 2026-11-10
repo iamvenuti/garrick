@@ -195,6 +195,29 @@ class Waiting(unittest.TestCase):
         self.assertGreater((self.claude / "a.jsonl").stat().st_size, aw.TAIL)
         self.assertEqual("waiting", self.row()["state"])
 
+    def test_a_waiting_session_stays_listed_for_a_day_and_an_idle_one_goes_after_half_an_hour(self):
+        write(self.claude / "w.jsonl", [PROMPT, ask()], age=3 * 3600)
+        write(self.claude / "i.jsonl", [PROMPT, DONE], age=3 * 3600)
+        write(self.claude / "k.jsonl", [PROMPT, DONE], age=60)
+        self.assertEqual({"w", "k"}, {r["id"] for r in aw.rows_json(self.home, self.ws, in_cmux=set())})
+        self.assertEqual(1, aw.check(self.home)[0])                       # Keep awake still reads 30 minutes
+        write(self.claude / "w.jsonl", [PROMPT, ask()], age=3 * 86400)
+        self.assertNotIn("w", {r["id"] for r in aw.rows_json(self.home, self.ws, in_cmux=set())})
+
+    def test_a_tail_with_no_prompt_or_result_still_shows_the_open_question(self):
+        big = {"type": "assistant", "message": {"content": "x" * (aw.TAIL + 10)}}
+        write(self.claude / "a.jsonl", [PROMPT, big, ask()])
+        self.assertEqual("waiting", self.row()["state"])
+
+    def test_a_codex_session_is_named_by_the_id_cmux_knows(self):
+        uuid = "0199a1b2-c3d4-4e5f-8a6b-7c8d9e0f1a2b"
+        path = self.home / ".codex" / "sessions" / "2026" / "11" / "10" / ("rollout-2026-11-10T09-00-00-%s.jsonl" % uuid)
+        write(path, [event("task_started"), event("exec_approval_request")])
+        rows = {r["id"]: r for r in aw.rows_json(self.home, self.ws, in_cmux={uuid})}
+        self.assertEqual("cmux", rows[uuid]["where"])
+        rows = {r["id"]: r for r in aw.rows_json(self.home, self.ws, in_cmux=set())}
+        self.assertEqual("terminal", rows[uuid]["where"])                   # no tab cmux knows: no button
+
     def test_a_folder_that_is_no_thread_reads_by_its_own_name(self):
         self.assertEqual("Acme Review", aw.thread_of(str(self.ws / "Zones" / "Work" / "Acme Review"), self.ws))
         self.assertEqual("scratch", aw.thread_of("/tmp/scratch", self.ws))

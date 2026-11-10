@@ -86,6 +86,53 @@ def first_id(text):
     return re.search(r"\[(r\d+-[0-9a-f]{4})\]", text).group(1)
 
 
+class TestRaw(ToolCase):
+    """#478: Ask's search ranks pages, hands out a raw record only when no page matches, marked "from the raw record",
+    or when `raw` is true, and a raw record is held as the zone of the page that cites it."""
+
+    CEDAR = "Wikis/Meetings/raw/260401-cedar-call.txt"
+
+    def setUp(self):
+        super().setUp()
+        sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
+        scoped.write(sources / "260401-cedar-call.md",
+                     scoped.meeting_page("Work", "[acme]", "Cedar call").replace(
+                         "---\n\n#", "raw: raw/260401-cedar-call.txt\n---\n\n#", 1))
+        scoped.write(self.root / self.CEDAR, "Dana: kiwiword " * 20 + " and numbatword\n")
+        scoped.write(sources / "260402-pricing-sync.md",
+                     scoped.meeting_page("Work", "[acme]", "Pricing sync") + "\nDecisions: kiwiword once.\n")
+        birch = sources / "260312-birch-kickoff.md"
+        birch.write_text(birch.read_text().replace("---\n\n#", "raw: raw/260312-birch-kickoff.txt\n---\n\n#", 1))
+        scoped.write(self.root / "Wikis/Meetings/raw/260312-birch-kickoff.txt", "Theo: the wombatraw numbers.\n")
+
+    def test_pages_only_while_a_page_matches(self):
+        text, _ = self.conv(told={"acme"}).call("search", {"words": "kiwiword"})
+        self.assertIn("Pricing sync", text)
+        self.assertNotIn("raw/260401-cedar-call.txt", text)
+        self.assertNotIn("from the raw record", text)
+
+    def test_raw_true_puts_the_raw_record_back_and_marks_it(self):
+        text, _ = self.conv(told={"acme"}).call("search", {"words": "kiwiword", "raw": True})
+        self.assertIn(self.CEDAR, text)
+        self.assertIn("from the raw record", text)
+
+    def test_with_no_page_matching_the_raw_record_answers_marked_and_reads(self):
+        c = self.conv(told={"acme"})
+        text, _ = c.call("search", {"words": "numbatword"})
+        self.assertIn(self.CEDAR, text)
+        self.assertIn("from the raw record", text)
+        self.assertEqual({"Work"}, set(self.out()["seen"]))                # held as the citing page's zone
+        body, bad = c.call("read", {"id": first_id(text)})
+        self.assertFalse(bad)
+        self.assertIn("numbatword", body)
+
+    def test_a_walled_zones_raw_record_is_never_handed_across(self):
+        for args in ({"words": "wombatraw"}, {"words": "wombatraw", "raw": True}):
+            text, _ = self.conv(told={"acme"}).call("search", args)
+            self.assertNotIn("260312-birch-kickoff.txt", text)
+            self.assertNotIn("from the raw record", text)
+
+
 class TestSearch(ToolCase):
     def test_the_scope_index_answers_and_ids_are_handed_out(self):
         c = self.conv(told={"acme"})

@@ -93,7 +93,7 @@ CODEX_PRINTS_ITS_PROMPT = textwrap.dedent("""\
 class AskCase(ActionCase):
     def setUp(self):
         super().setUp()
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True, "ask-agent": False}))
         self.names = ask.scan(self.root)
         # All of it: a server run in a thread here changes this process's own
         # environment, as it does its own (the marker, PATH, no CMUX_*).
@@ -311,7 +311,7 @@ class TestCarryOut(AskCase):
         self.assertEqual([], session.seen)
 
     def test_actions_need_only_the_ask_flag(self):
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True, "ask-agent": False}))
         session = FakeSession(json.dumps({"say": "Parked.", "do": [
             {"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"},
             {"verb": "open", "zone": "Work", "project": "Acme Review"}]}))
@@ -1248,6 +1248,20 @@ class TestRenewal(ServerCase):
         msgs = [json.loads(line) for line in Path(str(self.args) + ".msgs").read_text().splitlines()]
         self.assertNotIn("<refreshed/>", [m for m in msgs if m["pid"] == second["pid"]][1]["content"])   # said once
         self.assertRegex((self.jobs / "ask.log").read_text(), r"  ask command refreshed \d+ ms ")
+
+    def test_a_changed_ask_agent_flag_reaches_the_running_server_on_reset(self):
+        """#476: the server compares the flag with its session's type on each request and on `reset`."""
+        self.up()
+        self.op("ask", "what's open")
+        (first,) = self.procs()
+        self.assertNotIn("--mcp-config", first["argv"])                    # "ask-agent": false: the command session
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))   # on: the default with Claude
+        self.op("reset")
+        second = self.procs(at_least=2)[1]
+        self.assertIn("--mcp-config", second["argv"])                      # the one session, with no restart
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True, "ask-agent": False}))
+        self.op("reset")
+        self.assertNotIn("--mcp-config", self.procs(at_least=3)[2]["argv"])
 
     def test_nothing_is_renewed_with_ask_switched_off(self):
         self.up()

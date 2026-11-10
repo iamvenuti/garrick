@@ -14,6 +14,7 @@ first record id any tool result has shown that process, `$2` the second.
 from __future__ import annotations
 
 import functools
+import importlib.util
 import json
 import os
 import sys
@@ -192,6 +193,66 @@ class TestOneSession(AgentCase):
         self.agent().ask("find the pallet quote")
         (got,) = self.results()
         self.assertIn(ask.tools_lib().INDEX_DOWN, got["text"])
+
+
+class TestTheFlagFollowsTheHarness(AgentCase):
+    """#476: the one session is how Ask works with Claude, `"ask-agent": false` turns it off for one release,
+    Codex is always the fixed pipeline, and a change reaches the running server on the next request."""
+
+    def flags(self, **flags):
+        write(self.root / "System" / "garrick-flags.json", json.dumps(dict({"ask": True}, **flags)))
+
+    def test_ask_alone_gives_the_one_session_with_claude(self):
+        self.flags()                                            # no other line
+        self.assertIsInstance(ask.session_for(self.root), ask.AgentSession)
+        (self.root / "System" / "garrick-flags.json").write_text("{not json")
+        self.assertIsInstance(ask.session_for(self.root), ask.AgentSession)
+        self.flags(**{"ask-agent": True})
+        self.assertIsInstance(ask.session_for(self.root), ask.AgentSession)
+
+    def test_false_is_the_off_switch_and_nothing_else_is(self):
+        self.flags(**{"ask-agent": False})
+        self.assertNotIsInstance(ask.session_for(self.root), ask.AgentSession)
+        self.assertIsInstance(ask.session_for(self.root), ask.ClaudeSession)
+        for other in (None, 0, "false", []):
+            self.flags(**{"ask-agent": other})
+            self.assertIsInstance(ask.session_for(self.root), ask.AgentSession, other)
+
+    def test_codex_is_the_fixed_pipeline_whatever_the_flag_says(self):
+        before = os.environ.get("GARRICK_HARNESS")
+        os.environ["GARRICK_HARNESS"] = "codex"
+        self.addCleanup(lambda: os.environ.__setitem__("GARRICK_HARNESS", before) if before is not None
+                        else os.environ.pop("GARRICK_HARNESS", None))
+        for flags in ({}, {"ask-agent": True}, {"ask-agent": False}):
+            self.flags(**flags)
+            self.assertIsInstance(ask.session_for(self.root), ask.OnceSession, flags)
+
+    def test_a_changed_flag_reaches_the_next_request_and_reset(self):
+        self.flags()
+        a = ask.Asker(self.root, ask.session_for(self.root))
+        self.askers.append(a)
+        first = a.session
+        self.assertFalse(ask.fit(a, self.root))                 # the flag and the session agree
+        self.assertIs(first, a.session)
+        self.flags(**{"ask-agent": False})
+        self.assertTrue(ask.fit(a, self.root))                  # the next request
+        self.assertIsInstance(a.session, ask.ClaudeSession)
+        self.assertNotIsInstance(a.session, ask.AgentSession)
+        self.assertFalse(ask.fit(a, self.root))
+        self.flags()
+        self.assertTrue(ask.fit(a, self.root))                  # and the next reset
+        self.assertIsInstance(a.session, ask.AgentSession)
+
+    def test_settings_lists_it_on_by_default_and_off_on_false(self):
+        spec = importlib.util.spec_from_file_location("garrick_status_for_agent", scoped.REPO / "extras" / "status" / "status.py")
+        status = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(status)
+        self.assertIn("ask-agent", status.FLAGS)
+        self.assertIn("next release", status.FLAGS["ask-agent"][1])
+        self.assertTrue(status.preview_flags(self.root)["ask-agent"])
+        self.flags(**{"ask-agent": False})
+        self.assertFalse(status.preview_flags(self.root)["ask-agent"])
+        self.assertFalse(status.preview_flags(self.root)["effort"])
 
 
 class TestAnswers(AgentCase):

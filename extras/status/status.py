@@ -767,7 +767,12 @@ FLAGS = {
     "while-you-wait": ("While you wait", "Parked: the Garrick band's line during a long turn in Claude Code, one thing worth doing "
                        "elsewhere, with /garrick next, open, tick and later, and its section in Settings. Off, neither shows; "
                        "\"what's next\" answers either way."),
+    "ask-agent": ("Ask: one session", "With Claude, Ask is one session that reads your notes with tools Garrick serves and checks, "
+                  "and it is on. Set \"ask-agent\": false in the file to go back to the fixed steps for now; this switch goes in "
+                  "the next release. Codex always uses the fixed steps."),
 }
+# A flag in this set is on unless the file says false: a feature that is released with an off switch for one release.
+ON_BY_DEFAULT = ("ask-agent",)
 
 
 def preview_flags(ws: Path) -> Dict[str, bool]:
@@ -775,7 +780,8 @@ def preview_flags(ws: Path) -> Dict[str, bool]:
         data = json.loads(ws.joinpath("System", "garrick-flags.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    return {k: isinstance(data, dict) and data.get(k) is True for k in FLAGS}
+    data = data if isinstance(data, dict) else {}
+    return {k: (data.get(k) is not False) if k in ON_BY_DEFAULT else data.get(k) is True for k in FLAGS}
 
 
 _PREFS = None

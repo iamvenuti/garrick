@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from fixtures import HAVE_GIT, build_workspace, commit_all, git, meeting_page, thread_note, write
+from fixtures import HAVE_GIT, build_workspace, commit_all, git, thread_note, write
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
 
@@ -130,48 +130,6 @@ class TestShippedFilesCommit(CheckoutCase):
 class TestTheRestOfTheCheckoutIsChecked(CheckoutCase):
     """The true positive: only what a checkout ships is shared wording."""
 
-    def test_documentation_that_quotes_a_project_on_the_far_side(self):
-        write(self.checkout / "docs" / "ledgers.md", "# Ledgers\n\n" + BRIEF + ".\n")
-        self.assertEqual([("error", "Zones/Work/Acme Review/Repo/docs/ledgers.md")], self.refused())
-
-    def test_documentation_that_quotes_a_meeting_on_the_far_side(self):
-        write(self.meetings / "wiki" / "sources" / "260314-birch-call.md",
-              meeting_page("Work", "[birch]", "Birch call").replace("Decisions.", BRIEF + "."))
-        write(self.checkout / "docs" / "notes.md", "# Notes\n\n" + BRIEF + ".\n")
-        found = self.staged()
-        self.assertEqual([("error", "Zones/Work/Acme Review/Repo/docs/notes.md")],
-                         [(f.severity, f.path) for f in found])
-        self.assertIn("meeting 260314-birch-call", found[0].message)
-
-    def test_the_readme_and_the_tests_are_ordinary_files_too(self):
-        write(self.checkout / "README.md", "# Garrick\n\n" + BRIEF + ".\n")
-        write(self.checkout / "examples" / "demo.md", "# Demo\n\n" + BRIEF + ".\n")
-        self.assertEqual([("error", "Zones/Work/Acme Review/Repo/README.md"),
-                          ("error", "Zones/Work/Acme Review/Repo/examples/demo.md")], sorted(self.refused()))
-
-    def test_a_repository_that_is_not_a_checkout_ships_nothing(self):
-        """The same path in a repository with no installer beside it: an
-        ordinary folder that happens to be called `template`."""
-        shutil.rmtree(self.checkout / ".git")
-        (self.checkout / "install.py").unlink()
-        git(self.checkout, "init", "-q")
-        commit_all(self.checkout, "Code")
-        write(self.checkout / "template" / "System" / "templates" / "published.md", "# Published\n\n" + LEDGER + "\n")
-        self.assertEqual([("error", "Zones/Work/Acme Review/Repo/template/System/templates/published.md")],
-                         self.refused())
-
-    def test_an_unstaged_edit_to_a_shipped_file_makes_nothing_common(self):
-        """Wording is common when the commit holds it, not when the working
-        copy does: the shipped file counts as git has it."""
-        rules = self.checkout / "template" / "System" / "rules.md"
-        write(self.checkout / "docs" / "quoted.md", "# Quoted\n\n" + BRIEF + ".\n")
-        git(self.checkout, "add", "--", "docs/quoted.md")
-        rules.write_text(rules.read_text(encoding="utf-8") + "\n" + BRIEF + ".\n", encoding="utf-8")
-        found = check.run_checks(self.root, staged=self.checkout)
-        self.assertEqual([("error", "Zones/Work/Acme Review/Repo/docs/quoted.md")],
-                         [(f.severity, f.path) for f in found])
-
-
 class TestWhatCountsAsACheckout(CheckoutCase):
     """What is found, and what of it is shared."""
 
@@ -188,23 +146,6 @@ class TestWhatCountsAsACheckout(CheckoutCase):
         other = build_checkout(self.acme / ".worktrees" / "a-branch")
         ws = check.discover(self.root)
         self.assertEqual(sorted([self.checkout, other]), sorted(check.checkouts(ws)))
-
-    def test_what_a_checkout_shares_is_what_it_ships(self):
-        found = self.shared()
-        self.assertIn("template/System/rules.md", found)
-        self.assertIn("template/AGENTS.md", found)
-        self.assertIn("template/System/templates/thread.md", found)
-        self.assertIn("template/System/skills/threads/SKILL.md", found)
-        self.assertIn("CHANGELOG.md", found)
-        for name in ("README.md", "docs/principles.md", "tests/test_walls.py", "VERSION", "install.py"):
-            self.assertNotIn(name, found)
-
-    def test_a_folder_with_no_installer_is_not_one(self):
-        (self.checkout / "install.py").unlink()
-        ws = check.discover(self.root)
-        self.assertEqual([], check.checkouts(ws))
-        self.assertEqual(set(), self.shared())
-
 
 class TestAnUnpackedCheckoutIsNotAnUnfinishedInstall(unittest.TestCase):
     """A checkout unpacked from a release ZIP has no `.git`, and is left out
@@ -314,21 +255,6 @@ class TestAnUnpackedCheckoutIsNotProjectNotes(UnpackedCase):
     def test_its_own_files_raise_no_finding(self):
         self.assertEqual([], [f for f in self.found() if f[1].startswith(self.inside)])
 
-    def test_a_project_file_beside_it_is_still_reported(self):
-        write(self.acme / "Notes" / "Setup.md",
-              "# Setup\n\nKept in ~/Library/CloudStorage/OneDrive-Acme/Shared for {{PARTY}}, as Birch & Co does.\n")
-        note = "Zones/Work/Acme Review/Notes/Setup.md"
-        self.assertEqual([("links", note), ("placeholders", note), ("walls", note)], self.found())
-
-    def test_the_same_tree_with_no_installer_is_read_as_the_project(self):
-        """Recognised by checkouts(), not by its look: without its installer it
-        is an ordinary folder of the project, and every rule applies to it."""
-        (self.checkout / "install.py").unlink()
-        found = self.found()
-        self.assertIn(("links", self.inside + "template/System/rules.md"), found)
-        self.assertIn(("placeholders", self.inside + "docs/zones.md"), found)
-        self.assertIn(("walls", self.inside + "docs/walls.md"), found)
-
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_a_clone_reads_the_same(self):
         unpacked = self.found()
@@ -366,17 +292,3 @@ class TestAnUnpackedCheckoutAndTheCommitHook(UnpackedCase):
     def test_a_note_across_the_wall_may_repeat_its_docs(self):
         write(self.birch / "Threads" / "Market Sizing" / "Method.md", "# Method\n\n" + DOCS + "\n")
         self.assertEqual([], self.staged("Birch Entry/Threads/Market Sizing/Method.md"))
-
-    def test_the_same_sentence_in_a_project_note_still_counts(self):
-        write(self.acme / "Notes" / "Method.md", "# Method\n\n" + DOCS + "\n")
-        git(self.work, "add", "--", "Acme Review/Notes/Method.md")
-        git(self.work, "-c", "commit.gpgsign=false", "-c", "core.hooksPath=" + os.devnull,
-            "commit", "-q", "-m", "Acme's method")
-        write(self.birch / "Threads" / "Market Sizing" / "Method.md", "# Method\n\n" + DOCS + "\n")
-        self.assertEqual([("error", "Zones/Work/Birch Entry/Threads/Market Sizing/Method.md")],
-                         self.staged("Birch Entry/Threads/Market Sizing/Method.md"))
-
-    def test_a_commit_of_its_files_is_checked_as_the_project_s(self):
-        """Committed into the zone, its files are the project's, as a commit
-        made inside a clone is (#122)."""
-        self.assertEqual([("error", self.inside + "docs/walls.md")], self.staged("Acme Review/garrick/docs/walls.md"))

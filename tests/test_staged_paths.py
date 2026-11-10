@@ -61,6 +61,8 @@ class StagedFiles(unittest.TestCase):
         self.addCleanup(env.stop)
         commit_all(self.work, "start")
 
+    ACROSS = "[[Zones/Personal/Garden/Threads/Beds/Plan]]"       # a note of another walled zone
+
     def errors(self, suffix):
         return [f for f in check.run_checks(self.root, staged=self.work) if f.severity == "error" and f.path.endswith(suffix)]
 
@@ -71,7 +73,7 @@ class StagedFiles(unittest.TestCase):
         git(self.work, "add", "-A")
 
     def test_a_text_file_with_nul_bytes_and_no_byte_order_mark_is_refused(self):
-        self.stage("Northwind/Threads/Pricing/utf16.md", "Ask Theo Marsh".encode("utf-16-le"))
+        self.stage("Northwind/Threads/Pricing/utf16.md", "See the plan".encode("utf-16-le"))
         found = self.errors("utf16.md")
         self.assertEqual(1, len(found), found)
         self.assertIn("cannot read", found[0].message)
@@ -80,46 +82,39 @@ class StagedFiles(unittest.TestCase):
         # Excel's Unicode text and a Windows .csv: read as text, not refused as unreadable
         self.stage("Northwind/Sources/export.csv", "a,b\r\n1,2\r\n".encode("utf-16"))
         self.assertEqual([], self.errors("export.csv"))
-        self.stage("Northwind/Threads/Pricing/utf16.md", "Ask Theo Marsh".encode("utf-16"))
+        self.stage("Northwind/Threads/Pricing/utf16.md", ("See %s" % self.ACROSS).encode("utf-16"))
         found = self.errors("utf16.md")
         self.assertEqual(1, len(found), found)
-        self.assertNotIn("cannot read", found[0].message)          # it was read: the name in it is what is refused
-        self.stage("Northwind/Threads/Pricing/utf32.txt", "Ask Theo Marsh".encode("utf-32"))
+        self.assertNotIn("cannot read", found[0].message)          # it was read: the link in it is what is refused
+        self.stage("Northwind/Threads/Pricing/utf32.txt", ("See %s" % self.ACROSS).encode("utf-32"))
         found = self.errors("utf32.txt")
         self.assertEqual(1, len(found), found)
         self.assertNotIn("cannot read", found[0].message)
 
     def test_a_text_file_over_the_cap_is_refused_and_one_under_it_is_read_whole(self):
-        big = b"filler words " * 400_000 + b"Ask Theo Marsh at the end.\n"          # about 5 MB, past the old 2 MB cap
+        big = b"filler words " * 400_000 + ("See %s at the end.\n" % self.ACROSS).encode()          # about 5 MB, past the old 2 MB cap
         self.stage("Northwind/Threads/Pricing/transcript.txt", big)
         found = self.errors("transcript.txt")
         self.assertEqual(1, len(found), found)
-        self.assertNotIn("cannot read", found[0].message)          # it was read: the name in it is what is refused
+        self.assertNotIn("cannot read", found[0].message)          # it was read: the link in it is what is refused
         with mock.patch.object(check, "MAX_STAGED_BYTES", 1000):
             found = self.errors("transcript.txt")
         self.assertEqual(1, len(found), found)
         self.assertIn("cannot read", found[0].message)
 
-    def test_a_binary_file_of_a_labelled_project_keeps_the_old_rule(self):
+    def test_a_binary_file_is_not_read_whichever_project_it_is_in(self):
         self.stage("Northwind/Threads/Pricing/pic.png", b"\x89PNG\x00\x01\x02")
         self.assertEqual([], self.errors("pic.png"))
-
-    def test_a_binary_file_of_a_project_with_no_party_is_refused(self):
-        self.stage("Orchard/Threads/Drafts/pic.png", b"\x89PNG\x00\x01\x02")
-        self.assertEqual(1, len(self.errors("pic.png")))
+        self.stage("Orchard/Threads/Drafts/pic.png", b"\x89PNG\x00\x01\x02")       # a hub that names no party: no label is asked for
+        self.assertEqual([], self.errors("pic.png"))
 
     def test_a_case_renamed_project_folder_is_still_checked(self):
         os.rename(self.work / "Harbour", self.work / "Harbour-tmp")
         os.rename(self.work / "Harbour-tmp", self.work / "harbour")
-        write(self.work / "harbour" / "Threads" / "Sizing" / "Leak.md", "# n\n\nAsk Dana Whitlock of Acme Corp.\n")
+        write(self.work / "harbour" / "Threads" / "Sizing" / "Leak.md", "# n\n\nSee %s.\n" % self.ACROSS)
         git(self.work, "add", "-A")
         found = [f for f in check.run_checks(self.root, staged=self.work) if f.severity == "error"]
         self.assertTrue(any(f.path.lower().endswith("leak.md") for f in found), found)
-
-    def test_labels_find_a_folder_in_another_spelling(self):
-        ctx = lib.load_context(self.root)
-        self.assertEqual({"acme"}, lib.labels(self.root, "Zones/Work/northwind/Threads/Pricing/x.md", ctx))
-        self.assertEqual({"birch"}, lib.labels(self.root, "Zones/work/HARBOUR/Sources/x.md", ctx))
 
 
 if __name__ == "__main__":

@@ -13,7 +13,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,7 +22,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import HAVE_GIT, build_workspace, commit_all, git, project_hub, thread_note, write  # noqa: E402
+from fixtures import build_workspace, project_hub, thread_note, write  # noqa: E402
 from test_setup import Installed  # noqa: E402
 
 import check  # noqa: E402  (fixtures puts the tools folder on sys.path)
@@ -171,13 +170,6 @@ class TestResumeSiblingProject(Case):
         self.resume("`Deliverables/260303 - Budget.md`")
         self.assertEqual(["Resume here names `Deliverables/260303 - Budget.md`, which is not there"], self.unfound())
 
-    def test_a_project_across_a_wall_is_never_looked_in(self):
-        write(self.work / "Birch Entry" / "Deliverables" / "260304 - Entry plan.md", "# Plan\n")
-        self.resume("`Deliverables/260304 - Entry plan.md`")
-        self.assertEqual(["Resume here names `Deliverables/260304 - Entry plan.md`, which is not there"],
-                         self.unfound())
-
-
 class TestResumeSiblingGuards(Case):
     """A sibling project is searched only where the note may draw: never
     through a link that leads out of the sibling's folder, and never into a
@@ -217,18 +209,6 @@ class TestResumeSiblingGuards(Case):
         os.symlink(self.launch / "Deliverables", self.launch / "Linked")
         self.assertEqual([], self.unfound(self.pricing, "`Linked/260301 - Launch deck.md`"))
 
-    def test_a_siblings_thread_walled_from_the_note_is_not_searched(self):
-        self.assertEqual(["Resume here names `Deliverables/260305 - Stand plan.md`, which is not there",
-                          "Resume here names `Threads/Stand B/Deliverables/260305 - Stand plan.md`, which is not there"],
-                         self.unfound(self.pricing, "`Deliverables/260305 - Stand plan.md` and "
-                                                    "`Threads/Stand B/Deliverables/260305 - Stand plan.md`"))
-
-    def test_the_notes_own_thread_party_is_held_against_the_sibling(self):
-        # Stand B is for birch under a cedar hub: the acme project is walled from its note.
-        note = self.fair / "Threads" / "Stand B" / "Stand B.md"
-        self.assertEqual(["Resume here names `Deliverables/260301 - Launch deck.md`, which is not there"],
-                         self.unfound(note, "`Deliverables/260301 - Launch deck.md`"))
-
     def case_blind(self):
         """Does this machine's disk open a name spelt in another case?"""
         probe = write(Path(self._tmp.name) / "CaseProbe.txt", "x")
@@ -247,15 +227,6 @@ class TestResumeSiblingGuards(Case):
         os.symlink("threads/Stand B/Deliverables", self.fair / "Plans")
         self.assertEqual(["Resume here names `Plans/260305 - Stand plan.md`, which is not there"],
                          self.unfound(self.pricing, "`Plans/260305 - Stand plan.md`"))
-
-    def test_a_link_into_a_walled_thread_in_its_own_case_confirms_nothing(self):
-        os.symlink("Threads/Stand B/Deliverables", self.fair / "Plans")
-        self.assertEqual(["Resume here names `Plans/260305 - Stand plan.md`, which is not there"],
-                         self.unfound(self.pricing, "`Plans/260305 - Stand plan.md`"))
-
-    def test_a_folder_counts_only_when_every_file_in_it_is_clear(self):
-        self.assertEqual(["Resume here names `Threads/Stand B/`, which is not there"],
-                         self.unfound(self.pricing, "`Threads/Deck/` and `Threads/Stand B/`"))
 
     def test_the_sibling_bases_are_worked_out_once_per_note(self):
         with mock.patch.object(check, "sibling_bases", wraps=check.sibling_bases) as spy:

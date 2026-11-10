@@ -797,22 +797,6 @@ class TestMailAsMaterial(MailCase):
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertEqual("Zones/Work/Acme Review/Sources/forecast.eml", r.stdout.strip())
 
-    def test_the_check_reads_the_parties_it_carries(self):
-        birch = self.work / "Birch Entry" / "Sources"
-        birch.mkdir(parents=True, exist_ok=True)
-        (birch / "forecast.eml").write_bytes(lib.stamp_parties(self.data, ["acme"]))  # moved across by hand
-        found = [f for f in check.run_checks(self.root) if f.check in ("sources", "walls")]
-        self.assertEqual([("walls", "error")], [(f.check, f.severity) for f in found])
-        self.assertNotIn("Tilbury", check.report_text(found, self.root))
-        # A header is not trusted over the addresses: a mail from an Acme domain stamped as Birch's is still across the wall.
-        (birch / "forecast.eml").write_bytes(lib.stamp_parties(self.data, ["birch"]))
-        self.assertEqual(["error"], [f.severity for f in check.run_checks(self.root) if f.check in ("sources", "walls")])
-        (birch / "forecast.eml").unlink()
-        acme = self.work / "Acme Review" / "Sources"
-        acme.mkdir(parents=True, exist_ok=True)
-        (acme / "forecast.eml").write_bytes(lib.stamp_parties(self.data, ["acme"]))
-        self.assertEqual([], [f for f in check.run_checks(self.root) if f.check in ("sources", "walls")])
-
 
 QUOTES =b"maker,part,unit_price_eur\nKeld Seals,seal kit,4.10\nAnsel Gaskets,seal kit,3.85\n"
 
@@ -1099,29 +1083,10 @@ class TestWallsOnMail(MailCase):
     def test_clean(self):
         self.assertEqual([], self.walls())
 
-    def test_link_across_the_wall(self):
-        write(self.birch / "Notes.md", "See [[%s]].\n" % self.slug)
-        found = self.walls()
-        self.assertEqual(1, len(found), found)
-        self.assertIn(self.slug, found[0].message)
-
-    def test_quote_from_the_encoded_raw_mail(self):
-        write(self.birch / "Notes.md", "Heard that they will move every seal kit order to the Tilbury warehouse "
-                                       "before the spring audit.\n")
-        found = self.walls()
-        self.assertEqual(1, len(found), found)
-        self.assertIn("repeats wording", found[0].message)
-        self.assertNoLeak(found)
 
     def test_same_quote_on_the_near_side_is_fine(self):
         write(self.work / "Acme Review" / "Threads" / "Pricing" / "Notes.md", SECRET + ".\n")
         self.assertEqual([], self.walls())
-
-    def test_a_party_domain_names_the_party(self):
-        write(self.birch / "Notes.md", "Send it to procurement at acmecorp.example.\n")
-        found = self.walls()
-        self.assertEqual(1, len(found), found)
-        self.assertIn("names Acme Corp", found[0].message)
 
 
 class TestInboxChecks(MailCase):
@@ -1224,58 +1189,12 @@ class TestSourcesFromMail(MailCase):
         intake.extract_attachment(self.root, slug, "Zones/Work/Acme Review", index=1)
         self.assertEqual([], self.findings("sources", "walls"))
 
-    def test_attachment_saved_before_the_mail_was_filed(self):
-        self.drop("q.eml", self.quotes)
-        write(self.acme_sources / "Seal kit quotes.csv", QUOTES.decode())
-        found = self.findings("sources")
-        self.assertEqual(["error"], [f.severity for f in found])
-        self.assertIn("not filed", found[0].ear)
-
-    def test_attachment_of_a_mail_whose_page_is_unfinished(self):
-        slug, _, page = intake.file_conversation(self.root, self.drop("q.eml", self.quotes), ["acme"])
-        page.write_text(page.read_text().replace("parties: [acme]", "parties: []"))
-        write(self.acme_sources / "Seal kit quotes.csv", QUOTES.decode())
-        self.assertEqual(1, len(self.findings("sources")))
-
-    def test_attachment_across_the_wall(self):
-        slug, _, _ = intake.file_conversation(self.root, self.drop("q.eml", self.quotes), ["acme"])
-        (self.birch_sources).mkdir(parents=True, exist_ok=True)
-        (self.birch_sources / "numbers.csv").write_bytes(QUOTES)  # renamed, same bytes
-        found = self.findings("walls", "sources")
-        self.assertEqual([("walls", "error")], [(f.check, f.severity) for f in found])
-        self.assertIn(slug, found[0].message)
-        self.assertNotIn("Keld", check.report_text(found, self.root))
-
-    def test_a_whole_mail_in_sources_needs_its_meetings_page(self):
-        (self.acme_sources / "quotes.eml").write_bytes(self.quotes)
-        self.assertEqual(1, len(self.findings("sources")))
-        intake.file_conversation(self.root, self.drop("q.eml", self.quotes), ["acme"])
-        self.assertEqual([], self.findings("sources", "walls"))
 
     def test_ordinary_sources_are_left_alone(self):
         write(self.acme_sources / "Supplier list.csv", "supplier,part\nKeld Seals,seal kit\n")
         write(self.acme_sources / "tiny.csv", "q,p\n")
         self.drop("forecast.eml", eml(plain="x\n", attachment=("tiny.csv", b"q,p\n")))  # too small to prove anything
         self.assertEqual([], self.findings("sources", "walls"))
-
-    @unittest.skipUnless(HAVE_GIT, "git is not installed")
-    def test_hook_refuses_a_walled_attachment(self):
-        tools = self.root / "System" / "tools"
-        tools.mkdir(parents=True, exist_ok=True)
-        for name in ("check.py", "garrick_lib.py"):
-            shutil.copy2(TOOLS / name, tools / name)
-        shutil.rmtree(self.work / ".git")
-        git(self.work, "init", "-q")
-        lib.install_wall_hook(self.work)
-        commit_all(self.work, "start")
-        intake.file_conversation(self.root, self.drop("q.eml", self.quotes), ["acme"])
-        self.birch_sources.mkdir(parents=True, exist_ok=True)
-        (self.birch_sources / "numbers.csv").write_bytes(QUOTES)
-        git(self.work, "add", "Birch Entry/Sources/numbers.csv")
-        res = subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "numbers"], cwd=str(self.work),
-                             env=dict(GIT_ENV, PYTHONDONTWRITEBYTECODE="1"), capture_output=True, text=True)
-        self.assertNotEqual(0, res.returncode, res.stdout + res.stderr)
-        self.assertIn("Commit refused: Zones/Work/Birch Entry/Sources/numbers.csv came from mail", res.stderr)
 
 
 class TestKnowledgeCarriesNoParties(MailCase):

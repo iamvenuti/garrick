@@ -45,7 +45,7 @@ def load(name: str, path: Path):
 
 nurture = load("garrick_nurture", TOOLS / "nurture.py")
 
-WALLED_NOTE = "Theo Marsh said their tender closes on the ninth.\n"      # a name: never a crossing
+WALLED_NOTE = "Their tender closes on the ninth, see [[Zones/Personal/Todo]].\n"      # a link to a file of another walled zone: a crossing
 
 
 class Base(unittest.TestCase):
@@ -690,7 +690,7 @@ class DebtTest(Base):
         rec = json.loads((self.root / "System" / "generated" / "nurture" / "2026-10-17.json").read_text())
         self.assertEqual(debt, rec["debt"])
         self.assertEqual(len(out["items"]), len(rec["standing"]))
-        for word in ("Theo", "tender"):                                      # a wall is weighed, never quoted
+        for word in ("tender",):                                      # a wall is weighed, never quoted
             self.assertNotIn(word, json.dumps(rec["standing"]))
         report = (self.root / out["report"]).read_text()
         self.assertIn("Context debt: %d (wall 10, attribution 5" % debt["total"], report)
@@ -894,7 +894,7 @@ class NightlyTest(Base):
         self.assertTrue(notice.startswith("digest|Fixed 4 overnight (Wikis 1, Work 3):"), notice)
         self.assertIn("1 status word", notice)
         self.assertIn("Waiting for you: one wall", notice)
-        for word in ("Theo", "tender"):
+        for word in ("tender",):
             self.assertNotIn(word, notice)
         report = (self.root / "System" / "generated" / "nurture").glob("*.md")
         self.assertIn("nobody watching", next(report).read_text())
@@ -947,7 +947,7 @@ class NightlyTest(Base):
         notice = self.notices.read_text()
         self.assertIn("Waiting for you: one wall", notice)
         self.assertRegex(notice, r'\nContext debt \d+, mostly walls in Work\. Say "nurture Work"\.')
-        for word in ("Theo", "tender"):
+        for word in ("tender",):
             self.assertNotIn(word, notice)
 
     def test_pages_that_would_fade_get_a_line_of_their_own_and_never_move(self):

@@ -183,9 +183,10 @@ class TestAFadedDecision(DecisionCase):
         return [f for f in check.run_checks(self.root) if f.check == "walls" and f.path == rel]
 
     def put(self, home):
-        write(self.meetings / RECORD, answer_record())
-        write(self.meetings / home / "wiki/decisions/261005 - pallets.md", decision())
-        write(self.meetings / home / "raw/answers/261005 - pallets.md", answer_record())
+        far = lambda text: text.replace("zone: Work", "zone: Personal")        # the far side is another walled zone
+        write(self.meetings / RECORD, far(answer_record()))
+        write(self.meetings / home / "wiki/decisions/261005 - pallets.md", far(decision()))
+        write(self.meetings / home / "raw/answers/261005 - pallets.md", far(answer_record()))
 
     def test_a_live_decision_is_refused_on_each_form(self):
         self.put("")
@@ -355,13 +356,8 @@ class TestWhatTheCheckSays(DecisionCase):
         write(self.meetings / "wiki/decisions/261005 - nozone.md", decision(zone="", parties=""))
         write(self.meetings / "wiki/decisions/261005 - short.md", decision().replace("## Revisit when\n\nNot set.\n", ""))
         messages = " | ".join(f.message for f in self.findings())
-        self.assertIn("unfinished: no zone or parties", messages)
+        self.assertIn("unfinished: no zone", messages)
         self.assertIn("no `## Revisit when` section", messages)
-
-    def test_a_decision_citing_a_meeting_across_a_wall_is_warned_about(self):
-        write(self.meetings / RECORD, answer_record())
-        write(self.meetings / DECISION, decision().replace("None yet.", "See [[wiki/sources/260312-birch-kickoff]].", 1))
-        self.assertTrue([f for f in self.findings() if "is walled and" in f.message])
 
     def test_the_lint_counts_a_decision_as_no_orphan(self):
         self.decide()

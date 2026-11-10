@@ -22,7 +22,7 @@ from walls_fixture import build  # noqa: E402
 import check  # noqa: E402
 import garrick_lib as lib  # noqa: E402
 
-NAMES = ("Acme", "acme", "Birch", "birch", "Dana", "Whitlock", "Theo", "Marsh", "Northwind", "Harbour", "Notes.md")
+NAMES = ("Acme", "acme", "Birch", "birch", "Dana", "Whitlock", "Theo", "Marsh", "Northwind", "Harbour", "Notes.md", "Garden", "Plan", "Leak")
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
@@ -41,7 +41,7 @@ class RefusalRecord(unittest.TestCase):
         self.record = self.root.joinpath(*lib.REFUSALS)
 
     def refuse(self):
-        write(self.work / "Northwind" / "Threads" / "Pricing" / "Leak.md", "# N\n\nAsk Theo Marsh at Birch & Co.\n")
+        write(self.work / "Northwind" / "Threads" / "Pricing" / "Leak.md", "# N\n\nSee [[Zones/Personal/Garden/Threads/Beds/Plan]].\n")
         git(self.work, "add", "-A")
         found = [f for f in check.run_checks(self.root, staged=self.work) if f.severity == "error"]
         lib.record_refusals(self.root, self.work, [f.message for f in found])
@@ -55,14 +55,14 @@ class RefusalRecord(unittest.TestCase):
         rows = self.rows()
         self.assertEqual(len(found), len(rows))
         self.assertEqual({"at", "zone", "repo", "kind", "walled"}, set(rows[0]))
-        self.assertEqual(("Work", "zone", "name", True), (rows[0]["zone"], rows[0]["repo"], rows[0]["kind"], rows[0]["walled"]))
+        self.assertEqual(("Work", "zone", "link", True), (rows[0]["zone"], rows[0]["repo"], rows[0]["kind"], rows[0]["walled"]))
         text = self.record.read_text(encoding="utf-8")
         for name in NAMES:
             self.assertNotIn(name, text)
         self.assertTrue(all(r["kind"] in lib.REFUSAL_KINDS for r in rows))
 
     def test_the_hook_route_records_it_too(self):
-        write(self.work / "Northwind" / "Threads" / "Pricing" / "Leak.md", "# N\n\nAsk Theo Marsh.\n")
+        write(self.work / "Northwind" / "Threads" / "Pricing" / "Leak.md", "# N\n\nSee [[Zones/Personal/Garden/Threads/Beds/Plan]].\n")
         git(self.work, "add", "-A")
         cwd = os.getcwd()
         os.chdir(self.work)
@@ -71,11 +71,12 @@ class RefusalRecord(unittest.TestCase):
         finally:
             os.chdir(cwd)
         self.assertEqual(1, code)
-        self.assertEqual("name", self.rows()[0]["kind"])
+        self.assertEqual("link", self.rows()[0]["kind"])
 
     def test_the_kinds(self):
         for message, kind in (("repeats wording from a page", "wording"), ("writes the path x, a path that leads", "path"),
-                              ("names X, or one of its people", "name"), ("links y, a file that names no party", "unlabelled"),
+                              ("names X, or one of its people", "name"), ("links y, a page that names no zone, so nothing says whose it is", "unlabelled"),
+                              ("is a copy, whole, of a file of the Home zone", "copy"),
                               ("holds NUL bytes, so the walls cannot read it", "unreadable"), ("links z, a note of q", "link")):
             self.assertEqual(kind, lib.refusal_kind(message), message)
 
@@ -87,7 +88,7 @@ class RefusalRecord(unittest.TestCase):
         with self.record.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(old) + "\n")
         got = lib.refusal_counts(self.root)
-        self.assertEqual({"name": len(self.rows()) - 1}, got["kinds"])        # the old line is outside the 30 days
+        self.assertEqual({"link": len(self.rows()) - 1}, got["kinds"])        # the old line is outside the 30 days
         self.assertEqual(1, got["overridden"])
         self.assertEqual(1, len(got["days"]))
 
@@ -99,8 +100,8 @@ class RefusalRecord(unittest.TestCase):
         (self.root / "System" / "tools" / "garrick_lib.py").write_text(Path(lib.__file__).read_text(encoding="utf-8"), encoding="utf-8")
         shown = status.refusals_block(self.root)
         self.assertIn("Wall refusals, 30 days", shown)
-        self.assertIn("name", shown)
-        self.assertNotIn("Theo", shown)
+        self.assertIn("link", shown)
+        self.assertNotIn("Plan", shown)
 
 
 if __name__ == "__main__":

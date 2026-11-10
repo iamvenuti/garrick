@@ -2,15 +2,15 @@ name: Wall diff
 
 # A change to how the wall check reads a token is released only when no row of the
 # case files and end-to-end rows goes from refused to passed against the newest release,
-# other than by design (a token that does not resolve). The counts
-# go in the job summary. tests/wall_diff.py has the rest.
+# other than by design (a token that does not resolve), inside one zone, or by a name
+# alone, and none goes from passed to refused. The counts go in the job summary. tests/wall_diff.py has the rest.
 on:
   pull_request:
     paths:
       - template/System/tools/check.py
       - template/System/tools/garrick_lib.py
       - tests/wall_diff.py
-      - tests/test_wall_forms.py
+      - tests/walls_forms.py
   workflow_dispatch:
 
 permissions:

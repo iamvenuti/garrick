@@ -934,68 +934,8 @@ class TestFromThePage(ManageCase):
         self.assertIsNotNone(ops)
         return ops.WALL_REFUSAL
 
-    def test_a_manage_verb_the_real_wall_check_refuses_says_the_rules_sentence_alone(self):
-        """#172: the zone's own wall check, as installed, refuses each manage
-        verb, since what it would commit names Birch & Co in a project for Acme.
-        The page says #116's sentence and nothing else, where the script, run in
-        a terminal, still prints the check's line for whoever has to take the
-        material out."""
-        wall = self.wall()
-        head = self.git("rev-parse", "HEAD").stdout
 
-        def refused(**req):
-            with self.assertRaises(pa.Refused, msg=req) as said:
-                self.act(**req)
-            self.assertEqual(wall, str(said.exception), req)
-            for leak in ("Birch", "birch", "acme", "Commit refused", "not committed"):
-                self.assertNotIn(leak, str(said.exception), req)
-            self.assertEqual(head, self.git("rev-parse", "HEAD").stdout, req)
 
-        refused(verb="rename", zone="Work", project="Acme", thread="Freight", to="Birch Lanes")
-        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the rename put back
-        self.assertTrue(self.freight.is_file())
-        refused(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
-        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the new thread taken away
-        refused(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
-        self.assertEqual("", self.git("status", "--porcelain").stdout)              # and the new project
-        hub = self.work / "Acme" / "Acme.md"                       # written before the wall stood, say
-        hub.write_text(hub.read_text() + "\nBirch & Co asked about the same lanes.\n")
-        self.git("commit", "-q", "--no-verify", "-am", "a line from before the wall")
-        head = self.git("rev-parse", "HEAD").stdout
-        refused(verb="delete", zone="Work", project="Acme", thread="Freight", confirm="Freight")
-        self.assertEqual("", self.git("status", "--porcelain").stdout)              # the deletion put back
-        self.assertTrue(self.freight.is_file())
-        r = self.scaffold("delete", "--zone", "Work", "--project", "Acme", "--thread", "Freight", "--confirm", "Freight")
-        self.assertEqual(1, r.returncode)
-        self.assertIn("Commit refused: ", r.stderr)                                 # the terminal keeps the check's line
-
-    def test_a_new_thread_the_wall_check_refuses_leaves_nothing_behind(self):
-        """#172: "Nothing was written" holds. The thread's folder goes, and the
-        hub gets back the bytes it held before the request, an edit another
-        session had not committed yet included; the index is as it was."""
-        hub = self.work / "Acme" / "Acme.md"
-        hub.write_text(hub.read_text() + "\nA line typed in Obsidian, not committed yet.\n")
-        before = hub.read_bytes()
-        with self.assertRaises(pa.Refused) as said:
-            self.act(verb="new-thread", zone="Work", project="Acme", name="Birch Pitch")
-        self.assertEqual(self.wall(), str(said.exception))
-        self.assertFalse((self.work / "Acme" / "Threads" / "Birch Pitch").exists())
-        self.assertEqual(before, hub.read_bytes())
-        self.assertEqual(" M Acme/Acme.md\n", self.git("status", "--porcelain").stdout)
-        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
-
-    def test_a_new_project_the_wall_check_refuses_leaves_nothing_behind(self):
-        """Its folder goes, a Threads folder and a first thread with it, and
-        nothing that was there before the request is touched."""
-        todo = self.work / "Todo.md"
-        todo.write_text(todo.read_text() + "- [ ] [[Freight]]: an edit of its own\n")
-        before = {p: p.read_bytes() for p in self.work.rglob("*") if p.is_file() and ".git" not in p.parts}
-        with self.assertRaises(pa.Refused) as said:
-            self.act(verb="new-project", zone="Work", name="Cobalt", party="acme", thread="Birch Pitch")
-        self.assertEqual(self.wall(), str(said.exception))
-        self.assertFalse((self.work / "Cobalt").exists())
-        self.assertEqual(before, {p: p.read_bytes() for p in self.work.rglob("*") if p.is_file() and ".git" not in p.parts})
-        self.assertEqual("", self.git("diff", "--cached", "--name-only").stdout)
 
     def test_a_manage_verb_refused_for_any_other_reason_still_says_why(self):
         hook = Path(self.git("rev-parse", "--git-path", "hooks/pre-commit").stdout.strip())

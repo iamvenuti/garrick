@@ -281,33 +281,34 @@ class TestWhichRepositoryAFolderBelongsTo(PathspecCase):
 class TestTheWallStillHolds(PathspecCase):
     """Nothing about the environment may let a pathspec commit through a wall."""
 
-    def test_a_name_across_the_wall_is_refused(self):
+    ACROSS = "See [[Zones/Personal/Todo]].\n"        # a file of the Personal zone, a walled zone beside Work
+
+    def test_a_link_across_the_wall_is_refused(self):
         note = self.birch / "Threads" / "Market Sizing" / "Notes.md"
-        write(note, "Dana Whitlock called.\n")
+        write(note, self.ACROSS)
         git(self.zone, "add", "--", str(note.relative_to(self.zone)))   # git names only what it knows
         head = self.head()
         res = self.commit(str(note.relative_to(self.zone)))
         self.assertEqual(1, res.returncode, res.stdout + res.stderr)
         self.assertIn("Commit refused", res.stderr)
-        self.assertIn("names <acme>", res.stderr)
-        self.assertNotIn("Dana", res.stderr)
+        self.assertIn("the Personal zone", res.stderr)
         self.assertEqual(head, self.head())
 
-    def test_wording_from_a_meeting_in_the_other_repository_is_refused(self):
-        """The quote comparison reads the Wikis repository through the git calls
-        this fix changed: the meeting is gone from disk, so git's version of
-        that repository is the only place the wording still is."""
-        self.birch_call()
+    def test_a_page_of_another_zone_that_only_git_holds_still_counts(self):
+        """The zone of a meeting is read from the Wikis repository through the git calls this fix changed: the page
+        says Work on disk, but git's version says Personal, so it is no one zone's until they agree."""
+        page = self.meetings / "wiki" / "sources" / "260314-birch-call.md"
+        write(page, meeting_page("Personal", "[birch]", "Birch call"))
+        commit_all(self.wikis, "Birch call")
+        write(page, meeting_page("Work", "[birch]", "Birch call"))
         brief = self.acme / "Deliverables" / "260302 - Board note.md"
-        write(brief, SECRET + "\n")
+        write(brief, "See [[260314-birch-call]].\n")
         git(self.zone, "add", "--", str(brief.relative_to(self.zone)))
         head = self.head()
         res = self.commit(str(brief.relative_to(self.zone)))
         self.assertEqual(1, res.returncode, res.stdout + res.stderr)
         self.assertIn("Commit refused", res.stderr)
         self.assertIn("260314-birch-call", res.stderr)
-        for word in SECRET_WORDS:
-            self.assertNotIn(word, res.stderr.lower())
         self.assertEqual(head, self.head())
 
     def test_the_hook_reads_the_temporary_index_not_the_file_on_disk(self):
@@ -319,12 +320,12 @@ class TestTheWallStillHolds(PathspecCase):
         write(note, "Three scenarios.\n")
         git(self.zone, "add", "--", str(note.relative_to(self.zone)))
         commit_all(self.zone, "Market sizing notes")
-        write(note, "Dana Whitlock called.\n")          # in the working tree alone, never staged
+        write(note, self.ACROSS)          # in the working tree alone, never staged
         self.assertEqual("", git(self.zone, "diff", "--cached", "--name-only"))
         head = self.head()
         res = self.commit(str(note.relative_to(self.zone)))
         self.assertEqual(1, res.returncode, res.stdout + res.stderr)
-        self.assertIn("names <acme>", res.stderr)
+        self.assertIn("the Personal zone", res.stderr)
         self.assertEqual(head, self.head())
 
     def test_what_the_commit_leaves_behind_does_not_refuse_it(self):
@@ -332,7 +333,7 @@ class TestTheWallStillHolds(PathspecCase):
         the working tree is not what a pathspec commit of that file holds, so
         it passes, and the commit holds the clean version."""
         note = self.birch / "Threads" / "Market Sizing" / "Notes.md"
-        write(note, "Dana Whitlock called.\n")
+        write(note, self.ACROSS)
         git(self.zone, "add", "--", str(note.relative_to(self.zone)))
         write(note, "Three scenarios.\n")
         res = self.commit(str(note.relative_to(self.zone)))

@@ -45,10 +45,10 @@ def journey(name, said, workspace, steps, asks, never_asks, says, not_says=()):
 ADD = "Shall I add it as a party"
 AMBIGUOUS = ("Two of your parties are called Acme Corp: the supplier in Work, and the research client "
              "in Consulting. Which one is this call with?")
-BOTH_SIDES = ("These notes mention both, and a wall stands between them. Which one is this brief for? "
+BOTH_SIDES = ("These notes mention both, and they are in two walled zones. Which zone is this brief for? "
               "What belongs to the other stays out.")
-SECOND_HAT = ("Is this the same Acme Corp in another capacity? Both stay walled, and a "
-              "note never names the two together.")
+SECOND_HAT = ("Is this the same Acme Corp in another capacity? It goes in its own zone, "
+              "and the zone keeps the two apart.")
 
 JOURNEYS = [
     journey(
@@ -79,7 +79,7 @@ JOURNEYS = [
     journey(
         "an ambiguous party, or one organisation in two capacities",
         "Help me prepare my next Acme Corp call.",
-        "Two parties are called Acme Corp, in two zones, and a wall stands between them.",
+        "Two parties are called Acme Corp, in two zones, and the zone wall stands between them.",
         [1, 4, 5],
         [AMBIGUOUS, BOTH_SIDES, SECOND_HAT],
         ["which one it is, of its own accord"],

@@ -1882,7 +1882,7 @@ def classify(root, lib, finding, stems, parties, zones):
     target = _target_zone(root, lib, finding, stems, parties, zones)
     if src is not None and target == src:
         return "inside"
-    if lib.refusal_kind(finding.get("message") or "") == "name":
+    if re.match(r"\s*names\b", finding.get("message") or "") or "one of its people" in (finding.get("message") or ""):
         return "name"
     return "other"
 

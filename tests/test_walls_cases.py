@@ -111,6 +111,9 @@ class Cases(unittest.TestCase):
             "e30": lambda: self.pricing("# N\n\n%s\n" % HOME_SAYS),
             "e31": lambda: self.pricing("# N\n\n%s\n" % UNZONED_SAYS),
             "e32": lambda: self.knowledge_says(),
+            "e33": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260310-work-call")),
+            "e34": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260312-ventures-call")),
+            "e35": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260311-home-call", fill=True)),
             "e17": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Home/Garden/Threads/Beds/Plan.md")),
             "e18": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Ventures/Orchard/Threads/Drafts/Plan.md")),
             "e19": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Work/Harbour/Threads/Sizing/Plan.md")),
@@ -123,6 +126,12 @@ class Cases(unittest.TestCase):
             "e26": lambda: self.staged("Northwind/Threads/Pricing/tool.py", "# see [[260311-home-call]]\n"),
             "e27": lambda: self.staged("Northwind/Threads/Pricing/Blob.md", data=b"see\x00there"),
         }
+
+    def raw(self, stem, fill=False):
+        path = self.root / "Wikis" / "Meetings" / "raw" / (stem + ".txt")
+        if fill:      # a record long enough to count as a copy
+            path.write_text("Jo: the beds are marked along the south wall, and the path is laid.\n", encoding="utf-8")
+        return path.read_bytes()
 
     def plan(self, rel):
         return (self.root / "Zones" / rel).read_bytes()

@@ -4799,6 +4799,11 @@ def symlink_finding(ws: Workspace, path: Path) -> Optional[Finding]:
                    "A note in %s is a symbolic link into %s" % (zone_name(dest), zone_name(there)))
 
 
+def an(noun: str) -> str:
+    """`noun` with its article: a meeting, an entity page."""
+    return ("an " if noun[:1] in "aeiou" else "a ") + noun
+
+
 def zone_findings_for_file(ws: Workspace, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one file of a zone, whose text is `text`: a link, an embed or a path that lands on a
     file of another walled zone, or on a Meetings page of one, or on a page that names no zone. A path in it that the
@@ -4828,13 +4833,13 @@ def zone_findings_for_file(ws: Workspace, path: Path, text: str) -> List[Finding
                 else "note" if hit.suffix.lower() == ".md" else "file"
             if there == UNZONED:
                 out.append(Finding(ERROR, "walls", r,
-                                   "%s %s, a %s that names no zone, so nothing says whose it is; give it a `zone:`" % (verb, written, noun),
-                                   "A note in %s uses a %s with no zone" % (zone_name(dest), noun)))
+                                   "%s %s, %s that names no zone, so nothing says whose it is; give it a `zone:`" % (verb, written, an(noun)),
+                                   "A note in %s uses %s with no zone" % (zone_name(dest), an(noun))))
             else:
                 out.append(Finding(ERROR, "walls", r,
-                                   "%s %s, a %s of %s; that zone is walled and this file is in %s"
-                                   % (verb, written, noun, zone_name(there), zone_name(dest)),
-                                   "A note in %s uses a %s of %s" % (zone_name(dest), noun, zone_name(there))))
+                                   "%s %s, %s of %s; that zone is walled and this file is in %s"
+                                   % (verb, written, an(noun), zone_name(there), zone_name(dest)),
+                                   "A note in %s uses %s of %s" % (zone_name(dest), an(noun), zone_name(there))))
     return out + (wording_findings(ws, path, text, dest) if not ws.quick else [])
 
 
@@ -4894,12 +4899,12 @@ def wording_findings(ws: Workspace, path: Path, text: str, dest: str) -> List[Fi
         there = zone_from_frontmatter(ws.root, ws.meetings[page])
         noun = meeting_noun(ws, page)
         if there == UNZONED:
-            out.append(Finding(ERROR, "walls", r, "repeats wording from %s %s, a %s that names no zone, so nothing says whose it is; "
-                               "give it a `zone:`" % (noun, page.stem, noun), "A note in %s quotes a %s with no zone" % (zone_name(dest), noun)))
+            out.append(Finding(ERROR, "walls", r, "repeats wording from %s %s, %s that names no zone, so nothing says whose it is; "
+                               "give it a `zone:`" % (noun, page.stem, an(noun)), "A note in %s quotes %s with no zone" % (zone_name(dest), an(noun))))
         else:
-            out.append(Finding(ERROR, "walls", r, "repeats wording from %s %s, a %s of %s; that zone is walled and this file is in %s"
-                               % (noun, page.stem, noun, zone_name(there), zone_name(dest)),
-                               "A note in %s quotes a %s of %s" % (zone_name(dest), noun, zone_name(there))))
+            out.append(Finding(ERROR, "walls", r, "repeats wording from %s %s, %s of %s; that zone is walled and this file is in %s"
+                               % (noun, page.stem, an(noun), zone_name(there), zone_name(dest)),
+                               "A note in %s quotes %s of %s" % (zone_name(dest), an(noun), zone_name(there))))
     for other in sorted(copied):
         sources = sorted(copied[other])
         there = zone_of(ws.root, sources[0])
@@ -4947,7 +4952,7 @@ def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Findi
                     continue
                 if size not in want or at.is_symlink():
                     continue
-                there = zone_of(ws.root, at)
+                there = hit_zone(ws, at)         # a raw record is in the zone of the pages that claim it
                 if there is None:
                     continue
                 digest = None

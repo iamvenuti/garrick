@@ -120,6 +120,9 @@ A fixture workspace: `Work` and `Home` are walled zones, `Ventures` an open one.
 | e30 | check | a Northwind note that repeats a sentence of a Meetings page of Home | refused | wording held by a Meetings page of another walled zone |
 | e31 | check | a Northwind note that repeats a sentence of a Meetings page with no zone | refused | a page with no zone is walled |
 | e32 | check | a Knowledge page that repeats a sentence of a Meetings page | warned | Knowledge's own rule: wording in Knowledge is common to every zone |
+| e33 | check | a Northwind file that is a whole copy of a raw record of a Meetings page of Work | permitted | a record is in the zone of the page that claims it |
+| e34 | check | a Northwind file that is a whole copy of a raw record of a Meetings page of Ventures | permitted | an open zone's record may be copied |
+| e35 | check | a Northwind file that is a whole copy of a raw record of a Meetings page of Home | refused | a copy across a zone wall, a record included |
 
 ## Meetings
 

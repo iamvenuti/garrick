@@ -124,6 +124,7 @@ from garrick_lib import (  # noqa: E402
     zone_roles,
     local_file,
     parse_frontmatter,
+    read_settings,
     parse_frontmatter_text,
     read_checkpoint,
     read_version,
@@ -2052,6 +2053,35 @@ def check_threads(ws: Workspace) -> List[Finding]:
     return out
 
 
+def check_history(ws: Workspace) -> List[Finding]:
+    """A hub or thread note over `note-max-words`, and a Resume here block over `resume-max-words` (#502): each
+    finding names the note, its words and the limit. The first is mechanical (history.py moves the older dated
+    entries); the second is a rewrite that only the user's yes makes."""
+    try:
+        import history
+    except ImportError:
+        return []
+    cap = history.limits(ws.root)
+    out: List[Finding] = []
+    for project, fm in ws.projects:
+        notes = [("projects", project / (project.name + ".md"), project.name)]
+        notes += [("threads", t / (t.name + ".md"), "%s, %s" % (project.name, t.name)) for t in visible_dirs(project / "Threads")]
+        for name, note, spoken in notes:
+            text = read_text(note) if note.is_file() else None
+            if not text:
+                continue
+            words = history.note_words(text)
+            if words > cap["note-max-words"]:
+                out.append(Finding(WARNING, name, rel(ws, note), history.note_over(words, cap["note-max-words"]),
+                                   "%s is %d words long, over its limit of %d" % (spoken, words, cap["note-max-words"])))
+            block = history.resume_words(text)
+            if block > cap["resume-max-words"]:
+                out.append(Finding(WARNING, "resume", rel(ws, note), history.resume_over(block, cap["resume-max-words"]),
+                                   "The resume point of %s is %d words long, over its limit of %d"
+                                   % (spoken, block, cap["resume-max-words"])))
+    return out
+
+
 RESUME_END_RE = re.compile(r"^(#{1,3} |---\s*$)")
 TICK_RE = re.compile(r"`([^`\n]+)`")
 PATHLIKE_RE = re.compile(r"^[\w./~ ()&',+-]+(\.[A-Za-z0-9]{1,5}|/)$")
@@ -3459,7 +3489,7 @@ def note_refs(ws: Workspace, zone: Path) -> List[Finding]:
         if not hub.is_file():
             continue
         scan = [hub] + [p for folder in ("Threads", "Notes") for p in live_files(project / folder)
-                        if p.suffix.lower() == ".md" and not {"Deliverables", "Sources"} & set(p.relative_to(project).parts)]
+                        if p.suffix.lower() == ".md" and not {"Deliverables", "Sources", "history"} & set(p.relative_to(project).parts)]
         subs = visible_dirs(project)
         for path in scan:
             text = read_text(path) or ""
@@ -6389,7 +6419,7 @@ PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
     check_hooks, check_cmux,
-    check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
+    check_skills, check_names, check_projects, check_threads, check_history, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates,
 ]

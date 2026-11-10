@@ -1053,6 +1053,30 @@ def cmd_park(root, args, today):
     return "%s is %s" % (name, "parked" if status == "parked" else "awake again")
 
 
+def rename_history(zone_dir, moved, old, new):
+    """The history files beside a renamed note (history.py) go by its new name: each file, its `parent:` and its
+    heading. The note's own link line is rewritten with the note. The files of a thread moved to another project
+    need nothing: the whole folder goes with it. Returns the files it changed, in their new places."""
+    folder = moved / "history"
+    out = []
+    if not folder.is_dir():
+        return out
+    for path in sorted(folder.glob("*.md")):
+        m = re.fullmatch(re.escape(old) + r" history (\d{4}-Q[1-4])\.md", path.name)
+        if not m:
+            continue
+        target = folder / f"{new} history {m.group(1)}.md"
+        step = folder / f".rename-{m.group(1)}.md"
+        git_ok(["mv", path.relative_to(zone_dir).as_posix(), step.relative_to(zone_dir).as_posix()], zone_dir)
+        git_ok(["mv", step.relative_to(zone_dir).as_posix(), target.relative_to(zone_dir).as_posix()], zone_dir)
+        text = target.read_text(encoding="utf-8")
+        text = re.sub(r'(?m)^parent: "\[\[%s\]\]"$' % re.escape(old), lambda _: f'parent: "[[{new}]]"', text, count=1)
+        text = re.sub(r"(?m)^# %s: history, " % re.escape(old), lambda _: f"# {new}: history, ", text, count=1)
+        target.write_text(text, encoding="utf-8")
+        out.append(target)
+    return out
+
+
 def cmd_rename(root, args, today):
     zone_dir, project_dir, thread_dir, note = target_of(root, args)
     new = args.to.strip()
@@ -1106,6 +1130,7 @@ def cmd_rename(root, args, today):
         git_ok(["mv", f"{rel_new}/{old}.md", f"{rel_new}/{new}.md"], zone_dir)
         new_note = moved / f"{new}.md"
         touched.add(new_note)
+        touched.update(rename_history(zone_dir, moved, old, new))
         for path in zone_notes(zone_dir):
             try:
                 text = path.read_text(encoding="utf-8")
@@ -1125,6 +1150,7 @@ def cmd_rename(root, args, today):
                 if spoken or is_sayable(new)[0]:
                     changed = set_spoken(changed, spoken)
                 changed = re.sub(r"(?m)^# %s\s*$" % re.escape(old), f"# {new}", changed, count=1)
+                changed = re.sub(r"\[\[%s history (\d{4}-Q[1-4])\]\]" % re.escape(old), lambda m: f"[[{new} history {m.group(1)}]]", changed)
                 changed = re.sub(r"(?m)^updated: .*$", f"updated: {today}", changed, count=1)
                 changed = dated_entry(changed, f"Renamed from {old}.", today)
             if changed != text:

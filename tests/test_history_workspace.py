@@ -166,6 +166,21 @@ class Wrapped(Made):
         names = {t["thread"] for t in rows["threads"]} | set(rows.get("quiet", []) and [])
         self.assertFalse([n for n in names if n and "history" in n])
 
+    def test_the_status_page_and_the_todo_list_see_threads_not_history_files(self):
+        for zone in self.zones:
+            self.assertEqual(0, self.history("apply", self.note(zone).relative_to(self.root).as_posix(), "--commit", "m").returncode)
+        out = self.root / "System" / "generated" / "history-test.html"
+        r = subprocess.run([sys.executable, str(self.root / "System" / "status" / "status.py"), "--workspace", str(self.root),
+                            "--out", str(out), "--no-graph", "--no-cmux"], capture_output=True, text=True, env=self.env, cwd=str(self.root))
+        self.assertEqual(0, r.returncode, r.stderr[-400:])
+        page = out.read_text(encoding="utf-8")
+        for zone, (project, thread, _) in self.zones.items():
+            self.assertIn(thread, page)
+        self.assertNotIn(" history 20", page)
+        r = subprocess.run([sys.executable, str(self.root / "System" / "skills" / "todo" / "todo.py"), "list", "--zone", "Work"],
+                           capture_output=True, text=True, env=self.env, cwd=str(self.root))
+        self.assertNotIn(" history 20", r.stdout)
+
     def test_a_dead_link_inside_a_history_file_is_no_finding(self):
         zone = "Work"
         note = self.note(zone)

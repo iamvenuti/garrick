@@ -1405,6 +1405,24 @@ CONTEXT_EFFECT = {
 }
 
 
+# What a one-word People row's finding says, which Nurture reads to ask for the full name (nurture.ONE_WORD_ROW).
+ONE_WORD_ROW = "by one word, which a note refuses only beside the party's name or another of its people"
+
+
+def one_word_people(ws: Workspace, ctx_path: str) -> List[Finding]:
+    """A People row whose name is one word is matched by the walls only beside the party's name, another of its
+    people, or a link to the person's page; on its own it is a warning (#470). Warn about each row, so that
+    Nurture can ask for the full name, which refuses on its own."""
+    out = []
+    for person in ws.context["people"]:
+        key = " ".join(words(person["name"]))
+        if key and len(key.split()) == 1 and person["party"] in ws.context["parties"]:
+            out.append(Finding(WARNING, "context", ctx_path,
+                               "the People table lists `%s` of `%s` %s; give the full name" % (person["name"], person["party"], ONE_WORD_ROW),
+                               "A person in the context file has a one-word name"))
+    return out
+
+
 def check_context(ws: Workspace) -> List[Finding]:
     out = []
     ctx_path = "System/context.md"
@@ -1482,6 +1500,7 @@ def check_context(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "context", ctx_path,
                                "%s belongs to `%s`, which is not a tag in Parties" % (person["name"], person["party"]),
                                "%s belongs to an unknown party" % person["name"]))
+    out.extend(one_word_people(ws, ctx_path))
     if "none" in parties:
         out.append(Finding(ERROR, "context", ctx_path,
                            "the Parties table has a row for `none`, which is reserved: it says a page is nobody's, "

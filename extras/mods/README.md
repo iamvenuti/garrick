@@ -28,6 +28,8 @@ Above the prompt, two lines beside the mark:
 
   Where there is no thread note above the folder, such as `System/`, the workspace root or a wiki, there is nothing to resume, wrap or show, so the band offers *Clear*, *Close* and *Finder*, which shows the folder. In a wiki, *Obsidian* opens its `wiki/index.md`.
 
+When the band is older than the workspace, a third, dim line says so: "This band is from <commit>; the workspace runs <commit>. Run `python3 update.py` from the newer Garrick, or see Updating." The band reads the `VERSION` file of the Garrick it runs from (two folders above the plugin) and the workspace's `System/garrick-version.json` when the session starts and after every turn, and compares their commits. It says nothing when they match, when a file does not read or names no commit (a clone's `VERSION` names none), or when the band's date is later than the workspace's. `python3 System/tools/check.py --version` and the status page report the same mismatch.
+
 The band does not repeat what the session already shows: no Resume here paragraph, and no echo of your last prompt or the step the assistant is on.
 
 Outside any project it shows the mark and where you are, such as `System` or `Wikis › Meetings`. It reads the note again after every turn, so a wrap shows up straight away.

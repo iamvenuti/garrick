@@ -149,7 +149,7 @@ value is found and replaced one way only.
    kept out with `--leave <path>`.
 4. **On the yes**, the same line with `--yes`, and `--why "<why>"` when the
    user gave a reason. `correct.py` writes each copy, marks the pages
-   resting on a raw record as superseded, and commits once per repository,
+   resting on a raw record corrected or superseded, and commits once per repository,
    only the files it changed. The day's report records the copies fixed,
    each commit, and the yes. Relay the commits, and anything held or
    refused, as *Correct* does.

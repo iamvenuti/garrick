@@ -104,7 +104,7 @@ here, word for word. The commands below carry them out.
 - **"Park X"**: set the thread aside without finishing it. **"Wake X"** or **"unpark X"**: bring it back; so does "open X" on a parked thread. **"What's parked"**: name the parked threads. **"Rename X to Y"** moves the note and every link to it; **"delete X"**, for what should never have existed, lists what would go and acts only on the name said again.
 - **"Where am I" or "what's open"**: name the live threads, most recent first; at most five when the user is listening.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.
-- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on one yes fixes them all, one commit per repository. Live files keep only the new value, with no trail of the old: git holds it. A raw record is never edited; the page resting on it says it was superseded.
+- **"That's wrong, it's Y"** stops the old value everywhere, not only where it was heard. `System/tools/correct.py` lists every live copy, in memory, `System/context.md`, hubs, thread notes, `Todo.md` and the wikis, and on one yes fixes them all, one commit per repository. Live files keep only the new value, with no trail of the old: git holds it. A raw record is never edited; the page resting on it is marked `corrected:` or `superseded:`.
 
 **Files**
 
@@ -1130,7 +1130,7 @@ tomorrow. When the user says "that's wrong, it's Y", "no, it's Y" or
    python3 System/tools/correct.py --old "<X>" --new "<Y>" --apply --why "<why>"
    ```
    It writes Y in place of X in every file listed, re-reading each first;
-   marks each page that rests on a raw record holding X with `superseded:`
+   marks each page that rests on a raw record holding X with `corrected:` (its own text fixed) or `superseded:`
    and one line at its end, since the record itself is never edited;
    rebuilds the Meetings index, and the status page where there is one; and
    commits once per repository, the files it changed and nothing else. A

@@ -1013,9 +1013,12 @@ def _zone_flags(ctx: dict, sections: Dict[str, List[str]], canon: Dict[str, str]
         default = _col(row, "new parties").strip().strip("`*").strip().lower()
         known = ctx["parties"].get(tag)
         party_walled = True if not has_party_flags or known is None else bool(known["walled"])
-        # the same rule as update.zone_flags (#485): walled when its party is, or when its default says so
-        flags[canon.get(zone.casefold(), zone)] = not (not (tag and party_walled) and default == "open"
-                                                       and (not tag or known is not None))
+        # the same rule as update.zone_flags (#485): walled when its party is, when its default says so, or when any party
+        # the Parties table puts in the zone is walled
+        key = canon.get(zone.casefold(), zone)
+        holds_walled = any(p["zone"] == key and (not has_party_flags or p["walled"]) for p in ctx["parties"].values())
+        flags[key] = holds_walled or not (not (tag and party_walled) and default == "open"
+                                          and (not tag or known is not None))
     # GARRICK_ZONE_FLAGS_FINAL=1 reads the derived flags as the migration's yes would leave them: not pending. The
     # update's study sets it to run this check as it will decide after the yes, so what would be newly refused shows.
     return flags, os.environ.get("GARRICK_ZONE_FLAGS_FINAL") != "1"

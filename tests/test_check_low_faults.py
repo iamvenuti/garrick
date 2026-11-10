@@ -78,7 +78,7 @@ class RefusalTrailerTest(Base):
     def test_a_wall_crossing_ends_with_take_it_out(self):
         out = self.line("See `Wikis/Meetings/wiki/sources/260310-acme-kickoff.md`.\n")
         self.assertIn("Commit refused: ", out)
-        self.assertTrue(out.endswith("Take it out and commit again; only if you mean it, git commit --no-verify."), out)
+        self.assertTrue(out.splitlines()[-1].endswith("Take it out and commit again; only if you mean it, git commit --no-verify."), out)
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_a_project_with_no_party_ends_with_naming_one_in_its_hub(self):

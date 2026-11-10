@@ -133,6 +133,14 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     blocked,
     record_refusals,
+    refusal_kind,
+    ALLOW_RULES,
+    allow_add,
+    allow_commit,
+    allow_finding_id,
+    allow_may_write,
+    allow_remove,
+    allow_set,
     is_walled,
     hats_of,
     decide,
@@ -7831,13 +7839,15 @@ ALL_CHECKS = [
 ]
 
 
-def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = None, quick: bool = False) -> List[Finding]:
+def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = None, quick: bool = False,
+               use_ledger: bool = True) -> List[Finding]:
     """Every check, or with `walls_only` the walls check alone. With `staged`, a
     folder inside a git repository, the walls check alone on what it has staged.
     With `quick`, every check but the comparison of wording: whether a project
     file, a person page or a Knowledge page repeats a meeting. That comparison
     reads every meeting and project file, and is most of the time a full check
-    takes on a large workspace; the commit hook still runs it on what is staged."""
+    takes on a large workspace; the commit hook still runs it on what is staged.
+    Findings the user allowed once (System/walls-allowed.json) are dropped, unless `use_ledger` is off."""
     _committing(Path(staged) if staged is not None else None)
     _BLOBS.clear()
     cache = NoteCache.for_repo(Path(staged)) if staged is not None else None
@@ -7847,6 +7857,8 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
     if staged is not None:
         findings = check_walls_staged(ws, Path(staged))
         cache.save()
+        if use_ledger:
+            findings = drop_allowed(ws, findings, allow_repo_top(Path(staged)))
     else:
         for check in ([check_walls] if walls_only else ALL_CHECKS):
             try:
@@ -7855,6 +7867,8 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
                 name = check.__name__.replace("check_", "", 1)
                 findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
                                         "A check stopped before it finished"))
+        if use_ledger:
+            findings = drop_allowed(ws, findings)
     order = {c: i for i, (c, _) in enumerate(CHECKS)}
     findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
     return findings
@@ -8029,11 +8043,241 @@ def staged_fix(message: str) -> str:
     return TAKE_OUT
 
 
-def report_staged(findings: List[Finding]) -> str:
-    """For the pre-commit hook: one plain line per wall broken, nothing when clear."""
-    return "\n".join(
-        "Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message))
-        for f in findings if f.severity == ERROR)
+# ---------------------------------------------------------------------------
+# Allow once: a finding the user let through, for as long as its file is as it was
+# ---------------------------------------------------------------------------
+# The ledger is System/walls-allowed.json (garrick_lib.py). The hook reads it once and drops a finding whose path,
+# id and git blob id all match an entry. Nothing here writes it but allow_command() and the page's verbs, and
+# neither runs without a terminal or a click.
+
+def finding_rule(f: Finding) -> str:
+    """The kind of a finding, as the hook's report and the ledger name it."""
+    return refusal_kind(f.message)
+
+
+def finding_token(f: Finding) -> str:
+    """What a finding's id is taken over besides its path and kind: the text of the finding. The one place to
+    change if a finding comes to carry the matched text on its own."""
+    return f.message
+
+
+def finding_id(f: Finding) -> str:
+    return allow_finding_id(f.path, finding_rule(f), finding_token(f))
+
+
+def allowable(f: Finding) -> bool:
+    """Whether the user may let a finding through: a wall refusal about a file of the workspace, of a kind the
+    ledger holds. A finding about something that could not be read, a file waiting in an inbox, or a repository
+    the walls cannot place is never allowed."""
+    return (f.severity == ERROR and f.check == "walls" and bool(f.path) and not Path(f.path).is_absolute()
+            and finding_rule(f) in ALLOW_RULES and staged_fix(f.message) in ALLOWED_FIXES)
+
+
+# What a refusal ends with when the user may let it through: material to take out (a name, a link, a path, repeated
+# wording), or a file that names no party. A refusal whose fix is a change of the hub, a staging, a finished page or
+# a file that could not be read is not a judgment about the material, and is never allowed.
+ALLOWED_FIXES = {TAKE_OUT, staged_fix("is a file that names no party")}
+
+
+def index_blobs(top: Path) -> Dict[str, str]:
+    """Git's blob id of every file in the index of the repository at `top`, by path in any case: what the commit
+    holds, with nothing hashed here."""
+    listing = _git(["ls-files", "-s", "-z"], top) or ""
+    blobs: Dict[str, str] = {}
+    for entry in listing.split("\0"):
+        meta, _, name = entry.partition("\t")
+        parts = meta.split()
+        if name and len(parts) == 3 and parts[2] == "0":
+            blobs[name.casefold()] = parts[1]
+    return blobs
+
+
+def disk_blob(path: Path) -> Optional[str]:
+    """Git's blob id of a file as it is on disk, from the repository it is in."""
+    got = _git(["hash-object", "--", path.name], path.parent)
+    return got.strip() if got and got.strip() else None
+
+
+def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = None) -> List[Finding]:
+    """The findings left once the allowed ones are taken out. With `top`, the repository being committed, a blob
+    id comes from its index; without, from the file on disk, and only for the files that have a finding the
+    ledger could cover. The ledger is read once; a missing or unreadable one drops nothing."""
+    ledger = allow_set(ws.root)
+    if not ledger:
+        return findings
+    covered = {(p, i) for p, i, _ in ledger}
+    index: Optional[Dict[str, str]] = None
+    disk: Dict[str, Optional[str]] = {}
+    kept = []
+    for f in findings:
+        if not allowable(f) or (f.path, finding_id(f)) not in covered:
+            kept.append(f)
+            continue
+        if top is not None:
+            if index is None:
+                index = index_blobs(top)
+            try:
+                name = (ws.root / f.path).relative_to(top).as_posix()
+            except ValueError:
+                kept.append(f)
+                continue
+            blob = index.get(name.casefold())
+        else:
+            if f.path not in disk:
+                disk[f.path] = disk_blob(ws.root / f.path)
+            blob = disk[f.path]
+        if blob is None or (f.path, finding_id(f), blob) not in ledger:
+            kept.append(f)
+    return kept
+
+
+def allow_repo_top(folder: Path) -> Optional[Path]:
+    top = _git(["rev-parse", "--show-toplevel"], folder)
+    return Path(top.strip()).resolve() if top else None
+
+
+def refused_by_file(findings: List[Finding]) -> Dict[str, List[Finding]]:
+    out: Dict[str, List[Finding]] = {}
+    for f in findings:
+        if f.severity == ERROR:
+            out.setdefault(f.path, []).append(f)
+    return out
+
+
+def kind_counts(found: List[Finding]) -> str:
+    counts: Dict[str, int] = {}
+    for f in found:
+        counts[finding_rule(f)] = counts.get(finding_rule(f), 0) + 1
+    return ", ".join("%d %s" % (n, k) for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def shell_word(text: str) -> str:
+    return text if re.fullmatch(r"[A-Za-z0-9_./@%+=:,-]+", text) else "'" + text.replace("'", "'\\''") + "'"
+
+
+ALLOW_COMMAND = "python3 System/tools/check.py allow"
+
+
+def report_short(findings: List[Finding]) -> str:
+    """The hook's report: a file with one refusal keeps its own line; a file with several gets one line with the
+    kind of each and a count. Then the command that lets one through, once. The full list is --verbose."""
+    lines = []
+    first = None
+    for path, found in refused_by_file(findings).items():
+        if len(found) == 1:
+            f = found[0]
+            lines.append("Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message)))
+        else:
+            lines.append("Commit refused: %s holds %d refusals (%s). Take them out and commit again; "
+                         "--verbose lists each." % (path, len(found), kind_counts(found)))
+        if first is None:
+            first = next((f for f in found if allowable(f)), None)
+    if first is not None:        # first, not last: what reads a refusal back (the page, scaffold.py) takes the last line
+        lines.insert(0, "To let a refusal through, once, while the file stays as it is: %s %s [<id>]; "
+                     "--verbose gives each id, for example %s %s %s"
+                     % (ALLOW_COMMAND, "<path>", ALLOW_COMMAND, shell_word(first.path), finding_id(first)))
+    return "\n".join(lines)
+
+
+def report_verbose(findings: List[Finding]) -> str:
+    """Every refusal on a line of its own, as the hook used to print them, with the id that lets it through."""
+    lines = []
+    for f in (f for f in findings if f.severity == ERROR):
+        line = "Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message))
+        lines.append(line + ("  [id %s, %s]" % (finding_id(f), finding_rule(f)) if allowable(f) else ""))
+    return "\n".join(lines)
+
+
+def allow_files(root: Path, path: str):
+    """(findings, blob, top) for a file of the workspace: what the wall check says about it now, the blob id of the
+    file as that check read it, and the repository it is in. Read from the index when the file is staged, else
+    from the file on disk (the walls check of the named file, as an update asks it). None when the file is not
+    in a repository of the workspace."""
+    file = root / path
+    top = _git(["rev-parse", "--show-toplevel"], file.parent if file.parent.is_dir() else root)
+    if top is None:
+        return None
+    top_path = Path(top.strip()).resolve()
+    try:
+        name = file.resolve().relative_to(top_path).as_posix()
+    except ValueError:
+        return None
+    staged = _git(["diff", "--cached", "--name-only", "-z", "--", name], top_path) or ""
+    if staged.strip("\0"):
+        found = run_checks(root, staged=top_path, use_ledger=False)
+        blob = index_blobs(top_path).get(name.casefold())
+    else:
+        found = run_path_checks(root, [path])
+        blob = disk_blob(file)
+    return [f for f in found if f.path == path and allowable(f)], blob, top_path
+
+
+def allow_page(root: Path, path: str, fid: Optional[str], by: str, remove: bool = False) -> Tuple[int, str]:
+    """Write or take away one allowance. (0, what was done) or (1, why not). `by` is "terminal" or "page"; the
+    caller has settled that it is one (allow_may_write). Without an id, lists the file's findings and
+    writes nothing."""
+    root = Path(root).resolve()
+    path = Path(path).as_posix()
+    if path.startswith("/") or ".." in path.split("/") or not path:
+        return 1, "name the file by its path from the workspace root, such as Zones/Work/Acme/Notes.md"
+    if remove:
+        if not fid:
+            return 1, "name the finding to take away: allow --remove <path> <id>"
+        if not allow_remove(root, path, fid):
+            return 1, "no allowance for %s with the id %s" % (path, fid)
+        said = allow_commit(root, "Walls: take away an allowance")
+        return 0, "Allowance taken away.%s" % (" The ledger was not committed: %s" % said if said else "")
+    got = allow_files(root, path)
+    if got is None:
+        return 1, "%s is not in a repository of this workspace" % path
+    found, blob, _ = got
+    if not found:
+        return 1, "no refusal that can be allowed for %s now" % path
+    if not fid:
+        return 0, "\n".join("%s  %s  %s" % (finding_id(f), finding_rule(f), f.message) for f in found)
+    hit = next((f for f in found if finding_id(f) == fid), None)
+    if hit is None:
+        return 1, "%s has no refusal with the id %s now" % (path, fid)
+    if blob is None:
+        return 1, "git has no blob id for %s, so nothing was allowed; stage the file first" % path
+    entry = allow_add(root, path, fid, blob, finding_rule(hit), by)
+    said = allow_commit(root, "Walls: allow one %s refusal once" % entry["rule"])
+    return 0, "Allowed once: %s, a %s refusal. It holds until the file changes.%s" % (
+        path, entry["rule"], " The ledger was not committed: %s" % said if said else "")
+
+
+def allow_command(argv: List[str]) -> int:
+    """`check.py allow [--root R] [--remove] <path> [<id>]`: from a terminal only."""
+    parser = argparse.ArgumentParser(prog="check.py allow", description="Let one wall refusal through, once, while its "
+                                     "file stays as it is. Without an id, lists the file's refusals.")
+    parser.add_argument("--root", help="workspace root (default: the workspace this script sits in)")
+    parser.add_argument("--remove", action="store_true", help="take the allowance away instead")
+    parser.add_argument("path", help="the file, from the workspace root")
+    parser.add_argument("id", nargs="?", help="the refusal's id, as --verbose or this command without one lists it")
+    args = parser.parse_args(argv)
+    if not allow_may_write("terminal"):
+        print("check: an allowance is written from a terminal you type in, or by a click in the app; "
+              "nothing was written", file=sys.stderr)
+        return 2
+    try:
+        root = Path(args.root).expanduser().resolve() if args.root else workspace_root(Path(__file__).resolve().parent)
+    except FileNotFoundError as exc:
+        print("check: %s" % exc, file=sys.stderr)
+        return 2
+    path = args.path
+    if os.path.isabs(path):
+        try:
+            path = Path(path).resolve().relative_to(root).as_posix()
+        except ValueError:
+            pass
+    code, said = allow_page(root, path, args.id, "terminal", remove=args.remove)
+    print(said, file=sys.stderr if code else sys.stdout)
+    return code
+
+
+def report_staged(findings: List[Finding], verbose: bool = False) -> str:
+    """For the pre-commit hook: the short report, nothing when clear; with `verbose`, one line per wall broken."""
+    return report_verbose(findings) if verbose else report_short(findings)
 
 
 def install_hooks(root: Path) -> int:
@@ -8101,6 +8345,9 @@ def walls_cases(root: Path) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["allow"]:
+        return allow_command(argv[1:])
     parser = argparse.ArgumentParser(description="Check a Garrick workspace against its rules.")
     parser.add_argument("--root", help="workspace root (default: the workspace this script sits in, else the current folder's)")
     fmt = parser.add_mutually_exclusive_group()
@@ -8121,6 +8368,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                              "Parties table, with its tags in place of the fixture's")
     parser.add_argument("--version", action="store_true",
                         help="say which Garrick the workspace was installed from, for a bug report")
+    parser.add_argument("--verbose", action="store_true",
+                        help="with --staged: one line for every refusal, each with the id that lets it through "
+                             "(`check.py allow <path> <id>`), not the short report")
     args = parser.parse_args(argv)
 
     try:
@@ -8157,7 +8407,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.json or not (sys.stderr if args.staged and not args.ear else sys.stdout).isatty():
         findings = assistant_findings(root, findings)       # an assistant is shown a walled party by its tag
     if args.staged and not (args.json or args.ear):
-        text = report_staged(findings)
+        text = report_staged(findings, args.verbose)
         if text:
             print(text, file=sys.stderr)
     elif args.json:

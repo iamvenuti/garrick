@@ -269,7 +269,19 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 
 The check reports a settings file that does not read, a key it does not know, a zone it names that does not exist, and a memory folder that is not there.
 
-The walls part also runs before every commit. The installer puts a git hook in each zone and in `Wikis/` that runs `check.py --staged --walls-only` on the files being committed, as they are staged, and refuses the commit with one line naming the file and the wall, and ending with the fix for that kind of refusal: usually take the material out and commit again, but naming a party in the project's hub when that is what is missing. The first commit in a zone reads every meeting and project file, which on a large workspace takes a while; the hook keeps what it read in the zone's `.git` folder, so after that it reads only what is being committed and what changed since. `git commit --no-verify` skips the check; it exists for the rare deliberate case, and your assistant is told never to use it unless you ask.
+The walls part also runs before every commit. The installer puts a git hook in each zone and in `Wikis/` that runs `check.py --staged --walls-only` on the files being committed, as they are staged, and refuses the commit with one line naming the file and the wall, and ending with the fix for that kind of refusal: usually take the material out and commit again, but naming a party in the project's hub when that is what is missing. The first commit in a zone reads every meeting and project file, which on a large workspace takes a while; the hook keeps what it read in the zone's `.git` folder, so after that it reads only what is being committed and what changed since. When a file has one refusal, the line is the whole report for it; when it has several, the hook prints one line with the kind of each (`2 name, 1 link`) and a count, then the command below. `check.py --staged --walls-only --verbose` prints every refusal on a line of its own, each with its id.
+
+A refusal that is a false alarm can be let through once, with a record:
+
+```sh
+python3 System/tools/check.py allow Zones/Work/Acme/Notes.md          # lists the file's refusals, each with its id
+python3 System/tools/check.py allow Zones/Work/Acme/Notes.md 3f9a1c2b7d
+python3 System/tools/check.py allow --remove Zones/Work/Acme/Notes.md 3f9a1c2b7d
+```
+
+The allowance is written to `System/walls-allowed.json` and committed in the workspace's own repository, with the day and who wrote it. It holds for that one refusal in that one file, only while the file is as it was allowed: edit the file and the refusal comes back, and an allowance for one refusal does not cover another in the same file. It is written from a terminal you type in (not from a shell with no terminal, as an assistant's is) or by a click in the app, never by an assistant: an assistant that meets a refusal names the files and this command, and stops. A refusal about something that could not be read, or a file waiting in an inbox, cannot be allowed. [Allow once](enforced.md#allow-once) has the file's format.
+
+`git commit --no-verify` skips the check altogether; it exists for the rare deliberate case, it is yours alone, and your assistant is told never to use it unless you ask.
 
 ## Nurturing the context
 

@@ -628,6 +628,8 @@ def is_generated(ws: Workspace, path: Path) -> bool:
 
 
 TEMPLATES = ("System", "templates")
+# The user's own templates, beside the ones Garrick ships: a source of common wording as those are (#470).
+TEMPLATES_LOCAL = ("System", "templates.local")
 
 
 def is_template_path(ws: Workspace, path: Path) -> bool:
@@ -636,7 +638,7 @@ def is_template_path(ws: Workspace, path: Path) -> bool:
     with an underscore (`_project`). The originals a Garrick checkout ships
     are never asked about: the checks leave a checkout out whole (set_apart)."""
     parts = Path(rel(ws, path)).parts
-    if parts[:2] == TEMPLATES:
+    if parts[:2] in (TEMPLATES, TEMPLATES_LOCAL):
         return True
     return bool(parts) and parts[0] == "Zones" and any(p.startswith("_") for p in parts[1:-1])
 
@@ -4723,7 +4725,8 @@ class QuoteIndex:
 SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md",
                 "AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md", "System/rules.local.md",
                 "System/garrick-changelog.md")
-SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "System/garrick-docs", "Wikis/Knowledge")
+SHARED_FOLDERS = ("System/skills", "System/templates", "System/templates.local", "System/tools", "System/garrick-docs",
+                  "Wikis/Knowledge")
 
 # A Garrick checkout kept inside the workspace is where those files come from.
 # The repository in the project about it, or a release unpacked to read, holds
@@ -5010,11 +5013,13 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
                 beyond |= found
     # Wording also found in a template Garrick ships (System/templates/: the zone, project and thread templates) is
     # common wording: a hub made from one template shares its text, and the template is nobody's confidence (#465).
-    templates = ws.root.joinpath(*TEMPLATES)
-    if templates.is_dir():
-        for path in walk_files(templates):
-            if path.suffix.lower() in TEXT_SUFFIXES:
-                common |= {h for h in file_runs(ws, path, False) if h in owners}
+    # The user's own templates (System/templates.local/) are the same on purpose: text they put there is theirs to
+    # reuse, and templates_local_findings warns about a file there that names a party.
+    for templates in (ws.root.joinpath(*TEMPLATES), ws.root.joinpath(*TEMPLATES_LOCAL)):
+        if templates.is_dir():
+            for path in walk_files(templates):
+                if path.suffix.lower() in TEXT_SUFFIXES:
+                    common |= {h for h in file_runs(ws, path, False) if h in owners}
     ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
     if ws.cache is not None:
         ws.cache.whole = True
@@ -6277,6 +6282,30 @@ def check_walls(ws: Workspace) -> List[Finding]:
     out.extend(form_findings(ws, [(p, None) for p in form_candidates(ws)]))
     out.extend(nested_repositories(ws))
     out.extend(archive_labels(ws))
+    out.extend(templates_local_findings(ws))
+    return out
+
+
+def templates_local_findings(ws: Workspace) -> List[Finding]:
+    """A file in `System/templates.local/` is common wording, read by every side of every wall (#470). Warn about one
+    that names a party the Parties table holds, by its name, tag, domain or a person, or that carries a `party:` or
+    `parties:` key: what a party said does not belong in a template."""
+    folder = ws.root.joinpath(*TEMPLATES_LOCAL)
+    if not folder.is_dir():
+        return []
+    out = []
+    forms = [f for found in name_forms(ws, set(ws.context["parties"])).values() for f in found]
+    forms.sort(key=lambda f: (-len(f[1].split()), -len(f[1]), f[1]))
+    for path in walk_files(folder):
+        if path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        text = read_text(path) or ""
+        keyed = bool(re.search(r"(?mi)^[ \t]*[\"']?(?:party|parties)[\"']?[ \t]*:", text.split("\n---", 1)[0] if text.startswith("---") else ""))
+        if keyed or names_hit(fold_format(text) + "\n" + path.name, forms):
+            out.append(Finding(WARNING, "walls", rel(ws, path),
+                               "is in System/templates.local/, whose wording every side of a wall may use, but it %s; "
+                               "keep a party out of a template" % ("carries a party key" if keyed else "names a party"),
+                               "A file in your templates names a party"))
     return out
 
 

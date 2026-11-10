@@ -97,6 +97,37 @@ class NamesTest(unittest.TestCase):
         finally:
             (self.work / "Northwind" / "Threads" / "Pricing" / "Source.md").unlink()
 
+    # -- the user's own templates ----------------------------------------------
+
+    def mine(self, name="hub.md", text="# Hub\n\n%s\n" % SENTENCE):
+        path = self.root / "System" / "templates.local" / name
+        write(path, text)
+        self.addCleanup(shutil.rmtree, path.parent, True)
+        return path
+
+    def test_a_sentence_in_templates_local_is_common_wording_and_the_same_sentence_from_a_walled_note_is_not(self):
+        write(self.work / "Northwind" / "Threads" / "Pricing" / "Source.md", "# S\n\n%s\n" % SENTENCE)
+        self.addCleanup((self.work / "Northwind" / "Threads" / "Pricing" / "Source.md").unlink)
+        self.assertEqual("refused", self.verdict("# N\n\n%s\n" % SENTENCE))
+        self.mine()
+        self.assertEqual("clear", self.verdict("# N\n\n%s\n" % SENTENCE))
+
+    def test_a_file_there_that_names_a_party_or_carries_a_party_key_is_warned_about(self):
+        self.mine("clean.md")
+        self.mine("named.md", "# Hub\n\nAsk Dana Whitlock.\n")
+        self.mine("keyed.md", "---\nparty: acme\n---\n\n# Hub\n")
+        self.mine("keyed-upper.md", "---\nParties: [acme]\n---\n\n# Hub\n")
+        got = {f.path.split("/")[-1]: f for f in check.run_checks(self.root, walls_only=True) if "templates.local" in f.path}
+        self.assertEqual({"named.md", "keyed.md", "keyed-upper.md"}, set(got))
+        self.assertTrue(all(f.severity == "warning" for f in got.values()))
+        self.assertIn("carries a party key", got["keyed.md"].message)
+
+    def test_templates_local_is_a_template_path(self):
+        ws = check.discover(self.root, None)
+        self.assertTrue(check.is_template_path(ws, self.root / "System" / "templates.local" / "x.md"))
+        self.assertTrue(check.is_template_path(ws, self.root / "System" / "templates" / "x.md"))
+        self.assertFalse(check.is_template_path(ws, self.root / "System" / "templates.localx" / "x.md"))
+
 
 
 if __name__ == "__main__":

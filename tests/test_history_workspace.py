@@ -23,7 +23,7 @@ from test_setup import Installed  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 TODAY = datetime.date.today()
-STOCK = "Thread opened and scoped the work."     # seven words after its date: the wording check reads eight
+STOCK = "Thread opened and scoped the %s work."   # the zone's own word in it, so no run is shared across zones
 
 
 def day(n):
@@ -84,7 +84,7 @@ class Made(Installed):
         for i in range(count):
             d = day(i * 9)
             filler = " ".join("%s%d" % (thread, k) for k in range(words))
-            body = STOCK if i == count - 1 else "Session %d settled the %s plan." % (i, thread)
+            body = STOCK % thread if i == count - 1 else "Session %d settled the %s plan." % (i, thread)
             entries.append("**%s.** %s\n\n%s notes, see [the memo](Deliverables/%s-memo.md): %s.\n" % (stamp(d), body, thread.capitalize(), thread, filler))
         note.write_text(head + sep + "\n" + "\n".join(entries), encoding="utf-8")
 

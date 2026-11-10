@@ -9,6 +9,8 @@ From your workspace's folder:
 ```sh
 python3 System/tools/release.py update            # download the newest release; say what would change
 python3 System/tools/release.py update --apply    # do it
+python3 System/tools/release.py update --apply --yes    # and answer yes to the zone-flags step, when one waits
+python3 System/tools/release.py update --apply --clean people    # and answer yes to one clean-up list after it
 ```
 
 Or ask your assistant: "update Garrick". It runs the same command, tells you what would change, and changes it when you say yes.
@@ -74,26 +76,23 @@ When Garrick installed your workspace it recorded a fingerprint of every file it
 | Removed by you | A file Garrick still ships that you deleted | Nothing, unless you name it with `--only` |
 | Retired | A file Garrick no longer ships | Nothing. Delete it yourself if you want it gone |
 
-A file you changed that Garrick hasn't changed stays as you left it and isn't listed, unless it is one of Garrick's instruction files. `System/context.md`, your own answers, is never read or written but for the one step under [Party flags](#party-flags), and neither is a local file beside an instruction file, such as `System/rules.local.md`.
+A file you changed that Garrick hasn't changed stays as you left it and isn't listed, unless it is one of Garrick's instruction files. `System/context.md`, your own answers, is never read or written but for the one step under [Zone flags](#zone-flags), and neither is a local file beside an instruction file, such as `System/rules.local.md`.
 
-## Party flags
+## Zone flags
 
-Before 0.60.0 a workspace kept a list of pairs of parties in `System/context.md`. From 0.60.0 each party has one flag, **Walled**, in the Parties table: a walled party's material goes only into work that names it, and an open party's goes anywhere. An update that finds a Parties table with no Walled column does this once, and shows you before it writes:
+Garrick 0.63.0 walls each zone, not each party. A workspace that took 0.60.0 to 0.62.0 keeps a flag on each party and a party and a default on each zone; one step turns them into one flag on each zone, **Walled**, in the Zones table. A workspace still on 0.59 or older updates to 0.62.0 first, and the update says so.
 
-1. It proposes the flags: every party that stood in a pair is walled, every other one open, and a party of the Projects zone, which holds your own ventures, open. It proposes each zone's *Party* as the party named by most of the zone's projects, walled, and *New parties* as walled when most of the zone's parties are.
-2. It prints what that changes. It does not compare parties; it runs the old rule and the new one over every record and every project in your workspace and prints each flow whose answer differs, grouped as refused before and allowed after, allowed before and refused after, and asked about. A flow that only exists for a record with two walled parties on it shows up here and in no table of parties.
-3. It writes only on your yes. `--apply --yes` answers for a scripted update, and at a terminal it asks. A run with nobody to answer prints the changes and writes nothing. On a yes it writes the columns, takes out the old list of pairs, and runs the walls check over the whole workspace, naming what the flags now refuse that was committed before.
+> Each zone is either **walled** or **open**. What is in a walled zone stays in that zone; what is in an open zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones is split before it is filed.
 
-The report in step 2 also does two things for a name. If a party is named after you (the first sentence of `## Me` in `System/context.md`), it proposes renaming it to a label of what it holds, such as *Own affairs*, as part of the same yes: your own name is said in most notes, and a walled party's name is refused wherever the scope does not name that party. And it runs the walls check, as it stands, over the workspace with the proposed flags, and lists each file that check would refuse, a name in a note as well as a changed verdict, so you read them before you answer.
+The step runs before the update installs anything, and shows you before it writes:
 
-### Finishing a migration an update from the app left pending
+1. It proposes each zone's flag: walled when the zone's party is walled or its default for new parties is walled, open otherwise.
+2. It prints what that changes. It runs the workspace's own check (the rule in force) and the new check over every record and every project, and prints each refusal the zone rule releases, grouped as *inside one zone*, *name only* and *other*. Anything the zone rule refuses that the old rule passed comes first, as *newly refused*. It also lists the Meetings entity and people pages whose sources sit in two walled zones.
+3. It installs and writes only on your yes. `--apply --yes` answers for a scripted update, and at a terminal it asks. A run with nobody to answer prints the changes and stops: the workspace is left as it was, and the rule in force keeps deciding. On a yes it writes the Walled column, takes the *Party* and *New parties* columns off the Zones table and the *Walled* column off the Parties table, and then installs.
 
-*Check for updates* in *Settings* runs the update with no terminal, so nobody can answer the yes. The update itself goes through; the migration waits, the old pairs keep deciding, and the check warns. Finish it either way:
+`party:` on hubs, threads and Meetings pages is left as it is: it stays as an optional index.
 
-- **On the page.** *Settings*, *About Garrick*, shows a card, *The walls migration is pending*, as soon as the update ends, or whenever you open the page while one waits. *Show the changes* reads the proposed flags, the grouped changes and the files a name would refuse. *Write the flags* asks once, in the page, and only *Yes, write them* writes: the same checks as the command line, and the change committed through the wall check or put back.
-- **In a terminal.** Run `python3 System/tools/release.py update --apply`, and answer at the prompt, or add `--yes` once you have read the report. With the release already installed and a migration waiting, the command runs the migration instead of saying "Up to date". Without `--apply` it only prints the report.
-
-Until you answer, the old list of pairs stays in force and decides every flow as it did before, so an update you did not answer changes no verdict; the workspace's check warns until the flags are written. A second run finds nothing to do.
+After the yes it proposes three clean-up lists, each on its own yes: People rows that repeat a person under a second party, allowances in the ledger whose finding no longer exists, and each mixed Meetings page, split per zone, page by page. At a terminal it asks about each. Without one, answer with `python3 System/tools/release.py update --apply --clean people`, `--clean ledger` or `--clean pages`. A page with a block that cites no source, or sources of two zones, is left for hand work. A second run of the update finds nothing to do.
 
 ## Your rules, and Garrick's
 

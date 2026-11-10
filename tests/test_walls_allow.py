@@ -37,9 +37,20 @@ class TestLedger(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.root = Path(self._tmp.name).resolve()
+        env = mock.patch.dict(os.environ, GIT_ENV)
+        env.start()
+        self.addCleanup(env.stop)
+        if HAVE_GIT:
+            git(self.root, "init", "-q")      # the writers start from the committed ledger
 
     def tearDown(self):
         self._tmp.cleanup()
+
+    def put(self, *args, **kw):
+        """allow_add, then its commit: the next writer starts from what is committed."""
+        entry = gl.allow_add(self.root, *args, **kw)
+        gl.allow_commit(self.root, "ledger")
+        return entry
 
     def test_id_is_ten_hex_of_sha1_over_path_rule_token(self):
         fid = gl.allow_finding_id(PATH, "name", "Cedar")
@@ -54,33 +65,34 @@ class TestLedger(unittest.TestCase):
 
     def test_round_trip(self):
         fid = gl.allow_finding_id(PATH, "name", "Cedar")
-        entry = gl.allow_add(self.root, PATH, fid, BLOB, "name", "terminal", today="2026-11-10")
+        entry = self.put( PATH, fid, BLOB, "name", "terminal", today="2026-11-10")
         self.assertEqual({"path": PATH, "id": fid, "blob": BLOB, "rule": "name", "date": "2026-11-10",
                           "by": "terminal"}, entry)
         data = json.loads(gl.allow_ledger_path(self.root).read_text(encoding="utf-8"))
         self.assertEqual(1, data["version"])
         self.assertEqual([entry], data["allowed"])
         self.assertEqual([entry], gl.allow_read(self.root))
-        self.assertEqual(frozenset(), gl.allow_set(self.root))     # not committed: not honoured
+        self.assertEqual(frozenset({(PATH, fid, BLOB)}), gl.allow_set(self.root))     # committed by put: honoured
         self.assertEqual([entry], gl.allow_read(self.root))
 
     def test_the_ledger_names_no_token(self):
-        gl.allow_add(self.root, PATH, gl.allow_finding_id(PATH, "name", "Cedar Holdings"), BLOB, "name", "page")
+        self.put( PATH, gl.allow_finding_id(PATH, "name", "Cedar Holdings"), BLOB, "name", "page")
         self.assertNotIn("Cedar", gl.allow_ledger_path(self.root).read_text(encoding="utf-8"))
 
     def test_a_new_blob_renews_and_a_second_finding_is_kept(self):
         a, b = gl.allow_finding_id(PATH, "name", "Cedar"), gl.allow_finding_id(PATH, "link", "Maple")
-        gl.allow_add(self.root, PATH, a, BLOB, "name", "terminal")
-        gl.allow_add(self.root, PATH, b, BLOB, "link", "terminal")
-        gl.allow_add(self.root, PATH, a, "f" * 40, "name", "page")
+        self.put( PATH, a, BLOB, "name", "terminal")
+        self.put( PATH, b, BLOB, "link", "terminal")
+        self.put( PATH, a, "f" * 40, "name", "page")
         rows = {(e["id"], e["blob"], e["by"]) for e in gl.allow_read(self.root)}
         self.assertEqual({(a, "f" * 40, "page"), (b, BLOB, "terminal")}, rows)
 
     def test_remove(self):
         a, b = gl.allow_finding_id(PATH, "name", "Cedar"), gl.allow_finding_id(PATH, "link", "Maple")
-        gl.allow_add(self.root, PATH, a, BLOB, "name", "terminal")
-        gl.allow_add(self.root, PATH, b, BLOB, "link", "terminal")
+        self.put( PATH, a, BLOB, "name", "terminal")
+        self.put( PATH, b, BLOB, "link", "terminal")
         self.assertEqual(1, gl.allow_remove(self.root, PATH, a))
+        gl.allow_commit(self.root, "ledger")
         self.assertEqual([b], [e["id"] for e in gl.allow_read(self.root)])
         self.assertEqual(0, gl.allow_remove(self.root, PATH, a))
 
@@ -105,24 +117,25 @@ class TestLedger(unittest.TestCase):
 
     def test_a_kind_or_a_writer_outside_the_format_is_refused(self):
         with self.assertRaises(ValueError):
-            gl.allow_add(self.root, PATH, "0123456789", BLOB, "unreadable", "terminal")
+            self.put( PATH, "0123456789", BLOB, "unreadable", "terminal")
         with self.assertRaises(ValueError):
-            gl.allow_add(self.root, PATH, "0123456789", BLOB, "name", "assistant")
+            self.put( PATH, "0123456789", BLOB, "name", "assistant")
         self.assertFalse(gl.allow_ledger_path(self.root).exists())
 
     def test_only_a_terminal_or_the_page_may_write(self):
         self.assertTrue(gl.allow_may_write("terminal", TTY()))
         self.assertFalse(gl.allow_may_write("terminal", io.StringIO()))      # an assistant's shell: stdin is no terminal
         self.assertFalse(gl.allow_may_write("terminal", object()))
-        self.assertTrue(gl.allow_may_write("page"))
+        self.assertFalse(gl.allow_may_write("page"))               # the page can take an allowance away, never write one
         self.assertFalse(gl.allow_may_write("assistant", TTY()))
+        self.assertFalse(gl.allow_may_write("page"))               # the page can take an allowance away, never write one
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
     def test_commit_ledger_commits_only_the_ledger(self):
         git(self.root, "init", "-q")
         (self.root / "other.txt").write_text("staged\n")
         git(self.root, "add", "other.txt")
-        gl.allow_add(self.root, PATH, "0123456789", BLOB, "name", "terminal")
+        gl.allow_add(self.root,  PATH, "0123456789", BLOB, "name", "terminal")
         with mock.patch.dict(os.environ, GIT_ENV):
             said = gl.allow_commit(self.root, "Allow once")
         self.assertEqual("", said)
@@ -314,10 +327,51 @@ class TestAllowOnce(AllowCase):
         self.assertNotIn("--no-verify", res.stderr)
         self.assertTrue(res.stderr.strip().splitlines()[-1].endswith("commit again."), res.stderr)
         found = check.run_checks(self.root, staged=self.zone)
-        with mock.patch("sys.stdin", TTY()):
+        with mock.patch("sys.stderr", TTY()):                       # a person at a terminal: stdin is /dev/null in a hook
             self.assertIn("only if you mean it, git commit --no-verify", check.report_staged(found))
-        with mock.patch("sys.stdin", io.StringIO()):
+        with mock.patch("sys.stderr", io.StringIO()):               # an assistant: stderr is a pipe
             self.assertNotIn("--no-verify", check.report_staged(found))
+        self.assertTrue(check.prints_for_assistant(True))
+        self.assertTrue(check.prints_for_assistant(False, True))     # a pipe here
+        with mock.patch("sys.stderr", TTY()):
+            self.assertFalse(check.prints_for_assistant(False, True))
+
+    def test_a_remove_does_not_sweep_in_a_hand_written_entry(self):
+        """R-W1: the writers start from HEAD's ledger, so an uncommitted entry is dropped, never committed."""
+        self.stage(NAME_A)
+        fid = self.ids()["name"]
+        dummy = {"path": "Zones/Work/x.md", "id": "0123456789", "blob": "f" * 40, "rule": "name", "date": "2026-11-10",
+                 "by": "page"}
+        mine = {"path": self.rel, "id": fid, "blob": "e" * 40, "rule": "name", "date": "2026-11-10", "by": "terminal"}
+        gl.allow_write(self.root, [dummy, mine])                    # by hand, uncommitted
+        self.assertEqual(1, self.hook().returncode)
+        code, said = check.allow_page(self.root, "Zones/Work/x.md", "0123456789", "page", remove=True)
+        self.assertEqual(1, code, said)                              # nothing committed to take away
+        self.assertIn("dropped, not committed", said)
+        self.assertEqual([], gl.allow_read(self.root))
+        self.assertEqual(1, self.hook().returncode)
+        gl.allow_write(self.root, [dummy, mine])                    # again, then a real allow
+        self.assertEqual(0, self.allow(fid)[0])
+        committed = gl.allow_committed(self.root)
+        self.assertEqual([(self.rel, fid)], [(e["path"], e["id"]) for e in committed])
+        self.assertEqual(0, self.hook().returncode)
+
+    def test_an_allowance_drops_only_wall_findings(self):
+        """R-W2: another check's finding on the same file is never dropped, with the blob matching or not."""
+        write(self.note, NAME_A + "\n{{PLACEHOLDER}}\n")
+        git(self.zone, "add", "-A")
+        git(self.zone, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "x")
+        before = [f for f in check.run_checks(self.root, use_ledger=False) if f.path == self.rel]
+        others = [f.check for f in before if f.check != "walls"]
+        self.assertTrue(others, before)
+        fid = [check.finding_id(f) for f in before if check.allowable(f)][0]
+        self.assertEqual(0, check.allow_page(self.root, self.rel, fid, "terminal")[0])
+        after = [f for f in check.run_checks(self.root) if f.path == self.rel]
+        self.assertEqual(sorted(others), sorted(f.check for f in after))        # the wall finding went, the rest stayed
+        write(self.note, NAME_A + "\n{{PLACEHOLDER}}\nMore.\n")                  # edited: the blob no longer matches
+        stale = [f for f in check.run_checks(self.root) if f.path == self.rel]
+        self.assertEqual(sorted(f.check for f in check.run_checks(self.root, use_ledger=False) if f.path == self.rel),
+                         sorted(f.check for f in stale))
 
     def test_no_terminal_writes_nothing(self):
         self.stage(NAME_A)
@@ -351,6 +405,20 @@ class TestAllowOnce(AllowCase):
                  check.Finding(check.ERROR, "inbox", self.rel, "is waiting in the inbox to be filed"),
                  check.Finding(check.WARNING, "walls", self.rel, "names Acme Corp")]
         self.assertEqual([False] * 4, [check.allowable(f) for f in found])
+
+    def test_one_allowance_costs_a_full_run_no_second_walls_pass(self):
+        """R-C3: the rerun is of the touched files, not of the workspace."""
+        self.stage(NAME_A)
+        git(self.zone, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "unchecked")
+        found = [f for f in check.run_checks(self.root, walls_only=True, use_ledger=False) if f.path == self.rel]
+        self.assertEqual(0, check.allow_page(self.root, self.rel, check.finding_id(found[0]), "terminal")[0])
+        real, calls = check.check_walls, []
+        def counting(ws):
+            calls.append(1)
+            return real(ws)
+        with mock.patch.object(check, "check_walls", counting):
+            check.run_checks(self.root, walls_only=True)
+        self.assertEqual(1, len(calls))
 
     def test_the_list_without_an_id(self):
         self.stage(NAME_A)

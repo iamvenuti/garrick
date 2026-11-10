@@ -850,8 +850,7 @@ class Refresher:
         page that names it as its `raw:`."""
         con = self.idx.con
         if rel.split("/")[1] == "Knowledge":
-            row = con.execute("SELECT page FROM claims WHERE raw=? ORDER BY page LIMIT 1", (rel,)).fetchone()
-            pages = [row[0]] if row else []
+            pages = sorted(self.claims().get(rel, []))      # every page that names it, an unadmitted one included
         else:
             cites = self.cites()
             if self.stem_count(Path(rel).stem.lower()) != 1:
@@ -866,6 +865,25 @@ class Refresher:
                 return None
             first = first or (page,) + tuple(row)
         return first
+
+    def claims(self) -> Dict[str, List[str]]:
+        """Each Knowledge raw record to the pages that name it as their `raw:`, at every grade and whether or not this
+        scope may read the page, made once a run: a page this scope may not read keeps its record out, as for Meetings."""
+        key = ("claims", str(self.root))
+        if key not in self.cache:
+            found: Dict[str, List[str]] = {}
+            pages, _ = wiki_entries(self.root, "Knowledge")
+            for rel, path in pages:
+                text = read_text(path)
+                fm = parse_frontmatter_text(text) if text is not None else {}
+                if not fm.get("raw"):
+                    continue
+                probe = fade.Page(rel, "Knowledge", grade_of(rel, "Knowledge"), "")
+                fade.find_raw(self.root / "Wikis" / "Knowledge", probe, fade.link_target(fm.get("raw")))
+                if probe.raw:
+                    found.setdefault(probe.raw, []).append(rel)
+            self.cache[key] = found
+        return self.cache[key]
 
     def cites(self) -> Dict[str, List[Path]]:
         """Each raw record's stem to the Meetings pages that cite it, at every grade, made once a run."""
@@ -906,7 +924,10 @@ class Refresher:
 
     def raw_derived(self, rel: str, path: Path) -> Optional[str]:
         owner = self.owner_row(rel)           # a record is read where the pages that cite it are: all of them admitted here
-        return None if owner is None else json.dumps([owner])
+        if owner is None:
+            return None
+        named = sorted(self.claims().get(rel, [])) if rel.split("/")[1] == "Knowledge" else []
+        return json.dumps([owner, named] if named else [owner])     # a new claimer, walled or not, changes the row
 
     def raw(self, rel: str, path: Path) -> bool:
         owner = self.owner_row(rel)

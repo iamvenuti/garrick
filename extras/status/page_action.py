@@ -127,7 +127,7 @@ zone's repository, as the skills would:
                 <YYMMDD> - <slug>.md with status: valid, the same zone and
                 parties as the question, and the words under Decision; the
                 question then says answered and points at both. Meetings
-                only: a question with no zone or parties is refused. The
+                only: a question with no zone is refused. The
                 status of a decision is never changed by any other verb
     question-work    read only: the pages an answered question may change, and
                 the record to cite. A page walled from the question's parties
@@ -2448,6 +2448,22 @@ def page_zone_of(q: WikiQuestion, page: Path) -> Optional[str]:
     return page_zone(q.lib, q.ws, page)
 
 
+def refuse_pages_of_another_zone(q: WikiQuestion, wall: str) -> None:
+    """A Meetings question may not name a page of another walled zone: the question would carry that zone's
+    material into its own. Refused with the rule's sentence, naming nothing, before anything is written. A page
+    with no zone, or one that is not there, is not refused here: the work-in step holds it back all the same."""
+    if q.name == "Knowledge":
+        return
+    mine = question_zone(q, wall)
+    for link in tags_of(q.fm.get("pages")):
+        p = page_target(q, link)
+        if p is None:
+            continue
+        there = page_zone_of(q, p)
+        if there and there != mine and (not callable(getattr(q.lib, "walled", None)) or q.lib.walled(q.context, there)):
+            raise Refused(wall)
+
+
 def question_pages(q: WikiQuestion, wall: str) -> tuple:
     """(the pages the answer may change, how many were held back, how many are
     not there). A page of another zone, or one with no zone, is held back. A
@@ -2594,7 +2610,9 @@ def open_section_slug(title: str, line: str) -> str:
 def open_section_text(row: dict, today: dt.date, meetings: bool) -> str:
     where = ["type: question", "asked: %s" % today.isoformat(), "status: open"]
     if meetings:
-        where += ["zone: %s" % row["zone"], "parties: [%s]" % ", ".join(row["parties"])]
+        where.append("zone: %s" % row["zone"])
+        if row["parties"]:
+            where.append("parties: [%s]" % ", ".join(row["parties"]))
     link = quoted("[[%s]]" % row["page"])
     where += ["origin: %s" % link, "pages: [%s]" % link]
     return ("---\n%s\n---\n\n**%s**\n\nThe page lists this under Open, and nothing on the page has changed. "
@@ -2604,9 +2622,9 @@ def open_section_text(row: dict, today: dt.date, meetings: bool) -> str:
 
 def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> list:
     """The open-section rows of a wiki, as wiki_lint.py reads them, each
-    proposal checked the way a question's own fields are: a zone the workspace
-    has, parties it knows, none two sides of a wall. A row that fails is
-    skipped with the reason, and nothing about the other side is named."""
+    proposal checked the way a question's own fields are: one zone the workspace
+    has. `parties:` is an index and is copied, never read as a wall. A row that
+    fails is skipped, and nothing about the other zone is named."""
     tool = Path(ws) / "System" / "tools" / "wiki_lint.py"
     lib = prefs().lib(ws)
     if not tool.is_file() or lib is None or not all(callable(getattr(lib, n, None)) for n in
@@ -2630,11 +2648,15 @@ def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> l
         rows = [r for r in rows if r["page"] in only]
     zones = zone_names(ws)
     for r in rows:
-        if r["state"] != "propose" or wiki != "Meetings":
+        if wiki != "Meetings":
             continue
-        if r["zone"] not in zones:
-            r.update(state="skipped", reason="its zone is not one this workspace knows")
-        else:
+        # A page in two zones, in none, or in one the Zones table does not know gets no question, and the
+        # reader is told only the rule's sentence: nothing says which zone, or that another page exists.
+        if r["state"] == "skipped" and r["reason"].startswith(("it names more than one zone", "it has no zone")):
+            r["reason"] = wall
+        elif r["state"] == "propose" and r["zone"] not in zones:
+            r.update(state="skipped", reason=wall)
+        elif r["state"] == "propose":
             r["parties"] = [t.strip() for t in r["parties"]]
     return rows
 
@@ -2659,7 +2681,7 @@ def open_sections_act(ws: Path, req: dict, today: dt.date) -> str:
     meetings = wiki == "Meetings"
 
     def group_of(r):
-        return (r["zone"], tuple(sorted(r["parties"])))
+        return r["zone"]
 
     def say(rows):
         todo = [r for r in rows if r["state"] == "propose"]
@@ -2667,7 +2689,7 @@ def open_sections_act(ws: Path, req: dict, today: dt.date) -> str:
         lines = ["%d open line%s would become a question, in %d group%s. Ask once per group, never for two together."
                  % (len(todo), "" if len(todo) == 1 else "s", len(groups), "" if len(groups) == 1 else "s")]
         for g in groups:
-            lines.append("Group%s:" % (" (%s, %s)" % (g[0], ", ".join(g[1])) if meetings else ""))
+            lines.append("Group%s:" % (" (%s)" % g if meetings else ""))
             lines += ["  %s: %s" % (r["page"], r["line"]) for r in todo if group_of(r) == g]
         done = sum(r["state"] == "converted" for r in rows)
         if done:
@@ -2685,7 +2707,7 @@ def open_sections_act(ws: Path, req: dict, today: dt.date) -> str:
         if not rows:
             return "Nothing to write. No open line is waiting for a question"
         if len({group_of(r) for r in rows}) > 1:
-            raise Refused("those lines belong to more than one zone and party group, so nothing was written. "
+            raise Refused("those lines belong to more than one zone, so nothing was written. "
                           "Confirm one group at a time, naming its pages")
         folder = Path(ws) / "Wikis" / wiki / WIKI_QUESTION_DIR
         used = set()
@@ -2731,6 +2753,7 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
         zone = question_zone(q, wall)
         tags = q.parties()              # the index the answer carries: a name, never a wall
         question_pages(q, wall)
+        refuse_pages_of_another_zone(q, wall)
         if verb == "question-decide":
             if q.name != "Meetings" or not zone:
                 raise Refused(NO_DECISION)

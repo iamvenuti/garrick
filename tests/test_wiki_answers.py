@@ -15,12 +15,13 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import write  # noqa: E402
+from fixtures import meeting_page, write  # noqa: E402
 from test_page_action import ActionCase, TODAY, pa  # noqa: E402
 
 SENTENCE = "A wall holds some material back from this project, so I have not used it. Nothing was written."
 ACME = "[[wiki/sources/260310-acme-kickoff]]"
-BIRCH = "[[wiki/sources/260312-birch-kickoff]]"
+# A Meetings page of another walled zone (Personal): the question below sits in Work.
+BIRCH = "[[wiki/sources/260312-home-visit]]"
 
 
 def question(fields="zone: Work\nparties: [acme]\n", pages=ACME, status="open", extra=""):
@@ -41,6 +42,7 @@ class WikiAnswerCase(ActionCase):
         self.meetings = self.root / "Wikis" / "Meetings"
         self.knowledge = self.root / "Wikis" / "Knowledge"
         self.q = "questions/260312 - volume-floor.md"
+        write(self.meetings / "wiki" / "sources" / "260312-home-visit.md", meeting_page("Personal", "[]", "Home visit"))
 
     def ask(self, text=None, wiki="Meetings", name=None):
         base = self.meetings if wiki == "Meetings" else self.knowledge
@@ -181,10 +183,9 @@ class TestOutcomes(WikiAnswerCase):
 
 class TestWalls(WikiAnswerCase):
     def answered_anyway(self, **kw):
-        """The question's own file carries a wall finding when it names a page across the wall, and an answer
-        from the panel is refused for it (TestARefusedQuestion); these tests are about the work-in step, so the
-        answered state is made with that one test off."""
-        with mock.patch.object(pa, "walls_on_written", return_value=[]):
+        """A question that names a page of another walled zone is refused when it is answered (TestARefusedQuestion);
+        these tests are about the work-in step, so the answered state is made with that one check off."""
+        with mock.patch.object(pa, "refuse_pages_of_another_zone"):
             return self.do("question-answer", **kw)
 
     def test_a_page_across_the_wall_is_left_out_and_the_sentence_said(self):
@@ -223,16 +224,19 @@ class TestWalls(WikiAnswerCase):
             self.assertEqual(SENTENCE, str(caught.exception))
         self.assertEqual([], self.changed(before))
 
-    def test_a_question_naming_both_sides_is_refused(self):
-        self.ask(question("zone: Work\nparties: [acme, birch]\n"))
+    def test_a_question_naming_two_walled_zones_is_refused(self):
+        self.ask(question("zone: [Work, Personal]\nparties: [acme]\n"))
         before = snapshot(self.root)
-        with self.assertRaises(pa.Refused) as caught:
+        with self.assertRaises(pa.Refused):
             self.do("question-answer", words="500")
-        self.assertEqual(SENTENCE, str(caught.exception))
         self.assertEqual([], self.changed(before))
 
-    def test_a_question_with_no_zone_or_parties_is_refused(self):
-        for fields in ("", "parties: [acme]\n", "zone: Work\n", "zone: Work\nparties: [nobody]\n", "zone: Nowhere\nparties: [acme]\n"):
+    def test_parties_are_an_index_and_no_wall(self):
+        self.ask(question("zone: Work\nparties: [acme, birch]\n"))
+        self.assertIn("raw/answers/261005 - volume-floor", self.do("question-answer", words="500"))
+
+    def test_a_question_with_no_zone_or_an_unknown_one_is_refused(self):
+        for fields in ("", "parties: [acme]\n", "zone: Nowhere\nparties: [acme]\n", "zone: Nowhere\n"):
             self.ask(question(fields))
             before = snapshot(self.root)
             with self.assertRaisesRegex(pa.Refused, "unfinished"):
@@ -267,7 +271,7 @@ class TestWalls(WikiAnswerCase):
     def test_a_knowledge_question_with_parties_is_refused(self):
         name = "questions/260312 - source-date.md"
         self.ask(question(pages="[[wiki/sources/supply-chain-report]]"), wiki="Knowledge", name=name)
-        with self.assertRaisesRegex(pa.Refused, "no zone and no parties"):
+        with self.assertRaisesRegex(pa.Refused, "carries no zone"):
             self.do("question-close", wiki="Knowledge", file=name)
 
 
@@ -342,7 +346,7 @@ class TestARefusedQuestion(WikiAnswerCase):
 class TestHeldPages(WikiAnswerCase):
     def worked(self, pages):
         self.ask(question(pages=pages))
-        with mock.patch.object(pa, "walls_on_written", return_value=[]):
+        with mock.patch.object(pa, "refuse_pages_of_another_zone"):
             self.do("question-answer", words="500")
         return self.do("question-work")
 

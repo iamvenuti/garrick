@@ -85,7 +85,9 @@ zone's repository, as the skills would:
                 one request; says what it found and whether this workspace
                 may be updated. It changes no workspace file but the kept answer
     release-update  the update to the release the check found, after it:
-                release.py update --tag <that release> --apply, and only when
+                release.py update --tag <that release> --apply (it never says yes
+                to the zone-walls step: while that waits nothing is installed and
+                the reply, state "waits", carries what the yes would change), and only when
                 the running version is older than it by semantic comparison;
                 a build that is not older, or that cannot be read, is refused
                 with the reason. The report comes back as counts and lists
@@ -1428,6 +1430,15 @@ def release_update(ws: Path) -> dict:
         line = "The update stopped: %s" % (why[-1].rstrip(".") + "." if why else "release.py gave no report.")
         return {"say": line, "release": {"state": "stopped", "line": line, "running": state["running"],
                                          "latest": state["latest"], "split": split}}
+    if result.get("installed") is False:         # the walls step waits for a yes: nothing installed, nothing written
+        walls = result.get("walls") if isinstance(result.get("walls"), dict) else {}
+        line = ("The update waits for your yes on the zone walls. Nothing was installed and nothing was written. "
+                "Read what it would change, then answer in a terminal: python3 System/tools/release.py update --apply --yes")
+        return {"say": line, "release": {"state": "waits", "line": line, "running": state["running"], "latest": state["latest"],
+                                         "url": release_notes_url(state), "text": str(result.get("message") or "")[:6000],
+                                         "flags": {str(z): bool(w) for z, w in (walls.get("flags") or {}).items()},
+                                         "released": walls.get("released") if isinstance(walls.get("released"), dict) else {},
+                                         "newly_refused": walls.get("newly_refused"), "split": split}}
     done = result.get("done") if isinstance(result.get("done"), dict) else {}
     names = lambda kind: [str(x) for x in done.get(kind) or []]
     skipped = [[str(a), str(b)] for a, b in (x for x in result.get("skipped") or [] if isinstance(x, (list, tuple)) and len(x) == 2)]

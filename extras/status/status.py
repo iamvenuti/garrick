@@ -6777,7 +6777,7 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 .setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:5px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
 .setrel{margin:8px 0}.setrelrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:6px 0}.setrelrow .hint{margin:0}
 .setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
-.setrelbox a{color:var(--accent)}
+.setrelbox a{color:var(--accent)}.wallstext{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
 /* Settings › Notifications: the five notices, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
@@ -7256,9 +7256,10 @@ function put(t){line.textContent=t}
 function at(r){var d=r&&r.asked?new Date(r.asked):null;return d&&!isNaN(d)?' Asked at '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'.':''}
 function add(tag,text,into){var e=document.createElement(tag);e.textContent=text;(into||box).appendChild(e);return e}
 function items(head,list,said){if(!list||!list.length)return;add('p',head);var ul=add('ul','');list.forEach(function(x){add('li',said?said(x):x,ul)})}
-function show(r){box.textContent='';box.hidden=true;if(!r||r.state!=='updated'&&r.state!=='stopped')return;box.hidden=false;
+function show(r){box.textContent='';box.hidden=true;if(!r||r.state!=='updated'&&r.state!=='stopped'&&r.state!=='waits')return;box.hidden=false;
 var p=add('p',r.line||'');if(r.url){p.appendChild(document.createTextNode(' '));var a=document.createElement('a');a.href=r.url;a.target='_blank';a.rel='noopener';a.textContent='Release notes';p.appendChild(a)}
 if(r.state==='updated')add('p',(r.replaced||0)+' file'+(r.replaced===1?'':'s')+' replaced, '+(r.added||0)+' added.');
+if(r.state==='waits'&&r.text){var pre=add('pre','');pre.textContent=r.text;pre.className='wallstext'}
 items('Written as .new beside the file you changed. Merge each, then remove the .new.',r.new,function(x){return x+'.new'});
 if((r.new&&r.new.length)||(r.split&&r.split.length))add('p','Say \u201cmerge the update\u201d to your assistant.');
 items('Instruction files you changed, left as they are (Split):',r.split);

@@ -1465,6 +1465,31 @@ class TestVerbsThatWentWithTheParties(ActionCase):
         self.assertIn("walls-unallow", pa.VERBS)
 
 
+class TestTheUpdateThatWaitsForTheWallsYes(ActionCase):
+    """The update button installs nothing until the zone-walls step has its yes, and never answers it (#485)."""
+
+    def run_update(self, apply_result):
+        state = {"update": True, "tag": "v0.63.0", "running": "0.62.0", "latest": "0.63.0", "newer": True}
+        calls = []
+
+        def run(ws, *args, **kw):
+            calls.append(args)
+            out = {"actions": {"split": []}} if "--apply" not in args else apply_result
+            return mock.Mock(returncode=0, stdout=json.dumps(out), stderr="")
+        with mock.patch.object(pa, "release_state", return_value=state), mock.patch.object(pa, "release_run", run):
+            return pa.release_update(self.root), calls
+
+    def test_a_waiting_step_is_shown_and_nothing_is_answered(self):
+        said, calls = self.run_update({"installed": False, "message": "Garrick 0.63 walls each zone.",
+                                       "walls": {"flags": {"Work": True, "Home": False}, "released": {"inside one zone": 3},
+                                                 "newly_refused": 0}})
+        out = said["release"]
+        self.assertEqual(("waits", {"Work": True, "Home": False}, "Garrick 0.63 walls each zone."), (out["state"], out["flags"], out["text"]))
+        self.assertIn("Nothing was installed", out["line"])
+        for args in calls:
+            self.assertNotIn("--yes", args)
+
+
 class TestFlag(ActionCase):
     """The actions were a preview, `page-actions`; released, they need no flag."""
 

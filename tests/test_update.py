@@ -1008,6 +1008,21 @@ class TestZoneWallsStep(Case):
         self.assertLess(text.index("NEWLY REFUSED"), text.index("Inside one zone"))
         self.assertIn("Zones/Home/Garden/Garden.md", text[text.index("NEWLY REFUSED"):text.index("Inside one zone")])
 
+    def test_the_zone_rule_is_run_as_if_the_flags_were_written(self):
+        page = self.root / "Wikis/Meetings/wiki/entities/orphan.md"
+        page.write_text("---\ntitle: Orphan\ntype: entity\n---\n\n# Orphan\n")
+        add = ("import os\nif os.environ.get('GARRICK_ZONE_FLAGS_FINAL') == '1':\n"
+               "    d['findings'].append({'severity': 'error', 'check': 'walls', 'path': 'Wikis/Meetings/wiki/entities/orphan.md', "
+               "'message': 'a page with no zone', 'fid': 'zz1', 'token': ''})\n")
+        study, text = self.study(self.zone_rule(add))
+        self.assertEqual(1, study["newly_refused"])
+        self.assertIn("orphan.md", text[text.index("NEWLY REFUSED"):text.index("Inside one zone")])
+        seen = []
+        real = update.run_wall_check
+        with mock.patch.object(update, "run_wall_check", lambda c, r, final=False: seen.append(final) or real(c, r, final)):
+            self.study(self.zone_rule())
+        self.assertEqual([False, True], seen)                      # the installed check without the switch, the release's with it
+
     def test_a_check_that_does_not_run_stops_the_step(self):
         broken = self.stub("broken.py", "import sys\nsys.exit(3)\n")
         with self.assertRaises(update.UpdateError):

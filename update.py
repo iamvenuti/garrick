@@ -1779,10 +1779,14 @@ def duplicate_people(text):
 
 # ---- the two checks and their diff
 
-def run_wall_check(check, root):
+def run_wall_check(check, root, final=False):
     """The walls findings of one check.py over `root`, each as its --json gives it. Raises UpdateError when it
     does not run: a diff made of half its parts would say nothing was released."""
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    if final:       # the zone flags the tables would hold count as written: what the zone rule refuses after the yes
+        env["GARRICK_ZONE_FLAGS_FINAL"] = "1"
+    else:
+        env.pop("GARRICK_ZONE_FLAGS_FINAL", None)
     try:
         r = subprocess.run([sys.executable, "-B", str(check), "--root", str(root), "--walls-only", "--json"],
                            capture_output=True, text=True, timeout=WALL_TIMEOUT, env=env, cwd=str(root))
@@ -1924,7 +1928,7 @@ def walls_study(root, flags, old_check=None, new_check=None):
     old_check = old_check or root / "System" / "tools" / "check.py"
     new_check = new_check or TEMPLATE / "System" / "tools" / "check.py"
     old = run_wall_check(old_check, root)
-    new = run_wall_check(new_check, root)
+    new = run_wall_check(new_check, root, final=True)
     released, refused = diff_findings(old, new)
     text = (root / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
     stems, parties, zones = _meeting_stems(root), _party_zones(text), list(flags)

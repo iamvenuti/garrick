@@ -255,7 +255,7 @@ class TestAllowOnce(AllowCase):
         self.assertRegex(lines[0], r"^Commit refused: Zones/Work/Birch Entry/.* holds \d refusals \(.*\)\. .*commit again; --verbose lists each\.$")
         self.assertTrue(pa_line(lines[0]), lines[0])
         self.assertIn("name", lines[0])
-        self.assertIn("python3 System/tools/check.py allow", lines[1])
+        self.assertIn("System/tools/check.py allow", lines[1])
         self.assertLess(len(res.stderr), len(self.hook("--verbose").stderr))
         full = self.hook("--verbose").stderr.strip().splitlines()
         self.assertGreater(len(full), 2)
@@ -263,6 +263,32 @@ class TestAllowOnce(AllowCase):
             self.assertTrue(line.startswith("Commit refused: Zones/Work/Birch Entry/"), line)
         ids = {check.finding_id(f) for f in self.findings()}
         self.assertTrue(ids and all(any("[id %s," % i in l for l in full) for i in ids))
+
+    def test_the_printed_command_runs_from_the_zone_folder(self):
+        import shlex
+        self.stage(NAME_A)
+        res = self.hook()
+        first = res.stderr.splitlines()[0]
+        self.assertIn("python3 ../../System/tools/check.py allow <path>", first)     # the path from the zone folder the hook runs in
+        example = first.split("for example ", 1)[1]
+        words = shlex.split(example)
+        self.assertEqual("python3", words[0])
+        self.assertTrue((self.zone / words[1]).resolve() == (self.root / "System" / "tools" / "check.py").resolve(), words)
+        listed = _run([sys.executable] + words[1:-1] + ["--root", self.root], self.zone)   # from the zone's own folder; no terminal
+        self.assertEqual(2, listed.returncode)                               # refused for want of one, not for want of the file
+        self.assertIn("nothing was written", listed.stderr)
+        self.assertEqual(words[-1], self.ids()["name"])
+
+    def test_the_way_past_the_whole_check_is_named_only_with_a_terminal(self):
+        self.stage(NAME_A)
+        res = self.hook()
+        self.assertNotIn("--no-verify", res.stderr)
+        self.assertTrue(res.stderr.strip().splitlines()[-1].endswith("commit again."), res.stderr)
+        found = check.run_checks(self.root, staged=self.zone)
+        with mock.patch("sys.stdin", TTY()):
+            self.assertIn("only if you mean it, git commit --no-verify", check.report_staged(found))
+        with mock.patch("sys.stdin", io.StringIO()):
+            self.assertNotIn("--no-verify", check.report_staged(found))
 
     def test_no_terminal_writes_nothing(self):
         self.stage(NAME_A)

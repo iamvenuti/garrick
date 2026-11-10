@@ -7961,7 +7961,23 @@ def shell_word(text: str) -> str:
     return text if re.fullmatch(r"[A-Za-z0-9_./@%+=:,-]+", text) else "'" + text.replace("'", "'\\''") + "'"
 
 
-ALLOW_COMMAND = "python3 System/tools/check.py allow"
+def allow_prefix() -> str:
+    """The command that allows, written to run from the folder the hook runs in (a zone's), not only from the
+    workspace root: this file's path from there. The path argument stays the workspace's."""
+    tool = Path(__file__).resolve()
+    try:
+        shown = os.path.relpath(str(tool), str(Path.cwd()))
+    except ValueError:
+        shown = str(tool)
+    return "python3 %s allow" % shell_word(shown)
+
+
+def hook_fix(message: str) -> str:
+    """staged_fix(), for the hook's own lines. The way past the whole check (`git commit --no-verify`) is the
+    user's, so it is named only where a terminal is: for an assistant, or with no terminal, the allow command stands
+    in its place."""
+    fix = staged_fix(message)
+    return fix if allow_may_write("terminal") else fix.replace("; only if you mean it, git commit --no-verify", "")
 
 
 def report_short(findings: List[Finding]) -> str:
@@ -7972,16 +7988,17 @@ def report_short(findings: List[Finding]) -> str:
     for path, found in refused_by_file(findings).items():
         if len(found) == 1:
             f = found[0]
-            lines.append("Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message)))
+            lines.append("Commit refused: %s %s. %s" % (f.path, f.message, hook_fix(f.message)))
         else:
             lines.append("Commit refused: %s holds %d refusals (%s). Take them out and commit again; "
                          "--verbose lists each." % (path, len(found), kind_counts(found)))
         if first is None:
             first = next((f for f in found if allowable(f)), None)
     if first is not None:        # first, not last: what reads a refusal back (the page, scaffold.py) takes the last line
-        lines.insert(0, "To let a refusal through, once, while the file stays as it is: %s %s [<id>]; "
+        prefix = allow_prefix()
+        lines.insert(0, "To let a refusal through, once, while the file stays as it is: %s <path> [<id>]; "
                      "--verbose gives each id, for example %s %s %s"
-                     % (ALLOW_COMMAND, "<path>", ALLOW_COMMAND, shell_word(first.path), finding_id(first)))
+                     % (prefix, prefix, shell_word(first.path), finding_id(first)))
     return "\n".join(lines)
 
 
@@ -7989,7 +8006,7 @@ def report_verbose(findings: List[Finding]) -> str:
     """Every refusal on a line of its own, as the hook used to print them, with the id that lets it through."""
     lines = []
     for f in (f for f in findings if f.severity == ERROR):
-        line = "Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message))
+        line = "Commit refused: %s %s. %s" % (f.path, f.message, hook_fix(f.message))
         lines.append(line + ("  [id %s, %s]" % (finding_id(f), finding_rule(f)) if allowable(f) else ""))
     return "\n".join(lines)
 

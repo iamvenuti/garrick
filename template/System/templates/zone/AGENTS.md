@@ -4,7 +4,7 @@ Part of the workspace above. Before anything else, read `../../AGENTS.md`, `../.
 
 ## Structure
 
-Three levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> --party <tag> --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.
+Three levels, always. Start a project or a thread by asking the assistant, or with `python3 ../../System/tools/scaffold.py project --zone {{ZONE}} --name <Project> [--party <tag>] --thread <Thread>` and `python3 ../../System/tools/scaffold.py thread --zone {{ZONE}} --project <Project> --name <Thread>`. A party that is not in `System/context.md` yet goes in first, with `python3 ../../System/tools/scaffold.py party --name <Party> --zone {{ZONE}} --what <what it is>`, committed on its own. Do not copy folders by hand: the script checks the name and the party.
 
     {{ZONE}}/
       Todo.md                 the only list of open actions in this zone
@@ -22,7 +22,7 @@ Every piece of work belongs to a thread, even when a project has only one. That 
 
 ## Parties
 
-A project hub names its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. That tag is what the walls are checked against, so a project without one cannot draw on the Meetings wiki until it has one.
+A project hub may name its `party` in the frontmatter, as a tag from the Parties table in `System/context.md`. It is an index, so that "what did X say" finds the project; no check reads it as a wall. The wall is this zone's: walled or open, as the Zones table says.
 
 ## Inbox
 

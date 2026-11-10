@@ -80,7 +80,7 @@ FULL_ONLY = {
     "test_checkpoint", "test_cmux", "test_cmux_sidebar", "test_decide", "test_executor",
     "test_fetch", "test_knowledge_skill", "test_lib", "test_meetings", "test_memory_canary",
     "test_mod", "test_nested_checkout", "test_obsidian", "test_open_sections",
-    "test_party_flags", "test_pathspec_commit", "test_person_organisation", "test_reading", "test_refusals",
+    "test_pathspec_commit", "test_reading", "test_refusals",
     "test_staged_paths", "test_walls_cases", "test_wiki_answers", "test_wrap",
 }
 # A change here can break anything: the full suite runs.

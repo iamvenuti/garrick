@@ -116,11 +116,6 @@ class StagedFiles(unittest.TestCase):
         found = [f for f in check.run_checks(self.root, staged=self.work) if f.severity == "error"]
         self.assertTrue(any(f.path.lower().endswith("leak.md") for f in found), found)
 
-    def test_labels_find_a_folder_in_another_spelling(self):
-        ctx = lib.load_context(self.root)
-        self.assertEqual({"acme"}, lib.labels(self.root, "Zones/Work/northwind/Threads/Pricing/x.md", ctx))
-        self.assertEqual({"birch"}, lib.labels(self.root, "Zones/work/HARBOUR/Sources/x.md", ctx))
-
 
 if __name__ == "__main__":
     unittest.main()

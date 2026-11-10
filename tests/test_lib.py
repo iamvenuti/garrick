@@ -276,23 +276,11 @@ class TestContext(unittest.TestCase):
         self.assertEqual(["acmecorp.example"], self.ctx["parties"]["acme"]["domains"])
 
     def test_flags(self):
-        self.assertTrue(lib.is_walled(self.ctx, "acme"))
-        self.assertTrue(lib.is_walled(self.ctx, "ghost"))          # a tag the table lacks is walled
-        self.assertEqual({"birch"}, lib.blocked(self.ctx, {"acme"}, {"`birch`"}))
-        self.assertEqual(set(), lib.blocked(self.ctx, {"acme"}, {"acme"}))
+        self.assertTrue(self.ctx["pending"])                 # no Walled column on the Zones table: derived
+        self.assertEqual({"Work": True, "Personal": True}, self.ctx["zone_walled"])
+        self.assertTrue(lib.walled(self.ctx, "Work"))
+        self.assertTrue(lib.walled(self.ctx, "Ghost"))        # a zone the table lacks is walled
         self.assertNotIn("walls", self.ctx)
-
-    def test_a_walled_cell_other_than_no_walls_the_party(self):
-        write(self.root / "System" / "context.md", CONTEXT.replace("| `acme` | yes |", "| `acme` | no |").replace("| `birch` | yes |", "| `birch` | maybe |"))
-        ctx = lib.load_context(self.root)
-        self.assertFalse(lib.is_walled(ctx, "acme"))
-        self.assertTrue(lib.is_walled(ctx, "birch"))
-
-    def test_zone_party_and_default(self):
-        write(self.root / "System" / "context.md", CONTEXT.replace("| Personal | Everything else | | walled |", "| Personal | Everything else | `jo` | open |"))
-        ctx = lib.load_context(self.root)
-        self.assertEqual({"Personal": "jo"}, ctx["zone_parties"])
-        self.assertEqual({"Work": "walled", "Personal": "open"}, ctx["zone_default"])
 
     def test_people_and_aliases(self):
         self.assertEqual({"name": "Theo Marsh", "party": "birch", "role": "Managing partner"}, self.ctx["people"][1])
@@ -307,22 +295,7 @@ class TestContext(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ctx = lib.load_context(tmp)
         self.assertEqual({}, ctx["parties"])
-        self.assertEqual({}, ctx["zone_parties"])
-
-
-class TestPlainNames(unittest.TestCase):
-    """A name cell is read as plain text, once, in load_context (#457)."""
-
-    def test_a_bold_and_a_plain_name_are_one_name_to_the_two_hats_check(self):
-        text = CONTEXT.replace("## Parties", "## Parties\n\n| Party | What it is | Zone | Tag | Walled | Domains |\n"
-                               "|---|---|---|---|---|---|\n"
-                               "| **Acme Corp** | Technology partnership | Work | `acme-oem` | yes | |\n"
-                               "| Acme Corp | Advisory | Personal | `acme-adv` | yes | |\n\n## Parties (fixture)", 1)
-        with tempfile.TemporaryDirectory() as tmp:
-            write(Path(tmp) / "System" / "context.md", text)
-            ctx = lib.load_context(tmp)
-        self.assertEqual(ctx["parties"]["acme-oem"]["party"], "Acme Corp")
-        self.assertEqual(lib.hats_of(ctx, {"acme-oem", "acme-adv"}), [("acme-adv", "acme-oem")])
+        self.assertEqual({}, ctx["zone_walled"])
 
 
 class TestWorkspaceRoot(unittest.TestCase):

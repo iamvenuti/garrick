@@ -4137,8 +4137,8 @@ def link_dests(ws: Workspace, source: Path, target: str) -> List[Path]:
 # A token is a reference only when the vault resolves it, and nothing is read as
 # anything else (docs/principles.md, One memory, walled use). Four rules: a link
 # that resolves (link_references); a token that is the exact path of a file
-# (reference_tokens, exact_files); a name from the Parties, People or Aliases
-# tables (name_forms); eight words in a row shared with a walled file (runs).
+# (reference_tokens, exact_files); eight words in a row shared with a file of
+# another walled zone (runs).
 # A glob, a folder, a bare word and a path with an entity or an escape in it
 # resolve to nothing, so they are text.
 

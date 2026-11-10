@@ -110,7 +110,6 @@ class ZoneFlags(unittest.TestCase):
             ctx = lib.load_context(workspace(tmp, OLD059))
         self.assertTrue(ctx["pending"])
         self.assertEqual({"Work": True}, ctx["zone_walled"])
-        self.assertIsNotNone(ctx["walls_pending"])      # the old pairs keep their own key
 
     def test_no_context_file(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -589,7 +589,6 @@ class SplitAndExtractTest(unittest.TestCase):
             page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md")
             fixtures.write(page, fixtures.meeting_page("Work", "[%s]" % ", ".join(sorted(tags)), stem)
                            .replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
-            self.assertEqual(tags, set(lib.labels(self.root, dest.relative_to(self.root))))
 
     def test_a_cut_that_leaves_a_line_out_or_doubles_one_is_refused(self):
         for parts, why in ((["acme:1-2", "birch:3"], "belong to no cut"), (["acme:1-3", "birch:3-5"], "in two cuts"),

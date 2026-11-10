@@ -227,6 +227,36 @@ class TestAllowOnce(AllowCase):
         self.assertEqual(0, self.hook().returncode)
         git(self.root, "checkout", "--", "System/walls-allowed.json")
 
+    def test_allowing_a_link_does_not_let_a_name_through(self):
+        """The reviewer's case l01: a walled person's name and a link to a walled meeting. The link is named first and
+        marks the party reported, so the report leaves the name out; an allowance must not hide it."""
+        self.stage("Dana Whitlock agreed.\nSee [[260310-acme-kickoff]].\n")
+        first = self.hook("--verbose").stderr
+        self.assertEqual(1, first.count("Commit refused"), first)            # the report shows the link alone
+        listed = self.allow()[1]
+        self.assertEqual(2, len(listed.strip().splitlines()), listed)        # allow lists both ids
+        ids = {l.split()[1]: l.split()[0] for l in listed.strip().splitlines()}
+        self.assertEqual({"link", "name"}, set(ids))
+        self.assertEqual(0, self.allow(ids["link"])[0])
+        res = self.hook()
+        self.assertEqual(1, res.returncode, res.stderr)                      # the name is not let through
+        self.assertIn("holds 2 refusals", res.stderr)                       # both shown now: nothing of the file was dropped
+        self.assertEqual(0, self.allow(ids["name"])[0])
+        self.assertEqual(0, self.hook().returncode)                          # both allowed: through
+
+    def test_a_new_name_of_the_party_in_an_unchanged_file_is_a_new_id(self):
+        """S3: the id covers the forms matched, not the party alone."""
+        self.stage("Dana Whitlock agreed.\n")
+        old = self.ids()["name"]
+        self.stage("Dana Whitlock agreed.\nTheo said nothing.\n")
+        self.assertEqual(old, self.ids()["name"])                            # a form of another party changes nothing
+        a = check.Finding(check.ERROR, "walls", self.rel, "names Acme Corp, or one of its people; acme is walled",
+                          token="m\0Dana Whitlock")
+        b = check.Finding(check.ERROR, "walls", self.rel, "names Acme Corp, or one of its people; acme is walled",
+                          token="m\0Dana Whitlock\0Acme")
+        self.assertNotEqual(check.finding_id(a), check.finding_id(b))
+        self.assertEqual("abcdef0123", check.finding_id(check.Finding(check.ERROR, "walls", "x", "m", fid="abcdef0123")))
+
     def test_a_finding_not_in_the_ledger_still_refuses(self):
         self.stage(NAME_A)
         self.assertEqual(1, self.hook().returncode)
@@ -234,17 +264,16 @@ class TestAllowOnce(AllowCase):
 
     def test_an_allowance_for_one_finding_does_not_cover_another_in_the_file(self):
         self.stage_hub()
-        found = self.findings()
+        found = check.allow_files(self.root, self.rel)[0]          # every finding the file has
         self.assertGreaterEqual(len(found), 2)
-        first, rest = found[0], found[1:]
-        self.assertTrue(all(check.finding_id(f) != check.finding_id(first) for f in rest))
-        self.assertEqual(0, self.allow(check.finding_id(first))[0])
+        ids = sorted({check.finding_id(f) for f in found})        # two identical findings are one id
+        self.assertGreaterEqual(len(ids), 2)
+        self.assertEqual(0, self.allow(ids[0])[0])
         left = [f for f in check.run_checks(self.root, staged=self.zone) if f.path == self.rel]
-        self.assertEqual(len(found) - 1, len(left))
-        self.assertNotIn(check.finding_id(first), [check.finding_id(f) for f in left])
+        self.assertGreaterEqual(len(left), len(found))             # one covered: nothing of the file is dropped
         self.assertEqual(1, self.hook().returncode)
-        for f in rest:
-            self.assertEqual(0, self.allow(check.finding_id(f))[0])
+        for fid in ids[1:]:
+            self.assertEqual(0, self.allow(fid)[0])
         self.assertEqual(0, self.hook().returncode)
 
     def test_the_short_report_is_a_line_for_each_file_and_one_command(self):

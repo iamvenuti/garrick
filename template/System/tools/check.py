@@ -279,6 +279,8 @@ class Finding:
     path: str
     message: str
     ear: str = ""
+    fid: str = ""       # the allow-once id, kept from the finding as found when its words are rewritten for an assistant
+    token: str = ""     # what the allow-once id is taken over besides path and kind; the message when empty
 
 
 @dataclass
@@ -5199,6 +5201,20 @@ def name_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = N
     return None
 
 
+def name_hits(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> List[str]:
+    """Every one of `forms` that `text` holds: what name_hit stops at the first of."""
+    if padded is None:
+        padded = padded_words(text)
+    found = []
+    for case_sensitive, form in forms:
+        if case_sensitive:
+            if re.search(r"(?<![\w])%s(?![\w])" % re.escape(form), text):
+                found.append(form)
+        elif " %s " % form in padded:
+            found.append(form)
+    return found
+
+
 def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> bool:
     """Does `text` hold one of `forms`? `padded` is padded_words(text), when
     the caller has it already."""
@@ -5765,6 +5781,18 @@ def link_references(ws: Workspace, note: Path, text: str, meetings: "PathIndex")
     return out
 
 
+_DEDUP_OFF = False   # allow once: while set, a party or meeting already named for a file is named again (see _Reported)
+
+
+class _Reported(set):
+    """The walled parties and meetings a file's findings have named. A second finding about one is left out, which is
+    right for a report and wrong for an allowance: allowing the first must not hide the second. While _DEDUP_OFF is
+    set, nothing counts as named, and every finding of the file exists."""
+
+    def __contains__(self, item):
+        return False if _DEDUP_OFF else set.__contains__(self, item)
+
+
 def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
@@ -5773,7 +5801,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     tags, where = file_tags(ws, project, ptags, path)
     r = rel(ws, path)
     zone = project.parent.name
-    reported: set = set()  # walled parties and meetings already named for this file
+    reported: set = _Reported()  # walled parties and meetings already named for this file
     unlabelled_hits: set = set()  # linked files with no label already named
     linked = symlink_finding(ws, project, ptags, path)
     if linked is not None:
@@ -5903,10 +5931,12 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             if hit is None:
                 continue
             reported.add(b)
-            out.append(Finding(ERROR, "walls", r,
-                               "names %s%s, or one of its people; %s is walled and this project does not name it"
-                               % (party_name(ws, b), as_tag(ws, b, hit), b),
-                               "A note in %s names %s" % (where, party_name(ws, b))))
+            matched = sorted(set(name_hits(scanned, forms, padded)) | ({only[b]} if b in only and hit == only[b] else set()))
+            message = ("names %s%s, or one of its people; %s is walled and this project does not name it"
+                       % (party_name(ws, b), as_tag(ws, b, hit), b))
+            # The id covers every form of the party this file holds, so a name added to an unchanged file is a new id.
+            out.append(Finding(ERROR, "walls", r, message, "A note in %s names %s" % (where, party_name(ws, b)),
+                               token=message + "\0" + "\0".join(matched)))
 
     # Quotes: a run of words held only across a wall, by a meeting page or its
     # raw record or by another project's file, or held by an unfinished page.
@@ -7664,7 +7694,8 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
         findings = check_walls_staged(ws, Path(staged))
         cache.save()
         if use_ledger:
-            findings = drop_allowed(ws, findings, allow_repo_top(Path(staged)))
+            findings = drop_allowed(ws, findings, allow_repo_top(Path(staged)),
+                                    lambda: check_walls_staged(ws, Path(staged)))
     else:
         for check in ([check_walls] if walls_only else ALL_CHECKS):
             try:
@@ -7674,7 +7705,7 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
                 findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
                                         "A check stopped before it finished"))
         if use_ledger:
-            findings = drop_allowed(ws, findings)
+            findings = drop_allowed(ws, findings, None, lambda: check_walls(ws))
     order = {c: i for i, (c, _) in enumerate(CHECKS)}
     findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
     return findings
@@ -7864,11 +7895,11 @@ def finding_rule(f: Finding) -> str:
 def finding_token(f: Finding) -> str:
     """What a finding's id is taken over besides its path and kind: the text of the finding. The one place to
     change if a finding comes to carry the matched text on its own."""
-    return f.message
+    return f.token or f.message
 
 
 def finding_id(f: Finding) -> str:
-    return allow_finding_id(f.path, finding_rule(f), finding_token(f))
+    return f.fid or allow_finding_id(f.path, finding_rule(f), finding_token(f))
 
 
 def allowable(f: Finding) -> bool:
@@ -7904,36 +7935,57 @@ def disk_blob(path: Path) -> Optional[str]:
     return got.strip() if got and got.strip() else None
 
 
-def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = None) -> List[Finding]:
+def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = None,
+                 rerun: Optional[Callable[[], List[Finding]]] = None) -> List[Finding]:
     """The findings left once the allowed ones are taken out. With `top`, the repository being committed, a blob
     id comes from its index; without, from the file on disk, and only for the files that have a finding the
-    ledger could cover. The ledger is read once; a missing or unreadable one drops nothing."""
+    ledger could cover. The ledger is the committed one, read once; a missing or unreadable one drops nothing.
+
+    A file is cleared only when every finding it can have is covered. The report leaves a second finding about a
+    party or meeting already named out, so for a file the ledger touches `rerun` (the walls check again, with that
+    left in) says what the file holds; if anything the ledger does not cover is there, nothing of the file is
+    dropped, and the findings the file really has are shown in place of the first pass's."""
+    global _DEDUP_OFF
     ledger = allow_set(ws.root)
     if not ledger:
         return findings
     covered = {(p, i) for p, i, _ in ledger}
+    touched = {f.path for f in findings if allowable(f) and (f.path, finding_id(f)) in covered}
+    if not touched:
+        return findings
+    full = findings
+    if rerun is not None:
+        _DEDUP_OFF = True
+        try:
+            full = [f for f in rerun() if f.check == "walls"]
+        finally:
+            _DEDUP_OFF = False
     index: Optional[Dict[str, str]] = None
     disk: Dict[str, Optional[str]] = {}
-    kept = []
-    for f in findings:
-        if not allowable(f) or (f.path, finding_id(f)) not in covered:
-            kept.append(f)
-            continue
+
+    def blob_of(path: str) -> Optional[str]:
+        nonlocal index
         if top is not None:
             if index is None:
                 index = index_blobs(top)
             try:
-                name = (ws.root / f.path).relative_to(top).as_posix()
+                name = (ws.root / path).relative_to(top).as_posix()
             except ValueError:
-                kept.append(f)
-                continue
-            blob = index.get(name.casefold())
+                return None
+            return index.get(name.casefold())
+        if path not in disk:
+            disk[path] = disk_blob(ws.root / path)
+        return disk[path]
+
+    kept = [f for f in findings if f.path not in touched]
+    for path in sorted(touched):
+        here = [f for f in full if f.path == path]
+        mine = [f for f in here if allowable(f)]
+        blob = blob_of(path)
+        if blob is not None and mine and all((path, finding_id(f), blob) in ledger for f in mine):
+            kept += [f for f in here if not allowable(f)]
         else:
-            if f.path not in disk:
-                disk[f.path] = disk_blob(ws.root / f.path)
-            blob = disk[f.path]
-        if blob is None or (f.path, finding_id(f), blob) not in ledger:
-            kept.append(f)
+            kept += here or [f for f in findings if f.path == path]
     return kept
 
 
@@ -8026,12 +8078,17 @@ def allow_files(root: Path, path: str):
     except ValueError:
         return None
     staged = _git(["diff", "--cached", "--name-only", "-z", "--", name], top_path) or ""
-    if staged.strip("\0"):
-        found = run_checks(root, staged=top_path, use_ledger=False)
-        blob = index_blobs(top_path).get(name.casefold())
-    else:
-        found = run_path_checks(root, [path])
-        blob = disk_blob(file)
+    global _DEDUP_OFF
+    _DEDUP_OFF = True            # every finding the file has, the second about a party already named included
+    try:
+        if staged.strip("\0"):
+            found = run_checks(root, staged=top_path, use_ledger=False)
+            blob = index_blobs(top_path).get(name.casefold())
+        else:
+            found = run_path_checks(root, [path])
+            blob = disk_blob(file)
+    finally:
+        _DEDUP_OFF = False
     return [f for f in found if f.path == path and allowable(f)], blob, top_path
 
 

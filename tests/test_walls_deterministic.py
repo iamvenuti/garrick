@@ -286,7 +286,7 @@ class TestStaged(WallCase):
         self.assertEqual(1, res.returncode)
         lines = res.stderr.strip().splitlines()
         self.assertEqual(1, len(lines), res.stderr)
-        self.assertTrue(lines[0].startswith("Commit refused: Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md names Acme Corp"))
+        self.assertTrue(lines[0].startswith("Commit refused: Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md names <acme>"))
         self.assertIn("--no-verify", lines[0])
         self.assertNotIn("Dana", res.stderr)
 
@@ -742,7 +742,7 @@ class TestStagedAgainstDisk(WallCase):
         res = self.staged()
         self.assertNotIn("different party", res.stderr)
         self.assertNotIn("repeats wording", res.stderr)
-        self.assertIn("names Birch & Co", res.stderr)       # an Acme project called Birch Entry names Birch
+        self.assertIn("names <birch>", res.stderr)       # an Acme project called Birch Entry names Birch; a run with no terminal says the tag
 
     def test_thread_party_changed_on_disk_only(self):
         self.stage_quote()
@@ -874,7 +874,7 @@ class TestInstalledHook(unittest.TestCase):
         res = self.git(work, "commit", "-q", "-m", "Launch Plan: wrap")
         self.assertEqual(1, res.returncode)
         self.assertEqual(1, len(res.stderr.strip().splitlines()), res.stderr)
-        self.assertIn("Launch Plan.md names Acme Corp", res.stderr)
+        self.assertIn("Launch Plan.md names <acme>", res.stderr)
         self.assertNotIn("Dana", res.stderr)
         self.assertEqual(head, self.git(work, "rev-parse", "HEAD").stdout)
 

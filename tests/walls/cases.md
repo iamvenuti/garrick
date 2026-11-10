@@ -194,6 +194,8 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e72 | check | a Reed note that links the person page of that one-word name | refused | a link to a person page is the person, whatever the page is called |
 | e73 | check | a Reed note that repeats a sentence a walled note holds and `System/templates.local/` holds too | permitted | the user's own templates are common wording |
 | e74 | check | a Reed note that repeats a sentence only a walled note holds | refused | wording held across the wall is a quotation |
+| e75 | check | a Reed note that quotes a refusal line of the check, which names a walled party | permitted | the check's own words are not material |
+| e76 | check | the same line with a person of that party written in it | refused | a line that holds more than the check prints is the note's own |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
 | e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; a row decide() does not admit is not in the scope index, so it ranks nothing;  ranking statistics computed over walled rows |

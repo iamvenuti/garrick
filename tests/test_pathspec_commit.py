@@ -289,7 +289,7 @@ class TestTheWallStillHolds(PathspecCase):
         res = self.commit(str(note.relative_to(self.zone)))
         self.assertEqual(1, res.returncode, res.stdout + res.stderr)
         self.assertIn("Commit refused", res.stderr)
-        self.assertIn("names Acme Corp", res.stderr)
+        self.assertIn("names <acme>", res.stderr)
         self.assertNotIn("Dana", res.stderr)
         self.assertEqual(head, self.head())
 
@@ -324,7 +324,7 @@ class TestTheWallStillHolds(PathspecCase):
         head = self.head()
         res = self.commit(str(note.relative_to(self.zone)))
         self.assertEqual(1, res.returncode, res.stdout + res.stderr)
-        self.assertIn("names Acme Corp", res.stderr)
+        self.assertIn("names <acme>", res.stderr)
         self.assertEqual(head, self.head())
 
     def test_what_the_commit_leaves_behind_does_not_refuse_it(self):

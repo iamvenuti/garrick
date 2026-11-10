@@ -302,6 +302,9 @@ class EnforcementPoints(unittest.TestCase):
                                                 "Zones/Work/Northwind/Threads/Pricing/Notes.md") else "permitted"
 
     SENTENCE = "The quarterly review covers pallet routing, supplier lead times and the harbour handover plan."
+    REFUSAL = ("Commit refused: Zones/Work/Reed/Threads/Notes/X.md names Acme Corp, or one of its people; acme is walled "
+               "and this project does not name it. Take it out and commit again; only if you mean it, git commit --no-verify.")
+
     def template_sentence(self, held):
         """A Reed note repeating a sentence that a Northwind note holds, and System/templates.local/ too when `held`."""
         write(self.work / "Northwind" / "Threads" / "Pricing" / "Source.md", "# S\n\n%s\n" % self.SENTENCE)
@@ -395,6 +398,8 @@ class EnforcementPoints(unittest.TestCase):
             "e72": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk [[kit]] about the order.\n"),
             "e73": lambda: self.template_sentence(True),
             "e74": lambda: self.template_sentence(False),
+            "e75": lambda: self.check_note("Reed", "Notes", "# N\n\nThe hook said:\n\n%s\n" % self.REFUSAL),
+            "e76": lambda: self.check_note("Reed", "Notes", "# N\n\nThe hook said:\n\n%s Ask Dana Whitlock.\n" % self.REFUSAL),
             "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),

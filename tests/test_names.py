@@ -128,6 +128,69 @@ class NamesTest(unittest.TestCase):
         self.assertTrue(check.is_template_path(ws, self.root / "System" / "templates" / "x.md"))
         self.assertFalse(check.is_template_path(ws, self.root / "System" / "templates.localx" / "x.md"))
 
+    # -- the check's own words -------------------------------------------------
+
+    def test_a_quoted_refusal_line_is_not_material(self):
+        for text in (LINE, LINE.replace("Acme Corp", "<acme>"), "  error   Zones/x.md: names Acme Corp (as \"acme\"), or one of "
+                     "its people; acme is walled and this project does not name it",
+                     "> " + LINE, "`" + LINE + "`",
+                     "A note in Reed names Acme Corp",
+                     "A wall holds some material back from this project, so I have not used it. Nothing was written."):
+            with self.subTest(text=text):
+                self.assertEqual("clear", self.verdict("# N\n\nThe hook said:\n\n%s\n" % text))
+
+    def test_a_line_that_holds_more_than_the_check_prints_is_the_notes_own(self):
+        for text in (LINE + " Ask Dana Whitlock.", LINE.replace("acme is walled", "Kit is walled"), "Ask Acme Corp. " + LINE.split(".")[0],
+                     "Commit refused: Zones/x.md names Acme Corp."):
+            with self.subTest(text=text):
+                self.assertEqual("refused", self.verdict("# N\n\n%s\n" % text))
+        # the party named beside the line, not in it
+        self.assertEqual("refused", self.verdict("# N\n\nAcme Corp.\n\n%s\n" % LINE))
+
+    def test_a_link_on_a_quoted_line_is_still_a_link(self):
+        self.assertEqual("refused", self.verdict("# N\n\n%s [[260310-acme-kickoff]]\n" % LINE))
+
+    def run_main(self, *args, tty=False):
+        out, err = io.StringIO(), io.StringIO()
+        for stream in (out, err):
+            stream.isatty = lambda tty=tty: tty
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                mock.patch.object(check, "record_refusals", lambda *a, **k: None):
+            code = check.main(["--root", str(self.root)] + list(args))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_json_and_a_run_with_no_terminal_name_a_walled_party_by_its_tag(self):
+        path = self.work / "Reed" / "Threads" / "Notes" / "Case.md"
+        write(path, "# N\n\nAsk Dana Whitlock.\n")
+        self.addCleanup(path.unlink)
+        code, out, _ = self.run_main("--walls-only", "--json")
+        self.assertEqual(1, code)
+        message = [f for f in json.loads(out)["findings"] if f["path"].endswith("Reed/Threads/Notes/Case.md")][0]
+        self.assertEqual("names <acme>, or one of its people; acme is walled and this project does not name it", message["message"])
+        self.assertNotIn("Acme Corp", message["ear"])
+        self.assertIn("<acme>", message["ear"])
+        _, text, _ = self.run_main("--walls-only")
+        self.assertNotIn("Acme Corp", text)
+        self.assertIn("<acme>", text)
+
+    def test_a_terminal_is_shown_the_name(self):
+        path = self.work / "Reed" / "Threads" / "Notes" / "Case.md"
+        write(path, "# N\n\nAsk Dana Whitlock.\n")
+        self.addCleanup(path.unlink)
+        _, text, _ = self.run_main("--walls-only", tty=True)
+        self.assertIn("names Acme Corp", text)
+
+    def test_the_hooks_line_pasted_back_names_nobody_and_is_not_refused(self):
+        findings = [check.Finding("error", "walls", "Zones/Work/Reed/x.md",
+                                  "names Acme Corp (as \"acme\"), or one of its people; acme is walled and this project does not name it")]
+        shown = check.assistant_findings(self.root, findings)[0]
+        line = "Commit refused: %s %s. Take it out and commit again; only if you mean it, git commit --no-verify." % (shown.path, shown.message)
+        self.assertNotIn("Acme", line)
+        self.assertEqual("clear", self.verdict("# N\n\n%s\n" % line))
+
+    def test_a_name_that_is_an_everyday_word_is_left_alone(self):
+        shown = check.assistant_findings(self.root, [check.Finding("warning", "x", "p", "the Personal zone and Acme Corp", "")])[0]
+        self.assertEqual("the Personal zone and <acme>", shown.message)
 
 
 if __name__ == "__main__":

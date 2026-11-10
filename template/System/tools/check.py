@@ -5226,6 +5226,75 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
     return out
 
 
+# The check's own words (#470). A note that quotes one of the check's refusal or warning lines, or the sentence the
+# rules give for a wall, repeats words the check printed; they are not material. A refusal names the party and its
+# tag and nothing else, so a line in that shape is passed over when what it holds beyond them is no name of a party.
+WALL_SENTENCE = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+# What the check's lines hold: the refusal the hook prints (`Commit refused: <path> <message>. <fix>`), a line of the
+# full report (`  error   <path>: <message>`), a finding's `message` or `ear` in the JSON, and the ear text itself.
+OWN_LINE_RE = re.compile(
+    r"^[\s>*\-`\"']*(?:Commit refused: .+|(?:error|warning)\s+\S.*: .+|\"?(?:message|ear)\"?\s*:\s*\".+|A note in .+)$", re.I)
+OWN_ANCHOR_RE = re.compile(
+    r"\bis walled and this (?:project|page) does not name it\b|\brepeats wording from\b"
+    r"|^[\s>*\-`\"']*A note in .+? (?:names|uses|quotes|is a symbolic link into|has) ", re.I | re.M)
+
+
+def own_words_line(ws: Workspace, line: str) -> bool:
+    """Is `line` one the check prints, naming no one but a party by its name or tag? A line of that shape that also
+    holds a person of a party, a domain, an alias or a one-word name is not (fail closed): it is a note's own."""
+    if len(line) > 600 or not OWN_LINE_RE.match(line) or not OWN_ANCHOR_RE.search(line):
+        return False
+    tags = set(ws.context["parties"])
+    named = set()
+    for tag in tags:
+        for text in (ws.context["parties"][tag].get("party") or "", tag):
+            key = " ".join(words(text))
+            if key:
+                named.add(key)
+    padded = padded_words(fold_format(line))
+    for key in sorted(named, key=len, reverse=True):
+        padded = re.sub(r"(?<= )%s(?= )" % re.escape(key), "", padded)
+    rest = [(c, f) for found in name_forms(ws, tags).values() for (c, f) in found if f not in named]
+    rest += [(False, f) for found in soft_forms(ws, tags).values() for f in found if f not in named]
+    return not names_hit(padded, [f for f in rest if not f[0]]) and not name_hit(fold_format(line), [f for f in rest if f[0]])
+
+
+def without_own_words(ws: Workspace, text: str) -> str:
+    """`text` without the check's own lines and the wall sentence: not material for the name check or the wording
+    check. Line by line, so the lines either side keep their places; the links stay with the caller's text."""
+    if WALL_SENTENCE in text:
+        text = text.replace(WALL_SENTENCE, "")
+    if not OWN_ANCHOR_RE.search(text) and "is walled and" not in text:
+        return text
+    return "\n".join("" if own_words_line(ws, line) else line for line in text.split("\n"))
+
+
+def assistant_findings(root: Path, findings: List[Finding]) -> List[Finding]:
+    """The findings as an assistant is shown them (`--json`, or a run with no terminal): a walled party by its tag in
+    angle brackets, `<acme>`, never by its name, so that a refusal pasted into a note names nobody. A path is left as
+    it is, and a tag, which already stands in every line. A name that is an everyday word is left alone."""
+    try:
+        ctx = load_context(root)
+    except Exception:
+        return findings
+    skip = STOPWORDS | COMMON_WORD_NAMES | {" ".join(words(z)) for z in ctx.get("zones", {})}
+    names = {}
+    for tag, entry in ctx["parties"].items():
+        name = (entry.get("party") or "").strip()
+        key = " ".join(words(name))
+        if entry.get("walled") and key and key not in skip and key != " ".join(words(tag)):
+            names.setdefault(name.casefold(), tag)
+    if not names:
+        return findings
+    pattern = re.compile(r"(?<![\w<])(%s)(?![\w>])" % "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)), re.I)
+
+    def hide(text: str) -> str:
+        text = pattern.sub(lambda m: "<%s>" % names[m.group(1).casefold()], text)
+        return re.sub(r'(<[^<>\s]+>) \(as "[^"]*"\)', r"\1", text)
+
+    return [Finding(f.severity, f.check, f.path, hide(f.message), hide(f.ear)) for f in findings]
+
+
 def fold_format(text: str) -> str:
     """`text` with Unicode format characters (zero-width spaces and joiners, bidi marks, soft hyphens) taken out
     and every kind of space made a plain one, so a name cut by one still reads as the name. Initials stay a limit."""
@@ -5938,7 +6007,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
     if far and not in_sources:
-        scanned = fold_format(without_party_field(text)) + "\n" + path.name
+        scanned = fold_format(without_party_field(without_own_words(ws, text))) + "\n" + path.name
         padded = padded_words(scanned)
         named_forms = name_forms(ws, far)
         only = tag_only_forms(ws, far)
@@ -5998,7 +6067,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             got = crossed_by_page[o] = bool(blocked(ws.context, tags, index.tags.get(o, ())))
         return got
 
-    for h in runs(transcript_text(path, text), shared_link(ws, path)):
+    for h in runs(transcript_text(path, without_own_words(ws, text)), shared_link(ws, path)):
         owners = index.owners.get(h)
         if not owners or h in index.common:
             continue
@@ -8057,6 +8126,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
     if args.staged and any(f.severity == ERROR for f in findings):
         record_refusals(root, Path.cwd(), [f.message for f in findings if f.severity == ERROR])
+    if args.json or not (sys.stderr if args.staged and not args.ear else sys.stdout).isatty():
+        findings = assistant_findings(root, findings)       # an assistant is shown a walled party by its tag
     if args.staged and not (args.json or args.ear):
         text = report_staged(findings)
         if text:

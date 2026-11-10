@@ -61,7 +61,7 @@ INBOX = "Wikis/Meetings/raw/inbox/Theo Marsh call 2026-09-28.vtt"
 # gitignored, so these never show as changes. A newsletter, which goes to the
 # library; Dana's forecast, which files itself under Acme by its domain; Owen's
 # quote, whose attachment goes into Acme Review; and Cobalt's notice, which
-# copies both Acme and Birch, so the assistant has to ask.
+# copies both Acme and Birch, who sit in two walled zones, so the assistant has to ask.
 MAIL = ("Zones/Work/Inbox/Freight Ledger Weekly.eml",
         "Zones/Work/Inbox/Pallet forecast by quarter.eml",
         "Zones/Work/Inbox/Second seal-kit quote.eml",
@@ -127,9 +127,9 @@ PLAN = [
     ("2026-09-04 12:30", "Wikis", "Meetings: ingest 260904-birch-kick-off, Birch kick-off", [
         M + "raw/260904-birch-kick-off.vtt", M + "wiki/sources/260904-birch-kick-off.md",
         M + "wiki/people/theo-marsh.md", M + "wiki/people/iris-bell.md"]),
-    ("2026-09-04 12:34", "Zones/Work", "New project Birch Entry (birch), first thread Market Sizing", [
-        project("Work", "Birch Entry", "birch", "Market Sizing")]),
-    ("2026-09-04 12:40", "Zones/Work", "Work: actions from Birch kick-off", [
+    ("2026-09-04 12:34", "Zones/Birch", "New project Birch Entry (birch), first thread Market Sizing", [
+        project("Birch", "Birch Entry", "birch", "Market Sizing")]),
+    ("2026-09-04 12:40", "Zones/Birch", "Birch: actions from Birch kick-off", [
         todo("Market sizing memo", "Sizing assumptions to Iris")]),
     ("2026-09-04 16:10", "Zones/Work", "Acme Review: supplier list received from Owen", [
         ACME + "Sources/Acme supplier list.csv"]),
@@ -140,7 +140,7 @@ PLAN = [
         K + "wiki/entities/pellow-strand-research.md"]),
     ("2026-09-07 11:10", "Wikis", "Meetings: ingest 260907-birch-distributor-contacts, Birch distributor contacts", [
         M + "raw/260907-birch-distributor-contacts.vtt", M + "wiki/sources/260907-birch-distributor-contacts.md"]),
-    ("2026-09-07 11:30", "Zones/Work", "Birch Entry: distributor contacts received from Iris", [
+    ("2026-09-07 11:30", "Zones/Birch", "Birch Entry: distributor contacts received from Iris", [
         BIRCH + "Sources/Birch distributor contacts.csv"]),
     ("2026-09-08 08:20", "Wikis", "Knowledge: ingested Nordic Pump Market Review 2026 (Nordic Fluid Equipment Council)", [
         K + "raw/nfec-nordic-pump-market-review-2026.txt", K + "wiki/sources/nfec-nordic-pump-market-review-2026.md",
@@ -163,7 +163,7 @@ PLAN = [
         todo("Freight baseline to Dana")]),
     ("2026-09-10 15:30", "Zones/Work", "Acme Review: line stoppage log received from Owen", [
         ACME + "Sources/Pump line stoppages.csv"]),
-    ("2026-09-10 17:00", "Zones/Work", "Birch Entry, Market Sizing: assumptions sent to Iris for Friday", [
+    ("2026-09-10 17:00", "Zones/Birch", "Birch Entry, Market Sizing: assumptions sent to Iris for Friday", [
         BIRCH + "Deliverables/260910 - Sizing assumptions.md",
         done("Sizing assumptions to Iris")]),
     ("2026-09-10 18:30", "Wikis", "Meetings: ingest 260910-kitchen-quote, Kitchen quote", [
@@ -176,7 +176,7 @@ PLAN = [
     ("2026-09-11 12:10", "Wikis", "Meetings: ingest 260911-birch-sizing-assumptions, Birch sizing assumptions", [
         M + "raw/260911-birch-sizing-assumptions.txt", M + "wiki/sources/260911-birch-sizing-assumptions.md",
         M + "wiki/people/lena-moss.md"]),
-    ("2026-09-11 12:15", "Zones/Work", "Work: actions from Birch sizing assumptions", [
+    ("2026-09-11 12:15", "Zones/Birch", "Birch: actions from Birch sizing assumptions", [
         todo("Rerun the sizing")]),
     ("2026-09-11 14:05", "Zones/Work", "Acme Review: last year's freight spend received from Gil", [
         ACME + "Sources/Acme freight spend 2025.csv"]),
@@ -195,7 +195,7 @@ PLAN = [
     ("2026-09-14 08:45", "Wikis", "Knowledge: ingested Seeing the Whole Chain (Brindle Systems)", [
         K + "raw/brindle-seeing-the-whole-chain.txt", K + "wiki/sources/brindle-seeing-the-whole-chain.md",
         K + "wiki/concepts/supply-chain-visibility.md", K + "wiki/entities/brindle-systems.md"]),
-    ("2026-09-14 10:30", "Zones/Work", "Birch Entry, Market Sizing: export price list in; sizing rerun", [
+    ("2026-09-14 10:30", "Zones/Birch", "Birch Entry, Market Sizing: export price list in; sizing rerun", [
         BIRCH + "Sources/Birch export price list.csv", done("Rerun the sizing")]),
     ("2026-09-14 15:40", "Zones/Work", "Acme Review, Freight Terms: baseline to Dana; questions for the renewal call", [
         ACME + "Deliverables/260914 - Freight baseline.md", ACME + "Threads/Freight Terms/Renewal call questions.md",
@@ -213,28 +213,30 @@ PLAN = [
         K + "wiki/concepts/volume-commitments.md", K + "wiki/entities/the-freight-ledger.md"]),
     ("2026-09-16 12:30", "Wikis", "Meetings: ingest 260916-birch-market-sizing-review, Birch market sizing review", [
         M + "raw/260916-birch-market-sizing-review.md", M + "wiki/sources/260916-birch-market-sizing-review.md"]),
-    ("2026-09-16 12:40", "Zones/Work", "Birch Entry, Market Sizing: memo presented; Theo closed the sizing", [
+    ("2026-09-16 12:40", "Zones/Birch", "Birch Entry, Market Sizing: memo presented; Theo closed the sizing", [
         BIRCH + "Deliverables/260916 - Market sizing memo.md", BIRCH + "Threads/Market Sizing/Sizing model.md",
         done("Market sizing memo")]),
-    ("2026-09-16 12:45", "Zones/Work", "Birch Entry: new thread Carrier Choice", [
-        thread("Work", "Birch Entry", "Carrier Choice")]),
-    ("2026-09-17 09:25", "Zones/Work", "Birch Entry: new thread Launch Plan", [
-        thread("Work", "Birch Entry", "Launch Plan")]),
-    ("2026-09-17 09:30", "Zones/Work", "Birch Entry, Market Sizing: finished; outcome recorded", [
+    ("2026-09-16 12:45", "Zones/Birch", "Birch Entry: new thread Carrier Choice", [
+        thread("Birch", "Birch Entry", "Carrier Choice")]),
+    ("2026-09-17 09:25", "Zones/Birch", "Birch Entry: new thread Launch Plan", [
+        thread("Birch", "Birch Entry", "Launch Plan")]),
+    ("2026-09-17 09:30", "Zones/Birch", "Birch Entry, Market Sizing: finished; outcome recorded", [
         BIRCH + "Threads/Market Sizing/Market Sizing.md", BIRCH + "Birch Entry.md", todo("Invoice Birch")]),
     ("2026-09-17 17:05", "Wikis", "Meetings: ingest 260917-acme-weekly-check-in, Acme weekly check-in", [
         M + "raw/260917-acme-weekly-check-in.txt", M + "wiki/sources/260917-acme-weekly-check-in.md"]),
     ("2026-09-18 11:50", "Wikis", "Meetings: ingest 260918-birch-carrier-requirements, Birch carrier requirements", [
         M + "raw/260918-birch-carrier-requirements.vtt", M + "wiki/sources/260918-birch-carrier-requirements.md",
         M + "wiki/people/arno-vale.md"]),
-    ("2026-09-18 11:55", "Zones/Work", "Work: actions from Birch carrier requirements", [
+    ("2026-09-18 11:55", "Zones/Birch", "Birch: actions from Birch carrier requirements", [
         todo("Carrier requirements to Iris")]),
-    ("2026-09-18 15:10", "Zones/Work", "Birch Entry, Carrier Choice: requirements sent to Iris and Arno", [
+    ("2026-09-18 15:10", "Zones/Birch", "Birch Entry, Carrier Choice: requirements sent to Iris and Arno", [
         BIRCH + "Deliverables/260918 - Carrier requirements.md", done("Carrier requirements to Iris")]),
     ("2026-09-18 17:20", "Zones/Work", "Acme Review, Freight Terms: first draft of the options brief", [
         ACME + "Deliverables/260918 - Freight options brief.md", done("Freight options brief, first draft")]),
-    ("2026-09-18 17:40", "Zones/Work", "Work: sizing invoiced to Birch; Acme's September invoice noted", [
-        todo("Invoice Acme"), done("Invoice Birch")]),
+    ("2026-09-18 17:40", "Zones/Birch", "Birch: sizing invoiced", [
+        done("Invoice Birch")]),
+    ("2026-09-18 17:41", "Zones/Work", "Work: Acme's September invoice noted", [
+        todo("Invoice Acme")]),
     ("2026-09-18 19:05", "Wikis", "Meetings: ingest 260918-kitchen-survey, Kitchen survey", [
         M + "raw/260918-kitchen-survey.txt", M + "wiki/sources/260918-kitchen-survey.md",
         M + "wiki/people/ned-lark.md"]),
@@ -261,8 +263,8 @@ PLAN = [
         todo("Clear the kitchen", "Pay Ray's deposit"), done("Tell Ray yes")]),
     ("2026-09-22 11:40", "Wikis", "Meetings: ingest 260922-cobalt-northern-lane-for-birch, Cobalt northern lane for Birch", [
         M + "raw/260922-cobalt-northern-lane-for-birch.vtt",
-        M + "wiki/sources/260922-cobalt-northern-lane-for-birch.md"]),
-    ("2026-09-22 11:44", "Zones/Work", "Work: actions from Cobalt northern lane for Birch", [
+        M + "wiki/sources/260922-cobalt-northern-lane-for-birch.md", M + "wiki/people/marta-quill-birch.md"]),
+    ("2026-09-22 11:44", "Zones/Birch", "Birch: actions from Cobalt northern lane for Birch", [
         todo("Volume forecast to Marta")]),
     ("2026-09-22 18:20", "Wikis", "Meetings: ingest 260922-home-insurance-renewal, Home insurance renewal", [
         M + "raw/260922-home-insurance-renewal.txt", M + "wiki/sources/260922-home-insurance-renewal.md",
@@ -276,9 +278,9 @@ PLAN = [
     ("2026-09-23 11:10", "Wikis", "Meetings: ingest 260923-birch-distributor-shortlist, Birch distributor shortlist", [
         M + "raw/260923-birch-distributor-shortlist.md", M + "wiki/sources/260923-birch-distributor-shortlist.md",
         M + "wiki/people/ruth-kemp.md"]),
-    ("2026-09-23 11:15", "Zones/Work", "Work: actions from Birch distributor shortlist", [
+    ("2026-09-23 11:15", "Zones/Birch", "Birch: actions from Birch distributor shortlist", [
         todo("Questions for the distributor agreement")]),
-    ("2026-09-23 16:30", "Zones/Work", "Birch Entry, Carrier Choice: shortlist drafted; waiting on Iris's volumes", [
+    ("2026-09-23 16:30", "Zones/Birch", "Birch Entry, Carrier Choice: shortlist drafted; waiting on Iris's volumes", [
         BIRCH + "Deliverables/260923 - Carrier shortlist.md", BIRCH + "Threads/Carrier Choice/Carrier Choice.md",
         BIRCH + "Threads/Carrier Choice/Volume forecast.md", todo("Chase Fernway")]),
     ("2026-09-24 10:40", "Wikis", "Meetings: ingest 260924-acme-supplier-map-review, Acme supplier map review", [
@@ -290,14 +292,14 @@ PLAN = [
         ACME + "Acme Review.md"]),
     ("2026-09-25 10:20", "Wikis", "Meetings: ingest 260925-birch-board-paper-review, Birch board paper review", [
         M + "raw/260925-birch-board-paper-review.txt", M + "wiki/sources/260925-birch-board-paper-review.md"]),
-    ("2026-09-25 10:25", "Zones/Work", "Work: actions from Birch board paper review", [
+    ("2026-09-25 10:25", "Zones/Birch", "Birch: actions from Birch board paper review", [
         todo("Board recommendation")]),
-    ("2026-09-25 16:10", "Zones/Work", "Birch Entry, Launch Plan: one-page recommendation to Iris for the board", [
+    ("2026-09-25 16:10", "Zones/Birch", "Birch Entry, Launch Plan: one-page recommendation to Iris for the board", [
         BIRCH + "Deliverables/260925 - Board recommendation.md", done("Board recommendation")]),
     ("2026-09-25 17:50", "Zones/Work", "Acme Review, Freight Terms: brief reworked; due to Dana 2 October", [
         ACME + "Threads/Freight Terms/Freight Terms.md", ACME + "Threads/Freight Terms/Cost model.md",
         todo("Test the pallet commitment")]),
-    ("2026-09-26 11:15", "Zones/Work", "Birch Entry, Launch Plan: outline drafted; waiting on the board", [
+    ("2026-09-26 11:15", "Zones/Birch", "Birch Entry, Launch Plan: outline drafted; waiting on the board", [
         BIRCH + "Threads/Launch Plan/Launch Plan.md", BIRCH + "Threads/Launch Plan/Outline.md",
         BIRCH + "Threads/Launch Plan/Distributor terms.md", BIRCH + "Birch Entry.md",
         todo("Launch plan: timing and budget")]),
@@ -737,7 +739,7 @@ def build(target, today=None):
     root = target.resolve()
     pin_version(root, dated)
 
-    todos = {z: TodoList(dated.read(f"Zones/{z}/Todo.md").decode("utf-8")) for z in ("Work", "Personal")}
+    todos = {z: TodoList(dated.read(f"Zones/{z}/Todo.md").decode("utf-8")) for z in ("Work", "Birch", "Personal")}
     plan = dated.plan()
     named = plan_paths(plan)
     copied = set()
@@ -806,7 +808,7 @@ def build(target, today=None):
         dst = root / rel
         if not dst.is_file() or dst.read_bytes() != dated.read(rel):
             raise BuildError(f"{rel} did not end up as it is in content/; check the plan in build.py")
-    for repo in ("", "Wikis", "Zones/Work", "Zones/Personal"):
+    for repo in ("", "Wikis", "Zones/Work", "Zones/Birch", "Zones/Personal"):
         status = run(["git", "status", "--porcelain", "--untracked-files=all"], root / repo if repo else root,
                      installed, "git status")
         stray = [l for l in status.splitlines() if Path(inbox).name not in l]

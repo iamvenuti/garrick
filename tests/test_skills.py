@@ -603,8 +603,8 @@ class ThreadListingTest(unittest.TestCase):
                 rel = note.relative_to(self.demo).as_posix()
                 expected.append("%s\t%s\t%s" % (first_value(note, "updated"), first_value(note, "status"), rel))
         self.assertEqual(7, len(expected), expected)
-        self.assertIn("2026-09-23\tactive\tZones/Work/Birch Entry/Threads/Carrier Choice/Carrier Choice.md", expected)
-        self.assertIn("2026-09-17\tdone\tZones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md", expected)
+        self.assertIn("2026-09-23\tactive\tZones/Birch/Birch Entry/Threads/Carrier Choice/Carrier Choice.md", expected)
+        self.assertIn("2026-09-17\tdone\tZones/Birch/Birch Entry/Threads/Market Sizing/Market Sizing.md", expected)
         for shell, res in self.listings(self.demo):
             lines = res.stdout.splitlines()
             self.assertEqual((0, ""), (res.returncode, res.stderr), shell)

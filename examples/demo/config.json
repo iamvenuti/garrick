@@ -4,37 +4,168 @@
     "description": "Independent advisor on supply chains and market entry, working for a handful of mid-sized manufacturers."
   },
   "zones": [
-    {"name": "Work", "holds": "Client engagements and the practice itself"},
-    {"name": "Personal", "holds": "Home, health, money and travel"}
+    {
+      "name": "Work",
+      "holds": "Client engagements and the practice itself"
+    },
+    {
+      "name": "Birch",
+      "holds": "Birch & Co's market-entry engagement, kept apart from Acme's"
+    },
+    {
+      "name": "Personal",
+      "holds": "Home, health, money and travel"
+    }
   ],
   "parties": [
-    {"name": "Acme Corp", "what": "Client. Supply-chain review", "zone": "Work", "tag": "acme", "domains": ["acmecorp.example"]},
-    {"name": "Birch & Co", "what": "Client. Market-entry advice; competes with Acme", "zone": "Work", "tag": "birch", "domains": ["birchco.example"]},
-    {"name": "Cobalt Freight", "what": "Freight carrier. Talks to Acme and to Birch, separately", "zone": "Work", "tag": "cobalt", "walled": false, "domains": ["cobaltfreight.example"]},
-    {"name": "Lark & Sons", "what": "Builder. Kitchen refit and roof repair at home", "zone": "Personal", "tag": "lark", "walled": false, "domains": ["larkandsons.example"]},
-    {"name": "Pell Joinery", "what": "Joiner. Gave the other kitchen quote", "zone": "Personal", "tag": "pell", "walled": false, "domains": ["pelljoinery.example"]},
-    {"name": "Wrenfield Mutual", "what": "Insurer. Home insurance", "zone": "Personal", "tag": "wrenfield", "walled": false, "domains": ["wrenfield.example"]}
+    {
+      "name": "Acme Corp",
+      "what": "Client. Supply-chain review",
+      "zone": "Work",
+      "tag": "acme",
+      "domains": [
+        "acmecorp.example"
+      ]
+    },
+    {
+      "name": "Birch & Co",
+      "what": "Client. Market-entry advice; competes with Acme",
+      "zone": "Birch",
+      "tag": "birch",
+      "domains": [
+        "birchco.example"
+      ]
+    },
+    {
+      "name": "Cobalt Freight",
+      "what": "Freight carrier. Talks to Acme and to Birch, separately",
+      "zone": "Work",
+      "tag": "cobalt",
+      "walled": false,
+      "domains": [
+        "cobaltfreight.example"
+      ]
+    },
+    {
+      "name": "Lark & Sons",
+      "what": "Builder. Kitchen refit and roof repair at home",
+      "zone": "Personal",
+      "tag": "lark",
+      "walled": false,
+      "domains": [
+        "larkandsons.example"
+      ]
+    },
+    {
+      "name": "Pell Joinery",
+      "what": "Joiner. Gave the other kitchen quote",
+      "zone": "Personal",
+      "tag": "pell",
+      "walled": false,
+      "domains": [
+        "pelljoinery.example"
+      ]
+    },
+    {
+      "name": "Wrenfield Mutual",
+      "what": "Insurer. Home insurance",
+      "zone": "Personal",
+      "tag": "wrenfield",
+      "walled": false,
+      "domains": [
+        "wrenfield.example"
+      ]
+    }
   ],
   "people": [
-    {"name": "Dana Whitlock", "party": "acme", "role": "Head of procurement; sponsor of the review"},
-    {"name": "Owen Pike", "party": "acme", "role": "Logistics manager"},
-    {"name": "Hana Croft", "party": "acme", "role": "Plant manager; runs the pump line"},
-    {"name": "Gil Thorne", "party": "acme", "role": "Financial controller"},
-    {"name": "Felix Rook", "party": "acme", "role": "Quality engineer; approves new suppliers"},
-    {"name": "Theo Marsh", "party": "birch", "role": "Managing partner"},
-    {"name": "Iris Bell", "party": "birch", "role": "Head of strategy; runs the entry project day to day"},
-    {"name": "Lena Moss", "party": "birch", "role": "Finance director"},
-    {"name": "Arno Vale", "party": "birch", "role": "Operations manager; warehouse and shipping"},
-    {"name": "Ruth Kemp", "party": "birch", "role": "Export sales manager"},
-    {"name": "Marta Quill", "party": "cobalt", "role": "Account director; handles both Acme and Birch"},
-    {"name": "Ray Lark", "party": "lark", "role": "Owner; runs the kitchen job himself"},
-    {"name": "Ned Lark", "party": "lark", "role": "Electrician; Ray's son"},
-    {"name": "Corin Pell", "party": "pell", "role": "Owner of Pell Joinery"},
-    {"name": "Mina Holt", "party": "wrenfield", "role": "Account handler for the home insurance"}
+    {
+      "name": "Dana Whitlock",
+      "party": "acme",
+      "role": "Head of procurement; sponsor of the review"
+    },
+    {
+      "name": "Owen Pike",
+      "party": "acme",
+      "role": "Logistics manager"
+    },
+    {
+      "name": "Hana Croft",
+      "party": "acme",
+      "role": "Plant manager; runs the pump line"
+    },
+    {
+      "name": "Gil Thorne",
+      "party": "acme",
+      "role": "Financial controller"
+    },
+    {
+      "name": "Felix Rook",
+      "party": "acme",
+      "role": "Quality engineer; approves new suppliers"
+    },
+    {
+      "name": "Theo Marsh",
+      "party": "birch",
+      "role": "Managing partner"
+    },
+    {
+      "name": "Iris Bell",
+      "party": "birch",
+      "role": "Head of strategy; runs the entry project day to day"
+    },
+    {
+      "name": "Lena Moss",
+      "party": "birch",
+      "role": "Finance director"
+    },
+    {
+      "name": "Arno Vale",
+      "party": "birch",
+      "role": "Operations manager; warehouse and shipping"
+    },
+    {
+      "name": "Ruth Kemp",
+      "party": "birch",
+      "role": "Export sales manager"
+    },
+    {
+      "name": "Marta Quill",
+      "party": "cobalt",
+      "role": "Account director; handles both Acme and Birch"
+    },
+    {
+      "name": "Ray Lark",
+      "party": "lark",
+      "role": "Owner; runs the kitchen job himself"
+    },
+    {
+      "name": "Ned Lark",
+      "party": "lark",
+      "role": "Electrician; Ray's son"
+    },
+    {
+      "name": "Corin Pell",
+      "party": "pell",
+      "role": "Owner of Pell Joinery"
+    },
+    {
+      "name": "Mina Holt",
+      "party": "wrenfield",
+      "role": "Account handler for the home insurance"
+    }
   ],
   "aliases": [
-    {"heard": "birch and co, birchen co", "means": "Birch & Co"},
-    {"heard": "dana whitlaw", "means": "Dana Whitlock"},
-    {"heard": "lark and sons, larks", "means": "Lark & Sons"}
+    {
+      "heard": "birch and co, birchen co",
+      "means": "Birch & Co"
+    },
+    {
+      "heard": "dana whitlaw",
+      "means": "Dana Whitlock"
+    },
+    {
+      "heard": "lark and sons, larks",
+      "means": "Lark & Sons"
+    }
   ]
 }

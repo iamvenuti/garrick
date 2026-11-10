@@ -1,6 +1,7 @@
 ---
 title: Owen Pike
 type: person
+zone: Work
 party: acme
 created: 2026-09-02
 updated: 2026-09-02

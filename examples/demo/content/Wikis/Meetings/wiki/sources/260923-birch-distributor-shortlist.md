@@ -2,7 +2,7 @@
 title: Birch distributor shortlist
 type: meeting
 date: 2026-09-23
-zone: Work
+zone: Birch
 parties: [birch]
 people: ["[[wiki/people/iris-bell]]", "[[wiki/people/ruth-kemp]]"]
 raw: "[[raw/260923-birch-distributor-shortlist]]"

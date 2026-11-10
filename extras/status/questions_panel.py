@@ -26,6 +26,7 @@ Standard library only, Python 3.9.
 from __future__ import annotations
 
 import datetime as dt
+import html
 import importlib.util
 import json
 import os
@@ -545,10 +546,13 @@ def counts_of(data: dict) -> dict:
     return {"z": dict(data.get("menu") or {}), "g": dict(data.get("menu_groups") or {}), "k": int(data.get("menu_knowledge") or 0)}
 
 
-def tab_button() -> str:
+def tab_button(dot: str = "") -> str:
     """The tab. Its number is the open count of the zone shown, set by the
-    panel's own script: a number made here would add up zones."""
-    return '<button type="button" role="tab" data-tab="questions">Context<span class="n" id="qp-tab-n"></span></button>'
+    panel's own script: a number made here would add up zones. `dot` is the
+    title of a red dot, for a party with no flag or a note naming two parties
+    with one name (the Parties view)."""
+    mark = '<span class="dot critical" title="%s"></span>' % html.escape(dot, quote=True) if dot else ""
+    return '<button type="button" role="tab" data-tab="questions">Context<span class="n" id="qp-tab-n"></span>%s</button>' % mark
 
 
 def body(data: dict) -> str:
@@ -559,7 +563,7 @@ def body(data: dict) -> str:
             '<div class="qp-counts" id="qp-counts" role="status"></div>'
             '<div class="qp-bar">'
             '<label>Zone <select id="qp-zone"></select></label>'
-            '<div class="qp-show"><span>Show</span><div class="qp-switch" id="qp-source" role="group" aria-label="Show">'
+            '<div class="qp-show"><span>List</span><div class="qp-switch" id="qp-source" role="group" aria-label="List">'
             '<button type="button" data-source="wiki" aria-pressed="true">Wiki questions</button>'
             '<button type="button" data-source="nurture" aria-pressed="false">Nurture findings</button></div></div>'
             '<label class="qp-wikiq-only">Wiki <select id="qp-wiki"><option value="">Both</option>'

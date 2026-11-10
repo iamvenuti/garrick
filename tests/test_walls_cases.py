@@ -111,6 +111,7 @@ class Cases(unittest.TestCase):
             "e30": lambda: self.pricing("# N\n\n%s\n" % HOME_SAYS),
             "e31": lambda: self.pricing("# N\n\n%s\n" % UNZONED_SAYS),
             "e32": lambda: self.knowledge_says(),
+            "e36": lambda: self.pricing("# N\n\nSee [[bare]].\n"),
             "e33": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260310-work-call")),
             "e34": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260312-ventures-call")),
             "e35": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260311-home-call", fill=True)),

@@ -69,6 +69,8 @@ def worker(tools: Path, full: bool) -> None:
     """Child process: the check in `tools` first, then the rows; JSON on stdout."""
     sys.path.insert(0, str(HERE))
     sys.path.insert(0, str(tools))
+    if Path(tools).resolve() == TOOLS.resolve():
+        os.environ["GARRICK_ZONE_FLAGS_FINAL"] = "1"
     out = verdicts(tools, full)
     json.dump({"rows": [[*k, v] for k, v in sorted(out["rows"].items())], "by_design": out["by_design"]}, sys.stdout)
 
@@ -146,6 +148,10 @@ def by_design(label: str, design: set) -> bool:
     return label in design
 
 
+# The one row that goes from passed to refused by design: an entity page with no zone and no party, which the
+# release before read as nobody's and the zone wall refuses once the flags are final (#481). The new check runs with
+# GARRICK_ZONE_FLAGS_FINAL=1, as the update's study does, so the row shows.
+WORSE_BY_DESIGN = ("unplaced-entity/final",)
 NAME_ONLY = ("cedar-zone/prose",)       # a party named in prose, with no link, embed, path or copy: no name is read
 
 
@@ -179,6 +185,8 @@ def diff(tag: str, full: bool = False) -> dict:
             target["refused_both" if now == "refused" else "passed_both"] += 1
         else:
             (group if key in temp else moved)["refused_to_passed" if before == "refused" else "passed_to_refused"].append(key)
+    result["worse_by_design"] = sorted(k for k in moved["passed_to_refused"] if k[2] in WORSE_BY_DESIGN)
+    moved["passed_to_refused"] = [k for k in moved["passed_to_refused"] if k[2] not in WORSE_BY_DESIGN]
     for name, keys in moved.items():
         result[name] = {"total": len(keys),
                         "by_kind": dict(Counter(split(k[2])[0] for k in keys)),
@@ -230,6 +238,7 @@ def report(result: dict, show: int = 20) -> str:
                 lines += ["    " + r[:200] for r in part["other_rows"][:show]]
                 if kinds["other"] > show:
                     lines.append("    ... and %d more" % (kinds["other"] - show))
+    lines.append("passed -> refused by design: %d (%s)" % (len(result["worse_by_design"]), ", ".join(k[2] for k in result["worse_by_design"])))
     t = result["temp_path"]
     lines.append("rows with a temporary path in the key, compared with it taken out: %d" % t["rows"])
     lines += ["  refused in both:   %d" % t["refused_both"], "  passed in both:    %d" % t["passed_both"],

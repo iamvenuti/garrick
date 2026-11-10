@@ -111,6 +111,16 @@ class ZoneFlags(unittest.TestCase):
         self.assertTrue(ctx["pending"])
         self.assertEqual({"Work": True}, ctx["zone_walled"])
 
+    def test_the_final_switch_reads_derived_flags_as_final(self):
+        from unittest import mock
+        import os
+        with tempfile.TemporaryDirectory() as tmp:
+            root = workspace(tmp, OLD)
+            with mock.patch.dict(os.environ, {"GARRICK_ZONE_FLAGS_FINAL": "1"}):
+                ctx = lib.load_context(root)
+            self.assertFalse(ctx["pending"])
+            self.assertEqual({"Work": True, "Ventures": False, "Home": True, "Bare": True}, ctx["zone_walled"])
+
     def test_no_context_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             ctx = lib.load_context(tmp)

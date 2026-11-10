@@ -198,6 +198,7 @@ class Table:
         text = ctx.read_text(encoding="utf-8").replace("| Personal | Everything else | | walled |", "| Personal | Everything else | | walled |\n| Ventures | Published work | | open |")
         text = text.replace("| Acme Corp |", "| Own affairs | His own | Personal | `jo` | yes | |\n| Maple | Own venture | Ventures | `maple` | no | |\n| Acme Corp |", 1)
         ctx.write_text(text, encoding="utf-8")
+        write(root / "Wikis" / "Meetings" / "wiki" / "entities" / "unplaced.md", "---\ntitle: Unplaced\ntype: entity\n---\n\n# Unplaced\n")
         meetings = root / "Wikis" / "Meetings" / "wiki" / "sources"
         write(meetings / "260320-garden-call.md", meeting_page("Personal", "[jo]", "Garden call"))
         write(meetings / "260321-orchard-call.md", meeting_page("Ventures", "[maple]", "Orchard call"))
@@ -229,6 +230,7 @@ class Table:
                        ("jo", "other-zone/source-path"): "# Notes\n\nSee `Wikis/Meetings/wiki/sources/260320-garden-call.md`.\n",
                        ("jo", "other-zone/project-file"): "# Notes\n\nSee [[Zones/Personal/Garden/Garden]].\n",
                        ("maple", "open-zone/source-link"): "# Notes\n\nSee [[260321-orchard-call]].\n",
+                       ("none", "unplaced-entity/final"): "# Notes\n\nSee [[unplaced]].\n",
                        ("maple", "open-zone/project-file"): "# Notes\n\nSee [[Zones/Ventures/Orchard/Orchard]].\n"}
     ZONE_ROWS = {"cedar-zone/prose": "# Notes\n\nCedar asked for the figures.\n",
                  "cedar-zone/zone-key": "---\nzone: Cedar\ntype: note\n---\n\nx\n"}

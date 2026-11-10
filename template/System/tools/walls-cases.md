@@ -123,6 +123,7 @@ A fixture workspace: `Work` and `Home` are walled zones, `Ventures` an open one.
 | e33 | check | a Northwind file that is a whole copy of a raw record of a Meetings page of Work | permitted | a record is in the zone of the page that claims it |
 | e34 | check | a Northwind file that is a whole copy of a raw record of a Meetings page of Ventures | permitted | an open zone's record may be copied |
 | e35 | check | a Northwind file that is a whole copy of a raw record of a Meetings page of Home | refused | a copy across a zone wall, a record included |
+| e36 | check | a Northwind note that links an entity page with no zone and no party | refused | fail closed once the flags are final: every page has one zone (#481) |
 
 ## Meetings
 

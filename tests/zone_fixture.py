@@ -105,6 +105,7 @@ def build(root: Path) -> Path:
     write(ents / "mixed.md", "---\ntitle: Mixed\ntype: entity\n---\n\n# Mixed\n\nSee [[260310-work-call]] and [[260311-home-call]].\n")
     write(ents / "mixed-open.md", "---\ntitle: Mixed open\ntype: entity\nzone: Work\n---\n\n# Mixed open\n\nSee [[260310-work-call]] and [[260312-ventures-call]].\n")
     write(ents / "whole.md", "---\ntitle: Whole\ntype: entity\nzone: Work\n---\n\n# Whole\n\nSee [[260310-work-call]].\n")
+    write(ents / "bare.md", "---\ntitle: Bare\ntype: entity\n---\n\n# Bare\n")
     write(ents / "party-only.md", "---\ntitle: Party only\ntype: entity\nparty: jo\n---\n\n# Party only\n")
     write(people / "pat.md", "---\ntitle: Pat\ntype: person\nparty: jo\n---\n\n# Pat\n")
     write(meetings / "raw" / "inbox" / ".gitkeep")

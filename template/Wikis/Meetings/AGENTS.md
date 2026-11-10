@@ -66,7 +66,7 @@ updated: YYYY-MM-DD
 ---
 ```
 
-A mail with a Message-ID also carries it as `source-id:`; a mail or a recording already filed, by its bytes or that ID, is refused a second page. Then: what it says or asks, the wording that matters, and an actions table. Attachments stay in the raw record and are listed on the page; one a project needs goes into its `Sources/` only after this page exists, and only if the project's party is not walled from the page's.
+A mail with a Message-ID also carries it as `source-id:`; a mail or a recording already filed, by its bytes or that ID, is refused a second page. Then: what it says or asks, the wording that matters, and an actions table. Attachments stay in the raw record and are listed on the page; one a project needs goes into its `Sources/` only after this page exists, and only if the project's zone may hold the page's.
 
 ## A person page
 

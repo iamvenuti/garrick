@@ -58,7 +58,7 @@ TOUCH_MAP = {
     "tests/walls/cases.md": ["test_walls_cases"],
     "extras/status/questions_panel.py": ["test_questions_panel", "test_decisions", "test_question_transaction",
                                          "test_status", "test_page_action"],
-    "template/System/tools/migrate_walls.py": ["test_update", "test_decide", "test_migration_names"],
+    "update.py": ["test_update"],
     "extras/status/status.py": ["test_status", "test_status_find", "test_status_finder",
                                 "test_status_graph_3d", "test_status_graph_ignored",
                                 "test_status_more", "test_status_work"],

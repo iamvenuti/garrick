@@ -81,10 +81,10 @@ MAP = [
     ("ways in: something to read", "something to read (a newsletter, an article, a report) is filed in Knowledge, with no zone. If it comes from a party's domain, ask before treating it as published;", "intake"),
     ("ways in: material for a project", "A mail the Meetings wiki keeps out goes whole into a project's `Sources/` only when the user says it is material, not a conversation.", "intake"),
     ("ways in: zone from addresses", "**The zone comes from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and the party's row names its zone;", "intake"),
-    ("ways in: own addresses, in rules", "**Your own addresses and personal webmail never name a party**: the people inside a forward count. If addresses do not settle it, or put two walled parties on one mail, ask. Never guess across a wall.", "rules"),
+    ("ways in: own addresses, in rules", "**Your own addresses and personal webmail never settle a zone**: the people inside a forward count. If addresses do not settle it, or put two walled zones on one mail, ask.", "rules"),
     ("ways in: own addresses", "the people inside the forward are the ones who count. Ask when a domain is unknown, when the parties on a mail sit in two walled zones,", "intake"),
     ("ways in: wall before a project", "**Check the wall before anything goes into a project.**", "rules"),
-    ("ways in: wall before a project, in full", "**Check the wall before anything goes into a project.** The project must name every walled party of the material. If not, stop, and say only the sentence under *Zones and walls*", "rules"),
+    ("ways in: wall before a project, in full", "**Check the wall before anything goes into a project.** The material's zone must be the project's, or open. If not, stop, and say only the sentence under *Zones and walls*", "rules"),
     ("ways in: unsure, ask", "**Unsure of the kind, the zone or the project: ask**, in one short line. Never guess which zone.", "intake"),
     ("ways in: code never chooses", "**Code moves, parses and lists; it never chooses where a thing goes.**", "intake"),
     # Threads

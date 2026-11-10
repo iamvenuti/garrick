@@ -923,196 +923,257 @@ class TestCommandLine(Case):
         self.assertIn("Updated on 6 October 2026 from", r.stdout)
 
 
-class TestWallsMigration(Case):
-    """Pairs to flags (#446): the proposal, the diff of the workspace, and a write only on a yes."""
+class TestZoneWallsStep(Case):
+    """Party flags to zone flags (#485): the proposal, the diff of the two rules, an install and a write only on a yes."""
 
     def setUp(self):
         super().setUp()
         sys.path.insert(0, str(REPO / "tests"))
-        import legacy_walls
-        self.legacy = legacy_walls
-        legacy_walls.build(self.root)
-        self.commit(self.root, "the 0.59 context")
+        import zones_062
+        from fixtures import write
+        self.zones = zones_062
+        self.write = write
+        zones_062.build(self.root)
+        z = self.root / "Zones"
+        write(z / "Work/Northwind/Threads/Pricing/Notes.md",
+              "# n\nSee [[260310-acme-kickoff]] and [[Zones/Advisory/AcmeAdv/AcmeAdv]].\n")
+        write(z / "Work/Northwind/Threads/Pricing/Hello.md", "# n\nAcme Corp said hello.\n")
+        write(z / "Advisory/BirchAdv/Threads/Entry/Notes.md", "# n\nSee [[260310-acme-kickoff]].\n")
+        write(z / "Advisory/BirchAdv/Threads/Entry/Two.md", "# n\nAcme Corp negotiated this.\n")
+        write(z / "Projects/Venture/Threads/Notes/N.md", "# n\nSee [[260312-emp-sync]]\n")
+        self.commit(self.root, "the 0.62 context")
         self.context = self.root / "System" / "context.md"
+        self.tools = self.root / "System" / "tools"
 
     def run_update(self, *args):
         return subprocess.run([sys.executable, str(INSTALL), "--update", str(self.root), *args],
-                              capture_output=True, text=True, env=self.env)
+                              capture_output=True, text=True, env=self.env, stdin=subprocess.DEVNULL)
 
-    def study(self):
-        import migrate_walls
-        return migrate_walls.study(self.root, update.install.lib())
+    def stub(self, name, body):
+        path = self.base / name
+        path.write_text(body)
+        return path
 
-    def test_the_proposal_is_the_pairs_as_flags(self):
-        prop = self.study()["prop"]
-        self.assertEqual({t: f == "yes" for t, f in self.legacy.FLAGS.items()}, prop["flags"])
-        self.assertEqual({"Work": "emp", "Advisory": "", "Personal": "jo", "Projects": ""}, prop["zone_party"])
-        self.assertTrue(prop["flags"]["jo"])                          # no pair names Jo; a zone's party is proposed walled
-        self.assertTrue(any("`jo`" in n and "walled" in n for n in prop["notes"]))
-        self.assertEqual({"Work": "open", "Advisory": "walled", "Personal": "walled", "Projects": "open"}, prop["zone_default"])
-        self.assertTrue(any("`cedar`" in n and "open" in n for n in prop["notes"]))
+    def zone_rule(self, extra=""):
+        """A check that answers as the zone rule would on this fixture: the old rule's findings, less what stays
+        inside one zone and the names (a stand-in for the release's check, which the model branch builds)."""
+        return self.stub("zone_check.py", (
+            "import json, subprocess, sys\n"
+            "r = subprocess.run([sys.executable, %r] + sys.argv[1:], capture_output=True, text=True)\n"
+            "d = json.loads(r.stdout)\n"
+            "d['findings'] = [f for f in d['findings'] if f['path'].startswith(('Zones/Work', 'Zones/Projects')) "
+            "and 'names <' not in f['message']]\n%s"
+            "print(json.dumps(d))\n" % (str(self.tools / "check.py"), extra)))
 
-    def test_the_diff_shows_the_four_kinds(self):
-        items = self.study()["items"]
+    def study(self, new_check):
+        flags = update.walls_pending(self.root)
+        return update.walls_study(self.root, flags, new_check=new_check)
 
-        def has(old, new, source, scope, action=None):
-            return any((e["old"], e["new"]) == (old, new) and e["s_after"] is not None and set(e["s_after"]) == source
-                       and e["c_after"] is not None and scope <= set(e["c_after"])
-                       and (action is None or action in e["actions"]) for e in items)
-        self.assertTrue(has("deny", "permit", {"cedar"}, {"emp"}, "write"), "an open venture into a walled scope")
-        self.assertTrue(has("permit", "deny", {"acme"}, {"birch"}, "write"), "one client into another's")
-        self.assertTrue(has("deny", "permit", {"emp", "acme"}, {"emp", "acme"}, "write"), "two walled into a scope naming both")
-        self.assertTrue(has("permit", "deny", {"jo"}, {"mint", "emp"}, "write"), "personal refused elsewhere")
-        text = self.study()["text"]
-        self.assertIn("Refused today, allowed after", text)
-        self.assertIn("Allowed today, refused after", text)
+    def test_the_proposal_is_the_zone_flags(self):
+        flags = update.walls_pending(self.root)
+        self.assertEqual(self.zones.FLAGS, {z: w for z, (w, _) in flags.items()})
+        self.assertIn("`emp`", flags["Work"][1])
+        self.assertIn("default", flags["Advisory"][1])
+        lib = update.install.lib()
+        self.assertEqual(self.zones.FLAGS, lib.load_context(self.root)["zone_walled"])      # the release reads it the same
 
-    def test_nothing_is_written_without_the_yes(self):
+    def test_the_diff_groups_what_the_zone_rule_releases(self):
+        study, text = self.study(self.zone_rule())
+        self.assertEqual({"inside": 2, "name": 1, "other": 0}, study["released"])
+        self.assertEqual(0, study["newly_refused"])
+        self.assertEqual(["Wikis/Meetings/wiki/entities/dana-whitlock.md"], study["mixed_pages"])
+        inside = text.index("Inside one zone")
+        name = text.index("Name only")
+        other = text.index("Other:")
+        self.assertTrue(inside < name < other)
+        self.assertIn("Zones/Advisory/BirchAdv/Threads/Entry/Notes.md", text[inside:name])
+        self.assertIn("Zones/Advisory/BirchAdv/Threads/Entry/Two.md", text[inside:name])
+        self.assertIn("Zones/Work/Northwind/Threads/Pricing/Hello.md", text[name:other])
+        self.assertNotIn("Pricing/Notes.md", text)                  # a link across two zones stays refused
+        self.assertIn("Advisory, Work", text)
+        self.assertIn("Work           walled", text)
+        self.assertIn("Projects       open", text)
+
+    def test_a_release_across_two_zones_is_other(self):
+        drop = ("d['findings'] = [f for f in d['findings'] if 'AcmeAdv' not in f['message']]\n")
+        study, text = self.study(self.zone_rule(drop))
+        self.assertEqual({"inside": 2, "name": 1, "other": 1}, study["released"])
+        self.assertIn("Zones/Work/Northwind/Threads/Pricing/Notes.md", text[text.index("Other:"):])
+
+    def test_a_finding_only_the_zone_rule_has_is_printed_first(self):
+        add = ("d['findings'].append({'severity': 'error', 'check': 'walls', 'path': 'Zones/Home/Garden/Garden.md', "
+               "'message': 'links [[260310-acme-kickoff]]', 'fid': 'abc123', 'token': ''})\n")
+        study, text = self.study(self.zone_rule(add))
+        self.assertEqual(1, study["newly_refused"])
+        self.assertLess(text.index("NEWLY REFUSED"), text.index("Inside one zone"))
+        self.assertIn("Zones/Home/Garden/Garden.md", text[text.index("NEWLY REFUSED"):text.index("Inside one zone")])
+
+    def test_the_zone_rule_is_run_as_if_the_flags_were_written(self):
+        page = self.root / "Wikis/Meetings/wiki/entities/orphan.md"
+        page.write_text("---\ntitle: Orphan\ntype: entity\n---\n\n# Orphan\n")
+        add = ("import os\nif os.environ.get('GARRICK_ZONE_FLAGS_FINAL') == '1':\n"
+               "    d['findings'].append({'severity': 'error', 'check': 'walls', 'path': 'Wikis/Meetings/wiki/entities/orphan.md', "
+               "'message': 'a page with no zone', 'fid': 'zz1', 'token': ''})\n")
+        study, text = self.study(self.zone_rule(add))
+        self.assertEqual(1, study["newly_refused"])
+        self.assertIn("orphan.md", text[text.index("NEWLY REFUSED"):text.index("Inside one zone")])
+        seen = []
+        real = update.run_wall_check
+        with mock.patch.object(update, "run_wall_check", lambda c, r, final=False: seen.append(final) or real(c, r, final)):
+            self.study(self.zone_rule())
+        self.assertEqual([False, True], seen)                      # the installed check without the switch, the release's with it
+
+    def test_a_check_that_does_not_run_stops_the_step(self):
+        broken = self.stub("broken.py", "import sys\nsys.exit(3)\n")
+        with self.assertRaises(update.UpdateError):
+            self.study(broken)
+
+    def test_the_report_says_what_it_would_do_and_writes_nothing(self):
         before, head = self.context.read_bytes(), self.head(self.root)
         r = self.run_update()
         self.assertEqual(0, r.returncode, r.stderr)
-        self.assertIn("Refused today, allowed after", r.stdout)
-        r = self.run_update("--apply")                     # no tty here: a headless run never answers
-        self.assertIn("Nothing was written", r.stdout)
-        self.assertIn("Refused today, allowed after", r.stdout)
+        self.assertIn("The flag each zone would get", r.stdout)
+        self.assertIn("installs nothing", r.stdout)
         self.assertEqual(before, self.context.read_bytes())
         self.assertEqual(head, self.head(self.root))
-        r = self.run_update("--yes")                       # a yes without --apply writes nothing either
+
+    def test_no_answer_leaves_the_workspace_as_it_was(self):
+        before, head = self.context.read_bytes(), self.head(self.root)
+        tools = {p.name: p.read_bytes() for p in self.tools.glob("*.py")}
+        stamp = (self.root / STAMP).read_bytes()
+        r = self.run_update("--apply")                       # no terminal: a headless run never answers
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("Nothing was installed and nothing was written", r.stdout)
+        self.assertIn("release.py update --apply --yes", r.stdout)
+        self.assertEqual(before, self.context.read_bytes())
+        self.assertEqual(head, self.head(self.root))
+        self.assertEqual(tools, {p.name: p.read_bytes() for p in self.tools.glob("*.py")})
+        self.assertEqual(stamp, (self.root / STAMP).read_bytes())
+        self.assertEqual("", self.git(self.root, "status", "--porcelain", "--", "System"))
+        self.run_update("--yes")                             # a yes without --apply writes nothing either
         self.assertEqual(before, self.context.read_bytes())
 
-    def test_the_yes_writes_the_flags_and_takes_out_the_walls(self):
+    def test_only_waits_with_the_step(self):
+        head = self.head(self.root)
+        r = self.run_update("--apply", "--yes", "--only", "System/tools/check.py")
+        self.assertIn("without --only", r.stdout)
+        self.assertEqual(head, self.head(self.root))
+
+    def test_the_yes_writes_the_tables_and_installs(self):
         r = self.run_update("--apply", "--yes")
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
-        self.assertIn("took out the Walls table", r.stdout)
         text = self.context.read_text()
-        self.assertNotIn("## Walls", text)
+        self.assertIn(self.zones.ZONES_AFTER, text)
+        self.assertIn(self.zones.PARTIES_AFTER, text)
+        self.assertNotIn("New parties", text)
         ctx = update.install.lib().load_context(self.root)
-        self.assertEqual(self.legacy.FLAGS, {t: e["flag"] for t, e in ctx["parties"].items()})
-        self.assertEqual({"Work": "emp", "Personal": "jo"}, ctx["zone_parties"])
-        self.assertEqual("open", ctx["zone_default"]["Projects"])
+        self.assertFalse(ctx["pending"])
+        self.assertEqual(self.zones.FLAGS, ctx["zone_walled"])
         self.assertEqual("", self.git(self.root, "status", "--porcelain", "--", "System/context.md"))
-        self.assertIn("party flags", self.git(self.root, "log", "-1", "--format=%s"))
-        self.assertIn("| Acme Corp | Client | Advisory | `acme` | yes | acmecorp.example |", text)
+        subjects = self.git(self.root, "log", "--format=%s").splitlines()
+        self.assertTrue(any("Walled flag on each zone" in s for s in subjects), subjects)
+        self.assertNotIn("migrate_walls.py", [p.name for p in self.tools.glob("*.py")])
+        self.assertNotEqual("0000000", json.loads((self.root / STAMP).read_text())["commit"])
+        self.assertIn("People rows that repeat a person", r.stdout)       # the lists are proposed, not applied
+        self.assertIn("| Dana Whitlock | `emp` |", self.context.read_text())
 
     def test_a_second_run_changes_nothing(self):
         self.run_update("--apply", "--yes")
         written, head = self.context.read_bytes(), self.head(self.root)
         r = self.run_update("--apply", "--yes")
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
-        self.assertNotIn("Walls table", r.stdout)
+        self.assertNotIn("zone would get", r.stdout)
+        self.assertNotIn("People rows", r.stdout)
         self.assertEqual(written, self.context.read_bytes())
         self.assertEqual(head, self.head(self.root))
-        self.assertIsNone(self.study())
 
-    def test_the_check_warns_until_the_migration_has_run(self):
-        def findings():
-            r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root),
-                                "--json", "--paths", "System/context.md"], capture_output=True, text=True, env=self.env)
-            return [f["message"] for f in json.loads(r.stdout)["findings"] if f["check"] == "context"]
-        before = findings()
-        self.assertTrue(any("no Walled column" in m for m in before), before)
-        self.assertTrue(any("Walls table is still there" in m for m in before), before)
-        self.run_update("--apply", "--yes")
-        after = findings()
-        self.assertFalse(any("Walled column" in m or "Walls table" in m for m in after), after)
-
-    def test_an_uncommitted_context_is_left_alone(self):
+    def test_a_context_with_changes_not_committed_is_left_alone(self):
         self.context.write_text(self.context.read_text() + "\nMy own line.\n")
-        mine = self.context.read_bytes()
+        mine, tools = self.context.read_bytes(), (self.tools / "check.py").read_bytes()
         r = self.run_update("--apply", "--yes")
         self.assertIn("not committed", r.stdout)
         self.assertEqual(mine, self.context.read_bytes())
+        self.assertEqual(tools, (self.tools / "check.py").read_bytes())
 
+    def test_a_0_59_workspace_is_told_to_take_0_62_first(self):
+        text = self.context.read_text().replace("| Walled |", "|").replace("| yes |", "|")
+        legacy = ("# Context\n\n## Zones\n\n| Zone | Holds |\n|---|---|\n| Work | Clients |\n\n## Parties\n\n"
+                  "| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|\n| Acme | Client | Work | `acme` | |\n\n"
+                  "## Walls\n\n| Between | And |\n|---|---|\n| `acme` | `birch` |\n")
+        self.context.write_text(legacy)
+        self.commit(self.root, "0.59")
+        head = self.head(self.root)
+        for args in ((), ("--apply", "--yes")):
+            r = self.run_update(*args)
+            self.assertEqual(1, r.returncode)
+            self.assertIn("Update to Garrick 0.62.0 first", r.stderr)
+        self.assertEqual(head, self.head(self.root))
 
-class TestPendingKeepsTheOldRule(Case):
-    """Until the yes the old rule stays active (#446): an update applied without an answer changes no verdict."""
+    def test_the_tables_keep_other_columns(self):
+        text = ("## Zones\n\n| Zone | Holds | Party | New parties | Learned |\n|---|---|---|---|---|\n| **Work** | Jobs | `x` | walled | 2026-01-01, user |\n"
+                "\n## Parties\n\n| Party | What it is | Zone | Tag | Walled | Domains | Learned |\n|---|---|---|---|---|---|---|\n"
+                "| X | y | Work | `x` | no | | 2026-02-02, user |\n")
+        flags = update.zone_flags(text)
+        self.assertTrue(flags["Work"][0])                          # its default is walled, its party is open
+        out = update.rewrite_tables(text, {"Work": (True, "")})
+        self.assertIn("| Zone | Holds | Walled | Learned |", out)
+        self.assertIn("| **Work** | Jobs | yes | 2026-01-01, user |", out)
+        self.assertIn("| Party | What it is | Zone | Tag | Domains | Learned |", out)
+        self.assertIn("| X | y | Work | `x` | | 2026-02-02, user |", out)
+        self.assertEqual(out, update.rewrite_tables(out, {"Work": (True, "")}))          # a table in the new shape stays
 
-    def setUp(self):
-        super().setUp()
-        sys.path.insert(0, str(REPO / "tests"))
-        import legacy_walls
-        legacy_walls.build(self.root)
-        self.commit(self.root, "the 0.59 context")
-        self.context = self.root / "System" / "context.md"
-        sys.path.insert(0, str(REPO / "extras" / "status"))
-
-    def lib(self):
-        spec = importlib.util.spec_from_file_location("pending_lib", self.root / "System" / "tools" / "garrick_lib.py")
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return mod
-
-    def verdicts(self):
-        lib = self.lib()
-        ctx = lib.load_context(self.root)
-        return ctx, {"client_to_client": lib.decide({"birch"}, {"acme"}, "write", ctx),
-                     "venture_into_employer": lib.decide({"emp"}, {"cedar"}, "write", ctx)}, lib
-
-    def walls_check(self):
-        r = subprocess.run([sys.executable, str(self.root / "System/tools/check.py"), "--root", str(self.root),
-                            "--walls-only", "--json"], capture_output=True, text=True, env=self.env)
-        return sorted(f["path"] for f in json.loads(r.stdout)["findings"] if f["check"] == "walls")
-
-    def link_notes(self):
-        for rel, target in (("Advisory/BirchAdv/Threads/Entry/Notes.md", "260310-acme-kickoff"),
-                            ("Work/Northwind/Threads/Pricing/Notes.md", "260312-cedar-note")):
-            path = self.root / "Zones" / rel
-            path.write_text("# Notes\n\nSee [[%s]].\n" % target)
-
-    def test_a_pending_context_gives_the_old_verdicts_at_decide_the_hook_and_ask(self):
-        self.link_notes()
-        ctx, got, lib = self.verdicts()
-        self.assertIsNotNone(ctx["walls_pending"])
-        # the flags would refuse the first and allow the second; the pairs say the opposite
-        self.assertEqual({"client_to_client": "permit", "venture_into_employer": "deny"}, got)
-        import ask_scope
-        self.assertTrue(ask_scope.admits(ctx, {"birch"}, {"acme"}, lib))
-        self.assertFalse(ask_scope.admits(ctx, {"emp"}, {"cedar"}, lib))
-        found = self.walls_check()
-        self.assertIn("Zones/Work/Northwind/Threads/Pricing/Notes.md", found)
-        self.assertNotIn("Zones/Advisory/BirchAdv/Threads/Entry/Notes.md", found)
-        # a labelled record is the old kind too: the zone's party is not on a Personal file yet
-        self.assertEqual({"jo"}, set(lib.labels(self.root, "Zones/Personal/Garden/Threads/Beds/Notes.md", ctx)))
-        r = subprocess.run([sys.executable, str(INSTALL), "--update", str(self.root), "--apply", "--yes"],
-                           capture_output=True, text=True, env=self.env)
+    def test_the_lists_are_answered_one_by_one(self):
+        self.run_update("--apply", "--yes")
+        r = self.run_update("--apply", "--clean", "people")
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
-        ctx, got, lib = self.verdicts()
-        self.assertIsNone(ctx["walls_pending"])
-        self.assertEqual({"client_to_client": "deny", "venture_into_employer": "permit"}, got)
-        self.assertFalse(ask_scope.admits(ctx, {"birch"}, {"acme"}, lib))
-        self.assertTrue(ask_scope.admits(ctx, {"emp"}, {"cedar"}, lib))
-        found = self.walls_check()
-        self.assertIn("Zones/Advisory/BirchAdv/Threads/Entry/Notes.md", found)
-        self.assertNotIn("Zones/Work/Northwind/Threads/Pricing/Notes.md", found)
-        self.assertEqual({"jo"}, set(lib.labels(self.root, "Zones/Personal/Garden/Threads/Beds/Notes.md", ctx)))
+        self.assertNotIn("`emp` | Head of procurement", self.context.read_text())
+        self.assertIn("| Dana Whitlock | `acme` | Head of procurement |", self.context.read_text())
+        self.assertIn("one People row", self.git(self.root, "log", "-1", "--format=%s", "--", "System/context.md"))
 
-    def test_a_public_meetings_page_reads_as_in_0591_while_pending(self):
-        page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260401-open-call.md"
-        page.parent.mkdir(parents=True, exist_ok=True)
-        page.write_text("---\ntitle: Open call\ntype: meeting\nzone: Work\nparties: [public]\n---\n\n# Open call\n")
-        ctx, got, lib = self.verdicts()
-        self.assertIsNotNone(ctx["walls_pending"])
-        rel = "Wikis/Meetings/wiki/sources/260401-open-call.md"
-        label = lib.labels(self.root, rel, ctx)
-        self.assertIsNone(label)                        # v0.59.1: a conversation never names `public`
-        self.assertEqual(["deny", "deny", "confirm"],
-                         [lib.decide({"acme"}, label, a, ctx) for a in ("read", "write", "file")])
-        self.assertIsNone(lib.meeting_labels({"zone": "Work", "parties": ["public"]}, True))
+    def test_an_allowance_with_no_finding_goes_on_its_yes(self):
+        self.run_update("--apply", "--yes")
+        ledger = self.root / "System" / "walls-allowed.json"
+        ledger.write_text(json.dumps({"version": 1, "allowed": [
+            {"path": "Zones/Work/Gone/Notes.md", "id": "0123456789", "blob": "a" * 40, "rule": "link",
+             "date": "2026-10-01", "by": "terminal"}]}) + "\n")
+        self.commit(self.root, "a stale allowance")
+        r = self.run_update("--apply")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("Zones/Work/Gone/Notes.md", ledger.read_text())
+        r = self.run_update("--apply", "--clean", "ledger")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertEqual([], json.loads(ledger.read_text())["allowed"])
 
-    def test_a_context_with_flags_or_with_neither_table_is_never_pending(self):
-        lib = self.lib()
-        flagged = "## Parties\n\n| Party | What it is | Zone | Tag | Walled | Domains |\n|---|---|---|---|---|---|\n| A | x | Work | `a` | yes | |\n"
-        for name, text, pending, walled in (
-                ("flags and a leftover Walls table", flagged + "\n## Walls\n\n| Between | And |\n|---|---|\n| `a` | `b` |\n", False, True),
-                ("no Walls table", flagged, False, True),
-                ("neither", "## Parties\n\n| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|\n| A | x | Work | `a` | |\n", False, False),
-                ("pairs and no column", "## Parties\n\n| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|\n| A | x | Work | `a` | |\n\n## Walls\n\n| Between | And |\n|---|---|\n| `a` | `b` |\n", True, True)):
-            folder = self.base / name.replace(" ", "-")
-            (folder / "System").mkdir(parents=True)
-            (folder / "System" / "context.md").write_text(text)
-            ctx = lib.load_context(folder)
-            self.assertEqual(pending, ctx["walls_pending"] is not None, name)
-            self.assertEqual(walled, lib.is_walled(ctx, "a"), name)
+    def test_a_mixed_page_is_split_per_zone_on_its_yes(self):
+        page = self.root / "Wikis/Meetings/wiki/entities/dana-whitlock.md"
+        page.write_text("---\ntitle: Dana Whitlock\ntype: entity\nsources:\n"
+                        "  - \"[[wiki/sources/260310-acme-kickoff]]\"\n  - \"[[wiki/sources/260312-emp-sync]]\"\n---\n\n"
+                        "# Dana Whitlock\n\n## Claims\n\n- Leads the review. [[wiki/sources/260310-acme-kickoff]]\n"
+                        "- Joined the sync. [[wiki/sources/260312-emp-sync]]\n")
+        self.git(self.root / "Wikis", "add", "-A")
+        subprocess.run(["git", "-C", str(self.root / "Wikis"), "commit", "-q", "--no-verify", "-m", "mixed"], capture_output=True)
+        self.run_update("--apply", "--yes")
+        self.assertTrue(page.exists())                             # proposed, not done
+        r = self.run_update("--apply", "--clean", "pages")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertFalse(page.exists(), r.stdout)
+        advisory = page.with_name("dana-whitlock-advisory.md").read_text()
+        work = page.with_name("dana-whitlock-work.md").read_text()
+        self.assertIn("zone: Advisory", advisory)
+        self.assertIn("Leads the review", advisory)
+        self.assertNotIn("Joined the sync", advisory)
+        self.assertNotIn("emp-sync", advisory)
+        self.assertIn("zone: Work", work)
+        self.assertIn("Joined the sync", work)
+        self.assertNotIn("acme-kickoff", work)
+
+    def test_a_page_with_an_unplaced_block_is_left_for_hand_work(self):
+        page = self.root / "Wikis/Meetings/wiki/entities/dana-whitlock.md"
+        before = page.read_bytes()
+        self.run_update("--apply", "--yes")
+        r = self.run_update("--apply", "--clean", "pages")
+        self.assertIn("split by hand", r.stdout)
+        self.assertEqual(before, page.read_bytes())
 
 
 class TestIgnoreFiles(Case):
@@ -1889,7 +1950,7 @@ class TestCheckOnlyWhatWasWritten(ExtrasCase):
     def test_the_errors_it_reports_for_a_file_are_those_of_a_whole_run(self):
         self.project()
         bad = {"System/skills/threads/SKILL.md": "\nUnfilled {{ZONE}} left here.\n",
-               "Zones/Work/Acme Review/Threads/Intake/note.md": "# Note\n\nTalked with Birch & Co about pricing.\n"}
+               "Zones/Work/Acme Review/Threads/Intake/note.md": "# Note\n\nSee [[Zones/Personal/Todo]] for the dates.\n"}   # a link into another walled zone
         for path, extra in bad.items():
             with (self.root / path).open("a" if (self.root / path).exists() else "w") as f:
                 f.write(extra)
@@ -1973,7 +2034,8 @@ class TestReleases(unittest.TestCase):
                          "run python3 update.py --release-hashes and commit release-hashes.json")
 
     @unittest.skipUnless(shutil.which("git") and has_tag("v0.6.0"), "needs the release tags")
-    def test_a_real_0_6_0_workspace_updates_cleanly(self):
+    def test_a_real_0_6_0_workspace_is_told_to_take_0_62_first(self):
+        """A workspace with a Walls table and no flags, whatever its age, has no way to this Garrick but through 0.62.0."""
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp).resolve()
             (base / "home").mkdir()
@@ -1988,14 +2050,13 @@ class TestReleases(unittest.TestCase):
             r = subprocess.run([sys.executable, str(old / "install.py"), "--config", str(EXAMPLE), "--target", str(ws)],
                                capture_output=True, text=True, env=env)
             self.assertEqual(0, r.returncode, r.stderr)
-            r = subprocess.run([sys.executable, str(INSTALL), "--update", str(ws), "--apply"],
-                               capture_output=True, text=True, env=env)
-            self.assertEqual(0, r.returncode, r.stdout + r.stderr)
-            r = subprocess.run([sys.executable, str(INSTALL), "--update", str(ws)], capture_output=True, text=True, env=env)
-            self.assertIn("Up to date", r.stdout)
-            r = subprocess.run([sys.executable, str(ws / "System/tools/check.py"), "--root", str(ws), "--json"],
-                               capture_output=True, text=True, env=env)
-            self.assertEqual([], [f for f in json.loads(r.stdout)["findings"] if f["severity"] == "error"])
+            before = subprocess.run(["git", "-C", str(ws), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+            for args in ((), ("--apply",)):
+                r = subprocess.run([sys.executable, str(INSTALL), "--update", str(ws), *args],
+                                   capture_output=True, text=True, env=env)
+                self.assertEqual(1, r.returncode, r.stdout)
+                self.assertIn("Update to Garrick 0.62.0 first", r.stderr)
+            self.assertEqual(before, subprocess.run(["git", "-C", str(ws), "rev-parse", "HEAD"], capture_output=True, text=True).stdout)
 
 
 if __name__ == "__main__":

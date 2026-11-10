@@ -353,7 +353,8 @@ class InstallTest(unittest.TestCase):
         ctx = load_context(self.root)
         self.assertEqual(set(ctx["parties"]), {"acme", "birch"})
         self.assertEqual(ctx["parties"]["birch"]["party"], "Birch & Co")
-        self.assertEqual([True, True], [ctx["parties"][t]["walled"] for t in ("acme", "birch")])
+        self.assertEqual([True, True], [ctx["zone_walled"][z] for z in ("Work", "Personal")])      # a zone carries the wall
+        self.assertFalse(ctx["pending"])
         self.assertNotIn("walls", ctx)
         self.assertEqual(sorted(p["name"] for p in ctx["people"]), ["Dana Whitlock", "Theo Marsh"])
         self.assertEqual(ctx["aliases"]["birchen co"], "Birch & Co")
@@ -727,10 +728,10 @@ class InteractiveTest(unittest.TestCase):
             self.assertEqual({t: (p["party"], p["zone"], p["domains"]) for t, p in ctx["parties"].items()},
                              {"acme": ("Acme Corp", "Work", []), "birch": ("Birch & Co", "Personal", [])})
             self.assertEqual((ctx["people"], ctx["aliases"]), ([], {}))
-            self.assertTrue(all(p["walled"] for p in ctx["parties"].values()))      # a new party is walled until its row says otherwise
+            self.assertTrue(all(ctx["zone_walled"].values()))      # a new zone is walled until its row says otherwise
             text = (target / "System" / "context.md").read_text()
             # What each party is stays for the user, or their assistant, to fill in.
-            self.assertIn("| Acme Corp | <What it is> | Work | `acme` | yes |  |", text)
+            self.assertIn("| Acme Corp | <What it is> | Work | `acme` |  |", text)
             self.assertIn("| Personal | <What Personal holds> |", text)
         finally:
             box.close()

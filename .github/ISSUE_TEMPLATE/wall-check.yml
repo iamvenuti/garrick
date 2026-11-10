@@ -8,17 +8,24 @@ body:
         This form is for refusals that were wrong. If the check let something through that it should have stopped, do not open an issue: report it privately (see SECURITY.md).
 
         Rebuild the case with invented names before you paste anything.
-  - type: textarea
-    id: refused
+  - type: input
+    id: zones
     attributes:
-      label: What was refused
-      description: The finding check.py printed, and the file it pointed at, with invented names.
+      label: The two zones
+      description: The zone of the file the check refused, and the zone of the file it pointed at, as walled or open, with invented names. For example, Maple (walled) and Harbour (walled).
+    validations:
+      required: true
+  - type: textarea
+    id: reference
+    attributes:
+      label: The reference
+      description: The link, embed, path or copied file the check read as a crossing, and the finding check.py printed, with invented names.
     validations:
       required: true
   - type: textarea
     id: why-fine
     attributes:
       label: Why it should pass
-      description: For example, a public fact about a walled party, or a common phrase that happens to match.
+      description: For example, the file is published material, or the path is text that only looks like a path.
     validations:
       required: true

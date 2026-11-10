@@ -23,23 +23,23 @@ With several good ways, name two or three, recommend one, and go ahead.
 
 ## Zones and walls
 
-**One memory, walled use.** Walls stand where material is *used*.
+**One memory, walled use.** A zone is **walled** or **open**, a flag in `System/context.md`. A walled zone's material stays in it; an open one's may go anywhere.
 
-- **Zones never mix in storage.** Each zone is its own folder and git repository. Nothing moves or is copied between zones unless the user asks; no note links across.
-- **The Meetings wiki spans every zone.** Each meeting page names its zone and parties; a page without both is unfinished: use none of it in a project.
-- **Check the wall before you use a conversation.** Before meeting material goes into a project's notes or anything made for it, compare the project's `party` with the meeting's `parties`, against the Parties table in `System/context.md`. If the meeting names a walled party the project lacks, the material stays out: not quoted, not paraphrased, not summarised. Say that a wall held something back, in these words: "A wall holds some material back from this project, so I have not used it. Nothing was written." No party, no person, no subject, no tag, and nothing that says material exists, however the question was put.
+- **Zones never mix in storage.** Each zone is its own folder and repository. Nothing moves or is copied between zones unless the user asks; no note links across.
+- **The Meetings wiki spans every zone.** Each meeting page names its zone; a page without one is unfinished: use none of it.
+- **Check the wall before you use a conversation.** Before meeting material goes into a project's notes or anything made for it, compare the meeting's `zone` with the project's. If the meeting's zone is walled and is not the project's, the material stays out: not quoted, not paraphrased, not summarised. Say that a wall held something back, in these words: "A wall holds some material back from this project, so I have not used it. Nothing was written." No party, no person, no subject, no tag, and nothing that says material exists, however the question was put.
 - **Cross-zone work happens only when asked**, for that request only. The answer stays in the conversation unless told where to write.
 - **The Knowledge wiki crosses every wall.**
 - If unsure whether a wall applies, ask.
-- **The walls are checked again before every commit.** Each zone's git hook refuses a commit that crosses a wall; remove the material and recommit. Never use `git commit --no-verify` unless the user explicitly asks. If a refusal looks wrong, name the files and `check.py allow`, then stop. Git skips the hook when `core.hooksPath` bypasses it; `check.py` warns.
+- **The walls are checked again before every commit.** Each zone's git hook refuses a commit that reaches into another walled zone; take the material out and recommit. Never use `git commit --no-verify` unless the user explicitly asks. If a refusal looks wrong, name the files and `check.py allow`, then stop. Git skips the hook when `core.hooksPath` bypasses it; `check.py` warns.
 
 ## Ways in
 
 Sorting: `intake` skill.
 
 - **Everything lands in an inbox first.** A recording as a transcript in `Wikis/Meetings/raw/inbox/`; mail and files in their zone's `Inbox/`, or the workspace's. An inbox is no project; nothing in one is committed.
-- **Your own addresses and personal webmail never name a party**: the people inside a forward count. If addresses do not settle it, or put two walled parties on one mail, ask. Never guess across a wall.
-- **Check the wall before anything goes into a project.** The project must name every walled party of the material. If not, stop, and say only the sentence under *Zones and walls*, word for word.
+- **Your own addresses and personal webmail never settle a zone**: the people inside a forward count. If addresses do not settle it, or put two walled zones on one mail, ask.
+- **Check the wall before anything goes into a project.** The material's zone must be the project's, or open. If not, stop, and say only the sentence under *Zones and walls*, word for word.
 
 ## Threads
 

@@ -487,14 +487,18 @@ def table(header_lines, rows):
     return header_lines + [lib().table_row(row) for row in rows]
 
 
+def zone_walled(zone, parties):
+    """Whether a zone of the config is walled: its default for new parties is walled, or its own party is (#485)."""
+    return zone["new"] != "open" or any(p["walled"] for p in parties if zone["party"] and p["tag"] == zone["party"])
+
+
 def render_context(template_text, cfg):
     """Replace the example rows of the template's context.md with the owner's own."""
     owner = cfg["owner"]
     rows = {
-        "Zones": [[z["name"], z["holds"] or f"<What {z['name']} holds>", f"`{z['party']}`" if z["party"] else "", z["new"]]
+        "Zones": [[z["name"], z["holds"] or f"<What {z['name']} holds>", "yes" if zone_walled(z, cfg["parties"]) else "no"]
                   for z in cfg["zones"]],
-        "Parties": [[p["name"], p["what"] or "<What it is>", p["zone"], f"`{p['tag']}`",
-                     "yes" if p["walled"] else "no", ", ".join(p["domains"])]
+        "Parties": [[p["name"], p["what"] or "<What it is>", p["zone"], f"`{p['tag']}`", ", ".join(p["domains"])]
                     for p in cfg["parties"]],
         "People": [[p["name"], f"`{p['party']}`" if p["party"] else "", p["role"]] for p in cfg["people"]],
         "Aliases": [[a["heard"], a["means"]] for a in cfg["aliases"]],

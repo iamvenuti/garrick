@@ -598,8 +598,9 @@ class TestTabs(StatusCase):
         self.assertIn(["critical", "jobs"], [t[:2] for t in trouble(html)])      # the dot is drawn on the tab that holds the card (LAYOUT_JS)
 
 
-class TestParties(StatusCase):
-    """The Parties view of the Context tab (#447): each zone, its projects, their parties with their flags, nothing else."""
+class TestContextTab(StatusCase):
+    """The Context tab (#482): one view, Findings, and Allowed by you under it. No Show switch, no Parties or Who
+    sees what view, no party flag to flip; the zone flags are read in the Guide."""
 
     def setUp(self):
         super().setUp()
@@ -607,386 +608,50 @@ class TestParties(StatusCase):
         tools.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / "template" / "System" / "tools" / "garrick_lib.py", tools / "garrick_lib.py")
 
-    def view(self, html, name="parties"):
-        """One view of the Context tab: from its container to the next view's, or to the end of the tab."""
-        start = html.index('<div class="cx-view" id="cx-%s"' % name)
-        nxt = html.find('<div class="cx-view" id="cx-', start + 10)
-        return html[start:nxt if nxt > 0 else html.index('<section class="tab" id="tab-guide"', start)]
+    def fake_check(self, *findings):
+        errors = sum(1 for f in findings if f["severity"] == "error")
+        (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
+            "errors": errors, "warnings": len(findings) - errors, "findings": list(findings)})
 
-    def tab(self, html):
-        return self.view(html, "parties")
-
-    def row(self, html, project):
-        """The row of one project in the Parties view."""
-        rows = self.tab(html).split('<li class="pp-proj"')[1:]
-        return next(r for r in rows if re.search(r">%s</a>" % re.escape(project), r.split("</a>")[0] + "</a>"))
-
-    def chip(self, html, tag):
-        view = self.tab(html)
-        start = view.index('<span class="pp-chip')  if tag is None else view.index('data-tag="%s"' % tag)
-        return view[start:view.index("</button></span>", start)]
-
-    def test_parties_is_a_view_of_context_not_a_tab(self):
+    def test_context_is_one_tab_with_no_view_switch(self):
         html = self.page()
         self.assertEqual(["overview", "todo", "status", "questions", "guide"], re.findall(r'role="tab" data-tab="([a-z]+)"', html))
-        self.assertNotIn('data-tab="parties"', html)
-        self.assertNotIn('id="tab-parties"', html)
-        switch = html[html.index('id="cx-switch"'):]
-        switch = switch[:switch.index("</div>")]
-        self.assertEqual([("findings", "true", "Findings"), ("parties", "false", "Parties"), ("who", "false", "Who sees what")],
-                         re.findall(r'data-view="(\w+)" aria-pressed="(\w+)">([^<]+)<', switch))
-        self.assertIn('data-tab="questions">Context<span class="n" id="qp-tab-n"></span></button>', html)   # no dot while every party has a flag
-        self.assertIn('<div class="cx-view" id="cx-parties" data-cx-view="parties" hidden>', html)
-        self.assertIn('<div class="cx-view" id="cx-findings" data-cx-view="findings">', html)
-        self.assertIn('id="qp"', self.view(html, "findings"))
-        self.assertIn('id="checks"', self.view(html, "findings"))              # the Checks card stays under the findings
+        for gone in ("cx-switch", "cx-parties", "cx-who", "data-cx-view", "pp-zone", "cxw-pick", "Who sees what", "data-flip"):
+            self.assertNotIn(gone, html, gone)
+        self.assertIn('data-tab="questions">Context<span class="n" id="qp-tab-n"></span></button>', html)
 
-    def test_the_zone_block_and_a_row_for_each_project_with_its_flag(self):
+    def test_no_party_symbol_is_left_in_the_page_or_the_extra(self):
         html = self.page()
-        view = self.tab(html)
-        self.assertIn('<section class="pp-zone" data-zone="Work"><h3>Work <small>no party of its own · new parties walled</small></h3>', view)
-        acme = self.row(html, "Acme Review")
-        self.assertIn("Acme Corp", acme)
-        self.assertIn(">walled<", acme)
-        self.assertIn('data-flip="open"', acme)                                   # a walled party offers the other flag
-        self.assertNotIn("Birch", acme)
-        self.assertNotIn("Pricing", acme)                                         # its thread names only the hub's party: not shown
-        self.assertNotIn("<details", acme)
-        self.assertLess(view.index("Acme Review"), view.index("Birch Entry"))
-        self.assertNotIn("<caption>Zones</caption>", view)                        # the zones table is gone: each zone's heading says it
+        for gone in ("party-flag", "parties_panel", "walls-card", "walls-study", "walls-migrate"):
+            self.assertNotIn(gone, html, gone)
+            for f in (REPO / "extras" / "status").glob("*.py"):
+                self.assertNotIn(gone, f.read_text(encoding="utf-8"), (f.name, gone))
+        self.assertFalse((REPO / "extras" / "status" / "parties_panel.py").exists())
 
-    def test_a_zone_heading_names_its_party_and_default(self):
-        path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace("| Work | Client work | | walled |", "| Work | Client work | `acme` | open |"))
-        self.assertIn("<h3>Work <small><code>acme</code> · new parties open</small></h3>", self.tab(self.page()))
+    def test_a_wall_finding_has_no_parties_link(self):
+        self.fake_check({"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "links a file of zone Personal"})
+        self.assertNotIn("cxgo", self.page())
 
-    def test_a_thread_shows_only_where_it_names_a_party_its_hub_does_not(self):
-        note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
-        note.write_text(note.read_text().replace("party: acme", "party: [acme, birch]"))
+    def test_the_guide_reads_the_zone_flags_and_changes_none(self):
         html = self.page()
-        acme = self.row(html, "Acme Review")
-        self.assertIn('<details class="pp-threads"><summary>1 thread names another party</summary>', acme)
-        self.assertIn(">Pricing</a>", acme)
-        self.assertIn('data-tag="birch"', acme)                                   # the party the hub does not name
-        self.assertEqual(1, len(re.findall(r'<span class="pp-chip[^"]*" data-tag="acme"', acme)))   # the hub's own is not repeated on the thread
-        self.assertNotIn("<details", self.row(html, "Birch Entry"))
+        guide = html[html.index('id="guide-zones"'):]
+        guide = guide[:guide.index("</section>")]
+        self.assertIn("Each zone is either <b>walled</b> or <b>open</b>.", guide)
+        self.assertIn("is split before it is filed.", guide)
+        self.assertEqual(["Personal", "Work"], re.findall(r"<li><b>(\w+)</b>: ", guide))
+        self.assertIn("python3 System/tools/scaffold.py zone --name Work --open", guide)     # a walled zone says how to open it
+        self.assertNotIn("<button", guide)                                                   # the page flips nothing
 
-    def test_an_open_party_offers_the_other_flag(self):
-        path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace("`birch` | yes", "`birch` | no"))
-        birch = self.chip(self.page(), "birch")
-        self.assertIn(">open<", birch)
-        self.assertIn('data-flip="walled"', birch)
-
-    def test_a_party_with_no_flag_stands_out_and_the_context_tab_has_a_dot(self):
-        path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace(" Walled |", "").replace("| yes |", "|"))
-        html = self.page()
-        self.assertIn('data-tab="questions">Context<span class="n" id="qp-tab-n"></span><span class="dot critical"', html)
-        self.assertIn('<span class="pp-chip pp-flagless pp-none" data-tag="acme">', self.tab(html))
-        self.assertIn("no flag", self.chip(html, "acme"))
-
-    def test_a_party_no_note_names_stands_under_unused_in_its_zone(self):
-        path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace("| Birch & Co |", "| Cedar Ltd | Supplier | Work | `cedar` | no | |\n| Birch & Co |", 1))
-        view = self.tab(self.page())
-        unused = view[view.index('<div class="pp-unused">'):]
-        unused = unused[:unused.index("</section>")]
-        self.assertIn("<h4>Unused</h4>", unused)
-        self.assertIn("Cedar Ltd", unused)
-        self.assertNotIn("Acme Corp", unused)
-        self.assertEqual(1, view.count('<div class="pp-unused">'))                 # a party that is named never shows there
-        self.assertNotIn("Cedar Ltd", view[:view.index('<div class="pp-unused">')])
-
-    def test_a_note_naming_none_stands_out_grouped_by_zone(self):
-        write(self.root / "Zones" / "Work" / "Orphan" / "Orphan.md", project_hub("Work", "Orphan", "", ["Loose"]))
-        write(self.root / "Zones" / "Work" / "Orphan" / "Threads" / "Loose" / "Loose.md", thread_note("Orphan", "Loose", ""))
-        html = self.page()
-        warn = self.tab(html)
-        warn = warn[warn.index("Names no party</h3>"):]
-        self.assertIn("<h4>Work</h4>", warn)
-        self.assertIn("Orphan / Loose", warn)
-        self.assertIn("names no party", self.row(html, "Orphan"))
-
-    def test_two_parties_of_one_name_on_a_note_give_the_tab_a_dot(self):
-        path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace("| Birch & Co |", "| Acme Corp | Adviser to its board | Work | `acme-adv` | yes | |\n| Birch & Co |", 1))
-        note = self.root / "Zones" / "Work" / "Acme Review" / "Acme Review.md"
-        note.write_text(note.read_text().replace("party: acme", "party: [acme, acme-adv]"))
-        html = self.page()
-        self.assertIn('id="qp-tab-n"></span><span class="dot critical"', html)
-        warn = self.tab(html)
-        self.assertIn("Names two parties with one name", warn)
-        self.assertIn("<h4>Work</h4>", warn[warn.index("Names two parties with one name"):])
-
-    def test_no_parties_table_no_views(self):
-        (self.root / "System" / "context.md").write_text("# Context\n")
-        html = self.page()
-        self.assertNotIn('id="cx"', html)
-        self.assertNotIn('id="cx-parties"', html)
-        self.assertNotIn("garrick-context-view", html)
-
-    def test_the_tab_script_is_small_and_names_are_text(self):
-        pp = status.parties_mod()
-        self.assertLess(len(pp.JS.strip().splitlines()), 80)
-        write(self.root / "Zones" / "Work" / "Odd" / "Odd.md", project_hub("Work", "Odd", "acme", ["T"]).replace("title: Odd", "title: Odd").replace("# Odd", "# Odd"))
-        (self.root / "Zones" / "Work" / "Odd" / "Threads").mkdir(parents=True, exist_ok=True)
-        path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace("Acme Corp |", "Acme <b>Corp</b> |", 1))
-        tab = self.tab(self.page())
-        self.assertNotIn("<b>Corp</b>", tab)
-        self.assertIn("Acme &lt;b&gt;Corp&lt;/b&gt;", tab)
-
-    def test_a_rebuilt_page_is_the_same_page(self):
-        self.assertEqual(self.tab(self.page()), self.tab(self.page()))
-        self.assertEqual(self.view(self.page(), "who"), self.view(self.page(), "who"))
-
-    def test_an_old_link_to_the_parties_tab_opens_context_on_parties(self):
-        # a saved tab and a link written for the old tab both say "parties": the page opens Context and that view
-        self.assertIn("if(n==='parties'){n='questions';window.GarrickCxWant='parties';", status.JS)
-        self.assertIn("if(window.GarrickCxFor)GarrickCxFor(el);", status.JS)      # and a link into a view shows the view first
-
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_the_switch_shows_one_view_and_a_saved_choice_wins_over_the_first(self):
-        harness = r"""
-        const vm = require("vm");
-        const [js, want, open] = JSON.parse(process.argv[1]);
-        function view(name) { return { name, hidden: false, getAttribute: a => a === "data-cx-view" ? name : null,
-          closest: s => s === "[data-cx-view]" ? this : null }; }
-        const views = ["findings", "parties", "who"].map(view);
-        views.forEach(v => { v.closest = s => s === "[data-cx-view]" ? v : null; });
-        const buttons = views.map(v => { const b = { v: v.name, pressed: "", getAttribute: a => a === "data-view" ? v.name : null,
-          setAttribute: (a, x) => { if (a === "aria-pressed") b.pressed = x; } }; return b; });
-        const cx = { querySelectorAll: s => s === "[data-cx-view]" ? views : s === "#cx-switch button" ? buttons : [], addEventListener() {} };
-        const store = {}, calls = [];
-        const window = { GarrickCxWant: want, GarrickQuestions: { open: () => calls.push("opened") } };
-        const ctx = { window, document: { getElementById: id => id === "cx" ? cx : null },
-          sessionStorage: { getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; } }, JSON, Object };
-        vm.createContext(ctx);
-        vm.runInContext(js, ctx);
-        const shown = () => views.filter(v => !v.hidden).map(v => v.name);
-        const out = { first: shown(), pressed: buttons.map(b => b.pressed), want: window.GarrickCxWant };
-        window.GarrickCxFor(views[2]);                       // a link into the Who sees what view
-        out.link = shown();
-        window.GarrickContextView("nothing");                // a name that is not a view reads as the first
-        out.bad = shown();
-        window.GarrickContextView("parties");
-        if (open) window.GarrickQuestions.open();            // the menu's Context row lands on Findings
-        out.menu = shown(); out.calls = calls; out.saved = store["garrick-context-view"];
-        process.stdout.write(JSON.stringify(out));
-        """
-        pp = status.parties_mod()
-
-        def run(want, open_=False):
-            done = subprocess.run(["node", "-e", harness, json.dumps([pp.CX_JS, want, open_])], capture_output=True, text=True, timeout=30)
-            self.assertEqual(0, done.returncode, done.stderr)
-            return json.loads(done.stdout)
-
-        plain = run(None)
-        self.assertEqual(["findings"], plain["first"])
-        self.assertEqual(["true", "false", "false"], plain["pressed"])
-        self.assertEqual(["who"], plain["link"])
-        self.assertEqual(["findings"], plain["bad"])
-        old = run("parties")                                                    # StatusTab('parties') left its wish
-        self.assertEqual(["parties"], old["first"])
-        self.assertIsNone(old["want"])                                          # and it is spent
-        menu = run(None, True)
-        self.assertEqual(["findings"], menu["menu"])
-        self.assertEqual(["opened"], menu["calls"])
-        self.assertEqual("findings", menu["saved"])
-
-    def test_no_panel_script_opens_a_browser_dialog(self):
-        # the Mac app's web view shows none: a confirm answers false at once, an alert and a prompt say nothing (#456)
-        dialog = re.compile(r"(?<![\w.$])(?:window\.)?(?:confirm|alert|prompt)\(")
-        found = []
-        for path in sorted((REPO / "extras" / "status").rglob("*")):
-            if path.suffix not in (".py", ".js") or "node_modules" in path.parts:
-                continue
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                if line.lstrip().startswith(("def ", "#")):
-                    continue
-                if dialog.search(line):
-                    found.append("%s:%d" % (path.relative_to(REPO), number))
-        self.assertEqual([], found)
-
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_make_it_open_asks_inline_and_only_the_button_sends_yes(self):
-        harness = r"""
-        const vm = require("vm");
-        const [js, choice] = JSON.parse(process.argv[1]);
-        function el(tag) { return { tag, children: [], dataset: {}, className: "", textContent: "",
-          setAttribute() {}, focus() {}, remove() { this.gone = true; if (this.parent) this.parent.children = this.parent.children.filter(c => c !== this); },
-          appendChild(c) { c.parent = this; this.children.push(c); return c; },
-          find(cls) { for (const c of this.children) { if (c.className === cls) return c; const d = c.find(cls); if (d) return d; } return null; },
-          all(tag) { return this.children.flatMap(c => (c.tag === tag ? [c] : []).concat(c.all(tag))); } }; }
-        const card = el("article"), root = el("div");
-        root.appendChild(card);
-        root.querySelector = s => s === ".pp-ask" ? root.find("pp-ask") : s === '[data-tag="acme"]' ? card : null;
-        root.addEventListener = () => {};
-        const sent = [], said = [];
-        const ctx = { JSON, Object, GarrickSay: s => said.push(s), document: { getElementById: () => root, createElement: el } };
-        ctx.window = { webkit: { messageHandlers: { garrick: { postMessage: m => sent.push(m) } } }, GarrickSay: s => said.push(s) };
-        vm.createContext(ctx);
-        vm.runInContext(js, ctx);
-        const q = { verb: "party-flag", tag: "acme", flag: "open" };
-        ctx.window.GarrickActed(q, { ok: true, ask: true, say: "Making Acme open releases 3 files." });
-        const box = root.find("pp-ask");
-        const buttons = box.all("button");
-        const out = { text: box.children[0].textContent, labels: buttons.map(b => b.textContent), sentBefore: sent.length };
-        buttons[choice].onclick();
-        out.sent = sent; out.said = said; out.boxGone = !!box.gone;
-        process.stdout.write(JSON.stringify(out));
-        """
-        pp = status.parties_mod()
-
-        def run(choice):
-            done = subprocess.run(["node", "-e", harness, json.dumps([pp.JS, choice])], capture_output=True, text=True, timeout=30)
-            self.assertEqual(0, done.returncode, done.stderr)
-            return json.loads(done.stdout)
-
-        yes = run(0)
-        self.assertEqual("Making Acme open releases 3 files.", yes["text"])      # the command's own sentence, with its count
-        self.assertEqual(["Make it open", "Cancel"], yes["labels"])
-        self.assertEqual(0, yes["sentBefore"])                                   # asking writes nothing
-        self.assertEqual([{"act": {"verb": "party-flag", "tag": "acme", "flag": "open", "yes": True}}], yes["sent"])
-        self.assertTrue(yes["boxGone"])
-        no = run(1)
-        self.assertEqual([], no["sent"])                                         # Cancel sends nothing
-        self.assertTrue(no["boxGone"])
-
-
-class TestWhoSeesWhat(StatusCase):
-    """The Who sees what view of the Context tab: the wall check's own answer for a project, printed."""
-
-    def setUp(self):
-        super().setUp()
-        tools = self.root / "System" / "tools"
-        tools.mkdir(parents=True, exist_ok=True)
-        shutil.copy(REPO / "template" / "System" / "tools" / "garrick_lib.py", tools / "garrick_lib.py")
-
-    def who(self, html=None):
-        html = html or self.page()
-        found = re.search(r'<script type="application/json" id="cxw-data">(.*?)</script>', html, re.S)
-        return json.loads(found.group(1))
-
-    def entry(self, data, project, thread=""):
-        return next(e for e in data["entries"] if e["project"] == project and e["thread"] == thread)
-
-    def lib(self):
-        spec = importlib.util.spec_from_file_location("test_who_lib", self.root / "System" / "tools" / "garrick_lib.py")
-        lib = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(lib)
-        return lib
-
-    def test_a_walled_project_holds_its_own_party_and_draws_from_no_walled_neighbour(self):
-        data = self.who()
-        acme = self.entry(data, "Acme Review")
-        self.assertEqual(["acme"], acme["scope"])
-        self.assertEqual([["acme", "permit"]], acme["holds"])
-        self.assertEqual([{"zone": "Work", "total": 1, "all": False, "projects": []}], acme["zones"])
-        self.assertEqual({"name": "Acme Corp", "state": "walled"}, data["parties"]["acme"])
-
-    def test_an_open_party_is_held_by_every_project_and_its_projects_are_drawn_from(self):
-        path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace("`birch` | yes", "`birch` | no"))
-        data = self.who()
-        acme = self.entry(data, "Acme Review")
-        self.assertEqual([["acme", "permit"], ["birch", "permit"]], acme["holds"])
-        self.assertEqual([{"zone": "Work", "total": 1, "all": True, "projects": []}], acme["zones"])
-        birch = self.entry(data, "Birch Entry")
-        self.assertEqual([["birch", "permit"]], birch["holds"])                       # an open party cannot read a walled one
-        self.assertEqual([], birch["zones"][0]["projects"])
-        self.assertFalse(birch["zones"][0]["all"])
-
-    def test_the_page_agrees_with_decide_on_every_project_and_party(self):
-        lib = self.lib()
-        ctx = lib.load_context(self.root)
-        write(self.root / "Zones" / "Work" / "Cedar Trial" / "Cedar Trial.md", project_hub("Work", "Cedar Trial", "", ["Loose"]))
-        note = self.root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
-        note.write_text(note.read_text().replace("party: birch", "party: [birch, acme]"))
-        data = self.who()
-        hubs = [e for e in data["entries"] if not e["thread"]]
-        self.assertEqual(4, len(data["entries"]))                                      # three projects and the one thread that adds a party
-        for e in data["entries"]:
-            path = self.root / "Zones" / e["zone"] / e["project"] / ((("Threads/%s/%s" % (e["thread"], e["thread"])) if e["thread"] else e["project"]) + ".md")
-            scope = lib.labels(self.root, path, ctx) or frozenset()
-            self.assertEqual(sorted(scope), e["scope"])
-            held = [[t, lib.decide(scope, {t}, "write", ctx)] for t in data["parties"]]
-            self.assertEqual([h for h in held if h[1] != "deny"], e["holds"], e["project"])
-            for z in e["zones"]:
-                drawn = [h["project"] for h in hubs if h["zone"] == z["zone"] and h["project"] != e["project"]
-                         and lib.decide(scope, lib.labels(self.root, self.root / "Zones" / h["zone"] / h["project"] / (h["project"] + ".md"), ctx), "read", ctx) == "permit"]
-                self.assertEqual(z["total"] if z["all"] else len(z["projects"]), len(drawn), e["project"])
-                if not z["all"]:
-                    self.assertEqual(sorted(drawn), sorted(z["projects"]))
-
-    def test_a_thread_that_names_another_party_has_an_entry_of_its_own(self):
-        note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
-        note.write_text(note.read_text().replace("party: acme", "party: [acme, birch]"))
-        data = self.who()
-        self.assertEqual(["acme"], self.entry(data, "Acme Review")["scope"])           # the hub's own set is unchanged
-        thread = self.entry(data, "Acme Review", "Pricing")
-        self.assertEqual(["acme", "birch"], thread["scope"])
-        self.assertEqual([["acme", "permit"], ["birch", "permit"]], thread["holds"])
-        self.assertEqual(1, len([e for e in data["entries"] if e["project"] == "Birch Entry"]))   # a thread with no extra party has none
-
-    def test_a_hub_that_names_no_party_holds_nothing(self):
-        write(self.root / "Zones" / "Work" / "Orphan" / "Orphan.md", project_hub("Work", "Orphan", "", ["Loose"]))
-        orphan = self.entry(self.who(), "Orphan")
-        self.assertEqual([], orphan["holds"])
-        self.assertEqual([], orphan["scope"])
-        self.assertIn("holds nothing", orphan["note"])
-        self.assertEqual(2, orphan["zones"][0]["total"])
-
-    def test_two_parties_with_one_name_on_a_project_read_as_none(self):
-        path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace("| Birch & Co |", "| Acme Corp | Adviser to its board | Work | `acme-adv` | yes | |\n| Birch & Co |", 1))
-        note = self.root / "Zones" / "Work" / "Acme Review" / "Acme Review.md"
-        note.write_text(note.read_text().replace("party: acme", "party: [acme, acme-adv]"))
-        acme = self.entry(self.who(), "Acme Review")
-        self.assertEqual([], acme["holds"])
-        self.assertIn("holds nothing", acme["note"])
-
-    def test_the_picker_and_the_link_from_a_project_row(self):
-        html = self.page()
-        self.assertIn('<select id="cxw-pick">', html)
-        self.assertIn('<div class="cx-view" id="cx-who" data-cx-view="who" hidden>', html)
-        ids = [e["id"] for e in self.who(html)["entries"]]
-        for i in ids:
-            self.assertIn('data-who="%s"' % i, html)                                   # a row's link names the entry it shows
-            self.assertIn('id="%s"' % i, html)                                         # and the entry is a row of the Parties view
-
-    def test_no_policy_is_worked_out_in_the_script(self):
-        pp = status.parties_mod()
-        for word in ("decide", "blocked", "labels(", "walled"):
-            self.assertNotIn(word, pp.CX_JS, word)
-
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_the_view_prints_what_the_data_says(self):
-        harness = r"""
-        const vm = require("vm");
-        const [js, data] = JSON.parse(process.argv[1]);
-        function el(tag) { return { tag, children: [], className: "", textContent: "", value: "", label: "",
-          appendChild(c) { this.children.push(c); return c; },
-          all() { return [this].concat(...this.children.map(c => c.all ? c.all() : [c])); } }; }
-        const pick = el("select"), out = el("div");
-        const text = n => n.all().map(x => x.textContent).join("|");
-        const cx = { querySelectorAll: () => [], addEventListener() {} };
-        const ctx = { JSON, Object, document: { createElement: el, createTextNode: t => ({ textContent: t, all: () => [{ textContent: t }] }),
-          getElementById: id => id === "cx" ? cx : id === "cxw-data" ? { textContent: JSON.stringify(data) } : id === "cxw-pick" ? pick : id === "cxw-out" ? out : null } };
-        ctx.window = {};
-        vm.createContext(ctx);
-        vm.runInContext(js, ctx);
-        process.stdout.write(JSON.stringify({ options: pick.all().filter(x => x.tag === "option").map(x => x.textContent), out: text(out) }));
-        """
-        data = self.who()
-        done = subprocess.run(["node", "-e", harness, json.dumps([status.parties_mod().CX_JS, data])], capture_output=True, text=True, timeout=30)
-        self.assertEqual(0, done.returncode, done.stderr)
-        got = json.loads(done.stdout)
-        self.assertEqual(["Acme Review", "Birch Entry"], got["options"])
-        for piece in ("Acme Review", "May hold material of", "Acme Corp", "walled", "May draw from", "Work: none of 1 projects"):
-            self.assertIn(piece, got["out"])
-        self.assertNotIn("Birch", got["out"])                                          # a wall's other side is not named
+    def test_a_zone_that_is_open_says_so_and_how_to_wall_it(self):
+        text = (self.root / "System" / "context.md").read_text(encoding="utf-8")
+        write(self.root / "System" / "context.md", text.replace("| Zone | Holds | Party | New parties |\n|---|---|---|---|\n| Work | Client work | | walled |\n| Personal | Everything else | | walled |",
+                                                              "| Zone | Holds | Walled |\n|---|---|---|\n| Work | Client work | no |\n| Personal | Everything else | yes |")
+              .replace("| Party | What it is | Zone | Tag | Walled | Domains |\n|---|---|---|---|---|---|", "| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|")
+              .replace("| yes | acmecorp.example |", "| acmecorp.example |").replace("| yes | birchco.example", "| birchco.example"))
+        guide = status.zone_flags(self.root)
+        self.assertIn("<b>Work</b>: open <code>python3 System/tools/scaffold.py zone --name Work --walled</code>", guide)
+        self.assertIn("<b>Personal</b>: walled", guide)
+        self.assertNotIn("until the update to zone walls is accepted", guide)
 
 
 class TestAllowedByYou(StatusCase):
@@ -1025,8 +690,8 @@ class TestAllowedByYou(StatusCase):
     def test_each_allowance_shows_its_file_rule_date_and_remove(self):
         self.ledger(self.entry())
         html = self.page()
-        findings = html[html.index('id="cx-findings"'):html.index('id="cx-parties"')]
-        self.assertIn('id="cxa"', findings)                                           # in the Findings view
+        self.assertIn('id="cx"', html)                                                # in the one view of the Context tab
+        self.assertIn('id="cxa"', html)
         box = self.section(html)
         self.assertIn("<h3>Allowed by you</h3>", box)
         self.assertIn(">Zones/Work/Acme Review/Memo.md</a>", box)                     # a link that opens the file
@@ -1061,8 +726,8 @@ class TestAllowedByYou(StatusCase):
         box = self.section(self.page())
         self.assertNotIn("walls-allow", box)
         self.assertEqual(["Remove"], re.findall(r"<button[^>]*>([^<]*)</button>", box))
-        self.assertNotIn("walls-allow'", status.parties_mod().CX_JS)
-        self.assertNotIn("verb:'walls-allow", status.parties_mod().CX_JS)
+        self.assertNotIn("walls-allow'", status.questions_mod().CX_JS)
+        self.assertNotIn("verb:'walls-allow", status.questions_mod().CX_JS)
 
     def test_a_file_edited_since_or_gone_says_so(self):
         self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Gone.md", id="aaaaaaaaaa"))
@@ -1108,7 +773,7 @@ class TestAllowedByYou(StatusCase):
         window.GarrickActed({ verb: "walls-unallow", path: attrs["data-path"], id: attrs["data-id"] }, { ok: true });
         process.stdout.write(JSON.stringify({ sent, refused, afterRefusal, removed: row.removed }));
         """
-        done = subprocess.run(["node", "-e", harness, status.parties_mod().CX_JS], capture_output=True, text=True, timeout=30)
+        done = subprocess.run(["node", "-e", harness, status.questions_mod().CX_JS], capture_output=True, text=True, timeout=30)
         self.assertEqual(0, done.returncode, done.stderr)
         got = json.loads(done.stdout)
         self.assertEqual([{"act": {"verb": "walls-unallow", "path": "Zones/Work/Acme Review/Memo.md", "id": "3f9a1c2b7d"}}], got["sent"])
@@ -4458,25 +4123,6 @@ class TestChecksCardActs(StatusCase):
         self.assertIn(">Take it out</button>", card)
         self.assertIn("Memo.md</a>: names birch</span>", card)            # a wall in the check's own words
         self.assertIn("Notes.md</a>: something odd</span></li>", card)     # a judgment is the file to open
-
-    def test_a_wall_finding_links_to_its_project_row_on_the_context_tab(self):
-        self.fake_check(
-            {"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "names birch"},
-            {"check": "walls", "severity": "error", "path": "Zones/Work/Todo.md", "message": "names birch"},
-            {"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Notes.md:4", "message": "something odd"})
-        html = self.page()
-        card = self.card(html)
-        pid = status.parties_mod().project_id("Work", "Acme Review")
-        self.assertEqual(['<a class="cxgo" href="#%s" title="Its parties and their flags, on the Context tab">Parties</a>' % pid],
-                         re.findall(r'<a class="cxgo"[^>]*>Parties</a>', card))            # only the wall finding inside a project
-        self.assertIn('<li class="pp-proj" id="%s">' % pid, html)                         # and the row it points at is on the page
-        self.assertIn("Memo.md</a>: names birch</span>", card)                            # the check's words are untouched
-
-    def test_no_link_without_the_parties_view(self):
-        (self.root / "System" / "context.md").write_text("# Context\n")
-        self.fake_check({"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "names birch"})
-        self.assertNotIn("cxgo", self.page())
-
 
     def test_a_finding_without_fix_reads_no_history(self):
         """A rename's date comes from git, a call a file: the page makes it

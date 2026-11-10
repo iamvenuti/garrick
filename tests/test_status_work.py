@@ -592,12 +592,8 @@ class TestWorkOnThePage(StatusCase):
                    "files-stop", "files-progress", "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update"}
         # A wiki question's verbs (#224) act on one wiki under that wiki's own lock, in no zone's repository.
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
-        # The Questions panel's Nurture answers (#224) act on the wikis and zones their rows name, under their own lock.
-        unzoned |= {v for v in page_action.VERBS if v.startswith("nurture-")}
-        # The Parties tab's flip edits the workspace's own context under its own lock (#447).
-        unzoned.add("party-flag")
-        # The walls migration's card: a read, and a write to the same context file (#455).
-        unzoned |= {"walls-study", "walls-migrate", "walls-unallow"}
+        # Taking an allowance away edits the workspace's own ledger under its own lock.
+        unzoned |= {"walls-unallow"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

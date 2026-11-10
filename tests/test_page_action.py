@@ -1450,154 +1450,19 @@ class TestJournal(ActionCase):
         self.assertEqual(("Work: added to Inbox, Book the room", ""), self.last_commit())
 
 
-class TestWallsMigrationCard(ActionCase):
-    """The pending walls migration on the page (#455): the study only reads, and the write answers one yes."""
+class TestVerbsThatWentWithTheParties(ActionCase):
+    """The party flip, the walls migration's card and Nurture's attribution saves are gone from the page (#482, #484):
+    a wall is a flag on a zone, changed with scaffold.py zone --walled | --open."""
 
-    LEGACY = ("# Context\n\n## Me\n\nSam Rivera. Advisor.\n\n## Zones\n\n| Zone | Holds |\n|---|---|\n| Work | Clients |\n\n"
-              "## Parties\n\n| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|\n"
-              "| Acme Corp | Client | Work | `acme` | acmecorp.example |\n| Birch & Co | Client | Work | `birch` | birchco.example |\n\n"
-              "## Walls\n\n| Between | And | Why |\n|---|---|---|\n| `acme` | `birch` | Competitors |\n\n"
-              "## People\n\n| Name | Party | Role |\n|---|---|---|\n| Dana Whitlock | `acme` | Procurement |\n")
+    def test_the_verbs_are_not_known(self):
+        for verb in ("party-flag", "walls-study", "walls-migrate", "nurture-answer", "nurture-organisation", "nurture-correct",
+                     "nurture-save", "nurture-save-all"):
+            self.assertNotIn(verb, pa.VERBS)
+            with self.assertRaises(pa.Refused, msg=verb):
+                self.act(verb=verb)
 
-    def setUp(self):
-        super().setUp()
-        for tool in ("check.py", "nurture.py", "migrate_walls.py"):
-            shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
-        self.context = self.root / "System" / "context.md"
-        self.context.write_text(self.LEGACY, encoding="utf-8")
-        git(self.root, "init", "-q")
-        git(self.root, "config", "user.name", "Sam Rivera")
-        git(self.root, "config", "user.email", "sam@example.com")
-        git(self.root, "config", "maintenance.auto", "false")
-        git(self.root, "config", "gc.auto", "0")
-        git(self.root, "add", "System/context.md")
-        git(self.root, "commit", "-q", "-m", "start")
-
-    def test_the_study_shows_the_flags_and_the_diff_and_writes_nothing(self):
-        before = self.context.read_bytes()
-        out = self.act(verb="walls-study")
-        self.assertTrue(out["pending"])
-        self.assertEqual({"acme": True, "birch": True}, {f["tag"]: f["walled"] for f in out["flags"]})
-        self.assertIn("The Parties table would carry", out["text"])
-        self.assertIn("walls check, run with these flags", out["text"])
-        self.assertEqual(before, self.context.read_bytes())
-        self.assertEqual("start", git(self.root, "log", "-1", "--format=%s").strip())
-
-    def test_the_write_asks_first_and_writes_nothing_without_the_yes(self):
-        before = self.context.read_bytes()
-        for req in ({}, {"yes": False}):
-            out = self.act(verb="walls-migrate", **req)
-            self.assertTrue(out["ask"])
-            self.assertFalse(out["written"])
-        self.assertEqual(before, self.context.read_bytes())
-        self.assertEqual("start", git(self.root, "log", "-1", "--format=%s").strip())
-        with self.assertRaises(pa.Refused):
-            self.act(verb="walls-migrate", yes="yes")
-
-    def test_the_yes_writes_the_flags_commits_them_and_the_migration_is_no_longer_pending(self):
-        out = self.act(verb="walls-migrate", yes=True)
-        self.assertTrue(out["written"], out)
-        text = self.context.read_text(encoding="utf-8")
-        self.assertNotIn("## Walls", text)
-        self.assertIn("| Acme Corp | Client | Work | `acme` | yes | acmecorp.example |", text)
-        self.assertIn("party flags", git(self.root, "log", "-1", "--format=%s"))
-        self.assertEqual("", git(self.root, "status", "--porcelain", "--", "System/context.md").strip())
-        self.assertFalse(self.act(verb="walls-study")["pending"])
-        again = self.act(verb="walls-migrate", yes=True)
-        self.assertFalse(again["written"])
-
-    def test_the_page_asks_inline_and_never_in_a_box_the_apps_web_view_hides(self):
-        text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
-        start = text.index('RELEASE_JS = r"""')
-        script = text[start:text.index('\n"""', start)]
-        for box in ("confirm(", "alert(", "prompt("):
-            self.assertNotIn(box, script)
-        self.assertIn('id="walls-ask"', text)
-        self.assertEqual(1, script.count("verb:'walls-migrate'"))        # sent from the Yes button alone
-        self.assertLess(script.index("wgo.onclick"), script.index("verb:'walls-migrate'"))
-        self.assertIn("'The walls migration is done.'", script)           # the heading no longer says pending
-        self.assertIn("several minutes", script)
-
-
-class TestPartyFlag(ActionCase):
-    """The Parties tab's Flip (#447): scaffold.py's real flip command, then the context committed in the workspace's own repository."""
-
-    def setUp(self):
-        super().setUp()
-        for tool in ("check.py", "nurture.py"):         # the flip's workspace-wide check
-            shutil.copy2(REPO / "template" / "System" / "tools" / tool, self.root / "System" / "tools" / tool)
-        git(self.root, "init", "-q")
-        git(self.root, "config", "user.name", "Sam Rivera")
-        git(self.root, "config", "user.email", "sam@example.com")
-        git(self.root, "config", "maintenance.auto", "false")
-        git(self.root, "config", "gc.auto", "0")
-        git(self.root, "add", "System/context.md")
-        git(self.root, "commit", "-q", "-m", "start")
-        self.context = self.root / "System" / "context.md"
-
-    def head(self):
-        return git(self.root, "log", "-1", "--format=%s").strip(), git(self.root, "status", "--porcelain", "--", "System/context.md").strip()
-
-    def test_walled_to_open_asks_once_and_writes_nothing_until_the_yes(self):
-        before = self.context.read_bytes()
-        out = self.act(verb="party-flag", tag="acme", flag="open")
-        self.assertTrue(out["ask"])
-        self.assertRegex(out["say"], r"releases \d+ files")
-        self.assertEqual(before, self.context.read_bytes())
-        self.assertEqual(("start", ""), self.head())
-        out = self.act(verb="party-flag", tag="acme", flag="open", yes=True)
-        self.assertEqual((False, True), (out["ask"], out["written"]))
-        self.assertIn("| `acme` | no |", self.context.read_text())
-        self.assertEqual(("Party acme: open", ""), self.head())
-
-    def test_open_to_walled_writes_at_once_and_says_what_is_now_in_violation(self):
-        self.act(verb="party-flag", tag="birch", flag="open", yes=True)
-        (self.work / "Acme Review" / "Notes.md").write_text("# Notes\n\nSee [[260312-birch-kickoff]].\n")
-        out = self.act(verb="party-flag", tag="birch", flag="walled")
-        self.assertTrue(out["written"])
-        self.assertIn("now in violation", out["say"])
-        self.assertIn("Acme Review/Notes.md", out["say"])
-        self.assertIn("| `birch` | yes |", self.context.read_text())
-        self.assertEqual(("Party birch: walled", ""), self.head())
-
-    def test_a_flag_already_set_changes_nothing(self):
-        out = self.act(verb="party-flag", tag="acme", flag="walled")
-        self.assertEqual((False, False), (out["written"], out["ask"]))
-        self.assertEqual(("start", ""), self.head())
-
-    def test_the_commands_refusal_is_the_pages(self):
-        with self.assertRaisesRegex(pa.Refused, "^ghost is not a party tag in System/context.md"):
-            self.act(verb="party-flag", tag="ghost", flag="open")
-
-    def test_the_request_is_closed(self):
-        for bad in (dict(tag="acme", flag="maybe"), dict(tag="acme", flag="open", yes="yes"), dict(tag="-acme", flag="open"),
-                    dict(flag="open"), dict(tag="acme", flag="open", confirm="x"), dict(tag="acme", flag="open", extra=1)):
-            with self.assertRaises(pa.Refused, msg=bad):
-                self.act(verb="party-flag", **bad)
-        self.assertEqual(("start", ""), self.head())
-
-    def test_a_commit_the_check_refuses_puts_the_context_back(self):
-        hook = self.root / ".git" / "hooks" / "pre-commit"
-        hook.parent.mkdir(parents=True, exist_ok=True)
-        hook.write_text("#!/bin/sh\necho refused >&2\nexit 1\n")
-        hook.chmod(0o755)
-        before = self.context.read_bytes()
-        with self.assertRaisesRegex(pa.Refused, "not committed, so nothing changed"):
-            self.act(verb="party-flag", tag="acme", flag="open", yes=True)
-        self.assertEqual(before, self.context.read_bytes())
-        self.assertEqual(("start", ""), self.head())
-
-    def test_a_command_that_writes_and_then_refuses_puts_the_context_back(self):
-        (self.root / "System" / "tools" / "scaffold.py").write_text(
-            "import sys\nfrom pathlib import Path\n"
-            "p = Path(sys.argv[2]) / 'System' / 'context.md'\n"
-            "p.write_text(p.read_text() + '\\nhalf done\\n')\n"
-            "print('the check could not run', file=sys.stderr)\nsys.exit(1)\n")
-        before = self.context.read_bytes()
-        with self.assertRaisesRegex(pa.Refused, "the check could not run"):
-            self.act(verb="party-flag", tag="acme", flag="open", yes=True)
-        self.assertEqual(before, self.context.read_bytes())
-        self.assertEqual(("start", ""), self.head())
+    def test_allowing_is_still_only_taken_away_here(self):
+        self.assertIn("walls-unallow", pa.VERBS)
 
 
 class TestFlag(ActionCase):

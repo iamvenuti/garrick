@@ -89,12 +89,6 @@ zone's repository, as the skills would:
                 the running version is older than it by semantic comparison;
                 a build that is not older, or that cannot be read, is refused
                 with the reason. The report comes back as counts and lists
-    walls-study  the pending walls migration (#455): the flags migrate_walls.py
-                proposes and the grouped diff; it only reads
-    walls-migrate  writes them: {"yes": true}, after the page's one inline
-                question; without it the reply is the question and nothing is
-                written. The same checks as release.py update --apply --yes:
-                the study still pending, the commit through the wall check
     walls-unallow  takes an allowance away (allow once): {"path", "id"}, the file
                 from the workspace root and the refusal's id. The ledger
                 System/walls-allowed.json loses the entry and the refusal comes
@@ -293,7 +287,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag", "walls-study", "walls-migrate", "walls-unallow")
+         "walls-unallow")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -1450,13 +1444,6 @@ def release_update(ws: Path) -> dict:
     else:
         out["state"] = "updated"
         out["line"] = "Updated to %s from %s." % (state["latest"], state["running"])
-        try:        # an update from the page has no terminal to answer the walls migration's yes (#455)
-            lib, tool = walls_context(ws)
-            out["walls"] = bool(tool.pending(ws, lib))
-        except Refused:
-            out["walls"] = False
-        if out["walls"]:
-            out["line"] += " The walls migration is pending: read its changes below, then write the flags."
     return {"say": out["line"], "release": out}
 
 
@@ -1888,117 +1875,6 @@ def said_all(said: str, most: int = 1200) -> str:
     now holds in violation), cut at `most` characters."""
     text = said.strip()
     return text if len(text) <= most else text[:most].rsplit("\n", 1)[0] + "\n..."
-
-
-def party_flag(ws: Path, req: dict):
-    """Flip a party's flag from the Parties tab (#447): scaffold.py's own `party --walled | --open`, so the
-    page, a session and a terminal meet the same refusals, then System/context.md committed in the workspace's
-    own repository. Walled to open releases history: the command says how many files and writes only on
-    `yes`, so a first request without it comes back as a question (`ask`) and nothing changed. Open to walled
-    writes at once and the reply lists the files now in violation."""
-    tag, flag = field(req, "tag"), req.get("flag")
-    if flag not in ("walled", "open"):
-        raise Refused("not a flag: %r" % (flag,))
-    if req.get("yes") not in (None, True, False):
-        raise Refused("not an answer: %r" % (req.get("yes"),))
-    context = ws / "System" / "context.md"
-    with held("page-action-context.lock", busy="another change to the parties is still running"):
-        try:
-            before = context.read_bytes()
-        except OSError:
-            raise Refused("System/context.md is missing")
-        try:
-            said = scaffold(ws, "party", "--tag", tag, "--" + flag, *(["--yes"] if req.get("yes") else []))
-        except BaseException:
-            # the command may write and then refuse (it could not run its check): the context goes back as it was
-            try:
-                if context.read_bytes() != before:
-                    context.write_bytes(before)
-            except OSError:
-                context.write_bytes(before)
-            raise
-        try:
-            after = context.read_bytes()
-        except OSError:
-            after = b""
-        if after == before:
-            return {"say": said_all(said), "ask": not req.get("yes") and "--yes" in said, "written": False}
-        commit(ws, context, before, "Party %s: %s" % (tag, flag), wall=wall_refusal(ws))
-    return {"say": said_all(said), "ask": False, "written": True}
-
-
-def walls_tool(ws: Path):
-    """The workspace's own System/tools/migrate_walls.py, or None: the one-time step from pairs of parties to flags.
-    Loaded afresh each time, so the study is the file's as it stands."""
-    src = ws / "System" / "tools" / "migrate_walls.py"
-    if not src.is_file():
-        return None
-    try:
-        with tools_path(ws):
-            spec = importlib.util.spec_from_file_location("garrick_page_migrate_walls", str(src))
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules["garrick_page_migrate_walls"] = mod
-            spec.loader.exec_module(mod)
-    except Exception:
-        return None
-    finally:
-        sys.modules.pop("garrick_page_migrate_walls", None)
-    return mod if all(callable(getattr(mod, n, None)) for n in ("study", "rewrite", "pending", "walls_check")) else None
-
-
-def walls_context(ws: Path):
-    lib, tool = prefs().lib(ws), walls_tool(ws)
-    if lib is None or tool is None:
-        raise Refused("this workspace has no migrate_walls.py or garrick_lib.py that can read the walls, so nothing was done")
-    return lib, tool
-
-
-def walls_study(ws: Path) -> dict:
-    """The walls migration, when one is pending (#455): the flags it proposes and the grouped diff, as migrate_walls.py's
-    study() reads them, the same the update prints. It only reads; nothing is written."""
-    lib, tool = walls_context(ws)
-    found = tool.study(ws, lib)
-    if found is None:
-        return {"say": "No walls migration is pending.", "pending": False}
-    prop = found["prop"]
-    return {"say": "A walls migration is pending: %d flag%s proposed, %d flow%s change." % (
-                len(prop["flags"]), "" if len(prop["flags"]) == 1 else "s", len(found["items"]), "" if len(found["items"]) == 1 else "s"),
-            "pending": True, "text": found["text"], "changes": len(found["items"]),
-            "refused": None if found["refused"] is None else len(found["refused"]),
-            "flags": [{"tag": t, "walled": bool(w), "rename": prop.get("renames", {}).get(t, "")} for t, w in sorted(prop["flags"].items())]}
-
-
-def walls_migrate(ws: Path, req: dict) -> dict:
-    """Write the flags (#455), with update.py's own checks: the study must still find the migration pending, the
-    columns go into System/context.md and the Walls table out, the file is committed through the wall check or
-    put back, and the whole workspace is checked after. Nothing is written without `yes`: a request without it
-    comes back as the question (`ask`)."""
-    if req.get("yes") not in (None, True, False):
-        raise Refused("not an answer: %r" % (req.get("yes"),))
-    if not req.get("yes"):
-        return {"say": "Write the party flags and take out the Walls table? Nothing is written until you say yes.",
-                "ask": True, "written": False}
-    lib, tool = walls_context(ws)
-    context = ws / "System" / "context.md"
-    with held("page-action-context.lock", busy="another change to the parties is still running"):
-        found = tool.study(ws, lib, refused=False)       # the refusal list is the study's; the lock is not held for it
-        if found is None:
-            return {"say": "No walls migration is pending, so nothing was written.", "ask": False, "written": False, "pending": False}
-        try:
-            before = context.read_bytes()
-        except OSError:
-            raise Refused("System/context.md is missing")
-        text = tool.rewrite(before.decode("utf-8"), found["prop"])
-        if text is None:
-            raise Refused("System/context.md has no Parties table, so nothing was written")
-        context.write_bytes(text.encode("utf-8"))
-        commit(ws, context, before, "Garrick: party flags in System/context.md, the Walls table out", wall=wall_refusal(ws))
-    refused = tool.walls_check(ws)
-    say = "Wrote the party flags and took out the Walls table."
-    if refused:
-        say += " The walls check now refuses %d thing%s that was committed before: %s" % (
-            len(refused), "" if len(refused) == 1 else "s", "; ".join(refused[:5]) + (" ..." if len(refused) > 5 else ""))
-    return {"say": say, "ask": False, "written": True, "pending": False, "refused": refused}
 
 
 def walls_allowed_tool(ws: Path):
@@ -2466,12 +2342,6 @@ def tags_of(value) -> list:
     return [str(v).strip() for v in items if v is not None and str(v).strip()]
 
 
-def two_walled(lib, ctx: dict, tags) -> bool:
-    """Do `tags` hold more than one walled party? A page or a question of two is mixed and has no
-    destination yet: nothing is named or written."""
-    return not lib.meets_in(ctx, tags)
-
-
 def bare_tag(lib, tag: str) -> str:
     return lib.strip_tag(tag) if callable(getattr(lib, "strip_tag", None)) else tag
 
@@ -2498,7 +2368,7 @@ class WikiQuestion:
         self.path = path
         self.lib = prefs().lib(ws)
         if self.lib is None or not all(callable(getattr(self.lib, n, None)) for n in
-                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "blocked", "decide")):
+                                       ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "zone_of")):
             raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
         self.reload()
 
@@ -2527,40 +2397,17 @@ class WikiQuestion:
         return self.path.stem
 
 
-def party_keys_two_ways(text: str) -> bool:
-    """Whether a page spells its party keys so a reader could take them two
-    ways: `party:` beside `parties:`, or either in capitals. The walls read
-    `parties:` alone on a Meetings question or decision, so such a page is
-    placed nowhere and nothing is saved from it (fail closed)."""
-    m = re.match(r"---\n(.*?)\n---", text or "", re.S)
-    if not m:
-        return False
-    keys = [k for k in re.findall(r"(?m)^([A-Za-z_][\w-]*)\s*:", m.group(1)) if k.lower() in ("party", "parties")]
-    return bool(keys) and (len({k.lower() for k in keys}) > 1 or any(k != k.lower() for k in keys))
-
-
-def question_parties(q: WikiQuestion, wall: str) -> list:
-    """The question's own parties, checked: a Meetings question names its zone
-    and parties, every one a tag the workspace knows, and no two walled from
-    each other. A Knowledge question names neither. Anything else is refused."""
-    ctx = q.context
+def question_zone(q: WikiQuestion, wall: str) -> str:
+    """The question's own zone, checked: a Meetings question names a zone of the Zones table. A Knowledge question
+    names none. Anything else is refused. `parties:` is an index and is not read as a wall."""
     zone = q.fm.get("zone")
-    # Both spellings of the party key, or one in another case, read two ways: the question says whose it is to no one.
-    keys = [k for k in q.fm if str(k).strip().lower() in ("party", "parties")]
-    if any(k != "parties" for k in keys):
-        raise Refused("that question's frontmatter cannot be read plainly, so nothing was written")
-    tags = q.parties()
     if q.name == "Knowledge":
-        if zone not in (None, "") or tags:
-            raise Refused("a Knowledge question carries no zone and no parties, so nothing was written")
-        return []
-    if not isinstance(zone, str) or zone.strip() not in {z.name for z in (q.ws / "Zones").iterdir() if z.is_dir()}:
-        raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
-    if not tags or any(t not in ctx.get("parties", {}) for t in tags):
-        raise Refused("that question is unfinished, with no zone or parties it can be read by, so nothing was written")
-    if two_walled(q.lib, ctx, tags):
-        raise Refused(wall)
-    return tags
+        if zone not in (None, ""):
+            raise Refused("a Knowledge question carries no zone, so nothing was written")
+        return ""
+    if not isinstance(zone, str) or zone.strip() not in zone_names(q.ws):
+        raise Refused("that question is unfinished, with no zone it can be read by, so nothing was written")
+    return zone.strip()
 
 
 def page_target(q: WikiQuestion, link: str) -> Optional[Path]:
@@ -2580,34 +2427,21 @@ def page_target(q: WikiQuestion, link: str) -> Optional[Path]:
     return None
 
 
-def page_tags(q: WikiQuestion, page: Path) -> Optional[list]:
-    """The parties a Meetings page is written for, or None when it cannot be
-    read plainly: no party, a form a reader could take two ways, or a tag the
-    workspace does not know. `party: none` is plainly nobody's."""
+def page_zone_of(q: WikiQuestion, page: Path) -> Optional[str]:
+    """The zone a Meetings page is filed in, or None when it has none the Zones table knows or is not plain."""
     try:
-        text = page.read_text(encoding="utf-8")
+        if q.lib.frontmatter_form_problem(page.read_text(encoding="utf-8")):
+            return None
     except (OSError, UnicodeError):
         return None
-    if q.lib.frontmatter_form_problem(text):
-        return None
-    fm = q.lib.parse_frontmatter_text(text)
-    found = tags_of(fm.get("parties")) + tags_of(fm.get("party"))
-    if not found:
-        return None
-    known = q.context.get("parties", {})
-    out = [bare_tag(q.lib, t) for t in found]
-    if out == ["none"]:
-        return []
-    return out if all(t in known for t in out) else None
+    return page_zone(q.lib, q.ws, page)
 
 
 def question_pages(q: WikiQuestion, wall: str) -> tuple:
     """(the pages the answer may change, how many were held back, how many are
-    not there). A question whose pages sit on both sides of a wall is refused
-    with the rules' sentence and nothing named. A page walled from the
-    question's parties, or not readable plainly, is held back. A Knowledge
-    question has no parties: every page it names is one it may change."""
-    mine = question_parties(q, wall)
+    not there). A page of another zone, or one with no zone, is held back. A
+    Knowledge question has no zone: every page it names is one it may change."""
+    mine = question_zone(q, wall)
     links = tags_of(q.fm.get("pages"))
     pages, missing = [], 0
     for link in links:
@@ -2618,29 +2452,14 @@ def question_pages(q: WikiQuestion, wall: str) -> tuple:
             pages.append(p)
     if q.name == "Knowledge":
         return pages, 0, missing
-    ctx = q.context
-    seen, readable, held = [], [], 0
+    allowed, held = [], 0
     for p in pages:
-        tags = page_tags(q, p)
-        if tags is None:
-            held += 1
-            continue
-        seen.append(tags)
-        readable.append((p, tags))
-    flat = [t for tags in seen for t in tags]
-    if two_walled(q.lib, ctx, flat):
-        raise Refused(wall)             # two walled parties: nothing named, nothing written
-    allowed = []
-    for p, tags in readable:
-        # Only a page that carries the question's own parties, and no others:
-        # a page written for nobody (`none`) is guarded by no wall, so the
-        # answer is never written into it.
-        if not tags or not set(tags) <= set(mine) or q.lib.decide(mine, tags, "write", ctx) == "deny":
-            held += 1
-        else:
+        if page_zone_of(q, p) == mine:
             allowed.append(p)
-    # A page that is not there looks like a page held back, so that a `pages:`
-    # list cannot be used to ask whether a walled page exists.
+        else:
+            held += 1
+    # A page that is not there looks like a page held back, so that a `pages:` list cannot be used to ask
+    # whether a page of another zone exists.
     return allowed, held + missing, 0
 
 
@@ -2662,7 +2481,7 @@ def raw_answer_text(q: WikiQuestion, words: str, today: dt.date, tags: list, out
     if outcome:
         where.append("outcome: %s" % outcome)       # `decision`: the record check.py asks for before a decision's status moves
     if q.name == "Meetings":
-        where += ["zone: %s" % str(q.fm.get("zone")).strip(), "parties: [%s]" % ", ".join(tags)]
+        where += ["zone: %s" % str(q.fm.get("zone")).strip()] + (["parties: [%s]" % ", ".join(tags)] if tags else [])
     where.append("question: %s" % quoted("[[%s]]" % q.path.relative_to(q.dir).with_suffix("").as_posix()))
     fence = fence_for(words)
     return ("---\n%s\n---\n\nQuestion: %s\n\nAnswered on %s, in the user's own words:\n\n%s\n%s\n%s\n"
@@ -2706,12 +2525,12 @@ def file_raw_answer(q: WikiQuestion, today: dt.date, words: str, tags: list, out
 
 
 def decision_text(q: WikiQuestion, words: str, today: dt.date, tags: list, record: str) -> str:
-    """The decision page: its question's zone and parties copied exactly,
+    """The decision page: its question's zone, and its parties as the index they are, copied exactly,
     status valid (the user's own save is the act that settles it), and the
     user's words under Decision, fenced so nothing in them can open a section."""
     title = q.bold.strip("*").strip()
     where = ["type: decision", "title: %s" % quoted(title), "status: valid", "decided: %s" % today.isoformat(),
-             "zone: %s" % str(q.fm.get("zone")).strip(), "parties: [%s]" % ", ".join(tags),
+             "zone: %s" % str(q.fm.get("zone")).strip()] + (["parties: [%s]" % ", ".join(tags)] if tags else []) + [
              "source: %s" % quoted("[[%s]]" % record),
              "question: %s" % quoted(q.path.relative_to(q.dir).with_suffix("").as_posix()),
              "created: %s" % today.isoformat(), "updated: %s" % today.isoformat()]
@@ -2780,7 +2599,7 @@ def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> l
     tool = Path(ws) / "System" / "tools" / "wiki_lint.py"
     lib = prefs().lib(ws)
     if not tool.is_file() or lib is None or not all(callable(getattr(lib, n, None)) for n in
-                                                     ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "blocked", "decide")):
+                                                     ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "zone_of")):
         raise Refused("this workspace's wiki_lint.py or garrick_lib.py cannot read the pages, so nothing was written")
     import importlib.util
     spec = importlib.util.spec_from_file_location("wiki_lint_for_open_sections", str(tool))
@@ -2798,16 +2617,12 @@ def open_section_rows(ws: Path, wiki: str, wall: str, only: Optional[list]) -> l
     rows = mod.open_sections(Path(ws) / "Wikis" / wiki)
     if only is not None:
         rows = [r for r in rows if r["page"] in only]
-    ctx = lib.load_context(ws)
-    zones = {z.name for z in (Path(ws) / "Zones").iterdir() if z.is_dir()}
+    zones = zone_names(ws)
     for r in rows:
         if r["state"] != "propose" or wiki != "Meetings":
             continue
-        tags = [bare_tag(lib, t) for t in r["parties"]]
-        if r["zone"] not in zones or any(t not in ctx.get("parties", {}) for t in tags):
-            r.update(state="skipped", reason="its zone or parties are not ones this workspace knows")
-        elif two_walled(lib, ctx, tags):
-            r.update(state="skipped", reason=wall)
+        if r["zone"] not in zones:
+            r.update(state="skipped", reason="its zone is not one this workspace knows")
         else:
             r["parties"] = [t.strip() for t in r["parties"]]
     return rows
@@ -2902,15 +2717,13 @@ def wiki_question_act(ws: Path, req: dict, today: dt.date) -> str:
         q.reload()
         if q.status not in ("open", "later"):
             raise Refused("that question is %s, not open" % (q.status or "unreadable"))
-        tags = question_parties(q, wall)
-        question_pages(q, wall)         # a question across a wall is refused before anything is written
+        zone = question_zone(q, wall)
+        tags = q.parties()              # the index the answer carries: a name, never a wall
+        question_pages(q, wall)
         if verb == "question-decide":
-            if q.name != "Meetings" or not tags:
+            if q.name != "Meetings" or not zone:
                 raise Refused(NO_DECISION)
-            if party_keys_two_ways(q.text):
-                raise Refused("that question names its parties two ways, so nothing was written")
-            # the zone must own the parties: the panel's own test, with its wording
-            if not View(ws, q.lib, str(q.fm.get("zone")).strip(), tags[0]).ok(tags):
+            if not View(ws, q.lib, zone).ok(zone):
                 raise Refused(wall)
             words = wiki_words(req)
             set_front(q.text, {"status": "answered"})
@@ -2986,13 +2799,11 @@ def own_record(q: WikiQuestion, wall: str) -> str:
     fm = q.lib.parse_frontmatter_text(text)
     if fm.get("type") != "answer":
         raise refuse
-    mine = sorted(q.parties())
-    theirs = sorted(bare_tag(q.lib, t) for t in tags_of(fm.get("parties")))
     if q.name == "Meetings":
         zone = fm.get("zone")
-        if not isinstance(zone, str) or zone.strip() != str(q.fm.get("zone")).strip() or theirs != mine:
+        if not isinstance(zone, str) or zone.strip() != str(q.fm.get("zone")).strip():
             raise refuse
-    elif fm.get("zone") not in (None, "") or theirs:
+    elif fm.get("zone") not in (None, ""):
         raise refuse
     link = tags_of(fm.get("question"))
     target = re.fullmatch(r"\[\[([^\]|#]+)\]\]", link[0]) if len(link) == 1 else None
@@ -3408,634 +3219,44 @@ def transaction(ws: Path, change, *, commit=None, after=None, triage=None):
         TX = None
 
 
-# ---- Nurture's answers, from the Questions panel (#224, point 9) --------------------------
-# nurture-answer (an entity page's party), nurture-organisation (where a person
-# works) and nurture-correct (a value written wrong) call the same code as
-# `nurture.py answered`, `organisation` and `correct`, so the chat and the panel
-# write the same way and record in the day's Nurture report. nurture-save is the
-# review page's Save: its rows go through one transaction, the walls check runs
-# on what is staged and a row it refuses is put back and named while the rest
-# go on, and the files are committed once per repository. Every row is read
-# again from the page it names: nothing a row carries is trusted, and its text
-# is data, never a command or a path to open.
-NURTURE_VERBS = ("nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all")
-NURTURE_LATER = ("System", "generated", "nurture", "later.json")
-NURTURE_ROWS_MAX = 200
-NURTURE_WORD_MAX = 200
-NURTURE_ROW_KEYS = ("do", "key", "path", "choice", "pick", "until", "edit")
-NURTURE_DO = ("answer", "organisation", "correct")
-NURTURE_CHOICES = ("yes", "no", "another", "later")
-UNATTRIBUTED = "unattributed"           # the view of entity pages that do not say whose they are
-KEY_RE = re.compile(r"[0-9a-f]{12}")
-_NURTURE_MOD = {}
-
-
-@contextlib.contextmanager
-def nurture_tools(ws: Path):
-    """The workspace's own nurture.py, loaded with its System/tools/ on the
-    path for as long as the block runs, and its context for today. Nothing
-    beside this extra: what it counts is that workspace's pages."""
-    key = Path(ws)
-    src = key / "System" / "tools" / "nurture.py"
-    if not src.is_file():
-        raise Refused("System/tools/nurture.py is missing; update Garrick")
-    with tools_path(key):
-        if key not in _NURTURE_MOD:
-            try:
-                spec = importlib.util.spec_from_file_location("garrick_page_nurture", str(src))
-                mod = importlib.util.module_from_spec(spec)
-                sys.modules["garrick_page_nurture"] = mod
-                spec.loader.exec_module(mod)
-            except Exception as e:
-                raise Refused("System/tools/nurture.py cannot be loaded (%s); update Garrick" % type(e).__name__)
-            if not all(callable(getattr(mod, n, None)) for n in ("organisation_item", "party_item", "record_answer",
-                                                                  "run_correction", "record_correction", "Ctx")):
-                raise Refused("this workspace's nurture.py is too old for the Questions panel; update Garrick")
-            _NURTURE_MOD[key] = mod
-        yield _NURTURE_MOD[key]
-
+# ---- the zone the Questions panel shows ---------------------------------------------------
 
 class RowRefused(Exception):
-    """One row put back, with the words the row says."""
+    """A page the panel will not name."""
 
 
 def zone_names(ws: Path) -> set:
     folder = Path(ws) / "Zones"
-    return {z.name for z in folder.iterdir() if z.is_dir()} if folder.is_dir() else set()
+    return {z.name for z in folder.iterdir() if z.is_dir() and not z.name.startswith(".")} if folder.is_dir() else set()
 
 
 class View:
     """The near side of the walls for what the Questions panel shows: the zone
-    shown, and the party chosen in it. `ok(tags)` is the one test, for what the
-    panel lists, counts and offers and for what a save may write: every tag
-    belongs to the zone, no two are walled from each other, and, with a party
-    chosen, it is among them and none is walled from it. The view of entity
-    pages that do not say whose they are (`zone` is UNATTRIBUTED) names, as
-    `scope`, the zone whose parties may be given to them. Fail closed: an
-    unknown zone or party, or a zone whose own parties a wall divides with no
-    party chosen, is refused with the rules' sentence."""
+    shown. `ok(zone)` is the one test, for what the panel lists, counts and
+    offers and for what a save may write: an item belongs to the view when its
+    own zone is the view's. Fail closed: an unknown zone, or an item whose zone
+    cannot be read, is refused with the rules' sentence or placed nowhere."""
 
-    def __init__(self, ws: Path, lib, zone, scope):
+    def __init__(self, ws: Path, lib, zone):
         wall = wall_sentence(ws)
         self.lib, self.ctx, self.ws = lib, lib.load_context(ws), ws
-        zones = zone_names(ws)
-        self.unattributed = zone == UNATTRIBUTED and zone not in zones
-        home = str(scope).strip() if self.unattributed and scope else zone
-        scope = bare_tag(lib, str(scope)) if scope not in (None, "") and not self.unattributed else None
-        if not isinstance(home, str) or home not in zones:
+        if not isinstance(zone, str) or zone not in zone_names(ws):
             raise Refused(wall)
-        self.zone = home
-        self.parties = {t for t, p in (self.ctx.get("parties") or {}).items() if str(p.get("zone") or "").strip() == home}
-        self.chosen = None
-        if self.unattributed:
-            return
-        if scope is not None:
-            if scope not in self.parties:
-                raise Refused(wall)
-            self.chosen = scope
-        elif not self.parties or two_walled(lib, self.ctx, self.parties):
-            raise Refused(wall)
+        self.zone = zone
 
-    def ok(self, tags) -> bool:
-        tags = set(tags or ())
-        if self.unattributed or not tags or not tags <= self.parties:
-            return False
-        if two_walled(self.lib, self.ctx, tags):
-            return False
-        return self.chosen is None or self.chosen in tags
+    def ok(self, zone) -> bool:
+        return isinstance(zone, str) and bool(zone) and zone == self.zone
 
 
-def page_party_tags(lib, ws: Path, path: Path) -> Optional[set]:
-    """The party tags a Meetings page names, `party:` and `parties:`; None when
-    it cannot be read plainly or names none (treated as walled)."""
+def page_zone(lib, ws: Path, path: Path) -> Optional[str]:
+    """The zone of a file, by its path or a Meetings page's `zone:`; None when it has none the Zones table knows
+    (a file of Knowledge or System, or a page with no zone or two: placed nowhere)."""
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+        got = lib.zone_of(ws, path)
+    except Exception:
         return None
-    if lib.frontmatter_form_problem(text):
-        return None
-    fm = lib.parse_frontmatter_text(text)
-    # Two spellings of the party key (`party:` and `PARTY:`) can be read two ways: the page says whose it is to no one.
-    if any(str(k).strip().lower() in ("party", "parties") and str(k).strip() not in ("party", "parties") for k in fm):
-        return None
-    got = lib.labels(ws, path)          # one derivation: a page whose party: and parties: disagree reads as neither
-    known = lib.load_context(ws).get("parties", {})
-    tags = set(got or ())
-    return tags if tags and all(t in known for t in tags) else None
+    return got if got and got != getattr(lib, "UNZONED", None) else None
 
-
-def near_side(lib, ws: Path, view: "View", path: Path) -> bool:
-    return view.ok(page_party_tags(lib, ws, path))
-
-
-def meetings_page(ws: Path, rel, folder: str) -> Path:
-    """A page of the Meetings wiki's wiki/<folder>/, by its path from the
-    workspace's top; anything else, a link, or a path out of the folder, is
-    refused."""
-    if not isinstance(rel, str) or not rel.endswith(".md") or rel.startswith(("/", "~")) or "\0" in rel or len(rel) > 400:
-        raise RowRefused("not a page of the Meetings wiki")
-    base = (Path(ws) / "Wikis" / "Meetings" / "wiki" / folder).resolve()
-    raw = Path(ws) / rel
-    path = raw.resolve()
-    if base not in path.parents or raw.is_symlink() or not path.is_file() or SKIP & set(path.relative_to(base).parts):
-        raise RowRefused("that page is not in wiki/%s/ any more" % folder)
-    # On a disk that ignores case a path can be spelled two ways and git knows one: only the spelling on disk is taken.
-    here = Path(ws).resolve()
-    for part in path.relative_to(here).parts:
-        if part not in os.listdir(str(here)):
-            raise RowRefused("that page is not in wiki/%s/ any more" % folder)
-        here = here / part
-    return path
-
-
-def clean_in_repo(ws: Path, path: Path) -> None:
-    """Refuse a page whose repository cannot be found, or that has changes not
-    committed or is not committed at all: a commit of it would carry somebody
-    else's work."""
-    repo = repo_of_path(ws, path)
-    if repo is None:
-        raise RowRefused("no repository holds that page, so it could not be undone")
-    code, said = git(repo, "status", "--porcelain", "--untracked-files=all", "--", str(path.relative_to(repo)))
-    if code != 0 or said.strip():
-        raise RowRefused("that page has changes not committed, or is not committed at all")
-
-
-def clean_rows(req: dict) -> list:
-    rows = req.get("rows")
-    if not isinstance(rows, list) or not rows:
-        raise Refused("there is nothing to save")
-    if len(rows) > NURTURE_ROWS_MAX:
-        raise Refused("at most %d answers are saved at once" % NURTURE_ROWS_MAX)
-    out = []
-    for r in rows:
-        if not isinstance(r, dict) or set(r) - set(NURTURE_ROW_KEYS):
-            raise Refused("an answer carries a field the review page does not send, so nothing was written")
-        if r.get("do") not in NURTURE_DO or r.get("choice", "yes") not in NURTURE_CHOICES:
-            raise Refused("an answer is not one the review page sends, so nothing was written")
-        for k in ("key", "path", "pick", "until"):
-            v = r.get(k)
-            if v is not None and (not isinstance(v, str) or len(v) > 400 or "\0" in v or (k == "pick" and len(v) > NURTURE_WORD_MAX)):
-                raise Refused("an answer carries a value the review page does not send, so nothing was written")
-        if r.get("key") is not None and not KEY_RE.fullmatch(r["key"]):
-            raise Refused("an answer names a finding by a key the review page does not make, so nothing was written")
-        edit = r.get("edit")
-        if edit is not None:
-            if isinstance(edit, dict) and isinstance(edit.get("old"), str) and len(edit["old"].strip()) < 3:
-                raise Refused("the value to correct needs at least three characters, so nothing was written")
-            if not isinstance(edit, dict) or set(edit) - {"old", "new"} or not all(
-                    isinstance(edit.get(k), str) and 0 < len(edit[k]) <= NURTURE_WORD_MAX
-                    and not any(ord(c) < 32 or c == "\x7f" for c in edit[k]) for k in ("old", "new")):
-                raise Refused("a correction carries more than the two values, so nothing was written")
-        out.append(dict(r, choice=r.get("choice", "yes")))
-    return out
-
-
-def later_path(ws: Path) -> Path:
-    return Path(ws).joinpath(*NURTURE_LATER)
-
-
-def read_later(ws: Path) -> dict:
-    """Rows put off: {key: {"until": day, "path": page}}. A key is bound to the
-    page it was put off for, so a forged key cannot hide another finding."""
-    try:
-        data = json.loads(later_path(ws).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(data, dict):
-        return {}
-    return {k: v for k, v in data.items() if KEY_RE.fullmatch(str(k)) and isinstance(v, dict)
-            and isinstance(v.get("until"), str) and isinstance(v.get("path"), str)}
-
-
-def save_later(ws: Path, put: dict, drop: set) -> None:
-    """Rows put off until a date, and rows that were answered: a small file the
-    tools own, beside the day's report, never committed."""
-    data = read_later(ws)
-    if not put and not (drop & set(data)):
-        return
-    for k in drop:
-        data.pop(k, None)
-    data.update(put)
-    target = later_path(ws)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(target.parent), prefix=target.name + ".")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(json.dumps(data, indent=1, sort_keys=True) + "\n")
-        os.replace(tmp, str(target))
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
-
-
-def put_back(w: Writes, rows: list, bad: dict, say_wall: str, refuse) -> None:
-    """Put back the rows in `bad` ({tag: kind}) and any row that shares a real
-    file with one, until no more do, and say each: the rules' sentence for a
-    wall, else what the kind is. What is put back is worked out after the
-    sharing is settled, so a row said not to be written has all its files back."""
-    while True:
-        back = set()
-        for tag in bad:
-            back |= {p for p, o in w.owners.items() if tag in o}
-        more = {tag for tag, row in rows if tag not in bad and any(tag in o for p, o in w.owners.items() if p in back)}
-        if not more:
-            break
-        for tag in more:
-            bad[tag] = "wall"
-    w.undo(back)
-    for tag, kind in bad.items():
-        refuse(tag, say_wall if kind == "wall" else
-               "the walls check could not read this page's form, so nothing was written for it" if kind == "form" else
-               "a check found something new on this page, so nothing was written for it" if kind == "new" else
-               "another session has files staged in that repository, so nothing was written for it")
-
-
-def walls_gate(ws: Path, w: Writes, rows: list, say_wall: str, refuse) -> None:
-    """The walls check on what the rows wrote, staged, per repository. When it
-    refuses, each row is checked on its own files, the rows it refuses are put
-    back (and any row that shares a file with one), and the rest are checked
-    again. `rows` are (tag, the row); `refuse(tag, why)` records a row put
-    back. A refusal no row accounts for refuses the lot."""
-    def check(files) -> str:
-        groups = {}
-        for p in files:
-            repo = repo_of_path(ws, p)
-            if repo is None:
-                continue
-            groups.setdefault(repo, []).append(str(p.relative_to(repo)))
-        for repo, rels in groups.items():
-            stage(repo, rels)
-            try:
-                said = walls_on_staged(ws, repo, rels)
-            finally:
-                unstage(repo, rels)
-            if said:
-                return said
-        return ""
-    changed = set(w.changed())
-    said = check(changed)
-    if not said:
-        return
-    bad = {}
-    for tag, row in rows:
-        mine = [p for p, o in w.owners.items() if tag in o and p in changed]
-        one = check(mine) if mine else ""
-        if one:
-            bad[tag] = refusal_kind(one)
-    if not bad:
-        raise Refused(say_wall if refusal_kind(said) == "wall" else
-                      "the walls check could not pass the change as a whole (%s), so nothing was written" % refusal_kind(said))
-    put_back(w, rows, bad, say_wall, refuse)
-    left = set(w.changed())
-    again = check(left) if left else ""
-    if again:
-        raise Refused(say_wall if refusal_kind(again) == "wall" else
-                      "the walls check could not pass what was left, so nothing was written")
-
-
-def nurture_save(ws: Path, req: dict, rows: list, today: dt.date, single: bool = False):
-    """Save rows (see clean_rows) as one transaction. Returns the reply, or,
-    for a single verb, its sentence."""
-    wall = wall_sentence(ws)
-    lib = prefs().lib(ws)
-    if lib is None or not all(callable(getattr(lib, n, None)) for n in
-                              ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "blocked", "decide",
-                               "entity_names", "staged_walls_refusal")):
-        raise Refused("this workspace's garrick_lib.py cannot read the walls, so nothing was written")
-    view = View(ws, lib, req.get("zone"), req.get("scope"))
-    headless = os.environ.get("GARRICK_HEADLESS", "").strip() not in ("", "0")
-    results = {}                    # index -> {"key", "ok", "say"}
-    plan = []                       # (index, row, how, item, asked, extra)
-
-    def refuse(i, why):
-        r = rows[i]
-        results[i] = {"key": r.get("key"), "ok": False, "say": why}
-        plan[:] = [entry for entry in plan if entry[0] != i]
-
-    with held("nurture-answers.lock", busy="another answer is still being saved"), nurture_tools(ws) as N:
-        ctx = N.Ctx(Path(ws).resolve(), headless=headless, today=today)
-
-        def open_walls(w):
-            """The pages that carry a walls-family finding already: not writable from the panel."""
-            before = getattr(w, "before_counts", None) or {}
-            return {f[1] for found in before.values() if isinstance(found, set) for f in found if wallish(f[0], f[2])}
-
-        def one(i, row, w):
-            """Write one row's change; a RowRefused leaves nothing of it."""
-            path_rel = row.get("path")
-            if row["choice"] in ("no", "later"):
-                if row["do"] == "answer":
-                    page = meetings_page(ws, path_rel, "entities")
-                    if not view.unattributed:
-                        raise RowRefused(wall)
-                else:
-                    page = meetings_page(ws, path_rel, "people")
-                    if view.unattributed or not near_side(lib, ws, view, page):
-                        raise RowRefused(wall)
-                if row.get("edit") and row["do"] != "answer":
-                    run_edit(i, row, page, w)
-                if row["choice"] == "later":
-                    try:
-                        day = dt.date.fromisoformat(row.get("until") or "")
-                    except ValueError:
-                        raise RowRefused("not a later day: %r" % (row.get("until"),))
-                    if day <= today:
-                        raise RowRefused("not a later day: %r" % (row.get("until"),))
-                    if not isinstance(row.get("key"), str):
-                        raise RowRefused("a row put off is named by its key")
-                    plan.append((i, row, "later", None, "", {"until": day.isoformat(), "path": ctx.rel(page)}))
-                    return
-                plan.append((i, row, "no", None, ctx.rel(page), ""))
-                return
-            do = row["do"]
-            folder = "entities" if do == "answer" else "people"
-            if do == "correct":
-                if not row.get("edit"):
-                    raise RowRefused("say the old value and the new one")
-                page = meetings_page(ws, path_rel, "people") if "/people/" in "/" + str(path_rel) else meetings_page(ws, path_rel, "entities")
-            else:
-                page = meetings_page(ws, path_rel, folder)
-            if do == "answer":
-                if not view.unattributed:
-                    raise RowRefused(wall)          # an entity page is asked about in the unattributed view only
-                tag = bare_tag(lib, str(row.get("pick") or "").strip())
-                if tag != "none" and tag not in view.parties:
-                    raise RowRefused(wall)          # only the parties of the zone chosen are offered
-            else:
-                if view.unattributed or not near_side(lib, ws, view, page):
-                    raise RowRefused(wall)
-            if do != "correct":
-                if ctx.rel(page) in open_walls(w):
-                    raise RowRefused(wall)          # a page with a wall finding open is read-only here
-                clean_in_repo(ws, page)
-            edit = row.get("edit")
-            if edit and do != "correct":
-                run_edit(i, row, page, w)
-            if do == "correct":
-                run_edit(i, row, page, w)
-                return
-            try:
-                if do == "answer":
-                    if row["choice"] != "another":
-                        raise RowRefused("say whose it is: a party, or none")
-                    item, asked = N.party_item(ctx, ctx.rel(page), row.get("pick") or "")
-                    answer = item.fix["party"]
-                else:
-                    pick = row.get("pick") or "" if row["choice"] == "another" else ""
-                    if row["choice"] == "another" and not pick.strip():
-                        raise RowRefused("name the entity page")
-                    item, asked = N.organisation_item(ctx, ctx.rel(page), pick)
-                    answer = "yes" if not pick else "another page: %s" % pick
-                    target = re.fullmatch(r"\[\[wiki/entities/([^\]|#]+)\]\]", item.fix["link"])
-                    entity = ctx.root.joinpath("Wikis", "Meetings", "wiki", "entities", (target.group(1) if target else "") + ".md")
-                    if not target or not near_side(lib, ws, view, entity):
-                        raise RowRefused(wall)
-            except N.Refusal as e:
-                # A page picked by name that cannot be used is said as a wall, whatever stopped it: a typed or
-                # forged name must not tell a page that is not there from one on the far side.
-                raise RowRefused(wall if (do == "organisation" and row["choice"] == "another") else str(e))
-            w.tag = i
-            N.OPS[item.fix["op"]](ctx, item, ShimJournal(w))
-            plan.append((i, row, do, item, asked, answer))
-
-        def run_edit(i, row, page, w):
-            if view.unattributed or not near_side(lib, ws, view, page) or ctx.rel(page) in open_walls(w):
-                raise RowRefused(wall)
-            edit = row["edit"]
-            w.tag = i
-            index = ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md"
-
-            def only(hit) -> bool:
-                """A correction in the panel reaches Meetings wiki pages on the near side of the view, and nothing
-                else: not a zone's notes, a memory, a page with no readable party or another party's page."""
-                pages = [hit.path] if hit.kind == "wiki" else list(hit.pages) if hit.kind == "raw" else []
-                base = (ctx.root / "Wikis" / "Meetings" / "wiki").resolve()
-                # A decision page is settled by the user's own save (#224, point 5): no correction rewrites its
-                # `question:`, `status:`, `zone:` or `parties:`, so it is left out whole.
-                settled = base / "decisions"
-                return bool(pages) and all(base in Path(x).resolve().parents and settled not in Path(x).resolve().parents
-                                           and near_side(lib, ws, view, Path(x)) for x in pages)
-            try:
-                out = N.run_correction(ctx, [ctx.rel(page)], edit["old"], edit["new"], True, "", [], ctx.rel(page),
-                                       commit=False, watch=w.watch, only=only, rebuild=False)
-            except ValueError as e:
-                raise RowRefused(str(e))
-            plan.append((i, row, "correct", out, "", edit))
-
-        def rebuild_index(w):
-            """The Meetings index, once, from the pages that remain: it belongs to no row, so a row put back
-            never leaves it describing pages it did not write."""
-            index = ctx.root / "Wikis" / "Meetings" / "wiki" / "index.md"
-            w.tag = None
-            if not any(e[2] == "correct" and e[3].get("done") and e[3]["done"].changed for e in plan):
-                if index in w.before:
-                    w.undo([index])
-                return
-            ingest = ctx.root.joinpath(*N.correct.INGEST)
-            if not ingest.is_file():
-                raise Refused("the Meetings index cannot be rebuilt (the meetings skill's ingest.py is missing), so nothing was written")
-            w.watch(index)
-            try:
-                r = subprocess.run([sys.executable, str(ingest), "--root", str(ctx.root), "index"], capture_output=True, text=True,
-                                   stdin=subprocess.DEVNULL, timeout=CHECK_TIMEOUT)
-            except subprocess.SubprocessError:
-                raise Refused("the Meetings index took too long to rebuild, so nothing was written")
-            if r.returncode != 0:
-                w.undo([index])
-                raise Refused("the Meetings index could not be rebuilt, so nothing was written")
-
-        def triage(w, new, walls):
-            """Findings the write made, or walls-family findings on a file it wrote, put on the rows that wrote
-            those files by path: the rows are put back with their own reply, and the rest go on."""
-            root = Path(ws).resolve()
-            hit = {f[1] for _k, f in new} | {f[1] for _k, f in walls}
-            wallish_paths = {f[1] for _k, f in walls} | {f[1] for _k, f in new if wallish(f[0], f[2])}
-            bad = {}
-            for e in plan:
-                if e[2] not in NURTURE_DO:
-                    continue
-                mine = {str(p.relative_to(root)) for p, o in w.owners.items() if e[0] in o and root in p.parents}
-                if mine & hit:
-                    bad[e[0]] = "wall" if mine & wallish_paths else "new"
-            if bad:
-                put_back(w, [(e[0], e[1]) for e in plan if e[2] in NURTURE_DO], bad, wall, refuse)
-                rebuild_index(w)
-
-        def change(w):
-            for i, row in enumerate(rows):
-                w.tag = i
-                try:
-                    one(i, row, w)
-                except RowRefused as e:
-                    refuse(i, str(e))
-                except N.Held as e:
-                    refuse(i, "held: %s" % e)
-            w.tag = None
-            walls_gate(ws, w, [(e[0], e[1]) for e in plan if e[2] in NURTURE_DO], wall, refuse)
-            rebuild_index(w)
-            return None
-
-        def message(label, rels):
-            repo = Path(ws).resolve() / label if label != "." else Path(ws).resolve()
-            counts = {}
-            for e in plan:
-                if e[2] in NURTURE_DO and any(e[0] in o and repo_of_path(ws, p) == repo for p, o in TX.owners.items()):
-                    counts[e[2]] = counts.get(e[2], 0) + 1
-            words = {"answer": ("entity party", "entity parties"), "organisation": ("organisation link", "organisation links"),
-                     "correct": ("correction", "corrections")}
-            return "%s: context nurtured by hand; %s" % (
-                label.split("/", 1)[-1] if label != "." else "Workspace",
-                ", ".join("%d %s" % (n, words[k][0 if n == 1 else 1]) for k, n in sorted(counts.items())))
-
-        def finish(result, done):
-            refused_repos = done["refused"]
-            put, answered_keys = {}, set()
-            for e in list(plan):
-                i, row, how, item, asked, extra = e
-                if how in ("no", "later"):
-                    if how == "later":
-                        put[row["key"]] = extra
-                    said = "Left as it is" if how == "no" else "Put off until %s" % extra["until"]
-                    before = results.get(i)
-                    one_outcome = before["say"] if before and before["ok"] and how == "no" else \
-                        "%s; %s" % (before["say"], said.lower()) if before and before["ok"] else said
-                    results[i] = {"key": row.get("key"), "ok": True, "say": one_outcome}
-                    continue
-                files = [p for p, o in TX.owners.items() if i in o] if TX else []
-                repos = {repo_of_path(ws, p) for p in files}
-                failed = [r for r in repos if r is not None and (str(r.relative_to(Path(ws).resolve())) if r != Path(ws).resolve() else ".") in refused_repos]
-                if failed:
-                    names = {str(r.relative_to(Path(ws).resolve())) if r != Path(ws).resolve() else "." for r in repos if r is not None}
-                    kept = sorted(n for n in names if n in done["commits"])
-                    results[i] = {"key": row.get("key"), "ok": False,
-                                  "say": ("committed in %s, not committed elsewhere and put back there" % ", ".join(kept)) if kept
-                                  else "not committed, so nothing changed"}
-                    continue
-                if how == "correct":
-                    out = item
-                    said = "Corrected %s to %s" % (extra["old"], extra["new"]) if out.get("done") and out["done"].changed else \
-                        "Nothing live held the old value"
-                    results[i] = {"key": row.get("key"), "ok": True, "say": said}
-                    continue
-                results[i] = {"key": row.get("key"), "ok": True,
-                              "say": ("Whose it is: %s" % extra) if how == "answer" else "Where they work: written"}
-                answered_keys.add(row.get("key"))
-            # the day's report: the same lines the chat path writes
-            for e in plan:
-                i, row, how, item, asked, extra = e
-                if how == "no" and results.get(i, {}).get("ok"):
-                    N.record_answer(ctx, asked, "Is the proposed answer right?", "no", settled=False)
-                    continue
-                if not results.get(i, {}).get("ok") or how in ("no", "later"):
-                    continue
-                if how == "correct":
-                    class Done:
-                        pass
-                    d = Done()
-                    app = item.get("done")
-                    d.commits = [(r, s) for r, s in done["commits"].items()]
-                    d.changed = list(app.changed) if app else []
-                    d.superseded = list(app.superseded) if app else []
-                    d.uncommitted = [(p, "in no repository, so changed and not committed") for p in done["uncommitted"]]
-                    d.refused = list(done["refused"].items())
-                    rec = N.read_record(ctx)
-                    N.record_correction(ctx, rec, item["item"], extra["old"], extra["new"], "", d)
-                    N.write_report(ctx, rec)
-                elif how == "answer":
-                    N.record_answer(ctx, item.path, asked, extra)
-                else:
-                    N.organisation_answered(ctx, item, asked, "" if extra == "yes" else extra.split(": ", 1)[-1])
-            save_later(ws, put, {k for k in answered_keys if k})
-            return results
-
-        if not any(True for _ in rows):
-            raise Refused("there is nothing to save")
-        out = transaction(ws, change, commit=message, after=finish, triage=triage)
-    saved = sum(1 for r in out.values() if r["ok"] and not r["say"].startswith(("Left as it is", "Put off")))
-    later = sum(1 for r in out.values() if r["ok"] and r["say"].startswith("Put off"))
-    held_back = [r for r in out.values() if not r["ok"]]
-    if single:
-        only = out[0]
-        if not only["ok"]:
-            raise Refused(only["say"])
-        return only["say"]
-    say = "Saved %d answer%s" % (saved, "" if saved == 1 else "s")
-    if later:
-        say += ", put off %d" % later
-    if held_back:
-        say += ". %d row%s put back, named below" % (len(held_back), " was" if len(held_back) == 1 else "s were")
-    return {"say": say, "rows": [dict(out[i], index=i) for i in sorted(out)]}
-
-
-NURTURE_GROUPS_MAX = 20
-
-
-def nurture_save_all(ws: Path, req: dict, today: dt.date):
-    """A save from the panel's *All* view (#384). `groups` is a list of
-    {"zone", "scope", "rows"}, one for each view the rows were shown in. Each
-    group is saved as it would be from its own view: its own View, its own
-    transaction, its own check and its own commit, through nurture_save. Two
-    groups are never one transaction, so a wall between them cannot be
-    crossed by saving together. A group that is refused as a whole (its view
-    refused, the checks cannot run) is named and the others go on; the walls
-    still hold in each. The reply is nurture_save's, with the rows of every
-    group and the say of each."""
-    groups = req.get("groups")
-    if not isinstance(groups, list) or not groups:
-        raise Refused("there is nothing to save")
-    if len(groups) > NURTURE_GROUPS_MAX:
-        raise Refused("at most %d groups are saved at once" % NURTURE_GROUPS_MAX)
-    clean = []
-    for g in groups:
-        if not isinstance(g, dict) or set(g) - {"zone", "scope", "rows"}:
-            raise Refused("a group carries a field the review page does not send, so nothing was written")
-        for k in ("zone", "scope"):
-            if g.get(k) is not None and (not isinstance(g[k], str) or len(g[k]) > 200 or "\0" in g[k]):
-                raise Refused("a group carries a value the review page does not send, so nothing was written")
-        clean.append((g.get("zone"), g.get("scope"), clean_rows(g)))
-    rows, said, results = [], [], []
-    for gi, (zone, scope, mine) in enumerate(clean):
-        try:
-            reply = nurture_save(ws, {"zone": zone, "scope": scope}, mine, today)
-            ok, whole = True, False
-        except Refused as e:
-            whole = True
-            reply = {"say": str(e), "rows": [{"key": r.get("key"), "ok": False, "say": str(e), "index": i} for i, r in enumerate(mine)]}
-            ok = False
-        rows.extend(dict(r, group=gi) for r in reply["rows"])
-        said.append(reply["say"])
-        results.append({"zone": zone, "scope": scope, "ok": ok and all(r["ok"] for r in reply["rows"]), "say": reply["say"],
-                        "refused": whole})
-    return {"say": " | ".join(said), "rows": rows, "groups": results}
-
-
-class ShimJournal:
-    """What nurture's fixes write through, in place of its Journal: the
-    transaction's Writes, which put every file back."""
-
-    def __init__(self, w):
-        self.w = w
-
-    def write(self, path, text):
-        self.w.write(path, text)
-
-
-def nurture_act(ws: Path, req: dict, today: dt.date):
-    verb = req["verb"]
-    if verb == "nurture-save":
-        return nurture_save(ws, req, clean_rows(req), today)
-    if verb == "nurture-save-all":
-        return nurture_save_all(ws, req, today)
-    if verb == "nurture-answer":
-        row = {"do": "answer", "path": req.get("path"), "choice": "another", "pick": req.get("party")}
-    elif verb == "nurture-organisation":
-        row = {"do": "organisation", "path": req.get("path"), "choice": "another" if req.get("entity") else "yes",
-               "pick": req.get("entity") or None}
-    else:
-        row = {"do": "correct", "path": req.get("path"), "choice": "yes",
-               "edit": {"old": req.get("old"), "new": req.get("new")}}
-    return nurture_save(ws, req, clean_rows({"rows": [{k: v for k, v in row.items() if v is not None}]}), today, single=True)
 
 
 def managed_places() -> Optional[list]:
@@ -5384,12 +4605,6 @@ def act(ws: Path, req, today=None, now=None):
         return save_settings(ws, req)
     if req["verb"] == "memory-preview":
         return memory_preview(ws, req)
-    if req["verb"] == "party-flag":
-        return party_flag(ws, req)
-    if req["verb"] == "walls-study":
-        return walls_study(ws)
-    if req["verb"] == "walls-migrate":
-        return walls_migrate(ws, req)
     if req["verb"] == "walls-unallow":
         return walls_unallow(ws, req)
     if req["verb"] == "release-check":
@@ -5410,8 +4625,6 @@ def act(ws: Path, req, today=None, now=None):
         return put_off(ws, req, today or dt.date.today())
     if req["verb"].startswith("question-"):
         return wiki_question_act(ws, req, today or dt.date.today())
-    if req["verb"].startswith("nurture-"):
-        return nurture_act(ws, req, today or dt.date.today())
     if req["verb"] == "continue":
         return continue_work(ws, req, now)
     if req["verb"] == "ask-desktop":

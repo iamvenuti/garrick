@@ -1286,25 +1286,18 @@ CHECK_KINDS = (("wall", "Walls", "Take it out"), ("mechanical", "Mechanical", "F
                ("attribution", "Attribution", "Answer"), ("judgment", "Judgment", ""))
 
 
-def check_groups(ws: Path, C: dict, link: "Links", projects=frozenset()) -> str:
+def check_groups(ws: Path, C: dict, link: "Links") -> str:
     """The Checks card's list: one fold per kind, the largest open, and any
-    holding an error. A wall finding in a project the Context tab's Parties
-    view lists links to that project's row, where its parties and their flags are."""
+    holding an error."""
     lib = nurture_lib(ws)
     rows: Dict[str, List[str]] = {}
     errors: Dict[str, int] = {}
     for f in C.get("findings", []):
         for kind, line, act in sorted_finding(ws, lib, f):
-            where = ""
-            if kind == "wall" and projects:
-                m = re.match(r"Zones/([^/]+)/([^/]+)/", line[0])
-                pid = parties_mod().project_id(m.group(1), m.group(2)) if m else ""
-                if pid in projects:
-                    where = ' <a class="cxgo" href="#%s" title="Its parties and their flags, on the Context tab">Parties</a>' % pid
             rows.setdefault(kind, []).append(
-                '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s%s</li>'
+                '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s</li>'
                 % (ICON["critical" if f.get("severity") == "error" else "warning"], link.attrs(ws / line[0]), E(line[0]),
-                   E(line[1]), where, act))
+                   E(line[1]), act))
             errors[kind] = errors.get(kind, 0) + (f.get("severity") == "error")
     if not rows:
         return '<div class="clean">%sNo problems found.</div>' % ICON["good"]
@@ -1492,7 +1485,27 @@ def guide_tab(ws: Path) -> Tuple[str, str]:
     except OSError:
         text = None
     ref = gd.release_ref(text, edge=workspace_stamp(ws).get("from") in ("clone", "adopted"))
-    return gd.guide(ws.joinpath(*gd.DOCS), ref)
+    body, held = gd.guide(ws.joinpath(*gd.DOCS), ref)
+    return zone_flags(ws) + body, held
+
+
+ZONE_RULE = ("Each zone is either <b>walled</b> or <b>open</b>. What is in a walled zone stays in that zone; what is in an open "
+             "zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones "
+             "is split before it is filed.")
+
+
+def zone_flags(ws: Path) -> str:
+    """The Guide's Walls block: the rule in three sentences, and one line per zone, walled or open, with the command
+    that changes it. Read-only: the page flips nothing; the flag is changed with scaffold.py. Nothing without zones."""
+    ctx = workspace_context(ws)
+    flags = ctx.get("zone_walled") or {}
+    if not flags:
+        return ""
+    rows = "".join('<li><b>%s</b>: %s <code>python3 System/tools/scaffold.py zone --name %s --%s</code></li>'
+                   % (E(z), "walled" if w else "open", E(z), "open" if w else "walled") for z, w in sorted(flags.items()))
+    note = ('<p class="muted">These flags are read from your Parties and Zones tables until the update to zone walls is '
+            'accepted.</p>' if ctx.get("pending") else "")
+    return ('<section class="gd-zones" id="guide-zones"><h2>Walls</h2><p>%s</p><ul>%s</ul>%s</section>' % (ZONE_RULE, rows, note))
 
 
 _EF = None
@@ -4217,38 +4230,7 @@ def release_choice(ws: Optional[Path]) -> Tuple[bool, int]:
         return False, 1
 
 
-def walls_pending(ws: Optional[Path]) -> bool:
-    """Whether the walls migration still waits (#455): System/context.md has no Walled column. Read through the
-    workspace's own migrate_walls.py; any fault says no."""
-    try:
-        lib, src = workspace_lib(ws), ws / "System" / "tools" / "migrate_walls.py"
-        if lib is None or not src.is_file():
-            return False
-        spec = importlib.util.spec_from_file_location("garrick_status_migrate_walls", str(src))
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        return bool(mod.pending(ws, lib))
-    except Exception:
-        return False
-
-
-def walls_card(pending: bool) -> str:
-    """The pending walls migration as a card in Settings › About Garrick (#455), in the app only. Shown when one is
-    pending at build, and by RELEASE_JS when an update has just left one. Show the changes reads the proposal;
-    Write the flags asks once, inline (the app's web view shows no confirm box), and only its yes writes."""
-    return ('<div class="setrelbox" id="walls-card"%s><p><b id="walls-head">The walls migration is pending.</b> Walls are now a flag on each party. '
-            'Until the flags are written, the old pairs keep deciding and the check warns.</p>'
-            '<p class="setrelrow"><button type="button" class="act" id="walls-show">Show the changes</button>'
-            '<span class="hint" id="walls-line" role="status"></span></p>'
-            '<div id="walls-body" hidden><pre id="walls-text" class="wallstext"></pre>'
-            '<p class="setrelrow"><button type="button" class="act" id="walls-write">Write the flags</button></p>'
-            '<p class="setrelrow" id="walls-ask" hidden><span>Write these flags and take out the Walls table?</span> '
-            '<button type="button" class="act" id="walls-yes">Yes, write them</button> '
-            '<button type="button" class="act" id="walls-no">Cancel</button></p></div></div>'
-            % ("" if pending else " hidden"))
-
-
-def release_controls(on: bool, every: int, walls: bool = False) -> str:
+def release_controls(on: bool, every: int) -> str:
     """Settings › About Garrick's Check for updates button and its switch
     (#410), in the app only. The button asks GitHub now, which is the
     click's consent; the switch and its cadence are saved when Settings
@@ -4257,11 +4239,11 @@ def release_controls(on: bool, every: int, walls: bool = False) -> str:
     option = lambda days, label: '<option value="%d"%s>%s</option>' % (days, " selected" if every == days else "", label)
     return ('<div class="setrel apponly" id="release-settings"><p class="setrelrow"><button type="button" class="act" '
             'id="rel-check">Check for updates</button><span class="hint" id="rel-line" role="status"></span></p>'
-            '<div class="setrelbox" id="rel-detail" hidden></div>%s'
+            '<div class="setrelbox" id="rel-detail" hidden></div>'
             '<p class="setrelrow"><label><input type="checkbox" id="rel-on"%s> <span>Check for a newer Garrick</span></label> '
             '<select id="rel-every" aria-label="How often"%s>%s%s</select></p>'
             '</div>'
-            % (walls_card(walls), " checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
+            % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
 
 
 def about_garrick(version: str, ws: Optional[Path] = None) -> str:
@@ -4285,7 +4267,7 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
                'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and on the Repositories card, and never updates.'),
-               E(version), release_controls(*release_choice(ws), walls=walls_pending(ws)) if ws is not None else "", rows))
+               E(version), release_controls(*release_choice(ws)) if ws is not None else "", rows))
 
 
 # Each row of Opening a thread carries the icon its way carries on Explore's
@@ -5136,26 +5118,12 @@ def questions_data(ws: Path, C: Optional[dict], today: dt.date, link: "Links") -
         return None
 
 
-_PP = None
-
-
-def parties_mod():
-    """parties_panel.py, beside this file: the Parties tab's data and page (#447)."""
-    global _PP
-    if _PP is None:
-        spec = importlib.util.spec_from_file_location("garrick_status_parties", str(Path(__file__).with_name("parties_panel.py")))
-        _PP = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(_PP)
-    return _PP
-
-
-def parties_data(ws: Path, link: "Links") -> Optional[dict]:
-    """The Parties tab's data, or None: no tab. Any fault leaves the tab out."""
+def allowed_data(ws: Path, link: "Links") -> list:
+    """What the user allowed once, for the Context tab's Allowed by you; none on any fault."""
     try:
-        lib = workspace_lib(ws)
-        return parties_mod().build(ws, lib, link) if lib is not None else None
+        return questions_mod().read_allowed(ws, link)
     except Exception:
-        return None
+        return []
 
 
 _YW = None
@@ -6809,7 +6777,7 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 .setlinks{margin-top:8px;border-bottom:1px solid var(--line)}.setlink{display:block;padding:5px 2px;border-top:1px solid var(--line);color:var(--ink);text-decoration:none}
 .setrel{margin:8px 0}.setrelrow{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin:6px 0}.setrelrow .hint{margin:0}
 .setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
-.setrelbox a{color:var(--accent)}.wallstext{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0}
+.setrelbox a{color:var(--accent)}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
 /* Settings › Notifications: the five notices, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
@@ -7005,7 +6973,7 @@ b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();va
 document.querySelectorAll('.pchev').forEach(chev);
 /* Tabs, when the Todo list is on: one open at a time, remembered in this window. */
 var tabSecs=document.querySelectorAll('main>section.tab'),tabBtns=document.querySelectorAll('.tabs [data-tab]');
-window.StatusTab=function(n){if(n==='parties'){n='questions';window.GarrickCxWant='parties';if(window.GarrickContextView)GarrickContextView('parties')}   /* the Parties tab is a view of Context now: a saved tab or an old link opens it there */
+window.StatusTab=function(n){if(n==='parties')n='questions';   /* an old link or a saved tab to the Parties view opens Context */
 if(!document.getElementById('tab-'+n))n='overview';
 if(n==='guide'&&window.GarrickGuide)GarrickGuide.mount();       /* the Guide's pages go on the page the first time it opens */
 tabSecs.forEach(function(sec){sec.hidden=sec.id!=='tab-'+n});document.body.dataset.tab=n;
@@ -7017,7 +6985,7 @@ var tSaved=null;try{tSaved=localStorage.getItem('garrick-tab')}catch(e){}StatusT
    the Guide shows its page first (GUIDE_JS), so it never leaves the page in any host */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||a.getAttribute('href')==='#')return;
 var id=a.getAttribute('href').slice(1),el=(window.GarrickGuide&&GarrickGuide.reveal(id))||document.getElementById(id),sec=el&&el.closest('section.tab');if(!sec)return;
-StatusTab(sec.id.slice(4));if(window.GarrickCxFor)GarrickCxFor(el);if(!a.closest('nav')){e.preventDefault();var c=el.closest('details');if(c)c.open=true;el.scrollIntoView({block:'start'})}},true);
+StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.closest('details');if(c)c.open=true;el.scrollIntoView({block:'start'})}},true);
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…
    (⌘,) calls StatusSettings.open(). */
@@ -7297,15 +7265,6 @@ items('Instruction files you changed, left as they are (Split):',r.split);
 items('Skipped:',r.skipped,function(x){return x[0]+': '+x[1]});
 items('Left for you:',r.then);items('The check found:',r.problems)}
 function done(){busy=false;btn.disabled=false}
-var card=document.getElementById('walls-card'),wbtn=document.getElementById('walls-show'),wline=document.getElementById('walls-line'),wbody=document.getElementById('walls-body'),
-wtext=document.getElementById('walls-text'),wwrite=document.getElementById('walls-write'),wask=document.getElementById('walls-ask'),wgo=document.getElementById('walls-yes'),wno=document.getElementById('walls-no');
-function wput(t){wline.textContent=t}
-function wstudy(){if(!host){wput('Only the Garrick app can show the changes.');return}wbtn.disabled=true;wput('Reading the workspace\u2026 on a large workspace the check can take several minutes.');
-host.postMessage({act:{verb:'walls-study'}})}
-if(card){wbtn.onclick=function(){wstudy()};
-wwrite.onclick=function(){wask.hidden=false;wwrite.disabled=true};
-wno.onclick=function(){wask.hidden=true;wwrite.disabled=false;wput('Nothing was written.')};
-wgo.onclick=function(){wgo.disabled=true;wno.disabled=true;wput('Writing\u2026');host.postMessage({act:{verb:'walls-migrate',yes:true}})}}
 btn.onclick=function(){if(busy)return;if(!host){put('Only the Garrick app can ask GitHub.');return}busy=true;btn.disabled=true;box.hidden=true;put('Asking GitHub\u2026');
 host.postMessage({act:{verb:'release-check'}})};
 sec.addEventListener('change',function(e){if(e.target===on||e.target===every){changed=true;every.disabled=!on.checked}});
@@ -7314,11 +7273,7 @@ if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){put
 if(r.state==='newer'){put('Updating from '+r.running+' to '+r.latest+'\u2026 this takes a minute.');host.postMessage({act:{verb:'release-update'}});return}
 put(r.line+at(r));done();return}
 if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update could not start. Nothing was changed.');done();return}
-put(u.line);show(u);done();if(u.walls&&card){card.hidden=false;wstudy()}return}
-if(q&&q.verb==='walls-study'&&card){wbtn.disabled=false;if(!(out&&out.ok)){wput((out&&out.say)||'Could not read the workspace. Nothing was changed.');return}
-if(!out.pending){card.hidden=true;return}wput(out.say);wtext.textContent=out.text||'';wbody.hidden=false;return}
-if(q&&q.verb==='walls-migrate'&&card){wgo.disabled=false;wno.disabled=false;wask.hidden=true;wwrite.disabled=false;
-if(!(out&&out.ok)){wput((out&&out.say)||'Nothing was written.');return}wput(out.say);if(out.written){wbody.hidden=true;wbtn.hidden=true;document.getElementById('walls-head').textContent='The walls migration is done.'}return}
+put(u.line);show(u);done();return}
 if(prev)return prev(q,out)};
 window.GarrickRelease={changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};
 })();
@@ -8242,7 +8197,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
     qdata = questions_data(ws, C, now.date(), link)        # the Context tab (#224), None where it cannot be placed
-    pdata = parties_data(ws, link)                         # the Context tab's Parties and Who sees what views (#447), None without a Parties table
+    allowed = allowed_data(ws, link)                       # the Context tab's Allowed by you (#447): what the user let through, once
 
     # ---- what needs attention, worst first
     attn = []
@@ -8548,7 +8503,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     elif C.get("failed"):
         body = '<div class="clean">%sThe check did not run. Run <code>python3 System/tools/check.py</code> to see why.</div>' % ICON["critical"]
     else:
-        body = check_groups(ws, C, link, parties_mod().project_ids(pdata))
+        body = check_groups(ws, C, link)
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
@@ -8744,7 +8699,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
-               questions_mod().tab_button(parties_mod().dot_title(pdata)) if qdata or pdata else ""))
+               questions_mod().tab_button() if qdata or allowed else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
     if qdata:
@@ -8779,7 +8734,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s</main>%s'
             % (home_tabs, overview, section("todo", True, todo_tab + slots("todo")) if todo_tab else "", status_tab,
-               section("questions", True, parties_mod().tab((questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "", pdata)) if qdata or pdata else "",
+               section("questions", True, questions_mod().tab((questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "", allowed)) if qdata or allowed else "",
                section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
@@ -8790,12 +8745,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", parties_mod().JS + parties_mod().CX_JS if pdata else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (parties_mod().CSS if pdata else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),

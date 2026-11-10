@@ -237,25 +237,6 @@ DECLARED: Dict[str, Op] = {
     # Open sections as questions (#224, point 8): a read without `confirm`; with it,
     # one question file per line, committing nothing and changing no page.
     "question-open-sections": _op(("wiki", "confirm", "pages"), ("wiki", "confirm"), "workspace"),
-    # The Questions panel's Nurture answers (#224): an entity page's party, where
-    # a person works, a value corrected, and the review page's one Save. `zone`
-    # and `scope` name the view the rows were shown in (a zone, and a party of
-    # it), which the walls are checked against; each row is read again from the
-    # page it names. Each commits, once per repository, after the transaction.
-    "nurture-answer": _op(("zone", "scope", "path", "party"), ("path", "party"), "workspace", True),
-    "nurture-organisation": _op(("zone", "scope", "path", "entity"), ("path", "entity"), "workspace", True),
-    "nurture-correct": _op(("zone", "scope", "path", "old", "new"), ("path", "old", "new"), "workspace", True),
-    "nurture-save": _op(("zone", "scope", "rows"), ("zone", "scope"), "workspace", True),
-    # The same from the panel's All view (#384): `groups` is a list of
-    # {zone, scope, rows}, each saved as its own transaction and commit.
-    "nurture-save-all": _op(("groups",), (), "workspace", True),
-    # A party's flag from the Parties tab (#447): scaffold.py's `party --walled | --open`, committed in the
-    # workspace's own repository. `yes` answers the question a walled-to-open change asks first.
-    "party-flag": _op(("tag", "flag", "yes"), ("tag", "flag"), "workspace", True),
-    # The walls migration's card in Settings › About Garrick (#455): the study only reads; the write answers `yes`,
-    # and commits System/context.md in the workspace's own repository, as party-flag does.
-    "walls-study": _op((), (), "none", retry="safe"),
-    "walls-migrate": _op(("yes",), (), "workspace", True),
     # Allow once: an allowance taken away (`check.py allow` writes one, from a terminal only). Writes
     # System/walls-allowed.json and commits it in the workspace's own repository.
     "walls-unallow": _op(("path", "id"), ("path", "id"), "workspace", True),

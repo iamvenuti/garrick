@@ -3,16 +3,15 @@
 
 status.py builds the page; this file, beside it, decides what the panel may
 show and draws it. The panel lists the wikis' open questions (a file each in
-`Wikis/<Wiki>/questions/`) and Nurture's attribution findings, one zone at a
+`Wikis/<Wiki>/questions/`) and Nurture's findings to open, one zone at a
 time, and answers them through page_action.py: the panel itself calls no
 model, and in a browser, where a page cannot act, it shows the questions and
 copies what to say.
 
-The walls decide what is listed. Every item is placed in a bucket, a zone and
-a party of it, by page_action.py's View.ok(tags), the one test a save is held
-to as well: a question or a finding whose parties cannot be read plainly, or
-that is not wholly on the near side of the zone shown, is placed nowhere, and
-so is never listed, never counted and never offered as a pick. The page is one
+The walls decide what is listed. Every item is placed in a bucket, a zone, by
+page_action.py's View.ok(zone), the one test a save is held to as well: a
+question or a finding whose zone cannot be read, or that is not in the zone
+shown, is placed nowhere, and so is never listed and never counted. The page is one
 static file, as status.py's always is (it holds every zone's projects, todos
 and Needs you questions, and the app picks the zone): every bucket is in the
 page source and the script shows one. What a bucket holds is only what is on
@@ -26,11 +25,13 @@ Standard library only, Python 3.9.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import html
 import importlib.util
 import json
 import os
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -43,7 +44,7 @@ WHY_MAX = 600
 TITLE_MAX = 300
 LINE_MAX = 200
 VERDICTS = ("done", "stale", "duplicate")
-ALL = "*"           # the choice that means every zone, or every party of a zone (#384)
+ALL = "*"           # the choice that means every zone (#384)
 _PA = None
 
 
@@ -106,14 +107,13 @@ def body_parts(text: str) -> dict:
 
 def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable) -> Optional[dict]:
     """One question as the panel shows it, or None. None for anything the
-    walls cannot read: a question whose pages sit on both sides of a wall,
-    whose parties are unknown or walled from each other, or whose frontmatter
-    is not plain. That is the same reading a save is held to."""
+    walls cannot read: a question with no zone the workspace knows, or whose
+    frontmatter is not plain. That is the same reading a save is held to."""
     pa = page_action()
     try:
         q = pa.WikiQuestion(ws, {"wiki": wiki, "file": rel})
         wall = pa.wall_sentence(ws)
-        tags = pa.question_parties(q, wall)
+        zone = pa.question_zone(q, wall)
         pages, _held, _missing = pa.question_pages(q, wall)
     except Exception:
         return None
@@ -139,9 +139,7 @@ def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable)
                 # `pages:` link is, and only when that page is on the question's own side of every wall.
                 page = pa.page_target(q, l)
                 if page is not None:
-                    ptags = pa.page_tags(q, page) if q.name == "Meetings" else []
-                    if q.name == "Knowledge" or (ptags and set(ptags) <= set(tags) and not q.lib.blocked(
-                            q.context, tags, ptags)):
+                    if q.name == "Knowledge" or (zone and pa.page_zone_of(q, page) == zone):
                         origin = {"name": page.relative_to(q.dir).as_posix(), "href": link(page)}
     slug = pa.answer_slug(q.stem())
     answer_file = "Wikis/%s/raw/answers/%s - %s.md" % (wiki, today.strftime("%y%m%d"), slug)
@@ -151,7 +149,7 @@ def read_question(ws: Path, wiki: str, rel: str, today: dt.date, link: Callable)
     return {
         "wiki": wiki, "file": rel, "status": q.status, "title": parts["ask"], "why": parts["why"],
         "asked": asked.isoformat() if asked else "", "later": later.isoformat() if later else "",
-        "due": bool(due), "shown": bool(shown), "parties": sorted(tags), "zone": str(q.fm.get("zone") or "").strip(),
+        "due": bool(due), "shown": bool(shown), "zone": zone,
         "origin": origin,
         "pages": [{"name": p.relative_to(q.dir).as_posix(), "href": link(p)} for p in pages],
         "writes": dict({"answer": [answer_file, qpath], "later": [qpath], "close": [qpath]},
@@ -184,74 +182,38 @@ def decision_files(ws: Path) -> List[str]:
 def read_decision(ws: Path, lib, rel: str, link: Callable) -> Optional[dict]:
     """One decision page as the panel lists it, with the tags the walls place
     it by, or None for a page whose frontmatter cannot be read plainly, that
-    is not `type: decision`, or whose zone or parties are missing (fail
-    closed: an unfinished page is placed nowhere)."""
+    is not `type: decision`, or whose zone is missing (fail closed: an
+    unfinished page is placed nowhere)."""
     path = Path(ws) / "Wikis" / "Meetings" / rel
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return None
-    pa = page_action()
-    if lib.frontmatter_form_problem(text) or pa.party_keys_two_ways(text):
+    if lib.frontmatter_form_problem(text):
         return None
     fm = lib.parse_frontmatter_text(text)
     status = str(fm.get("status") or "").strip().lower()
     zone = fm.get("zone")
-    tags = [pa.bare_tag(lib, t) for t in pa.tags_of(fm.get("parties"))]
-    if fm.get("type") != "decision" or status not in DECISION_STATES or not isinstance(zone, str) or not zone.strip() or not tags:
+    if fm.get("type") != "decision" or status not in DECISION_STATES or not isinstance(zone, str) or not zone.strip():
         return None
     revisit = clip(fm.get("revisit") or "", LINE_MAX)
     return {"file": rel, "title": clip(fm.get("title") or path.stem, TITLE_MAX), "status": status,
             "decided": str(fm.get("decided") or "")[:10], "revisit": revisit, "zone": zone.strip(),
-            "parties": sorted(tags), "href": link(path)}
-
-
-def plain_party_keys(path: Path) -> bool:
-    """False for a page that spells its party key two ways (`party:` and
-    `PARTY:`), which a reader could take either way: it is placed nowhere."""
-    try:
-        text = Path(path).read_text(encoding="utf-8")
-        keys = _KEY_LINE.findall(re.match(r"---\n(.*?)\n---", text, re.S).group(1))
-    except (OSError, UnicodeError, AttributeError):
-        return False
-    return all(k in ("party", "parties") for k in keys if k.lower() in ("party", "parties"))
-
-
-_KEY_LINE = re.compile(r"(?m)^([A-Za-z_][\w-]*)\s*:")
-
-
-def first_line(path: Path) -> str:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return ""
-    body = re.sub(r"\A---\n.*?\n---\n", "", text, count=1, flags=re.S)
-    for line in body.splitlines():
-        s = line.strip()
-        if s and not s.startswith("#"):
-            return clip(s, LINE_MAX)
-    return ""
+            "href": link(path)}
 
 
 def review_rows(ws: Path, nurture, C: Optional[dict], lib, ctx: dict, today: dt.date, link: Callable,
                 views: Dict[str, object]) -> dict:
-    """Nurture's attribution findings, placed in the buckets by the walls.
+    """Nurture's findings to open, placed in the buckets by the walls.
 
-    Returns {bucket key: {"entities": [...], "people": [...], "read": [...]}}.
-    A wall finding is never read here. A person row appears in the bucket its
-    page's parties fit, and only with a proposal whose entity page fits it
-    too. An entity page that does not say whose it is has no party the walls
-    could hold it to, so it is offered only in the unattributed view, for the
-    parties of the zone chosen there. A page whose frontmatter cannot be read
-    plainly is placed nowhere."""
+    Returns {zone: {"read": [...]}}. A wall finding is never read here. A row
+    appears in the bucket of the zone its file is in; a file with no zone the
+    workspace knows is placed nowhere."""
     pa = page_action()
     out: Dict[str, dict] = {}
     if not nurture or not C:
         return out
     N, nctx = nurture
-    later = pa.read_later(ws)
-    index = lib.entity_names(ws) if callable(getattr(lib, "entity_names", None)) else []
-    by_rel = {e["rel"]: e for e in index}
     root = Path(ws).resolve()
     seen = set()
     sorted_items = []
@@ -266,159 +228,56 @@ def review_rows(ws: Path, nurture, C: Optional[dict], lib, ctx: dict, today: dt.
         if item.kind not in ("attribution", "judgment") or item.key in seen or item.path in walled_paths:
             continue
         seen.add(item.key)
-        put_off = later.get(item.key)
-        if put_off and put_off["path"] == item.path and put_off["until"] > today.isoformat():
-            continue
         path = root / item.path
         if not str(path).startswith(str(root) + "/") or path.is_symlink() or not path.is_file():
             continue
         rel = item.path
-        people = item.check == "people" and item.kind == "attribution" and rel.startswith("Wikis/Meetings/wiki/people/") \
-            and item.message.startswith((N.NO_ORGANISATION, N.NO_EMPLOYER, N.ORGANISATION_ASK))
-        ents = item.check == "meetings" and item.kind == "attribution" and rel.startswith("Wikis/Meetings/wiki/entities/") \
-            and item.message.startswith(N.NO_ENTITY_PARTY)
-        if ents:
-            e = next((x for x in index if x["rel"] == rel[len("Wikis/Meetings/wiki/entities/"):-3]), None)
-            if e is None or e["tagged"] or e["misread"] or e["parties"] or not plain_party_keys(path):
-                continue
-            row = {"key": item.key, "do": "answer", "path": rel, "title": clip(e["title"], LINE_MAX), "href": link(path)}
-            for key, view in views.items():
-                if key.startswith("unattributed|"):
-                    out.setdefault(key, {"entities": [], "people": [], "read": []})["entities"].append(row)
-            continue
-        tags = pa.page_party_tags(lib, ws, path)
-        if not tags:
-            continue                        # parties cannot be read plainly: walled
-        if people:
-            title = clip(path.stem.replace("-", " "), LINE_MAX)
-            try:
-                from_fm = lib.parse_frontmatter_text(path.read_text(encoding="utf-8")).get("title")
-                title = clip(from_fm or title, LINE_MAX)
-            except (OSError, UnicodeError):
-                continue
-            prop = None
-            m = re.fullmatch(r"\[\[wiki/entities/([^\]|#]+)\]\]", item.proposal or "")
-            if m and m.group(1) in by_rel:
-                prop = by_rel[m.group(1)]
-            for key, view in views.items():
-                if key.startswith("unattributed|") or not view.ok(tags):
-                    continue
-                row = {"key": item.key, "do": "organisation", "path": rel, "title": title, "href": link(path), "proposal": None}
-                if prop is not None:
-                    if not view.ok(prop["parties"]):
-                        continue
-                    row["proposal"] = {"rel": prop["rel"], "title": clip(prop["title"], LINE_MAX),
-                                       "line": first_line(prop["path"])}
-                out.setdefault(key, {"entities": [], "people": [], "read": []})["people"].append(row)
-            continue
-        # a judgment finding, or an attribution this page cannot answer: read-only, the path and the check's name
         if not (rel.startswith("Wikis/Meetings/wiki/") or rel.startswith("Zones/")):
             continue
+        zone = pa.page_zone(lib, ws, path)
         for key, view in views.items():
-            if key.startswith("unattributed|") or not view.ok(tags):
+            if not view.ok(zone):
                 continue
-            out.setdefault(key, {"entities": [], "people": [], "read": []})["read"].append(
+            out.setdefault(key, {"read": []})["read"].append(
                 {"key": item.key, "path": rel, "check": clip(item.check, 40), "line": clip(item.message, LINE_MAX), "href": link(path)})
     return out
 
 
-def pick_lists(ws: Path, lib, views: Dict[str, object]) -> Dict[str, dict]:
-    """What *Another page* may offer in each bucket: entity pages by title and
-    alias, and party tags plus none. Only pages on the near side of the bucket
-    (View.ok on the page's own parties); in the unattributed view the parties
-    of the zone chosen."""
-    out = {}
-    index = lib.entity_names(ws) if callable(getattr(lib, "entity_names", None)) else []
-    ctx = lib.load_context(ws)
-    for key, view in views.items():
-        if key.startswith("unattributed|"):
-            out[key] = {"entities": [], "parties": [{"tag": t, "name": str((ctx["parties"].get(t) or {}).get("party") or t)}
-                                                    for t in sorted(view.parties)] + [{"tag": "none", "name": "none"}]}
-            continue
-        ents = []
-        for e in index:
-            if e["misread"] or not e["tagged"] or not e["parties"] or not view.ok(e["parties"]) or not plain_party_keys(e["path"]):
-                continue
-            names = [n for n in e["names"] if n not in (e["title"], e["rel"])]
-            ents.append({"rel": e["rel"], "title": clip(e["title"], LINE_MAX), "aliases": [clip(n, LINE_MAX) for n in names[:6]]})
-        out[key] = {"entities": ents, "parties": []}
-    return out
+def group_views(zones: List[dict], zone: str = ALL) -> List[dict]:
+    """The groups the panel shows for a Zone choice, *All* included (#384).
 
-
-def group_views(zones: List[dict], zone: str = ALL, party: str = ALL) -> List[dict]:
-    """The groups the panel shows for a Zone and Party choice, *All* included (#384).
-
-    `zones` is build()'s `zones` list. Each group is one view, exactly what
-    0.56.0 shows for that zone and party: {"key": the bucket's key, "zone",
-    "party" (a tag, or ""), "kind": "zone" | "party" | "unattributed",
-    "heading": "Work · Acme Corp"}. A zone no wall divides is one group; a
-    zone whose parties a wall divides is one group per party, or only the
-    party chosen; the zone's unattributed entity pages come after its
-    groups. A zone shown alone keeps 0.56.0's rule: a party that is not one of
-    its own is read as its default. With a party chosen and All zones, only the
-    zone that owns the party is shown. Order is the zones' own, then the parties'.
-    Nothing here joins groups: it only lists them."""
-    out: List[dict] = []
-    for info in zones:
-        name = info.get("zone")
-        if zone != ALL and name != zone:
-            continue
-        scopes = info.get("scopes") or []
-        tags = [sc["tag"] for sc in scopes]
-        if not scopes:
-            if party != ALL and zone == ALL:
-                continue            # a party is chosen: a zone with no party menu does not own it
-            out.append({"key": "%s|" % name, "zone": name, "party": "", "kind": "zone", "heading": name})
-        else:
-            if party == ALL:
-                chosen = tags
-            elif party in tags:
-                chosen = [party]
-            elif zone == ALL:
-                continue
-            else:
-                chosen = [info.get("default") or tags[0]]
-            for sc in scopes:
-                if sc["tag"] in chosen:
-                    out.append({"key": "%s|%s" % (name, sc["tag"]), "zone": name, "party": sc["tag"], "kind": "party",
-                                "heading": "%s \u00b7 %s" % (name, sc.get("name") or sc["tag"])})
-        if info.get("unattributed"):
-            out.append({"key": "unattributed|%s" % name, "zone": name, "party": "", "kind": "unattributed",
-                        "heading": "%s \u00b7 Unattributed" % name})
-    return out
+    `zones` is build()'s `zones` list. Each group is one zone: {"key": the
+    zone's name, "zone", "kind": "zone", "heading": the zone's name}. Order is
+    the zones' own. Nothing here joins groups: it only lists them."""
+    return [{"key": z["zone"], "zone": z["zone"], "kind": "zone", "heading": z["zone"]}
+            for z in zones if zone == ALL or z["zone"] == zone]
 
 
 def can_sum(views: List[dict]) -> bool:
-    """Whether one number may stand for these groups. Only when at most one
-    holds parties: two groups may have a wall between them, and the page
-    cannot show that they do not, so it fails closed and counts them apart.
-    The unattributed group holds entity pages that name no party and the
-    Knowledge group has none, so neither has a wall to cross."""
-    return sum(1 for v in views if v["kind"] != "unattributed") <= 1
+    """Whether one number may stand for these groups. Only for one: two zones
+    may have a wall between them, and the page cannot show that they do not,
+    so it fails closed and counts them apart."""
+    return len(views) <= 1
 
 
 def selections(zones: List[dict]) -> Dict[str, dict]:
-    """group_views for every Zone and Party choice the menus offer, keyed
-    "zone|party" with All as *: {"views": [...], "sum": can_sum(views)}. The
-    page looks a choice up here and does not work groups out itself."""
-    zone_choices = [ALL] + [z["zone"] for z in zones]
-    tags = [sc["tag"] for z in zones for sc in z.get("scopes") or []]
+    """group_views for every Zone choice the menu offers, with All as *:
+    {"views": [...], "sum": can_sum(views)}. The page looks a choice up here
+    and does not work groups out itself."""
     out: Dict[str, dict] = {}
-    for zc in zone_choices:
-        own = tags if zc == ALL else [sc["tag"] for z in zones if z["zone"] == zc for sc in z.get("scopes") or []]
-        for pc in [ALL] + own + ([] if zc == ALL else [""]):
-            views = group_views(zones, zc, pc)
-            out["%s|%s" % (zc, pc)] = {"views": views, "sum": can_sum(views)}
+    for zc in [ALL] + [z["zone"] for z in zones]:
+        views = group_views(zones, zc)
+        out[zc] = {"views": views, "sum": can_sum(views)}
     return out
 
 
 def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) -> Optional[dict]:
     """Everything the Questions panel draws, or None where the workspace has
-    nothing to build it from (no garrick_lib that reads the walls, or no
-    zone with a party)."""
+    nothing to build it from (no garrick_lib that reads the zones, or no
+    zone)."""
     pa = page_action()
     lib = pa.prefs().lib(ws)
-    need = ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "blocked", "decide", "entity_names")
+    need = ("parse_frontmatter_text", "frontmatter_form_problem", "load_context", "zone_of")
     if lib is None or not all(callable(getattr(lib, n, None)) for n in need):
         return None
     try:
@@ -430,30 +289,13 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
     views: Dict[str, object] = {}
     zone_info = []
     for zone in zones:
-        parties = sorted(t for t, p in (ctx.get("parties") or {}).items() if str(p.get("zone") or "").strip() == zone)
-        if not parties:
-            continue
-        info = {"zone": zone, "scopes": [], "default": "", "unattributed": False}
         try:
-            views["%s|" % zone] = pa.View(ws, lib, zone, None)
-        except pa.Refused:
-            # a wall divides this zone's own parties: one bucket for each party, and no view of all of them
-            for tag in parties:
-                try:
-                    views["%s|%s" % (zone, tag)] = pa.View(ws, lib, zone, tag)
-                    info["scopes"].append({"tag": tag, "name": str((ctx["parties"].get(tag) or {}).get("party") or tag)})
-                except pa.Refused:
-                    pass
-            info["default"] = info["scopes"][0]["tag"] if info["scopes"] else ""
-        try:
-            views["unattributed|%s" % zone] = pa.View(ws, lib, pa.UNATTRIBUTED, zone)
-            info["unattributed"] = True
+            views[zone] = pa.View(ws, lib, zone)
+            zone_info.append({"zone": zone})
         except pa.Refused:
             pass
-        if any(k.startswith(zone + "|") for k in views):
-            zone_info.append(info)
-    buckets: Dict[str, dict] = {k: {"questions": [], "answered": 0, "review": {"entities": [], "people": [], "read": []},
-                                    "picks": {"entities": [], "parties": []}, "decisions": [], "waiting": 0} for k in views}
+    buckets: Dict[str, dict] = {k: {"questions": [], "answered": 0, "review": {"read": []}, "decisions": [], "waiting": 0}
+                                for k in views}
     knowledge, answered_k = [], 0
     # A question whose own file carries a walls-family finding is not listed: a save would be refused.
     wall_files = {re.sub(r":\d+$", "", str(f.get("path"))) for f in (C or {}).get("findings", [])
@@ -481,7 +323,7 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
                     waiting_k += 1
                 else:
                     for key, view in views.items():
-                        if not key.startswith("unattributed|") and q["zone"] == view.zone and view.ok(q["parties"]):
+                        if view.ok(q["zone"]):
                             buckets[key]["waiting"] += 1
                 continue
             if wiki == "Knowledge":
@@ -491,13 +333,13 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
                     knowledge.append(q)
                 continue
             for key, view in views.items():
-                if key.startswith("unattributed|") or q["zone"] != view.zone or not view.ok(q["parties"]):
+                if not view.ok(q["zone"]):
                     continue
                 if q["status"] == "answered":
                     buckets[key]["answered"] += 1
                 elif q["shown"]:
                     buckets[key]["questions"].append(q)
-    # A decision page is placed as a question is: by its zone and parties, through the view's one test.
+    # A decision page is placed as a question is: by its zone, through the view's one test.
     # Only a valid decision with a revisit flag is listed (the assistant flags, the user settles).
     for rel in decision_files(ws):
         if "Wikis/Meetings/%s" % rel in wall_files:
@@ -506,40 +348,102 @@ def build(ws: Path, C: Optional[dict], nurture, today: dt.date, link: Callable) 
         if d is None or d["status"] != "valid" or not d["revisit"]:
             continue
         for key, view in views.items():
-            if not key.startswith("unattributed|") and d["zone"] == view.zone and view.ok(d["parties"]):
+            if view.ok(d["zone"]):
                 buckets[key]["decisions"].append(d)
     for key, rows in review_rows(ws, nurture, C, lib, ctx, today, link, views).items():
         buckets[key]["review"] = rows
-    for key, picks in pick_lists(ws, lib, views).items():
-        buckets[key]["picks"] = picks
-    # the menu's number: the open questions of each zone's default bucket. A Knowledge question has no zone, so it
-    # is counted once, apart (menu_knowledge), and in no zone's number.
+    # the menu's number: the open questions of each zone. A Knowledge question has no zone, so it is counted
+    # once, apart (menu_knowledge), and in no zone's number.
     menu, per_group, per_find = {}, {}, {}
     for info in zone_info:
-        key = "%s|%s" % (info["zone"], info["default"])
-        if key in buckets:
-            menu[info["zone"]] = len(buckets[key]["questions"])
+        key = info["zone"]
+        menu[key] = len(buckets[key]["questions"])
         # each group's own open count, for the menu to name apart (#384): never added up, and Knowledge apart
-        per_group[info["zone"]] = [{"h": v["heading"], "n": len(buckets[v["key"]]["questions"])}
-                                   for v in group_views([info]) if v["kind"] != "unattributed"]
-        per_find[info["zone"]] = {v["heading"]: findings_in(buckets[v["key"]])
-                                  for v in group_views([info]) if v["kind"] != "unattributed"}
+        per_group[key] = [{"h": key, "n": len(buckets[key]["questions"])}]
+        per_find[key] = {key: findings_in(buckets[key])}
     return {"today": today.isoformat(), "root": str(ws), "zones": zone_info, "select": selections(zone_info), "buckets": buckets, "knowledge": knowledge,
             "knowledge_answered": answered_k, "knowledge_waiting": waiting_k, "menu": menu, "menu_groups": per_group, "menu_findings": per_find,
             "menu_knowledge": len(knowledge), "built": int(time.time() * 1000)}
 
 
 def findings_in(bucket: dict) -> int:
-    """The Nurture findings a group holds to answer or open: the people and
-    the judgment rows of its own, and the entity pages the unattributed view of
-    its zone offers, which the zone's groups do not carry, so are not here."""
-    rev = bucket.get("review") or {}
-    return len(rev.get("people") or []) + len(rev.get("read") or [])
+    """The Nurture findings a group holds to open."""
+    return len((bucket.get("review") or {}).get("read") or [])
+
+
+LEDGER = ("System", "walls-allowed.json")
+LEDGER_MAX = 500
+
+
+def read_allowed(ws: Path, link: Callable) -> List[dict]:
+    """What the user allowed, from System/walls-allowed.json as committed at HEAD (version 1: path, id, blob, rule, date, by). A missing or
+    unreadable ledger, or an entry that does not read, is no allowance: nothing is shown for it. The token a finding
+    matched is not in the ledger and not here. `state` says whether the file is still the one that was allowed (its
+    git blob id), since an entry matches only on path, id and blob."""
+    # The check honours only the ledger as committed at the workspace root's HEAD, so that is the copy listed: an
+    # entry still only on disk allows nothing. No repository, or no committed ledger, is no allowance.
+    try:
+        done = subprocess.run(["git", "-C", str(ws), "show", "HEAD:" + "/".join(LEDGER)], capture_output=True, timeout=20,
+                              stdin=subprocess.DEVNULL)
+        if done.returncode != 0:
+            return []
+        data = json.loads(done.stdout.decode("utf-8"))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return []
+    rows = data.get("allowed") if isinstance(data, dict) and data.get("version") == 1 else None
+    out: List[dict] = []
+    for e in rows[:LEDGER_MAX] if isinstance(rows, list) else []:
+        if not isinstance(e, dict) or not all(isinstance(e.get(k), str) and e.get(k) for k in ("path", "id", "blob", "rule", "date", "by")):
+            continue
+        rel = Path(e["path"])
+        if rel.is_absolute() or ".." in rel.parts or "\\" in e["path"]:
+            continue
+        full = Path(ws) / rel
+        try:
+            raw = full.read_bytes() if full.is_file() else None
+        except OSError:
+            raw = None
+        state = "gone" if raw is None else "same" if hashlib.sha1(b"blob %d\0" % len(raw) + raw).hexdigest() == e["blob"] else "changed"
+        out.append({"path": e["path"], "id": e["id"], "rule": e["rule"], "date": e["date"], "by": e["by"], "state": state,
+                    "href": _href(link, full) if state != "gone" else ""})
+    return out
+
+
+def _e(text) -> str:
+    return html.escape(str(text), quote=True)
+
+
+def _href(link: Callable, path: Path) -> str:
+    return link.attrs(path) if hasattr(link, "attrs") else 'href="%s"' % html.escape(str(link(path)), quote=True)
+
+
+def allowed_body(data: dict) -> str:
+    """Allowed by you: each allowance with its file, rule, date and Remove, or nothing where there is none."""
+    rows = data.get("allowed") or []
+    if not rows:
+        return ""
+    state = {"same": "", "changed": "The file has changed since, so this no longer allows anything.", "gone": "The file is gone."}
+    items = []
+    for r in rows:
+        name = '<a %s>%s</a>' % (r["href"], _e(r["path"])) if r["href"] else '<span>%s</span>' % _e(r["path"])
+        items.append('<li class="cxa-row" data-id="%s" data-path="%s"><div>%s</div><div class="muted">%s · allowed %s by %s%s</div>'
+                     '<button type="button" class="act" data-unallow="1">Remove</button></li>' % (
+                         _e(r["id"]), _e(r["path"]), name, _e(r["rule"]), _e(r["date"]), _e(r["by"]),
+                         (" · " + state[r["state"]]) if state[r["state"]] else ""))
+    return ('<section class="cxa" id="cxa"><h3>Allowed by you</h3><p class="muted">A finding you chose to let through, once, for the file as it was. '
+            'Editing the file ends the allowance. Remove puts the refusal back.</p><ul>%s</ul></section>' % "".join(items))
+
+
+def tab(findings: str, allowed: Optional[List[dict]]) -> str:
+    """The Context tab's inside: what the tab showed (the questions panel and the cards under it, or nothing), and
+    under it Allowed by you. One view: there is no switch."""
+    body = findings + allowed_body({"allowed": allowed or []})
+    return '<div class="cx" id="cx">%s</div>' % body if body else ""
 
 
 def counts_of(data: dict) -> dict:
     """The panel's menu rows. "g" is each zone's groups with the open count of
-    each, "k" the open Knowledge questions, which carry no party: the app names
+    each, "k" the open Knowledge questions, which carry no zone: the app names
     them apart and adds none of them (#384). "z" is the count of each zone's
     default group, with no Knowledge in it, for a menu not yet updated;
     it is not added up either."""
@@ -549,8 +453,7 @@ def counts_of(data: dict) -> dict:
 def tab_button(dot: str = "") -> str:
     """The tab. Its number is the open count of the zone shown, set by the
     panel's own script: a number made here would add up zones. `dot` is the
-    title of a red dot, for a party with no flag or a note naming two parties
-    with one name (the Parties view)."""
+    title of a red dot."""
     mark = '<span class="dot critical" title="%s"></span>' % html.escape(dot, quote=True) if dot else ""
     return '<button type="button" role="tab" data-tab="questions">Context<span class="n" id="qp-tab-n"></span>%s</button>' % mark
 
@@ -568,7 +471,6 @@ def body(data: dict) -> str:
             '<button type="button" data-source="nurture" aria-pressed="false">Nurture findings</button></div></div>'
             '<label class="qp-wikiq-only">Wiki <select id="qp-wiki"><option value="">Both</option>'
             '<option value="Meetings">Meetings</option><option value="Knowledge">Knowledge</option></select></label>'
-            '<label id="qp-party-l">Party <select id="qp-party"></select></label>'
             '<label class="qp-wikiq-only">Age <select id="qp-age"><option value="any">Any</option>'
             '<option value="week">A week or more</option><option value="month">A month or more</option></select></label>'
             '</div>'
@@ -609,9 +511,6 @@ CSS = r"""
 .qp-row.refused{background:color-mix(in srgb,var(--critical) 8%,transparent)}
 #qp-open .qp-say{color:var(--critical);margin:6px 0 0}
 .qp-row .qp-first{color:var(--muted);display:block;margin-top:2px}.qp-row .qp-say{grid-column:1/-1;color:var(--critical)}
-.qp-row .qp-choice{display:flex;flex-wrap:wrap;gap:4px 10px}.qp-row .qp-choice label{display:flex;align-items:center;gap:4px;white-space:nowrap}
-.qp-row .qp-extra{grid-column:2/-1;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.qp-row .qp-extra input[type=text],.qp-row .qp-extra input[list]{font:inherit;font-size:13px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:4px 8px;min-width:200px}
 .qp-save{position:sticky;bottom:0;display:flex;gap:10px;align-items:center;padding:10px 0;background:var(--bg)}
 body.nohost .qp-hostonly{display:none}body:not(.nohost) .qp-webonly{display:none}
 """
@@ -629,7 +528,7 @@ function head(box,v,tail){var c=v.kind==='knowledge'?'':((D.zcls||{})[v.zone]||'
 if(!c||v.heading.indexOf(v.zone)!==0){box.appendChild(document.createTextNode(v.heading+(tail||'')));return box}
 box.appendChild(el('span',c.trim(),v.zone));box.appendChild(document.createTextNode(v.heading.slice(v.zone.length)+(tail||'')));return box}
 function link(name,href){var a=el('a','',name);a.setAttribute('href',href);return a}
-var S={zone:'',party:'',source:'wiki',wiki:'',age:'any',cursor:'',gone:{},typed:{}};
+var S={zone:'',source:'wiki',wiki:'',age:'any',cursor:'',gone:{},typed:{}};
 try{Object.assign(S,JSON.parse(ss(SK)||'{}'))}catch(e){}
 function keep(){ss(SK,JSON.stringify(S))}
 /* S.gone only bridges the moment between a save and the rebuild after it: each entry holds the build it was saved against (the build's own time, never this browser's clock, so a clock apart from the server's cannot misjudge it), and an entry from an older build than this page's is dropped, so the data decides what shows */
@@ -637,18 +536,11 @@ function stamp(){return D.built||1}
 (function(){var b=D.built||0,ch=false;Object.keys(S.gone).forEach(function(k){if(!(S.gone[k]>=b)){delete S.gone[k];ch=true}});if(ch)keep()})();
 /* no zone chosen yet: the first zone, by name, with an open question in its default view; none has one, the first zone */
 var zones=D.zones||[];if(S.zone!=='*'&&!zones.some(function(z){return z.zone===S.zone})){var fz=zones.filter(function(z){return((D.menu||{})[z.zone]||0)>0})[0]||zones[0];S.zone=fz?fz.zone:''}
-function zinfo(){return zones.filter(function(z){return z.zone===S.zone})[0]||{scopes:[]}}
-function scopes(){if(S.zone!=='*')return zinfo().scopes;var o=[];zones.forEach(function(z){z.scopes.forEach(function(s){o.push(s)})});return o}
-function scoped(){return scopes().length>0}
-/* the party shown: * is All; a zone shown alone with a party that is not its own reads as its default */
-function pkey(){var l=scopes();if(!l.length)return S.zone==='*'?'*':'';if(S.party==='*')return'*';
-if(l.some(function(s){return s.tag===S.party}))return S.party;return S.zone==='*'?'*':zinfo().default}
 /* the groups to show come from the page's own table (group_views in Python), never worked out here */
-function sel(){return(D.select||{})[S.zone+'|'+pkey()]||{views:[],sum:false}}
-var EMPTY={questions:[],answered:0,decisions:[],waiting:0,review:{entities:[],people:[],read:[]},picks:{entities:[],parties:[]}};
+function sel(){return(D.select||{})[S.zone]||{views:[],sum:false}}
+var EMPTY={questions:[],answered:0,decisions:[],waiting:0,review:{read:[]}};
 function bucketOf(k){return(D.buckets||{})[k]||EMPTY}
-function qviews(){return sel().views.filter(function(v){return v.kind!=='unattributed'})}
-function uviews(){return sel().views.filter(function(v){return v.kind==='unattributed'})}
+function qviews(){return sel().views}
 function key(q){return q.wiki+'/'+q.file}
 /* the day after the build's today, in local time: the page's own today is the build's, a day with no clock in it */
 function tomorrow(){var p=String(D.today||'').split('-').map(Number);if(p.length<3||p.some(isNaN))return'';var d=new Date(Date.UTC(p[0],p[1]-1,p[2]+1));return d.toISOString().slice(0,10)}
@@ -666,8 +558,7 @@ function open(qs){return qs.filter(function(q){return !q.verdict}).length}
 /* A number stands for several groups only where the table says one may (sum): otherwise each group counts alone. */
 function wikiN(){if(!sel().sum)return null;var n=0;groups().forEach(function(g){n+=open(g.qs)});return n}
 function nurtureN(){if(!sel().sum)return null;var n=0;
-uviews().forEach(function(v){n+=bucketOf(v.key).review.entities.filter(function(r){return !S.gone['r:'+r.key]}).length});
-qviews().forEach(function(v){n+=bucketOf(v.key).review.people.filter(function(r){return !S.gone['r:'+r.key]}).length});return n}
+qviews().forEach(function(v){n+=bucketOf(v.key).review.read.length});return n}
 function counts(){var c=$('qp-counts'),gs=groups();c.textContent='';
 function chips(box,qs,ans,decs,wait){function chip(n,t){var s=el('span','chip');s.appendChild(el('b','',String(n)));s.appendChild(document.createTextNode(t));box.appendChild(s)}
 chip(open(qs),'open');chip(qs.filter(function(q){return q.due}).length,'due today');chip(qs.filter(function(q){return q.verdict}).length,'proposed verdicts');chip(decs,'decisions to review');chip(ans,'answered, not worked in');if(wait)chip(wait,'waiting for the next check')}
@@ -678,7 +569,6 @@ function answeredText(){var gs=groups().filter(function(g){return g.answered});i
 return gs.map(function(g){return g.v.heading+' '+g.answered}).join('; ')+' answered, waiting to be worked in.'}
 function fill(sel,opts,cur){sel.textContent='';opts.forEach(function(o){var e=el('option','',o[1]);e.value=o[0];if(o[0]===cur)e.selected=true;sel.appendChild(e)})}
 function bar(){fill($('qp-zone'),[['*','All']].concat(zones.map(function(z){return[z.zone,z.zone]})),S.zone);
-var sc=scopes();$('qp-party-l').hidden=!sc.length;if(sc.length)fill($('qp-party'),[['*','All']].concat(sc.map(function(s){return[s.tag,s.name]})),pkey());
 $('qp-wiki').value=S.wiki;$('qp-age').value=S.age;
 [['wiki','Wiki questions',wikiN()],['nurture','Nurture findings',nurtureN()]].forEach(function(o){var b=root.querySelector('#qp-source [data-source="'+o[0]+'"]');
 b.textContent=o[1]+(o[2]===null?'':' '+o[2]);b.setAttribute('aria-pressed',S.source===o[0]?'true':'false')});
@@ -750,37 +640,6 @@ function work(){var box=$('qp-work');box.textContent='';if(!groups().some(functi
 var b=el('button','act primary','Work them in');b.type='button';b.setAttribute('data-request','work through the open questions');
 b.setAttribute('data-folder',D.root||'');b.title='Hand “work through the open questions” to your assistant';box.appendChild(b);
 box.appendChild(el('span','hint',answeredText()))}
-/* ---- the review page for Nurture's findings: one row each, the proposal chosen, one Save ---- */
-var rows=[];
-function mk(tag,type,name,value,on){var i=el(tag);i.type=type;if(name)i.name=name;i.value=value;i.checked=!!on;return i}
-function opt(parent,v,t,on){var l=el('label'),i=mk('input','radio',parent.dataset.name,v,on);l.appendChild(i);l.appendChild(document.createTextNode(t));parent.appendChild(l);return i}
-function rowFor(r,bk,kind){var row=el('div','qp-row'),left=el('div'),prop=r.proposal,hasProp=kind==='organisation'&&!!prop;
-left.appendChild(r.href?link(r.title,r.href):el('span','',r.title));row.appendChild(left);
-var mid=el('div');
-if(kind==='organisation'){if(prop){mid.appendChild(el('span','','Works at '));mid.appendChild(el('b','',prop.title));if(prop.line)mid.appendChild(el('span','qp-first',prop.line))}else mid.appendChild(el('span','','No page is proposed'))}
-else mid.appendChild(el('span','','Whose is it: a party, or none?'));
-row.appendChild(mid);
-var ch=el('div','qp-choice');ch.dataset.name='c-'+r.key;
-if(hasProp)opt(ch,'yes','Yes',true);opt(ch,'no','No',false);opt(ch,'another','Another page',false);opt(ch,'later','Later',false);
-var ed=el('label'),edc=mk('input','checkbox','', 'edit',false);ed.appendChild(edc);ed.appendChild(document.createTextNode('Edit'));if(kind==='organisation')ch.appendChild(ed);row.appendChild(ch);
-var extra=el('div','qp-extra');row.appendChild(extra);
-var pick=el('input');pick.type='text';pick.setAttribute('aria-label','Another page');pick.autocomplete='off';pick.placeholder=kind==='organisation'?'An entity page':'A party, or none';
-var dl=el('datalist');dl.id='dl-'+r.key;pick.setAttribute('list',dl.id);
-((kind==='organisation'?(bk.picks.entities||[]).map(function(e){return[e.rel,e.title+(e.aliases.length?' ('+e.aliases.join(', ')+')':'')]}):(bk.picks.parties||[]).map(function(p){return[p.tag,p.name]}))).forEach(function(o){var op=el('option');op.value=o[0];op.label=o[1];dl.appendChild(op)});
-var oldv=mk('input','text','','',false),newv=mk('input','text','','',false),until=mk('input','date','','',false);
-oldv.setAttribute('aria-label','The value as written');oldv.placeholder='The value as written (three characters or more)';newv.setAttribute('aria-label','What it should be');newv.placeholder='What it should be';until.setAttribute('aria-label','Come back on');
-[pick,dl,oldv,newv,until].forEach(function(e){extra.appendChild(e)});
-function choice(){var c=ch.querySelector('input[type=radio]:checked');return c?c.value:'none'}
-function paint(){var c=choice();pick.hidden=c!=='another';until.hidden=c!=='later';oldv.hidden=newv.hidden=!edc.checked;extra.hidden=pick.hidden&&until.hidden&&oldv.hidden;if(out.change)out.change()}
-ch.addEventListener('change',paint);
-var out={key:r.key,el:row,
-action:function(){var c=choice(),e=edc.checked&&oldv.value&&newv.value;if(c==='yes'||c==='another')return'save';if(c==='later')return'later';
-if(c==='no')return'no';return e?'save':'none'},
-value:function(){var c=choice(),v={do:kind,key:r.key,path:r.path};
-if(c==='yes'||c==='another'||c==='later'||c==='no'){v.choice=c;if(c==='another')v.pick=pick.value.trim();if(c==='later')v.until=until.value}
-else{v.do='correct';v.choice='yes'}
-if(edc.checked&&oldv.value&&newv.value)v.edit={old:oldv.value,new:newv.value};return v}};
-paint();return out}
 /* Open in Claude, and in Codex where installed (#433): one finding handed to a session, with its path, the check and its line. In a browser, or with neither installed, the request is copied. */
 var OPENS=[['claude','Open in Claude'],['codex','Open in Codex']];
 function handOver(r){var box=el('div','gacts'),say_='Look at this finding with me: '+r.path+', check '+r.check+(r.line?', '+r.line:'')+'. Open the file, say what is wrong and propose the edit; change nothing until I say yes.',
@@ -789,52 +648,44 @@ var ls=host?OPENS.filter(function(o){return on.indexOf(o[0])>=0}):[];
 ls.forEach(function(o){var b=el('button','act',o[1]);b.type='button';b.setAttribute('data-launch',o[0]);b.setAttribute('data-folder',D.root||'');b.setAttribute('data-phrase',say_);b.setAttribute('data-say','Opening '+o[1].slice(8)+' on this finding…');box.appendChild(b)});
 if(!ls.length){var c=el('button','act','Copy request');c.type='button';c.setAttribute('data-request',say_);c.setAttribute('data-folder',D.root||'');box.appendChild(c)}
 return box}
-function review(){var box=$('qp-nurture');box.textContent='';rows=[];var secs=[],zs=[],labels=[];
-sel().views.forEach(function(v){if(zs.indexOf(v.zone)<0)zs.push(v.zone)});
-zs.forEach(function(z){var vs=sel().views.filter(function(v){return v.zone===z});
-vs.filter(function(v){return v.kind==='unattributed'}).concat(vs.filter(function(v){return v.kind!=='unattributed'})).forEach(function(v){
-var b=bucketOf(v.key),un=v.kind==='unattributed',items=(un?b.review.entities:b.review.people).filter(function(r){return !S.gone['r:'+r.key]});
-secs.push({v:v,b:b,un:un,items:items,rows:[]})})});
-var many=sel().views.length>1&&!sel().sum;
-function nOf(rs){return rs.filter(function(r){return r.action()==='save'}).length}
-function label(btn,rs){btn.textContent='Save '+nOf(rs)+' answer'+(nOf(rs)===1?'':'s')}
-/* A save is one request per group, however many groups are on the screen: the page sends each group with the view its rows were shown in. */
-function groupOf(sec){var rs=sec.rows.filter(function(r){return r.action()!=='none'}),g={zone:sec.un?'unattributed':sec.v.zone,rows:rs.map(function(r){return r.value()})};
-var sc=sec.un?sec.v.zone:sec.v.party;if(sc)g.scope=sc;return g}
-function send(list){var gs=list.map(groupOf).filter(function(g){return g.rows.length});if(!gs.length){say('Nothing to save.');return}
-if(gs.length===1)act({verb:'nurture-save',zone:gs[0].zone,scope:gs[0].scope,rows:gs[0].rows},'Saving…');
-else act({verb:'nurture-save-all',groups:gs},'Saving…')}
-secs.forEach(function(sec){if(!sec.items.length)return;
-var d=el('div','qp-group');d.appendChild(el('h3','',sec.v.heading+': '+(sec.un?'whose entity pages are':'where people work')+', '+sec.items.length));
-sec.items.forEach(function(r){var row=rowFor(r,sec.b,sec.un?'answer':'organisation');sec.rows.push(row);rows.push(row);d.appendChild(row.el)});
-if(many){var sb=el('button','act primary qp-hostonly');sb.type='button';sec.rows.forEach(function(r){r.change=function(){labels.forEach(function(f){f()})}});
-var f=function(){label(sb,sec.rows)};labels.push(f);f();sb.onclick=function(){send([sec])};var ft=el('div','qp-save');ft.appendChild(sb);d.appendChild(ft)}
-box.appendChild(d)});
-qviews().forEach(function(v){var rd=bucketOf(v.key).review.read;if(!rd.length)return;
-var d=el('details','qp-group');d.appendChild(el('summary','',(sel().views.length>1?v.heading+': ':'')+'Judgment and other findings, to open ('+rd.length+')'));
+function review(){var box=$('qp-nurture');box.textContent='';var any=false;
+qviews().forEach(function(v){var rd=bucketOf(v.key).review.read;if(!rd.length)return;any=true;
+var d=el('details','qp-group');d.appendChild(el('summary','',(sel().views.length>1?v.heading+': ':'')+'Findings to open ('+rd.length+')'));
 rd.forEach(function(r){var p=el('div','qp-row');p.appendChild(link(r.path,r.href));p.appendChild(el('div','',r.check+(r.line?': '+r.line:'')));p.appendChild(handOver(r));d.appendChild(p)});box.appendChild(d)});
-if(!rows.length){box.appendChild(el('div','qp-empty','No findings to answer here.'));return}
-var foot=el('div','qp-save'),sv=el('button','act primary qp-hostonly');sv.type='button';
-if(many){sv.textContent='Save all answers'}
-else{rows.forEach(function(r){r.change=function(){label(sv,rows)}});label(sv,rows)}
-sv.onclick=function(){send(secs)};
-foot.appendChild(sv);
-var web=el('button','act qp-webonly','Nurture in the chat');web.type='button';web.setAttribute('data-request','nurture the context');web.setAttribute('data-folder',D.root||'');
+if(!any){box.appendChild(el('div','qp-empty','No findings to open here.'));return}
+var foot=el('div','qp-save'),web=el('button','act qp-webonly','Nurture in the chat');web.type='button';web.setAttribute('data-request','nurture the context');web.setAttribute('data-folder',D.root||'');
 foot.appendChild(web);box.appendChild(foot)}
 var prevActed=window.GarrickActed;window.GarrickActed=function(q,res){
-if(q&&(q.verb==='nurture-save'||q.verb==='nurture-save-all')){(res&&res.rows||[]).forEach(function(x){var r=rows.filter(function(y){return y.key===x.key})[0];if(!r)return;
-if(x.ok){S.gone['r:'+x.key]=stamp()}else{r.el.classList.add('refused');var m=r.el.querySelector('.qp-say');if(!m){m=el('div','qp-say');r.el.appendChild(m)}m.textContent=x.say}});
-keep();if(res&&res.ok){var m=rows.filter(function(r){return r.el.classList.contains('refused')});if(!m.length)setTimeout(review,0)}}
 if(q&&/^question-/.test(q.verb)&&q.wiki&&q.file&&res&&!res.ok){var qk=q.wiki+'/'+q.file;delete S.gone[qk];REFUSED[qk]=res.say||'That did not work.';
 var at=shown().flat.filter(function(e){return key(e.q)===qk})[0];if(at)S.cursor=ekey(at);keep();counts();list()}
 if(q&&q.verb==='question-close'&&line.length)drain();
 if(prevActed)return prevActed(q,res)};
 function all(){bar();counts();list();vlist();dlist();work();review();keep()}
-$('qp-zone').onchange=function(){S.zone=this.value;S.party=this.value==='*'?'*':'';S.cursor='';all()};
-$('qp-party').onchange=function(){S.party=this.value;S.cursor='';all()};
+$('qp-zone').onchange=function(){S.zone=this.value;S.cursor='';all()};
 root.querySelectorAll('#qp-source button').forEach(function(b){b.onclick=function(){S.source=b.getAttribute('data-source');all()}});
 $('qp-wiki').onchange=function(){S.wiki=this.value;S.cursor='';all()};
 $('qp-age').onchange=function(){S.age=this.value;S.cursor='';all()};
 window.GarrickQuestions={open:function(){if(window.StatusTab)StatusTab('questions');window.scrollTo(0,0);var t=root.querySelector('textarea');if(t)t.focus()}};
 all()})();
+"""
+
+
+CX_CSS = r"""
+.cxa{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:10px 14px;margin:14px 0 0}.cxa h3{margin:0 0 4px;font-size:15px}
+.cxa ul{list-style:none;margin:8px 0 0;padding:0}.cxa-row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.cxa-row .muted{grid-column:1}.cxa-row .act{grid-column:2;grid-row:1/3;align-self:center}
+"""
+
+CX_JS = r"""
+(function(){var cx=document.getElementById('cx');if(!cx)return;
+var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+function say(s){if(window.GarrickSay)GarrickSay(s)}
+/* Allowed by you: Remove puts the refusal back, through the page's walls-unallow */
+cx.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-unallow]');if(!b)return;var r=b.closest('.cxa-row');if(!r)return;
+var q={verb:'walls-unallow',path:r.getAttribute('data-path'),id:r.getAttribute('data-id')};
+if(!host){say('A browser cannot change anything. Remove it in the Garrick app.');return}
+if(!(window.GarrickAct&&GarrickAct(q,'Removing…')))host.postMessage({act:q});say('Removing…')});
+var prev=window.GarrickActed;window.GarrickActed=function(q,res){
+if(q&&q.verb==='walls-unallow'&&res&&res.ok){[].forEach.call(cx.querySelectorAll('.cxa-row'),function(r){if(r.getAttribute('data-path')===q.path&&r.getAttribute('data-id')===q.id)r.remove()})}
+if(prev)return prev(q,res)}})();
 """

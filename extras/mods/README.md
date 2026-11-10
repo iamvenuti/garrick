@@ -30,6 +30,8 @@ Above the prompt, two lines beside the mark:
 
 When the band is older than the workspace, a third, dim line says so: "This band is from <commit>; the workspace runs <commit>. Run `python3 update.py` from the newer Garrick, or see Updating." The band reads the `VERSION` file of the Garrick it runs from (two folders above the plugin) and the workspace's `System/garrick-version.json` when the session starts and after every turn, and compares their commits. It says nothing when they match, when a file does not read or names no commit (a clone's `VERSION` names none), or when the band's date is later than the workspace's. `python3 System/tools/check.py --version` and the status page report the same mismatch.
 
+The update keeps the copy current when it can. When the band runs from a release download that sits outside the workspace (its `VERSION` names a commit and the folder is not a git clone), `python3 update.py --apply` lists a step for it: it downloads the release the workspace now runs from GitHub, checks the old copy against the release it names, moves the old copy beside itself with its commit in the name (it never deletes it), and puts the new one in its place, so the path in your settings stays the same. A copy whose files differ from its release, and a clone, are left as they are, and the report prints the command that updates them: `git -C <folder> pull`, or a download and a new path in `~/.claude/settings.json`.
+
 The band does not repeat what the session already shows: no Resume here paragraph, and no echo of your last prompt or the step the assistant is on.
 
 Outside any project it shows the mark and where you are, such as `System` or `Wikis › Meetings`. It reads the note again after every turn, so a wrap shows up straight away.

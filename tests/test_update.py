@@ -1635,6 +1635,113 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertNotIn("zone guard", self.report_of(self.plan()))
 
 
+class TestBandKeptOutside(ExtrasCase):
+    """The Garrick band runs from a Garrick kept outside the workspace. Two fake
+    releases, built here as ZIP archives, stand for the downloads; the settings,
+    the home and the network are the test's own."""
+
+    OLD, NEW = ("0.60.0", "aaaa111"), ("0.63.1", "bbbb222")
+
+    def release_tree(self, folder, release, commit, band="the band"):
+        for name, text in (("install.py", "# installer\n"), ("update.py", "# updater\n"),
+                           ("VERSION", "# Which Garrick\ncommit: %s\ndate: 2026-11-01\n" % commit),
+                           ("CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n## [%s] - 2026-11-01\n\n- A change.\n" % release),
+                           ("extras/mods/garrick-band/hooks/register.tsx", "// %s %s\n" % (band, release))):
+            f = Path(folder) / name
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(text, encoding="utf-8")
+        return Path(folder)
+
+    def archive(self, release, commit):
+        import io
+        import zipfile
+        src = self.release_tree(self.base / ("zip-" + release) / "garrick", release, commit)
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            for f in sorted(src.rglob("*")):
+                if f.is_file():
+                    z.write(f, "garrick/" + str(f.relative_to(src)))
+        return out.getvalue()
+
+    def setUp(self):
+        super().setUp()
+        self.ours = self.release_tree(self.base / "ours", *self.NEW)        # the Garrick that is updating
+        (self.ours / "VERSION").write_text("commit: %s\n" % self.NEW[1])
+        self.kept = self.release_tree(self.base / "kept" / "garrick-release", *self.OLD)
+        (self.base / "home" / ".claude").mkdir(parents=True, exist_ok=True)
+        self.point(self.kept)
+        update.install.lib()
+        import release
+        self.release = release
+        self.fetched = []
+
+        def fetch(url, root, timeout, accept="", limit=0, say=None):
+            self.fetched.append(url)
+            tag = url.rsplit("/", 1)[1][:-len(".zip")]
+            return self.archive(*{"v" + self.OLD[0]: self.OLD, "v" + self.NEW[0]: self.NEW}[tag])
+        patch = mock.patch.object(release, "fetch", fetch)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def point(self, top):
+        (self.base / "home" / ".claude" / "settings.json").write_text(json.dumps(
+            {"env": {"CLAUDE_CODE_PLUGIN_DIRS": str(top / "extras" / "mods" / "garrick-band")}}))
+
+    def band_steps(self):
+        p = self.plan()                                     # of the real Garrick; only the band's check sees `ours`
+        with mock.patch.object(update, "REPO", self.ours):
+            return [(w, fn) for w, fn in update.next_steps(self.root, p) if "band" in w]
+
+    def test_an_unmodified_download_is_refreshed_and_the_old_copy_kept_beside_it(self):
+        ((what, fn),) = self.band_steps()
+        self.assertIn("Refresh the Garrick band kept at %s, a download of Garrick 0.60.0" % self.kept, what)
+        self.assertEqual([], self.fetched)                                  # offering it asks nobody
+        said = fn()
+        self.assertIn("is now Garrick 0.63.1", said)
+        aside = self.kept.with_name("garrick-release-aaaa111")
+        self.assertIn("// the band 0.60.0", (aside / "extras/mods/garrick-band/hooks/register.tsx").read_text())
+        self.assertIn("// the band 0.63.1", (self.kept / "extras/mods/garrick-band/hooks/register.tsx").read_text())
+        self.assertEqual(["v0.60.0", "v0.63.1"], [u.rsplit("/", 1)[1][:-4] for u in self.fetched])
+        self.assertEqual([], self.band_steps())                              # the settings' path is current now
+
+    def test_a_copy_with_changes_of_its_own_is_left_as_it_is_with_the_command(self):
+        (self.kept / "extras/mods/garrick-band/hooks/register.tsx").write_text("// mine\n")
+        ((what, fn),) = self.band_steps()
+        said = fn()
+        self.assertIn("was left as it is: its files differ from Garrick 0.60.0", said)
+        self.assertIn("git -C %s pull" % self.kept, said)
+        self.assertEqual("// mine\n", (self.kept / "extras/mods/garrick-band/hooks/register.tsx").read_text())
+        self.assertEqual([self.kept.name], [p.name for p in self.kept.parent.iterdir()])
+
+    def test_a_clone_gets_the_line_with_the_command_and_no_step_with_a_function(self):
+        (self.kept / ".git").mkdir()
+        ((what, fn),) = self.band_steps()
+        self.assertIsNone(fn)
+        self.assertIn("runs from %s" % (self.kept / "extras/mods/garrick-band"), what)
+        self.assertIn("git -C %s pull" % self.kept, what)
+
+    def test_a_copy_with_no_commit_in_its_version_is_a_clone_too(self):
+        (self.kept / "VERSION").write_text("commit: $Format:%h$\n")
+        ((what, fn),) = self.band_steps()
+        self.assertIsNone(fn)
+
+    def test_a_garrick_that_is_not_a_release_offers_no_download(self):
+        (self.ours / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n\n- Waiting.\n\n## [0.63.1] - 2026-11-01\n")
+        ((what, fn),) = self.band_steps()
+        self.assertIsNone(fn)
+
+    def test_nothing_is_moved_when_the_download_fails_or_the_aside_name_is_taken(self):
+        def refuse(*a, **k):
+            raise OSError("no network")
+        with mock.patch.object(self.release, "fetch", refuse):
+            ((what, fn),) = self.band_steps()
+            self.assertIn("was not refreshed: no network", fn())
+        self.assertEqual([self.kept.name], [p.name for p in self.kept.parent.iterdir()])
+        self.kept.with_name("garrick-release-aaaa111").mkdir()
+        self.assertIn("already exists", fn())
+        self.assertEqual([], self.fetched)
+
+
 class TestJobsRenamed(ExtrasCase):
     """#275, #276: a workspace still running Garrick's jobs under their old
     names, from a fake LaunchAgents folder and a fake jobs folder. The update

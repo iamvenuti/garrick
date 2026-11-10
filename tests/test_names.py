@@ -139,6 +139,18 @@ class NamesTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual("clear", self.verdict("# N\n\nThe hook said:\n\n%s\n" % text))
 
+    def test_the_wall_sentence_is_read_from_the_rules_and_nothing_is_dropped_when_it_is_missing(self):
+        rules = self.root / "System" / "rules.md"
+        kept = rules.read_text(encoding="utf-8")
+        self.addCleanup(rules.write_text, kept, encoding="utf-8")
+        said = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+        ws = check.discover(self.root, None)
+        self.assertEqual("", check.wall_sentence(ws))
+        self.assertEqual("x %s Acme Corp" % said, check.without_own_words(ws, "x %s Acme Corp" % said))
+        rules.write_text('Say it in these words: "%s" No party.\n' % said, encoding="utf-8")
+        self.assertEqual(said, check.wall_sentence(ws))
+        self.assertEqual("x  Acme Corp", check.without_own_words(ws, "x %s Acme Corp" % said))
+
     def test_a_line_that_holds_more_than_the_check_prints_is_the_notes_own(self):
         for text in (LINE + " Ask Dana Whitlock.", LINE.replace("acme is walled", "Kit is walled"), "Ask Acme Corp. " + LINE.split(".")[0],
                      "Commit refused: Zones/x.md names Acme Corp."):

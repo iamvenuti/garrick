@@ -5248,7 +5248,15 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
 # The check's own words (#470). A note that quotes one of the check's refusal or warning lines, or the sentence the
 # rules give for a wall, repeats words the check printed; they are not material. A refusal names the party and its
 # tag and nothing else, so a line in that shape is passed over when what it holds beyond them is no name of a party.
-WALL_SENTENCE = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+WALL_SENTENCE_RE = re.compile(r'in these words: "([^"\n]+)"')
+
+
+def wall_sentence(ws: Workspace) -> str:
+    """The sentence the rules give for a wall, read from the workspace's own System/rules.md (the one quoted after
+    "in these words:"); "" when it cannot be found, and then nothing is dropped."""
+    text = read_text(ws.root / "System" / "rules.md") or ""
+    found = WALL_SENTENCE_RE.search(text)
+    return found.group(1) if found else ""
 # What the check's lines hold: the refusal the hook prints (`Commit refused: <path> <message>. <fix>`), a line of the
 # full report (`  error   <path>: <message>`), a finding's `message` or `ear` in the JSON, and the ear text itself.
 OWN_LINE_RE = re.compile(
@@ -5281,8 +5289,9 @@ def own_words_line(ws: Workspace, line: str) -> bool:
 def without_own_words(ws: Workspace, text: str) -> str:
     """`text` without the check's own lines and the wall sentence: not material for the name check or the wording
     check. Line by line, so the lines either side keep their places; the links stay with the caller's text."""
-    if WALL_SENTENCE in text:
-        text = text.replace(WALL_SENTENCE, "")
+    sentence = wall_sentence(ws)
+    if sentence and sentence in text:
+        text = text.replace(sentence, "")
     if not OWN_ANCHOR_RE.search(text) and "is walled and" not in text:
         return text
     return "\n".join("" if own_words_line(ws, line) else line for line in text.split("\n"))

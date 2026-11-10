@@ -157,6 +157,8 @@ let kAwakeWorking = "awakeWhileWorking", kAwakeDisplay = "awakeDisplay"
 enum Awake: Equatable { case off, on, until(Date), whileWorking }
 // agents_working.py, beside status.py: exit 0 when an assistant is mid-turn, 1 when none is, 2 when it cannot tell.
 let agentsCheck = builder.deletingLastPathComponent().appendingPathComponent("agents_working.py")
+// desk.py, in the cmux extra beside the status folder: `focus --session ID` brings a cmux tab forward (#474).
+let deskScript = builder.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("cmux/desk.py")
 // ask.py, beside status.py (preview ask): a warm assistant session that answers a request and acts on it.
 let asker = builder.deletingLastPathComponent().appendingPathComponent("ask.py")
 let flagsFile = workspace.appendingPathComponent("System/garrick-flags.json")
@@ -702,6 +704,12 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var awake: Awake = .off
 	var held: [String: IOPMAssertionID] = [:]   // the sleep assertions this app holds, by type
 	var agentsBusy: Bool?                       // the last check: nil when it could not tell
+	// Waiting on you now (#474): the sessions stopped on a question or an approval, from the last minute's
+	// agents_working.py --json. Rows carry ids, folders, states and times, never a question's text.
+	var waitingRows: [[String: Any]] = []
+	var waitingJSON = ""                       // the same result as text, for the page
+	var waitingTimer: Timer?
+	var waitingRunning = false
 	var awakeTimer: Timer?
 	var askPanel: AskPanel?
 	var askClickGlobal: Any?          // mouse-down monitors while the box is visible and a click outside closes it (#411)
@@ -815,6 +823,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		present()
 		applyHotKeys()    // the menu's, and the Ask box's with the preview ask on
 		if resident && defaults.bool(forKey: kAwakeWorking) { setAwake(.whileWorking) }
+		if resident { startWaitingWatch() }
 		// Out of sight, nothing brings the app forward to check the page's age.
 		hourly = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.freshen() }
 		if !outOfSight { showWindow() }   // a launch you make always shows something
@@ -1014,6 +1023,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if body["pick"] as? String == "folder" { return pickFolder() }
 		if let save = body["save"] as? [String: Any] { return saveVersion(save) }
 		if let request = body["app"] as? [String: Any] { return setting(request) }
+		if let id = body["waitingGo"] as? String { return goToWaiting(id) }
 		// A Copy button's own text. A launch carries the phrase too, for an app
 		// built before 0.28.0; here the launcher owns the clipboard and says
 		// when it replaced it, so the copy is left to it and never happens twice.
@@ -1547,9 +1557,14 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		let trouble = (menuState?["data"] as? [String: Any])?["trouble"] as? Bool == true
 		let said = (trouble ? "Garrick: " + troubleSaid.lowercased() : "Garrick") + (held.isEmpty ? "" : ", keeping the Mac awake")
+		let waits = waitingRows.count
+		let told = said + (waits == 0 ? "" : ", \(waits) waiting on you")
+		statusItem?.length = waits == 0 ? NSStatusItem.squareLength : NSStatusItem.variableLength
 		statusItem?.button?.image = icon(trouble: trouble, awake: !held.isEmpty)
-		statusItem?.button?.toolTip = said
-		statusItem?.button?.setAccessibilityLabel(said)
+		statusItem?.button?.imagePosition = waits == 0 ? .imageOnly : .imageLeft
+		statusItem?.button?.title = waits == 0 ? "" : " \(waits)"
+		statusItem?.button?.toolTip = told
+		statusItem?.button?.setAccessibilityLabel(told)
 	}
 
 	func removeStatusItem() {
@@ -3073,6 +3088,66 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		                open: fallback.map { a in { [weak self] in self?.run(a) } }, live: r["s"] as? String)
 	}
 
+	// MARK: waiting on you now (#474)
+	// Once a minute: agents_working.py reads the transcripts and the hook's markers, and tells the
+	// notifier about each new wait. The same minute's result goes to the page's card and, as a count,
+	// to the menu bar. Nothing here reads a question's text: the script never carries it.
+
+	func startWaitingWatch() {
+		waitingTimer?.invalidate()
+		waitingTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.waitingTick() }
+		waitingTick()
+	}
+
+	func waitingTick() {
+		guard !waitingRunning, FileManager.default.fileExists(atPath: agentsCheck.path) else { return }
+		waitingRunning = true
+		let p = Process()
+		p.executableURL = URL(fileURLWithPath: python)
+		p.arguments = [agentsCheck.path, "--json", "--workspace", workspace.path, "--notify"]
+		let out = Pipe()
+		p.standardOutput = out
+		p.standardError = FileHandle.nullDevice
+		p.terminationHandler = { [weak self] _ in
+			let data = out.fileHandleForReading.readDataToEndOfFile()
+			DispatchQueue.main.async {
+				guard let self else { return }
+				self.waitingRunning = false
+				let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+				let rows = (parsed?["sessions"] as? [[String: Any]] ?? []).filter { $0["state"] as? String == "waiting" }
+				let changed = rows.count != self.waitingRows.count
+				self.waitingRows = rows
+				self.waitingJSON = parsed == nil ? "" : String(data: data, encoding: .utf8) ?? ""   // only what parsed goes to the page
+				self.pushWaiting()
+				if changed, self.statusItem != nil { self.showStatusItem() }
+			}
+		}
+		do { try p.run() } catch { waitingRunning = false }
+	}
+
+	// Hand the page the same minute's result, so the card never shows data older than a minute.
+	func pushWaiting() {
+		guard !checking, web != nil, !waitingJSON.isEmpty else { return }
+		web.evaluateJavaScript("window.GarrickWaiting&&window.GarrickWaiting(\(waitingJSON))")
+	}
+
+	// Go to it: only a session cmux runs in a tab, and only one the last minute named. Claude's desktop
+	// app has no documented way to bring one session forward, so its row names the app and the folder.
+	func goToWaiting(_ id: String) {
+		guard waitingRows.contains(where: { $0["id"] as? String == id && $0["where"] as? String == "cmux" }),
+		      id.range(of: "^[A-Za-z0-9_.:-]{1,80}$", options: .regularExpression) != nil,
+		      FileManager.default.fileExists(atPath: deskScript.path) else { return toast("That session cannot be brought forward from here.") }
+		let p = Process()
+		p.executableURL = URL(fileURLWithPath: python)
+		p.arguments = [deskScript.path, "--workspace", workspace.path, "focus", "--session", id]
+		p.standardOutput = FileHandle.nullDevice
+		p.standardError = FileHandle.nullDevice
+		p.terminationHandler = { [weak self] proc in
+			if proc.terminationStatus != 0 { DispatchQueue.main.async { self?.toast("cmux did not bring that session forward.") } }
+		}
+		do { try p.run() } catch { toast("cmux did not bring that session forward.") }
+	}
+
 	// MARK: keep awake
 	// macOS's own power assertions, as caffeinate takes them, held by this
 	// process: macOS drops them when the app quits or crashes, so nothing is
@@ -3354,6 +3429,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	func webView(_ webView: WKWebView, didFinish nav: WKNavigation!) {
 		guard checking else {
 			pageLoaded = Date()
+			pushWaiting()
 			if let asked = settingsAsked {
 				settingsAsked = nil
 				if -asked.timeIntervalSinceNow < 60 { openSettings(nil) }

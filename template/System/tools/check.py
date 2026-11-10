@@ -96,6 +96,11 @@ from garrick_lib import (  # noqa: E402
     WALL_HOOK_MARK,
     as_sources,
     has_wall_hook,
+    has_merge_hooks,
+    missing_merge_hooks,
+    foreign_merge_hooks,
+    merge_hook_advice,
+    MergeHookNotGarricks,
     inbound_only,
     is_origin,
     memory_entries,
@@ -129,6 +134,7 @@ from garrick_lib import (  # noqa: E402
     say_version,
     spoken_clash,
     spoken_of,
+    stale_bands,
     strip_recipients,
     strip_tag,
     record_refusals,
@@ -1533,6 +1539,8 @@ def check_zones(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "zones", r,
                                "no pre-commit wall check; run `python3 System/tools/check.py --install-hooks`",
                                "The %s zone does not check the walls before a commit" % zone.name))
+        elif (zone / ".git").is_dir() and not has_merge_hooks(zone):
+            out.append(merge_hooks_finding(ws, zone, "zone"))
         for name in ("AGENTS.md", "Todo.md"):
             if not (zone / name).is_file():
                 out.append(Finding(ERROR, "zones", r, "has no %s" % name,
@@ -1553,7 +1561,22 @@ def check_zones(ws: Workspace) -> List[Finding]:
                                "no pre-commit wall check; a hand edit committed here is read by the next full check "
                                "alone. Run `python3 System/tools/check.py --install-hooks`",
                                "The %s wiki does not check the walls before a commit" % wiki.name))
+        elif git_dir.is_dir() and not has_merge_hooks(wiki):
+            out.append(merge_hooks_finding(ws, wiki, "wiki"))
     return out
+
+
+def merge_hooks_finding(ws: Workspace, repo: Path, what: str) -> Finding:
+    """A repository with Garrick's pre-commit hook and without its merge hooks: a merge that completes on its own
+    runs no pre-commit hook, so the walls are not checked on what it brings in (#497)."""
+    names = ", ".join(missing_merge_hooks(repo))
+    foreign = [n for n in foreign_merge_hooks(repo) if n in missing_merge_hooks(repo)]
+    fix = ("a hook of yours is in the place of %s, which --install-hooks leaves alone: %s" % (", ".join(foreign), merge_hook_advice(foreign))
+           if foreign else "run `python3 System/tools/check.py --install-hooks`")
+    return Finding(WARNING, "zones" if what != "project repository" else "hooks", rel(ws, repo),
+                   "has the pre-commit wall check but not %s, so a merge, a fast-forward or a rebase brings changes in "
+                   "with no wall check; %s" % (names, fix),
+                   "The %s %s does not check the walls when a merge brings changes in" % (repo.name, what))
 
 
 def wiki_repos(ws: Workspace) -> List[Path]:
@@ -1688,6 +1711,8 @@ def check_hooks(ws: Workspace) -> List[Finding]:
     # A repository inside a project is the likeliest to be pushed somewhere
     # public, and the zone's hook never sees its commits.
     for repo, project, _ in project_repos(ws):
+        if (repo / ".git").is_dir() and has_wall_hook(repo) and not has_merge_hooks(repo):
+            out.append(merge_hooks_finding(ws, repo, "project repository"))
         if not (repo / ".git").is_dir() or has_wall_hook(repo) or not has_remote(repo):
             continue
         out.append(Finding(WARNING, "hooks", rel(ws, repo),
@@ -4918,6 +4943,52 @@ def wording_findings(ws: Workspace, path: Path, text: str, dest: str) -> List[Fi
     return out
 
 
+def near_wording(root: Path, pairs: List[Tuple[str, str]]) -> List[bool]:
+    """For each (file, source), the file root-relative and the source a lower-cased page stem or root-relative path:
+    whether a run of words the file shares with the source is also held by a file or meeting page of the file's own
+    zone, the near side that wording_findings does not count as a leak. Read only: it discovers the workspace
+    without a cache and writes nothing. The update asks it of the finding a rule it replaces made, whatever that
+    finding's own message said. False for anything it cannot place."""
+    _BLOBS.clear()
+    ws = discover(Path(root).resolve(), None)
+    index = quote_index(ws)
+    out: List[bool] = []
+    for rel_path, source in pairs:
+        path = ws.root / rel_path
+        found = False
+        try:
+            text = read_text(path)
+            project = project_of(ws, path)
+            dest = zone_of(ws.root, path)
+            if text and project is not None and dest not in (None, UNZONED):
+                project, sent = project[0], _in_sources(project[0], path)
+                for h in runs(transcript_text(path, text), shared_link(ws, path)):
+                    owners = index.owners.get(h)
+                    if not owners or h in index.common:
+                        continue
+                    if not any((o.stem.lower() == source) if o in ws.meetings else (rel(ws, o).lower() == source)
+                               for o in owners if o != path):
+                        continue
+                    for o in owners:
+                        if o == path or o in ws.meeting_questions:
+                            continue
+                        if o in ws.meetings:
+                            there = zone_from_frontmatter(ws.root, ws.meetings[o])
+                        elif sent or (index.project.get(o) == project and not _in_sources(project, o)):
+                            continue
+                        else:
+                            there = zone_of(ws.root, o)
+                        if there == dest:
+                            found = True
+                            break
+                    if found:
+                        break
+        except (OSError, ValueError):
+            found = False
+        out.append(found)
+    return out
+
+
 def _in_sources(project: Path, path: Path) -> bool:
     try:
         parts = path.relative_to(project).parts
@@ -6815,6 +6886,61 @@ def report_staged(findings: List[Finding], verbose: bool = False) -> str:
     return report_verbose(findings) if verbose else report_short(findings)
 
 
+MERGE_SAID = " and its merge hooks (pre-merge-commit, post-merge, post-rewrite)"
+
+
+def changed_files(top: Path, specs: List[str]) -> Optional[List[str]]:
+    """The files, relative to the top of the repository `top`, that the commits `specs` changed: `A..B` is what
+    changed from A to B, a lone commit is what that commit changed. Added, copied, modified, renamed or retyped; a
+    file that is gone is not read. None when git cannot say. Read only: git is told to take no lock."""
+    names = set()
+    for spec in specs:
+        if spec.startswith("-"):
+            return None
+        args = (["diff", "--name-only", "--diff-filter=ACMRT", "-z", spec, "--"] if ".." in spec else
+                ["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "--root", "-m", "--diff-filter=ACMRT", spec, "--"])
+        got = _git(args, top)
+        if got is None:
+            return None
+        names.update(n for n in got.split("\0") if n)
+    return sorted(names)
+
+
+def changed_command(root: Path, specs: List[str], after: str = "merge") -> int:
+    """`--changed`: after a merge, a fast-forward or a rebase has brought commits in, the walls check on the files
+    they changed, read only, as the post-merge and post-rewrite hooks run it. The commits are in, so this refuses
+    nothing: it says what the check finds, that the commits are in, and how to undo them, without doing it. Always 0."""
+    cwd = Path.cwd()
+    top = _git(["rev-parse", "--show-toplevel"], cwd)
+    names = changed_files(Path(top.strip()), specs) if top else None
+    if names is None:
+        return 0
+    base = Path(top.strip()).resolve()
+    wanted = []
+    for name in names:
+        try:
+            wanted.append((base / name).relative_to(root.resolve()).as_posix())
+        except ValueError:
+            continue
+    if not wanted:
+        return 0
+    findings = [f for f in run_path_checks(root, wanted) if f.check == "walls" and f.severity == ERROR and f.path in set(wanted)]
+    if findings:
+        by_file = refused_by_file(findings)
+        lines = ["Wall check: %d file%s that the commits just brought in would have been refused. The commits are "
+                 "already in, so nothing was refused and nothing was undone:" % (len(by_file), "" if len(by_file) == 1 else "s")]
+        lines += ["  %s %s" % (path, found[0].message if len(found) == 1 else "holds %d refusals (%s)" % (len(found), kind_counts(found)))
+                  for path, found in by_file.items()]
+        if after == "amend":     # an amend sets no ORIG_HEAD: the old commit is where the reflog says
+            lines.append("To undo the amend, keeping its changes staged, you can run (it is not run for you): "
+                         "git reset --soft HEAD@{1}")
+        else:
+            lines.append("To undo what was just brought in, you can run (it is not run for you, and it discards "
+                         "uncommitted changes): git reset --hard ORIG_HEAD")
+        print("\n".join(lines), file=sys.stderr)
+    return 0
+
+
 def install_hooks(root: Path) -> int:
     """The wall check in every zone's repository, in each wiki that is a
     repository, and in every repository inside a project, which checks its staged files against the walls of the
@@ -6824,14 +6950,18 @@ def install_hooks(root: Path) -> int:
     for zone in ws.zones:
         try:
             hook = install_wall_hook(zone)
-            print("%s: wall check installed at %s" % (zone.name, rel(ws, hook)))
+            print("%s: wall check installed at %s%s" % (zone.name, rel(ws, hook), MERGE_SAID))
+        except MergeHookNotGarricks as exc:      # pre-commit and the other hooks are written; this one is left, and said
+            print("%s: wall check installed at .git/hooks/pre-commit; %s" % (zone.name, exc))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (zone.name, exc), file=sys.stderr)
             code = 1
     for wiki in wiki_repos(ws):
         try:
             hook = install_wall_hook(wiki, wiki=True, root=ws.root)
-            print("%s: wall check installed at %s" % (rel(ws, wiki), rel(ws, hook)))
+            print("%s: wall check installed at %s%s" % (rel(ws, wiki), rel(ws, hook), MERGE_SAID))
+        except MergeHookNotGarricks as exc:
+            print("%s: wall check installed at .git/hooks/pre-commit; %s" % (rel(ws, wiki), exc))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (rel(ws, wiki), exc), file=sys.stderr)
             code = 1
@@ -6839,7 +6969,9 @@ def install_hooks(root: Path) -> int:
         parties = ", ".join(strip_tag(t) for t in as_list(pfm.get("party"))) or "no party"
         try:
             hook = install_wall_hook(repo, nested=True)
-            print("%s: wall check installed at %s, on %s's side" % (rel(ws, repo), rel(ws, hook), parties))
+            print("%s: wall check installed at %s%s, on %s's side" % (rel(ws, repo), rel(ws, hook), MERGE_SAID, parties))
+        except MergeHookNotGarricks as exc:
+            print("%s: wall check installed at .git/hooks/pre-commit, on %s's side; %s" % (rel(ws, repo), parties, exc))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (rel(ws, repo), exc), file=sys.stderr)
             code = 1
@@ -6895,6 +7027,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--paths", nargs="+", metavar="PATH",
                         help="report only the findings for these files (relative to the root), reading no more of "
                              "the workspace than they need; what an update asks of the files it wrote")
+    parser.add_argument("--changed", nargs="+", metavar="REV",
+                        help="the walls check, read only, on the files these commits changed in the current folder's "
+                             "repository (`A..B` is what changed from A to B), and a report; it refuses nothing, "
+                             "for the post-merge and post-rewrite hooks")
+    parser.add_argument("--after", choices=("merge", "rebase", "amend"), default="merge",
+                        help="with --changed: what brought the commits in, which decides how the report says to undo it")
     parser.add_argument("--staged", action="store_true",
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
@@ -6925,6 +7063,11 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.install_hooks:
         return install_hooks(root)
+    if args.changed:
+        try:
+            return changed_command(root, args.changed, args.after)
+        except Exception:       # a report after the fact never fails a merge
+            return 0
     if args.walls_cases:
         return walls_cases(root)
     if args.version:
@@ -6933,6 +7076,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         newer = say_newer_release(root)        # what GitHub last said, kept on disk; the check never asks
         if newer:
             print(newer)
+        for line in stale_bands(root):         # the band's own copy, read as the settings name it
+            print(line)
         return 0
     if args.paths:
         findings = run_path_checks(root, args.paths)

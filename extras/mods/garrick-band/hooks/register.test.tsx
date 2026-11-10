@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { bandSlot, buildIndex, doneFile, doneFinished, endsWithQuestion, fileHref, foldersUp, FULL, label, launcherSettings, linkify, liveNote, lockFile, lockRunning, lockStart, lookup, MARK, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, WRAP_LOCK_MS, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
+import { bandRelease, bandSlot, staleBand, workspaceRelease, buildIndex, doneFile, doneFinished, endsWithQuestion, fileHref, foldersUp, FULL, label, launcherSettings, linkify, liveNote, lockFile, lockRunning, lockStart, lookup, MARK, markCells, nextUpArgv, obsidianUrl, pageActionArgv, paneMarkdown, parseNote, percentOf, previewOn, resumePrompt, rootOf, signature, switchedOff, WRAP_LOCK_MS, waitOff, waitOrder, waitSettings, wrapPrompt, zoneOf } from './register'
 
 const ROOT = '/v'
 const NOTE = `---
@@ -1516,4 +1516,71 @@ describe('the one slot', () => {
     expect(wrapPrompt(n, true)).toContain('run it in the foreground and do not ask the question')
     expect(wrapPrompt(n)).not.toContain('foreground')
   })
+})
+
+describe('a band older than the workspace', () => {
+  const rel = (commit: string, date: string | null = null) => ({ commit, date })
+
+  test('reads the VERSION of the band and the stamp of the workspace, and nothing from what does not name a commit', () => {
+    expect(bandRelease('# Which Garrick\ncommit: 3b61b836\ndate: 2026-11-02\n')).toEqual(rel('3b61b836', '2026-11-02'))
+    expect(bandRelease('commit: $Format:%h$\ndate: $Format:%cs$\n')).toBeNull()      // a clone
+    expect(bandRelease('date: 2026-11-02\n')).toBeNull()
+    expect(bandRelease('')).toBeNull()
+    expect(bandRelease(null)).toBeNull()
+    expect(workspaceRelease('{"commit": "c16b738a", "date": "2026-11-10"}')).toEqual(rel('c16b738a', '2026-11-10'))
+    expect(workspaceRelease('{"commit": "unknown"}')).toBeNull()
+    expect(workspaceRelease('{"date": "2026-11-10"}')).toBeNull()
+    expect(workspaceRelease('{"commit": ')).toBeNull()
+    expect(workspaceRelease('[]')).toBeNull()
+    expect(workspaceRelease(NOTE)).toBeNull()
+  })
+
+  test('says so when the commits differ, and says nothing when they do not or cannot be told', () => {
+    expect(staleBand(rel('3b61b836', '2026-10-01'), rel('c16b738a', '2026-11-10')))
+      .toBe('This band is from 3b61b836 of 2026-10-01; the workspace runs c16b738a of 2026-11-10. Run `python3 update.py` from the newer Garrick, or see Updating.')
+    expect(staleBand(rel('3b61b836'), rel('c16b738a'))).toMatch(/^This band is from 3b61b836; the workspace runs c16b738a\./)
+    expect(staleBand(rel('c16b738'), rel('c16b738a'))).toBeNull()       // one hash is the other's prefix
+    expect(staleBand(rel('c16b738a'), rel('c16b738'))).toBeNull()
+    expect(staleBand(null, rel('c16b738a'))).toBeNull()
+    expect(staleBand(rel('3b61b836'), null)).toBeNull()
+    expect(staleBand(rel('c16b738a', '2026-11-12'), rel('3b61b836', '2026-11-10'))).toBeNull()   // the band is the newer one
+  })
+
+  async function withVersions($: any, on: any, own: string | null, stamp: string | null) {
+    const cwd = `${ROOT}/Zones/Work/Acme`
+    on('ui.render', ENGINE)
+    on('session.root', async () => ({ value: cwd }))
+    on('session.cwd', async () => ({ value: cwd }))
+    on('env.get', async () => ({ value: '/Users/someone' }))
+    on('fs.exists', async (_$: any, e: any) => ({ value: [`${ROOT}/System/rules.md`, `${cwd}/Acme.md`].includes(e.path) }))
+    on('fs.read', async (_$: any, e: any) => {
+      if (e.path === `${ROOT}/System/garrick-version.json`) return { value: stamp } as any
+      if (e.path.endsWith('/VERSION')) return { value: own } as any
+      return { value: NOTE }
+    })
+    on('turn.complete', async () => ({ text: '' }))
+    await $.turn.complete({ answer: '', durationMs: 1, isAborted: false, turnId: 't1', reason: 'answer' })
+  }
+
+  test('the band shows one dim line on a mismatch', async ($, on) => {
+    await withVersions($, on, 'commit: 3b61b836\ndate: 2026-10-01\n', '{"commit": "c16b738a", "date": "2026-11-10"}')
+    const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    expect(await band.find({ text: /This band is from 3b61b836 of 2026-10-01; the workspace runs c16b738a of 2026-11-10/ })).toBeDefined()
+    expect(await band.find({ key: 'wrap' })).toBeDefined()
+  })
+
+  for (const [what, own, stamp] of [
+    ['the same commit', 'commit: c16b738a\n', '{"commit": "c16b738a"}'],
+    ['no stamp', 'commit: 3b61b836\n', null],
+    ['an unreadable stamp', 'commit: 3b61b836\n', '{"commit": '],
+    ['the VERSION of a clone', 'commit: $Format:%h$\n', '{"commit": "c16b738a"}'],
+    ['no VERSION', null, '{"commit": "c16b738a"}'],
+  ] as const) {
+    test(`the band shows nothing with ${what}`, async ($, on) => {
+      await withVersions($, on, own, stamp)
+      const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+      expect(await band.find({ text: /This band is from/ })).toBeUndefined()
+      expect(await band.find({ key: 'wrap' })).toBeDefined()
+    })
+  }
 })

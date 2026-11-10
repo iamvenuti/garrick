@@ -37,6 +37,7 @@
   "test_onboarding": 0.0,
   "test_operations": 0.8,
   "test_page_action": 46.7,
+  "test_merge_hooks": 21.0,
   "test_pathspec_commit": 5.8,
   "test_reading": 1.5,
   "test_release": 8.0,

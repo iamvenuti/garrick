@@ -54,11 +54,12 @@ TIME_LINE = re.compile(r"shard-time (\w+) (\d+(?:\.\d+)?)")
 TOUCH_MAP = {
     # The wall check: a change to it runs every module that tests a wall, not only test_check*.
     "template/System/tools/check.py": ["test_walls_cases", "test_staged_paths", "test_pathspec_commit", "test_decide",
-                                       "test_zones", "test_allow_ledger"],
+                                       "test_zones", "test_allow_ledger", "test_merge_hooks"],
+    "install.py": ["test_merge_hooks"],
     "tests/walls/cases.md": ["test_walls_cases"],
     "extras/status/questions_panel.py": ["test_questions_panel", "test_decisions", "test_question_transaction",
                                          "test_status", "test_page_action"],
-    "update.py": ["test_update"],
+    "update.py": ["test_update", "test_merge_hooks"],
     "extras/status/status.py": ["test_status", "test_status_find", "test_status_finder",
                                 "test_status_graph_3d", "test_status_graph_ignored",
                                 "test_status_more", "test_status_work"],

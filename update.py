@@ -94,14 +94,19 @@ import argparse
 import datetime
 import fnmatch
 import hashlib
+import http.client
+import itertools
 import json
 import os
 import plistlib
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
 sys.dont_write_bytecode = True
 
@@ -395,18 +400,44 @@ def wiki_hook_state(root):
         return ""
     if lib.WALL_HOOK_MARK not in text:
         return "foreign"
-    return "refresh" if text != lib.wiki_hook_text(root) else ""
+    if text != lib.wiki_hook_text(root):
+        return "refresh"
+    for name, want in lib.wall_hook_texts(wiki=True, root=root).items():     # the merge hooks beside it (#497)
+        try:
+            have = (wikis / ".git" / "hooks" / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            if lib.hook_slot(wikis / ".git" / "hooks" / name) == "free":
+                return "refresh"
+            continue
+        if lib.hook_slot(wikis / ".git" / "hooks" / name) == "ours" and (have != want or not os.access(wikis / ".git" / "hooks" / name, os.X_OK)):
+            return "refresh"
+    return ""
 
 
 def stale_hook(zone):
-    """A zone whose pre-commit hook is Garrick's wall check, but an older one."""
+    """A zone whose pre-commit hook is Garrick's wall check, but an older one, or one that has not the merge hooks
+    (pre-merge-commit, post-merge, post-rewrite) this Garrick writes beside it (#497). Only where Garrick's own
+    pre-commit is already there; a merge hook that is not Garrick's is left as it is and does not make it stale."""
     lib = install.lib()
-    hook = zone / ".git" / "hooks" / "pre-commit"
+    hooks = zone / ".git" / "hooks"
     try:
-        text = hook.read_text(encoding="utf-8", errors="replace")
+        text = (hooks / "pre-commit").read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    return lib.WALL_HOOK_MARK in text and text != lib.WALL_HOOK
+    if lib.WALL_HOOK_MARK not in text:
+        return False
+    if text != lib.WALL_HOOK:
+        return True
+    for name, want in lib.wall_hook_texts().items():
+        try:
+            have = (hooks / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            if lib.hook_slot(hooks / name) == "free":
+                return True             # not there
+            continue                    # a link or a folder in its place: left alone
+        if lib.hook_slot(hooks / name) == "ours" and (have != want or not os.access(hooks / name, os.X_OK)):
+            return True                 # an older one, or one git would not run
+    return False
 
 
 # --------------------------------------------------------------------------- saying it
@@ -471,12 +502,12 @@ def report(p, applied=None):
                 continue
             lines += ["  " + path for path in paths]
     if p["hooks"]:
-        lines += ["", "Wall check: %d zone%s get%s the newer pre-commit check: %s." % (
+        lines += ["", "Wall check: %d zone%s get%s the newer pre-commit check and the merge hooks: %s." % (
             len(p["hooks"]), "" if len(p["hooks"]) == 1 else "s", "s" if len(p["hooks"]) == 1 else "",
             ", ".join(p["hooks"]))]
     wiki = p.get("wiki_hook")
     if wiki in ("add", "refresh"):
-        lines += ["", "Wall check: the wikis get %s pre-commit check." % ("their" if wiki == "add" else "the newer")]
+        lines += ["", "Wall check: the wikis get %s pre-commit check and the merge hooks." % ("their" if wiki == "add" else "the newer")]
     elif wiki == "foreign":
         lines += ["", "Wall check: Wikis has a pre-commit hook that is not Garrick's, so it is left as it is and the wikis "
                   "do not check the walls before a commit. Add this line to it: "
@@ -678,7 +709,14 @@ def apply(root, p, only=None, today=None):
 
     hooks, added = [], []
     for zone in p["hooks"]:
-        lib.install_wall_hook(root / "Zones" / zone)
+        try:
+            lib.install_wall_hook(root / "Zones" / zone)
+        except lib.MergeHookNotGarricks as exc:      # the others are written; this one is left as it is, and named
+            skipped.append(("Zones/%s/.git/hooks/%s" % (zone, ", ".join(exc.names)),
+                            "not Garrick's, so it is left as it is; " + lib.merge_hook_advice(exc.names)))
+        except (FileExistsError, FileNotFoundError) as exc:
+            skipped.append(("Zones/%s/.git/hooks" % zone, "the wall check was not refreshed: %s" % exc))
+            continue
         hooks.append(zone)
     if p.get("wiki_hook") in ("add", "refresh"):
         try:
@@ -686,6 +724,12 @@ def apply(root, p, only=None, today=None):
             hooks.append("Wikis")
             if p.get("wiki_hook") == "add":
                 added.append("Wikis")
+        except lib.MergeHookNotGarricks as exc:      # pre-commit and the others were written
+            hooks.append("Wikis")
+            if p.get("wiki_hook") == "add":
+                added.append("Wikis")
+            skipped.append(("Wikis/.git/hooks/%s" % ", ".join(exc.names),
+                            "not Garrick's, so it is left as it is; " + lib.merge_hook_advice(exc.names)))
         except (FileExistsError, FileNotFoundError) as exc:
             skipped.append(("Wikis/.git/hooks/pre-commit", "the wikis' wall check was not installed: %s" % exc))
 
@@ -1299,6 +1343,119 @@ def outside_copies(root):
     return found
 
 
+BAND_PATH = ("extras", "mods", "garrick-band")
+BAND_BY_HAND = ("Get a newer Garrick: for a download, unpack the release from "
+                "https://github.com/iamvenuti/garrick/releases/latest/download/garrick.zip and point CLAUDE_CODE_PLUGIN_DIRS "
+                "in ~/.claude/settings.json at its extras/mods/garrick-band; for a clone, run: git -C %s pull")
+
+
+def version_commit(top):
+    """The commit a Garrick download's VERSION names, or "" for a clone, whose VERSION still holds git's placeholder."""
+    for line in (read_text(top / "VERSION") or "").splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key.strip() == "commit" and re.fullmatch(r"[0-9a-f]{4,40}", value.strip()):
+            return value.strip()
+    return ""
+
+
+def read_text(path):
+    try:
+        return Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def release_of(top, waiting=False):
+    """The release a Garrick folder is: the newest in its CHANGELOG.md, such as "0.63.1"; "" when it has
+    none, or, with `waiting`, when lines wait under Unreleased, which no release download holds."""
+    lib = install.lib()
+    text = read_text(Path(top) / "CHANGELOG.md") or ""
+    if waiting and any(part.lower().startswith("[unreleased]") and re.search(r"(?m)^- ", part)
+                       for part in re.split(r"(?m)^## ", text)):
+        return ""
+    for line in text.splitlines():
+        m = re.match(r"^## \[([^\]]+)\]", line)
+        if m and m.group(1).lower() != "unreleased" and lib.release_key(m.group(1)):
+            return m.group(1).lstrip("v")
+    return ""
+
+
+def band_refresh(there, root):
+    """(top, old release, new release) when the band at `there` is in an unmodified-looking release download
+    older than this Garrick's own release, which an update may replace; None for a clone, a link, a copy that
+    is not a whole Garrick folder, or a Garrick that is not itself a release. Reads files only: whether the
+    copy still holds the files it came with is checked when the step runs, against the release it names."""
+    if not Path(there).is_absolute():
+        return None                      # a relative entry names whatever folder the update runs in
+    top = Path(there).parent.parent.parent
+    if not top.name or same_place(top, REPO) or inside(top, root) or inside(root, top):
+        return None                      # the running Garrick, or one that holds the workspace or is held by it
+    if not (top / "install.py").is_file() or not (top / "update.py").is_file() or top.is_symlink():
+        return None
+    if not same_place(top.joinpath(*BAND_PATH), there) or (top / ".git").exists() or not version_commit(top):
+        return None
+    old = release_of(top, waiting=True)
+    new = release_of(REPO, waiting=True) if version_commit(REPO) else ""
+    key = install.lib().release_key
+    if not old or not new or not (key(old) < key(new)):
+        return None
+    return top, old, new
+
+
+def refresh_band(root, top, old, new):
+    """Replace the Garrick download at `top` with release `new`: download the release `old` the copy says it
+    is and check the copy against it, so a copy with changes of its own is left; download `new`; move the
+    old copy beside itself with its commit in the name, never deleting it; put the new one in its place. The
+    only call that reaches the network is release.py's, and it is made here, when the step runs."""
+    top = Path(top)
+    lib = install.lib()                  # puts System/tools on the path, where release.py is
+    import release
+    try:
+        repo = lib.release_repository(root)
+        commit = version_commit(top)
+        aside = top.with_name("%s-%s" % (top.name, commit))
+        if aside.exists() or aside.is_symlink():
+            return "The Garrick band at %s was not refreshed: %s already exists. %s" % (top, aside, BAND_BY_HAND % top)
+        tmp = Path(tempfile.mkdtemp(prefix="garrick-band-")).resolve()
+        try:
+            got = {}
+            for tag in ("v" + old, "v" + new):
+                data = release.fetch(release.ARCHIVE % (repo, tag), root, release.DOWNLOAD_TIMEOUT, limit=release.MAX_ARCHIVE)
+                got[tag] = release.unpack(data, tmp / tag)
+            for f in sorted(x for x in got["v" + old].rglob("*") if x.is_file()):
+                if f.name == "VERSION" and f.parent == got["v" + old]:
+                    continue             # git's abbreviation of the commit is as long as its repository needs
+                if read(top / f.relative_to(got["v" + old])) != f.read_bytes():
+                    return ("The Garrick band at %s was left as it is: its files differ from Garrick %s, which it says it is. %s"
+                            % (top, old, BAND_BY_HAND % top))
+            os.rename(str(top), str(aside))
+            try:
+                shutil.move(str(got["v" + new]), str(top))
+            except OSError:
+                if top.exists():
+                    shutil.rmtree(str(top), ignore_errors=True)
+                try:
+                    os.rename(str(aside), str(top))
+                except OSError:
+                    return ("The Garrick band was not refreshed, and its old copy could not be put back: it is now at %s, "
+                            "not at %s. Move it back by hand." % (aside, top))
+                raise
+        finally:
+            shutil.rmtree(str(tmp), ignore_errors=True)
+    except (OSError, ValueError, http.client.HTTPException, release.ReleaseError, install.InstallError) as exc:
+        return "The Garrick band at %s was not refreshed: %s. %s" % (top, exc, BAND_BY_HAND % top)
+    return "Garrick band: %s is now Garrick %s; the old copy, Garrick %s, is at %s." % (top, new, old, aside)
+
+
+def inside(a, b):
+    """Whether folder `a` is `b` or lies under it, by resolved paths."""
+    try:
+        a, b = Path(a).resolve(), Path(b).resolve()
+    except OSError:
+        return True                      # cannot tell: treated as inside, so nothing is moved
+    return a == b or b in a.parents
+
+
 def same_place(a, b):
     try:
         return Path(a).resolve() == Path(b).resolve()
@@ -1392,8 +1549,19 @@ def next_steps(root, p, done=None):
     steps.extend(before_quit_steps(root))
 
     for what, path in outside_copies(root):
-        steps.append(("%s runs from %s, which differs from this Garrick's. Point your assistant's settings at a newer "
-                      "Garrick you keep outside the workspace" % (what[0].upper() + what[1:], path), None))
+        again = band_refresh(path, root) if what == "the Garrick band" else None
+        if again:
+            top, old, new = again
+            aside = top.with_name("%s-%s" % (top.name, version_commit(top)))
+            steps.append(("Refresh the Garrick band kept at %s, a download of Garrick %s: download Garrick %s from GitHub, "
+                          "move %s to %s, and put the new one in its place" % (top, old, new, top, aside),
+                          lambda top=top, old=old, new=new: refresh_band(root, top, old, new)))
+            continue
+        line = ("%s runs from %s, which differs from this Garrick's. Point your assistant's settings at a newer "
+                "Garrick you keep outside the workspace" % (what[0].upper() + what[1:], path))
+        if what == "the Garrick band":
+            line += ". " + BAND_BY_HAND % Path(path).parent.parent.parent
+        steps.append((line, None))
     return steps
 
 
@@ -1885,19 +2053,89 @@ def _subject(finding):
     return finding.get("fid") or finding.get("token") or message
 
 
-def _keys(finding):
+_WORDING = re.compile(r"repeats wording from (.+?), (?:an? |in project )")
+# What the check calls a file of the Meetings wiki in a wording finding (meeting_noun, PageNames.kinds). Longest first.
+_NOUNS = ("meeting page", "entity page", "person page", "wiki page", "raw record", "meeting", "reply", "question",
+          "decision")
+_MORE = re.compile(r"\s+and \d+ more of its files$")
+
+
+def _kind(finding):
+    """What sort of refusal a finding is, from the shape of its message: the library's own kinds (link, name,
+    wording, path, copy, ...). One reading for both checks, so a message that is reworded stays the same kind."""
+    message = finding.get("message") or ""
+    try:
+        return install.lib().refusal_kind(message)
+    except (AttributeError, install.InstallError):
+        return "wording" if "repeats wording" in message else "link"
+
+
+def _source(finding, raw=False):
+    """The file a finding says its material comes from or points at, or "" when it names none (a name, a missing
+    zone). A wording finding names the page it repeats, by its stem, or the file, by its path; a link or path
+    finding names its target. Lower-cased, so the two releases' spellings agree."""
+    message = finding.get("message") or ""
+    kind = _kind(finding)
+    if kind == "wording":
+        hit = _WORDING.search(message)
+        if not hit:
+            return ""
+        head = _MORE.sub("", hit.group(1).strip())
+        if head.startswith(("Zones/", "Wikis/")):
+            return head.strip("`") if raw else head.strip("`").lower()
+        if not message[hit.end(1):].startswith(", an unfinished "):     # that form names the stem alone
+            for noun in _NOUNS:                      # the noun the check puts before a page's stem, never part of it
+                if head.startswith(noun + " "):
+                    head = head[len(noun) + 1:]
+                    break
+            else:
+                if len(head.split()) != 1:           # not a noun it knows and not one word: unsure, so no source
+                    return ""
+        return head.strip("`") if raw else head.strip("`").lower()
+    if kind in ("link", "path"):
+        for pattern in _SUBJECT[:3]:
+            hit = pattern.search(message)
+            if hit:
+                return hit.group(1).strip("`") if raw else hit.group(1).strip("`").lower()
+    return ""
+
+
+def _ident(finding):
+    """One finding's identity: its file, its kind and its source file, or its subject when it names no source."""
     path = finding.get("path") or ""
+    return (path, _kind(finding), _source(finding) or _subject(finding))
+
+
+def _keys(finding):
+    """The keys a finding is matched on. With a source file: the file, the kind and the source, whatever the words
+    of the message or its id. Without one: the file and its id, or the file and what it is about."""
+    path = finding.get("path") or ""
+    source = _source(finding)
+    if source:
+        return {(path, _kind(finding), source)}
     return {(path, finding.get("fid") or ""), (path, _subject(finding))} - {(path, "")}
 
 
+def _once(findings):
+    """The findings with each identity kept once: the same finding under two party tags is one."""
+    seen, out = set(), []
+    for f in findings:
+        ident = _ident(f)
+        if ident not in seen:
+            seen.add(ident)
+            out.append(f)
+    return out
+
+
 def diff_findings(old, new):
-    """(released, newly refused): the findings only the old check has, and those only the new one has. A finding is
-    the same in both when its path and id agree, or its path and what it is about."""
+    """(released, newly refused): the findings only the old check has, and those only the new one has, each kept
+    once. A finding is the same in both when its file, its kind and its source file agree; one that names no source
+    file, when its file and id agree, or its file and what it is about."""
     seen_new = set().union(*[_keys(f) for f in new]) if new else set()
     seen_old = set().union(*[_keys(f) for f in old]) if old else set()
     released = [f for f in old if not (_keys(f) & seen_new)]
     refused = [f for f in new if not (_keys(f) & seen_old)]
-    return released, refused
+    return _once(released), _once(refused)
 
 
 def _meeting_stems(root):
@@ -1923,28 +2161,129 @@ def _party_zones(text):
     return out
 
 
-def _target_zone(root, lib, finding, stems, parties, zones):
-    """The zone of what a finding points at or names: the file a link or path resolves to, else the zone of the
-    party it names. None when neither says."""
-    message = finding.get("message") or ""
+_OBSIDIAN = re.compile(r"obsidian://open\?[^\s)\]]+")   # a `<tag>` may stand in it
+
+
+def _zone_stems(root):
+    """{stem: [paths]} of every note under Zones/."""
+    stems = {}
+    base = root / "Zones"
+    if base.is_dir():
+        for path in base.rglob("*.md"):
+            stems.setdefault(path.stem.casefold(), []).append(path)
+    return stems
+
+
+def _candidates(root, target, stems, zstems, meeting_only=False):
+    """The set of files a link, path, Obsidian address or wiki name stands for, read only. A name is looked for among the Meetings pages and the notes under Zones/, a
+    `Project/Note` name by the end of its path."""
+    target = target.strip().strip("`").rstrip(",;").strip()
+    if target.lower().startswith("obsidian://"):
+        query = parse_qs(urlparse(target).query)
+        name, vault = (query.get("file") or [""])[0], (query.get("vault") or [""])[0]
+        if not name or ".." in Path(name).parts:
+            return set()
+        bases = [root, root / "Wikis"] + ([root / "Wikis" / vault] if vault and ".." not in vault else [])
+        found = {(b / n).resolve() for b in bases for n in (name, name + ".md") if (b / n).is_file()}
+        return found
+    target = unquote(target)
+    if not target or ".." in Path(target).parts:
+        return set()
+    if target.startswith(("Zones/", "Wikis/")):
+        found = {(root / n).resolve() for n in (target, target + ".md") if (root / n).is_file()}
+        return found
+    stem = Path(target).name.casefold()
+    stem = stem[:-3] if stem.endswith(".md") else stem
+    found = {p.resolve() for p in stems.get(stem, [])}
+    direct = root / "Wikis" / "Meetings" / (target + ".md")
+    if direct.is_file():
+        found.add(direct.resolve())
+    if not meeting_only:
+        tail = "/" + (target if target.casefold().endswith(".md") else target + ".md").casefold()
+        found |= {p.resolve() for p in zstems.get(stem, [])
+                  if "/" not in target or ("/" + p.relative_to(root).as_posix().casefold()).endswith(tail)}
+    return found
+
+
+_LABEL = re.compile(r"<([^<>\s]+)>")
+
+
+def _party_names(text):
+    """{tag: the Party cell, plain text} from the Parties table: what the 0.62 check read when it put a tag in the
+    place of a walled party's name in the messages it prints."""
+    header, rows = _table_rows(text.splitlines(), "parties")
+    tag_at, name_at = _column(header, "tag"), _column(header, "party")
+    out = {}
+    if tag_at is None or name_at is None:
+        return out
+    for row in rows:
+        if len(row) > max(tag_at, name_at):
+            out[_plain(row[tag_at]).lstrip("#").lower()] = _plain(row[name_at])
+    return out
+
+
+def _unmasked(target, names):
+    """The spellings a target may have had before 0.62 put `<tag>` in the place of a party's name: for each label the
+    name as written, in lower case, and as a hyphenated slug, every combination. [] when a label names no party, or
+    there are more than four labels. The target itself when it holds none."""
+    labels = _LABEL.findall(target)
+    if not labels:
+        return [target]
+    if len(labels) > 4 or any(t.lower() not in names or not names[t.lower()] for t in labels):
+        return []
+    forms = []
+    for t in labels:
+        name = names[t.lower()]
+        forms.append(sorted({name, name.lower(), name.replace(" ", "-"), name.lower().replace(" ", "-")}))
+    out = set()
+    for combo in itertools.product(*forms):
+        text, it = target, iter(combo)
+        out.add(_LABEL.sub(lambda m: next(it), text))
+    return sorted(out)
+
+
+def _resolve(root, target, stems, zstems, meeting_only=False, names=None):
+    """The one file a link, path, Obsidian address or wiki name stands for, read only; None when it stands for no
+    file, or for more than one across every spelling it may have had before a party's name was masked as a tag, or
+    for a file outside the workspace."""
     found = set()
+    for form in _unmasked(target, names or {}):
+        found |= _candidates(root, form, stems, zstems, meeting_only)
+    top = Path(root).resolve()
+    same = {}
+    for p in found:                  # one file by its inode: a case-blind volume answers to every spelling
+        try:
+            if top in p.parents:
+                st = p.stat()
+                same.setdefault((st.st_dev, st.st_ino), p)
+        except OSError:
+            continue
+    return next(iter(same.values())) if len(same) == 1 else None
+
+
+def _target_zone(root, lib, finding, stems, parties, zones, zstems=None, names=None):
+    """The zone of what a finding points at or names: the one zone of the files its links, paths and Obsidian
+    addresses resolve to, and of the page or file a wording finding repeats. Every target must resolve to exactly
+    one file, else None: an unresolved or ambiguous target is never placed. With no target at all, the zone of the
+    party it names, when it names one."""
+    message = finding.get("message") or ""
+    zstems = _zone_stems(root) if zstems is None else zstems
+    targets = []
     for pattern in _SUBJECT[:3]:
-        for target in pattern.findall(message):
-            target = target.strip("`").strip()
-            options = []
-            if target.startswith(("Zones/", "Wikis/")):
-                options += [root / target, root / (target + ".md")]
-            else:
-                options += [root / "Wikis" / "Meetings" / (target + ".md")]
-                stem = Path(target).name.casefold()
-                stem = stem[:-3] if stem.endswith(".md") else stem
-                if len(stems.get(stem, [])) == 1:
-                    options += stems[stem]
-            hit = next((p for p in options if p.is_file()), None)
-            if hit is not None:
-                found.add(lib.zone_of(root, hit))
-    if found:
-        return found.pop() if len(found) == 1 else None
+        targets += [(t, False) for t in pattern.findall(message)]
+    targets += [(t, False) for t in _OBSIDIAN.findall(message) if t not in {x for x, _ in targets}]
+    if _kind(finding) == "wording":
+        source = _source(finding, raw=True)
+        if source:
+            targets.append((source, not source.startswith(("Zones/", "Wikis/"))))
+    if targets:
+        zones_found = set()
+        for target, meeting in targets:
+            hit = _resolve(root, target, stems, zstems, meeting_only=meeting, names=names)
+            if hit is None:
+                return None
+            zones_found.add(lib.zone_of(root, hit))
+        return zones_found.pop() if len(zones_found) == 1 else None
     tags = set(re.findall(r"<([^<>\s]+)>", message)) | set(re.findall(r"; (\S+) is walled", message))
     known = {parties[t.lower()] for t in tags if t.lower() in parties}
     if len(known) == 1:
@@ -1953,11 +2292,36 @@ def _target_zone(root, lib, finding, stems, parties, zones):
     return None
 
 
-def classify(root, lib, finding, stems, parties, zones):
+def near_wording(root, tools, findings):
+    """{(path, source)} of the released wording findings whose run of words the zone rule's own search also finds
+    in a file of the finding's own zone, so what the file repeats stays inside one zone however the old message
+    worded it. Asked of the release's check, which reads the workspace and writes nothing. None when it cannot be
+    run: a finding it cannot place is printed as other, never as inside one zone, and the study says why."""
+    pairs = sorted({(f.get("path") or "", _source(f)) for f in findings if _kind(f) == "wording" and _source(f)})
+    if not pairs:
+        return set()
+    program = ("import sys, json; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import check; "
+               "pairs = json.load(sys.stdin); got = check.near_wording(Path(sys.argv[2]), pairs); "
+               "print(json.dumps([p for p, g in zip(pairs, got) if g]))")
+    try:
+        with tempfile.TemporaryDirectory() as neutral:      # not the workspace: nothing there may shadow a module
+            r = subprocess.run([sys.executable, "-B", "-c", program, str(tools), str(root)], input=json.dumps(pairs),
+                               capture_output=True, text=True, timeout=WALL_TIMEOUT, cwd=neutral,
+                               env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
+        if r.returncode != 0:
+            return None
+        return {tuple(x) for x in json.loads(r.stdout)}
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        return None
+
+
+def classify(root, lib, finding, stems, parties, zones, near=frozenset(), zstems=None, names=None):
     """"inside", "name" or "other" for a finding the zone rule releases."""
     src = lib.zone_of(root, finding.get("path") or "")
-    target = _target_zone(root, lib, finding, stems, parties, zones)
+    target = _target_zone(root, lib, finding, stems, parties, zones, zstems, names)
     if src is not None and target == src:
+        return "inside"
+    if src is not None and _kind(finding) == "wording" and (finding.get("path") or "", _source(finding)) in near:
         return "inside"
     if re.match(r"\s*names\b", finding.get("message") or "") or "one of its people" in (finding.get("message") or ""):
         return "name"
@@ -2005,20 +2369,23 @@ def walls_study(root, flags, old_check=None, new_check=None):
     released, refused = diff_findings(old, new)
     text = (root / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
     stems, parties, zones = _meeting_stems(root), _party_zones(text), list(flags)
+    zstems, names = _zone_stems(root), _party_names(text)
     kinds = {k: [] for k, _ in WALL_KINDS}
+    near = near_wording(root, Path(new_check).parent, released)
     for f in released:
-        kinds[classify(root, lib, f, stems, parties, zones)].append(f)
+        kinds[classify(root, lib, f, stems, parties, zones, near or frozenset(), zstems, names)].append(f)
     mixed = mixed_pages(root, lib, flags)
     study = {"flags": {z: w for z, (w, _) in flags.items()}, "released": {k: len(v) for k, v in kinds.items()},
-             "newly_refused": len(refused), "mixed_pages": [p for p, _ in mixed], "old": len(old), "new": len(new)}
-    return study, say_study(flags, kinds, refused, mixed)
+             "newly_refused": len(refused), "mixed_pages": [p for p, _ in mixed], "old": len(old), "new": len(new),
+             "wording_unplaced": near is None}
+    return study, say_study(flags, kinds, refused, mixed, near is None)
 
 
 def say_finding(f):
     return "  %s: %s" % (f.get("path"), (f.get("message") or "").strip())
 
 
-def say_study(flags, kinds, refused, mixed):
+def say_study(flags, kinds, refused, mixed, wording_unplaced=False):
     out = ["Garrick 0.63 walls each zone, not each party. Each zone is either walled or open: what is in a walled zone "
            "stays in that zone; what is in an open zone may go anywhere.", "",
            "The flag each zone would get, from its party and its default for new parties:"]
@@ -2032,6 +2399,9 @@ def say_study(flags, kinds, refused, mixed):
     total = sum(len(v) for v in kinds.values())
     out += ["", "%d refusal%s of the rule in force %s released by the zone rule:" % (
         total, "" if total == 1 else "s", "is" if total == 1 else "are")]
+    if wording_unplaced:
+        out += ["", "The check that says whether copied wording is also held inside the file's own zone could not be run, "
+                    "so wording refusals sit under Other; they may belong under Inside one zone."]
     for key, title in WALL_KINDS:
         found = kinds[key]
         out.append("")

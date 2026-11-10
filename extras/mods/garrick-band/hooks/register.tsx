@@ -336,7 +336,65 @@ async function measure($: any) {
   await update($, used, () => percentOf(usage?.context))
 }
 
+// Which Garrick this band is, against the one the workspace runs. The band's
+// own VERSION (the Garrick it came in, two folders above the plugin's) and the
+// workspace's System/garrick-version.json each name a commit and its date. A
+// clone's VERSION still holds git's placeholder and names none, and a file that
+// does not read or a field that is missing says nothing: the band shows a line
+// only when it knows both. Commits are compared as prefixes, since git's short
+// hash is as long as the repository needs.
+export type Release = { commit: string; date: string | null }
+
+const commitOf = (v: unknown) => (typeof v === 'string' && /^[0-9a-f]{4,40}$/i.test(v.trim()) ? v.trim().toLowerCase() : null)
+const dateOf = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v.trim()) ? v.trim() : null)
+
+export function bandRelease(text: string | null | undefined): Release | null {
+  const fields: Record<string, string> = {}
+  for (const line of (text ?? '').split('\n')) {
+    const at = line.indexOf(':')
+    if (at > 0 && !line.startsWith('#')) fields[line.slice(0, at).trim()] = line.slice(at + 1).trim()
+  }
+  const commit = commitOf(fields.commit)
+
+  return commit === null ? null : { commit, date: dateOf(fields.date) }
+}
+
+export function workspaceRelease(text: string | null | undefined): Release | null {
+  let data: any = null
+  try {
+    data = text ? JSON.parse(text) : null
+  } catch {
+    data = null
+  }
+  const commit = data !== null && typeof data === 'object' ? commitOf(data.commit) : null
+
+  return commit === null ? null : { commit, date: dateOf(data.date) }
+}
+
+const say = (r: Release) => (r.date === null ? r.commit : `${r.commit} of ${r.date}`)
+
+// The line to show, or null. A band dated later than the workspace is the newer
+// one: the workspace is what needs the update, and this line says nothing of that.
+export function staleBand(band: Release | null, workspace: Release | null): string | null {
+  if (band === null || workspace === null) return null
+  if (band.commit.startsWith(workspace.commit) || workspace.commit.startsWith(band.commit)) return null
+  if (band.date !== null && workspace.date !== null && band.date > workspace.date) return null
+
+  return `This band is from ${say(band)}; the workspace runs ${say(workspace)}. Run \`python3 update.py\` from the newer Garrick, or see Updating.`
+}
+
+async function checkBand($: any) {
+  stale = null
+  const root = await findRoot($)
+  if (root === null) return
+  const dir: string = $.plugin.root
+  const own = await $.fs.read(`${parent(parent(parent(dir)))}/VERSION`).catch(() => null)
+  const stamp = await $.fs.read(`${root}/System/garrick-version.json`).catch(() => null)
+  stale = staleBand(bandRelease(own), workspaceRelease(stamp))
+}
+
 async function refresh($: any) {
+  await checkBand($).catch(() => { stale = null })
   const found = await findNote($).catch(() => null)
   last = found
   await update($, note, () => found)
@@ -354,6 +412,8 @@ async function refresh($: any) {
 // costs no file read.
 let last: Note | null | undefined = undefined
 let finding: Promise<Note | null> | null = null
+// The line checkBand made, or null: the band is as new as the workspace, or cannot tell.
+let stale: string | null = null
 
 async function noteOf($: any): Promise<Note | null> {
   const n = await read($, note)
@@ -1151,6 +1211,7 @@ export const register: Register = on => {
               <Button key="wait-later" label="later" plain dimColor onPress={() => void waitLater($)} />
             </Box>
           )}
+          {stale !== null && <Text dimColor wrap="truncate-end">{stale}</Text>}
           <Box flexDirection="row" gap={2}>
             {slot === 'wrap' && resumable(current) && (
               <Button key="wrap" label="Wrap" hotkey="w" plain onPress={() => void startWrap($, current).catch(() => $.ui.toast('The wrap did not start.'))} />

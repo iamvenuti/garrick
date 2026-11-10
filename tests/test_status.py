@@ -108,6 +108,11 @@ class StatusCase(unittest.TestCase):
         agents = mock.patch.object(status, "launch_agents", lambda: base / "LaunchAgents")
         agents.start()
         self.addCleanup(agents.stop)
+        # So does its home: the settings that name a band are read from an empty one.
+        (base / "empty-home").mkdir()
+        home = mock.patch.dict(os.environ, {"HOME": str(base / "empty-home")})
+        home.start()
+        self.addCleanup(home.stop)
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -1581,6 +1586,22 @@ class TestSettings(StatusCase):
     def test_the_version_is_the_stamps(self):
         self.stamp()
         self.assertIn("Garrick abc1234 of 4 October 2026, installed from a download.", self.dialog())
+
+    def test_a_band_from_an_older_commit_is_said_beside_the_version(self):
+        self.stamp()
+        home = self.root.parent / "home"
+        band = self.root.parent / "older" / "extras" / "mods" / "garrick-band"
+        band.mkdir(parents=True)
+        write(band.parent.parent.parent / "VERSION", "commit: 3b61b83\ndate: 2026-09-01\n")
+        write(home / ".claude" / "settings.json", json.dumps({"env": {"CLAUDE_CODE_PLUGIN_DIRS": str(band)}}))
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            dialog = self.dialog()
+            self.assertIn("is from 3b61b83 of 2026-09-01; the workspace runs abc1234 of 2026-10-04.", dialog)
+            self.assertIn('id="band-stale"', dialog)
+            write(band.parent.parent.parent / "VERSION", "commit: abc1234\n")
+            self.assertNotIn("band-stale", self.dialog())
+            write(band.parent.parent.parent / "VERSION", "commit: $Format:%h$\n")      # a clone: it cannot say
+            self.assertNotIn("band-stale", self.dialog())
 
     def test_the_bug_form_arrives_with_the_version(self):
         self.stamp()

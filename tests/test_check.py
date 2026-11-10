@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 from fixtures import (
     HAVE_GIT,
@@ -233,6 +235,40 @@ class TestLocalInstructions(CheckCase):
               "# Your rules\n\n## From your earlier rules.md, to review\n\nIntro.\n\n### 1. Changed, at the top\n\n"
               "Mine.\n\n### 2. Removed, under Files\n\nGone.\n")
         self.assertFinds("instructions", "warning", "still holds 2 passages", path="System/rules.local.md")
+
+
+class TestVersionReport(CheckCase):
+    """`check.py --version` and the band kept outside the workspace."""
+
+    def say(self, home):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"HOME": str(home)}), redirect_stdout(out):
+            code = check.main(["--root", str(self.root), "--version"])
+        self.assertEqual(0, code)
+        return out.getvalue()
+
+    def settings(self, band, version):
+        home = self.root.parent / "home"
+        write(home / ".claude" / "settings.json", json.dumps({"env": {"CLAUDE_CODE_PLUGIN_DIRS": str(band)}}))
+        garrick = band.parent.parent.parent
+        if version is not None:
+            write(garrick / "VERSION", version)
+        write(self.root / "System" / "garrick-version.json", json.dumps({"commit": "c16b738a", "date": "2026-11-10"}))
+        return home
+
+    def test_the_report_says_when_the_band_runs_an_older_garrick(self):
+        band = self.root.parent / "older" / "extras" / "mods" / "garrick-band"
+        band.mkdir(parents=True)
+        home = self.settings(band, "commit: 3b61b83\ndate: 2026-10-01\n")
+        said = self.say(home)
+        self.assertIn("Garrick c16b738a of 10 November 2026", said)
+        self.assertIn("is from 3b61b83 of 2026-10-01; the workspace runs c16b738a of 2026-11-10.", said)
+
+    def test_the_report_says_nothing_of_a_band_it_cannot_read_or_that_matches(self):
+        for version in (None, "commit: $Format:%h$\n", "commit: c16b738a\n"):
+            band = self.root.parent / ("band-%s" % abs(hash(version))) / "extras" / "mods" / "garrick-band"
+            band.mkdir(parents=True)
+            self.assertNotIn("garrick band", self.say(self.settings(band, version)).lower())
 
 
 class TestPlaceholders(CheckCase):

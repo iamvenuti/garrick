@@ -423,20 +423,30 @@ def require_own_foreground(s: dict) -> None:
 
 
 def only_surface(s: dict) -> bool:
-    """Whether the tab is the one surface its workspace holds: one pane, with
-    this surface alone in it. `list-pane-surfaces` reads the focused pane only,
-    so the workspace's panes are listed and each one's surfaces counted. False
-    when cmux cannot say."""
+    """Whether the tab is the one surface its workspace holds. `list-pane-surfaces`
+    reads the focused pane only, so the workspace's panes are listed and the
+    surfaces counted across all of them: a pane with none, such as cmux 0.65's
+    global dock, does not count (#490). False when cmux cannot say, or when a
+    pane holds surfaces it does not name."""
     try:
         data = cx.cmux("list-panes", "--workspace", s["workspace"], "--json", "--id-format", "both", parse=True)
         panes = data.get("panes")
     except (cx.CmuxError, AttributeError):
         return False
-    if not isinstance(panes, list) or len(panes) != 1 or not isinstance(panes[0], dict):
+    if not isinstance(panes, list) or not panes:
         return False
-    pane = panes[0]
-    ids = pane.get("surface_ids")
-    return isinstance(ids, list) and pane.get("surface_count", len(ids)) == 1 and ids == [s["surface"]]
+    ids = []
+    for pane in panes:
+        if not isinstance(pane, dict):
+            return False
+        names = pane.get("surface_ids")
+        if isinstance(names, list):
+            if pane.get("surface_count", len(names)) != len(names):
+                return False
+            ids += names
+        elif pane.get("surface_count") != 0:
+            return False
+    return ids == [s["surface"]]
 
 
 def close_workspace(s: dict) -> None:

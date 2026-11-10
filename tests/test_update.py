@@ -45,7 +45,7 @@ class Case(unittest.TestCase):
         (base / "home").mkdir()
         gitconfig = base / "gitconfig"
         gitconfig.write_text("[user]\n\tname = Test Runner\n\temail = test@example.invalid\n"
-                             "[commit]\n\tgpgsign = false\n")
+                             "[commit]\n\tgpgsign = false\n[gc]\n\tauto = 0\n[maintenance]\n\tauto = false\n")
         # GARRICK_INSTALL_NO_PAGE: the status page is put in place, not built (#208).
         # GARRICK_CALLER_BUILDS_PAGE: scaffold.py starts no build of it in the
         # background, which would outlive the test and write into its folder (#243).
@@ -666,6 +666,57 @@ class TestSafety(Case):
         hook.write_text("#!/bin/sh\necho mine\n")
         self.assertEqual([], self.plan()["hooks"])
 
+    def test_a_zone_with_garricks_pre_commit_alone_gets_the_merge_hooks(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        for name in ("pre-merge-commit", "post-merge", "post-rewrite"):          # as 0.63.0 left it
+            (hooks / name).unlink(missing_ok=True)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        self.apply()
+        lib = update.install.lib()
+        for name, text in lib.wall_hook_texts().items():
+            self.assertEqual(text, (hooks / name).read_text())
+            self.assertTrue(os.access(hooks / name, os.X_OK))
+        self.assertEqual([], self.plan()["hooks"])
+
+    def test_a_zone_with_no_wall_check_gets_no_merge_hooks(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        for name in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite"):
+            (hooks / name).unlink(missing_ok=True)
+        self.assertEqual([], self.plan()["hooks"])
+        self.apply()
+        self.assertEqual([], [n for n in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite") if (hooks / n).exists()])
+
+    def test_a_merge_hook_that_is_not_garricks_is_left_alone_and_named(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        (hooks / "pre-merge-commit").unlink(missing_ok=True)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        result = self.apply()
+        self.assertEqual("#!/bin/sh\necho mine\n", (hooks / "post-merge").read_text())
+        self.assertTrue((hooks / "pre-merge-commit").is_file())
+        self.assertIn("post-merge", " ".join(p for p, _ in result["skipped"]))
+        self.assertEqual([], self.plan()["hooks"])                                # not stale for a hook that is not ours
+
+    def test_a_garrick_merge_hook_that_git_would_not_run_is_refreshed(self):
+        hook = self.root / "Zones" / "Work" / ".git" / "hooks" / "post-merge"
+        hook.chmod(0o644)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        self.apply()
+        self.assertTrue(os.access(hook, os.X_OK))
+        self.assertEqual([], self.plan()["hooks"])
+
+    def test_a_wiki_with_a_foreign_merge_hook_is_still_reported_under_the_hooks_installed(self):
+        hooks = self.root / "Wikis" / ".git" / "hooks"
+        (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        (hooks / "pre-merge-commit").unlink(missing_ok=True)
+        p = self.plan()
+        self.assertEqual("refresh", p["wiki_hook"])
+        self.assertIn("the merge hooks", update.report(p))
+        result = update.apply(self.root, p)
+        self.assertIn("Wikis", result["hooks"])
+        self.assertTrue((hooks / "pre-merge-commit").is_file())
+        self.assertIn("--changed ORIG_HEAD..HEAD", " ".join(w for _, w in result["skipped"]))
+
     def wiki_hook(self):
         return self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
 
@@ -1044,6 +1095,151 @@ class TestZoneWallsStep(Case):
         with mock.patch.object(update, "run_wall_check", lambda c, r, final=False: seen.append(final) or real(c, r, final)):
             self.study(self.zone_rule())
         self.assertEqual([False, True], seen)                      # the installed check without the switch, the release's with it
+
+    RUN1 = "The harbour committee agreed to move the cedar pier budget into the second quarter plan."
+    RUN2 = "Maple street tenants will receive the revised lease schedule before the autumn inspection."
+    RUN3 = "Theo proposed a joint survey of the northern orchard boundaries during the spring."
+
+    def wording_fixture(self):
+        """The 0.62 refusals the zone rule words differently or releases, over real files of invented zones."""
+        z = self.root / "Zones"
+        pages = self.root / "Wikis/Meetings/wiki/sources"
+        self.write(pages / "260320-emp-budget.md", self.zones_meeting("Work", "[emp]") + "\n" + self.RUN1 + "\n")
+        self.write(z / "Advisory/BirchAdv/Threads/Entry/Budget.md", "# b\n\n" + self.RUN1 + "\n")
+        self.write(z / "Advisory/AcmeAdv/Threads/Review/Budget.md", "# b\n\n" + self.RUN1 + "\n")
+        self.write(z / "Work/Northwind/Threads/Pricing/Plan.md", "# p\n\n" + self.RUN2 + "\n")
+        self.write(z / "Home/Garden/Threads/Beds/Note.md", "# n\n\n" + self.RUN2 + "\n")
+        self.write(z / "Home/Garden/Threads/Beds/Extra.md", "# e\n\n" + self.RUN3 + "\n")
+        self.write(z / "Advisory/BirchAdv/Threads/Entry/Other.md", "# o\n\n" + self.RUN3 + "\n")
+
+    def zones_meeting(self, zone, parties):
+        sys.path.insert(0, str(REPO / "tests"))
+        from fixtures import meeting_page
+        return meeting_page(zone, parties, "Budget call")
+
+    def old_wording(self, rows):
+        found = [{"severity": "error", "check": "walls", "path": p, "message": m, "fid": "w%d" % i, "token": ""}
+                 for i, (p, m) in enumerate(self.OLD + rows)]
+        return self.stub("old_wording.py", "import json\nprint(json.dumps({'findings': %r}))\n" % (found,))
+
+    def wording_study(self, rows):
+        self.wording_fixture()
+        return update.walls_study(self.root, update.walls_pending(self.root), old_check=self.old_wording(rows))
+
+    OLD_MEETING = "repeats wording from meeting 260320-emp-budget, a meeting with %s; %s is walled and this project does not name it"
+    OLD_FILE = "repeats wording from %s, in project %s for %s; %s is walled and this project does not name it"
+
+    def test_wording_held_in_the_files_own_zone_is_inside_one_zone_and_printed_once(self):
+        rows = [("Zones/Advisory/BirchAdv/Threads/Entry/Budget.md", self.OLD_MEETING % ("emp", "emp")),
+                ("Zones/Advisory/BirchAdv/Threads/Entry/Budget.md", self.OLD_MEETING % ("mint", "mint")),
+                ("Zones/Advisory/AcmeAdv/Threads/Review/Budget.md", self.OLD_MEETING % ("emp", "emp"))]
+        study, text = self.wording_study(rows)
+        self.assertEqual({"inside": 2 + 2, "name": 1, "other": 0}, study["released"])  # 2 and 1 are the fixture's own; the second tag is one finding
+        self.assertNotIn("Budget.md", text[:text.index("Inside one zone")])      # neither newly refused nor anything else
+        self.assertEqual(2, text.count("Threads/Entry/Budget.md") + text.count("Threads/Review/Budget.md"))
+
+    def test_a_reworded_refusal_is_the_same_refusal_and_a_new_source_is_not(self):
+        plan = "Zones/Work/Northwind/Threads/Pricing/Plan.md"
+        rows = [("Zones/Home/Garden/Threads/Beds/Note.md", self.OLD_FILE % (plan, "Northwind", "emp", "emp")),
+                (plan, self.OLD_FILE % ("Zones/Home/Garden/Threads/Beds/Note.md", "Garden", "jo", "jo")),
+                # the old check had Extra.md copy from the Work file; the zone rule finds it copies a file of Advisory
+                ("Zones/Home/Garden/Threads/Beds/Extra.md", self.OLD_FILE % (plan, "Northwind", "emp", "emp"))]
+        study, text = self.wording_study(rows)
+        refused = text[text.index("NEWLY REFUSED"):text.index("Inside one zone")]
+        self.assertIn("Zones/Home/Garden/Threads/Beds/Extra.md", refused)        # a new source in another walled zone
+        self.assertNotIn("Beds/Note.md", refused)                                # the same refusal, reworded
+        self.assertNotIn("Pricing/Plan.md", refused)
+        self.assertEqual({"inside": 2, "name": 1, "other": 1}, study["released"])  # the fixture's own, and the one the zone rule no longer makes
+
+    def test_a_page_stem_of_several_words_is_never_cut_to_its_last_word(self):
+        mine = lambda stem: {"path": "Zones/Advisory/BirchAdv/Threads/Entry/Budget.md",
+                             "message": "repeats wording from meeting page %s, a meeting with emp; emp is walled" % stem}
+        self.assertEqual("a sync", update._source(mine("A sync")))
+        released, refused = update.diff_findings([mine("A sync")], [mine("B sync")])
+        self.assertEqual((1, 1), (len(released), len(refused)))                # two pages, two findings
+        bare = {"path": "x.md", "message": "repeats wording from meeting notes, an unfinished meeting page (no zone or parties)"}
+        self.assertEqual("meeting notes", update._source(bare))
+        odd = {"path": "x.md", "message": "repeats wording from some odd words, a thing with emp; emp is walled"}
+        self.assertEqual("", update._source(odd))                              # unsure: today's key
+
+    def test_the_near_wording_test_is_for_wording_findings_only(self):
+        lib = update.install.lib()
+        path = "Zones/Advisory/BirchAdv/Threads/Entry/Budget.md"
+        link = {"path": path, "message": "links [[260320-emp-budget]], a meeting with emp; emp is walled"}
+        near = {(path, "260320-emp-budget")}
+        self.assertEqual("other", update.classify(self.root, lib, link, {}, {}, [], near))
+
+    def classify_text(self, message, path="Zones/Advisory/BirchAdv/Threads/Entry/Notes.md"):
+        lib = update.install.lib()
+        return update.classify(self.root, lib, {"path": path, "message": message, "fid": "x", "token": ""},
+                               update._meeting_stems(self.root), {}, list(self.zones.FLAGS),
+                               names=update._party_names(self.context.read_text()))
+
+    def test_every_form_of_a_target_is_placed_by_the_zone_of_its_one_file(self):
+        hub = "AcmeAdv"
+        for message in (
+                "links [[%s]], a note of acme; acme is walled" % hub,                                    # a hub by name
+                "links [[%s/%s|the hub]], a note of acme; acme is walled" % (hub, hub),                  # a hub with its folder
+                "links [[Review]], a note of acme; acme is walled",                                      # a note by name
+                "links [x](obsidian://open?vault=Meetings&file=wiki%2Fsources%2F260310-acme-kickoff), a meeting",
+                "links [x](obsidian://open?vault=Garrick&file=Zones%2FAdvisory%2FAcmeAdv%2FAcmeAdv.md), a note",
+                "writes the path Zones/Advisory/AcmeAdv/AcmeAdv, a note of acme",
+                "repeats wording from Zones/Advisory/AcmeAdv/AcmeAdv.md, in project AcmeAdv for acme; acme is walled",
+                "repeats wording from meeting 260310-acme-kickoff, a meeting with acme; acme is walled"):
+            self.assertEqual("inside", self.classify_text(message), message)
+
+    def test_a_target_that_is_not_one_file_in_the_files_own_zone_stays_other(self):
+        for message in (
+                "links [[Northwind]], a note of emp; emp is walled",                                       # another zone
+                "links [[Notes]], a note; acme is walled",                                                # two files
+                "links [[Nowhere]], a note; acme is walled",                                              # no file
+                "links [[AcmeAdv]] and [[Nowhere]], a note; acme is walled",                              # one placed, one not
+                "links [[AcmeAdv]] and [[Northwind]], a note; acme is walled",                            # two zones
+                "links [x](obsidian://open?vault=Meetings&file=wiki%2Fsources%2F260312-emp-sync), a meeting",   # another zone
+                "links [x](obsidian://open?vault=Meetings&file=wiki%2Fsources%2Fnone), a meeting",
+                "repeats wording from meeting 260312-emp-sync, a meeting with emp; emp is walled"):
+            self.assertEqual("other", self.classify_text(message), message)
+
+    def masked_fixture(self):
+        """Files named after the walled party Acme Corp: 0.62 printed its name as `<acme>` in every message."""
+        z = self.root / "Zones"
+        self.write(z / "Advisory/Acme Corp OEM/Acme Corp OEM.md", "---\ntitle: Acme Corp OEM\ntype: project\nzone: Advisory\nstatus: active\n---\n\n# Acme Corp OEM\n")
+        self.write(z / "Advisory/Acme Corp OEM/Notes/x.md", "# x\n")
+        self.write(self.root / "Wikis/Meetings/wiki/sources/260512-deal-acme-corp-review.md",
+                   self.zones_meeting("Advisory", "[acme]"))
+        self.write(z / "Advisory/Acme Corp OEM/Threads/A/Acme Corp plan.md", "# a\n")
+        self.write(z / "Advisory/BirchAdv/Threads/Entry/Acme Corp plan.md", "# a\n")
+        self.write(z / "Work/Northwind/Threads/Pricing/Acme Corp Notes.md", "# w\n")
+
+    def test_a_target_whose_party_name_was_masked_as_a_tag_is_found_again(self):
+        self.masked_fixture()
+        for message in (
+                "links [[<acme> OEM]], a note of acme; acme is walled and this project does not name it",
+                "links [[<acme> OEM/<acme> OEM|the hub]], a note; acme is walled",
+                "repeats wording from Zones/Advisory/<acme> OEM/Notes/x.md, in project <acme> OEM for <acme>; <acme> is walled",
+                "links [x](obsidian://open?vault=Wikis&file=Meetings/wiki/sources/260512-deal-<acme>-review), a meeting",
+                "repeats wording from meeting 260512-deal-<acme>-review, a meeting with <acme>; <acme> is walled"):
+            self.assertEqual("inside", self.classify_text(message), message)
+
+    def test_a_masked_target_that_matches_two_files_or_the_wrong_zone_stays_other(self):
+        self.masked_fixture()
+        for message in (
+                "links [[<acme> plan]], a note; acme is walled",                       # two files of that name
+                "links [[<acme> Notes]], a note; acme is walled",                      # one file, in another walled zone
+                "links [[<nobody> OEM]], a note",                                      # a label that names no party
+                "repeats wording from Zones/Advisory/<acme> OEM/../../Work/x.md, a note"):
+            self.assertEqual("other", self.classify_text(message), message)
+
+    def test_a_wording_check_that_cannot_run_is_said_above_the_groups(self):
+        self.wording_fixture()
+        rows = [("Zones/Advisory/BirchAdv/Threads/Entry/Budget.md", self.OLD_MEETING % ("emp", "emp"))]
+        with mock.patch.object(update, "near_wording", lambda *a: None):
+            study, text = update.walls_study(self.root, update.walls_pending(self.root), old_check=self.old_wording(rows))
+        self.assertTrue(study["wording_unplaced"])
+        said = text.index("could not be run")
+        self.assertLess(said, text.index("Inside one zone"))
+        self.assertGreater(said, text.index("released by the zone rule"))
+        self.assertIn("Budget.md", text[text.index("Other:"):])
 
     def test_a_check_that_does_not_run_stops_the_step(self):
         broken = self.stub("broken.py", "import sys\nsys.exit(3)\n")
@@ -1633,6 +1829,161 @@ class TestWhatExtrasNeedNext(ExtrasCase):
                       self.report_of(self.plan()))
         guard.write_bytes((REPO / "extras/hooks/zone_guard.py").read_bytes())
         self.assertNotIn("zone guard", self.report_of(self.plan()))
+
+
+class TestBandKeptOutside(ExtrasCase):
+    """The Garrick band runs from a Garrick kept outside the workspace. Two fake
+    releases, built here as ZIP archives, stand for the downloads; the settings,
+    the home and the network are the test's own."""
+
+    OLD, NEW = ("0.60.0", "aaaa111"), ("0.63.1", "bbbb222")
+
+    def release_tree(self, folder, release, commit, band="the band"):
+        for name, text in (("install.py", "# installer\n"), ("update.py", "# updater\n"),
+                           ("VERSION", "# Which Garrick\ncommit: %s\ndate: 2026-11-01\n" % commit),
+                           ("CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n## [%s] - 2026-11-01\n\n- A change.\n" % release),
+                           ("extras/mods/garrick-band/hooks/register.tsx", "// %s %s\n" % (band, release))):
+            f = Path(folder) / name
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(text, encoding="utf-8")
+        return Path(folder)
+
+    def archive(self, release, commit):
+        import io
+        import zipfile
+        src = self.release_tree(self.base / ("zip-" + release) / "garrick", release, commit)
+        out = io.BytesIO()
+        with zipfile.ZipFile(out, "w") as z:
+            for f in sorted(src.rglob("*")):
+                if f.is_file():
+                    z.write(f, "garrick/" + str(f.relative_to(src)))
+        return out.getvalue()
+
+    def setUp(self):
+        super().setUp()
+        self.ours = self.release_tree(self.base / "ours", *self.NEW)        # the Garrick that is updating
+        (self.ours / "VERSION").write_text("commit: %s\n" % self.NEW[1])
+        self.kept = self.release_tree(self.base / "kept" / "garrick-release", *self.OLD)
+        (self.base / "home" / ".claude").mkdir(parents=True, exist_ok=True)
+        self.point(self.kept)
+        update.install.lib()
+        import release
+        self.release = release
+        self.fetched = []
+
+        def fetch(url, root, timeout, accept="", limit=0, say=None):
+            self.fetched.append(url)
+            tag = url.rsplit("/", 1)[1][:-len(".zip")]
+            return self.archive(*{"v" + self.OLD[0]: self.OLD, "v" + self.NEW[0]: self.NEW}[tag])
+        patch = mock.patch.object(release, "fetch", fetch)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def point(self, top):
+        (self.base / "home" / ".claude" / "settings.json").write_text(json.dumps(
+            {"env": {"CLAUDE_CODE_PLUGIN_DIRS": str(top / "extras" / "mods" / "garrick-band")}}))
+
+    def band_steps(self):
+        p = self.plan()                                     # of the real Garrick; only the band's check sees `ours`
+        with mock.patch.object(update, "REPO", self.ours):
+            return [(w, fn) for w, fn in update.next_steps(self.root, p) if "band" in w]
+
+    def test_an_unmodified_download_is_refreshed_and_the_old_copy_kept_beside_it(self):
+        ((what, fn),) = self.band_steps()
+        self.assertIn("Refresh the Garrick band kept at %s, a download of Garrick 0.60.0" % self.kept, what)
+        self.assertEqual([], self.fetched)                                  # offering it asks nobody
+        said = fn()
+        self.assertIn("is now Garrick 0.63.1", said)
+        aside = self.kept.with_name("garrick-release-aaaa111")
+        self.assertIn("// the band 0.60.0", (aside / "extras/mods/garrick-band/hooks/register.tsx").read_text())
+        self.assertIn("// the band 0.63.1", (self.kept / "extras/mods/garrick-band/hooks/register.tsx").read_text())
+        self.assertEqual(["v0.60.0", "v0.63.1"], [u.rsplit("/", 1)[1][:-4] for u in self.fetched])
+        self.assertEqual([], self.band_steps())                              # the settings' path is current now
+
+    def test_a_copy_with_changes_of_its_own_is_left_as_it_is_with_the_command(self):
+        (self.kept / "extras/mods/garrick-band/hooks/register.tsx").write_text("// mine\n")
+        ((what, fn),) = self.band_steps()
+        said = fn()
+        self.assertIn("was left as it is: its files differ from Garrick 0.60.0", said)
+        self.assertIn("git -C %s pull" % self.kept, said)
+        self.assertEqual("// mine\n", (self.kept / "extras/mods/garrick-band/hooks/register.tsx").read_text())
+        self.assertEqual([self.kept.name], [p.name for p in self.kept.parent.iterdir()])
+
+    def test_a_clone_gets_the_line_with_the_command_and_no_step_with_a_function(self):
+        (self.kept / ".git").mkdir()
+        ((what, fn),) = self.band_steps()
+        self.assertIsNone(fn)
+        self.assertIn("runs from %s" % (self.kept / "extras/mods/garrick-band"), what)
+        self.assertIn("git -C %s pull" % self.kept, what)
+
+    def test_a_copy_with_no_commit_in_its_version_is_a_clone_too(self):
+        (self.kept / "VERSION").write_text("commit: $Format:%h$\n")
+        ((what, fn),) = self.band_steps()
+        self.assertIsNone(fn)
+
+    def test_a_garrick_that_is_not_a_release_offers_no_download(self):
+        (self.ours / "CHANGELOG.md").write_text("# Changelog\n\n## [Unreleased]\n\n- Waiting.\n\n## [0.63.1] - 2026-11-01\n")
+        ((what, fn),) = self.band_steps()
+        self.assertIsNone(fn)
+
+    def test_a_relative_entry_is_never_taken_for_a_folder_to_replace(self):
+        (self.base / "home" / ".claude" / "settings.json").write_text(json.dumps(
+            {"env": {"CLAUDE_CODE_PLUGIN_DIRS": "extras/mods/garrick-band"}}))
+        here = os.getcwd()
+        os.chdir(str(self.kept))
+        self.addCleanup(os.chdir, here)
+        self.assertIsNone(update.band_refresh("extras/mods/garrick-band", self.root))
+        self.assertEqual([], [fn for w, fn in self.band_steps() if fn])         # no crash, no step with a function
+
+    def test_a_folder_that_holds_the_workspace_or_is_the_running_garrick_is_not_moved(self):
+        band = self.base / "extras" / "mods" / "garrick-band"
+        self.release_tree(self.base, *self.OLD)                                # the workspace's own folder is inside it
+        self.assertTrue(self.root.is_relative_to(self.base))
+        with mock.patch.object(update, "REPO", self.ours):
+            self.assertIsNone(update.band_refresh(str(band), self.root))
+            self.assertIsNone(update.band_refresh(str(self.ours / "extras/mods/garrick-band"), self.root))
+            inner = self.release_tree(self.root / "Garrick copy", *self.OLD)   # one inside the workspace
+            self.assertIsNone(update.band_refresh(str(inner / "extras/mods/garrick-band"), self.root))
+            self.assertIsNotNone(update.band_refresh(str(self.kept / "extras/mods/garrick-band"), self.root))
+
+    def test_a_version_file_with_a_longer_commit_is_not_a_change(self):
+        (self.kept / "VERSION").write_text("commit: aaaa1112\ndate: 2026-11-01\n")
+        ((what, fn),) = self.band_steps()
+        self.assertIn("is now Garrick 0.63.1", fn())
+        self.assertTrue(self.kept.with_name("garrick-release-aaaa1112").is_dir())
+
+    def test_any_download_error_is_a_message_and_a_failed_put_back_says_where_the_copy_is(self):
+        import http.client
+        ((what, fn),) = self.band_steps()
+
+        def cut(*a, **k):
+            raise http.client.IncompleteRead(b"x")
+        with mock.patch.object(self.release, "fetch", cut):
+            self.assertIn("was not refreshed", fn())
+        self.assertEqual([self.kept.name], [p.name for p in self.kept.parent.iterdir()])
+        real = os.rename
+        aside = self.kept.with_name("garrick-release-aaaa111")
+
+        def rename(a, b):
+            if Path(b) == self.kept and Path(a) == aside:
+                raise OSError("busy")
+            return real(a, b)
+        with mock.patch.object(update.shutil, "move", side_effect=OSError("disk full")), \
+                mock.patch.object(update.os, "rename", rename):
+            said = fn()
+        self.assertIn("could not be put back: it is now at %s" % aside, said)
+        self.assertTrue(aside.is_dir())
+
+    def test_nothing_is_moved_when_the_download_fails_or_the_aside_name_is_taken(self):
+        def refuse(*a, **k):
+            raise OSError("no network")
+        with mock.patch.object(self.release, "fetch", refuse):
+            ((what, fn),) = self.band_steps()
+            self.assertIn("was not refreshed: no network", fn())
+        self.assertEqual([self.kept.name], [p.name for p in self.kept.parent.iterdir()])
+        self.kept.with_name("garrick-release-aaaa111").mkdir()
+        self.assertIn("already exists", fn())
+        self.assertEqual([], self.fetched)
 
 
 class TestJobsRenamed(ExtrasCase):

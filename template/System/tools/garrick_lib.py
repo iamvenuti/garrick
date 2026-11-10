@@ -34,7 +34,8 @@ functions below keep their signatures:
     checkpoint_key(base, content) -> str
     write_if_unchanged(note, text, expect) -> bool
     same_action(line) -> str
-    install_wall_hook(zone) -> Path
+    install_wall_hook(zone) -> Path   (writes pre-commit, pre-merge-commit, post-merge and post-rewrite)
+    has_merge_hooks(zone) -> bool / missing_merge_hooks(zone) -> [str] / wall_hook_texts() -> {name: text}
     work_folder(root, value) -> Path or None
     has_wall_hook(zone) -> bool
     hooks_path(repo) -> str
@@ -177,6 +178,14 @@ __all__ = [
     "strip_tag",
     "install_wall_hook",
     "has_wall_hook",
+    "has_merge_hooks",
+    "MergeHookNotGarricks",
+    "missing_merge_hooks",
+    "foreign_merge_hooks",
+    "merge_hook_advice",
+    "hook_slot",
+    "wall_hook_texts",
+    "WALL_HOOKS",
     "hooks_path",
     "WALL_HOOK",
     "WALL_HOOK_NESTED",
@@ -2624,6 +2633,134 @@ def wiki_hook_text(root: Optional[PathLike] = None) -> str:
     return WALL_HOOK_WIKI % (WALL_HOOK_MARK, shlex.quote(str(root)) if root else "''")
 
 
+# The same check at the two other places git brings changes into a repository without `git commit` (#497).
+# `pre-merge-commit` runs when a merge completes on its own, with the merge result staged: the very check
+# `pre-commit` runs, so it refuses exactly what one commit of the same changes would be refused. `post-merge` (a
+# merge or fast-forward) and `post-rewrite` (a rebase or an amend) run after the commits are in: they cannot refuse,
+# so they only report the files that changed, say that the commits are in, and name how to undo them without running
+# it. They never exit non-zero, never reset, and write nothing outside `.git/`: the check they run reads only
+# (`--changed`), and bytecode is not written.
+MERGE_HOOK = "pre-merge-commit"
+POST_HOOKS = ("post-merge", "post-rewrite")
+WALL_HOOKS = ("pre-commit", MERGE_HOOK) + POST_HOOKS
+_STAGED_RUN = "--staged --walls-only"
+
+# What a hook of the user's own needs added to it to run Garrick's check, by hook name: a line for a hook that is not
+# Garrick's, in the words a person pastes. The post hooks take `--changed`, never `--staged`.
+MERGE_HOOK_LINES = {
+    "pre-merge-commit": 'python3 <workspace>/System/tools/check.py --staged --walls-only',
+    "post-merge": 'python3 <workspace>/System/tools/check.py --changed ORIG_HEAD..HEAD',
+    "post-rewrite": 'python3 <workspace>/System/tools/check.py --changed "$@"   '
+                    '# after reading the new commits from stdin, as Garrick\'s own post-rewrite does',
+}
+
+
+def _post_hook(base: str, name: str) -> str:
+    """The post-merge or post-rewrite hook made from a pre-commit hook text `base`: the same way of finding the
+    workspace, no refusal anywhere in it, and at the end the report over what changed. post-merge reports on
+    ORIG_HEAD..HEAD (nothing for a squash, which commits nothing). post-rewrite reads the new commits from stdin and
+    reports on what each changed; after a rebase also on ORIG_HEAD..HEAD, so what the rebase brought in from
+    upstream is read as well. It tells `--after` which, since an amend sets no ORIG_HEAD."""
+    lines = base.rstrip("\n").split("\n")
+    out = []
+    for line in lines:
+        if line.startswith("# %s:" % WALL_HOOK_MARK):
+            line = "# %s: say, after a %s, which files the commits it brought in would have been refused for." % (
+                WALL_HOOK_MARK, "merge or fast-forward" if name == "post-merge" else "rebase or amend")
+        elif line.startswith("# Installed by Garrick"):
+            line = "# Installed by Garrick. It cannot refuse, undo or write: the commits are in, and it only reports."
+        line = line.replace("Commit refused: ", "The wall check did not run: ")
+        line = line.replace(", or commit with --no-verify if you mean to skip it", "")
+        line = line.replace(" Put it back, or commit with --no-verify if you mean to skip it.", " Put it back.")
+        line = line.replace("exit 1", "exit 0")
+        out.append(line)
+    run = out.pop()
+    assert _STAGED_RUN in run, run
+    run = run.replace("exec python3", "PYTHONDONTWRITEBYTECODE=1 GIT_OPTIONAL_LOCKS=0 python3")
+    if name == "post-merge":
+        out.append('[ "$1" = 1 ] && exit 0     # a squash commits nothing; what it staged is checked when it is committed')
+        out.append("git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1 || exit 0")
+        out.append(run.replace(_STAGED_RUN, "--after merge --changed ORIG_HEAD..HEAD"))
+    else:   # post-rewrite gets "how" ($1: amend or rebase) and "old new" pairs on stdin: the new commits are what it reads
+        out.append('how="$1"')
+        out.append('set -- $(while read -r old new rest; do echo "$new"; done)')
+        out.append('[ "$#" -gt 0 ] || exit 0')
+        out.append('if [ "$how" = rebase ] && git rev-parse -q --verify ORIG_HEAD >/dev/null 2>&1; then')
+        out.append("  " + run.replace(_STAGED_RUN, '--after rebase --changed ORIG_HEAD..HEAD "$@"'))
+        out.append("else")
+        out.append("  " + run.replace(_STAGED_RUN, '--after "$how" --changed "$@"'))
+        out.append("fi")
+    out.append("exit 0")
+    return "\n".join(out) + "\n"
+
+
+def wall_hook_texts(nested: bool = False, wiki: bool = False, root: Optional[PathLike] = None) -> Dict[str, str]:
+    """{hook name: text} of the four hooks, for a zone's repository, a nested one (`nested`) or a wiki's (`wiki`)."""
+    base = wiki_hook_text(root) if wiki else WALL_HOOK_NESTED if nested else WALL_HOOK
+    out = {"pre-commit": base, MERGE_HOOK: base}
+    for name in POST_HOOKS:
+        out[name] = _post_hook(base, name)
+    return out
+
+
+class MergeHookNotGarricks(FileExistsError):
+    """install_wall_hook found a merge hook (pre-merge-commit, post-merge or post-rewrite) that is not Garrick's. The
+    pre-commit hook and the others are written; this one is left as it is, and named in `names`."""
+
+    def __init__(self, message: str, names: List[str]):
+        super().__init__(message)
+        self.names = names
+
+
+def hook_slot(path: Path) -> str:
+    """What is in a hook's place: "free" when nothing is, "ours" for a regular file that carries Garrick's mark, else
+    "foreign": a hook of the user's, a link (never written through) or anything that is not a file."""
+    if not os.path.lexists(str(path)):
+        return "free"
+    if path.is_symlink() or not path.is_file():
+        return "foreign"
+    try:
+        return "ours" if WALL_HOOK_MARK in path.read_text(encoding="utf-8", errors="replace") else "foreign"
+    except OSError:
+        return "foreign"
+
+
+def foreign_merge_hooks(zone: PathLike) -> List[str]:
+    """The merge hooks of a repository that are the user's own (or a link), where Garrick's would go."""
+    hooks = _hooks_dir(zone)
+    return [] if hooks is None else [n for n in WALL_HOOKS[1:] if hook_slot(hooks / n) == "foreign"]
+
+
+def merge_hook_advice(names: List[str]) -> str:
+    """What to do about a merge hook that is not Garrick's: the line to add to it, for each, and the comment that
+    tells the check the hook runs it."""
+    lines = "; ".join("%s: %s" % (n, MERGE_HOOK_LINES[n]) for n in names)
+    return ("add the wall check to it by hand: %s. Keep the words \"%s\" in a comment of the hook, which is how the "
+            "check knows it runs" % (lines, WALL_HOOK_MARK))
+
+
+def _hook_runs(hooks: Path, name: str) -> bool:
+    hook = hooks / name
+    if hook.is_symlink() or not hook.is_file():
+        return False
+    try:
+        return WALL_HOOK_MARK in hook.read_text(encoding="utf-8", errors="replace") and os.access(hook, os.X_OK)
+    except OSError:
+        return False
+
+
+def has_merge_hooks(zone: PathLike) -> bool:
+    """Does this repository also run the wall check at a merge and after one (pre-merge-commit, post-merge, post-rewrite)?"""
+    hooks = _hooks_dir(zone)
+    return hooks is not None and all(_hook_runs(hooks, name) for name in WALL_HOOKS[1:])
+
+
+def missing_merge_hooks(zone: PathLike) -> List[str]:
+    """The merge hooks (pre-merge-commit, post-merge, post-rewrite) this repository does not run Garrick's check from."""
+    hooks = _hooks_dir(zone)
+    return [n for n in WALL_HOOKS[1:] if hooks is None or not _hook_runs(hooks, n)]
+
+
 def _hooks_dir(zone: PathLike) -> Optional[Path]:
     git_dir = Path(zone) / ".git"
     return git_dir / "hooks" if git_dir.is_dir() else None
@@ -2643,12 +2780,16 @@ def has_wall_hook(zone: PathLike) -> bool:
 
 def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False,
                       root: Optional[PathLike] = None) -> Path:
-    """Write the pre-commit wall check into a zone's repository, or with
-    `nested` into a repository inside a project, or with `wiki` into a wiki's,
-    which is told the workspace `root`, and return its path.
+    """Write the wall check into a zone's repository, or with `nested` into a
+    repository inside a project, or with `wiki` into a wiki's, which is told
+    the workspace `root`, and return the path of its pre-commit hook. Four
+    hooks are written (WALL_HOOKS): pre-commit, pre-merge-commit, post-merge
+    and post-rewrite. A second call changes nothing.
 
-    Refuses (FileExistsError) to replace a pre-commit hook Garrick did not write,
-    and (FileNotFoundError) a zone whose `.git` is not a folder."""
+    Refuses (FileExistsError) to replace a pre-commit hook Garrick did not
+    write, writing nothing; a merge hook that is not Garrick's is left alone,
+    the others written, and the error names it. (FileNotFoundError) for a zone
+    whose `.git` is not a folder."""
     hooks = _hooks_dir(zone)
     if wiki and (Path(zone) / ".git").exists() and (Path(zone) / ".git").is_symlink() or (
             wiki and (Path(zone) / ".git").is_file()):
@@ -2656,14 +2797,24 @@ def install_wall_hook(zone: PathLike, nested: bool = False, wiki: bool = False,
     if hooks is None:
         raise FileNotFoundError("%s is not a git repository with its own .git folder" % zone)
     hook = hooks / "pre-commit"
-    if hook.exists():
-        existing = hook.read_text(encoding="utf-8", errors="replace")
-        if WALL_HOOK_MARK not in existing:
-            raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
-                                  "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
+    if hook_slot(hook) == "foreign":
+        raise FileExistsError("%s already has a pre-commit hook; add this line to it: "
+                              "python3 <workspace>/System/tools/check.py --staged --walls-only" % zone)
     hooks.mkdir(parents=True, exist_ok=True)
-    hook.write_text(wiki_hook_text(root) if wiki else WALL_HOOK_NESTED if nested else WALL_HOOK, encoding="utf-8")
-    hook.chmod(0o755)
+    foreign = []
+    for name, text in wall_hook_texts(nested, wiki, root).items():
+        path = hooks / name
+        slot = hook_slot(path)
+        if slot == "foreign":
+            foreign.append(name)         # not Garrick's, or a link: left alone, never written through, and named
+            continue
+        if slot == "free" or path.read_text(encoding="utf-8", errors="replace") != text:
+            path.write_text(text, encoding="utf-8")
+        if not os.access(path, os.X_OK):
+            path.chmod(0o755)
+    if foreign:
+        raise MergeHookNotGarricks("%s already has a %s hook that is not Garrick's, so it is left as it is; %s" % (
+            zone, ", ".join(foreign), merge_hook_advice(foreign)), foreign)
     return hook
 
 
@@ -3012,6 +3163,57 @@ def say_changes(root: PathLike, stamp: dict) -> str:
     if gone:
         parts.append("%d gone" % gone)
     return "Of the %d files Garrick wrote, %s since." % (total, " and ".join(parts))
+
+
+def _commit_date(fields: dict) -> Optional[Tuple[str, str]]:
+    """(commit, date) from a VERSION file's or a stamp's fields, or None when
+    no commit is named: a clone's VERSION still holds git's placeholder."""
+    commit = str(fields.get("commit") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{4,40}", commit):
+        return None
+    date = str(fields.get("date") or "").strip()
+    return commit, date if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else ""
+
+
+def _say_commit(found: Tuple[str, str]) -> str:
+    return "%s of %s" % found if found[1] else found[0]
+
+
+def stale_bands(root: PathLike, home: Optional[PathLike] = None) -> List[str]:
+    """The Garrick band the assistant's settings name in CLAUDE_CODE_PLUGIN_DIRS,
+    when it is from another commit than the workspace runs: one sentence per
+    band. Reads the settings, the band's VERSION (two folders above the plugin,
+    the Garrick it came in) and the workspace's stamp, and writes nothing. A file
+    that does not read, or names no commit, says nothing, and neither does a
+    band dated later than the workspace, which is the newer one. The band shows
+    the same line itself (extras/mods/garrick-band)."""
+    stamp = _commit_date(read_version(root))
+    if stamp is None:
+        return []
+    try:
+        env = json.loads((Path(home) if home else Path.home()).joinpath(".claude", "settings.json").read_text(encoding="utf-8")).get("env")
+        value = env.get("CLAUDE_CODE_PLUGIN_DIRS") if isinstance(env, dict) else None
+    except (OSError, ValueError, AttributeError):
+        return []
+    out = []
+    for d in sorted({d for d in re.split(r"[:,]", value) if d.rstrip("/").endswith("garrick-band")} if isinstance(value, str) else ()):
+        band = Path(os.path.expanduser(d))
+        fields = {}
+        try:
+            for line in band.parent.parent.parent.joinpath("VERSION").read_text(encoding="utf-8").splitlines():
+                key, sep, text = line.partition(":")
+                if sep and not line.startswith("#"):
+                    fields[key.strip()] = text.strip()
+        except OSError:
+            continue
+        own = _commit_date(fields)
+        if own is None or own[0].startswith(stamp[0]) or stamp[0].startswith(own[0]):
+            continue
+        if own[1] and stamp[1] and own[1] > stamp[1]:
+            continue
+        out.append("The Garrick band that your settings name (%s) is from %s; the workspace runs %s. "
+                   "Run `python3 update.py` from the newer Garrick, or see Updating." % (d, _say_commit(own), _say_commit(stamp)))
+    return out
 
 
 # What the workspace's settings hold, SETTINGS above: choices that stay, unlike

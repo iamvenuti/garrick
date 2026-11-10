@@ -39,8 +39,8 @@ class NamesTest(unittest.TestCase):
         cls.work = cls.root / "Zones" / "Work"
         context = cls.root / "System" / "context.md"
         text = context.read_text(encoding="utf-8")
-        context.write_text(text.replace("| dana whitlaw | Dana Whitlock |\n", "| dana whitlaw | Dana Whitlock |\n| kitten | Kit |\n"),
-                           encoding="utf-8")
+        text = text.replace("| Theo Marsh | `birch` | Managing partner |\n", "| Theo Marsh | `birch` | Managing partner |\n| Pip | `birch` | Analyst |\n")
+        context.write_text(text, encoding="utf-8")
 
     @classmethod
     def tearDownClass(cls):
@@ -64,8 +64,16 @@ class NamesTest(unittest.TestCase):
     def test_a_one_word_name_alone_warns_and_does_not_refuse(self):
         self.assertEqual("warned", self.verdict("# N\n\nAsk Kit about the order.\n"))
         self.assertEqual("warned", self.verdict("# N\n\nask kit about the order.\n"))
-        self.assertEqual("warned", self.verdict("# N\n\nAsk kitten about the order.\n"))     # an alias of the same row
         self.assertEqual("warned", self.verdict("# N\n\nAsk Kit; Kit knows.\n"))             # the same person twice
+
+    def test_one_one_word_person_from_each_of_two_walled_parties_gives_two_warnings_and_passes(self):
+        got = self.found("# N\n\nAsk Kit and Pip.\n")
+        self.assertEqual(["warning", "warning"], [f.severity for f in got])
+
+    def test_an_alias_of_a_one_word_person_refuses_as_it_did(self):
+        for text in ("Ask kitten about the order.", "Kitten from purchasing wants the draft by Friday."):
+            with self.subTest(text=text):
+                self.assertEqual("refused", self.verdict("# N\n\n%s\n" % text))
 
     def test_the_warning_names_no_one(self):
         message = self.found("# N\n\nAsk Kit.\n")[0].message
@@ -139,17 +147,33 @@ class NamesTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual("clear", self.verdict("# N\n\nThe hook said:\n\n%s\n" % text))
 
-    def test_the_wall_sentence_is_read_from_the_rules_and_nothing_is_dropped_when_it_is_missing(self):
+    RULES = "# Rules\n\n## Autonomy\n\n%s\n\n## Zones and walls\n\n- Say that a wall held something back, in these words: \"%s\" No party.\n\n## Files\n"
+    SAID = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+
+    def with_rules(self, text):
         rules = self.root / "System" / "rules.md"
         kept = rules.read_text(encoding="utf-8")
         self.addCleanup(rules.write_text, kept, encoding="utf-8")
-        said = "A wall holds some material back from this project, so I have not used it. Nothing was written."
-        ws = check.discover(self.root, None)
-        self.assertEqual("", check.wall_sentence(ws))
-        self.assertEqual("x %s Acme Corp" % said, check.without_own_words(ws, "x %s Acme Corp" % said))
-        rules.write_text('Say it in these words: "%s" No party.\n' % said, encoding="utf-8")
-        self.assertEqual(said, check.wall_sentence(ws))
-        self.assertEqual("x  Acme Corp", check.without_own_words(ws, "x %s Acme Corp" % said))
+        rules.write_text(text, encoding="utf-8")
+        return check.discover(self.root, None)
+
+    def test_the_wall_sentence_is_read_from_the_zones_and_walls_section_of_the_rules(self):
+        ws = self.with_rules("# Rules\n")
+        self.assertEqual("", check.wall_sentence(ws))                                     # missing: nothing is dropped
+        self.assertEqual("x %s" % self.SAID, check.without_own_words(ws, "x %s" % self.SAID))
+        ws = self.with_rules(self.RULES % ("Nothing here.", self.SAID))
+        self.assertEqual(self.SAID, check.wall_sentence(ws))                              # found
+        self.assertEqual("x ", check.without_own_words(ws, "x %s" % self.SAID))
+
+    def test_an_earlier_quote_or_a_sentence_that_names_a_party_is_not_the_wall_sentence(self):
+        earlier = 'Say it in these words: "Dana Whitlock of Acme Corp signed the renewal at four million."'
+        ws = self.with_rules(self.RULES % (earlier, self.SAID))
+        self.assertEqual(self.SAID, check.wall_sentence(ws))                              # only the section counts
+        self.assertEqual("", check.wall_sentence(self.with_rules(self.RULES % ("", "Acme Corp is out. Nothing was written."))))
+        self.assertEqual("", check.wall_sentence(self.with_rules(self.RULES % ("", "Ask kitten. Nothing was written."))))
+        self.assertEqual("", check.wall_sentence(self.with_rules(self.RULES % ("", "Dana Whitlock is out."))))
+        ws = self.with_rules(self.RULES % (earlier, self.SAID))
+        self.assertEqual("refused", self.verdict("# N\n\nDana Whitlock of Acme Corp signed the renewal at four million.\n"))
 
     def test_a_line_that_holds_more_than_the_check_prints_is_the_notes_own(self):
         for text in (LINE + " Ask Dana Whitlock.", LINE.replace("acme is walled", "Kit is walled"), "Ask Acme Corp. " + LINE.split(".")[0],
@@ -158,6 +182,35 @@ class NamesTest(unittest.TestCase):
                 self.assertEqual("refused", self.verdict("# N\n\n%s\n" % text))
         # the party named beside the line, not in it
         self.assertEqual("refused", self.verdict("# N\n\nAcme Corp.\n\n%s\n" % LINE))
+
+    def test_ordinary_prose_that_looks_like_the_checks_words_is_the_notes_own(self):
+        for text in ("A note in passing: Acme Corp has agreed to the merger.",
+                     "Error   notes.md: Acme Corp is walled and this project does not name it, says the CFO, who wants out by June.",
+                     "- A note in Acme Corp names a price of four million; Acme Corp has decided to sell.",
+                     "Commit refused: x.md names Acme Corp, or one of its people; acme is walled and this project does not name it, says the CFO."):
+            with self.subTest(text=text):
+                self.assertEqual("refused", self.verdict("# N\n\n%s\n" % text))
+
+    def test_walled_wording_is_read_on_every_line_even_one_shaped_like_the_checks(self):
+        sentence = "The board will cut the supplier panel from nine firms to three before the March tender closes."
+        write(self.work / "Northwind" / "Threads" / "Pricing" / "Source.md", "# S\n\n%s\n" % sentence)
+        self.addCleanup((self.work / "Northwind" / "Threads" / "Pricing" / "Source.md").unlink)
+        self.assertEqual("refused", self.verdict("# N\n\n%s\n" % sentence))
+        self.assertEqual("refused", self.verdict("# N\n\nCommit refused: x.md repeats wording from a page: %s\n" % sentence))
+        self.assertEqual("refused", self.verdict("# N\n\nA note in the board pack has it: %s\n" % sentence))
+
+    def test_templates_local_does_not_make_a_meetings_wording_common(self):
+        """A run a Meetings page holds is no one's template: still refused, and the template is warned about."""
+        meeting = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260310-acme-kickoff.md"
+        sentence = "The board will cut the supplier panel from nine firms to three before the March tender closes."
+        kept = meeting.read_text(encoding="utf-8")
+        self.addCleanup(meeting.write_text, kept, encoding="utf-8")
+        meeting.write_text(kept + "\n" + sentence + "\n", encoding="utf-8")
+        self.mine("hub.md", "# Hub\n\n%s\n" % sentence)
+        self.assertEqual("refused", self.verdict("# N\n\n%s\n" % sentence))
+        got = [f for f in check.run_checks(self.root, walls_only=True) if "templates.local" in f.path]
+        self.assertEqual(["warning"], [f.severity for f in got])
+        self.assertIn("Meetings page", got[0].message)
 
     def test_a_link_on_a_quoted_line_is_still_a_link(self):
         self.assertEqual("refused", self.verdict("# N\n\n%s [[260310-acme-kickoff]]\n" % LINE))

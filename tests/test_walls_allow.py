@@ -21,7 +21,7 @@ from fixtures import GIT_ENV, HAVE_GIT, git  # noqa: E402  (puts System/tools on
 import check  # noqa: E402
 import garrick_lib as gl  # noqa: E402
 from test_walls_deterministic import WallCase, _copy_tools, _real_repo, _run  # noqa: E402
-from fixtures import TOOLS, write  # noqa: E402
+from fixtures import GIT_ENV, TOOLS, write  # noqa: E402
 from test_page_action import pa  # noqa: E402
 
 BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
@@ -61,7 +61,8 @@ class TestLedger(unittest.TestCase):
         self.assertEqual(1, data["version"])
         self.assertEqual([entry], data["allowed"])
         self.assertEqual([entry], gl.allow_read(self.root))
-        self.assertIn((PATH, fid, BLOB), gl.allow_set(self.root))
+        self.assertEqual(frozenset(), gl.allow_set(self.root))     # not committed: not honoured
+        self.assertEqual([entry], gl.allow_read(self.root))
 
     def test_the_ledger_names_no_token(self):
         gl.allow_add(self.root, PATH, gl.allow_finding_id(PATH, "name", "Cedar Holdings"), BLOB, "name", "page")
@@ -139,6 +140,10 @@ class AllowCase(WallCase):
     def setUp(self):
         super().setUp()
         _copy_tools(self.root)
+        env = mock.patch.dict(os.environ, GIT_ENV)             # git needs an identity for the ledger's own commit
+        env.start()
+        self.addCleanup(env.stop)
+        git(self.root, "init", "-q")                           # the ledger is honoured from the root repository's HEAD
         self.zone = self.root / "Zones" / "Work"
         _real_repo(self.zone)
         self.rel = "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"
@@ -202,6 +207,56 @@ class TestAllowOnce(AllowCase):
         self.assertEqual(1, res.returncode)
         self.assertIn("Commit refused", res.stderr)
 
+    def test_a_hand_written_ledger_allows_nothing(self):
+        self.stage(NAME_A)
+        fid = self.ids()["name"]
+        blob = git(self.zone, "ls-files", "-s", "--", "Birch Entry/Threads/Market Sizing/Notes.md").split()[1]
+        gl.allow_write(self.root, [{"path": self.rel, "id": fid, "blob": blob, "rule": "name", "date": "2026-11-10",
+                                    "by": "terminal"}])
+        self.assertEqual(1, len(gl.allow_read(self.root)))        # it reads, and nothing is committed
+        self.assertEqual(1, self.hook().returncode)
+        git(self.root, "add", "System/walls-allowed.json")
+        git(self.root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "ledger")
+        self.assertEqual(0, self.hook().returncode)               # committed, the same entry is honoured
+
+    def test_an_uncommitted_edit_of_the_ledger_allows_nothing_more(self):
+        self.stage(NAME_A + "\n")
+        self.assertEqual(0, self.allow(self.ids()["name"])[0])
+        self.assertEqual(0, self.hook().returncode)
+        gl.allow_write(self.root, [])                              # removed on disk only: the commit still holds it
+        self.assertEqual(0, self.hook().returncode)
+        git(self.root, "checkout", "--", "System/walls-allowed.json")
+
+    def test_allowing_a_link_does_not_let_a_name_through(self):
+        """The reviewer's case l01: a walled person's name and a link to a walled meeting. The link is named first and
+        marks the party reported, so the report leaves the name out; an allowance must not hide it."""
+        self.stage("Dana Whitlock agreed.\nSee [[260310-acme-kickoff]].\n")
+        first = self.hook("--verbose").stderr
+        self.assertEqual(1, first.count("Commit refused"), first)            # the report shows the link alone
+        listed = self.allow()[1]
+        self.assertEqual(2, len(listed.strip().splitlines()), listed)        # allow lists both ids
+        ids = {l.split()[1]: l.split()[0] for l in listed.strip().splitlines()}
+        self.assertEqual({"link", "name"}, set(ids))
+        self.assertEqual(0, self.allow(ids["link"])[0])
+        res = self.hook()
+        self.assertEqual(1, res.returncode, res.stderr)                      # the name is not let through
+        self.assertIn("holds 2 refusals", res.stderr)                       # both shown now: nothing of the file was dropped
+        self.assertEqual(0, self.allow(ids["name"])[0])
+        self.assertEqual(0, self.hook().returncode)                          # both allowed: through
+
+    def test_a_new_name_of_the_party_in_an_unchanged_file_is_a_new_id(self):
+        """S3: the id covers the forms matched, not the party alone."""
+        self.stage("Dana Whitlock agreed.\n")
+        old = self.ids()["name"]
+        self.stage("Dana Whitlock agreed.\nTheo said nothing.\n")
+        self.assertEqual(old, self.ids()["name"])                            # a form of another party changes nothing
+        a = check.Finding(check.ERROR, "walls", self.rel, "names Acme Corp, or one of its people; acme is walled",
+                          token="m\0Dana Whitlock")
+        b = check.Finding(check.ERROR, "walls", self.rel, "names Acme Corp, or one of its people; acme is walled",
+                          token="m\0Dana Whitlock\0Acme")
+        self.assertNotEqual(check.finding_id(a), check.finding_id(b))
+        self.assertEqual("abcdef0123", check.finding_id(check.Finding(check.ERROR, "walls", "x", "m", fid="abcdef0123")))
+
     def test_a_finding_not_in_the_ledger_still_refuses(self):
         self.stage(NAME_A)
         self.assertEqual(1, self.hook().returncode)
@@ -209,17 +264,16 @@ class TestAllowOnce(AllowCase):
 
     def test_an_allowance_for_one_finding_does_not_cover_another_in_the_file(self):
         self.stage_hub()
-        found = self.findings()
+        found = check.allow_files(self.root, self.rel)[0]          # every finding the file has
         self.assertGreaterEqual(len(found), 2)
-        first, rest = found[0], found[1:]
-        self.assertTrue(all(check.finding_id(f) != check.finding_id(first) for f in rest))
-        self.assertEqual(0, self.allow(check.finding_id(first))[0])
+        ids = sorted({check.finding_id(f) for f in found})        # two identical findings are one id
+        self.assertGreaterEqual(len(ids), 2)
+        self.assertEqual(0, self.allow(ids[0])[0])
         left = [f for f in check.run_checks(self.root, staged=self.zone) if f.path == self.rel]
-        self.assertEqual(len(found) - 1, len(left))
-        self.assertNotIn(check.finding_id(first), [check.finding_id(f) for f in left])
+        self.assertGreaterEqual(len(left), len(found))             # one covered: nothing of the file is dropped
         self.assertEqual(1, self.hook().returncode)
-        for f in rest:
-            self.assertEqual(0, self.allow(check.finding_id(f))[0])
+        for fid in ids[1:]:
+            self.assertEqual(0, self.allow(fid)[0])
         self.assertEqual(0, self.hook().returncode)
 
     def test_the_short_report_is_a_line_for_each_file_and_one_command(self):
@@ -230,7 +284,7 @@ class TestAllowOnce(AllowCase):
         self.assertRegex(lines[0], r"^Commit refused: Zones/Work/Birch Entry/.* holds \d refusals \(.*\)\. .*commit again; --verbose lists each\.$")
         self.assertTrue(pa_line(lines[0]), lines[0])
         self.assertIn("name", lines[0])
-        self.assertIn("python3 System/tools/check.py allow", lines[1])
+        self.assertIn("System/tools/check.py allow", lines[1])
         self.assertLess(len(res.stderr), len(self.hook("--verbose").stderr))
         full = self.hook("--verbose").stderr.strip().splitlines()
         self.assertGreater(len(full), 2)
@@ -238,6 +292,32 @@ class TestAllowOnce(AllowCase):
             self.assertTrue(line.startswith("Commit refused: Zones/Work/Birch Entry/"), line)
         ids = {check.finding_id(f) for f in self.findings()}
         self.assertTrue(ids and all(any("[id %s," % i in l for l in full) for i in ids))
+
+    def test_the_printed_command_runs_from_the_zone_folder(self):
+        import shlex
+        self.stage(NAME_A)
+        res = self.hook()
+        first = res.stderr.splitlines()[0]
+        self.assertIn("python3 ../../System/tools/check.py allow <path>", first)     # the path from the zone folder the hook runs in
+        example = first.split("for example ", 1)[1]
+        words = shlex.split(example)
+        self.assertEqual("python3", words[0])
+        self.assertTrue((self.zone / words[1]).resolve() == (self.root / "System" / "tools" / "check.py").resolve(), words)
+        listed = _run([sys.executable] + words[1:-1] + ["--root", self.root], self.zone)   # from the zone's own folder; no terminal
+        self.assertEqual(2, listed.returncode)                               # refused for want of one, not for want of the file
+        self.assertIn("nothing was written", listed.stderr)
+        self.assertEqual(words[-1], self.ids()["name"])
+
+    def test_the_way_past_the_whole_check_is_named_only_with_a_terminal(self):
+        self.stage(NAME_A)
+        res = self.hook()
+        self.assertNotIn("--no-verify", res.stderr)
+        self.assertTrue(res.stderr.strip().splitlines()[-1].endswith("commit again."), res.stderr)
+        found = check.run_checks(self.root, staged=self.zone)
+        with mock.patch("sys.stdin", TTY()):
+            self.assertIn("only if you mean it, git commit --no-verify", check.report_staged(found))
+        with mock.patch("sys.stdin", io.StringIO()):
+            self.assertNotIn("--no-verify", check.report_staged(found))
 
     def test_no_terminal_writes_nothing(self):
         self.stage(NAME_A)
@@ -295,7 +375,7 @@ class TestAllowOnce(AllowCase):
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class TestPageVerbs(AllowCase):
-    """The page's verbs walls-allow and walls-unallow: the same code, written by the page, and by nothing else."""
+    """The page's one verb, walls-unallow, and the absence of one that allows."""
 
     def setUp(self):
         super().setUp()
@@ -310,36 +390,30 @@ class TestPageVerbs(AllowCase):
         out, _, why = pa.perform(self.root, {"verb": verb, "path": self.rel, "id": fid}, None, via)
         return out
 
-    def test_a_click_allows_and_removes(self):
+    def test_a_click_removes_an_allowance(self):
         self.stage(NAME_A)
         fid = self.ids()["name"]
-        out = self.send("walls-allow", fid)
-        self.assertTrue(out["ok"], out)
-        self.assertEqual("page", gl.allow_read(self.root)[0]["by"])
+        self.assertEqual(0, self.allow(fid)[0])
         self.assertEqual(0, self.hook().returncode)
         out = self.send("walls-unallow", fid)
         self.assertTrue(out["ok"], out)
         self.assertEqual([], gl.allow_read(self.root))
         self.assertEqual(1, self.hook().returncode)
 
-    def test_a_session_or_the_ask_box_cannot_allow(self):
+    def test_the_page_has_no_verb_that_writes_an_allowance(self):
         self.stage(NAME_A)
         fid = self.ids()["name"]
-        for via in ("session", "ask"):
+        self.assertNotIn("walls-allow", pa.VERBS)
+        for via in ("page", "session", "ask"):
             out = self.send("walls-allow", fid, via)
             self.assertFalse(out["ok"], out)
-            self.assertIn("nothing was written", out["say"])
         self.assertFalse(gl.allow_ledger_path(self.root).exists())
-
-    def test_the_verbs_are_not_on_the_command_line(self):
-        self.assertNotIn("walls-allow", pa.CLI_FIELDS)
         self.assertNotIn("walls-unallow", pa.CLI_FIELDS)
 
     def test_a_malformed_id_is_refused(self):
         self.stage(NAME_A)
         for bad in ("", "xyz", "3F9A1C2B7D", "0123456789ab"):
-            self.assertFalse(self.send("walls-allow", bad)["ok"])
-        self.assertFalse(gl.allow_ledger_path(self.root).exists())
+            self.assertFalse(self.send("walls-unallow", bad)["ok"])
 
 
 def pa_line(line):

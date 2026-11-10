@@ -1222,7 +1222,7 @@ When it refuses:
   say), tell the user which file and which wall, name the command that lets
   that one refusal through once (`python3 System/tools/check.py allow <path>
   <id>`, ids from `--staged --walls-only --verbose`), and stop. Only the user
-  writes an allowance, in a terminal or by a click in the app. Never write
+  writes an allowance, in a terminal. Never write
   one yourself, and never touch `System/walls-allowed.json`.
 
 Git skips the hook when its `core.hooksPath` setting sends commits past it,

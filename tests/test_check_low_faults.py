@@ -8,6 +8,7 @@ Every name is invented; Acme Corp and Birch & Co have a wall between them.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
@@ -76,8 +77,15 @@ class RefusalTrailerTest(Base):
         return check.report_staged(found)
 
     def test_a_wall_crossing_ends_with_take_it_out(self):
-        out = self.line("See `Wikis/Meetings/wiki/sources/260310-acme-kickoff.md`.\n")
+        with mock.patch("sys.stdin", io.StringIO()) as _:           # no terminal: the clause is the user's, left out
+            out = self.line("See `Wikis/Meetings/wiki/sources/260310-acme-kickoff.md`.\n")
         self.assertIn("Commit refused: ", out)
+        self.assertTrue(out.splitlines()[-1].endswith("Take it out and commit again."), out)
+        self.assertNotIn("--no-verify", out)
+        tty = io.StringIO()
+        tty.isatty = lambda: True
+        with mock.patch("sys.stdin", tty):                          # a terminal: unchanged
+            out = self.line("See `Wikis/Meetings/wiki/sources/260310-acme-kickoff.md`.\n")
         self.assertTrue(out.splitlines()[-1].endswith("Take it out and commit again; only if you mean it, git commit --no-verify."), out)
 
     @unittest.skipUnless(HAVE_GIT, "git is not installed")

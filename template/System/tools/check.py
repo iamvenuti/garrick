@@ -4918,6 +4918,52 @@ def wording_findings(ws: Workspace, path: Path, text: str, dest: str) -> List[Fi
     return out
 
 
+def near_wording(root: Path, pairs: List[Tuple[str, str]]) -> List[bool]:
+    """For each (file, source), the file root-relative and the source a lower-cased page stem or root-relative path:
+    whether a run of words the file shares with the source is also held by a file or meeting page of the file's own
+    zone, the near side that wording_findings does not count as a leak. Read only: it discovers the workspace
+    without a cache and writes nothing. The update asks it of the finding a rule it replaces made, whatever that
+    finding's own message said. False for anything it cannot place."""
+    _BLOBS.clear()
+    ws = discover(Path(root).resolve(), None)
+    index = quote_index(ws)
+    out: List[bool] = []
+    for rel_path, source in pairs:
+        path = ws.root / rel_path
+        found = False
+        try:
+            text = read_text(path)
+            project = project_of(ws, path)
+            dest = zone_of(ws.root, path)
+            if text and project is not None and dest not in (None, UNZONED):
+                project, sent = project[0], _in_sources(project[0], path)
+                for h in runs(transcript_text(path, text), shared_link(ws, path)):
+                    owners = index.owners.get(h)
+                    if not owners or h in index.common:
+                        continue
+                    if not any((o.stem.lower() == source) if o in ws.meetings else (rel(ws, o).lower() == source)
+                               for o in owners if o != path):
+                        continue
+                    for o in owners:
+                        if o == path or o in ws.meeting_questions:
+                            continue
+                        if o in ws.meetings:
+                            there = zone_from_frontmatter(ws.root, ws.meetings[o])
+                        elif sent or (index.project.get(o) == project and not _in_sources(project, o)):
+                            continue
+                        else:
+                            there = zone_of(ws.root, o)
+                        if there == dest:
+                            found = True
+                            break
+                    if found:
+                        break
+        except (OSError, ValueError):
+            found = False
+        out.append(found)
+    return out
+
+
 def _in_sources(project: Path, path: Path) -> bool:
     try:
         parts = path.relative_to(project).parts

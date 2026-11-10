@@ -4,6 +4,28 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.63.1] - 2026-11-10
+
+The walls migration diff now groups findings the way the zone walls design says it should, and a merge into a zone runs the wall check.
+
+**Upgrading.**
+- The update's diff now matches findings by file, kind and source file, not by the wording of the message. If you stopped at 0.63.0's diff, run the update again and read the new one. Refusals both rules make no longer show up as newly refused, and wording that the file's own zone also holds is listed as *inside one zone*.
+- The update adds `pre-merge-commit`, `post-merge` and `post-rewrite` beside Garrick's `pre-commit` in every zone and wiki. Where a hook of yours sits in one of those places, it is left alone, and the update tells you the line to add to it.
+
+### Fixed
+
+- **The migration diff matches findings by file, kind and source file** (#493). A message reworded between releases no longer moves a finding from one group to another. A released wording finding counts as *inside one zone* when the release's own wording search finds the same words in another file of that zone. A released link counts as *inside one zone* when every target resolves to exactly one file in that zone: a path, an Obsidian URI, a wiki link to a hub or note by name, or a wording finding's source. This works even where 0.62 printed a walled party's name as its tag. Anything ambiguous stays under *other*. A finding printed under two party tags appears once. If the wording search cannot run, the diff says so.
+- **A `git merge` or `git pull` that completes on its own runs the wall check** (#494). The new `pre-merge-commit` hook refuses whatever a commit of the same changes would be refused for.
+- **Closing the only tab of a cmux workspace closes the workspace** (#490). Desk counts surfaces across all panes, so the empty global dock pane that cmux 0.65 lists no longer blocks it.
+
+### Added
+
+- **`post-merge` and `post-rewrite` hooks** (#494). After a merge, a fast-forward, a rebase (`git pull --rebase` included) or an amend, they check the files the new commits changed. When something crosses a wall, they print a short report. The commits are already in, so they refuse nothing and undo nothing. The report tells you how to undo (`git reset --hard ORIG_HEAD`, or `git reset --soft HEAD@{1}` after an amend) but does not run it.
+- **`check.py --changed <revisions>`**: the walls check, read only, over the files the named commits changed. The post hooks run it.
+- **The checks warn when the merge hooks are missing** (#494): a repository that has the pre-commit wall check and lacks a merge hook gets a warning. `check.py --install-hooks` and the installer write all four hooks. A link or a folder in a hook's place counts as yours and is never written through.
+- **The Garrick band says when it is stale** (#495). If the band runs from an older Garrick than the workspace, it shows one dim line. `check.py --version` and the status page's About Garrick say the same.
+- **The update can refresh the band** (#495). When the band kept outside the workspace is an unchanged release download, the update offers a step that downloads the release the workspace runs, moves the old copy aside with its commit in the name, and puts the new one in its place. It never deletes the old copy. A clone or a changed copy is left alone, and the report gives the command to update it.
+
 ## [0.63.0] - 2026-11-10
 
 A wall is now a property of the zone and nothing else. Each zone is walled or open: what is in a walled zone stays in that zone, and what is in an open zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones is split before it is filed. Party flags, labels and the name check are gone.

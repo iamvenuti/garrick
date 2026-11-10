@@ -977,6 +977,15 @@ class TestZoneWallsStep(Case):
         lib = update.install.lib()
         self.assertEqual(self.zones.FLAGS, lib.load_context(self.root)["zone_walled"])      # the release reads it the same
 
+    def test_a_zone_holding_walled_parties_is_walled_whatever_its_default(self):
+        text = ("## Zones\n\n| Zone | Holds | Party | New parties |\n|---|---|---|---|\n| Clients | Work | | open |\n"
+                "| Ventures | Own | | open |\n\n## Parties\n\n| Party | What it is | Zone | Tag | Walled | Domains |\n"
+                "|---|---|---|---|---|---|\n| Acme | c | clients | `acme` | yes | |\n| Birch | c | Clients | `birch` | yes | |\n"
+                "| Cedar | v | Ventures | `cedar` | no | |\n")
+        flags = update.zone_flags(text)
+        self.assertEqual({"Clients": True, "Ventures": False}, {z: w for z, (w, _) in flags.items()})
+        self.assertIn("holds a walled party, `acme`", flags["Clients"][1])
+
     def test_the_diff_groups_what_the_zone_rule_releases(self):
         study, text = self.study(self.zone_rule())
         self.assertEqual({"inside": 2, "name": 1, "other": 0}, study["released"])

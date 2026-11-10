@@ -1654,7 +1654,7 @@ def _column(header, *names):
 def zone_flags(text):
     """What the 0.62 tables propose for each zone: {zone: (walled, why)}, in the order of the Zones table; None
     when the Zones table already has its Walled column, or there is no Zones table to read. A zone is walled when
-    its party is walled or its default for new parties is walled, and open otherwise; a zone whose cells say
+    its party is walled, its default for new parties is walled, or a walled party's row sits in it, and open otherwise; a zone whose cells say
     neither is walled (#485)."""
     lines = text.splitlines()
     zh, zrows = _table_rows(lines, "zones")
@@ -1662,11 +1662,14 @@ def zone_flags(text):
         return None
     ph, prows = _table_rows(lines, "parties")
     tag_at, walled_at = _column(ph, "tag"), _column(ph, "walled")
-    flag = {}
+    flag, held = {}, {}
+    pzone_at = _column(ph, "zone")
     for row in prows:
         if tag_at is not None and len(row) > tag_at:
             tag = _plain(row[tag_at]).lstrip("#").lower()
             flag[tag] = (_plain(row[walled_at]).lower() != "no") if walled_at is not None and len(row) > walled_at else True
+            if flag[tag] and pzone_at is not None and len(row) > pzone_at:
+                held.setdefault(_plain(row[pzone_at]).casefold(), tag)      # the first walled party whose row sits in a zone
     zone_at, party_at, default_at = _column(zh, "zone"), _column(zh, "party"), _column(zh, "new parties")
     out = {}
     for row in zrows:
@@ -1677,6 +1680,8 @@ def zone_flags(text):
         default = _plain(row[default_at]).lower() if default_at is not None and len(row) > default_at else ""
         if party and flag.get(party, True):
             out[name] = (True, "its party `%s` is walled" % party)
+        elif name.casefold() in held:
+            out[name] = (True, "it holds a walled party, `%s`" % held[name.casefold()])
         elif default == "open" and (not party or party in flag):
             out[name] = (False, "its party and its default for new parties are open" if party else "its default for new parties is open")
         elif default == "open":

@@ -25,6 +25,7 @@ import hashlib
 import html
 import json
 import re
+import subprocess
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -84,13 +85,19 @@ LEDGER_MAX = 500
 
 
 def read_allowed(ws: Path, link: Callable) -> List[dict]:
-    """What the user allowed, from System/walls-allowed.json (version 1: path, id, blob, rule, date, by). A missing or
+    """What the user allowed, from System/walls-allowed.json as committed at HEAD (version 1: path, id, blob, rule, date, by). A missing or
     unreadable ledger, or an entry that does not read, is no allowance: nothing is shown for it. The token a finding
     matched is not in the ledger and not here. `state` says whether the file is still the one that was allowed (its
     git blob id), since an entry matches only on path, id and blob."""
+    # The check honours only the ledger as committed at the workspace root's HEAD, so that is the copy listed: an
+    # entry still only on disk allows nothing. No repository, or no committed ledger, is no allowance.
     try:
-        data = json.loads(Path(ws).joinpath(*LEDGER).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        done = subprocess.run(["git", "-C", str(ws), "show", "HEAD:" + "/".join(LEDGER)], capture_output=True, timeout=20,
+                              stdin=subprocess.DEVNULL)
+        if done.returncode != 0:
+            return []
+        data = json.loads(done.stdout.decode("utf-8"))
+    except (OSError, ValueError, subprocess.SubprocessError):
         return []
     rows = data.get("allowed") if isinstance(data, dict) and data.get("version") == 1 else None
     out: List[dict] = []

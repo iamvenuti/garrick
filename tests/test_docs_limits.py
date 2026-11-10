@@ -20,7 +20,7 @@ THREE = re.compile(r"^> (Each zone is either .*)$", re.M)
 BANNED = ("Walls table", "between two parties", "both ways", "not transitive",
           "walled from", "no wall between", "walled party", "walled parties", "label set", "who sees what", "zone party")
 # Pages still to be rewritten by another branch of 0.63.0 (the status page's guide). Empty once they have.
-SKIPPED = ("docs/extras/status-page.md",)
+SKIPPED = ()
 
 
 def section(page: str, heading: str) -> str:

@@ -498,14 +498,18 @@ def _page_then(root: Path, home: Path, page: Path, text: str, place) -> None:
 
 
 def file_conversation(root: Path, path: Path, parties: List[str], title: str = "", date: str = "",
-                      today: Optional[str] = None) -> Tuple[str, Path, Path]:
+                      today: Optional[str] = None, confirmed: bool = False) -> Tuple[str, Path, Path]:
     """Record a mail from a zone's Inbox as a conversation: move the original,
     untouched, into `Wikis/Meetings/raw/` and write its draft page beside the
-    meeting pages, with the zone it was dropped in and the parties given.
+    meeting pages, with the zone it was dropped in and the parties given, an
+    index and never a wall.
 
-    Refuses anything but mail in a zone Inbox, no parties or an unknown one,
-    and a mail with no date or title to go by. Never overwrites. Returns
-    (slug, raw path, page path).
+    Refuses anything but mail in a zone Inbox, a party the table does not
+    hold, a party of another walled zone, and a mail with no date or title to
+    go by. A mail whose addresses name a party of a walled zone other than the
+    inbox's, or that name no party while none is given, is a question for the
+    user (`Confirm`): the filing goes on only when the user has answered
+    (`confirmed`). Never overwrites. Returns (slug, raw path, page path).
     """
     path, where, zone, kind, m = _item(root, path)
     if where == "workspace":
@@ -520,6 +524,16 @@ def file_conversation(root: Path, path: Path, parties: List[str], title: str = "
     tags = _known_tags(ctx, parties, "A mail")
     _refuse_other_walled_zone(ctx, zone, tags, "This mail")
     mail = m or parse_mail(path)
+    if path.suffix.lower() == ".eml" and not confirmed:
+        # what its addresses name, whatever parties were given: another walled zone's is the user's question, and so
+        # is a mail whose addresses settle nothing when no party was given
+        hint = suggest(ctx, zone, mail)
+        other = sorted({_walled_zone(ctx, t) for t in hint["parties"]} - {"", zone})
+        if other:
+            raise Confirm("Needs your answer first: the mail's addresses name a party of the walled zone %s, but it is in "
+                          "the %s inbox. Nothing was filed." % (" and ".join(other), zone))
+        if not tags and hint["ask"]:
+            raise Confirm("Needs your answer first: %s Nothing was filed." % hint["ask"][0])
     date = date or mail["date"] or ""
     try:
         datetime.date.fromisoformat(date)
@@ -903,6 +917,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     c.add_argument("--parties", default="", help="comma-separated tags: an index of who it is about, optional")
     c.add_argument("--title", default="", help="what the mail is about (default: its subject)")
     c.add_argument("--date", default="", help="YYYY-MM-DD (default: the mail's own date)")
+    c.add_argument("--confirmed", action="store_true",
+                   help="the user has answered the question a `Needs your answer first` refusal asked; never pass it unasked")
     r = sub.add_parser("file-reading", help="freeze an item into Knowledge raw/ and write a draft source page")
     r.add_argument("--file", required=True)
     r.add_argument("--title", default="", help="title of the work (default: the subject, or the file name)")
@@ -950,7 +966,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(json.dumps(parse(root, Path(args.file)), indent=2))
         elif args.command == "file-conversation":
             slug, dest, page = file_conversation(root, Path(args.file), _tags(args.parties), args.title, args.date,
-                                                 args.today)
+                                                 args.today, args.confirmed)
             print("%s\t%s\t%s" % (slug, rel(dest), rel(page)))
         elif args.command == "file-reading":
             slug, dest, page = file_reading(root, Path(args.file), args.title, args.slug, args.today, args.kind)

@@ -228,7 +228,7 @@ class WallChecksAndGate(unittest.TestCase):
     def test_a_change_to_the_wall_check_runs_the_wall_modules(self):
         names = shard.modules()
         got = shard.touched(["template/System/tools/check.py"], names)
-        for m in ("test_wall_forms", "test_walls_cases", "test_wall_gaps", "test_staged_paths"):
+        for m in ("test_zones", "test_walls_cases", "test_decide", "test_staged_paths"):
             if m in names:
                 self.assertIn(m, got)
 

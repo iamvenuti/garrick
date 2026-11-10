@@ -20,7 +20,7 @@ sys.dont_write_bytecode = True
 import subprocess  # noqa: E402
 from unittest import mock  # noqa: E402
 
-from fixtures import GIT_ENV, HAVE_GIT, build_workspace, commit_all, git, git_init, project_hub, thread_note, write  # noqa: E402
+from fixtures import HAVE_GIT, build_workspace, commit_all, git, git_init, meeting_page, project_hub, thread_note, write  # noqa: E402
 
 import check  # noqa: E402
 
@@ -76,40 +76,29 @@ class RefusalTrailerTest(Base):
         found = [f for f in check.run_checks(self.root, walls_only=True) if f.path == where]
         return check.report_staged(found)
 
+    def far_page(self):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260399-home.md", meeting_page("Personal", "[acme]", "Home"))
+        return "See `Wikis/Meetings/wiki/sources/260399-home.md`.\n"
+
     def test_a_wall_crossing_ends_with_take_it_out(self):
         with mock.patch("sys.stderr", io.StringIO()) as _:          # printing for an assistant: the clause is the user's, left out
-            out = self.line("See `Wikis/Meetings/wiki/sources/260310-acme-kickoff.md`.\n")
+            out = self.line(self.far_page())
         self.assertIn("Commit refused: ", out)
         self.assertTrue(out.splitlines()[-1].endswith("Take it out and commit again."), out)
         self.assertNotIn("--no-verify", out)
         tty = io.StringIO()
         tty.isatty = lambda: True
         with mock.patch("sys.stderr", tty):                         # a terminal: unchanged
-            out = self.line("See `Wikis/Meetings/wiki/sources/260310-acme-kickoff.md`.\n")
+            out = self.line(self.far_page())
         self.assertTrue(out.splitlines()[-1].endswith("Take it out and commit again; only if you mean it, git commit --no-verify."), out)
-
-    @unittest.skipUnless(HAVE_GIT, "git is not installed")
-    def test_a_project_with_no_party_ends_with_naming_one_in_its_hub(self):
-        git_init(self.work)
-        write(self.work / "Orphan" / "Orphan.md", project_hub("Work", "Orphan", ""))
-        write(self.work / "Orphan" / "Threads" / "T" / "T.md", thread_note("Orphan", "T", ""))
-        write(self.work / "Orphan" / "Threads" / "T" / "Notes.md", "Some notes.\n")
-        git(self.work, "add", "-A")
-        out = check.report_staged(check.run_checks(self.root, walls_only=True, staged=self.work))
-        self.assertIn("Commit refused: Zones/Work/Orphan/Threads/T/Notes.md ", out)
-        for line in out.splitlines():
-            self.assertTrue(line.endswith("Name a party in the project's hub (`party:`), then commit again."), line)
-            self.assertNotIn("Take it out", line)
-            self.assertNotIn("--no-verify", line)
-            self.assertEqual(1, line.count("commit again"))      # the message does not say it a second time
 
     def test_each_kind_has_a_fix_that_says_commit_again(self):
         kinds = {
-            "names Acme Corp, or one of its people; acme is walled and this project does not name it": "Take it out",
-            "uses x, but the project has no party to check the walls against": "Name a party",
-            "names a different party on disk from the one staged; stage that change or undo it": "Stage that change",
+            "links x, a note of the Personal zone; that zone is walled and this file is in the Work zone": "Take it out",
+            "names different zones and walls on disk from the ones staged; stage that change or undo it": "Stage that change",
             "uses x, an unfinished source (no zone or parties)": "Finish or file it",
-            "uses x, a raw record that no page cites, so nothing says whose it is": "Name a party for it",
+            "links x, a source that names no zone, so nothing says whose it is; give it a `zone:`": "Give it a",
+            "uses x, a raw record that no page cites, so nothing says whose it is": "Give it a",
             "holds a path the system cannot read (Too long), so the file cannot be checked; shorten it": "Make that change",
         }
         for message, start in kinds.items():
@@ -142,15 +131,6 @@ class StagedRunTest(Base):
         self.assertEqual([], [f for f in found if f.severity == "error"])
         self.assertEqual(6, len(shown), shown)
         self.assertEqual(len(shown), len(set(shown)))
-
-    def test_a_hub_that_reads_two_ways_is_asked_once_for_all_its_files(self):
-        write(self.work / "Northwind" / "Northwind.md", project_hub("Work", "Northwind", "acme"))
-        ws = check.discover(self.root)
-        with mock.patch.object(check, "labels", wraps=check.labels) as asked:
-            first = check.hub_unreadable(ws, self.work / "Northwind")
-            for _ in range(5):
-                self.assertEqual(first, check.hub_unreadable(ws, self.work / "Northwind"))
-        self.assertEqual(1, asked.call_count)
 
 
 class CmuxResumeTest(unittest.TestCase):

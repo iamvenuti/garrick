@@ -34,6 +34,9 @@ class CheckCase(unittest.TestCase):
         self.work = self.root / "Zones" / "Work"
         self.acme = self.work / "Acme Review"
         self.meetings = self.root / "Wikis" / "Meetings"
+        # The far side of the wall is another walled zone: Birch's call is a page of the Personal zone.
+        far = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
+        far.write_text(far.read_text().replace("zone: Work", "zone: Personal"))
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -267,15 +270,17 @@ class TestContext(CheckCase):
     def test_pass(self):
         self.assertClean("context")
 
-    def test_zone_names_unknown_party(self):
+    def test_a_zone_with_no_flag_warns(self):
         ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("| Work | Client work | | walled |", "| Work | Client work | `cedar` | walled |"))
-        self.assertFinds("context", "error", "`cedar`")
-
-    def test_party_with_no_flag_warns(self):
-        ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("| `acme` | yes |", "| `acme` | |"))
+        ctx.write_text(ctx.read_text().replace(
+            "| Zone | Holds | Party | New parties |\n|---|---|---|---|\n| Work | Client work | | walled |\n"
+            "| Personal | Everything else | | walled |",
+            "| Zone | Holds | Walled |\n|---|---|---|\n| Work | Client work | yes |\n| Personal | Everything else | |"))
         self.assertFinds("context", "warning", "Walled")
+
+    def test_a_context_with_no_walled_column_is_read_by_its_old_flags_and_says_nothing_in_the_findings(self):
+        self.assertTrue(check.load_context(self.root)["pending"])
+        self.assertClean("context")
 
     def test_missing_context(self):
         (self.root / "System" / "context.md").unlink()
@@ -479,18 +484,16 @@ class TestProjects(CheckCase):
         (self.acme / "Acme Review.md").unlink()
         self.assertFinds("projects", "error", "no hub note")
 
-    def test_wrong_type_zone_and_unknown_party(self):
+    def test_wrong_type_and_zone(self):
         hub = self.acme / "Acme Review.md"
         hub.write_text(hub.read_text().replace("type: project", "type: note")
-                       .replace("zone: Work", "zone: Personal").replace("party: acme", "party: cedar"))
+                       .replace("zone: Work", "zone: Personal"))
         self.assertFinds("projects", "error", "`type`")
         self.assertFinds("projects", "error", "`zone`")
-        self.assertFinds("projects", "error", "cedar")
 
-    def test_no_party_is_an_error_that_names_the_hub(self):
-        write(self.acme / "Acme Review.md", project_hub("Work", "Acme Review", party=""))
-        self.assertFinds("projects", "error", "no `party`")
-        self.assertFinds("projects", "error", "set `party:` in this hub")
+    def test_a_project_needs_no_party(self):
+        write(self.acme / "Acme Review.md", project_hub("Work", "Acme Review", party="", threads=["Pricing"]))
+        self.assertClean("projects")
 
     def test_no_threads(self):
         shutil.rmtree(self.acme / "Threads")
@@ -770,12 +773,12 @@ class TestMeetings(CheckCase):
     def test_unfinished_is_a_warning(self):
         write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(zone=None, parties="[]"))
         hits = self.assertFinds("meetings", "warning", "unfinished")
-        self.assertIn("zone or parties", hits[0].message)
+        self.assertIn("no zone", hits[0].message)
         self.assertFalse(self.findings("meetings", "error"))
 
-    def test_unknown_party_is_an_error(self):
-        write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(parties="[acme, cedar]"))
-        self.assertFinds("meetings", "error", "cedar")
+    def test_a_page_needs_no_parties(self):
+        write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(parties=None))
+        self.assertClean("meetings")
 
     def test_block_list_parties(self):
         page = meeting_page(parties=None).replace("---\n\n#", "parties:\n  - acme\n---\n\n#", 1)
@@ -784,51 +787,60 @@ class TestMeetings(CheckCase):
 
 
 class TestWalls(CheckCase):
-    def test_pass_same_party(self):
+    """The walls read a zone: Birch's call is a page of the Personal zone, a walled zone beside Work."""
+
+    def test_pass_same_zone(self):
+        self.assertClean("walls")
+
+    def test_a_meeting_of_the_same_zone_is_used_whoever_the_party(self):
+        write(self.acme / "Threads" / "Pricing" / "Benchmarks.md", "See [[260312-birch-kickoff]] and [[260312-birch-kickoff-copy]].\n")
+        write(self.meetings / "wiki" / "sources" / "260312-birch-kickoff-copy.md", meeting_page("Work", "[birch]", "Birch copy"))
+        far = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
+        far.write_text(far.read_text().replace("zone: Personal", "zone: Work"))
         self.assertClean("walls")
 
     def test_wikilink_across_wall(self):
         write(self.acme / "Threads" / "Pricing" / "Benchmarks.md",
               "Their pricing: see [[260312-birch-kickoff|the Birch call]].\n")
-        hit = self.assertFinds("walls", "error", "birch is walled and this project does not name it")[0]
+        hit = self.assertFinds("walls", "error", "that zone is walled and this file is in the Work zone")[0]
         self.assertEqual("Zones/Work/Acme Review/Threads/Pricing/Benchmarks.md", hit.path)
         self.assertIn("[[260312-birch-kickoff|the Birch call]]", hit.message)
+        self.assertIn("the Personal zone", hit.message)
 
     def test_obsidian_uri_across_wall(self):
         uri = "obsidian://open?vault=Wikis&file=Meetings%2Fwiki%2Fsources%2F260312-birch-kickoff"
         write(self.acme / "Deliverables" / "260302 - Board note.md", "Source: [call](%s)\n" % uri)
-        self.assertFinds("walls", "error", "birch", "Zones/Work/Acme Review/Deliverables/260302 - Board note.md")
+        self.assertFinds("walls", "error", "the Personal zone", "Zones/Work/Acme Review/Deliverables/260302 - Board note.md")
 
     def test_relative_markdown_link_across_wall(self):
         write(self.acme / "Acme Review.md", project_hub("Work", "Acme Review", "acme")
               + "\n[call](../../../Wikis/Meetings/wiki/sources/260312-birch-kickoff.md)\n")
-        self.assertFinds("walls", "error", "birch", "Zones/Work/Acme Review/Acme Review.md")
+        self.assertFinds("walls", "error", "the Personal zone", "Zones/Work/Acme Review/Acme Review.md")
 
     def test_unfinished_meeting_used(self):
-        write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(parties=None))
+        write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(zone=None))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "[[260315-call]]\n")
-        self.assertFinds("walls", "error", "unfinished")
+        self.assertFinds("walls", "error", "names no zone")
 
-    def test_project_without_party_uses_meeting(self):
+    def test_a_project_with_no_party_uses_its_zones_meeting(self):
         write(self.acme / "Acme Review.md", project_hub("Work", "Acme Review", party=""))
         note = self.acme / "Threads" / "Pricing" / "Pricing.md"
         note.write_text(note.read_text().replace("party: acme\n", ""))
-        self.assertFinds("walls", "error", "no party")
+        self.assertClean("walls")
 
-    def test_cross_zone_is_a_warning(self):
+    def test_a_meeting_of_another_walled_zone_is_an_error_from_either_side(self):
         home = self.root / "Zones" / "Personal" / "Home Move"
         write(home / "Home Move.md", project_hub("Personal", "Home Move", "acme"))
         write(home / "Threads" / "Boxes" / "Boxes.md", thread_note("Home Move", "Boxes", "acme", "[[260310-acme-kickoff]]"))
-        self.assertFinds("walls", "warning", "cross-zone")
-        self.assertFalse(self.findings("walls", "error"))
+        self.assertFinds("walls", "error", "the Work zone")
 
     def test_ear_report_names_the_wall(self):
         write(self.acme / "Threads" / "Pricing" / "Benchmarks.md", "[[260312-birch-kickoff]]\n")
-        write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(parties="[]"))
+        write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(zone=None))
         text = check.report_ear(check.run_checks(self.root))
         self.assertEqual(
-            "One problem and one warning. A note in Acme Review's Pricing thread uses a meeting with Birch & Co. "
-            "One meeting page has no parties.", text)
+            "One problem and one warning. A note in the Work zone uses a meeting of the Personal zone. "
+            "One meeting page has no zone.", text)
         self.assertLessEqual(text.count(". "), 2)
 
     def test_exit_code_on_error(self):
@@ -859,18 +871,9 @@ class TestFadedPages(CheckCase):
                 for link in ("[[260312-birch-kickoff]]", "[[%s/wiki/sources/260312-birch-kickoff]]" % grade,
                              "[[Wikis/Meetings/%s/wiki/sources/260312-birch-kickoff|the call]]" % grade):
                     write(self.acme / "Threads" / "Pricing" / "Benchmarks.md", "Their pricing: %s.\n" % link)
-                    self.assertFinds("walls", "error", "links %s, a meeting with birch" % link,
+                    self.assertFinds("walls", "error", "links %s, a meeting of the Personal zone" % link,
                                      "Zones/Work/Acme Review/Threads/Pricing/Benchmarks.md")
                 moved.rename(self.meetings / "wiki" / "sources" / moved.name)
-
-    def test_wording_from_a_faded_record_across_a_wall_is_refused(self):
-        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
-        page = self.fade("dormant")
-        page.write_text(meeting_page("Work", "[birch]", "Birch kick-off").replace(
-            "type: meeting", 'type: meeting\nraw: "[[dormant/raw/260312-birch-kickoff]]"'))
-        write(self.meetings / "dormant" / "raw" / "260312-birch-kickoff.txt", "%s.\n" % quote)
-        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
-        self.assertFinds("walls", "error", "repeats wording from meeting 260312-birch-kickoff")
 
     def test_nothing_else_reports_on_a_faded_page(self):
         write(self.meetings / "dormant" / "wiki" / "sources" / "old call.md", meeting_page(zone=None, parties="[cedar]"))
@@ -900,7 +903,7 @@ class TestFadedPages(CheckCase):
                                  "[the call](../../../../../Wikis/Meetings/%s.md)" % place,
                                  "[the call](Meetings/%s.md)" % place):
                         write(self.acme / "Threads" / "Pricing" / "Benchmarks.md", "Their pricing: %s\n" % link)
-                        self.assertFinds("walls", "error", "a meeting with birch",
+                        self.assertFinds("walls", "error", "a meeting of the Personal zone",
                                          "Zones/Work/Acme Review/Threads/Pricing/Benchmarks.md")
                 finally:
                     moved.rename(self.meetings / "wiki" / "sources" / moved.name)
@@ -1035,27 +1038,14 @@ class TestWikiQuestions(CheckCase):
         write(self.asked / "260312 - no-parties.md", wiki_question("zone: Work\n"))
         self.assertEqual(["unfinished: no zone; nothing on it may be used in a project"],
                          self.messages("Wikis/Meetings/questions/260312 - no-zone.md"))
-        self.assertEqual(["unfinished: no parties; nothing on it may be used in a project"],
-                         self.messages("Wikis/Meetings/questions/260312 - no-parties.md"))
+        self.assertEqual([], self.messages("Wikis/Meetings/questions/260312 - no-parties.md"))      # parties index, they are not asked for
         self.assertFalse(self.findings("questions", "error"))
         self.assertClean("meetings")       # a question is not a meeting page: no name or type to fix
-        self.assertEqual("No problems, two warnings. Two things need fixing in question files.",
-                         check.report_ear(check.run_checks(self.root, quick=True)))
-        (self.asked / "260312 - no-zone.md").unlink()
-        self.assertEqual("No problems, one warning. One Meetings question has no parties.",
+        self.assertEqual("No problems, one warning. One Meetings question has no zone.",
                          check.report_ear(check.run_checks(self.root, quick=True)))
 
     def test_every_check_can_be_said_aloud_in_a_group(self):
         self.assertEqual([], [c for c, _ in check.CHECKS if c not in check.EAR_GROUP])
-
-    def test_an_unknown_party_and_two_hats_are_named(self):
-        ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("| Birch & Co | Client.", "| Acme Corp | Second role | Work | `acme-board` | yes | |\n| Birch & Co | Client.", 1))
-        write(self.asked / "260312 - cedar.md", wiki_question("zone: Work\nparties: [cedar]\n"))
-        write(self.asked / "260312 - both.md", wiki_question("zone: Work\nparties: [acme, acme-board]\n"))
-        self.assertFinds("questions", "error", "party `cedar` is not a tag", "Wikis/Meetings/questions/260312 - cedar.md")
-        self.assertFinds("questions", "warning", "names both acme and acme-board, one company in two hats, so no project "
-                         "of either may use it; ask it once for each side", "Wikis/Meetings/questions/260312 - both.md")
 
     def test_a_knowledge_question_with_no_parties_passes(self):
         write(self.kasked / "260312 - failover-figure.md",
@@ -1148,21 +1138,15 @@ class TestWikiQuestions(CheckCase):
         self.assertEqual([], self.messages("Wikis/Meetings/questions/sub/260312 - s.md"))
 
     def test_a_project_may_not_link_a_raw_answer_across_a_wall(self):
-        write(self.meetings / "raw" / "answers" / "260313 - birch-lease.md", answer_record("[birch]"))
+        write(self.meetings / "raw" / "answers" / "260313 - birch-lease.md", answer_record("[birch]").replace("zone: Work", "zone: Personal"))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260313 - birch-lease]].\n")
-        self.assertFinds("walls", "error", "links [[260313 - birch-lease]], a reply with birch; birch is walled and this project does not name it", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
-
-    def test_wording_from_a_raw_answer_across_a_wall_is_refused(self):
-        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
-        write(self.meetings / "raw" / "answers" / "260313 - birch-lease.md", answer_record("[birch]", quote))
-        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
-        self.assertFinds("walls", "error", "repeats wording from reply 260313 - birch-lease, a reply with birch")
+        self.assertFinds("walls", "error", "links [[260313 - birch-lease]], a reply of the Personal zone; that zone is walled and this file is in the Work zone", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
 
     def test_an_unfinished_raw_answer_is_unusable_and_warned_about(self):
         write(self.meetings / "raw" / "answers" / "260313 - floor.md", answer_record("[acme]").replace("zone: Work\n", ""))
         self.assertFinds("questions", "warning", None, "Wikis/Meetings/raw/answers/260313 - floor.md")
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260313 - floor]].\n")
-        self.assertFinds("walls", "error", "uses 260313 - floor, an unfinished reply (no zone or parties)")
+        self.assertFinds("walls", "error", "links [[260313 - floor]], a reply that names no zone, so nothing says whose it is")
 
     def test_a_raw_answer_with_a_frontmatter_read_two_ways_is_unfinished(self):
         text = answer_record("[acme]").replace("parties: [acme]\n", "parties: [acme]\nparties: [birch]\n")
@@ -1170,47 +1154,27 @@ class TestWikiQuestions(CheckCase):
         self.assertFinds("walls", "error", "frontmatter must be plain key: value lines")
 
     def test_a_project_may_not_link_a_question_across_a_wall(self):
-        write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Work\nparties: [birch]\n",
+        write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Personal\nparties: [birch]\n",
                                                                      pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260312 - birch-lease]].\n")
-        self.assertFinds("walls", "error", "links [[260312 - birch-lease]], a question with birch; birch is walled and this project does not name it", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
+        self.assertFinds("walls", "error", "links [[260312 - birch-lease]], a question of the Personal zone; that zone is walled and this file is in the Work zone", "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
 
     def test_a_question_in_a_subfolder_or_named_apart_is_read_too(self):
         for name in ("answered/260312 - birch-lease.md", "_260312 - birch-lease.md"):
             with self.subTest(name=name):
-                q = write(self.asked / name, wiki_question("zone: Work\nparties: [birch]\n",
+                q = write(self.asked / name, wiki_question("zone: Personal\nparties: [birch]\n",
                                                           pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
                 link = Path(name).stem
                 write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[%s]].\n" % link)
-                self.assertFinds("walls", "error", "links [[%s]], a question with birch" % link,
+                self.assertFinds("walls", "error", "links [[%s]], a question of the Personal zone" % link,
                                  "Zones/Work/Acme Review/Threads/Pricing/Notes.md")
                 q.unlink()
 
     def test_nor_an_unfinished_one(self):
         write(self.asked / "260312 - floor.md", wiki_question("parties: [acme]\n"))
         write(self.acme / "Threads" / "Pricing" / "Notes.md", "See [[260312 - floor]].\n")
-        hit = self.assertFinds("walls", "error", "uses 260312 - floor, an unfinished question (no zone or parties)")
-        self.assertEqual("A note in Acme Review's Pricing thread uses an unfinished question", hit[0].ear)
-
-    def test_wording_from_a_question_across_a_wall_is_refused(self):
-        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
-        write(self.asked / "260312 - birch-lease.md", wiki_question("zone: Work\nparties: [birch]\n", body=quote + "."))
-        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
-        hit = self.assertFinds("walls", "error", "repeats wording from question 260312 - birch-lease, a question with birch")
-        self.assertEqual("A note in Acme Review's Pricing thread quotes a question with Birch & Co", hit[0].ear)
-
-    def test_a_question_on_the_near_side_never_vouches_for_wording(self):
-        quote = "Theo confirmed the Bergen warehouse lease runs out at the end of the spring quarter"
-        page = self.meetings / "wiki" / "sources" / "260312-birch-kickoff.md"
-        page.write_text(page.read_text().replace("Decisions.", quote + "."))
-        write(self.asked / "260312 - lease.md", wiki_question(body=quote + "."))   # filed for acme
-        write(self.acme / "Threads" / "Pricing" / "Notes.md", "%s.\n" % quote)
-        self.assertFinds("walls", "error", "repeats wording from meeting 260312-birch-kickoff")
-
-    def test_a_question_citing_a_meeting_across_its_wall_warns(self):
-        write(self.asked / "260312 - floor.md", wiki_question(pages='["[[wiki/sources/260312-birch-kickoff]]"]'))
-        self.assertFinds("questions", "warning", "cites 260312-birch-kickoff, a meeting with birch; birch is walled "
-                         "and this page does not name it", "Wikis/Meetings/questions/260312 - floor.md")
+        hit = self.assertFinds("walls", "error", "links [[260312 - floor]], a question that names no zone")
+        self.assertEqual("A note in the Work zone uses a question with no zone", hit[0].ear)
 
     def test_the_wiki_lint_counts_no_question_as_a_page(self):
         import wiki_lint  # noqa: E402
@@ -1336,7 +1300,7 @@ class TestTextReport(CheckCase):
         write(self.work / "CLAUDE.md", "x")
         write(self.acme / "Deliverables" / "memo.md", "x")
         write(self.acme / "Threads" / "Pricing" / "Benchmarks.md", "[[260312-birch-kickoff]]\n")
-        write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(parties="[]"))
+        write(self.meetings / "wiki" / "sources" / "260315-call.md", meeting_page(zone=None))
         text = check.report_ear(check.run_checks(self.root))
         self.assertEqual(3, text.count("."), text)
         self.assertTrue(text.startswith("Two problems and two warnings."), text)

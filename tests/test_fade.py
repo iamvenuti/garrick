@@ -539,6 +539,8 @@ class ApplyTest(Base):
     def test_a_full_path_in_code_to_a_walled_page_is_reported_before_and_after_it_fades(self):
         """Fade leaves a link in code as written (#256), and a Markdown link
         too; the walls still find the page behind it once it has faded (#297)."""
+        far = self.page("wiki/sources/260312-birch-kickoff.md")             # the far side is another walled zone
+        far.write_text(self.text(far).replace("zone: Work", "zone: Personal"), encoding="utf-8")
         pricing = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
         said = ("\nTheir terms: `[[Meetings/wiki/sources/260312-birch-kickoff]]`.\n\n"
                 "```\nWikis/Meetings/wiki/sources/260312-birch-kickoff.md\n```\n\n"
@@ -551,7 +553,7 @@ class ApplyTest(Base):
                                capture_output=True, text=True)
             return sorted(f["message"] for f in json.loads(r.stdout)["findings"]
                           if f["check"] == "walls" and f["path"].endswith("Pricing/Pricing.md")
-                          and "a meeting with birch" in f["message"])
+                          and "a meeting of the Personal zone" in f["message"])
 
         before = walled()
         # One finding for the page, however many ways the note writes it (#436).

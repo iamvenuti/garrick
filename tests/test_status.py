@@ -2008,7 +2008,7 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort", "Ask", "While you wait"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertEqual(["Effort", "Ask", "While you wait", "Ask: one session"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
         self.assertIn('<code>{"effort": true}</code>', html)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)

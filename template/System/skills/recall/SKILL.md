@@ -56,7 +56,8 @@ python3 ../../../System/tools/recall.py read "Meetings:Wikis/Meetings/wiki/sourc
   page matches, and the result says "from the raw record". `--raw` ranks the
   raw records beside the pages: use it when the user wants the exact words said,
   or a page does not hold the detail. A wiki can set its own default,
-  `"recall": {"raw": "fallback" | "always" | "never"}` in its `schema.json`.
+  `"recall": {"raw": "fallback" | "always" | "never"}` in its `schema.json`
+  (Knowledge's `schema.json` also declares that wiki's layout to `check.py`).
 - `--sessions` adds past sessions. A session opened in a zone reads the past
   sessions of that zone (and of open zones); a session opened at the workspace
   root or in `System/` also reads the ones that span zones, which no zone's

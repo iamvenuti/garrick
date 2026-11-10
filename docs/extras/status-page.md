@@ -147,7 +147,7 @@ The pages wait as text at the end of the page and are laid out only when the tab
 
 ## Preview features
 
-Some features are in Garrick's source before they are in a release. They are off until you switch them on in `System/garrick-flags.json`, and *Settings* lists each one and whether it is on. To switch one on, write its name there and rebuild the page:
+Some features are in Garrick's source before they are in a release. They are off until you switch them on in `System/garrick-flags.json`, and *Settings* lists each one and whether it is on. One flag, `ask-agent`, is the exception: it is released and on until you set it to `false`, and Settings shows it on only while `ask` is on and Claude is the assistant, and "does not apply" with Codex. To switch one on, write its name there and rebuild the page:
 
 ```json
 {"effort": true}

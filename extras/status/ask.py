@@ -123,7 +123,7 @@ that state: a latched wall stops both sessions, starts them again, and the
 reply is the rules' sentence alone (Asker.wall_stop()). A proposal from a
 conversation that has read a record is offered as a button (Asker.offered()),
 never run; one from a conversation that has read none runs through carry_out(),
-as a command always has. With the flag off, or with Codex, everything below
+as a command always has. With `"ask-agent": false`, or with Codex, everything below
 holds as it did.
 
 **The model proposes, this file disposes.** The session sees only names and
@@ -495,11 +495,18 @@ def agent_on(ws: Path) -> bool:
     return agent().harness() == "claude" and not agent_off(ws)
 
 
-def fit(asker: "Asker", ws: Path) -> bool:
-    """Make the session the one the flag asks for, as the server calls it for each request and each `reset` (#476).
-    A session of the other type is stopped, with everything the conversation held, and replaced. True when it was."""
+RESTARTED = "Ask restarted, because its setting changed."
+
+
+def fit(asker: "Asker", ws: Path, fresh: bool = False) -> bool:
+    """Make the session the one the flag asks for, as the server calls it for each request, `warm`, `keep` and `reset` (#476).
+    A session of the other type is stopped, with everything the conversation held, and replaced. True when it was.
+    Never while a question waits for its answer (a zone, a name, an action to confirm, a session's own question),
+    since stopping would lose it; `fresh`, the user's own *New conversation*, drops all that anyway."""
     s = asker.session
     if s is None or isinstance(s, AgentSession) == agent_on(ws):
+        return False
+    if not fresh and (asker.unclear is not None or asker.zone_question is not None or asker.asked or asker.asking):
         return False
     asker.stop()
     asker.session = session_for(ws)
@@ -2561,14 +2568,13 @@ def serve_locked(ws: Path, path: Path) -> None:
                 if not isinstance(msg, dict):
                     continue
                 conn.settimeout(None)
-                op, t0 = msg.get("op"), time.time()
+                op, t0, restarted = msg.get("op"), time.time(), False
                 try:
                     if op == "ask":
                         # This connection only: its progress lines, and its STOP heard mid-turn.
                         if asker.session is None and flag_on(ws):
                             asker.session = session_for(ws)
-                        if flag_on(ws):
-                            fit(asker, ws)              # a changed `ask-agent` reaches this request (#476)
+                        restarted = flag_on(ws) and fit(asker, ws)      # a changed `ask-agent` reaches this request (#476)
                         if asker.session is not None:
                             asker.session.watch = conn
                         asker.progress = lambda text, c=conn: send(c, {"progress": str(text)})
@@ -2583,11 +2589,15 @@ def serve_locked(ws: Path, path: Path) -> None:
                     elif op == "warm":
                         if asker.session is None:
                             asker.session = session_for(ws)
+                        elif flag_on(ws):
+                            fit(asker, ws)
                         asker.session.ready()
                         out = {"say": "Ready."}
                     elif op == "keep":
                         if asker.session is None:
                             asker.session = session_for(ws)
+                        elif flag_on(ws):
+                            fit(asker, ws)
                         leased, kept = time.time(), True
                         before = asker.session.started
                         if asker.revive() and before:
@@ -2595,7 +2605,7 @@ def serve_locked(ws: Path, path: Path) -> None:
                         out = {"say": "Kept.", "leased": True}
                     elif op == "reset":
                         if flag_on(ws):
-                            fit(asker, ws)
+                            fit(asker, ws, fresh=True)
                         asker.reset()
                         out = {"say": "A fresh conversation."}
                     elif op == "status":
@@ -2621,6 +2631,8 @@ def serve_locked(ws: Path, path: Path) -> None:
                            "failed": True}
                 if out.get("kind") not in KINDS:
                     out["kind"] = "command"
+                if op == "ask" and restarted:           # one line, so the lost conversation is no surprise (#476)
+                    out["say"] = RESTARTED + ("\n" + out["say"] if out.get("say") else "")
                 if op == "ask" and asker.afresh:
                     # A reset ran before the request stopped, was capped or failed:
                     # the app draws its divider all the same (#294), at a wall or a zone (#317).

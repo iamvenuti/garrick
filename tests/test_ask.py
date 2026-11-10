@@ -1263,6 +1263,33 @@ class TestRenewal(ServerCase):
         self.op("reset")
         self.assertNotIn("--mcp-config", self.procs(at_least=3)[2]["argv"])
 
+    def test_a_swap_says_so_and_waits_for_a_pending_question(self):
+        """#476: a changed flag restarts Ask with one line, never while a question waits for its answer."""
+        self.up()
+        self.op("ask", "what's open")
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        out = self.op("ask", "and Birch?")
+        self.assertTrue(out["say"].startswith(ask.RESTARTED))
+        self.assertEqual(2, len(self.procs(at_least=2)))
+        out = self.op("ask", "and Acme?")
+        self.assertNotIn(ask.RESTARTED, out["say"])                         # said once
+
+    def test_warm_and_keep_start_the_session_the_flag_asks_for(self):
+        self.up()
+        self.op("ask", "what's open")
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        self.op("warm")
+        self.assertIn("--mcp-config", self.procs(at_least=2)[1]["argv"])
+
+    def test_fit_leaves_a_session_with_a_question_waiting(self):
+        a = ask.Asker(self.root, ask.ClaudeSession(self.root, "haiku"))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+        a.zone_question = "Which zone?"
+        self.assertFalse(ask.fit(a, self.root))
+        self.assertIsInstance(a.session, ask.ClaudeSession)
+        self.assertTrue(ask.fit(a, self.root, fresh=True))                  # New conversation drops it anyway
+        self.assertIsInstance(a.session, ask.AgentSession)
+
     def test_nothing_is_renewed_with_ask_switched_off(self):
         self.up()
         self.op("ask", "what's open")

@@ -124,6 +124,7 @@ from garrick_lib import (  # noqa: E402
     zone_roles,
     local_file,
     parse_frontmatter,
+    read_settings,
     parse_frontmatter_text,
     read_checkpoint,
     read_version,
@@ -1380,24 +1381,6 @@ CONTEXT_EFFECT = {
 }
 
 
-# What a one-word People row's finding says, which Nurture reads to ask for the full name (nurture.ONE_WORD_ROW).
-ONE_WORD_ROW = "by one word, which a note refuses only beside the party's name or another of its people"
-
-
-def one_word_people(ws: Workspace, ctx_path: str) -> List[Finding]:
-    """A People row whose name is one word is matched by the walls only beside the party's name, another of its
-    people, or a link to the person's page; on its own it is a warning (#470). Warn about each row, so that
-    Nurture can ask for the full name, which refuses on its own."""
-    out = []
-    for person in ws.context["people"]:
-        key = " ".join(words(person["name"]))
-        if key and len(key.split()) == 1 and person["party"] in ws.context["parties"]:
-            out.append(Finding(WARNING, "context", ctx_path,
-                               "the People table lists `%s` of `%s` %s; give the full name" % (person["name"], person["party"], ONE_WORD_ROW),
-                               "A person in the context file has a one-word name"))
-    return out
-
-
 def check_context(ws: Workspace) -> List[Finding]:
     out = []
     ctx_path = "System/context.md"
@@ -1466,7 +1449,6 @@ def check_context(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "context", ctx_path,
                                "%s belongs to `%s`, which is not a tag in Parties" % (person["name"], person["party"]),
                                "%s belongs to an unknown party" % person["name"]))
-    out.extend(one_word_people(ws, ctx_path))
     if "none" in parties:
         out.append(Finding(ERROR, "context", ctx_path,
                            "the Parties table has a row for `none`, which is reserved: it says a page is nobody's, "
@@ -2068,6 +2050,70 @@ def check_threads(ws: Workspace) -> List[Finding]:
             if link and project.name.lower() not in link.lower():
                 out.append(Finding(WARNING, "threads", r, "`project` is %s but the thread sits in %s" % (link, project.name),
                                    "Thread %s points at the wrong project" % spoken))
+    return out
+
+
+def check_history(ws: Workspace) -> List[Finding]:
+    """A hub or thread note over `note-max-words`, and a Resume here block over `resume-max-words` (#502): each
+    finding names the note, its words and the limit. The first is mechanical (history.py moves the older dated
+    entries); the second is a rewrite that only the user's yes makes."""
+    try:
+        import history
+    except ImportError:
+        return []
+    cap = history.limits(ws.root)
+    out: List[Finding] = []
+    for project, fm in ws.projects:
+        notes = [("projects", project / (project.name + ".md"), project.name)]
+        notes += [("threads", t / (t.name + ".md"), "%s, %s" % (project.name, t.name)) for t in visible_dirs(project / "Threads")]
+        for name, note, spoken in notes:
+            text = read_text(note) if note.is_file() else None
+            if not text:
+                continue
+            words = history.note_words(text)
+            if words > cap["note-max-words"]:
+                out.append(Finding(WARNING, name, rel(ws, note), history.note_over(words, cap["note-max-words"]),
+                                   "%s is %d words long, over its limit of %d" % (spoken, words, cap["note-max-words"])))
+            block = history.resume_words(text)
+            if block > cap["resume-max-words"]:
+                out.append(Finding(WARNING, "resume", rel(ws, note), history.resume_over(block, cap["resume-max-words"]),
+                                   "The resume point of %s is %d words long, over its limit of %d"
+                                   % (spoken, block, cap["resume-max-words"])))
+    return out
+
+
+MEETING_MAX_WORDS = 450
+
+
+def check_concise_pages(ws: Workspace) -> List[Finding]:
+    """A meeting or mail page over `meeting-max-words` words of body (450 unless the settings say), for the pages
+    filed on or after the day `meetings-concise` names in System/garrick-settings.json, the day the user turned the
+    concise format on (#479). Without that key the check says nothing, and a page filed before it never counts. A
+    page's filed day is its `created:`."""
+    settings = read_settings(ws.root)
+    try:
+        start = datetime.date.fromisoformat(str(settings.get("meetings-concise") or "").strip())
+    except ValueError:
+        return []
+    limit = settings.get("meeting-max-words")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        limit = MEETING_MAX_WORDS
+    out: List[Finding] = []
+    for page, fm in sorted(ws.meetings.items()):
+        if fm.get("type") not in ("meeting", "email"):
+            continue
+        try:
+            filed = datetime.date.fromisoformat(str(fm.get("created") or "").strip())
+        except ValueError:
+            continue
+        if filed < start:
+            continue
+        words = len(body_of(read_text(page) or "").split())
+        if words > limit:
+            out.append(Finding(WARNING, "meetings", rel(ws, page),
+                               "its body is %d words, over the %d of `meeting-max-words`; a page is one line on who was there, "
+                               "`## Key points` and `## Actions`, about 350 words" % (words, limit),
+                               "A meeting page is %d words long, over its limit of %d" % (words, limit)))
     return out
 
 
@@ -3478,7 +3524,7 @@ def note_refs(ws: Workspace, zone: Path) -> List[Finding]:
         if not hub.is_file():
             continue
         scan = [hub] + [p for folder in ("Threads", "Notes") for p in live_files(project / folder)
-                        if p.suffix.lower() == ".md" and not {"Deliverables", "Sources"} & set(p.relative_to(project).parts)]
+                        if p.suffix.lower() == ".md" and not {"Deliverables", "Sources", "history"} & set(p.relative_to(project).parts)]
         subs = visible_dirs(project)
         for path in scan:
             text = read_text(path) or ""
@@ -4307,8 +4353,24 @@ LEDGER_HEADER_RE = re.compile(r"(?mi)^[ \t]*\|[ \t]*date[ \t]*\|[ \t]*file[ \t]*
                               r"[ \t]*recipients[ \t]*\|[ \t]*authoritative[ \t]*\|[ \t]*$")
 
 
-# Where no run of words crosses: a Markdown heading, or a ledger's header row.
-STRUCTURE_RE = re.compile(r"(?mi)%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:]))
+# A bold label at the start of a line ("**Where it stands, 10 November 2026.**",
+# "**Decision.**"), and the date that opens a dated entry when it is not bold
+# ("10 November 2026." or "2026-11-10:"). A thread note is made of these as it
+# is made of headings: the template's labels and every entry's date are the
+# same in every note, and a run that took in the last words of one entry, the
+# next entry's date and the first words of that entry read two walled notes as
+# quoting each other on structure alone (#498). Only a label that opens a line:
+# bold inside a sentence is part of it.
+_MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
+BOLD_LABEL_RE = re.compile(r"(?m)^ {0,3}\*\*[^*\n]+\*\*")
+ENTRY_DATE_RE = re.compile(r"(?m)^ {0,3}(?:\d{1,2} (?:%s) \d{4}|\d{4}-\d{2}-\d{2})(?![0-9])[.:]?" % _MONTHS)
+
+
+# Where no run of words crosses: a Markdown heading, a ledger's header row, a bold label that opens a line, or the
+# date that opens an entry. What each break holds is read on its own, as a heading's words are: a label or heading
+# the templates under System/templates/ also hold is common wording, found in a shared file, so it never counts.
+STRUCTURE_RE = re.compile(r"(?mi)%s|%s|%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:],
+                                                BOLD_LABEL_RE.pattern[4:], ENTRY_DATE_RE.pattern[4:]))
 
 
 # What `scaffold.py checkpoint` writes around a person's items, exactly as
@@ -4442,10 +4504,14 @@ def _runs_between_breaks(text: str, resume_rows: bool = True) -> set:
     last = 0
     under_resume = False
     for m in STRUCTURE_RE.finditer(text):
-        out.update(_resume_runs(text[last:m.start()]) if under_resume else shingles(words(text[last:m.start()])))
+        before = text[last:m.start()]
+        out.update(_resume_runs(before) if under_resume else shingles(words(before)))
         out.update(shingles(words(m.group(0))))
         last = m.end()
-        under_resume = resume_rows and RESUME_HEAD_RE.match(m.group(0)) is not None
+        if m.group(0).lstrip().startswith("#") or LEDGER_HEADER_RE.match(m.group(0)):
+            under_resume = resume_rows and RESUME_HEAD_RE.match(m.group(0)) is not None
+        elif under_resume and RESUME_RULE_RE.search(before):
+            under_resume = False        # a label or a date below the rule: the block is over
     out.update(_resume_runs(text[last:]) if under_resume else shingles(words(text[last:])))
     return out
 
@@ -6388,7 +6454,7 @@ PATH_CHECKS = [check_instructions, check_settings, check_context, check_skills]
 ALL_CHECKS = [
     check_claude_md, check_instructions, check_settings, check_placeholders, check_context, check_memory, check_zones,
     check_hooks, check_cmux,
-    check_skills, check_names, check_projects, check_threads, check_resume, check_deliverables, check_anonymous,
+    check_skills, check_names, check_projects, check_threads, check_history, check_concise_pages, check_resume, check_deliverables, check_anonymous,
     check_todo, check_questions, check_decisions, check_links, check_meetings, check_people, check_walls, check_inbox, check_knowledge,
     check_raw, check_generated, check_recall, check_preferences, check_review, check_updates,
 ]

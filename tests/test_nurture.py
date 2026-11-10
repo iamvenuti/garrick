@@ -207,7 +207,6 @@ class ClassificationTest(Base):
                 ("Wikis/Meetings/wiki/people/kit.md", "people", "no `organisation:` link to the entity page of its party"),
                 ("Wikis/Meetings/wiki/people/kit.md", "people", "no `party`"),
                 ("Wikis/Meetings/wiki/entities/larch.md", "meetings", "no `party:`"),
-                ("System/context.md", "context", "Kit is listed by one word, which a note refuses only beside the party's name"),
                 ("Zones/Work/Acme Review/Acme Review.md", "projects", "no `party`")):
             item = self.wall_item(message, check=check, path=path)
             self.assertNotEqual("attribution", item.kind, (check, message))

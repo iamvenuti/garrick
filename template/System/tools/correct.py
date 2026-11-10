@@ -99,7 +99,7 @@ from garrick_lib import (  # noqa: E402
     workspace_root,
 )
 
-KINDS = ("memory", "context", "hub", "thread", "todo", "wiki", "raw")
+KINDS = ("memory", "context", "hub", "thread", "history", "todo", "wiki", "raw")
 RAW_TEXT = {".md", ".markdown", ".txt", ".eml", ".vtt", ".html", ".htm", ".json", ".csv", ".tsv", ".yaml", ".yml", ".xml"}
 MAX_BYTES = 5_000_000
 MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
@@ -181,14 +181,25 @@ def _visible(folder: Path) -> List[Path]:
     return sorted(p for p in folder.iterdir() if p.is_dir() and not p.name.startswith((".", "_")))
 
 
+def _history(folder: Path) -> Iterable[Tuple[str, Path]]:
+    """The history files beside a hub or thread note (history.py): live files, reached like their note."""
+    found = folder / "history"
+    if found.is_dir():
+        for path in sorted(found.glob("*.md")):
+            if path.is_file():
+                yield "history", path
+
+
 def _notes(project: Path) -> Iterable[Tuple[str, Path]]:
     hub = project / (project.name + ".md")
     if hub.is_file():
         yield "hub", hub
+        yield from _history(project)
     for thread in _visible(project / "Threads"):
         note = thread / (thread.name + ".md")
         if note.is_file():
             yield "thread", note
+            yield from _history(thread)
 
 
 def places(root: Path, memory: Optional[List[Path]] = None) -> List[Tuple[str, Path]]:

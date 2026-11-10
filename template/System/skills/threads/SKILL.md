@@ -558,7 +558,9 @@ focus, as under *No name given*). Then:
    and by whom, quoting where the wording was the point. What you decided that
    they did not, marked as yours. What was left out on purpose, and why.>
    ```
-   Never edit or compress earlier entries. They are the record.
+   Never edit or compress earlier entries. They are the record. A wrap never
+   moves one by hand: step 12 hands the old ones to `history.py`, which moves
+   them whole.
 8. **Actions go to the zone's `Todo.md`**, not the note. Re-read it right
    before editing. Append new actions for this thread under `## Inbox` as
    `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the list's
@@ -634,8 +636,32 @@ focus, as under *No name given*). Then:
     ```
     Create it if missing, leave it if present, and add the two keys to one
     that has neither. No memory, no step.
-12. **Commit in the zone's repository.** First move the lines ticked before
-    today out of the list:
+12. **Commit in the zone's repository.** First keep the note short. Run
+    the history mover on the note the wrap wrote, after the new dated entry
+    and `updated:` are in:
+    ```sh
+    python3 System/tools/history.py apply "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
+    ```
+    It moves each dated entry older than `history-months` (6), and then the
+    oldest ones until the note is under `note-max-words` (4,000), to
+    `history/<Note> history <YYYY>-Q<n>.md` beside the note, unchanged, and
+    leaves one line under the last entry that links them. The newest five
+    entries always stay. It checks that every line it removed is in a history
+    file before it says it is done, and puts the note back if one is not. It
+    changes nothing for a note with nothing to move, and nothing for one it
+    cannot read for certain, which it reports in a line: say that line in the
+    reply and carry on. The files it wrote go in this wrap's commit below, with
+    the thread's own files: the `history/` folder beside the note. Then, if its
+    output or `python3 System/tools/history.py resume "<note>"` says the
+    Resume here block is over `resume-max-words` (400), offer the shrink in
+    one line after the wrap: "The Resume block is 920 words, over its 400.
+    Want a shorter one?" On a yes, show the proposed block as a diff before
+    writing it: *Where it stands* says now, *Keep in mind* loses what is
+    settled or has shipped, a durable fact moves to a working note with a link
+    left in its place, and a section that has grown into working material moves
+    to a working note with a link. Nothing changes without the yes, and a
+    shrink is never run overnight. The dated entry for it says what moved where.
+    Then move the lines ticked before today out of the list:
     ```sh
     python3 System/skills/todo/todo.py archive --zone <Zone>
     ```
@@ -648,8 +674,8 @@ focus, as under *No name given*). Then:
     commits that list there; with no list touched, there is nothing to
     archive.
     Then stage by name only what this wrap touched and this thread's own
-    changed files: the thread folder, the hub if edited, `Todo.md` if edited
-    or archived, `archive/` when the archive moved a line, and any
+    changed files: the thread folder, with its `history/` folder, the hub if
+    edited, `Todo.md` if edited or archived, `archive/` when the archive moved a line, and any
     `Deliverables/` or `Sources/` file this session made for the thread.
     Never `git add -A`.
     ```sh
@@ -810,11 +836,23 @@ Written: the outcome paragraph, the files changed, the commit hash.
 ## Park: "park X", "put X aside"; wake: "wake X", "unpark X"
 
 Parking sets a thread aside without finishing it, so the lists stay short. It
-moves nothing: the folder, the Resume here block, the links and the history
+moves nothing but the oldest dated entries, which go to history files beside
+the note, unchanged (step 2): the folder, the Resume here block and the links
 stay exactly where they are.
 
 1. **Resolve X.** Parked threads resolve like any other.
-2. **Run the executor** (*Running an action*), from the workspace root. It
+2. **Move the old entries first**, so a parked note is short when it is
+   woken. From the workspace root:
+   ```sh
+   python3 System/tools/history.py apply "Zones/Work/Acme/Threads/Pricing/Pricing.md" --commit "Acme, Pricing: older entries moved to history"
+   ```
+   It is the wrap's move (*Wrap*, step 12): entries older than `history-months`,
+   then the oldest until the note fits `note-max-words`, the newest five kept,
+   committed on its own through the wall check. The Resume here block stays as
+   it is. A note with nothing to move, or one it cannot read for certain,
+   changes nothing: say its line and park anyway. For a whole project, name
+   the hub note (`Zones/<Zone>/<Project>/<Project>.md`).
+   **Run the executor** (*Running an action*), from the workspace root. It
    sets `status: parked`, or `status: active` for `wake`, and `updated:`
    today, adds the dated entry, "Parked." or "Woken.", and leaves the Resume
    here block as it is: it still says where the work stood. It commits the

@@ -106,6 +106,17 @@ class DocCommandsTest(unittest.TestCase):
         self.assertEqual(shared, {}, "one folder, two different commands: the second stops with 'not empty'")
 
 
+class NurtureActionsTest(unittest.TestCase):
+    def test_every_nurture_action_the_docs_name_is_one_nurture_has(self):
+        source = (REPO / "template" / "System" / "tools" / "nurture.py").read_text(encoding="utf-8")
+        choices = re.search(r"choices=\(([^)]*)\)", source[source.index("def main"):]).group(1)
+        actions = set(re.findall(r'"([a-z-]+)"', choices))
+        self.assertIn("fix", actions)
+        for path in sorted((REPO / "docs").rglob("*.md")):
+            for word in re.findall(r"nurture\.py ([a-z][a-z-]*)", path.read_text(encoding="utf-8")):
+                self.assertIn(word, actions, "%s names nurture.py %s" % (path.relative_to(REPO), word))
+
+
 class FirstStepsTest(unittest.TestCase):
     """What a newcomer reads in docs/ stays true of the product it describes."""
 

@@ -94,8 +94,8 @@ class TestParty(ManageCase):
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("Added Cobalt Freight to the Parties table in System/context.md, with the tag `cobalt`, "
                       "in Work.", r.stdout)
-        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` | yes |  | 2027-01-01, user |", self.context())
-        # The rows typed by hand are left exactly as they were; only the header gains the column.
+        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |  | 2027-01-01, user |", self.context())
+        # The rows typed by hand are left exactly as they were; only the header gains the column (no Walled cell).
         self.assertIn("| Domains | Learned |", self.context())
         self.assertNotIn("|  |  |\n", self.context())
         # Left for the caller to commit, in the workspace's own repository.

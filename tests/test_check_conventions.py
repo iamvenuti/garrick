@@ -97,13 +97,14 @@ class TestNurtureThreadParty(Case):
         self.assertEqual([], [(i.kind, i.question, i.proposal) for i in self.items()])
 
     def test_a_finding_handed_in_proposes_no_party(self):
-        # A finding from an older check, or one stored before this one: still
-        # asked, but the hub's party is never offered as the answer.
+        # A finding from an older check, or one stored before this one: `party` is an index
+        # and no wall, so Nurture asks nothing about it; it is reported, with no proposal.
         ctx = nurture.Ctx(self.root)
         item = nurture.sort_item(ctx, nurture.Item(
             "check", "threads", "Zones/Work/Acme Review/Threads/Pricing/Pricing.md",
             "`party` acme, cedar differs from the project's acme"))
-        self.assertEqual("attribution", item.kind)
+        self.assertEqual("judgment", item.kind)
+        self.assertEqual("", item.question)
         self.assertEqual("", item.proposal)
 
 

@@ -4927,10 +4927,36 @@ def _in_sources(project: Path, path: Path) -> bool:
 COPY_MIN = 32   # below this many bytes, identical content proves nothing
 
 
+def shipped_hashes(ws: Workspace, zone: Optional[str]) -> set:
+    """The content hashes of the files Garrick ships, as installed: everything under System/templates/ of the workspace
+    (the zone, project and thread templates), and under the folder GARRICK_TEMPLATES_DIR names, which the update sets
+    to the release it is installing. Each is hashed as it is and with `{{ZONE}}` filled in as each zone's name, the way
+    the installer writes it. Such a file is the same in every zone, so it is never a copy from another one."""
+    folders = [ws.root.joinpath(*TEMPLATES)]
+    if os.environ.get("GARRICK_TEMPLATES_DIR"):
+        folders.append(Path(os.environ["GARRICK_TEMPLATES_DIR"]))
+    found = set()
+    for folder in folders:
+        for here, _, files in os.walk(folder):
+            for name in files:
+                try:
+                    data = (Path(here) / name).read_bytes()
+                except OSError:
+                    continue
+                found.add(hashlib.sha256(data).hexdigest())
+                for name_ in {z.name for z in ws.zones} | ({zone} if zone else set()):
+                    found.add(hashlib.sha256(data.replace(b"{{ZONE}}", name_.encode("utf-8"))).hexdigest())
+    return found
+
+
 def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Finding]:
     """A staged file whose bytes are those of a file of another walled zone, or of a Meetings page of one, is a copy
     made whole: the zone wall refuses it whatever it is called. Only the staged files are hashed, and a file of
-    another zone only when its size is one of theirs. A Knowledge page is a destination with no zone."""
+    another zone only when its size is one of theirs. A Knowledge page is a destination with no zone.
+
+    Not a copy: a file under COPY_MIN bytes (an empty `.gitkeep`), a file Garrick ships (shipped_hashes: the zone
+    template's files are identical in every zone), and content held by files of two or more zones, which is template
+    text, not one zone's material. Everything else stays refused."""
     want: Dict[int, List[Tuple[Path, str, Optional[str]]]] = {}
     for path, data in staged:
         dest = zone_of(ws.root, path)
@@ -4938,8 +4964,8 @@ def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Findi
             want.setdefault(len(data), []).append((path, hashlib.sha256(data).hexdigest(), dest))
     if not want:
         return []
-    out: List[Finding] = []
-    told: set = set()
+    hits: Dict[Path, Tuple[str, str, Optional[str]]] = {}        # staged file -> (hash, zone it copies, its own zone)
+    held: Dict[str, set] = {}                                    # hash -> the zones whose files have it
     tops = [z for z in ws.zones] + [ws.root / "Wikis" / "Meetings"]
     for top in tops:
         for here, dirs, files in os.walk(top):
@@ -4955,23 +4981,29 @@ def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Findi
                 there = hit_zone(ws, at)         # a raw record is in the zone of the pages that claim it
                 if there is None:
                     continue
-                digest = None
+                try:
+                    digest = hashlib.sha256(at.read_bytes()).hexdigest()
+                except OSError:
+                    continue
                 for path, sha, dest in want[size]:
-                    if path == at or path in told or may_flow(ws.context, there, dest):
+                    if path == at or digest != sha:
                         continue
-                    if digest is None:
-                        try:
-                            digest = hashlib.sha256(at.read_bytes()).hexdigest()
-                        except OSError:
-                            break
-                    if digest == sha:
-                        told.add(path)
-                        out.append(Finding(ERROR, "walls", rel(ws, path),
-                                           "is a copy, whole, of a file of %s; %s is walled and this file is in %s"
-                                           % (zone_name(there), "that zone" if there != UNZONED else "a page with no zone",
-                                              zone_name(dest) if dest is not None else "Knowledge"),
-                                           "A file in %s is a whole copy of a file of %s"
-                                           % (zone_name(dest) if dest is not None else "Knowledge", zone_name(there))))
+                    held.setdefault(sha, set()).add(there)
+                    if not may_flow(ws.context, there, dest) and path not in hits:
+                        hits[path] = (sha, there, dest)
+    out: List[Finding] = []
+    shipped: Dict[Optional[str], set] = {}
+    for path, (sha, there, dest) in sorted(hits.items()):
+        if dest not in shipped:
+            shipped[dest] = shipped_hashes(ws, dest)
+        if sha in shipped[dest] or len(held[sha]) > 1:
+            continue
+        out.append(Finding(ERROR, "walls", rel(ws, path),
+                           "is a copy, whole, of a file of %s; %s is walled and this file is in %s"
+                           % (zone_name(there), "that zone" if there != UNZONED else "a page with no zone",
+                              zone_name(dest) if dest is not None else "Knowledge"),
+                           "A file in %s is a whole copy of a file of %s"
+                           % (zone_name(dest) if dest is not None else "Knowledge", zone_name(there))))
     return out
 
 

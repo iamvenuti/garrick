@@ -81,6 +81,7 @@ def build(root: Path) -> Path:
     write(root / "Zones" / "Ventures" / "Orchard" / "Threads" / "Drafts" / "Plan.md", "Orchard plan: the trees go in rows, one row for each variety.\n")
     write(root / "Zones" / "Work" / "Harbour" / "Threads" / "Sizing" / "Plan.md", "Harbour plan: the quay works come first, then the sheds.\n")
 
+    write(root / "System" / "templates" / "zone" / "Todo.md", "# {{ZONE}}: open actions\n\n## Inbox\n\n## Done\n")
     meetings = root / "Wikis" / "Meetings"
     write(meetings / "AGENTS.md", "# Meetings\n")
     write(meetings / "wiki" / "index.md", "# Index\n")

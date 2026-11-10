@@ -367,6 +367,7 @@ class Outside:
     def __init__(self, entries, zone, text):
         self.entries, self.zone, self.text = list(entries), zone, text
         self.parties = set().union(*(e.parties for e in self.entries)) if self.entries else set()
+        self.zones = {e.zone for e in self.entries if e.zone}
 
 
 class Stopped(Bad):
@@ -724,7 +725,7 @@ def work_name(value, what: str) -> str:
     return value.strip()
 
 
-def party_labels(rows: Dict[str, dict], tags: List[str]) -> List[str]:
+def party_names(rows: Dict[str, dict], tags: List[str]) -> List[str]:
     """The parties as a question names them: by name, with the tag after it where two rows of the zone share one."""
     said = {t: (rows[t].get("party") or t) for t in tags}
     return [said[t] if sum(v == said[t] for v in said.values()) == 1 else "%s (%s)" % (said[t], t) for t in tags]
@@ -774,7 +775,7 @@ def project_party(a: dict, zone: str, ws: Path, named) -> str:
     if tag is None and len(heard) == 1:
         return heard[0]
     candidates = heard or here              # the parties it named, however many; none named: every party of the zone
-    labels = party_labels(rows, candidates)
+    labels = party_names(rows, candidates)
     name = work_name(a.get("name"), "name")
     question = "Which party is %s for: %s?" % (name, ", ".join(labels[:-1]) + " or " + labels[-1] if len(labels) > 1 else labels[0])
     if len(candidates) > MOST_PARTIES:
@@ -1162,14 +1163,14 @@ class AgentSession(ClaudeSession):
     the session's child and keeps the conversation's state in a folder of
     the session's own, inside its sealed home: what it has admitted and
     handed out, and the latch a wall sets. This side writes the zone and the
-    parties the requests named (`in.json`) and reads the rest after each turn.
+    zones the requests named (`in.json`) and reads the rest after each turn.
     The folder goes with the process, so a reset, a renewal or a new
     process starts a conversation that has nothing in it."""
 
     def __init__(self, ws: Path, tier_: str, brief: Path = AGENT_BRIEF):
         super().__init__(ws, tier_, brief)
         self.zone = None            # the zone the window answers in, for the server's first call
-        self.told = set()           # the parties the requests named, and the places the proposals did: the server holds them too
+        self.told = set()           # the zones the requests named, and the places the proposals did: the server holds them too
         self.state_dir = None
         self.proposals = 0          # how many propose lines were read already
         self.held_seen = 0          # how many wall holds the server had counted when the last answer was built
@@ -1208,17 +1209,17 @@ class AgentSession(ClaudeSession):
         super().stop(at_once)
         self.state_dir, self.told, self.proposals, self.held_seen = None, set(), 0, 0
 
-    def tell(self, zone: Optional[str], parties=()) -> None:
-        """The zone and the parties the server holds besides what it admitted, written for its next call."""
+    def tell(self, zone: Optional[str], zones=()) -> None:
+        """The zone and the zones the server holds besides what it admitted, written for its next call."""
         if self.state_dir is None:
             return
-        self.told |= set(parties)
+        self.told |= set(zones)
         tmp = self.state_dir / "in.json.tmp"
-        tmp.write_text(json.dumps({"zone": zone, "parties": sorted(self.told)}), encoding="utf-8")
+        tmp.write_text(json.dumps({"zone": zone, "zones": sorted(self.told)}), encoding="utf-8")
         os.replace(str(tmp), str(self.state_dir / "in.json"))
 
     def state(self) -> dict:
-        """What the server saved: its latch, the parties it admitted and the records it handed out. {} when none."""
+        """What the server saved: its latch, the zones it admitted and the records it handed out. {} when none."""
         if self.state_dir is None:
             return {}
         try:
@@ -1228,7 +1229,7 @@ class AgentSession(ClaudeSession):
         return data if isinstance(data, dict) else {}
 
     def held(self) -> set:
-        """The parties this conversation holds: what the server admitted and what the requests named."""
+        """The zones this conversation holds: what the server admitted and what the requests named."""
         return set(self.state().get("seen") or []) | self.told
 
     def proposed(self) -> List[dict]:
@@ -1392,9 +1393,9 @@ class Asker:
         self.answers = None         # the second session, which answers from records: started on the first question
         self.answer_sent = None     # its `sent` and `told`, as above
         self.answer_told = None
-        self.seen = set()           # the parties the answer process holds: its records' (admit()), its requests'
+        self.seen = set()           # the zones the answer process holds: its records' (admit()), its requests'
         self.seen_for = None        # the `started` of the process `seen` describes
-        self.heard = set()          # the parties the command process has been told of: requests' names, actions' places
+        self.heard = set()          # the zones the command process has been told of: requests' names, actions' places
         self.heard_for = None       # the `started` of the process `heard` describes
         self.passages = []          # each record admitted to that process, its id and path
         self.unclear = None         # a request the box asked about, waiting for the answer that settles it
@@ -1408,7 +1409,6 @@ class Asker:
         self.heard_text = ""        # that request as the names were read from it, with any earlier one it answers
         self.asking = False         # whether the last reply was a session's own question for the user
         self.ctx = {}               # System/context.md, as garrick_lib reads it, for this request
-        self.policy = None          # the Parties and Zones tables the admissions were made under
         self.refreshed = set()      # the sessions renewed by size, "command" and "answer", not yet told so
         self.quick = None           # the small tier's session for a plain "open X" or "park X" (#358)
         self.progress = lambda text: None
@@ -1431,11 +1431,6 @@ class Asker:
         if lib is None:
             raise Bad("ask needs garrick_lib.py in System/tools/")
         self.ctx = lib.load_context(self.ws)
-        tables = repr(sorted((t, bool(e.get("walled", True)), e.get("zone")) for t, e in self.ctx.get("parties", {}).items())
-                      + sorted(self.ctx.get("zone_parties", {}).items()))
-        if self.policy is not None and tables != self.policy:
-            self.reset()                            # the Parties or Zones table changed: what was admitted may no longer be
-        self.policy = tables
         names = scan(self.ws)
         window = zone if isinstance(zone, str) and zone in names else None
         picked = window if picked else None         # a zone the user chose for this question, which settles it
@@ -1460,7 +1455,7 @@ class Asker:
         # A wall between what the request names and what either session
         # holds, or a window now set to another zone than the one the
         # sessions answered in (#317): both start afresh before it is sent.
-        reset = "wall" if self.crosses(named.parties) else "zone" if self.moves(window) else None
+        reset = "wall" if self.crosses(named.zones) else "zone" if self.moves(window) else None
         if reset:
             first = self.question or earlier
             self.progress("Starting a fresh session")
@@ -1511,7 +1506,7 @@ class Asker:
                     text, usage = self.session.turn("\n".join(parts), record=False)
                 finally:
                     turns.append(getattr(self.session, "last", None))
-                    self.hear(named.parties)            # whatever became of the turn, the process was sent it
+                    self.hear(named.zones)              # whatever became of the turn, the process was sent it
                 self.sent, self.told = sent, self.session.started
                 self.refreshed.discard("command")
                 find = wanted(text)
@@ -1639,7 +1634,8 @@ class Asker:
             return clarify(str(e)), None
         except sc.Refused as e:
             raise Bad(str(e))
-        reset = "wall" if self.crosses(where.parties, where.every) else "zone" if self.moves(zoned) else None
+        reset = ("wall" if self.crosses({where.zone} if where.zone else set(), where.every)
+                 else "zone" if self.moves(zoned) and not self.afresh else None)     # one reset a request: the names' own already ran
         if reset:                                   # before anything is read
             first = self.question or request[:asked - 1]
             self.progress("Starting a fresh session")
@@ -1649,8 +1645,7 @@ class Asker:
                 return self.refilled(first, request[asked:], named, names, reset), reset
         if zoned is not None:                       # the sessions now answer in this zone, and the window follows
             self.zone = self.last_zone = zoned
-        records, back, matched = sc.choose(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib,
-                                              start=sc.starts(where, self.ctx))
+        records, back, matched = sc.choose(sc.search(self.ws, where, self.ctx, lib), self.holding(), self.ctx, lib)
         if not records and not self.passages:       # nothing to read, and nothing read before it
             out = reply(self.wall() if back else NOTHING_FOUND, "answer")
             out.update(claims=[], sources=[], after=[out["say"]], incomplete=False)
@@ -1673,8 +1668,8 @@ class Asker:
         if "answer" in self.refreshed:              # renewed by size: the records it held are gone
             parts.append("<refreshed/>")
         parts += ["<request>\n%s\n</request>" % request[-MAX_REQUEST:],
-                  self.admit(records, {p for r in records for p in r["parties"]}, matched, where.order)]
-        self.seen |= named.parties                  # it is sent the request too, and so the names in it
+                  self.admit(records, {z for r in records for z in r["zones"]}, matched, where.order)]
+        self.seen |= named.zones                    # it is sent the request too, and so the names in it
         self.answers.watch = getattr(self.session, "watch", None)     # Stop is heard in either session
         try:
             text, more = self.answers.turn("\n".join(parts), cap=False, record=False)
@@ -1747,7 +1742,7 @@ class Asker:
                 self.quick = AgentSession(self.ws, tier())
             sess = self.quick
             lib = scope_lib().lib(self.ws)
-            if sess.alive() and scope_lib().any_wall(self.ctx, named.parties, sess.held(), lib):
+            if sess.alive() and scope_lib().crosses(self.ctx, named.zones, sess.held(), lib):
                 sess.stop()                         # its own conversation, ended at a wall as the other is
         else:
             sess = self.session
@@ -1755,7 +1750,7 @@ class Asker:
         if sess is self.session and sess.fresh():
             self.results, self.asked = "", {}       # a new process was told none of what the last actions did
         sess.ready()
-        sess.tell(here, named.parties)
+        sess.tell(here, named.zones)
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat()]
         if sess is self.session and "command" in self.refreshed:
             parts.append("<refreshed/>")
@@ -1799,11 +1794,9 @@ class Asker:
         return out
 
     def crossing(self, held: set) -> bool:
-        """Whether a conversation holds two walled parties (admitted or named)."""
+        """Whether a conversation holds two walled zones (admitted or named)."""
         lib = scope_lib().lib(self.ws)
-        ctx = lib.load_context(self.ws)
-        held = {lib.strip_tag(t) for t in held}
-        return not lib.meets_in(ctx, held)
+        return scope_lib().crosses(lib.load_context(self.ws), held, (), lib)
 
     def wall_stop(self) -> dict:
         """A wall stopped the conversation: both sessions are stopped and everything they held cleared, the session
@@ -1871,11 +1864,8 @@ class Asker:
         claims, sources = self.claims_of(text, handed, names)
         used = {k: (usage or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
         said = " ".join(c["text"] for c in claims)
-        parties = set()
-        for a in props:
-            if isinstance(a, dict) and isinstance(a.get("zone"), str) and a.get("project") in names.get(a["zone"], {}):
-                parties |= set(scope_lib().place_parties(self.ws, a["zone"], a["project"], a.get("thread"),
-                                                         scope_lib().lib(self.ws)))
+        zones = {a["zone"] for a in props if isinstance(a, dict) and isinstance(a.get("zone"), str)
+                 and a.get("project") in names.get(a["zone"], {})}
         if props and not handed and not state.get("text_seen"):
             out = self.carry_out(said, props, names, usage)
             self.asking = asks_back(text, said, [])
@@ -1895,8 +1885,8 @@ class Asker:
                 out["choices"] = buttons
                 self.results = "Offered to the user as buttons, not done: " + "; ".join(b["label"] for b in buttons)
             self.asking = asks_back(text, said, [])
-        if parties:
-            sess.tell(here, parties)
+        if zones:
+            sess.tell(here, zones)
         if here:
             out["zone"] = here
         return out
@@ -1998,7 +1988,7 @@ class Asker:
         for o in tries:
             text = "%s (%s)" % (body, o)
             got = sc.mentions(self.ws, text, names, self.ctx, lib)
-            if not got.question and got.parties == named.parties:
+            if not got.question and got.zones == named.zones and got.parties == named.parties:
                 refill = text
                 break
         out = clarify(REFILLED if why == "wall" else REFILLED_ZONE)
@@ -2028,11 +2018,11 @@ class Asker:
             out.append(src)
         return out
 
-    def admit(self, passages: List[dict], parties, matched: Optional[int] = None, order: Optional[str] = None) -> str:
+    def admit(self, passages: List[dict], zones, matched: Optional[int] = None, order: Optional[str] = None) -> str:
         """The only way a record reaches a prompt (#261, section 3): the
-        passages as `<records>`, each with an id, and their parties added to
-        `seen`, the parties whose material the answer process holds. A
-        passage of no party, Knowledge or the docs, adds none. Refuses what a
+        passages as `<records>`, each with an id, and their zones added to
+        `seen`, the zones whose material the answer process holds. A
+        passage of no zone, Knowledge or the docs, adds none. Refuses what a
         wall divides from what the process holds: the reset runs before
         anything is read, so this never happens unless that order breaks.
         The tag says how many records matched, how many it was given and in
@@ -2041,7 +2031,7 @@ class Asker:
         counts only what a wall left it free to read (ask_scope.choose())."""
         lib = scope_lib().lib(self.ws)
         held = self.holding()
-        adding = set(parties) | {p for r in passages for p in r["parties"]}
+        adding = set(zones) | {z for r in passages for z in r["zones"]}
         if not scope_lib().admits(self.ctx, held, adding, lib):
             raise Bad("a wall stands between these records and what the session holds, so none was read")
         self.seen |= adding
@@ -2060,7 +2050,7 @@ class Asker:
         return "\n".join(rows)
 
     def holding(self) -> set:
-        """The parties either process holds: those whose records the answer
+        """The zones either process holds: those whose records the answer
         process was given, and those the command process was told of. Each
         set goes once its own process has ended or another has taken its
         place, and only that one: the other process still holds its own.
@@ -2080,9 +2070,9 @@ class Asker:
             self.results, self.asked = "", {}
         return self.seen | self.heard
 
-    def hear(self, parties) -> None:
-        """What the command process is told of: the parties a request named,
-        or those of a place one of its actions named, kept for the process
+    def hear(self, zones) -> None:
+        """What the command process is told of: the zones a request named,
+        or that of a place one of its actions named, kept for the process
         that holds them. A process other than the one `heard` describes
         knows none of it, so the set starts again with it."""
         s = self.session
@@ -2090,16 +2080,16 @@ class Asker:
             return
         if s.started != self.heard_for:
             self.heard, self.heard_for = set(), s.started
-        self.heard |= set(parties)
+        self.heard |= set(zones)
 
-    def crosses(self, parties, every: bool = False) -> bool:
-        """Whether reading for these parties needs fresh processes first: a
-        wall between one of them and a party either process holds, or, for
-        a question across every zone, any party held at all."""
+    def crosses(self, zones, every: bool = False) -> bool:
+        """Whether reading in these zones needs fresh processes first: a
+        second walled zone beside what either process holds, or, for
+        a question across every zone, any zone held at all."""
         held = self.holding()
         if every:
             return bool(held)
-        return scope_lib().any_wall(self.ctx, parties, held, scope_lib().lib(self.ws))
+        return scope_lib().crosses(self.ctx, zones, held, scope_lib().lib(self.ws))
 
     def reset(self) -> None:
         """New conversation, and the wall reset: both sessions stopped and
@@ -2267,20 +2257,17 @@ class Asker:
                 # Before anything is written: a party walled from one either process holds is refused here, never
                 # made and then noticed (#345). The request's own names reset at a wall before it was sent, so
                 # this only holds when that did not: fail closed.
-                held = {item["party"]} if item["verb"] == "new-project" else set(scope_lib().place_parties(
-                    self.ws, item["zone"], item["project"], None, scope_lib().lib(self.ws)))
-                if self.crosses(held):
+                if self.crosses({item["zone"]}):
                     try:
                         done.append(self.wall())             # the rule's sentence alone
                     except Bad as e:
                         done.append("Refused: %s" % e)
                     ok = False
                     continue
-            if item.get("verb") == "new-project":    # a place not there yet: the party it is for is what the session heard
-                self.hear({item["party"]})
+            if item.get("verb") == "new-project":    # a place not there yet: the zone it is in is what the session heard
+                self.hear({item["zone"]})
             elif a.get("project") is not None:      # its place goes back to the session in <last-results>
-                self.hear(scope_lib().place_parties(self.ws, a["zone"], a["project"], a.get("thread"),
-                                                    scope_lib().lib(self.ws)))
+                self.hear({a["zone"]})
             if kind == "launch":
                 desk = desk_ready(self.ws) if desk is None else desk
                 if desk:

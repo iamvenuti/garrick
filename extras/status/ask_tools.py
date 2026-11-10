@@ -17,12 +17,12 @@ Python standard library only, 3.9 or later.
 
 **The walls live here.** Every result passes through `Conversation.admit()`,
 which asks ask_scope.admits(): the one wall test Asker.admit() uses too. A
-result whose parties are walled from what the conversation holds is not
+result whose zone is walled from what the conversation holds is not
 returned. The server latches (`wall`), says nothing of what it withheld and
 refuses every call after, and the Ask server that started the session (ask.py)
 reads the latch from the state folder after the turn, stops the session and
 says the rules' sentence. What the conversation holds is the server's own:
-its `seen` parties (what it has admitted) and the parties ask.py wrote to
+its `seen` zones (what it has admitted) and the zones ask.py wrote to
 `in.json` (what the user's requests named), never anything the model says.
 
 **Ids are the server's.** `read` takes only an id that this server handed
@@ -42,8 +42,8 @@ the id in the scope index. Only when the index cannot be opened does `search`
 fall back to the keyword find the window used before (ask_scope.search()), and
 it says so.
 
-The state folder holds `in.json` (ask.py's: the zone and the parties the
-requests named), `out.json` (this server's: its nonce, the parties admitted,
+The state folder holds `in.json` (ask.py's: the zone and the zones the
+requests named), `out.json` (this server's: its nonce, the zones admitted,
 the records handed out, the latch) and `proposals.jsonl` (one line for each
 propose call).
 """
@@ -142,7 +142,7 @@ NO_PROJECTS = "No projects."
 class Conversation:
     """One Ask conversation, as the read server holds it. Its state is saved to
     `out.json` after every call, for ask.py to read; it reads `in.json` before
-    every call, for the zone and the parties ask.py says the requests named."""
+    every call, for the zone and the zones ask.py says the requests named."""
 
     def __init__(self, ws: Path, state: Path, zone: Optional[str] = None):
         self.ws, self.dir, self.zone = Path(ws), Path(state), zone
@@ -152,7 +152,7 @@ class Conversation:
         self.count = 0
         self.wall = False           # a result crossed a wall: nothing more is returned
         self.held_back = 0          # how many times a wall held records back from a first reading, which nothing crossed
-        self.told: set = set()      # the parties ask.py wrote to in.json: what the requests named
+        self.told: set = set()      # the zones ask.py wrote to in.json: what the requests named
         self.proposed = 0
         self.text_seen = False      # any text out of the workspace has been handed to the session (names too)
         self._world = None          # world(), read once for each tool call
@@ -183,7 +183,7 @@ class Conversation:
         os.replace(str(tmp), str(self.dir / "out.json"))
 
     def refresh(self) -> None:
-        """What ask.py says: the zone the window answers in and the parties the requests named."""
+        """What ask.py says: the zone the window answers in and the zones the requests named."""
         try:
             data = json.loads((self.dir / "in.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -191,8 +191,8 @@ class Conversation:
         if isinstance(data, dict):
             if isinstance(data.get("zone"), str) and data["zone"]:
                 self.zone = data["zone"]
-            if isinstance(data.get("parties"), list):
-                self.told = {str(p) for p in data["parties"]}
+            if isinstance(data.get("zones"), list):
+                self.told = {str(z) for z in data["zones"]}
 
     def held(self) -> set:
         return self.seen | self.told
@@ -207,18 +207,18 @@ class Conversation:
             self._world = (sc, lib, lib.load_context(self.ws), ask_mod().scan(self.ws))
         return self._world
 
-    def admit(self, parties) -> bool:
-        """The wall test (ask_scope.admits()) for records of these parties,
+    def admit(self, zones) -> bool:
+        """The wall test (ask_scope.admits()) for records of these zones,
         which are then held. A crossing latches the conversation and returns False."""
         if self.wall:
             return False
         sc, lib, ctx, _ = self.world()
-        parties = set(parties)
-        if not sc.admits(ctx, self.held(), parties, lib):
+        zones = {z for z in zones if z}
+        if not sc.admits(ctx, self.held(), zones, lib):
             self.wall = True
             self.save()
             return False
-        self.seen |= parties
+        self.seen |= zones
         return True
 
     def hand(self, d: dict) -> str:
@@ -226,7 +226,7 @@ class Conversation:
         self.count += 1
         rid = "r%d-%s" % (self.count, self.nonce)
         self.handed[rid] = {k: d.get(k) or "" for k in ("path", "title", "date", "imported", "rid", "scope", "kind", "zone")}
-        self.handed[rid]["parties"] = sorted(d.get("parties") or [])
+        self.handed[rid]["zones"] = sorted(d.get("zones") or [])
         return rid
 
     def latch(self) -> None:
@@ -234,33 +234,27 @@ class Conversation:
         self.save()
 
     def fair(self, rows: List[dict], most: int, ctx: dict, lib, sc) -> Optional[List[dict]]:
-        """The rows of a result that the conversation may hold, best first, at most `most`: none whose parties are
+        """The rows of a result that the conversation may hold, best first, at most `most`: none whose zone is
         walled from what it holds or from a row taken before it (ask_scope.choose()). Rows that a wall holds back are
         left out and counted, never named, so the answer ends with the rules' sentence. When a wall held back every
         row there was, the search reached across it: the conversation is stopped, and None is returned."""
-        # A conversation that holds nothing begins its group with the first record, among the parties of the window's
-        # zone (all of the table's when it has none): the release's choose() takes that as `start`.
-        names = self.world()[3]
-        start = set(ctx.get("parties", {})) if not self.zone else set().union(
-            *[set(sc.place_parties(self.ws, self.zone, pr, None, lib)) for pr in names.get(self.zone, {})], set())
-        chosen, back, _ = sc.choose(rows, self.held(), ctx, lib, most=most, start=start)
+        chosen, back, _ = sc.choose(rows, self.held(), ctx, lib, most=most)
         if back and not chosen:
             self.latch()
             return None
         if back:
             self.held_back += 1
-        if not self.admit({p for r in chosen for p in r["parties"]}):
+        if not self.admit({z for r in chosen for z in r["zones"]}):
             return None
         return chosen
 
     # ------------------------------------------------------------ records
 
     def describe(self, rel: str, words: Optional[List[str]] = None) -> Optional[dict]:
-        """A record as it is on disk now: its kind, parties, dates and text. None
+        """A record as it is on disk now: its kind, zone, dates and text. None
         for anything that is not a record Ask may read: a path outside the
         places records live, a link, a file too large, a Meetings page with no
-        zone or parties, a page of someone's in the library, a project whose hub
-        names no party the Parties table holds. Fails closed."""
+        zone the Zones table holds, a page of someone's in the library. Fails closed."""
         sc, lib, ctx, _ = self.world()
         rel = str(rel).replace("\\", "/")
         parts = tuple(Path(rel).parts)
@@ -277,8 +271,7 @@ class Conversation:
         elif parts[:2] == ("System", "garrick-docs"):
             kind, root = "docs", self.ws / "System" / "garrick-docs"
         elif len(parts) == 3 and parts[0] == "Zones" and parts[2] == "Todo.md":
-            # A zone's Todo list holds lines for every project in it, the far side of a wall too, and has no
-            # party of its own: it is not a record. owed() serves it line by line, each line with its own wall test.
+            # A zone's Todo list is not a record. owed() serves it line by line, each line with its own wall test.
             return None
         elif len(parts) >= 4 and parts[0] == "Zones":
             kind, root, zone, project = "threads", self.ws / "Zones" / parts[1] / parts[2], parts[1], parts[2]
@@ -299,31 +292,22 @@ class Conversation:
         fm = lib.parse_frontmatter_text(text) if p.suffix.lower() == ".md" else {}
         body = sc._body(text) if fm else text
         if kind == "meetings":
-            parties = sc.page_parties(fm, ctx, lib)
-            if not parties:
-                return None
-            zone = fm.get("zone")
-            if isinstance(zone, list) and len(zone) == 1:
-                zone = zone[0]
-            if not isinstance(zone, str) or not zone.strip():
-                return None             # a list of zones cannot be placed: fail closed
-            zone = zone.strip()
+            zone = lib.zone_of(self.ws, p)
+            if not zone or zone == getattr(lib, "UNZONED", None):
+                return None             # no zone, or a list of zones: cannot be placed, fail closed
+            zones = [zone]
         elif kind in ("library", "docs"):
-            if any(fm.get(k) for k in ("parties", "party", "zone")):
+            if sc._labelled(fm):
                 return None
-            parties = []
+            zones = []
         else:
-            hub = sc.hub_parties(self.ws, zone, project, lib)
-            if not hub or not hub <= set(ctx.get("parties", {})):
+            if lib.zone_of(self.ws, p) != zone:
                 return None
-            own = set(sc._tags(fm.get("party"), lib)) | set(sc._tags(fm.get("parties"), lib))
-            if not own <= set(ctx.get("parties", {})):
-                return None             # a tag the Parties table lacks cannot be walled: drop the row
-            parties = sorted(set(sc.place_parties(self.ws, zone, project, thread, lib)) | own)
+            zones = [zone]
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else p.stem
         return {"path": rel, "kind": kind, "zone": zone, "project": project, "thread": thread,
                 "title": title.strip(), "date": sc._date(fm, p), "imported": sc._imported(fm, p),
-                "parties": list(parties), "public": kind in ("library", "docs"), "body": body, "text": sc.passage(body, words or [])}
+                "zones": zones, "public": kind in ("library", "docs"), "body": body, "text": sc.passage(body, words or [])}
 
     def line(self, rid: str, d: dict, snippet: str = "") -> str:
         when = [d["date"]] if d.get("date") else ["no date"]
@@ -375,26 +359,14 @@ class Conversation:
         return sorted(found, key=lambda f: tuple(str(x) for x in f)), ""
 
     def zone_fits(self, zone: str, lib, ctx: dict) -> bool:
-        """Whether a zone as a place may be held with what is held: some scope of the zone has no wall between its
-        parties and anything held. A zone with no scope, or no way to list its scopes, does not fit."""
-        rc = recall_for(self.ws)
-        try:
-            scopes = [s for s in rc.scopes_of(self.ws, ctx) if s.kind == "zone" and s.zone.lower() == zone.lower()]
-        except Exception:
-            return False
-        return any(not self.crosses(s.tags, lib, ctx) for s in scopes)
+        """Whether a zone as a place may be held with what is held: no second walled zone."""
+        return not self.crosses({zone}, lib, ctx)
 
     def placeable(self, zone: str, project: str, thread: Optional[str]) -> Tuple[bool, bool]:
-        """(whether the conversation may name this place, whether a wall is why). Fails closed: a place whose hub names
-        no party, a party the table lacks, or a thread whose own party cannot be placed is not one the conversation may
-        name, and it is answered as a place that is not there. Only a wall that holds it back is noted as one."""
+        """(whether the conversation may name this place, whether a wall is why). A place of a zone walled from what is
+        held is answered as a place that is not there. Only a wall that holds it back is noted as one."""
         sc, lib, ctx, _ = self.world()
-        known = set(ctx.get("parties", {}))
-        hub = set(sc.hub_parties(self.ws, zone, project, lib))
-        parties = set(sc.place_parties(self.ws, zone, project, thread, lib))
-        if not hub or not hub <= known or not parties or not parties <= known:
-            return False, False
-        if not sc.admits(ctx, self.held(), parties, lib):
+        if not sc.admits(ctx, self.held(), {zone}, lib):
             return False, True
         return True, False
 
@@ -451,15 +423,13 @@ class Conversation:
                 scopes.append(sc.Scope(route, None, None, None, toks, set(), **kept))
             elif route == "meetings":
                 for z in zones:
-                    mine = {t for t, row in ctx.get("parties", {}).items() if row.get("zone") == z}
-                    scopes.append(sc.Scope(route, z, None, None, toks, mine, **kept))
+                    scopes.append(sc.Scope(route, z, None, None, toks, set(), **kept))
             elif place and place[1]:
-                scopes.append(sc.Scope(route, place[0], place[1], place[2], toks,
-                                       set(sc.place_parties(self.ws, place[0], place[1], place[2], lib)), **kept))
+                scopes.append(sc.Scope(route, place[0], place[1], place[2], toks, set(), **kept))
             else:
                 for z in zones:
                     for pr in names.get(z, {}):
-                        scopes.append(sc.Scope(route, z, pr, None, toks, set(sc.place_parties(self.ws, z, pr, None, lib)), **kept))
+                        scopes.append(sc.Scope(route, z, pr, None, toks, set(), **kept))
             for s in scopes:
                 try:
                     out += [r["path"] for r in sc.search(self.ws, s, ctx, lib)]
@@ -467,43 +437,24 @@ class Conversation:
                     continue
         return list(dict.fromkeys(out))
 
-    def held_tags(self, lib) -> set:
-        """Every party the conversation holds, seen or told, in any zone."""
-        return {lib.strip_tag(t) for t in self.held()}
-
-    def crosses(self, tags, lib, ctx: dict, extra=()) -> bool:
-        """True when held and scope together hold two walled parties that this scope lacks."""
-        held = {t for t in self.held_tags(lib) | {lib.strip_tag(t) for t in extra} if lib.is_walled(ctx, t)}
-        mine = {t for t in tags if lib.is_walled(ctx, lib.strip_tag(t))}
-        return bool(held and mine and len(held | mine) > 1 and not lib.meets_in(ctx, held | mine, tags))
+    def crosses(self, zones, lib, ctx: dict, extra=()) -> bool:
+        """True when what is held and these zones together hold two walled zones."""
+        return self.world()[0].crosses(ctx, self.held(), set(zones) | set(extra), lib)
 
     def scope_for(self, rc, ctx: dict, place, kind: str = "all"):
         """The one scope index this conversation opens: the scope of the zone the window answers in (or the place's
-        zone), on the side that holds what is held. (scope, "") or (None, why). Several sides and nothing to choose
-        by: the user names the project. What is held spread over two sides: the conversation is stopped."""
-        sc, lib, _, _ = self.world()
+        zone). (scope, "") or (None, why). What is held walled from that zone: the conversation is stopped."""
+        _, lib, _, _ = self.world()
         zone = place[0] if place else self.zone
         if not zone:
             return None, NAME_A_PLACE
         scopes = [s for s in rc.scopes_of(self.ws, ctx) if s.kind == "zone" and s.zone.lower() == zone.lower()]
         if not scopes:
             return None, NO_PLACE
-        every = set().union(*[set(s.tags) for s in scopes])
-        need = {lib.strip_tag(t) for t in self.held()} & every
-        if place and place[1]:
-            need |= {lib.strip_tag(t) for t in sc.place_parties(self.ws, place[0], place[1], place[2], lib)} & every
-        extra = {lib.strip_tag(t) for t in sc.place_parties(self.ws, place[0], place[1], place[2], lib)} \
-            if place and place[1] else set()
-        # A scope fits when what is held on its side is in it and no held party, of any zone, is walled from it.
-        fits = [s for s in scopes if need <= set(s.tags) and not self.crosses(s.tags, lib, ctx, extra)]
-        if not fits:
+        if self.crosses({scopes[0].zone}, lib, ctx):
             self.latch()
             return None, STOPPED
-        if len(fits) > 1:
-            if kind == "library":
-                return fits[0], ""              # published pages name no party: every side holds the same ones
-            return None, NAME_A_PLACE
-        return fits[0], ""
+        return scopes[0], ""
 
     def indexed(self, words: str, limit: int, place, wiki: Optional[str], after: Optional[str], kind: str = "all"):
         """(rows, scope, why): the scope index's results for the words, best first. rows is None when the index
@@ -595,12 +546,13 @@ class Conversation:
         if order == "recent":
             recs.sort(key=lambda d: (d["date"], d["imported"]), reverse=True)
         recs = recs[:limit]
-        # What the session now holds: the parties of the records it was given, for the reset between requests.
+        # What the session now holds: the zones of the records it was given, for the reset between requests.
         # It decides nothing about what is returned.
-        cache: dict = {}
         for d in recs:
-            lab = lib.labels(self.ws, d["path"], ctx, cache) if d["kind"] != "docs" else None
-            self.seen |= {lib.strip_tag(t) for t in (lab or ()) if t != lib.KNOWLEDGE}
+            if d["kind"] in ("meetings", "threads"):
+                z = lib.zone_of(self.ws, d["path"])
+                if z:
+                    self.seen.add(z)
         lines = []
         for d in recs:
             rid = self.hand(d)
@@ -616,7 +568,7 @@ class Conversation:
         return head + ("\n" + "\n".join(lines) if lines else "")
 
     def shape(self, r, scope, zone, place) -> Optional[dict]:
-        """A record from one result of the scope index: its kind from where it lives, no judgement of its parties."""
+        """A record from one result of the scope index: its kind from where it lives, no judgement of its zone."""
         path = str(getattr(r, "path", "") or "")
         source = str(getattr(r, "source", "") or "")
         parts = path.split("/")
@@ -633,7 +585,7 @@ class Conversation:
         title = str(getattr(r, "title", "") or "") or Path(path).stem
         return {"path": path, "kind": kind, "zone": zn, "project": proj, "thread": thread, "title": title,
                 "date": str(getattr(r, "date", "") or ""), "imported": "", "snippet": str(getattr(r, "snippet", "") or ""),
-                "rid": str(getattr(r, "id", "") or ""), "scope": scope.key, "parties": []}
+                "rid": str(getattr(r, "id", "") or ""), "scope": scope.key, "zones": []}
 
     @staticmethod
     def in_place(d: dict, place) -> bool:
@@ -651,7 +603,7 @@ class Conversation:
         recs: List[dict] = []
         for rel in self.keyword(words, zone, place, kind, order, names):
             d = self.describe(rel, terms)
-            if d is None or not set(d["parties"]) <= set(ctx.get("parties", {})) or not self.wanted(d, kind, zone, place):
+            if d is None or not self.wanted(d, kind, zone, place):
                 continue
             if after and (not d["date"] or d["date"] < str(after)):
                 continue
@@ -683,7 +635,7 @@ class Conversation:
                 scope = rc.scope_named(self.ws, ctx, rec["scope"]) if rc is not None else None
                 if scope is None:
                     return NOT_GIVEN
-                if self.crosses(scope.tags, lib, ctx):
+                if scope.kind != "zone" or self.crosses({scope.zone}, lib, ctx):
                     self.latch()                # what is held is walled from this scope: nothing is read
                     return STOPPED
                 text = rc.read(rec["rid"], project=None, root=self.ws, scope=scope)
@@ -700,7 +652,7 @@ class Conversation:
         d = self.describe(rec["path"])
         if d is None:
             return NOT_GIVEN
-        if not self.admit(set(d["parties"]) | set(rec.get("parties") or [])):
+        if not self.admit(set(d["zones"]) | set(rec.get("zones") or [])):
             return STOPPED
         self.save()
         return "%s\n\n%s" % (self.line(rid, d), inert(d["body"].strip())[:MOST_TEXT])
@@ -715,23 +667,21 @@ class Conversation:
             if z is None:
                 return "No such zone."
             zone = z
-        held, listing = self.held(), []
+        held = self.held()
         if not held and not zone:
             return NAME_A_PLACE             # nothing held and no zone to list: the user names the place
+        listing = []
         for z in ([zone] if zone else list(names)):
+            if held and not sc.admits(ctx, held, {z}, lib):
+                continue                # names of the far side are left out, not refused
             rows = []
             for pr, r in names.get(z, {}).items():
-                parties = set(sc.place_parties(self.ws, z, pr, None, lib))
-                if not parties or not parties <= set(ctx.get("parties", {})):
-                    continue            # a place no party can be stated for is not named
-                if held and not sc.admits(ctx, held, parties, lib):
-                    continue            # names of the far side are left out, not refused
                 ts = "; ".join(t + ("" if s == "active" else " (%s)" % s) for t, s in r["threads"].items())
-                rows.append((parties, "- %s [%s]%s" % (inert(pr), r["status"], " threads: " + inert(ts) if ts else "")))
+                rows.append("- %s [%s]%s" % (inert(pr), r["status"], " threads: " + inert(ts) if ts else ""))
             if rows:
                 listing.append((z, rows))
-        listed = {p for _, rows in listing for ps, _ in rows for p in ps}
-        if not lib.meets_in(ctx, listed):
+        listed = {z for z, _ in listing}
+        if not sc.admits(ctx, set(), listed, lib):
             return NO_PROJECTS          # the list would span a wall: the words of an empty zone, so the text says nothing
         if listed and not self.admit(listed):      # the names are material: what is listed is held
             return STOPPED
@@ -739,7 +689,7 @@ class Conversation:
         lines = []
         for z, rows in listing:
             lines.append("%s:" % z)
-            lines += [t for _, t in rows]
+            lines += rows
         return "\n".join(lines) or NO_PROJECTS
 
     @staticmethod
@@ -765,10 +715,10 @@ class Conversation:
             "Zones/%s/%s/%s.md" % (zone, project, project)
         d = self.describe(note)
         if d is None:
-            if not self.admit(set(sc.place_parties(self.ws, zone, project, thread, lib))):
+            if not self.admit({zone}):
                 return STOPPED
             return "That note cannot be read."
-        if not self.admit(set(d["parties"])):
+        if not self.admit(set(d["zones"])):
             return STOPPED
         rid = self.hand(d)
         self.save()
@@ -796,29 +746,6 @@ class Conversation:
             return nxt - dt.timedelta(days=1), ""
         return None, "period is a date (YYYY-MM-DD), today, tomorrow, this week or this month"
 
-    def zone_parties(self, zone: str, names, ctx: dict, sc, lib) -> Optional[set]:
-        """Every party of a zone's projects, or None when it holds two walled parties (an unplaceable
-        project counts as one)."""
-        every = set()
-        for pr in names.get(zone, {}):
-            ps = set(sc.place_parties(self.ws, zone, pr, None, lib))
-            if not ps or not ps <= set(ctx.get("parties", {})):
-                return None
-            every |= ps
-        return every if lib.meets_in(ctx, every) else None
-
-    @staticmethod
-    def surnamed(text: str, ctx: dict) -> set:
-        """The parties of the people a line names by surname alone: the last word of a name the People table holds,
-        written with a capital. A surname two people share names both parties."""
-        out = set()
-        for person in ctx.get("people", []):
-            words = str(person.get("name") or "").split()
-            if len(words) > 1 and person.get("party") and len(words[-1]) >= 3 \
-                    and re.search(r"(?<!\w)%s(?!\w)" % re.escape(words[-1]), text):
-                out.add(person["party"])
-        return out
-
     def owed(self, a: dict) -> str:
         sc, lib, ctx, names = self.world()
         until, bad = self.period_end(a.get("period"))
@@ -831,29 +758,12 @@ class Conversation:
                     if want in (t.casefold(), str(row.get("party") or "").casefold())}
             if not tags:
                 return "No such party."
-            if not self.admit(tags):             # a party from the far side goes through the same test
-                return STOPPED
         zone = self.zone
         scope = sc.Scope("actions", zone, None, None, [], tags, every=zone is None and not tags,
                          until=until.isoformat() if until else None, waiting=bool(a.get("waiting")))
         found = sc.actions(self.ws, scope, names, ctx, lib, dt.date.today())[:MOST_OWED]
-        known = set(ctx.get("parties", {}))
-        for i in found:
-            i["parties"] = sorted(set(i["parties"]) | self.surnamed(i["text"], ctx))
-        found = [i for i in found if set(i["parties"]) <= known]
-        # A line that names no party is material of its zone, and it passes every wall test by itself. It is served
-        # only in a zone with no wall inside it and a conversation that holds nothing yet, and it counts as every
-        # party of its zone, so what the conversation holds afterwards is walled against all of them.
-        held = self.held()
-        kept = []
-        for i in found:
-            if i["parties"]:
-                kept.append(i)
-                continue
-            zp = None if held else self.zone_parties(i["zone"], names, ctx, sc, lib)
-            if zp is not None:
-                kept.append(dict(i, parties=sorted(zp)))
-        found = kept
+        # Every line is of its zone, which is what the wall tests: the party a line names only narrows the list.
+        found = [dict(i, zones=[i["zone"]]) for i in found]
         found = self.fair(found, MOST_OWED, ctx, lib, sc)
         if found is None:
             return STOPPED
@@ -861,7 +771,7 @@ class Conversation:
         for it in found:
             where = " / ".join(x for x in (it["zone"], it["project"], it["thread"]) if x)
             rid = self.hand({"path": it["note"], "title": it["thread"] or it["project"] or "%s Todo list" % it["zone"],
-                             "date": it["date"], "imported": "", "parties": it["parties"]})
+                             "date": it["date"], "imported": "", "zones": [it["zone"]]})
             lines.append("[%s] %s%s (%s, %s)" % (rid, tidy(it["text"], 200), " — " + it["date"] if it["date"] else "",
                                                  where, it["kind"]))
         self.save()
@@ -897,7 +807,6 @@ class Conversation:
         except ask.Bad as e:
             return "Refused: %s." % e
         if act.get("project"):
-            parties = sc.place_parties(self.ws, act["zone"], act["project"], act.get("thread"), lib)
             if act["project"] in names.get(act["zone"], {}):
                 ok, walled = self.placeable(act["zone"], act["project"], act.get("thread"))
                 if not ok:
@@ -907,15 +816,15 @@ class Conversation:
                         self.held_back += 1
                         self.save()
                     return "Refused: no project %r in %s." % (act["project"], act["zone"])
-            if not self.admit(set(parties)):
+            if not self.admit({act["zone"]}):
                 return STOPPED
         elif act.get("verb") == "todo-add":
-            # A Todo line with no project is the zone's own: no party to test. Only the window's zone, and only
-            # while the conversation holds no party.
+            # A Todo line with no project is the zone's own. Only the window's zone, and only where that zone may be
+            # held with what the conversation holds.
             if self.zone and act.get("zone") != self.zone:
                 return "Refused: a Todo line goes in the window's zone, %s, or in a project." % self.zone
-            if self.held():
-                return "Refused: name the project the Todo line is for."
+            if not self.admit({act.get("zone")}):
+                return STOPPED
             if len(str(act.get("text") or "")) > MOST_TODO:
                 return "Refused: a Todo line of at most %d characters." % MOST_TODO
         self.proposed += 1

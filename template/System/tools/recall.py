@@ -11,33 +11,37 @@ The wall stands at the store, not at the result (#341, #358, #398).
     python3 System/tools/recall.py extract [--claude DIR] [--codex DIR]
     python3 System/tools/recall.py nightly
 
-Python standard library only (Python 3.9 floor). For each scope a session can
-hold, Recall writes one scope index holding the rows that scope may read and no
-others. `garrick_lib.labels()` says whose a record is and `garrick_lib.decide()`
-says whether the scope may read it; Recall keeps no wall test of its own. A
-walled row is never in the scope index file, so it cannot rank, count, order
-or be quoted: a search across a wall is impossible, not refused.
+Python standard library only (Python 3.9 floor). A scope is a zone. For each
+scope a session can hold, Recall writes one scope index holding the rows that
+scope may read and no others. `garrick_lib.zone_of()` says which zone a record
+is in and `garrick_lib.may_flow()` says whether the scope's zone may read it;
+Recall keeps no wall test of its own. A row of a walled zone is never in
+another zone's index file, so it cannot rank, count, order or be quoted: a
+search across a wall is impossible, not refused.
 
-The scopes: `root` (a session opened at the workspace root or in System/, which
-holds no party), a zone with no wall inside it (one index for the zone), and a
-zone with a wall inside it (one index for each side). The index of a zone scope
-is a cache beside the zone (`Zones/<Zone>/.recall.sqlite`, and
-`.recall.sqlite-<side>` for each side). The root scope has no file: it is made in
-memory, since a file of every zone's rows could be opened by any session.
-Deleting every index loses nothing; `build` makes them again, and a search
-brings its own scope's index up to date first, admitting or dropping each
-changed file through `decide()`. An index never sits in a cloud-synced folder,
-because sync corrupts an open SQLite file; one that would is kept in memory.
+The scopes: `root` (a session opened at the workspace root or in System/), and
+one for each zone. A zone scope reads its own zone, every open zone, Knowledge
+and System; the root reads everything. The index of a zone scope is a cache
+beside the zone (`Zones/<Zone>/.recall.sqlite`). The root scope has no file: it
+is made in memory, since a file of every zone's rows could be opened by any
+session. Deleting every index loses nothing; `build` makes them again, and a
+search brings its own scope's index up to date first, admitting or dropping
+each changed file. An index is made again when a zone's flag changes. An index
+never sits in a cloud-synced folder, because sync corrupts an open SQLite file;
+one that would is kept in memory. No list of what was admitted is stored.
+
+A past session's transcript takes the zone of the folder it was opened in. A
+root session's transcript, and one that worked in another zone's folder, spans
+zones: only the root scope reads it. A Meetings page uses its `zone:`; a page
+with none, or two, or one the Zones table does not know, is in no scope.
 
 A session's tools open only its scope's index. The command line takes a scope,
 never a folder: with none it uses the scope of the folder the session was opened
 in, and a scope it names may only be that one (a root session may name any).
 `GARRICK_RECALL_SCOPE` can only narrow a root session, never widen another.
 The root scope comes only from `CLAUDE_PROJECT_DIR` naming the root: a bare
-working folder at the root or in `System/` is refused. No root index is kept on
-disk (it would hold every zone's rows where any session could open it): the root
-scope is made in memory. This is a wall for what Recall returns, not for a
-session that can read files itself.
+working folder at the root or in `System/` is refused. This is a wall for what
+Recall returns, not for a session that can read files itself.
 `read(id)` answers only for an id that is in the scope index, and answers an
 unknown id and a walled one the same way.
 
@@ -73,13 +77,12 @@ import fade  # noqa: E402
 from garrick_lib import (  # noqa: E402
     NOT_LIVE_DIR_RE,
     SKIP_DIRS,
-    KNOWLEDGE,
-    decide,
-    labels,
+    UNZONED,
+    may_flow,
     load_context,
     parse_frontmatter_text,
-    strip_tag,
     workspace_root,
+    zone_of,
 )
 
 PathLike = Union[str, Path]
@@ -88,7 +91,7 @@ INDEX_NAME = ".recall.sqlite"
 SCOPE_ENV = "GARRICK_RECALL_SCOPE"      # a session started with its scope names it here; a folder cannot change it
 SESSIONS_DIR = ".sessions"
 TOKENIZER = "unicode61 remove_diacritics 2"
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 CHUNK_CHARS = 4000
 RRF_K = 60
 RAW_WEIGHT = 0.5
@@ -190,36 +193,6 @@ def locate(root: Path, path: PathLike) -> Optional[Place]:
     return None
 
 
-def known_tags(ctx: dict) -> Set[str]:
-    return {strip_tag(t) for t in ctx.get("parties", {})}
-
-
-def listed_tags(value, known: Set[str]) -> Optional[List[str]]:
-    """The party tags a frontmatter value names, each of them a tag the Parties
-    table lists. None when any of them is not (`birch, acme` is one word to
-    the YAML reader, and no wall names it): a value that cannot be read
-    plainly is a value that cannot be placed. Nothing given is an empty list."""
-    values = value if isinstance(value, list) else [value] if value else []
-    out: List[str] = []
-    for v in values:
-        tag = strip_tag(str(v))
-        if not tag:
-            continue
-        if tag not in known:
-            return None
-        out.append(tag)
-    return out
-
-
-def note_parties(fm: dict, known: Set[str]) -> Optional[List[str]]:
-    """Party tags of a note's `party:` and `parties:` together, or None when
-    either holds something that is not a listed tag."""
-    one, many = listed_tags(fm.get("party"), known), listed_tags(fm.get("parties"), known)
-    if one is None or many is None:
-        return None
-    return sorted(set(one + many))
-
-
 def fingerprint(path: Path) -> str:
     """What an edit that keeps the size and the modified time still moves, so
     a note's parties are read again after one. The change time cannot be set
@@ -251,19 +224,14 @@ def fm_hash(path: Path) -> str:
 
 @dataclasses.dataclass(frozen=True)
 class Scope:
-    """What one scope index covers. `root` holds no party and reads every
-    zone; a zone scope holds the parties of one side of one zone (all of
-    them where no wall stands inside the zone)."""
+    """What one scope index covers. `root` reads every zone; a zone scope reads
+    its own zone, every open zone, Knowledge and System."""
     kind: str                  # root, zone
     zone: str = ""             # the zone's own spelling; "" for root
-    side: str = ""             # "" for a zone with no wall inside it, else the side's first tag
-    tags: Tuple[str, ...] = ()  # sorted party tags the scope holds
 
     @property
     def key(self) -> str:
-        if self.kind == "root":
-            return "root"
-        return self.zone.lower() + ("/" + self.side if self.side else "")
+        return "root" if self.kind == "root" else self.zone.lower()
 
     def label(self) -> str:
         return self.key
@@ -271,7 +239,7 @@ class Scope:
     def file(self, root: Path) -> Path:
         if self.kind == "root":
             return root / "System" / INDEX_NAME
-        return root / "Zones" / self.zone / (INDEX_NAME + ("-" + self.side if self.side else ""))
+        return root / "Zones" / self.zone / INDEX_NAME
 
     @property
     def zones(self) -> Set[str]:
@@ -286,30 +254,9 @@ def zone_names(root: Path) -> List[str]:
     return sorted(p.name for p in top.iterdir() if p.is_dir() and not p.name.startswith(".")) if top.is_dir() else []
 
 
-def e_walled(ctx: dict, tag: str) -> bool:
-    return bool((ctx.get("parties", {}).get(tag) or {}).get("walled", True))
-
-
 def scopes_of(root: Path, ctx: dict) -> List[Scope]:
-    """Every scope a session can hold: the root, then for each zone one scope
-    where it has one walled party at most, and one per side where it has more.
-    A side is one walled party of the zone, taken in tag order; open parties
-    join the first side."""
-    out = [ROOT]
-    for zone in zone_names(root):
-        mine = sorted(t for t, e in ctx.get("parties", {}).items()
-                      if str(e.get("zone") or "").strip().lower() == zone.lower() and t != "none")
-        groups: List[List[str]] = [[t] for t in mine if e_walled(ctx, t)]
-        for tag in (t for t in mine if not e_walled(ctx, t)):
-            if groups:
-                groups[0].append(tag)
-            else:
-                groups.append([tag])
-        if len(groups) <= 1:
-            out.append(Scope("zone", zone, "", tuple(groups[0]) if groups else ()))
-        else:
-            out += [Scope("zone", zone, g[0], tuple(g)) for g in groups]
-    return out
+    """Every scope a session can hold: the root, then one for each zone."""
+    return [ROOT] + [Scope("zone", zone) for zone in zone_names(root)]
 
 
 def project_path(root: Path, place: Place) -> str:
@@ -320,8 +267,8 @@ def project_path(root: Path, place: Place) -> str:
 def scope_for_project(root: Path, ctx: dict, project: Optional[PathLike], cache: Optional[dict] = None) -> Optional[Scope]:
     """The scope a session opened in `project` holds. Only a literal None is
     the root. An empty string, ".", a place no zone owns (a wiki, Zones/
-    itself, a folder outside), a zone's top level, a project whose hub names
-    no listed party, or parties that fit no side of the zone: no scope at all."""
+    itself, a folder outside) or a zone's top level: no scope at all. A
+    folder in a zone holds that zone's scope."""
     if project is None:
         return ROOT
     if str(project).strip() in ("", ".") or Path(project) == Path("."):
@@ -334,16 +281,7 @@ def scope_for_project(root: Path, ctx: dict, project: Optional[PathLike], cache:
     if not place.project:
         return None
     zone = next((z for z in zone_names(root) if z.lower() == place.zone.lower()), None)
-    if zone is None:
-        return None
-    held = labels(root, project_path(root, Place(zone, place.project, place.thread)), ctx, cache)
-    if not held:
-        return None
-    held = {strip_tag(t) for t in held}
-    for sc in scopes_of(root, ctx):
-        if sc.kind == "zone" and sc.zone == zone and held <= set(sc.tags):
-            return sc
-    return None
+    return Scope("zone", zone) if zone else None
 
 
 def scope_named(root: Path, ctx: dict, key: str) -> Optional[Scope]:
@@ -352,13 +290,11 @@ def scope_named(root: Path, ctx: dict, key: str) -> Optional[Scope]:
 
 
 def policy_stamp(ctx: dict, scope: Scope) -> str:
-    """What the walls were when an index was made: a change to the Parties or
-    Zones tables makes every index again, because a file that was admitted may
-    no longer be."""
-    zones = sorted("%s:%s" % (z, t) for z, t in ctx.get("zone_parties", {}).items())
-    parties = sorted("%s:%s:%d" % (t, str(e.get("zone") or "").lower(), bool(e.get("walled", True)))
-                     for t, e in ctx.get("parties", {}).items())
-    return hashlib.sha1(json.dumps([scope.key, list(scope.tags), zones, parties]).encode()).hexdigest()
+    """What the flags were when an index was made: a zone changing between
+    walled and open makes every index again, because a file that was admitted
+    may no longer be."""
+    flags = sorted((z, bool(w)) for z, w in (ctx.get("zone_walled") or {}).items())
+    return hashlib.sha1(json.dumps([scope.key, flags]).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +359,7 @@ CREATE INDEX docs_owner ON docs(owner);
 
 class Index:
     """One scope's index file. It holds the rows its scope may read and no
-    others: a refresh admits a file through decide() or leaves it out."""
+    others: a refresh admits a file through the zone rule or leaves it out."""
 
     def __init__(self, root: Path, scope: Scope, fts: bool, tri: bool, ctx: dict):
         self.root, self.scope, self.ctx = root, scope, ctx
@@ -700,16 +636,15 @@ def grade_of(rel: str, wiki: str) -> str:
 
 class Refresher:
     """Brings one scope index up to date with the files it covers, by modified
-    time and size, and by what a file takes from another (a hub's party, the
-    page that owns a raw record). A file is admitted by decide() on its
-    labels(), or it is not in the index: the row for a file that stops being
-    admitted is dropped, and the index is made again so that nothing of it is
-    left in the file."""
+    time and size, and by what a file takes from another (the page that owns a
+    raw record). A file is admitted by may_flow() from its zone to the scope's,
+    or it is not in the index: the row for a file that stops being admitted is
+    dropped, and the index is made again so that nothing of it is left in the
+    file."""
 
     def __init__(self, idx: Index):
         self.idx, self.root, self.ctx = idx, idx.root, idx.ctx
         self.scope = idx.scope
-        self.known = known_tags(self.ctx)
         self.cache: dict = {}
 
     def run(self, rebuild: bool = False) -> None:
@@ -726,9 +661,9 @@ class Refresher:
             raws += r
         self._each(pages, known, seen, self.page_derived, self.page)
         self._each(raws, known, seen, self.raw_derived, self.raw)
-        zones = zone_names(self.root) if self.scope.kind == "root" else [self.scope.zone]
-        for zone in zones:
-            self._each(zone_entries(self.root, zone), known, seen, self.note_derived, self.note)
+        for zone in zone_names(self.root):
+            if self.scope.kind == "root" or zone == self.scope.zone or self.admit(zone_of(self.root, "Zones/%s/x" % zone)):
+                self._each(zone_entries(self.root, zone), known, seen, self.note_derived, self.note)
         if self.scope.kind == "root":
             self._each(system_entries(self.root), known, seen, self.session_derived, self.session)
         gone = set(known) - seen
@@ -763,43 +698,35 @@ class Refresher:
 
     # -- the one question ----------------------------------------------------
 
-    def admit(self, held: Optional[Iterable[str]]) -> bool:
-        """May this scope read a record labelled `held`? The root holds no
-        party, so no wall applies to it; a record it cannot place is nobody's.
-        Any other scope asks decide()."""
-        if held is None:
+    def admit(self, zone: Optional[str]) -> bool:
+        """May this scope read a record of `zone`? The root reads every zone
+        the Zones table holds; a page with no zone it can name is in no scope.
+        A zone scope asks may_flow(). None is no zone: Knowledge and System."""
+        if zone == UNZONED:
             return False
         if self.scope.kind == "root":
-            return all(strip_tag(t) in self.known or t == KNOWLEDGE for t in held)   # a tag no table lists is nobody's
-        return decide(set(self.scope.tags), set(held), "read", self.ctx) == "permit"
+            return zone is None or zone in (self.ctx.get("zone_walled") or {})
+        return may_flow(self.ctx, zone, self.scope.zone)
 
-    def admit_session(self, held: Optional[frozenset]) -> bool:
-        """A past session is read from the root scope only (0.59.0 release review):
-        what it read is known only from what it typed, and a command can reach another
-        project in more ways than any reading of it can name. A `project:` line an older
-        extractor wrote is not trusted either. A line that does not read back (None) is
-        nobody's, the root's included."""
-        return held is not None and self.scope.kind == "root" and self.admit(held)
-
-    def labelled(self, rel: str) -> Optional[frozenset]:
-        parts = rel.split("/")
-        if len(parts) >= 5 and parts[0] == "Zones" and not parts[2].startswith("."):
-            # a note's parties are its project's and thread's: one answer per folder, not per file
-            key = ("folder", parts[1], parts[2], parts[4] if len(parts) >= 6 and parts[3] == "Threads" else "")
-            if key not in self.cache:
-                self.cache[key] = labels(self.root, rel, self.ctx, self.cache)
-            return self.cache[key]
-        return labels(self.root, rel, self.ctx, self.cache)
+    def admit_session(self, zone: Optional[str]) -> bool:
+        """A past session takes the zone of the folder it was opened in. One that spans zones
+        (a root session, or one that worked in another zone's folder: `zone` is "") is read
+        from the root scope only, since what it read is known only from what it typed."""
+        if zone is None:
+            return False
+        if zone == "":
+            return self.scope.kind == "root"
+        return self.admit(zone)
 
     # -- zone notes and sessions --------------------------------------------
 
     def note_derived(self, rel: str, path: Path) -> Optional[str]:
         if SESSIONS_DIR in rel.split("/"):
             return self.session_derived(rel, path)
-        held = self.labelled(rel)
-        if not self.admit(held):
+        zone = zone_of(self.root, rel)
+        if not self.admit(zone):
             return None
-        return json.dumps([sorted(held), fingerprint(path)])
+        return json.dumps([zone, fingerprint(path)])
 
     def note(self, rel: str, path: Path) -> bool:
         if SESSIONS_DIR in rel.split("/"):
@@ -807,13 +734,9 @@ class Refresher:
         text = read_text(path)
         if text is None:
             return False
-        fm = parse_frontmatter_text(text)
-        own = note_parties(fm, self.known)
-        if own is None:
-            return False                            # a party no wall names: the note is used nowhere
-        held = self.labelled(rel)
-        if held is None or not self.admit(set(held) | set(own)):
+        if not self.admit(zone_of(self.root, rel)):
             return False
+        fm = parse_frontmatter_text(text)
         body = body_of(text)
         zone = rel.split("/")[1]
         stat_date = datetime.date.fromtimestamp(path.stat().st_mtime)
@@ -825,11 +748,10 @@ class Refresher:
                      bool(str(fm.get("superseded") or "").strip()), "", [body.strip()])
         return True
 
-    def session_labels(self, path: Path, rel: str) -> Tuple[Optional[frozenset], dict]:
-        """The parties of a session: those of every project it worked in, and
-        none at all when any of them cannot be placed in the session's own
-        zone or names no party. A session of two projects across a wall has both
-        sides' labels, which no scope but the root may read."""
+    def session_zone(self, path: Path, rel: str) -> Tuple[Optional[str], dict]:
+        """The zone of a session: that of the folder it sits in. "" (spans zones) when it sits in System/,
+        when its `project:` line does not read back plainly, or when it worked in a project of another zone.
+        None when it cannot be read."""
         try:
             with open(str(path), encoding="utf-8", errors="replace") as fh:
                 head = fh.read(4000)
@@ -838,31 +760,26 @@ class Refresher:
         fm = parse_frontmatter_text(head)
         zone = (locate(self.root, path) or Place("", "", "")).zone
         given = session_projects(head)
-        if given is None:
-            return None, fm                         # a project line that does not read back plainly
-        out: set = set()
+        if not zone or given is None:
+            return "", fm
         for g in given:
             place = locate(self.root, str(g))
             if place is None or not place.project or place.zone != zone:
-                return None, fm
-            held = self.labelled(project_path(self.root, place))
-            if not held:
-                return None, fm
-            out |= set(held)
-        return frozenset(out), fm
+                return "", fm
+        return zone_of(self.root, rel), fm
 
     def session_derived(self, rel: str, path: Path) -> Optional[str]:
-        held, _ = self.session_labels(path, rel)
-        if not self.admit_session(held):
+        zone, _ = self.session_zone(path, rel)
+        if not self.admit_session(zone):
             return None
-        return json.dumps([sorted(held), fingerprint(path)])
+        return json.dumps([zone, fingerprint(path)])
 
     def session(self, rel: str, path: Path) -> bool:
         text = read_text(path)
         if text is None:
             return False
-        held, fm = self.session_labels(path, rel)
-        if not self.admit_session(held):
+        zone, fm = self.session_zone(path, rel)
+        if not self.admit_session(zone):
             return False
         zone = (locate(self.root, path) or Place("", "", "")).zone
         title = str(fm.get("title") or "") or path.stem
@@ -874,10 +791,21 @@ class Refresher:
     # -- wiki pages and their raw records -----------------------------------
 
     def page_derived(self, rel: str, path: Path) -> Optional[str]:
-        held = self.labelled(rel)
-        if not self.admit(held):
+        zone = self.page_zone(rel, path)
+        if not self.admit(zone):
             return None
-        return json.dumps([sorted(held), fingerprint(path)])
+        return json.dumps([zone, fingerprint(path)])
+
+    def page_zone(self, rel: str, path: Path) -> Optional[str]:
+        """The zone of a wiki page: a Meetings page's `zone:`, UNZONED when it has none. A Knowledge page is in
+        no zone; one that carries a `zone:` or a party anyway is someone's, not published: UNZONED, in no scope."""
+        zone = zone_of(self.root, rel)
+        if rel.split("/")[1] == "Knowledge":
+            text = read_text(path)
+            fm = parse_frontmatter_text(text) if text is not None else {"zone": 1}
+            if any(fm.get(k) for k in ("zone", "party", "parties")):
+                return UNZONED
+        return zone
 
     def page(self, rel: str, path: Path) -> bool:
         wiki = rel.split("/")[1]
@@ -885,10 +813,8 @@ class Refresher:
         if text is None:
             return False
         fm = parse_frontmatter_text(text)
-        given = fm.get("zone") if isinstance(fm.get("zone"), list) else [fm.get("zone")]
-        zones = sorted({str(z).strip().lower() for z in given if z and str(z).strip()})
-        if self.scope.kind != "root" and (zones or wiki == "Meetings") and not (zones and set(zones) <= self.scope.zones):
-            return False                            # a conversation of a zone this scope was not asked to reach
+        if not self.admit(self.page_zone(rel, path)):
+            return False                            # a page of a zone this scope may not read, or of none
         body = body_of(text)
         date = next((d for d in (fade.read_date(fm.get(f)) for f in fade.DATE_FIELDS[wiki]) if d), None) \
             or fade.name_date(path.name)
@@ -912,7 +838,7 @@ class Refresher:
             row = con.execute("SELECT page FROM claims WHERE raw=? ORDER BY page LIMIT 1", (rel,)).fetchone()
             pages = [row[0]] if row else []
         else:
-            cites = self.cache.get(("cites", str(self.root))) or {}
+            cites = self.cites()
             if self.stem_count(Path(rel).stem.lower()) != 1:
                 return None                         # the citing index knows a record by its stem alone: a stem two files share has no one owner
             pages = sorted({r for r in (_rel(self.root, p) for p in cites.get(Path(rel).stem.lower(), [])) if r})
@@ -925,6 +851,25 @@ class Refresher:
                 return None
             first = first or (page,) + tuple(row)
         return first
+
+    def cites(self) -> Dict[str, List[Path]]:
+        """Each raw record's stem to the Meetings pages that cite it, at every grade, made once a run."""
+        key = ("cites", str(self.root))
+        if key not in self.cache:
+            index: Dict[str, List[Path]] = {}
+            pages: List[Path] = []
+            for grade in ("", "dormant", "archive"):
+                wiki = self.root / "Wikis" / "Meetings" / grade / "wiki"
+                pages += sorted(wiki.rglob("*.md")) if wiki.is_dir() else []
+            for page in pages:
+                text = read_text(page)
+                if text is None:
+                    continue
+                for stem in set(re.findall(r"\[\[(?:raw/)?([^\]|#]+?)(?:\.\w+)?(?:[|#][^\]]*)?\]\]", text)) | \
+                        set(re.findall(r"raw/([^\s\]|#)\"']+?)(?:\.\w+)?(?=[\s\]|#)\"']|$)", text)):
+                    index.setdefault(Path(stem).name.lower(), []).append(page)
+            self.cache[key] = index
+        return self.cache[key]
 
     def stem_count(self, stem: str) -> int:
         counts = self.cache.get(("rawstems", str(self.root)))
@@ -945,11 +890,8 @@ class Refresher:
         return counts.get(stem, 0)
 
     def raw_derived(self, rel: str, path: Path) -> Optional[str]:
-        held = self.labelled(rel)
-        if not self.admit(held):
-            return None
-        owner = self.owner_row(rel)
-        return None if owner is None else json.dumps([sorted(held), owner])
+        owner = self.owner_row(rel)           # a record is read where the pages that cite it are: all of them admitted here
+        return None if owner is None else json.dumps([owner])
 
     def raw(self, rel: str, path: Path) -> bool:
         owner = self.owner_row(rel)
@@ -1259,7 +1201,7 @@ def fuse(lists: List[Tuple[float, List[Hit]]], today: datetime.date) -> List[Tup
 
 def open_scope(root: Path, scope: Scope, ctx: dict, fts: bool, tri: bool) -> Optional[Index]:
     """The scope's index, brought up to date: each changed file is admitted
-    or dropped by decide() before anything is searched."""
+    or dropped by the zone rule before anything is searched."""
     folder = scope.file(root).parent
     if not folder.is_dir():
         return None
@@ -1274,8 +1216,7 @@ def open_scope(root: Path, scope: Scope, ctx: dict, fts: bool, tri: bool) -> Opt
 
 
 def purge_orphans(root: Path, ctx: dict) -> None:
-    """Remove every index file that is not a current scope's: a zone-wide file
-    from before a wall appeared, the root's file of an older version. Such a
+    """Remove every index file that is not a current scope's: the root's file of an older version, a side's file of the party walls. Such a
     file holds rows its scope would no longer admit."""
     live = {str(sc.file(root)) for sc in scopes_of(root, ctx) if sc.kind != "root"}
     folders = [root / "System"] + [root / "Zones" / z for z in zone_names(root)]
@@ -1304,9 +1245,8 @@ def reach_of(root: Path) -> str:
 
 
 def resolve(base: Path, ctx: dict, project: Optional[PathLike], scope: Optional[Union[Scope, str]]) -> Optional[Scope]:
-    """The one scope a call may use. A folder gives the scope its hub's parties
-    fit; a scope that is also asked for must be that one, unless the folder is
-    the root's, which holds no party and may take any scope it names."""
+    """The one scope a call may use. A folder gives its zone's scope; a scope that is also asked for must be that one, unless the folder is
+    the root's, which may take any scope it names."""
     mine = scope_for_project(base, ctx, project)
     if scope is None:
         return mine
@@ -1328,14 +1268,13 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
 
     `project` is the folder of the project the session works in (absolute, or
     relative to the workspace root), for example `Zones/Work/Acme`. It gives
-    the session's scope: the side of its zone that holds its hub's parties.
-    `None` means a session opened at the workspace root or in `System/`, which
-    has no party and holds the root scope, every zone and `System/.sessions/`.
+    the session's scope: its zone's. `None` means a session opened at the
+    workspace root or in `System/`, which holds the root scope, every zone and
+    `System/.sessions/`.
     Only a literal `None` is that: an empty string, ".", a folder that is not
     below the workspace, a place that belongs to no zone (a wiki, `Zones/`
-    itself), a zone's top level, a project whose hub names no listed party, or
-    a zone that does not exist returns []. `scope` (a `Scope`, or its key such
-    as `work/acme`) names the scope instead, for a caller that holds one: it
+    itself), a zone's top level, or a zone that does not exist returns [].
+    `scope` (a `Scope`, or its key such as `work`) names the scope instead, for a caller that holds one: it
     may only be the folder's own, unless the folder is the root's.
 
     `after` keeps only hits dated on or after YYYY-MM-DD. `zone` keeps one
@@ -1348,7 +1287,7 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
     `project`, or above the current folder.
 
     THE WALL IS AT THE STORE. Only the scope's own index is opened, and it
-    holds the rows `decide()` admitted for the scope and no others, so no
+    holds the rows the zone rule admitted for the scope and no others, so no
     result, count, rank or snippet can depend on a walled row. Nothing is
     filtered after the search.
 
@@ -1558,7 +1497,7 @@ def cli_scope(root: Path, asked: Optional[str]) -> Tuple[Optional[Scope], Option
             mine = want
     if mine is None:
         return None, ("This folder is not a place Recall reads from, so nothing was searched. Open the session in a "
-                      "project whose hub names a party, or at the workspace root.")
+                      "project of a zone, or at the workspace root.")
     if asked is None:
         return mine, None
     want = scope_named(root, ctx, asked)

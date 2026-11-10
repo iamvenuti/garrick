@@ -107,9 +107,10 @@ A Claude session as a whole stops at GARRICK_MAX_CALL_USD, and the next
 request starts another. ask.py needs agent.py, from the scheduled jobs
 extra, in System/jobs/ beside System/status/.
 
-**One session with Garrick's read tools (#358).** With `"ask-agent": true` in
-System/garrick-flags.json beside `ask`, and Claude as the harness,
-session_for() returns an AgentSession: one `claude -p`, sealed as the others
+**One session with Garrick's read tools (#358, #476).** With Claude as the
+harness it is how Ask works, unless System/garrick-flags.json says
+`"ask-agent": false`, which turns it off for one release (the next drops the
+flag); Codex always gets the fixed pipeline. session_for() returns an AgentSession: one `claude -p`, sealed as the others
 are, whose only MCP server is ask_tools.py (search, read, places,
 thread_state, owed, propose) and whose `--allowedTools` name those alone. Every
 turn goes to it (Asker.converse()), with no command session first; a plain
@@ -284,10 +285,10 @@ from typing import Dict, List, Optional, Tuple
 sys.dont_write_bytecode = True
 
 HERE = Path(__file__).resolve().parent
-BRIEF = HERE / "ask-command-brief.md"      # the command session's: Codex, and Claude with the agent switched off
+BRIEF = HERE / "ask-command-brief.md"      # the command session's: Codex, and Claude with `"ask-agent": false`
 ANSWER_BRIEF = HERE / "ask-answer-brief.md"
 AGENT_BRIEF = HERE / "ask-brief.md"        # the one session's (#358): it reads with Garrick's tools, and proposes
-AGENT_FLAG = "ask-agent"                    # System/garrick-flags.json: the one session with read tools, on top of `ask`
+AGENT_FLAG = "ask-agent"                    # System/garrick-flags.json: `false` turns the one session with read tools off, for one release (#476)
 TOOLS_SCRIPT = HERE / "ask_tools.py"
 TOOLS_SERVER = "garrick"                    # the MCP server's name, which makes a tool's name mcp__garrick__<tool>
 JOB = "ask"
@@ -477,9 +478,32 @@ def flag_on(ws: Path) -> bool:
     return page_action().flag_on(ws, FLAG)
 
 
+def agent_off(ws: Path) -> bool:
+    """Whether System/garrick-flags.json says `"ask-agent": false`: the one release's off switch (#476).
+    Only a JSON false counts; a missing file, a missing key, true or anything else leaves the session on."""
+    try:
+        data = json.loads((ws / "System" / "garrick-flags.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(data, dict) and data.get(AGENT_FLAG) is False
+
+
 def agent_on(ws: Path) -> bool:
-    """Whether Ask is the one session with Garrick's read tools (#358), in System/garrick-flags.json."""
-    return page_action().flag_on(ws, AGENT_FLAG)
+    """Whether Ask is the one session with Garrick's read tools (#358, #476): with Claude as the harness, unless
+    `"ask-agent": false` is in System/garrick-flags.json. Codex is always the fixed pipeline. The flag goes in the
+    release after 0.64.0."""
+    return agent().harness() == "claude" and not agent_off(ws)
+
+
+def fit(asker: "Asker", ws: Path) -> bool:
+    """Make the session the one the flag asks for, as the server calls it for each request and each `reset` (#476).
+    A session of the other type is stopped, with everything the conversation held, and replaced. True when it was."""
+    s = asker.session
+    if s is None or isinstance(s, AgentSession) == agent_on(ws):
+        return False
+    asker.stop()
+    asker.session = session_for(ws)
+    return True
 
 
 def desk_ready(ws: Path) -> bool:
@@ -1348,7 +1372,7 @@ def session_for(ws: Path):
     h = agent().harness()
     if h not in agent().HARNESSES:
         raise Bad("GARRICK_HARNESS is %r; use claude or codex" % h)
-    if h == "claude" and agent_on(ws):
+    if agent_on(ws):
         return AgentSession(ws, answer_tier())     # one session for the conversation, with Garrick's read tools (#358)
     return (ClaudeSession if h == "claude" else OnceSession)(ws, tier())
 
@@ -2543,6 +2567,8 @@ def serve_locked(ws: Path, path: Path) -> None:
                         # This connection only: its progress lines, and its STOP heard mid-turn.
                         if asker.session is None and flag_on(ws):
                             asker.session = session_for(ws)
+                        if flag_on(ws):
+                            fit(asker, ws)              # a changed `ask-agent` reaches this request (#476)
                         if asker.session is not None:
                             asker.session.watch = conn
                         asker.progress = lambda text, c=conn: send(c, {"progress": str(text)})
@@ -2568,6 +2594,8 @@ def serve_locked(ws: Path, path: Path) -> None:
                             log("session restarted")
                         out = {"say": "Kept.", "leased": True}
                     elif op == "reset":
+                        if flag_on(ws):
+                            fit(asker, ws)
                         asker.reset()
                         out = {"say": "A fresh conversation."}
                     elif op == "status":

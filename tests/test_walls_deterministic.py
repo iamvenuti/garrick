@@ -289,7 +289,7 @@ class TestStaged(WallCase):
         self.assertEqual(2, len(lines), res.stderr)              # the command that lets it through once, then the refusal
         self.assertTrue(lines[1].startswith("Commit refused: Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md names <acme>"))
         self.assertIn("check.py allow", lines[0])
-        self.assertIn("--no-verify", lines[1])
+        self.assertNotIn("--no-verify", res.stderr)                # no terminal: the allow command stands in its place
         self.assertNotIn("Dana", res.stderr)
 
     def test_only_the_staged_version_counts(self):

@@ -280,6 +280,7 @@ class Finding:
     message: str
     ear: str = ""
     fid: str = ""       # the allow-once id, kept from the finding as found when its words are rewritten for an assistant
+    token: str = ""     # what the allow-once id is taken over besides path and kind; the message when empty
 
 
 @dataclass
@@ -5424,6 +5425,20 @@ def name_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = N
     return None
 
 
+def name_hits(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> List[str]:
+    """Every one of `forms` that `text` holds: what name_hit stops at the first of."""
+    if padded is None:
+        padded = padded_words(text)
+    found = []
+    for case_sensitive, form in forms:
+        if case_sensitive:
+            if re.search(r"(?<![\w])%s(?![\w])" % re.escape(form), text):
+                found.append(form)
+        elif " %s " % form in padded:
+            found.append(form)
+    return found
+
+
 def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> bool:
     """Does `text` hold one of `forms`? `padded` is padded_words(text), when
     the caller has it already."""
@@ -5990,6 +6005,18 @@ def link_references(ws: Workspace, note: Path, text: str, meetings: "PathIndex")
     return out
 
 
+_DEDUP_OFF = False   # allow once: while set, a party or meeting already named for a file is named again (see _Reported)
+
+
+class _Reported(set):
+    """The walled parties and meetings a file's findings have named. A second finding about one is left out, which is
+    right for a report and wrong for an allowance: allowing the first must not hide the second. While _DEDUP_OFF is
+    set, nothing counts as named, and every finding of the file exists."""
+
+    def __contains__(self, item):
+        return False if _DEDUP_OFF else set.__contains__(self, item)
+
+
 def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
@@ -5998,7 +6025,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     tags, where = file_tags(ws, project, ptags, path)
     r = rel(ws, path)
     zone = project.parent.name
-    reported: set = set()  # walled parties and meetings already named for this file
+    reported: set = _Reported()  # walled parties and meetings already named for this file
     unlabelled_hits: set = set()  # linked files with no label already named
     linked = symlink_finding(ws, project, ptags, path)
     if linked is not None:
@@ -6140,10 +6167,12 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             if hit is None:
                 continue
             reported.add(b)
-            out.append(Finding(ERROR, "walls", r,
-                               "names %s%s, or one of its people; %s is walled and this project does not name it"
-                               % (party_name(ws, b), as_tag(ws, b, hit), b),
-                               "A note in %s names %s" % (where, party_name(ws, b))))
+            matched = sorted(set(name_hits(scanned, forms, padded)) | ({only[b]} if b in only and hit == only[b] else set()))
+            message = ("names %s%s, or one of its people; %s is walled and this project does not name it"
+                       % (party_name(ws, b), as_tag(ws, b, hit), b))
+            # The id covers every form of the party this file holds, so a name added to an unchanged file is a new id.
+            out.append(Finding(ERROR, "walls", r, message, "A note in %s names %s" % (where, party_name(ws, b)),
+                               token=message + "\0" + "\0".join(matched)))
 
     # Quotes: a run of words held only across a wall, by a meeting page or its
     # raw record or by another project's file, or held by an unfinished page.
@@ -7931,7 +7960,8 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
         findings = check_walls_staged(ws, Path(staged))
         cache.save()
         if use_ledger:
-            findings = drop_allowed(ws, findings, allow_repo_top(Path(staged)))
+            findings = drop_allowed(ws, findings, allow_repo_top(Path(staged)),
+                                    lambda: check_walls_staged(ws, Path(staged)))
     else:
         for check in ([check_walls] if walls_only else ALL_CHECKS):
             try:
@@ -7941,7 +7971,7 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
                 findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
                                         "A check stopped before it finished"))
         if use_ledger:
-            findings = drop_allowed(ws, findings)
+            findings = drop_allowed(ws, findings, None, lambda: check_walls(ws))
     order = {c: i for i, (c, _) in enumerate(CHECKS)}
     findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
     return findings
@@ -8120,8 +8150,8 @@ def staged_fix(message: str) -> str:
 # Allow once: a finding the user let through, for as long as its file is as it was
 # ---------------------------------------------------------------------------
 # The ledger is System/walls-allowed.json (garrick_lib.py). The hook reads it once and drops a finding whose path,
-# id and git blob id all match an entry. Nothing here writes it but allow_command() and the page's verbs, and
-# neither runs without a terminal or a click.
+# id and git blob id all match an entry. Nothing here writes it but allow_command(); the page's verb only takes an entry away, and
+# runs without a terminal.
 
 def finding_rule(f: Finding) -> str:
     """The kind of a finding, as the hook's report and the ledger name it."""
@@ -8131,7 +8161,7 @@ def finding_rule(f: Finding) -> str:
 def finding_token(f: Finding) -> str:
     """What a finding's id is taken over besides its path and kind: the text of the finding. The one place to
     change if a finding comes to carry the matched text on its own."""
-    return f.message
+    return f.token or f.message
 
 
 def finding_id(f: Finding) -> str:
@@ -8171,36 +8201,57 @@ def disk_blob(path: Path) -> Optional[str]:
     return got.strip() if got and got.strip() else None
 
 
-def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = None) -> List[Finding]:
+def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = None,
+                 rerun: Optional[Callable[[], List[Finding]]] = None) -> List[Finding]:
     """The findings left once the allowed ones are taken out. With `top`, the repository being committed, a blob
     id comes from its index; without, from the file on disk, and only for the files that have a finding the
-    ledger could cover. The ledger is read once; a missing or unreadable one drops nothing."""
+    ledger could cover. The ledger is the committed one, read once; a missing or unreadable one drops nothing.
+
+    A file is cleared only when every finding it can have is covered. The report leaves a second finding about a
+    party or meeting already named out, so for a file the ledger touches `rerun` (the walls check again, with that
+    left in) says what the file holds; if anything the ledger does not cover is there, nothing of the file is
+    dropped, and the findings the file really has are shown in place of the first pass's."""
+    global _DEDUP_OFF
     ledger = allow_set(ws.root)
     if not ledger:
         return findings
     covered = {(p, i) for p, i, _ in ledger}
+    touched = {f.path for f in findings if allowable(f) and (f.path, finding_id(f)) in covered}
+    if not touched:
+        return findings
+    full = findings
+    if rerun is not None:
+        _DEDUP_OFF = True
+        try:
+            full = [f for f in rerun() if f.check == "walls"]
+        finally:
+            _DEDUP_OFF = False
     index: Optional[Dict[str, str]] = None
     disk: Dict[str, Optional[str]] = {}
-    kept = []
-    for f in findings:
-        if not allowable(f) or (f.path, finding_id(f)) not in covered:
-            kept.append(f)
-            continue
+
+    def blob_of(path: str) -> Optional[str]:
+        nonlocal index
         if top is not None:
             if index is None:
                 index = index_blobs(top)
             try:
-                name = (ws.root / f.path).relative_to(top).as_posix()
+                name = (ws.root / path).relative_to(top).as_posix()
             except ValueError:
-                kept.append(f)
-                continue
-            blob = index.get(name.casefold())
+                return None
+            return index.get(name.casefold())
+        if path not in disk:
+            disk[path] = disk_blob(ws.root / path)
+        return disk[path]
+
+    kept = [f for f in findings if f.path not in touched]
+    for path in sorted(touched):
+        here = [f for f in full if f.path == path]
+        mine = [f for f in here if allowable(f)]
+        blob = blob_of(path)
+        if blob is not None and mine and all((path, finding_id(f), blob) in ledger for f in mine):
+            kept += [f for f in here if not allowable(f)]
         else:
-            if f.path not in disk:
-                disk[f.path] = disk_blob(ws.root / f.path)
-            blob = disk[f.path]
-        if blob is None or (f.path, finding_id(f), blob) not in ledger:
-            kept.append(f)
+            kept += here or [f for f in findings if f.path == path]
     return kept
 
 
@@ -8228,7 +8279,23 @@ def shell_word(text: str) -> str:
     return text if re.fullmatch(r"[A-Za-z0-9_./@%+=:,-]+", text) else "'" + text.replace("'", "'\\''") + "'"
 
 
-ALLOW_COMMAND = "python3 System/tools/check.py allow"
+def allow_prefix() -> str:
+    """The command that allows, written to run from the folder the hook runs in (a zone's), not only from the
+    workspace root: this file's path from there. The path argument stays the workspace's."""
+    tool = Path(__file__).resolve()
+    try:
+        shown = os.path.relpath(str(tool), str(Path.cwd()))
+    except ValueError:
+        shown = str(tool)
+    return "python3 %s allow" % shell_word(shown)
+
+
+def hook_fix(message: str) -> str:
+    """staged_fix(), for the hook's own lines. The way past the whole check (`git commit --no-verify`) is the
+    user's, so it is named only where a terminal is: for an assistant, or with no terminal, the allow command stands
+    in its place."""
+    fix = staged_fix(message)
+    return fix if allow_may_write("terminal") else fix.replace("; only if you mean it, git commit --no-verify", "")
 
 
 def report_short(findings: List[Finding]) -> str:
@@ -8239,16 +8306,17 @@ def report_short(findings: List[Finding]) -> str:
     for path, found in refused_by_file(findings).items():
         if len(found) == 1:
             f = found[0]
-            lines.append("Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message)))
+            lines.append("Commit refused: %s %s. %s" % (f.path, f.message, hook_fix(f.message)))
         else:
             lines.append("Commit refused: %s holds %d refusals (%s). Take them out and commit again; "
                          "--verbose lists each." % (path, len(found), kind_counts(found)))
         if first is None:
             first = next((f for f in found if allowable(f)), None)
     if first is not None:        # first, not last: what reads a refusal back (the page, scaffold.py) takes the last line
-        lines.insert(0, "To let a refusal through, once, while the file stays as it is: %s %s [<id>]; "
+        prefix = allow_prefix()
+        lines.insert(0, "To let a refusal through, once, while the file stays as it is: %s <path> [<id>]; "
                      "--verbose gives each id, for example %s %s %s"
-                     % (ALLOW_COMMAND, "<path>", ALLOW_COMMAND, shell_word(first.path), finding_id(first)))
+                     % (prefix, prefix, shell_word(first.path), finding_id(first)))
     return "\n".join(lines)
 
 
@@ -8256,7 +8324,7 @@ def report_verbose(findings: List[Finding]) -> str:
     """Every refusal on a line of its own, as the hook used to print them, with the id that lets it through."""
     lines = []
     for f in (f for f in findings if f.severity == ERROR):
-        line = "Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message))
+        line = "Commit refused: %s %s. %s" % (f.path, f.message, hook_fix(f.message))
         lines.append(line + ("  [id %s, %s]" % (finding_id(f), finding_rule(f)) if allowable(f) else ""))
     return "\n".join(lines)
 
@@ -8276,12 +8344,17 @@ def allow_files(root: Path, path: str):
     except ValueError:
         return None
     staged = _git(["diff", "--cached", "--name-only", "-z", "--", name], top_path) or ""
-    if staged.strip("\0"):
-        found = run_checks(root, staged=top_path, use_ledger=False)
-        blob = index_blobs(top_path).get(name.casefold())
-    else:
-        found = run_path_checks(root, [path])
-        blob = disk_blob(file)
+    global _DEDUP_OFF
+    _DEDUP_OFF = True            # every finding the file has, the second about a party already named included
+    try:
+        if staged.strip("\0"):
+            found = run_checks(root, staged=top_path, use_ledger=False)
+            blob = index_blobs(top_path).get(name.casefold())
+        else:
+            found = run_path_checks(root, [path])
+            blob = disk_blob(file)
+    finally:
+        _DEDUP_OFF = False
     return [f for f in found if f.path == path and allowable(f)], blob, top_path
 
 
@@ -8329,7 +8402,7 @@ def allow_command(argv: List[str]) -> int:
     parser.add_argument("id", nargs="?", help="the refusal's id, as --verbose or this command without one lists it")
     args = parser.parse_args(argv)
     if not allow_may_write("terminal"):
-        print("check: an allowance is written from a terminal you type in, or by a click in the app; "
+        print("check: an allowance is written from a terminal you type in; "
               "nothing was written", file=sys.stderr)
         return 2
     try:

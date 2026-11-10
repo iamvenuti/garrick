@@ -1502,21 +1502,42 @@ def _allow_entry_ok(e) -> bool:
             and e["rule"] in ALLOW_RULES and e["by"] in ALLOW_BY)
 
 
-def allow_read(root: PathLike) -> List[dict]:
-    """The allowances, as written. Fails closed: a ledger that is missing, unreadable, of another version, or not
-    shaped as above holds none, and one entry that is not shaped as above is left out."""
+def _allow_parse(text: str) -> List[dict]:
     try:
-        data = json.loads(allow_ledger_path(root).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(text)
+    except ValueError:
         return []
     if not isinstance(data, dict) or data.get("version") != ALLOW_VERSION or not isinstance(data.get("allowed"), list):
         return []
     return [dict(e) for e in data["allowed"] if _allow_entry_ok(e)]
 
 
+def allow_read(root: PathLike) -> List[dict]:
+    """The allowances in the file as it is on disk, which is what a writer starts from. Fails closed: a ledger that
+    is missing, unreadable, of another version, or not shaped as above holds none, and one entry that is not shaped
+    as above is left out. What the wall check honours is allow_committed(), not this."""
+    try:
+        return _allow_parse(allow_ledger_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+
+
+def allow_committed(root: PathLike) -> List[dict]:
+    """The allowances the workspace's own repository holds at HEAD: the only ones the wall check honours, so a file
+    written by hand, or an edit nobody committed, allows nothing. No repository, or no committed ledger, none."""
+    try:
+        got = subprocess.run(["git", "-C", str(root), "show", "HEAD:" + "/".join(ALLOW_LEDGER)], capture_output=True,
+                             timeout=30, env=foreign_git_env())
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if got.returncode != 0:
+        return []
+    return _allow_parse(got.stdout.decode("utf-8", "replace"))
+
+
 def allow_set(root: PathLike) -> frozenset:
-    """The ledger read once, for lookups: {(path, id, blob)}."""
-    return frozenset((e["path"], e["id"], e["blob"]) for e in allow_read(root))
+    """The committed ledger read once, for lookups: {(path, id, blob)}."""
+    return frozenset((e["path"], e["id"], e["blob"]) for e in allow_committed(root))
 
 
 def allow_write(root: PathLike, entries: List[dict]) -> None:

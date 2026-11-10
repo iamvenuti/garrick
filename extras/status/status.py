@@ -1296,6 +1296,11 @@ def check_groups(ws: Path, C: dict, link: "Links", projects=frozenset()) -> str:
     for f in C.get("findings", []):
         for kind, line, act in sorted_finding(ws, lib, f):
             where = ""
+            if kind == "wall" and projects:
+                m = re.match(r"Zones/([^/]+)/([^/]+)/", line[0])
+                pid = parties_mod().project_id(m.group(1), m.group(2)) if m else ""
+                if pid in projects:
+                    where = ' <a class="cxgo" href="#%s" title="Its parties and their flags, on the Context tab">Parties</a>' % pid
             rows.setdefault(kind, []).append(
                 '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s%s</li>'
                 % (ICON["critical" if f.get("severity") == "error" else "warning"], link.attrs(ws / line[0]), E(line[0]),
@@ -8543,7 +8548,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     elif C.get("failed"):
         body = '<div class="clean">%sThe check did not run. Run <code>python3 System/tools/check.py</code> to see why.</div>' % ICON["critical"]
     else:
-        body = check_groups(ws, C, link)
+        body = check_groups(ws, C, link, parties_mod().project_ids(pdata))
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)

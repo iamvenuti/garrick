@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime as dt
+import hashlib
 import html as htmllib
 import importlib.util
 import io
@@ -986,6 +987,100 @@ class TestWhoSeesWhat(StatusCase):
         for piece in ("Acme Review", "May hold material of", "Acme Corp", "walled", "May draw from", "Work: none of 1 projects"):
             self.assertIn(piece, got["out"])
         self.assertNotIn("Birch", got["out"])                                          # a wall's other side is not named
+
+
+class TestAllowedByYou(StatusCase):
+    """Allowed by you: the ledger of System/walls-allowed.json, read, shown with Remove, and nothing more."""
+
+    FILE = "Zones/Work/Acme Review/Memo.md"
+
+    def setUp(self):
+        super().setUp()
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / "template" / "System" / "tools" / "garrick_lib.py", tools / "garrick_lib.py")
+        write(self.root / self.FILE, "# Memo\n")
+
+    def blob(self, rel):
+        raw = (self.root / rel).read_bytes()
+        return hashlib.sha1(b"blob %d\0" % len(raw) + raw).hexdigest()
+
+    def ledger(self, *entries, version=1):
+        write(self.root / "System" / "walls-allowed.json", json.dumps({"version": version, "allowed": list(entries)}))
+
+    def entry(self, **kw):
+        row = {"path": self.FILE, "id": "3f9a1c2b7d", "blob": self.blob(self.FILE), "rule": "name", "date": "2026-11-10", "by": "terminal"}
+        row.update(kw)
+        return row
+
+    def section(self, html):
+        start = html.index('<section class="cxa" id="cxa">')
+        return html[start:html.index("</section>", start)]
+
+    def test_each_allowance_shows_its_file_rule_date_and_remove(self):
+        self.ledger(self.entry())
+        html = self.page()
+        findings = html[html.index('id="cx-findings"'):html.index('id="cx-parties"')]
+        self.assertIn('id="cxa"', findings)                                           # in the Findings view
+        box = self.section(html)
+        self.assertIn("<h3>Allowed by you</h3>", box)
+        self.assertIn(">Zones/Work/Acme Review/Memo.md</a>", box)                     # a link that opens the file
+        self.assertIn("name · allowed 2026-11-10 by terminal", box)
+        self.assertIn('data-id="3f9a1c2b7d" data-path="Zones/Work/Acme Review/Memo.md"', box)
+        self.assertIn('data-unallow="1">Remove</button>', box)
+        self.assertNotIn("no longer allows", box)
+
+    def test_a_file_edited_since_or_gone_says_so(self):
+        self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Gone.md", id="aaaaaaaaaa"))
+        (self.root / self.FILE).write_text("# Memo\n\nEdited.\n")
+        box = self.section(self.page())
+        self.assertIn("The file has changed since, so this no longer allows anything.", box)
+        self.assertIn("The file is gone.", box)
+
+    def test_nothing_is_shown_without_a_readable_ledger(self):
+        self.assertNotIn('id="cxa"', self.page())                                      # none at all: the Findings view is as it was
+        (self.root / "System" / "walls-allowed.json").write_text("{not json")
+        self.assertNotIn('id="cxa"', self.page())
+        self.ledger(self.entry(), version=2)                                          # a version this page does not know
+        self.assertNotIn('id="cxa"', self.page())
+        self.ledger(self.entry(path="../outside.md"), self.entry(path="/etc/hosts"), {"path": self.FILE})
+        self.assertNotIn('id="cxa"', self.page())                                      # an entry that does not read is no allowance
+
+    def test_a_names_free_row_and_escaped_text(self):
+        self.ledger(self.entry(rule="<b>x</b>", by="<i>me</i>"))
+        box = self.section(self.page())
+        self.assertNotIn("<b>x</b>", box)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt;", box)
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_remove_sends_walls_unallow_and_a_yes_takes_the_row_away(self):
+        harness = r"""
+        const vm = require("vm");
+        const js = process.argv[1];
+        const attrs = { "data-path": "Zones/Work/Acme Review/Memo.md", "data-id": "3f9a1c2b7d" };
+        const row = { getAttribute: a => attrs[a], removed: false, remove() { this.removed = true; } };
+        const button = { closest: s => s === ".cxa-row" ? row : null };
+        const handlers = [];
+        const cx = { querySelectorAll: s => s === ".cxa-row" ? [row] : [], addEventListener: (t, f) => handlers.push(f) };
+        const sent = [], said = [];
+        const window = { webkit: { messageHandlers: { garrick: { postMessage: m => sent.push(m) } } }, GarrickSay: s => said.push(s) };
+        const ctx = { JSON, Object, window, GarrickSay: window.GarrickSay, document: { getElementById: id => id === "cx" ? cx : null } };
+        vm.createContext(ctx);
+        vm.runInContext(js, ctx);
+        handlers.forEach(h => h({ target: { closest: s => s === "[data-unallow]" ? button : null } }));
+        const refused = row.removed;
+        window.GarrickActed({ verb: "walls-unallow", path: attrs["data-path"], id: attrs["data-id"] }, { ok: false, say: "No." });
+        const afterRefusal = row.removed;
+        window.GarrickActed({ verb: "walls-unallow", path: attrs["data-path"], id: attrs["data-id"] }, { ok: true });
+        process.stdout.write(JSON.stringify({ sent, refused, afterRefusal, removed: row.removed }));
+        """
+        done = subprocess.run(["node", "-e", harness, status.parties_mod().CX_JS], capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        got = json.loads(done.stdout)
+        self.assertEqual([{"act": {"verb": "walls-unallow", "path": "Zones/Work/Acme Review/Memo.md", "id": "3f9a1c2b7d"}}], got["sent"])
+        self.assertFalse(got["refused"])                                               # nothing leaves the page before the answer
+        self.assertFalse(got["afterRefusal"])                                          # a refusal keeps the row
+        self.assertTrue(got["removed"])
 
 
 class TestGuide(StatusCase):
@@ -4329,6 +4424,25 @@ class TestChecksCardActs(StatusCase):
         self.assertIn(">Take it out</button>", card)
         self.assertIn("Memo.md</a>: names birch</span>", card)            # a wall in the check's own words
         self.assertIn("Notes.md</a>: something odd</span></li>", card)     # a judgment is the file to open
+
+    def test_a_wall_finding_links_to_its_project_row_on_the_context_tab(self):
+        self.fake_check(
+            {"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "names birch"},
+            {"check": "walls", "severity": "error", "path": "Zones/Work/Todo.md", "message": "names birch"},
+            {"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Notes.md:4", "message": "something odd"})
+        html = self.page()
+        card = self.card(html)
+        pid = status.parties_mod().project_id("Work", "Acme Review")
+        self.assertEqual(['<a class="cxgo" href="#%s" title="Its parties and their flags, on the Context tab">Parties</a>' % pid],
+                         re.findall(r'<a class="cxgo"[^>]*>Parties</a>', card))            # only the wall finding inside a project
+        self.assertIn('<li class="pp-proj" id="%s">' % pid, html)                         # and the row it points at is on the page
+        self.assertIn("Memo.md</a>: names birch</span>", card)                            # the check's words are untouched
+
+    def test_no_link_without_the_parties_view(self):
+        (self.root / "System" / "context.md").write_text("# Context\n")
+        self.fake_check({"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "names birch"})
+        self.assertNotIn("cxgo", self.page())
+
 
     def test_a_finding_without_fix_reads_no_history(self):
         """A rename's date comes from git, a call a file: the page makes it

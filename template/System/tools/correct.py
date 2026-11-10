@@ -184,9 +184,9 @@ def _visible(folder: Path) -> List[Path]:
 def _history(folder: Path) -> Iterable[Tuple[str, Path]]:
     """The history files beside a hub or thread note (history.py): live files, reached like their note."""
     found = folder / "history"
-    if found.is_dir():
+    if found.is_dir() and not found.is_symlink() and folder.resolve() in found.resolve().parents:
         for path in sorted(found.glob("*.md")):
-            if path.is_file():
+            if path.is_file() and not path.is_symlink() and folder.resolve() in path.resolve().parents:
                 yield "history", path
 
 

@@ -39,5 +39,16 @@ class Correcting(Fixture):
         self.assertTrue([f for f in found if f[1].startswith("Northwind history ")], found)
 
 
+class Links(Fixture):
+    def test_a_history_folder_that_is_a_link_is_not_reached(self):
+        import correct, os
+        self.put(self.a, thread("Pricing", "Northwind", "acme", [1, 2, 3, 4, 5, 400]))
+        elsewhere = self.root / "Zones" / "Home" / "Garden" / "elsewhere"
+        elsewhere.mkdir(parents=True)
+        (elsewhere / "x.md").write_text("Dana Whitlaw\n", encoding="utf-8")
+        os.symlink(str(elsewhere), str(self.a.parent / "history"))
+        self.assertEqual([], [p for k, p in correct.places(self.root, memory=[]) if k == "history"])
+
+
 if __name__ == "__main__":
     unittest.main()

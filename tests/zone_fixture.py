@@ -28,6 +28,7 @@ Jo Example. Independent advisor.
 | Work | Client work | yes |
 | Home | Everything else | yes |
 | Ventures | Published work | no |
+| Study | Courses | yes |
 
 ## Parties
 
@@ -66,7 +67,7 @@ def build(root: Path) -> Path:
     write(root / "AGENTS.md", "# Workspace\n")
     write(root / "System" / "rules.md", "# Rules\n")
     write(root / "System" / "context.md", CONTEXT)
-    for zone in ("Work", "Home", "Ventures"):
+    for zone in ("Work", "Home", "Ventures", "Study"):
         z = root / "Zones" / zone
         write(z / "AGENTS.md", "# %s zone\n" % zone)
         write(z / "Todo.md", "# %s: open actions\n\n## Inbox\n\n## Done\n" % zone)

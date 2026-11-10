@@ -4957,8 +4957,8 @@ def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Findi
     another zone only when its size is one of theirs. A Knowledge page is a destination with no zone.
 
     Not a copy: a file under COPY_MIN bytes (an empty `.gitkeep`), a file Garrick ships (shipped_hashes: the zone
-    template's files are identical in every zone), and content held by files of two or more zones, which is template
-    text, not one zone's material. Everything else stays refused."""
+    template's files are identical in every zone), and content that a file of an open zone also holds, since open
+    material goes anywhere. Content held only by walled zones stays a copy, however many hold it."""
     want: Dict[int, List[Tuple[Path, str, Optional[str]]]] = {}
     for path, data in staged:
         dest = zone_of(ws.root, path)
@@ -4998,8 +4998,8 @@ def copy_findings(ws: Workspace, staged: List[Tuple[Path, bytes]]) -> List[Findi
     for path, (sha, there, dest) in sorted(hits.items()):
         if dest not in shipped:
             shipped[dest] = shipped_hashes(ws, dest)
-        if sha in shipped[dest] or len(held[sha]) > 1:
-            continue
+        if sha in shipped[dest] or any(not walled(ws.context, z) for z in held[sha]):
+            continue        # Garrick's own text, or held by an open zone, whose material goes anywhere
         out.append(Finding(ERROR, "walls", rel(ws, path),
                            "is a copy, whole, of a file of %s; %s is walled and this file is in %s"
                            % (zone_name(there), "that zone" if there != UNZONED else "a page with no zone",

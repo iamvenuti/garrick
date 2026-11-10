@@ -112,7 +112,8 @@ class Cases(unittest.TestCase):
             "e31": lambda: self.pricing("# N\n\n%s\n" % UNZONED_SAYS),
             "e32": lambda: self.knowledge_says(),
             "e37": lambda: self.staged("Northwind/Threads/Pricing/Todo.md", data=self.plan("Home/Todo.md")),
-            "e38": lambda: self.held_twice(),
+            "e38": lambda: self.held_twice("Ventures"),
+            "e39": lambda: self.held_twice("Study"),
             "e36": lambda: self.pricing("# N\n\nSee [[bare]].\n"),
             "e33": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260310-work-call")),
             "e34": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260312-ventures-call")),
@@ -136,10 +137,10 @@ class Cases(unittest.TestCase):
             path.write_text("Jo: the beds are marked along the south wall, and the path is laid.\n", encoding="utf-8")
         return path.read_bytes()
 
-    def held_twice(self):
-        text = b"Shared wording of a note kept by two zones, held word for word in each of them.\n"
-        for zone in ("Home", "Ventures"):
-            path = self.root / "Zones" / zone / "Garden-copy.md"
+    def held_twice(self, other):
+        text = ("Shared wording of a note kept by two zones (%s), held word for word in each of them.\n" % other).encode()
+        for zone in ("Home", other):
+            path = self.root / "Zones" / zone / ("Copy-%s.md" % other)
             path.write_bytes(text)
             self.addCleanup(path.unlink)
         return self.staged("Northwind/Threads/Pricing/Copy.md", data=text)

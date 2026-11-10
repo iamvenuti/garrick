@@ -171,19 +171,19 @@ STILL_STOPS = [
         "the party is not resolved",
         "A mail from personal webmail, or one carrying parties from two zones.",
         "ways in",
-        ["When the addresses do not settle it, or put two walled parties on one mail, ask."],
+        ["Ask when a domain is unknown, when the parties on a mail sit in two walled zones, and for a company that is always asked about."],
     ),
     case(
         "the party is not resolved, in the skill that files it",
         "The same mail, in the procedure.",
         "intake skill",
-        ["**It never guesses the kind, the zone, a party or a project.**"],
+        ["**It never guesses the kind, the zone or the project.**"],
     ),
     case(
         "two projects could take it",
-        "The material's party has two projects in the zone.",
+        "The zone has two projects that could take the material.",
         "intake skill",
-        ["Several, or none: ask."],
+        ["One: use it and say its name. Several: ask,"],
     ),
     case(
         "a wall stands between the conversation and the project",

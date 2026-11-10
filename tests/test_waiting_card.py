@@ -63,6 +63,17 @@ class Card(unittest.TestCase):
         self.assertIn("Claude&#x27;s desktop app, in Pricing", html)
         self.assertIn("Codex, in Freight", html)
 
+    def test_the_simple_homes_needs_you_gets_a_live_row_for_a_waiting_session_and_none_without(self):
+        today = dt.date(2026, 11, 10)
+        none = status.home_section([], today, None, None, {})
+        self.assertIn("Nothing needs you.", none)
+        html = status.home_section([], today, None, None, {}, [row("a", "2026-11-10T09:00:00Z", thread="Acme Review, Pricing")], NOW)
+        self.assertIn('data-live="a"', html)
+        self.assertIn("Live</span> waiting on you for a question, 1 h", html)
+        self.assertIn("1 question", html)
+        self.assertNotIn("Nothing needs you.", html)
+        self.assertNotIn("Birch", html)
+
     def test_an_empty_card_says_so(self):
         self.assertIn("No session is waiting on you.", status.waiting_card([], NOW))
 

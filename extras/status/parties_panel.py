@@ -212,7 +212,7 @@ def build(ws: Path, lib, link: Callable) -> Optional[dict]:
         if not r["notes"]:
             (blocks[r["zone"]]["unused"] if r["zone"] in blocks else unused_other).append(r["tag"])
     return {"parties": list(rows.values()), "blocks": list(blocks.values()), "nameless": nameless, "twins": twins,
-            "unused_other": unused_other, "who": None, "allowed": [],
+            "unused_other": unused_other, "who": _who(ws, lib, ctx, notes), "allowed": [],
             "dot": any(not r["state"] for r in rows.values()) or bool(twins)}
 
 

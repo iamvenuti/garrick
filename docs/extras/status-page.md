@@ -106,7 +106,7 @@ The page itself loads nothing from the network, and neither does a notice. Two t
 
 The **Context** tab, headed *Context Nurture*, is where the questions your wikis and Nurture raise are answered, one zone at a time or all of them. *Needs you* stays in the [simple home](simple-home.md#needs-you), for the questions that block a piece of work; this panel is for the rest. It calls no model.
 
-The tab has three views under one **Show** switch: *Findings*, which is what is described next, and *Parties*, described [after it](#parties). With no Parties table the tab is the findings alone. The tab remembers the view you left it on, and the menu's *Context* row opens it on *Findings*. The Parties view used to be a tab of its own: a saved window or a link that names it opens Context on *Parties*.
+The tab has three views under one **Show** switch: *Findings*, which is what is described next, *Parties*, and *Who sees what*, described [after it](#parties-and-who-sees-what). With no Parties table the tab is the findings alone. The tab remembers the view you left it on, and the menu's *Context* row opens it on *Findings*. The Parties view used to be a tab of its own: a saved window or a link that names it opens Context on *Parties*.
 
 - **Counters** at the top: open, due today (a *Later* whose day has come), proposed verdicts, and answered but not yet worked in. Decisions to review are the decision pages the assistant flagged with a `revisit:` reason, listed under their group with the reason and a link to the page; only you change a decision's status. Like the others, the count is shown per group wherever a wall may stand between groups.
 - **Filters**: the zone and the party, each with an *All* choice, the wiki, and the age. With no zone chosen yet, the panel opens on the first zone, by name, that has an open question, and on the first zone when none has; a zone you chose stays chosen. A zone whose own parties a wall divides opens on its first party; choose *All* in Party to see each party under its own heading.
@@ -127,9 +127,9 @@ The **Nurture** page lists the attribution findings Nurture has proposed an answ
 
 **Counts are per group.** No counter, tab number, menu count or switch adds two groups: the page cannot show that no wall stands between them, so it fails closed. With one party group in view the tab and the switch carry its number (questions that carry no party add to it). With several, the tab shows none, the switch shows none, and each group's heading carries its own count. The menu bar's menu and the edge panel have a *Context* row that names each group with its own open count, such as `Context · Work · Acme Corp 2 · Work · Birch & Co 1`, and one group with one number; *File › Context* in the app does the same: each brings the window forward on this tab. The count never adds up groups, parties or zones.
 
-## Parties
+## Parties and Who sees what
 
-This is another view of the Context tab, built from the Parties and Zones tables of `System/context.md` and from the `party:` of every hub and thread note. It reads frontmatter only. A red dot on the Context tab means a party has no flag, or a note names two parties with one name.
+These are the other two views of the Context tab, both built from the Parties and Zones tables of `System/context.md` and from the `party:` of every hub and thread note. They read frontmatter only. A red dot on the Context tab means a party has no flag, or a note names two parties with one name.
 
 **Parties** shows the one declaration the walls rest on: which parties are walled and which are open, and where each is used.
 
@@ -141,6 +141,10 @@ This is another view of the Context tab, built from the Parties and Zones tables
 - **Make it open** and **Make it walled** on a party run `scaffold.py party --walled` or `--open` through the page, and the context is committed in the workspace's repository. Walled to open releases history: the command says how many files it releases, the page shows that under the row and asks once, and nothing is written before you say yes. Open to walled writes at once and shows the files the whole workspace's check now finds in violation. The page asks for no more and no less than the command: a flip the command refuses is refused on the page with its sentence. In a browser, where a page cannot act, the button copies the command.
 
 The view shows no matrix and no rules, because there are none to show: a flag and a list of who names whom is the whole model.
+
+**Who sees what** reads that model out for one project. Pick a project from the list, or follow *Who sees what* on its row in Parties, and the view says two things: which parties' material the project may hold, and which projects it may draw from, zone by zone (*every other project*, the projects by name, or *none*). A thread that names a party its hub does not has an entry of its own, since it holds the hub's parties and its own. A project whose hub names no party, or whose notes put two parties with one name together, holds nothing, and the view says so.
+
+The answers are not worked out on the page. `garrick_lib.py`, the library the wall check itself uses, gives each project its parties (`labels()`) and says what they may hold (`decide()` to write) and draw from (`decide()` to read) while the page is built; the page only prints the result. When a flag or a hub's `party:` changes, the view changes with the next build. A party that is asked about first, because it shares a name with another, shows *asked first*.
 
 ## The Todo tab
 

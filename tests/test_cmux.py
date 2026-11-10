@@ -59,6 +59,9 @@ elif a[:1] == ["list-windows"]:
 elif a[:2] == ["workspace", "list"]:
     print(json.dumps({"workspaces": state.get("workspaces", [])}))
 elif a[:1] == ["list-panes"]:
+    if "panes_reply" in state:
+        print(json.dumps(state["panes_reply"]))
+        sys.exit(0)
     panes = state.get("panes", {}).get(a[a.index("--workspace") + 1], [])
     print(json.dumps({"panes": [{"id": "pane-" + str(n), "surface_ids": ids, "surface_count": len(ids)} for n, ids in enumerate(panes)]}))
 elif a[:1] == ["list-pane-surfaces"]:
@@ -663,6 +666,38 @@ class DeskVerbTest(CmuxCase):
         code, _, err = self.last_tab([["a-surface"], ["b-surface"]], self.alone())
         self.assertEqual(code, 2)
         self.assertNotIn("close-workspace", self.verbs())
+
+    def recorded_close(self, reply):
+        self.state({"close_invalid_state": "Cannot close the last surface in a workspace", "top": self.alone(),
+                    "panes_reply": reply,
+                    "sessions": [self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)]})
+        return self.run_desk("close", "--folder", str(self.pricing), "--yes")
+
+    DOCK = {"index": 1, "dock_scope": "global", "surface_count": 0, "surface_ids": []}
+
+    def test_close_closes_the_workspace_when_a_global_dock_pane_is_listed_beside_the_tab(self):
+        reply = {"panes": [{"index": 0, "surface_count": 1, "surface_ids": ["a-surface"]}, self.DOCK]}
+        code, _, err = self.recorded_close(reply)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn("close-workspace", self.verbs())
+
+    def test_close_leaves_the_workspace_when_two_real_panes_sit_beside_a_dock(self):
+        reply = {"panes": [{"index": 0, "surface_count": 1, "surface_ids": ["a-surface"]},
+                           {"index": 1, "surface_count": 1, "surface_ids": ["b-surface"]}, self.DOCK]}
+        code, _, err = self.recorded_close(reply)
+        self.assertEqual(code, 2)
+        self.assertNotIn("close-workspace", self.verbs())
+
+    def test_only_surface_fails_closed_on_output_it_cannot_read(self):
+        tab = {"workspace": "ws-work", "surface": "a-surface"}
+        one = {"index": 0, "surface_count": 1, "surface_ids": ["a-surface"]}
+        for reply in ({"panes": "x"}, {"panes": []}, {"panes": [one, "x"]}, {"panes": [one, {"surface_count": 1}]},
+                      {"panes": [one, {}]}, {"panes": [{"surface_count": 2, "surface_ids": ["a-surface"]}]},
+                      {"panes": [{"surface_count": 0, "surface_ids": []}]}, [1], {}):
+            self.state({"panes_reply": reply})
+            self.assertFalse(desk.only_surface(tab), reply)
+        self.state({"panes_reply": {"panes": [one, self.DOCK]}})
+        self.assertTrue(desk.only_surface(tab))
 
     def test_close_leaves_the_workspace_on_another_invalid_state(self):
         code, _, err = self.last_tab([["a-surface"]], self.alone(), message="Surface is pinned")

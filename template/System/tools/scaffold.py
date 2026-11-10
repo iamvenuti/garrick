@@ -543,7 +543,7 @@ def cmd_zone(root, args, today):
             return flip_zone(root, args)
         if args.walled and args.open:
             raise Refusal("Say --walled or --open, not both.")
-    if not args.holds:
+    if args.holds is None:
         raise Refusal(f"{given.strip()} is not a zone yet. To make it, say what it holds: --holds \"<what it holds>\".")
     name, holds = args.name.strip(), " ".join(args.holds.split())
     zones = root / "Zones"

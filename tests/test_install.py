@@ -1033,8 +1033,8 @@ class ZoneTest(unittest.TestCase):
         said = self.made.stdout.strip().splitlines()
         self.assertEqual(said[0], f"Created the {self.name} zone: its own folder and git history, an inbox, "
                                   "and the wall check before every commit.")
-        self.assertIn(f"Added {self.name} to the Zones table in System/context.md.", said[1])
-        self.assertTrue(said[-1].startswith(f'Next, say "new project <name> for <party> in {self.name}'), said[-1])
+        self.assertIn(f"Added {self.name} to the Zones table in System/context.md, walled: what is in it stays in it.", said[1])
+        self.assertTrue(said[-1].startswith(f'Next, say "new project <name> in {self.name}'), said[-1])
 
     def test_made_as_the_installer_makes_a_zone(self):
         personal = self.root / "Zones" / "Personal"

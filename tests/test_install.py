@@ -1087,16 +1087,11 @@ class ZoneTest(unittest.TestCase):
         check = run([self.root / "System" / "tools" / "check.py", "--root", self.root], self.box.env)
         self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
         self.assertIn("No problems found.", check.stdout)
-        # A project is for a party of its own zone (scaffold.py refuses another's), so acme is placed in the new zone
-        # for this test: the wall between acme and birch is by tag, whatever the zone.
-        context = self.root / "System" / "context.md"
-        kept = context.read_text()
-        context.write_text(re.sub(r"(?m)^(\| Acme Corp \|.*?\| )Work( \| `acme`)", r"\g<1>%s\2" % self.name, kept))
-        self.addCleanup(context.write_text, kept)
-        made = self.scaffold("project", "--zone", self.name, "--name", "Shed", "--party", "acme", "--thread", "Roof")
+        # The new zone is walled, and so is Work: a link from one into the other is refused at the commit.
+        made = self.scaffold("project", "--zone", self.name, "--name", "Shed", "--thread", "Roof")
         self.assertEqual(made.returncode, 0, made.stderr)
         note = self.zone / "Shed" / "Threads" / "Roof" / "Notes.md"
-        note.write_text("Theo Marsh says the roof will hold.\n")  # Birch's partner, behind the wall from acme
+        note.write_text("The roof quote is in [[Zones/Work/Todo]].\n")  # a file of another walled zone
         try:
             git(self.zone, "add", "-A")
             r = subprocess.run(["git", "-C", str(self.zone), "commit", "-q", "-m", "Shed"],

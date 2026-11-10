@@ -127,11 +127,17 @@ class ReleaseCase(unittest.TestCase):
         return code, out.getvalue()
 
     def page(self):
-        return status.build(self.root, now=dt.datetime.now(), folder=self.base / "jobs")
+        with mock.patch.dict(os.environ, self.home()):
+            return status.build(self.root, now=dt.datetime.now(), folder=self.base / "jobs")
+
+    def home(self):
+        """An empty home: the settings that name a band are the test's own, never this machine's."""
+        (self.base / "home").mkdir(exist_ok=True)
+        return {**os.environ, "HOME": str(self.base / "home")}
 
     def version(self):
         r = subprocess.run([sys.executable, str(self.root / "System" / "tools" / "check.py"), "--root", str(self.root),
-                            "--version"], capture_output=True, text=True)
+                            "--version"], capture_output=True, text=True, env=self.home())
         self.assertEqual(0, r.returncode, r.stderr)
         return r.stdout
 
@@ -818,7 +824,8 @@ class TestTheButtonsVerbs(ReleaseCase):
 
     def test_the_section_shows_the_button_the_switch_and_the_cadence(self):
         self.setting(**{"release-notice-every": 7})
-        html = status.build(self.root, now=dt.datetime.now(), folder=self.base / "jobs")
+        with mock.patch.dict(os.environ, self.home()):
+            html = status.build(self.root, now=dt.datetime.now(), folder=self.base / "jobs")
         start = html.index('id="about-settings"')
         sec = html[start:html.index("</section>", start)]
         self.assertIn('id="rel-check">Check for updates</button>', sec)

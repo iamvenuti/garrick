@@ -94,6 +94,7 @@ import argparse
 import datetime
 import fnmatch
 import hashlib
+import http.client
 import json
 import os
 import plistlib
@@ -1338,12 +1339,16 @@ def release_of(top, waiting=False):
     return ""
 
 
-def band_refresh(there):
+def band_refresh(there, root):
     """(top, old release, new release) when the band at `there` is in an unmodified-looking release download
     older than this Garrick's own release, which an update may replace; None for a clone, a link, a copy that
     is not a whole Garrick folder, or a Garrick that is not itself a release. Reads files only: whether the
     copy still holds the files it came with is checked when the step runs, against the release it names."""
+    if not Path(there).is_absolute():
+        return None                      # a relative entry names whatever folder the update runs in
     top = Path(there).parent.parent.parent
+    if not top.name or same_place(top, REPO) or inside(top, root) or inside(root, top):
+        return None                      # the running Garrick, or one that holds the workspace or is held by it
     if not (top / "install.py").is_file() or not (top / "update.py").is_file() or top.is_symlink():
         return None
     if not same_place(top.joinpath(*BAND_PATH), there) or (top / ".git").exists() or not version_commit(top):
@@ -1377,6 +1382,8 @@ def refresh_band(root, top, old, new):
                 data = release.fetch(release.ARCHIVE % (repo, tag), root, release.DOWNLOAD_TIMEOUT, limit=release.MAX_ARCHIVE)
                 got[tag] = release.unpack(data, tmp / tag)
             for f in sorted(x for x in got["v" + old].rglob("*") if x.is_file()):
+                if f.name == "VERSION" and f.parent == got["v" + old]:
+                    continue             # git's abbreviation of the commit is as long as its repository needs
                 if read(top / f.relative_to(got["v" + old])) != f.read_bytes():
                     return ("The Garrick band at %s was left as it is: its files differ from Garrick %s, which it says it is. %s"
                             % (top, old, BAND_BY_HAND % top))
@@ -1386,13 +1393,26 @@ def refresh_band(root, top, old, new):
             except OSError:
                 if top.exists():
                     shutil.rmtree(str(top), ignore_errors=True)
-                os.rename(str(aside), str(top))
+                try:
+                    os.rename(str(aside), str(top))
+                except OSError:
+                    return ("The Garrick band was not refreshed, and its old copy could not be put back: it is now at %s, "
+                            "not at %s. Move it back by hand." % (aside, top))
                 raise
         finally:
             shutil.rmtree(str(tmp), ignore_errors=True)
-    except (OSError, release.ReleaseError, install.InstallError) as exc:
+    except (OSError, ValueError, http.client.HTTPException, release.ReleaseError, install.InstallError) as exc:
         return "The Garrick band at %s was not refreshed: %s. %s" % (top, exc, BAND_BY_HAND % top)
     return "Garrick band: %s is now Garrick %s; the old copy, Garrick %s, is at %s." % (top, new, old, aside)
+
+
+def inside(a, b):
+    """Whether folder `a` is `b` or lies under it, by resolved paths."""
+    try:
+        a, b = Path(a).resolve(), Path(b).resolve()
+    except OSError:
+        return True                      # cannot tell: treated as inside, so nothing is moved
+    return a == b or b in a.parents
 
 
 def same_place(a, b):
@@ -1488,7 +1508,7 @@ def next_steps(root, p, done=None):
     steps.extend(before_quit_steps(root))
 
     for what, path in outside_copies(root):
-        again = band_refresh(path) if what == "the Garrick band" else None
+        again = band_refresh(path, root) if what == "the Garrick band" else None
         if again:
             top, old, new = again
             aside = top.with_name("%s-%s" % (top.name, version_commit(top)))

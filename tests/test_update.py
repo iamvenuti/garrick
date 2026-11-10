@@ -1730,6 +1730,54 @@ class TestBandKeptOutside(ExtrasCase):
         ((what, fn),) = self.band_steps()
         self.assertIsNone(fn)
 
+    def test_a_relative_entry_is_never_taken_for_a_folder_to_replace(self):
+        (self.base / "home" / ".claude" / "settings.json").write_text(json.dumps(
+            {"env": {"CLAUDE_CODE_PLUGIN_DIRS": "extras/mods/garrick-band"}}))
+        here = os.getcwd()
+        os.chdir(str(self.kept))
+        self.addCleanup(os.chdir, here)
+        self.assertIsNone(update.band_refresh("extras/mods/garrick-band", self.root))
+        self.assertEqual([], [fn for w, fn in self.band_steps() if fn])         # no crash, no step with a function
+
+    def test_a_folder_that_holds_the_workspace_or_is_the_running_garrick_is_not_moved(self):
+        band = self.base / "extras" / "mods" / "garrick-band"
+        self.release_tree(self.base, *self.OLD)                                # the workspace's own folder is inside it
+        self.assertTrue(self.root.is_relative_to(self.base))
+        with mock.patch.object(update, "REPO", self.ours):
+            self.assertIsNone(update.band_refresh(str(band), self.root))
+            self.assertIsNone(update.band_refresh(str(self.ours / "extras/mods/garrick-band"), self.root))
+            inner = self.release_tree(self.root / "Garrick copy", *self.OLD)   # one inside the workspace
+            self.assertIsNone(update.band_refresh(str(inner / "extras/mods/garrick-band"), self.root))
+            self.assertIsNotNone(update.band_refresh(str(self.kept / "extras/mods/garrick-band"), self.root))
+
+    def test_a_version_file_with_a_longer_commit_is_not_a_change(self):
+        (self.kept / "VERSION").write_text("commit: aaaa1112\ndate: 2026-11-01\n")
+        ((what, fn),) = self.band_steps()
+        self.assertIn("is now Garrick 0.63.1", fn())
+        self.assertTrue(self.kept.with_name("garrick-release-aaaa1112").is_dir())
+
+    def test_any_download_error_is_a_message_and_a_failed_put_back_says_where_the_copy_is(self):
+        import http.client
+        ((what, fn),) = self.band_steps()
+
+        def cut(*a, **k):
+            raise http.client.IncompleteRead(b"x")
+        with mock.patch.object(self.release, "fetch", cut):
+            self.assertIn("was not refreshed", fn())
+        self.assertEqual([self.kept.name], [p.name for p in self.kept.parent.iterdir()])
+        real = os.rename
+        aside = self.kept.with_name("garrick-release-aaaa111")
+
+        def rename(a, b):
+            if Path(b) == self.kept and Path(a) == aside:
+                raise OSError("busy")
+            return real(a, b)
+        with mock.patch.object(update.shutil, "move", side_effect=OSError("disk full")), \
+                mock.patch.object(update.os, "rename", rename):
+            said = fn()
+        self.assertIn("could not be put back: it is now at %s" % aside, said)
+        self.assertTrue(aside.is_dir())
+
     def test_nothing_is_moved_when_the_download_fails_or_the_aside_name_is_taken(self):
         def refuse(*a, **k):
             raise OSError("no network")

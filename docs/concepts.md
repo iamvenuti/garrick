@@ -64,7 +64,7 @@ The row of the Resume here block that names the single next thing, small enough 
 
 ### Keep in mind
 
-The row for what is only in your head: a decision half made and why, a doubt, or nothing. It is what a cold resume would otherwise lose. A wrap asks for it with its one question, "Anything only in your head?", and Enter skips it.
+The row for what is only in your head: a decision half made and why, a doubt, or nothing. It is what a cold resume would otherwise lose. A wrap writes it from the session, and from what you say with the request ("wrap it, I doubt the second option"); it asks nothing.
 
 ### Status
 
@@ -72,7 +72,7 @@ Every hub and thread note carries `status:` in its frontmatter, with one of thre
 
 ### Wrap and Resume
 
-One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks one line, "Anything only in your head?", then rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### Catch up
 

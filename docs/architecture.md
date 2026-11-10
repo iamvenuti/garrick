@@ -140,7 +140,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 
 ### A working day
 
-You press Continue on the Garrick App's home, or open a session in your app or terminal and say "open Acme pricing". The assistant reads the thread's Resume here block and answers in two sentences: where it stands, and the next action. You work, and what the session writes is committed in the zone's repository, where the wall check runs on every commit. If something cuts in, or at the end, "wrap it" (or "I'm being interrupted") asks one line, "Anything only in your head?", then rewrites the Resume here block so it describes now, adds a dated entry below it, puts open actions in the zone's `Todo.md` and commits. "Close for the day" does that for every thread touched today. The next session, in either assistant, starts from that block.
+You press Continue on the Garrick App's home, or open a session in your app or terminal and say "open Acme pricing". The assistant reads the thread's Resume here block and answers in two sentences: where it stands, and the next action. You work, and what the session writes is committed in the zone's repository, where the wall check runs on every commit. If something cuts in, or at the end, "wrap it" (or "I'm being interrupted") asks nothing and rewrites the Resume here block so it describes now, adds a dated entry below it, puts open actions in the zone's `Todo.md` and commits. "Close for the day" does that for every thread touched today. The next session, in either assistant, starts from that block.
 
 ### The walls
 

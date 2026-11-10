@@ -4,7 +4,7 @@
 
 The background run and the band are checked by hand; this is the part a test
 reaches: the lock a running wrap holds (taken once, gone after ten minutes),
-and the skill's words (one question first, no stack, Hold as no command).
+and the skill's words (no question first, no stack, Hold as no command).
 """
 
 from __future__ import annotations
@@ -176,13 +176,21 @@ class SkillTest(unittest.TestCase):
             self.assertNotIn(gone, self.text, gone)
         self.assertNotRegex(self.text, r'"verb": "(interrupt|back|stack)"')
 
-    def test_the_one_question_comes_first_and_skips_on_enter(self):
+    def test_the_wrap_asks_nothing_before_it_takes_the_lock(self):
         wrap = self.text[self.text.index("## Wrap:"):self.text.index("## Back:")]
-        self.assertIn('"Anything only in your head?"', wrap)
-        self.assertLess(wrap.index("Ask the one question"), wrap.index("background subagent"))
-        self.assertIn("Enter", wrap)
+        self.assertIn("**Ask nothing.**", wrap)
+        self.assertLess(wrap.index("**Ask nothing.**"), wrap.index("wrap_lock.py start"))
+        self.assertNotIn("Anything only in your head", wrap)
+        self.assertNotIn("Ask the one question", wrap)
+        self.assertNotIn("the answer to the question", wrap)
+        self.assertIn("what the user said with the request", " ".join(wrap.split()))
         self.assertIn("Keep in mind", wrap)
-        self.assertRegex(wrap, r"foreground")
+        self.assertIn("or `nothing`", wrap)
+
+    def test_what_the_user_says_with_the_request_goes_into_keep_in_mind(self):
+        wrap = " ".join(self.text[self.text.index("## Wrap:"):self.text.index("## Back:")].split())
+        self.assertIn("goes into *Keep in mind* as said", wrap)
+        self.assertIn("I was leaning towards the lower tier", wrap)
 
     def test_the_background_brief_carries_the_walls(self):
         wrap = self.text[self.text.index("## Wrap:"):self.text.index("## Back:")]
@@ -238,10 +246,16 @@ class WordsTest(unittest.TestCase):
         self.assertIn("*Wrap* (`w`) and *Resume* (`r`) share one slot", text)
         self.assertIn("older than ten minutes counts as gone", text)
 
-    def test_the_commands_page_says_the_one_question_and_the_record(self):
+    def test_the_commands_page_says_no_question_and_the_record(self):
         text = (REPO / "docs" / "commands.md").read_text(encoding="utf-8")
-        self.assertIn('"Anything only in your head?"', text)
+        self.assertIn("A wrap asks nothing", text)
         self.assertIn("the thread whose note was written most recently and is not finished or parked", text)
+
+    def test_no_shipped_page_or_skill_says_the_wrap_asks_a_question(self):
+        for page in self.PAGES + ("template/System/skills/threads/SKILL.md",):
+            text = (REPO / page).read_text(encoding="utf-8")
+            self.assertNotIn("Anything only in your head?", text, page)
+            self.assertNotRegex(text, r"(?i)\bwrap\b[^.]{0,40}\basks one line", page)
 
 
 class BackTest(unittest.TestCase):

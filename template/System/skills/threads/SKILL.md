@@ -439,15 +439,13 @@ thread per wrap: the one named, and nothing else.
 **How it runs.** Resolve X first ("hold this" or no name at all: the thread in
 focus, as under *No name given*). Then:
 
-- **Ask the one question, in the foreground, before anything starts**:
-   "Anything only in your head?" Enter, "no", "skip" or silence skips it. Take
-   the answer as said and never ask a follow-up. What the user already said
-   ("hold this, I was leaning towards the lower tier") is the answer, and is not
-   asked again. The answer goes into *Keep in mind*; a skipped question leaves
-   *Keep in mind* as the session knows it, or `nothing`. When the wrap is part of
-   closing the day, or for the band's *Close*, which waits for the note before
-   it ends the session, do not ask and do not run in the background: the wrap
-   runs in the foreground, each thread in turn.
+- **Ask nothing.** The wrap starts at once, with no question first. What the
+   user said with the request ("hold this, I was leaning towards the lower
+   tier") goes into *Keep in mind* as said; with nothing said, *Keep in mind*
+   is written from the session, or `nothing`. When the wrap is part of closing
+   the day, or for the band's *Close*, which waits for the note before it ends
+   the session, do not run in the background: the wrap runs in the foreground,
+   each thread in turn.
 - **Take the lock**, unless the request says the band has taken it already,
    so a second wrap of this thread cannot start while one is running, and so
    the band can show it:
@@ -467,7 +465,7 @@ focus, as under *No name given*). Then:
    the steps need, since it has not seen it: the thread note's path, what this
    session did and decided, the files it touched, the actions to file and the
    lines to tick, any deliverable that left the workspace and who edits it
-   next, and the answer to the question word for word. The brief carries the
+   next, and what the user said with the request, word for word. The brief carries the
    walls too, since a cold run knows none: the project's zone and whether
    it is walled (the Walled column of the Zones table in
    `System/context.md`), and any material in this session that a wall held
@@ -544,7 +542,7 @@ focus, as under *No name given*). Then:
    **Keep in mind** holds what no file can tell a cold resume: the decision
    half made and which way you were leaning and why, a doubt about a figure,
    a thing noticed and not yet acted on. Write it from what was said in this
-   session and from the answer to the question, not from the files; `nothing`
+   session and from what the user said with the request, not from the files; `nothing`
    is a valid answer, and the usual one for a thread that is simply waiting.
    A block written before this row existed is still whole; the row is added at
    its next wrap.

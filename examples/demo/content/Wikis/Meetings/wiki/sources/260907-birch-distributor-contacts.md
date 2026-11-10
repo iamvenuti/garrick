@@ -2,7 +2,7 @@
 title: Birch distributor contacts
 type: meeting
 date: 2026-09-07
-zone: Work
+zone: Birch
 parties: [birch]
 people: ["[[wiki/people/iris-bell]]"]
 raw: "[[raw/260907-birch-distributor-contacts]]"

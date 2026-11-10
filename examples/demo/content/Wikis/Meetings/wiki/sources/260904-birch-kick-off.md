@@ -2,7 +2,7 @@
 title: Birch Nordic entry kick-off
 type: meeting
 date: 2026-09-04
-zone: Work
+zone: Birch
 parties: [birch]
 people: ["[[wiki/people/theo-marsh]]", "[[wiki/people/iris-bell]]"]
 raw: "[[raw/260904-birch-kick-off]]"

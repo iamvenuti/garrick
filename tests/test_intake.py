@@ -454,6 +454,30 @@ class TestFileConversation(MailCase):
         self.assertIn("already filed as " + slug, str(caught.exception))
         self.assertTrue(again.exists())
 
+    def apart(self):
+        """Birch & Co in a zone of its own, walled from Work."""
+        from fixtures import CONTEXT
+        write(self.root / "System" / "context.md", CONTEXT.replace("| Work | `birch` |", "| Personal | `birch` |"))
+
+    def test_a_mail_from_another_walled_zones_domain_is_a_question_not_a_filing(self):
+        self.apart()
+        path = self.drop("offer.eml", eml(sender="Theo Marsh <theo@birchco.example>", plain="A word for Dana.\n"))
+        for given in ([], ["acme"]):                     # whatever party the caller names, the addresses are read
+            with self.assertRaises(intake.Confirm) as caught:
+                intake.file_conversation(self.root, path, given, today="2026-09-29")
+            self.assertIn("walled zone Personal", str(caught.exception))
+            self.assertTrue(path.exists())                # nothing was filed
+        self.assertEqual([], list((self.meetings / "wiki" / "sources").glob("260928-*")))
+        slug, _, page = intake.file_conversation(self.root, path, ["acme"], today="2026-09-29", confirmed=True)
+        self.assertEqual("Work", lib.parse_frontmatter(page)["zone"])        # the user's answer: it is filed in Work
+
+    def test_a_mail_whose_addresses_settle_nothing_asks_when_no_party_is_given(self):
+        path = self.drop("note.eml", eml(sender="Pat <pat@webmail.example>", plain="Hello.\n"))
+        with self.assertRaises(intake.Confirm):
+            intake.file_conversation(self.root, path, [], today="2026-09-29")
+        self.assertTrue(path.exists())
+        intake.file_conversation(self.root, path, [], today="2026-09-29", confirmed=True)
+
     def test_moves_the_raw_and_writes_the_page(self):
         data = eml(subject="Re: Fwd: Pallet forecast", plain="Figures inside.\n",
                    attachment=("forecast.csv", b"q,p\n"), cc="Owen Pike <owen.pike@acmecorp.example>")
@@ -486,7 +510,7 @@ class TestFileConversation(MailCase):
 
     def test_refusals(self):
         path = self.drop("forecast.eml", eml(plain="x\n"))
-        intake.file_conversation(self.root, self.drop("none.eml", eml(plain="y\n")), [])      # parties are an index: none is no refusal, the zone is the inbox's
+        intake.file_conversation(self.root, self.drop("none.eml", eml(plain="y\n")), [], confirmed=True)      # parties are an index: none is no refusal, the zone is the inbox's
         with self.assertRaises(intake.Refusal):
             intake.file_conversation(self.root, path, ["cedar"])
         undated = self.drop("undated.eml", eml(date=None, plain="x\n"))

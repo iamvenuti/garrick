@@ -2,7 +2,7 @@
 title: Birch carrier requirements
 type: meeting
 date: 2026-09-18
-zone: Work
+zone: Birch
 parties: [birch]
 people: ["[[wiki/people/arno-vale]]", "[[wiki/people/iris-bell]]"]
 raw: "[[raw/260918-birch-carrier-requirements]]"

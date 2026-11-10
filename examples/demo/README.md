@@ -4,10 +4,10 @@ A made-up advisor's workspace, about four weeks into real use. The 54-second wal
 
 ## The world
 
-Sam Rivera is an independent advisor with two zones, Work and Personal.
+Sam Rivera is an independent advisor with three zones, Work, Birch and Personal. Each is walled: what is in one stays in it. Acme sits in Work and Birch in a zone of its own, because the two compete.
 
 - **Acme Corp** (`acme`) hired Sam for a supply-chain review. Dana Whitlock sponsors it; Owen Pike runs logistics. Hana Croft runs the pump line, Gil Thorne is the financial controller and Felix Rook approves new suppliers. Project *Acme Review*, with threads *Supplier Map* and *Freight Terms*.
-- **Birch & Co** (`birch`) hired Sam for advice on entering the Nordics. Theo Marsh decides; Iris Bell runs the work, with Lena Moss in finance, Arno Vale in operations and Ruth Kemp in export sales. Project *Birch Entry*, with threads *Carrier Choice*, *Launch Plan*, and *Market Sizing*, which is finished. Birch competes with Acme, so a wall stands between `acme` and `birch`.
+- **Birch & Co** (`birch`) hired Sam for advice on entering the Nordics. Theo Marsh decides; Iris Bell runs the work, with Lena Moss in finance, Arno Vale in operations and Ruth Kemp in export sales. Project *Birch Entry*, in the Birch zone, with threads *Carrier Choice*, *Launch Plan*, and *Market Sizing*, which is finished. Birch competes with Acme, so a wall stands between `acme` and `birch`.
 - **Cobalt Freight** (`cobalt`) is a carrier that deals with both clients, separately. Marta Quill handles both accounts. Sam met her once for Acme (15 September as written, a contract renewal) and once for Birch (22 September, a new northern lane). That pair of calls is what the demo turns on.
 - **Lark & Sons** (`lark`) is Sam's builder: Ray Lark, and his son Ned, the electrician. Project *House* in Personal, with threads *Kitchen* and *Roof Repair*. **Pell Joinery** (`pell`) gave the other kitchen quote, and **Wrenfield Mutual** (`wrenfield`) insures the house.
 
@@ -15,7 +15,7 @@ The Meetings wiki holds twenty-one filed calls from the month: eight with Acme a
 
 ## The moment it exists for
 
-"Prep me for Cobalt", asked while a Birch thread is open, has to brief from the Birch-side call and leave the Acme-side call out entirely, saying only that a wall kept something back. No Birch file links, names or quotes the Acme call. `check.py` catches a Birch file that links a walled meeting page, names a walled party, person or alias, or copies eight words in a row from a finished meeting page or its transcript on the far side of the wall, and the Work zone's pre-commit hook refuses to commit it. Wording put another way gets past both. `tests/test_demo.py` checks that the link is caught, by the check and by the hook.
+"Prep me for Cobalt", asked while a Birch thread is open, has to brief from the Birch-side call and leave the Acme-side call out entirely, saying only that a wall kept something back. No file of the Birch zone links to, embeds or copies the Acme call. `check.py` catches a Birch file that links a Meetings page of the Work zone, or a file of it, or copies a file whole, and the Birch zone's pre-commit hook refuses to commit it. A name typed by hand is not caught. `tests/test_demo.py` checks that the link is caught, by the check and by the hook.
 
 ## Build it
 
@@ -33,7 +33,7 @@ When the build finishes, `python3 System/tools/check.py` inside the workspace re
 
 | Path | Holds |
 |---|---|
-| `config.json` | The installer's answers for Sam: zones, parties, the wall, people, aliases |
+| `config.json` | The installer's answers for Sam: zones, parties, people, aliases |
 | `content/` | The workspace's files as they stand at the end of the month (written as 26 September 2026), plus the transcript and the four mails waiting to be filed |
 | `build.py` | Installs, lays `content/` down in dated commits, and leaves the inbox files |
 | `video-script.md` | The shot list for the three-minute voice demo, and how to capture it |

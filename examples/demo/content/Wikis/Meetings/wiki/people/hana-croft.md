@@ -1,6 +1,7 @@
 ---
 title: Hana Croft
 type: person
+zone: Work
 party: acme
 created: 2026-09-08
 updated: 2026-09-08

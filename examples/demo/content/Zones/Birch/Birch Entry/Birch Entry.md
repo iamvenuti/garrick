@@ -1,7 +1,7 @@
 ---
 title: Birch Entry
 type: project
-zone: Work
+zone: Birch
 party: birch
 status: active
 created: 2026-09-04

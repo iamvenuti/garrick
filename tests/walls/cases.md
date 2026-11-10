@@ -13,9 +13,10 @@ that zone. Material of an open zone goes anywhere. A file's zone is its path,
 is read by every zone and takes only material with no zone. `System/` and the
 workspace root read every zone and hold no zone's content.
 
-The check refuses a crossing by reference only: a link, an embed or a path to a
+The check refuses a crossing by reference and by copy: a link, an embed or a path to a
 file of another walled zone, a link to a Meetings page of another walled zone or
-of none, and a file copied whole from another walled zone. No name is read.
+of none, a file copied whole from another walled zone, and a run of eight words
+shared with a file or Meetings page of another walled zone or of none. No name is read.
 
 A new rule comes with its cases, here, in the same commit.
 
@@ -83,7 +84,7 @@ In `scope`, `*` is a project not yet chosen. In `labels`, `-` is material with n
 
 ## Enforcement points
 
-A fixture workspace: `Work` and `Home` are walled zones, `Ventures` an open one. `Northwind` and `Harbour` are projects of Work, `Garden` of Home, `Orchard` of Ventures. Each zone has a Meetings page of its own, `zone:` its own. The result is what the check does with a staged note; `refused` is an error finding for it, `permitted` none.
+A fixture workspace: `Work` and `Home` are walled zones, `Ventures` an open one. `Northwind` and `Harbour` are projects of Work, `Garden` of Home, `Orchard` of Ventures. Each zone has a Meetings page of its own, `zone:` its own. The result is what the check does with a note; `refused` is an error finding for it, `permitted` none, `warned` a warning.
 
 | Id | Point | Item | Expect | Source |
 |---|---|---|---|---|
@@ -102,7 +103,7 @@ A fixture workspace: `Work` and `Home` are walled zones, `Ventures` an open one.
 | e13 | check | a Northwind note that links a raw record cited by a page of Home | refused | a record takes the zone of the page that claims it |
 | e14 | check | a Northwind note that links a raw record nobody cites | refused | no page, no zone |
 | e15 | check | a Northwind note that names a person of Home and its party, and links nothing | permitted | no name is read |
-| e16 | check | a Northwind note that repeats a paragraph of a Garden note | permitted | wording is not read, only whole files |
+| e16 | check | a Northwind note that repeats a sentence of a Garden note | refused | eight shared words held across a zone wall, a copy by wording |
 | e17 | check | a Northwind file that is a whole copy of a Garden file | refused | a copy made whole |
 | e18 | check | a Northwind file that is a whole copy of an Orchard file | permitted | an open zone's file may be copied |
 | e19 | check | a Northwind file that is a whole copy of a Northwind file in another project | permitted | the same zone |
@@ -114,6 +115,11 @@ A fixture workspace: `Work` and `Home` are walled zones, `Ventures` an open one.
 | e25 | check | a Northwind note that links a Garden note, with `party:` of Home on the hub | refused | a party key decides nothing |
 | e26 | check | a Northwind `.py` file that links a Garden note | refused | any staged file that reads as text is read, whatever its suffix |
 | e27 | check | a Northwind `.md` file that holds NUL bytes (UTF-16) | refused | a text file the walls cannot read is refused, not skipped |
+| e28 | check | a Northwind note that repeats a sentence of a Harbour note | permitted | wording held in the same zone |
+| e29 | check | a Northwind note that repeats a sentence of an Orchard note | permitted | wording held in an open zone |
+| e30 | check | a Northwind note that repeats a sentence of a Meetings page of Home | refused | wording held by a Meetings page of another walled zone |
+| e31 | check | a Northwind note that repeats a sentence of a Meetings page with no zone | refused | a page with no zone is walled |
+| e32 | check | a Knowledge page that repeats a sentence of a Meetings page | warned | Knowledge's own rule: wording in Knowledge is common to every zone |
 
 ## Meetings
 

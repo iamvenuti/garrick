@@ -21,7 +21,7 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 from fixtures import HAVE_GIT, commit_all, git, write  # noqa: E402
-from zone_fixture import build  # noqa: E402
+from zone_fixture import HOME_SAYS, UNZONED_SAYS, build  # noqa: E402
 
 import check  # noqa: E402
 import garrick_lib as lib  # noqa: E402
@@ -106,6 +106,11 @@ class Cases(unittest.TestCase):
             "e14": lambda: self.pricing("# N\n\nThe record is `Wikis/Meetings/raw/260319-orphan-call.txt`.\n"),
             "e15": lambda: self.pricing("# N\n\nAsk Jo Lane of Own affairs, and Pat.\n"),
             "e16": lambda: self.pricing("# N\n\nGarden plan: the beds go along the south wall, spaced a metre apart, with a path between.\n"),
+            "e28": lambda: self.pricing("# N\n\nHarbour plan: the quay works come first, then the sheds.\n"),
+            "e29": lambda: self.pricing("# N\n\nOrchard plan: the trees go in rows, one row for each variety.\n"),
+            "e30": lambda: self.pricing("# N\n\n%s\n" % HOME_SAYS),
+            "e31": lambda: self.pricing("# N\n\n%s\n" % UNZONED_SAYS),
+            "e32": lambda: self.knowledge_says(),
             "e17": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Home/Garden/Threads/Beds/Plan.md")),
             "e18": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Ventures/Orchard/Threads/Drafts/Plan.md")),
             "e19": lambda: self.staged("Northwind/Threads/Pricing/Copy.md", data=self.plan("Work/Harbour/Threads/Sizing/Plan.md")),
@@ -139,6 +144,13 @@ class Cases(unittest.TestCase):
         page = self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "copied.md"
         found = check.copy_findings(ws, [(page, self.plan("Home/Garden/Threads/Beds/Plan.md"))])
         return "refused" if found else "permitted"
+
+    def knowledge_says(self):
+        page = self.root / "Wikis" / "Knowledge" / "wiki" / "concepts" / "says.md"
+        write(page, "# Says\n\n%s\n" % HOME_SAYS)
+        self.addCleanup(lambda: page.exists() and page.unlink())
+        found = [f for f in check.run_checks(self.root) if f.path == page.relative_to(self.root).as_posix()]
+        return "warned" if any(f.severity == "warning" for f in found) else "permitted"
 
     def symlink(self):
         link = self.work / "Northwind" / "Linked"

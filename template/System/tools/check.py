@@ -45,6 +45,7 @@ import subprocess
 import sys
 import time
 import unicodedata
+from array import array
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
@@ -74,8 +75,14 @@ from garrick_lib import (  # noqa: E402
     CHECKPOINT_DAYS,
     CHECKPOINT_HEADING,
     CHECKPOINT_LABELS,
+    CHECKOUT_TREE,
+    CHECKPOINT_KINDS,
+    CHECKPOINT_ONE,
+    CHECKPOINT_SAID,
+    CHECKPOINT_UNCONFIRMED,
     CONTEXT_TABLES,
     INBOX,
+    parse_mail_bytes,
     UNZONED,
     may_flow,
     walled,
@@ -280,6 +287,7 @@ class Workspace:
     meeting_answers: set = field(default_factory=set)  # the raw answers among those (#224): raw/answers/, read as the question's parties
     meeting_decisions: set = field(default_factory=set)  # the decision pages among those (#224): wiki/decisions/, read as the question's parties
     wiki_files: List[Path] = field(default_factory=list)  # every .md under Wikis/
+    quote_index: Optional["QuoteIndex"] = None  # built on first use by the walls check
     meeting_links: Optional["PathIndex"] = None  # the meeting pages, indexed for links on first use
     index_files: Optional[set] = None  # staged mode: the files the commit holds (git's index), by real path; None reads the disk
     page_names: Optional["PageNames"] = None  # every page of the Meetings wiki, of every kind and grade, by name, on first use
@@ -4140,6 +4148,553 @@ LINK_ATTRS = {"href", "src", "srcset", "data", "xlink:href", "poster", "backgrou
 AUTOLINK_RE = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\s]*)>")
 
 
+# Quotes are found as shared runs of SHINGLE consecutive words, after lower-
+# casing and dropping punctuation. Eight words is long enough that ordinary
+# prose rarely repeats a run by chance, and short enough to catch a lifted
+# sentence or a quoted commitment. A run also needs MIN_CONTENT_WORDS words that
+# are not STOPWORDS, so stock phrases made of little words ("let me know if you
+# have any questions") never count, while numbers, names and terms do.
+SHINGLE = 8
+
+
+MIN_CONTENT_WORDS = 4
+
+
+STOPWORDS = frozenset("""
+a about after all also am an and any are as at be because been before being but by can could did do does
+doing don done for from get got had has have having he her here him his how i if in into is it its just
+know let like me more most my no not now of off on one only or our out over re s she so some such t than
+that the their them then there these they this those through to too up us very want was we well were what
+when where which while who why will with would yes yet you your ll ve d m okay ok right yeah think going
+go see say said really thing things thanks thank good
+""".split())
+
+
+# First names that are also everyday words are not matched on their own.
+COMMON_WORD_NAMES = frozenset("""
+will mark may june april august bill frank grace hope pat sue rich dawn faith joy rose summer
+chase hunter art max page ray bob sky april autumn
+""".split())
+
+
+VTT_TIMING_RE = re.compile(r"(?m)^\s*(?:WEBVTT.*|\d+|[\d:.]+\s*-->.*)\s*$")
+
+
+VTT_TAG_RE = re.compile(r"<[^>\n]*>")
+
+
+# What a browser never shows: comments, styles and scripts; then the tags,
+# with their names and attributes.
+HTML_HIDDEN_RE = re.compile(r"<!--.*?-->|<(script|style)\b[^>]*>.*?</\1\s*>", re.S | re.I)
+
+
+HTML_TAG_RE = re.compile(r"</?[A-Za-z!?][^>]*>")
+
+
+def html_text(text: str) -> str:
+    """An HTML page as a reader sees it: no comments, styles or scripts, no
+    tags or attributes, and entities read as the characters they stand for.
+    Two pages built from one slide template share their code, not wording."""
+    return html.unescape(HTML_TAG_RE.sub(" ", HTML_HIDDEN_RE.sub(" ", text)))
+
+
+def transcript_text(path: Path, text: str) -> str:
+    """A file as the words that were said or written: a transcript without
+    its timings and voice tags, so a sentence split across two cues still
+    reads as one run of words; a saved mail as its subject and text, decoded
+    from however the message was encoded; an HTML page as its visible text."""
+    if path.suffix.lower() in (".html", ".htm"):
+        text = html_text(text)
+    elif path.suffix.lower() == ".vtt":
+        text = VTT_TAG_RE.sub(" ", VTT_TIMING_RE.sub(" ", text))
+    elif path.suffix.lower() == ".eml":
+        try:
+            mail = parse_mail_bytes(text.encode("utf-8", errors="replace"), ".eml")
+            text = mail["subject"] + "\n" + mail["body"]
+        except Exception:  # an unreadable message still counts as its raw text
+            pass
+    return text
+
+
+def without_party_field(text: str) -> str:
+    """The file's text with its own frontmatter `party:` and `zone:` fields blanked out: structure, not prose (#465)."""
+    if not text.startswith("---"):
+        return text
+    lines = text.split("\n")
+    in_party = False
+    for i, line in enumerate(lines[1:], 1):
+        if line.rstrip("\r") in ("---", "..."):        # a `---` alone at the margin ends it, as for YAML
+            break
+        if re.match(r"(?:party|zone)\s*:", line):
+            lines[i], in_party = "", True
+        elif in_party and (line[:1].isspace() or line.startswith("-")):
+            lines[i] = ""
+        else:
+            in_party = False
+    return "\n".join(lines)
+
+
+# Dates are not content either. Two notes written on the same day share "24
+# September 2026" and the words around it by chance, so month and day names,
+# years and the days of a month do not count toward MIN_CONTENT_WORDS.
+CALENDAR = frozenset("""
+january february march april june july august september october november december
+jan feb mar apr jun jul aug sep sept oct nov dec
+monday tuesday wednesday thursday friday saturday sunday
+""".split())
+
+
+def is_content(token: str) -> bool:
+    if token in STOPWORDS or token in CALENDAR:
+        return False
+    return not (token.isdigit() and (len(token) <= 2 or (len(token) == 4 and token[:2] in ("19", "20"))))
+
+
+def word_id(token: str) -> int:
+    found = WORD_IDS.get(token)
+    if found is None:
+        found = WORD_IDS[token] = int.from_bytes(hashlib.blake2b(token.encode(), digest_size=8).digest(), "big") >> 4
+    return found
+
+
+def shingles(tokens: List[str]) -> Iterable[int]:
+    """A hash for each run of SHINGLE words that carries enough content words."""
+    content = [is_content(t) for t in tokens]
+    known = WORD_IDS.get
+    ids = [known(t) or word_id(t) for t in tokens]
+    for i in range(len(tokens) - SHINGLE + 1):
+        if sum(content[i:i + SHINGLE]) >= MIN_CONTENT_WORDS:
+            yield hash(tuple(ids[i:i + SHINGLE]))
+
+
+HEADING_RE = re.compile(r"(?m)^ {0,3}#{1,6}[ \t].*$")
+
+
+# The header row of a published ledger's table, as System/templates/published.md
+# ships it and drift.py reads it. Its words are the ledger's structure, as a
+# heading's are, and the separator row under it holds no words, so without a
+# break a run would cross from the header into the first row's date cell and
+# two walled ledgers dated alike would read as quoting each other (#221). Only
+# this exact header is a break: the header of any other table is not.
+LEDGER_HEADER_RE = re.compile(r"(?mi)^[ \t]*\|[ \t]*date[ \t]*\|[ \t]*file[ \t]*\|[ \t]*destination[ \t]*\|"
+                              r"[ \t]*recipients[ \t]*\|[ \t]*authoritative[ \t]*\|[ \t]*$")
+
+
+# Where no run of words crosses: a Markdown heading, or a ledger's header row.
+STRUCTURE_RE = re.compile(r"(?mi)%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:]))
+
+
+# What `scaffold.py checkpoint` writes around a person's items, exactly as
+# render_checkpoint() writes it: the opening marker, with its stamp, base and
+# key, the line under it, which carries the generated time and CHECKPOINT_SAID,
+# and the closing marker. No shared file holds that sentence, so two
+# checkpoints in walled projects read as quoting each other on it alone (#225).
+# These lines are not read at all, and an item is read as its own words, after
+# its kind and before its id. Only the exact shapes the tool writes, none with
+# room for a word of anyone's, and only inside a block that opens with the one
+# marker and closes with the other: a line shaped like them anywhere else, or
+# with anything more in it, is wording like any other.
+CHECKPOINT_STAMP = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:[+-]\d{2}:\d{2}(?::\d{2})?)?"
+
+
+CHECKPOINT_WRITTEN_OPEN_RE = re.compile(
+    r"(?m)^<!-- garrick-checkpoint at=%s base=(?:[0-9a-f]{12}|-) key=[0-9a-f]{12} -->[ \t]*$" % CHECKPOINT_STAMP)
+
+
+CHECKPOINT_WRITTEN_CLOSE_RE = re.compile(r"(?m)^<!-- /garrick-checkpoint -->[ \t]*$")
+
+
+# The months as said_time() says them, so this line can never disagree with it.
+_SAID_MONTHS = "|".join(said_time("2026-%02d-01T00:00:00" % month).split()[3] for month in range(1, 13))
+
+
+CHECKPOINT_WRITTEN_SAID_RE = re.compile(
+    r"^%s\d{2}:\d{2} on \d{1,2} (?:%s) \d{4}\.\*\* %s[ \t]*$"
+    % (re.escape(CHECKPOINT_UNCONFIRMED), _SAID_MONTHS, re.escape(CHECKPOINT_SAID)))
+
+
+# An item, with the id checkpoint_id() gives its kind: the stem alone for the
+# kinds a block holds one of, the stem and a number for the rest.
+CHECKPOINT_ITEM_RE = re.compile(
+    r"(?m)^- (?:%s)[ \t]*$" % "|".join(
+        r"\*\*%s\*\*(?P<item_%s>[^\n]*?)<!-- %s -->" % (re.escape(label), kind,
+                                                       re.escape(stem) if kind in CHECKPOINT_ONE
+                                                       else re.escape(stem) + r"[1-9][0-9]*")
+        for kind, label, stem in CHECKPOINT_KINDS))
+
+
+def checkpoint_spans(text: str) -> List[Tuple[int, int]]:
+    """Where each checkpoint block written by the tool sits in `text`: from
+    the first byte of its opening marker to the byte after its closing one.
+    An opening marker with no closing one after it, or another opening marker
+    before it, is no block."""
+    spans: List[Tuple[int, int]] = []
+    for head in CHECKPOINT_WRITTEN_OPEN_RE.finditer(text):
+        if spans and head.start() < spans[-1][1]:
+            continue
+        close = CHECKPOINT_WRITTEN_CLOSE_RE.search(text, head.end())
+        if close is None:
+            break
+        if CHECKPOINT_WRITTEN_OPEN_RE.search(text, head.end(), close.start()):
+            continue                  # the next opening marker is the block's, if any
+        spans.append((head.start(), close.end()))
+    return spans
+
+
+# A row of the table in a Resume here block, by the label the thread template
+# gives it. The labels are the template's structure, as a heading is, and the
+# cells under them are often short and common ("Nothing to rebuild", a Next
+# action that opens with the owner's name), so a run that took in one row's
+# cell and the next row's label read two walled thread notes as quoting each
+# other on wording no shared file holds (#262). Each such row is a break: its
+# label is not read, and its cell is read with whatever follows it up to the
+# next row's label, so a run is still found inside one cell or running on below it. Only these exact labels, and only between a
+# `### Resume here` heading and the rule that closes its block: any other
+# table, or a row below the rule, runs into the next line as it stands.
+RESUME_ROW_RE = re.compile(r"(?m)^[ \t]*\|[ \t]*(?:%s)[ \t]*\|(?P<cell>[^\n]*)$"
+                           % "|".join(re.escape(label) for label in RESUME_LABELS))
+
+
+# The rule under a Resume here block's table, where the block ends (see resume_block).
+RESUME_RULE_RE = re.compile(r"(?m)^[ \t]*---[ \t]*$")
+
+
+WEB_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.I)
+
+
+MDLINK_LABEL_RE = re.compile(r"\[([^\[\]\n]*)\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
+
+
+def without_link_targets(text: str, shared: Optional[Callable[[str], bool]] = None) -> str:
+    """`text` as a reader sees it: a wikilink reduced to its alias, a Markdown
+    link to its text, an address to nothing. Where a link points is not
+    wording; the link check reads it, and two notes that point at the same
+    page share no words by doing so. With `shared`, which says whether a
+    link's target is a shared file, a link to one loses its text too: it is
+    the title of a page every side reads, so two notes that list the same
+    Knowledge pages share no words by doing so either."""
+    def wikilink(m) -> str:
+        target, bar, alias = m.group(1).partition("|")
+        if not bar or (shared and shared(target.rstrip("\\").split("#", 1)[0].strip())):
+            return " "
+        return " %s " % alias
+
+    text = WIKILINK_RE.sub(wikilink, text)
+    if shared:
+        text = MDLINK_LABEL_RE.sub(lambda m: " " if shared(m.group(2)) else m.group(0), text)
+    return WEB_RE.sub(" ", MDLINK_RE.sub("] ", text))
+
+
+def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
+    """Every shingle of `text`, links reduced to the words a reader sees (see
+    without_link_targets), and no run crossing a Markdown heading: the
+    headings of a note are its template's structure ("State of play", "Resume
+    here"), and the words either side of one were not written as one sentence.
+    A published ledger's header row is a break in the same way (see
+    LEDGER_HEADER_RE); what its rows hold is read like any other text. So is
+    each row of a Resume here table (see RESUME_ROW_RE), read as its cell
+    alone. So is a checkpoint block the tool wrote (see
+    CHECKPOINT_WRITTEN_OPEN_RE): its markers and the line under the opening
+    one are never read, each of its items is read without its kind and its
+    id, and any other line in it is read as it stands."""
+    text = without_link_targets(text, shared)
+    out: set = set()
+    last = 0
+    for start, end in checkpoint_spans(text):
+        out.update(_runs_between_breaks(text[last:start]))
+        out.update(_checkpoint_runs(text[start:end]))
+        last = end
+    out.update(_runs_between_breaks(text[last:]))
+    return out
+
+
+def _runs_between_breaks(text: str, resume_rows: bool = True) -> set:
+    """The shingles of `text`, none crossing a heading or a ledger's header,
+    nor, with `resume_rows`, a row of the table under a Resume here heading."""
+    out: set = set()
+    last = 0
+    under_resume = False
+    for m in STRUCTURE_RE.finditer(text):
+        out.update(_resume_runs(text[last:m.start()]) if under_resume else shingles(words(text[last:m.start()])))
+        out.update(shingles(words(m.group(0))))
+        last = m.end()
+        under_resume = resume_rows and RESUME_HEAD_RE.match(m.group(0)) is not None
+    out.update(_resume_runs(text[last:]) if under_resume else shingles(words(text[last:])))
+    return out
+
+
+def _resume_runs(text: str) -> set:
+    """The shingles of what stands under a `### Resume here` heading, up to
+    the next break: no run crosses into a row of its table above the rule
+    that closes the block, and no label is read. A cell runs on into what
+    follows it, up to the next row's label, so a line that goes on below a
+    cell, or the text under the table, is read with the cell it continues."""
+    rule = RESUME_RULE_RE.search(text)
+    stop = rule.start() if rule else len(text)
+    out: set = set()
+    last = 0
+    for m in RESUME_ROW_RE.finditer(text, 0, stop):
+        out.update(shingles(words(text[last:m.start()])))
+        last = m.start("cell")
+    out.update(shingles(words(text[last:])))
+    return out
+
+
+def _checkpoint_runs(block: str) -> set:
+    """The shingles of one checkpoint block, from its opening marker to its
+    closing one. The two markers and the line straight under the opening one
+    are not read; an item is read as its own words; anything else is read."""
+    lines = block.split("\n")
+    body = lines[1:-1]
+    if body and CHECKPOINT_WRITTEN_SAID_RE.match(body[0]):
+        body = body[1:]
+    text = "\n".join(body)
+    out: set = set()
+    last = 0
+    for m in CHECKPOINT_ITEM_RE.finditer(text):
+        out.update(_runs_between_breaks(text[last:m.start()], resume_rows=False))
+        out.update(shingles(words(next(g for g in m.groups() if g is not None))))
+        last = m.end()
+    out.update(_runs_between_breaks(text[last:], resume_rows=False))
+    return out
+
+
+@dataclass
+class QuoteIndex:
+    """Where each run of words was said or written, and which runs are common.
+
+    `owners` maps a shingle to what holds it: meeting pages, finished or not,
+    whose page or raw record has it, and the text files of every project.
+    `tags` gives each project file the party tags it is written for, and
+    `project` its project. `common` holds the shingles that also appear in one
+    of the shared files (SHARED_FILES, SHARED_FOLDERS), which every side reads,
+    so repeating one is never evidence of a leak; `common_beyond_knowledge`
+    the ones found in a shared file outside the Knowledge wiki."""
+    owners: Dict[int, set]
+    common: set
+    common_beyond_knowledge: set = field(default_factory=set)
+    tags: Dict[Path, frozenset] = field(default_factory=dict)
+    project: Dict[Path, Path] = field(default_factory=dict)
+
+
+# The files every side reads, whose wording is common rather than a leak: the
+# instruction files, the rules and the context, the skills, templates and
+# tools, and the Knowledge wiki, which holds published material. A list, not
+# "System/ and whatever is in it": an interview record, a page a tool rebuilds
+# into System/generated/ or a note dropped into System/ can carry what one
+# party said, and would then exempt whatever it repeats from the wall check.
+# The local file beside an instruction file is read with it, by every side.
+# The changelog and the docs are there for the same reason: they are Garrick's
+# published release notes and documentation, so a note that describes a
+# Garrick feature tends to borrow their wording, on whichever side of a wall
+# it sits.
+SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md",
+                "AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md", "System/rules.local.md",
+                "System/garrick-changelog.md")
+
+
+SHARED_FOLDERS = ("System/skills", "System/templates", "System/templates.local", "System/tools", "System/garrick-docs",
+                  "Wikis/Knowledge")
+
+
+# A Garrick checkout kept inside the workspace is where those files come from.
+# The repository in the project about it, or a release unpacked to read, holds
+# the shipped original of every file above, under `template/`, with the
+# changelog at its top; the installer copies them into the positions
+# SHARED_FILES and SHARED_FOLDERS name. So a checkout's copies are shared
+# where they sit: shipped wording is wording every side reads whether or not
+# this workspace has installed it yet. Otherwise a checkout cannot commit a
+# new template, or a line added to the rules, whose words the workspace's own
+# notes already use, which is the whole purpose of shipping it.
+#
+# Only what it ships. A checkout's documentation, examples and tests are
+# ordinary files of the project that keeps it, and the commit hook reads them
+# as such: that is what keeps real material out of a repository on its way to
+# being public. That holds for its docs/ too, though the installer ships them
+# as System/garrick-docs: a page being written is where real material would
+# leave for the public repository, so it counts as shared only once installed.
+# How a checkout is recognised (is_checkout, CHECKOUT_TREE) comes from garrick_lib.
+CHECKOUT_APART = {"System/garrick-changelog.md": "CHANGELOG.md"}  # shipped from the top, not the tree
+
+
+def shared_files(ws: Workspace) -> List[Path]:
+    """Every shared file that exists: SHARED_FILES, and all under
+    SHARED_FOLDERS, in the workspace and in each Garrick checkout it keeps,
+    where the checkout holds them before an install moves them."""
+    out = [ws.root / name for name in SHARED_FILES]
+    for name in SHARED_FOLDERS:
+        folder = ws.root / name
+        if folder.is_dir():
+            out += list(walk_files(folder))
+    for checkout in checkouts(ws):
+        tree = checkout / CHECKOUT_TREE
+        out += [tree / name for name in SHARED_FILES]
+        out += [checkout / shipped for shipped in CHECKOUT_APART.values()]
+        for name in SHARED_FOLDERS:
+            folder = tree / name
+            if folder.is_dir():
+                out += list(walk_files(folder))
+    return [p for p in out if p.is_file()]
+
+
+def shared_link(ws: Workspace, source: Path) -> Callable[[str], bool]:
+    """For a file at `source`: does a link it holds lead to a shared file?"""
+    if ws.shared_links is None:
+        ws.shared_links = PathIndex(ws, shared_files(ws))
+    index = ws.shared_links
+
+    def test(target: str) -> bool:
+        if target.startswith("obsidian://"):
+            return any(resolve(ws, source, t, index) for _, t in extract_links(target))
+        target = unquote(target).split("#", 1)[0]
+        if not target or re.match(r"^[a-z][a-z0-9+.-]*:", target):
+            return False  # an address, not a file here
+        return bool(resolve(ws, source, target, index))
+    return test
+
+
+def wording(ws: Workspace, path: Path, text: str, body: bool) -> set:
+    """The runs of words of `text`, the text of the file at `path`: as a
+    transcript, a mail or a page reads (transcript_text), and with `body`
+    without its frontmatter."""
+    text = transcript_text(path, text)
+    return runs(body_of(text) if body else text, shared_link(ws, path))
+
+
+def file_runs(ws: Workspace, path: Path, body: bool) -> Iterable[int]:
+    """wording() of the file at `path` as it is on disk. In staged mode it
+    comes from the cache while the file is unchanged, and while every link it
+    holds still leads to a shared file, or not, as it did: a page added to the
+    Knowledge wiki can change which of its words a reader sees."""
+    if ws.cache is None:
+        return wording(ws, path, read_text(path) or "", body)
+    link = shared_link(ws, path)
+
+    def make() -> tuple:
+        asked: Dict[str, bool] = {}
+
+        def ask(target: str) -> bool:
+            asked[target] = link(target)
+            return asked[target]
+
+        text = transcript_text(path, read_text(path) or "")
+        found = runs(body_of(text) if body else text, ask)
+        return array("q", sorted(found)).tobytes(), sorted(asked.items())
+
+    held, _ = ws.cache.get("body" if body else "text", path, make,
+                           lambda v: all(link(target) == answer for target, answer in v[1]))
+    found = array("q")
+    found.frombytes(held)
+    return found
+
+
+def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
+    """The QuoteIndex of the whole workspace. With `wanted`, the runs of words
+    the files being committed hold, the index of those runs alone: the commit
+    check asks after no other, so a file that holds none of them is passed
+    over once its runs are known, and the cache knows them (see NoteCache)."""
+    if ws.quote_index is not None:
+        return ws.quote_index
+    if wanted is not None and not wanted:
+        ws.quote_index = QuoteIndex({}, set())  # nothing to ask after
+        return ws.quote_index
+    owners: Dict[int, set] = {}
+
+    def add(found: List[Iterable[int]], owner: Path) -> bool:
+        """Say that `owner` holds the runs `found`; whether it holds one."""
+        held = False
+        for hs in found:
+            for h in (hs if wanted is None else wanted.intersection(hs)):
+                owners.setdefault(h, set()).add(owner)
+                held = True
+        return held
+
+    # In staged mode a file can hold one text on disk and another in git (see
+    # git_view): both count as where its wording was said or written.
+    view = ws.git_view
+
+    def texts(path: Path, body: bool) -> List[Iterable[int]]:
+        out = [file_runs(ws, path, body)] if path.exists() else []
+        if path in view:
+            out.append(wording(ws, path, view[path], body))
+        return out
+
+    # Every meeting page and its raw record, finished or not: nothing on an
+    # unfinished page may be used anywhere until it has its zone.
+    for page, fm in ws.meetings.items():
+        add(texts(page, True), page)
+        for r in meeting_raws(ws, page, fm):
+            add(texts(r, False), page)
+    # Every project's own text files, under the zone each is in: a client's brief or data file, and the notes made
+    # from them, are that zone's material as much as its meetings are. Template folders are not.
+    tags: Dict[Path, frozenset] = {}
+    projects: Dict[Path, Path] = {}
+    for project, pfm in ws.projects:
+        files = list(walk_files(project, unchecked(ws)))
+        files += sorted(p for p in view if project in p.parents and not p.exists())  # deleted, but still in git
+        for path in files:
+            if path.suffix.lower() not in TEXT_SUFFIXES or is_template_path(ws, path):
+                continue
+            if not add(texts(path, True), path):
+                continue  # holds no run: nobody asks what it is written for
+            tags[path] = frozenset({zone_of(ws.root, path)} - {None})
+            projects[path] = project
+    common: set = set()
+    beyond: set = set()
+    # Wording also found in a shared file is common wording, not a leak. No
+    # other file counts, however widely it is read: see SHARED_FILES. A shared
+    # file whose working copy differs from git counts only for the wording both
+    # versions hold, so an edit left unstaged cannot make a quotation common.
+    knowledge = ws.root / "Wikis" / "Knowledge"
+    mine = ws.root.joinpath(*TEMPLATES_LOCAL)
+    local = lambda p: mine in p.parents  # noqa: E731
+    for path in shared_files(ws):
+        if path.suffix.lower() in TEXT_SUFFIXES or path.suffix.lower() == ".eml":
+            found = {h for h in file_runs(ws, path, False) if h in owners}
+            if path in view:
+                found &= wording(ws, path, view[path], False)
+            if local(path):     # your own templates: wording a meeting holds is not common (#470)
+                found = {h for h in found if not any(o in ws.meetings for o in owners[h])}
+            common |= found
+            if knowledge not in path.parents:
+                beyond |= found
+    # Wording also found in a template Garrick ships (System/templates/: the zone, project and thread templates) is
+    # common wording: a hub made from one template shares its text, and the template is nobody's confidence (#465).
+    templates = ws.root.joinpath(*TEMPLATES)
+    if templates.is_dir():
+        for path in walk_files(templates):
+            if path.suffix.lower() in TEXT_SUFFIXES:
+                common |= {h for h in file_runs(ws, path, False) if h in owners}
+    ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
+    if ws.cache is not None:
+        ws.cache.whole = True
+    return ws.quote_index
+
+
+def meeting_wording(ws: Workspace, text: str, exempt: set, source: Path) -> List[Path]:
+    """The finished meeting pages whose page or raw record shares a run of
+    SHINGLE words with `text`, the text of the file at `source`, leaving out
+    the runs in `exempt`."""
+    index = quote_index(ws)
+    found = set()
+    for h in runs(text, shared_link(ws, source)):
+        if h in exempt:
+            continue
+        found.update(o for o in index.owners.get(h, ()) if o in ws.meetings and finished(ws.meetings[o]))
+    return sorted(found)
+
+
+def fold_format(text: str) -> str:
+    """`text` with Unicode format characters (zero-width spaces and joiners, bidi marks, soft hyphens) taken out
+    and every kind of space made a plain one, so a name cut by one still reads as the name. Initials stay a limit."""
+    return "".join(" " if unicodedata.category(c) == "Zs" else c for c in text if unicodedata.category(c) != "Cf")
+
+
+def padded_words(text: str) -> str:
+    """`text` as its words, with a space either side, for names_hit."""
+    return " %s " % " ".join(words(text))
+
+
 class PageNames:
     """Every page and record of the Meetings wiki that is not a meeting page, by what to call it (`kinds`), and the
     zone each page and record is in (`zone`), read when a reference resolves to it."""
@@ -4280,7 +4835,88 @@ def zone_findings_for_file(ws: Workspace, path: Path, text: str) -> List[Finding
                                    "%s %s, a %s of %s; that zone is walled and this file is in %s"
                                    % (verb, written, noun, zone_name(there), zone_name(dest)),
                                    "A note in %s uses a %s of %s" % (zone_name(dest), noun, zone_name(there))))
+    return out + (wording_findings(ws, path, text, dest) if not ws.quick else [])
+
+
+def wording_findings(ws: Workspace, path: Path, text: str, dest: str) -> List[Finding]:
+    """Wording a file of a project shares with a page of the Meetings wiki of another walled zone, or of none, or
+    with a file of another walled zone's project: a run of SHINGLE words held across the wall, a copy by wording.
+    Wording also held on the near side (a page or file of the file's own zone, or of an open zone), in a question, in
+    this project's own notes, or in one of the shared files every zone reads, is not evidence."""
+    r = rel(ws, path)
+    index = quote_index(ws)
+    project = project_of(ws, path)[0]
+    out: List[Finding] = []
+    sent = _in_sources(project, path)
+    lifted: Dict[Path, int] = {}
+    copied: Dict[Path, set] = {}
+    crossed_by_file: Dict[Path, bool] = {}
+
+    def crossed(o: Path) -> bool:
+        got = crossed_by_file.get(o)
+        if got is None:
+            got = crossed_by_file[o] = any(not may_flow(ws.context, z, dest) for z in index.tags.get(o, ()))
+        return got
+
+    for h in runs(transcript_text(path, text), shared_link(ws, path)):
+        owners = index.owners.get(h)
+        if not owners or h in index.common:
+            continue
+        pages, files = [], []
+        clear = False
+        for o in owners:
+            if o == path:
+                continue
+            mfm = ws.meetings.get(o)
+            if mfm is not None:
+                if not may_flow(ws.context, zone_from_frontmatter(ws.root, mfm), dest):
+                    pages.append(o)
+                elif o in ws.meeting_questions:
+                    continue  # a question restates a record, and is not one: it can show a leak, never vouch for one
+                else:
+                    clear = True
+                    break
+            elif sent or (index.project.get(o) == project and not _in_sources(project, o) and not crossed(o)):
+                continue  # this project's own note: a leak copied twice must not vouch for itself
+            elif crossed(o):
+                files.append(o)
+            else:
+                clear = True
+                break
+        if clear:
+            continue
+        for o in pages:
+            lifted[o] = lifted.get(o, 0) + 1
+        if not pages:
+            for o in files:
+                copied.setdefault(index.project[o], set()).add(o)
+    for page in sorted(lifted):
+        there = zone_from_frontmatter(ws.root, ws.meetings[page])
+        noun = meeting_noun(ws, page)
+        if there == UNZONED:
+            out.append(Finding(ERROR, "walls", r, "repeats wording from %s %s, a %s that names no zone, so nothing says whose it is; "
+                               "give it a `zone:`" % (noun, page.stem, noun), "A note in %s quotes a %s with no zone" % (zone_name(dest), noun)))
+        else:
+            out.append(Finding(ERROR, "walls", r, "repeats wording from %s %s, a %s of %s; that zone is walled and this file is in %s"
+                               % (noun, page.stem, noun, zone_name(there), zone_name(dest)),
+                               "A note in %s quotes a %s of %s" % (zone_name(dest), noun, zone_name(there))))
+    for other in sorted(copied):
+        sources = sorted(copied[other])
+        there = zone_of(ws.root, sources[0])
+        more = " and %d more of its files" % (len(sources) - 1) if len(sources) > 1 else ""
+        out.append(Finding(ERROR, "walls", r,
+                           "repeats wording from %s%s, in project %s of %s; that zone is walled and this file is in %s"
+                           % (rel(ws, sources[0]), more, other.name, zone_name(there), zone_name(dest)),
+                           "A note in %s quotes a file of %s" % (zone_name(dest), zone_name(there))))
     return out
+
+
+def _in_sources(project: Path, path: Path) -> bool:
+    try:
+        parts = path.relative_to(project).parts
+    except ValueError:
+        return False
+    return len(parts) >= 2 and parts[0] == "Sources" and not parts[-1].startswith(".")
 
 
 COPY_MIN = 32   # below this many bytes, identical content proves nothing
@@ -4430,6 +5066,9 @@ def check_walls_staged(ws: Workspace, repo: Path) -> List[Finding]:
     out.extend(form_findings(ws, [(path, text) for path, text in staged_texts]))
     # Any staged file that reads as text is read for the walls, whatever its suffix.
     extra = [(canonical_path(ws, p), t) for p, t in staged_other_texts(repo)]
+    if not ws.quick:       # the wording check asks only after the runs of words these files hold
+        quote_index(ws, set().union(*(wording(ws, path, text, False) for path, text in staged_texts + extra
+                                      if zone_of(ws.root, path) is not None and project_of(ws, path) is not None)))
     for path, text in staged_texts + extra:
         out.extend(zone_findings_for_file(ws, path, text))
     raw = _staged_raw(repo)
@@ -5164,6 +5803,7 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
         return out
     kfiles = PathIndex(ws, walk_files(kroot))
     mfiles = PathIndex(ws, (p for p in ws.wiki_files if mroot in p.parents), lambda p: grade_places(ws, p))
+    beyond = None
     raws = [kroot / home for home in RAW_HOMES]
     schema, problems = knowledge_schema(ws.root)
     for problem in problems:
@@ -5229,6 +5869,20 @@ def check_knowledge(ws: Workspace) -> List[Finding]:
                     out.append(Finding(ERROR, "knowledge", rel(ws, path),
                                        "links %s, a Meetings page; Knowledge must not carry anyone's confidence" % written,
                                        "A Knowledge page links into Meetings"))
+        if ws.quick:
+            continue
+        if beyond is None:
+            beyond = quote_index(ws).common_beyond_knowledge
+        heard = meeting_wording(ws, body_of(transcript_text(path, text)), beyond, path)
+        if heard:
+            more = " and %d more" % (len(heard) - 1) if len(heard) > 1 else ""
+            noun = meeting_noun(ws, heard[0])
+            out.append(Finding(WARNING, "knowledge", rel(ws, path),
+                               "shares eight or more words in a row with %s %s%s; wording in Knowledge is common to "
+                               "every side, so a conversation copied here crosses every wall. If the %s quoted "
+                               "this published text, nothing needs changing" % (noun, heard[0].stem, more, noun),
+                               "A Knowledge page repeats a Meetings question" if noun == "question"
+                               else "A Knowledge page repeats a meeting"))
     return out
 
 

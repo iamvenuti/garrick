@@ -52,6 +52,8 @@ Jo Example. Independent advisor.
 | dana whitlaw | Dana Whitlock |
 """
 
+HOME_SAYS = "The cedar fence replacement is scheduled for the second week of March after the frost breaks."
+UNZONED_SAYS = "The northern depot lease transfer requires board approval before the end of the quarter."
 PLAN = "Garden plan: the beds go along the south wall, spaced a metre apart, with a path between.\n"
 
 
@@ -84,9 +86,9 @@ def build(root: Path) -> Path:
     write(meetings / "wiki" / "index.md", "# Index\n")
     sources = meetings / "wiki" / "sources"
     write(sources / "260310-work-call.md", meeting_page("Work", "[acme]", "Work call").replace("people:", cite("260310-work-call")))
-    write(sources / "260311-home-call.md", meeting_page("Home", "[jo]", "Home call").replace("people:", cite("260311-home-call")))
+    write(sources / "260311-home-call.md", meeting_page("Home", "[jo]", "Home call").replace("people:", cite("260311-home-call")).replace("Decisions.", HOME_SAYS))
     write(sources / "260312-ventures-call.md", meeting_page("Ventures", "[cedar]", "Ventures call"))
-    write(sources / "260313-unzoned-call.md", meeting_page(None, "[acme]", "Unzoned call"))
+    write(sources / "260313-unzoned-call.md", meeting_page(None, "[acme]", "Unzoned call").replace("Decisions.", UNZONED_SAYS))
     write(sources / "260314-two-zones-call.md", meeting_page("[Work, Home]", "[acme]", "Two zones call"))
     write(sources / "260315-both-a.md", meeting_page("Work", "[acme]", "Both A").replace("people:", cite("260315-both-call")))
     write(sources / "260315-both-b.md", meeting_page("Home", "[jo]", "Both B").replace("people:", cite("260315-both-call")))

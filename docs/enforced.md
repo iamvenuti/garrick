@@ -93,7 +93,7 @@ A refusal that is a false alarm can be let through for one finding of one file, 
 - `rule`: the kind of the finding, one of `link`, `name`, `wording`, `path` or `unlabelled`. A finding that cannot be read, or a file waiting in an inbox, is never allowed.
 - `date`: the day it was written. `by`: `terminal` (typed in a terminal); `page` is kept in the format for a later writer, and nothing writes it today.
 
-An entry covers a finding only when `path`, `id` and `blob` all match, so an allowance for one finding does not cover another in the same file. A ledger that is missing, unreadable or of another `version` holds no allowance, and every refusal stands as before. `allow_read` and `allow_add` in `System/tools/garrick_lib.py` read and write the file; `check.py` drops an allowed refusal (`drop_allowed`) and writes one (`allow_page`), and `page_action.py` has the verb `walls-unallow`, which only takes an entry away.
+An entry covers a finding only when `path`, `id` and `blob` all match, so an allowance for one finding does not cover another in the same file. The check reads the ledger as the workspace's own repository holds it at `HEAD`, once a run: a file written by hand or edited and not committed allows nothing, and a workspace with no repository has no allowances. A ledger that is missing, unreadable or of another `version` holds no allowance, and every refusal stands as before. `allow_read` and `allow_add` in `System/tools/garrick_lib.py` read and write the file; `check.py` drops an allowed refusal (`drop_allowed`) and writes one (`allow_page`), and `page_action.py` has the verb `walls-unallow`, which only takes an entry away.
 
 ## The wall check's known gaps
 

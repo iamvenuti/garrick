@@ -21,7 +21,7 @@ from fixtures import GIT_ENV, HAVE_GIT, git  # noqa: E402  (puts System/tools on
 import check  # noqa: E402
 import garrick_lib as gl  # noqa: E402
 from test_walls_deterministic import WallCase, _copy_tools, _real_repo, _run  # noqa: E402
-from fixtures import TOOLS, write  # noqa: E402
+from fixtures import GIT_ENV, TOOLS, write  # noqa: E402
 from test_page_action import pa  # noqa: E402
 
 BLOB = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
@@ -61,7 +61,8 @@ class TestLedger(unittest.TestCase):
         self.assertEqual(1, data["version"])
         self.assertEqual([entry], data["allowed"])
         self.assertEqual([entry], gl.allow_read(self.root))
-        self.assertIn((PATH, fid, BLOB), gl.allow_set(self.root))
+        self.assertEqual(frozenset(), gl.allow_set(self.root))     # not committed: not honoured
+        self.assertEqual([entry], gl.allow_read(self.root))
 
     def test_the_ledger_names_no_token(self):
         gl.allow_add(self.root, PATH, gl.allow_finding_id(PATH, "name", "Cedar Holdings"), BLOB, "name", "page")
@@ -139,6 +140,10 @@ class AllowCase(WallCase):
     def setUp(self):
         super().setUp()
         _copy_tools(self.root)
+        env = mock.patch.dict(os.environ, GIT_ENV)             # git needs an identity for the ledger's own commit
+        env.start()
+        self.addCleanup(env.stop)
+        git(self.root, "init", "-q")                           # the ledger is honoured from the root repository's HEAD
         self.zone = self.root / "Zones" / "Work"
         _real_repo(self.zone)
         self.rel = "Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md"
@@ -201,6 +206,26 @@ class TestAllowOnce(AllowCase):
         res = self.hook()
         self.assertEqual(1, res.returncode)
         self.assertIn("Commit refused", res.stderr)
+
+    def test_a_hand_written_ledger_allows_nothing(self):
+        self.stage(NAME_A)
+        fid = self.ids()["name"]
+        blob = git(self.zone, "ls-files", "-s", "--", "Birch Entry/Threads/Market Sizing/Notes.md").split()[1]
+        gl.allow_write(self.root, [{"path": self.rel, "id": fid, "blob": blob, "rule": "name", "date": "2026-11-10",
+                                    "by": "terminal"}])
+        self.assertEqual(1, len(gl.allow_read(self.root)))        # it reads, and nothing is committed
+        self.assertEqual(1, self.hook().returncode)
+        git(self.root, "add", "System/walls-allowed.json")
+        git(self.root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "ledger")
+        self.assertEqual(0, self.hook().returncode)               # committed, the same entry is honoured
+
+    def test_an_uncommitted_edit_of_the_ledger_allows_nothing_more(self):
+        self.stage(NAME_A + "\n")
+        self.assertEqual(0, self.allow(self.ids()["name"])[0])
+        self.assertEqual(0, self.hook().returncode)
+        gl.allow_write(self.root, [])                              # removed on disk only: the commit still holds it
+        self.assertEqual(0, self.hook().returncode)
+        git(self.root, "checkout", "--", "System/walls-allowed.json")
 
     def test_a_finding_not_in_the_ledger_still_refuses(self):
         self.stage(NAME_A)

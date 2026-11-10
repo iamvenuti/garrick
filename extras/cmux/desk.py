@@ -822,6 +822,18 @@ def cmd_close(desk: Desk, a) -> None:
         raise DeskError("left open, busy since the check or no longer readable: %s" % ", ".join(left))
 
 
+def cmd_focus(desk: Desk, a) -> None:
+    """Bring the tab running a session forward: the surface focus `open` makes for
+    a tab already there, then cmux itself in front of the app that asked."""
+    hits = [s for s in live_sessions() if s.get("session_id") == a.session and s.get("surface")]
+    if not hits:
+        raise DeskError("no live cmux tab runs that session")
+    s = hits[0]
+    cmux("rpc", "surface.focus", json.dumps({"surface_id": s["surface"]}), check=False)
+    bring_forward()
+    print("brought %s forward in %s" % (tab_label(s), s.get("workspace_name") or "?"))
+
+
 def cmd_workspace(desk: Desk, a) -> None:
     name = " ".join(a.name)
     if name in workspaces():
@@ -1021,6 +1033,10 @@ def parser() -> argparse.ArgumentParser:
     wr.add_argument("--folder", help="every tab at or below this folder")
     wr.add_argument("--yes", action="store_true")
     wr.set_defaults(fn=cmd_wrap)
+
+    fo = sub.add_parser("focus", help="bring the tab running a session forward")
+    fo.add_argument("--session", required=True, help="the session id")
+    fo.set_defaults(fn=cmd_focus)
 
     w = sub.add_parser("workspace", help="a new cmux workspace")
     w.add_argument("name", nargs="+")

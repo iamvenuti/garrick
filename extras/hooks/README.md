@@ -85,3 +85,22 @@ To run its tests, from the repository:
 ```sh
 python3 -m unittest discover -s tests -p test_zone_guard.py
 ```
+
+## The waiting hook
+
+`waiting_hook.py` is a second, separate hook, for Claude Code only. A permission prompt is not written to the transcript, so Garrick cannot tell from it that a session is stopped on one. The hook runs on `Notification`, `UserPromptSubmit`, `PreToolUse` and `PostToolUse`. On a `permission_prompt` or an `idle_prompt` notification it writes a small marker for the session, `~/.garrick-waiting/<session id>.json`, holding the kind, the tool's name where the prompt names one, and the time. Nothing else from the event is kept: the message can name a file, a command or a question. The next prompt or tool result removes the marker. The Overview's [Waiting on you now](../../docs/extras/status-page.md#waiting-on-you-now) card reads it; only a `permission_prompt` makes a session wait. The marker is outside every workspace and never committed. Without the hook, a session on a permission prompt shows as working, and a question it asks with `AskUserQuestion` still shows as waiting.
+
+Add it to the `hooks` block of `~/.claude/settings.json`, beside any others, for each event:
+
+```json
+{
+  "hooks": {
+    "Notification": [{ "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/waiting_hook.py", "timeout": 5 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/waiting_hook.py", "timeout": 5 }] }],
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/waiting_hook.py", "timeout": 5 }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "python3 /path/to/garrick/extras/hooks/waiting_hook.py", "timeout": 5 }] }]
+  }
+}
+```
+
+Its tests: `python3 -m unittest discover -s tests -p test_waiting_hook.py`.

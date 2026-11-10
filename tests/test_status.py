@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(23, html.count("</script>"))         # the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
+        self.assertEqual(24, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -967,12 +967,14 @@ class TestOpensOnTheWork(StatusCase):
         html = self.page()
         tab = overview(html)
         self.assertEqual(["threads", "todo", "inboxes", "graph"], card_order(tab))
-        self.assertIn('<div class="slot full" data-slot="top"><details class="card" id="threads" open>', tab)
+        self.assertIn('<div class="slot full" data-slot="top"><details class="card" id="waiting-now" open>', tab)   # #474: the sessions waiting on you first
+        self.assertLess(tab.index('id="waiting-now"'), tab.index('<details class="card" id="threads" open>'))
         self.assertIn('<div class="slot stack left" data-slot="left"><details class="card" id="todo"', tab)
         for gone in ("recent", "due", "thought", "waiting"):
             self.assertNotIn('id="%s"' % gone, html, gone)
-        for gone in ("Recent work", "Due and overdue", "Waiting on you", "<textarea"):
+        for gone in ("Recent work", "Due and overdue", "<textarea"):
             self.assertNotIn(gone, html, gone)
+        self.assertNotRegex(html, r"Waiting on you(?! now)")                        # the old card; #474's is Waiting on you now
         self.assertIn('<details class="card" id="graph">', tab)                    # folded shut: Explore opens it
         self.assertNotIn('class="top"', tab)                                       # the figures stay on Status
         machinery = html[html.index('id="tab-status"'):html.index("</section>", html.index('id="tab-status"'))]
@@ -3331,7 +3333,8 @@ class TestApp(unittest.TestCase):
         self.assertNotIn('Text("Something failed")', swift)
         self.assertIn('let troubleSaid = "Something on the Status tab failed"', swift)
         self.assertIn('.help(model.trouble ? troubleSaid : "Garrick")', swift)        # the panel's mark says it on hover
-        self.assertIn("statusItem?.button?.toolTip = said", swift)                    # and the menu bar's
+        self.assertIn("statusItem?.button?.toolTip = told", swift)                    # and the menu bar's, with the count of waiting sessions after it
+        self.assertIn('let told = said + (waits == 0 ? "" : ", \\(waits) waiting on you")', swift)
 
     def test_a_rebuild_drops_the_obsidian_flags_an_older_app_kept(self):
         """#318: make-app.sh stores the flags the app rebuilds the page with,

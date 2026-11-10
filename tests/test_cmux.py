@@ -595,6 +595,24 @@ class DeskVerbTest(CmuxCase):
     def close_calls(self):
         return [c["argv"] for c in self.calls() if c["argv"][0] == "close-surface"]
 
+    def focus_calls(self):
+        return [c["argv"] for c in self.calls() if c["argv"][:2] == ["rpc", "surface.focus"]]
+
+    def test_focus_brings_the_tab_running_a_session_forward(self):
+        self.state({"sessions": [self.session("a", self.pricing, claude_rows(), surface="surf-a"),
+                                 self.session("b", self.pricing, claude_rows(), surface="surf-b")]})
+        code, out, err = self.run_desk("focus", "--session", "b")
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual([["rpc", "surface.focus", json.dumps({"surface_id": "surf-b"})]], self.focus_calls())
+        self.assertIn("brought", out)
+
+    def test_focus_names_a_session_no_tab_runs_and_focuses_nothing(self):
+        self.state({"sessions": [self.session("a", self.pricing, claude_rows())]})
+        code, out, err = self.run_desk("focus", "--session", "nobody")
+        self.assertEqual(2, code)
+        self.assertIn("no live cmux tab runs that session", err)
+        self.assertEqual([], self.focus_calls())
+
     def test_close_forces_only_when_cmux_asks_for_confirmation(self):
         self.state({"close_needs_force": True, "top": tab_top("a-surface", [(ASSISTANT_PID, "2.1.318")]),
                     "sessions": [self.session("a", self.pricing, claude_rows(), pid=ASSISTANT_PID)]})

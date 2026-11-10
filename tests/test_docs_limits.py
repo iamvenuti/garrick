@@ -19,11 +19,8 @@ DOCS = REPO / "docs"
 THREE = re.compile(r"^> (Each zone is either .*)$", re.M)
 BANNED = ("Walls table", "between two parties", "both ways", "not transitive",
           "walled from", "no wall between", "walled party", "walled parties", "label set", "who sees what", "zone party")
-# Pages another branch of 0.63.0 rewrites with its code: the status page's guide and the skills that file and
-# sort. Empty once they have.
-SKIPPED = ("docs/extras/status-page.md", "template/System/tools/walls-cases.md",
-           "template/System/skills/intake/SKILL.md", "template/System/skills/meetings/SKILL.md",
-           "template/System/skills/nurture/SKILL.md", "template/System/skills/threads/SKILL.md")
+# Pages still to be rewritten by another branch of 0.63.0 (the status page's guide). Empty once they have.
+SKIPPED = ("docs/extras/status-page.md",)
 
 
 def section(page: str, heading: str) -> str:

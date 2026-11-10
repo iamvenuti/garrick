@@ -206,7 +206,7 @@ def normalise(raw):
         what = str(p.get("what", "")).strip()
         if name and name.casefold() == owner_name.casefold():
             # The party of the owner's own matters is named by what it holds: the owner's name is said in
-            # every note, and a walled party's name is refused wherever its scope is not named.
+            # every note, and a party is named by what it holds, never by the owner.
             name, what = OWN_PARTY, what or "Personal matters, no outside party"
         parties.append({
             "name": name,

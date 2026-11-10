@@ -35,6 +35,7 @@ def build(root: Path) -> Path:
     # two people of Acme who go by one word, and the person page of one of them
     text = text.replace("| Theo Marsh | `birch` | Managing partner |\n",
                         "| Theo Marsh | `birch` | Managing partner |\n| Kit | `acme` | Buyer |\n| Wren | `acme` | Planner |\n")
+    text = text.replace("| dana whitlaw | Dana Whitlock |\n", "| dana whitlaw | Dana Whitlock |\n| kitten | Kit |\n")
     context.write_text(text, encoding="utf-8")
     write(root / "Wikis" / "Meetings" / "wiki" / "people" / "kit.md",
           "---\ntitle: Kit\ntype: person\nparty: acme\n---\n\n# Kit\n")

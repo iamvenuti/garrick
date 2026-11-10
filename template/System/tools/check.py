@@ -5031,23 +5031,25 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
     # file whose working copy differs from git counts only for the wording both
     # versions hold, so an edit left unstaged cannot make a quotation common.
     knowledge = ws.root / "Wikis" / "Knowledge"
+    mine = ws.root.joinpath(*TEMPLATES_LOCAL)
+    local = lambda p: mine in p.parents  # noqa: E731
     for path in shared_files(ws):
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix.lower() == ".eml":
             found = {h for h in file_runs(ws, path, False) if h in owners}
             if path in view:
                 found &= wording(ws, path, view[path], False)
+            if local(path):     # your own templates: wording a meeting holds is not common (#470)
+                found = {h for h in found if not any(o in ws.meetings for o in owners[h])}
             common |= found
             if knowledge not in path.parents:
                 beyond |= found
     # Wording also found in a template Garrick ships (System/templates/: the zone, project and thread templates) is
     # common wording: a hub made from one template shares its text, and the template is nobody's confidence (#465).
-    # The user's own templates (System/templates.local/) are the same on purpose: text they put there is theirs to
-    # reuse, and templates_local_findings warns about a file there that names a party.
-    for templates in (ws.root.joinpath(*TEMPLATES), ws.root.joinpath(*TEMPLATES_LOCAL)):
-        if templates.is_dir():
-            for path in walk_files(templates):
-                if path.suffix.lower() in TEXT_SUFFIXES:
-                    common |= {h for h in file_runs(ws, path, False) if h in owners}
+    templates = ws.root.joinpath(*TEMPLATES)
+    if templates.is_dir():
+        for path in walk_files(templates):
+            if path.suffix.lower() in TEXT_SUFFIXES:
+                common |= {h for h in file_runs(ws, path, False) if h in owners}
     ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
     if ws.cache is not None:
         ws.cache.whole = True
@@ -5097,7 +5099,7 @@ def _in_near_side(form: str, near_side: set) -> bool:
 
 def soft_forms(ws: Workspace, walled_tags: set) -> Dict[str, Dict[str, str]]:
     """For each walled party, the name forms that are one word long and name a single person: {form: that person's
-    name}. A People row with one word in its name (`Kit`), and an alias that means such a row. A party's own name,
+    name}. A People row with one word in its name (`Kit`); an alias of it is a name like any other and refuses (#470). A party's own name,
     tag and domains, and the full name of a person, are never in it.
 
     Such a form is a first name with no surname to tell it from the next person's. On its own it is a reason to
@@ -5126,10 +5128,6 @@ def _soft_forms(ws: Workspace, walled_tags: set) -> Dict[str, Dict[str, str]]:
                 soft.setdefault(key, key)
             else:
                 hard.add(key)
-        for heard, meaning in ctx["aliases"].items():
-            alias, means = " ".join(words(heard)), " ".join(words(meaning))
-            if alias and means in soft and alias not in hard:
-                soft.setdefault(alias, soft[means])
         for key in hard:
             soft.pop(key, None)
         if soft:
@@ -5258,50 +5256,117 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
 # rules give for a wall, repeats words the check printed; they are not material. A refusal names the party and its
 # tag and nothing else, so a line in that shape is passed over when what it holds beyond them is no name of a party.
 WALL_SENTENCE_RE = re.compile(r'in these words: "([^"\n]+)"')
+RULES_SECTION = "## Zones and walls"
+
+
+def forbidden_forms(ws: Workspace) -> List[Tuple[bool, str]]:
+    """Every form that names a party, person, alias or domain of the tables, and every tag."""
+    tags = set(ws.context["parties"])
+    forms = [f for found in name_forms(ws, tags).values() for f in found]
+    forms += [(False, f) for found in soft_forms(ws, tags).values() for f in found]
+    forms += [(False, " ".join(words(t))) for t in tags if words(t)]
+    forms += [(False, " ".join(words(e.get("party") or ""))) for e in ws.context["parties"].values() if words(e.get("party") or "")]
+    return forms
 
 
 def wall_sentence(ws: Workspace) -> str:
-    """The sentence the rules give for a wall, read from the workspace's own System/rules.md (the one quoted after
-    "in these words:"); "" when it cannot be found, and then nothing is dropped."""
+    """The sentence the rules give for a wall: the one quoted after "in these words:" in the *Zones and walls*
+    section of the workspace's own System/rules.md. "" when it is not there, or when it names a party, a tag, a
+    person, an alias or a domain of the tables; then nothing is dropped."""
     text = read_text(ws.root / "System" / "rules.md") or ""
-    found = WALL_SENTENCE_RE.search(text)
-    return found.group(1) if found else ""
-# What the check's lines hold: the refusal the hook prints (`Commit refused: <path> <message>. <fix>`), a line of the
-# full report (`  error   <path>: <message>`), a finding's `message` or `ear` in the JSON, and the ear text itself.
-OWN_LINE_RE = re.compile(
-    r"^[\s>*\-`\"']*(?:Commit refused: .+|(?:error|warning)\s+\S.*: .+|\"?(?:message|ear)\"?\s*:\s*\".+|A note in .+)$", re.I)
-OWN_ANCHOR_RE = re.compile(
-    r"\bis walled and this (?:project|page) does not name it\b|\brepeats wording from\b"
-    r"|^[\s>*\-`\"']*A note in .+? (?:names|uses|quotes|is a symbolic link into|has) ", re.I | re.M)
+    start = text.find(RULES_SECTION)
+    if start < 0:
+        return ""
+    section = text[start + len(RULES_SECTION):]
+    end = re.search(r"(?m)^## ", section)
+    section = section[:end.start()] if end else section
+    found = WALL_SENTENCE_RE.search(section)
+    if not found:
+        return ""
+    sentence = found.group(1)
+    return "" if names_hit(fold_format(sentence), forbidden_forms(ws)) else sentence
+
+
+# What the check prints, exactly (#470). A line is the check's own only when it has one of these shapes whole: the
+# hook's refusal (`Commit refused: <path> <message>. <fix>`), a line of the full report (`error <path>: <message>`),
+# a finding's `message` or `ear` in the JSON, or the ear sentence, and what is named in it is a party by its name
+# or tag. Anything else on the line makes it an ordinary line.
+TAIL = r"(?P<t>\S+) is walled and this (?:project|page) does not name it"
+NOUN = r"(?:a|an) [a-z][a-z ]{1,28}?"
+MESSAGE_RES = (
+    re.compile(r"names (?P<p>.{1,120}?)(?: \(as \"[^\"]{1,60}\"\))?, or one of its people; " + TAIL + "$"),
+    re.compile(r"(?:links|embeds|uses|quotes|writes the path) (?P<w>.{1,240}?), " + NOUN + r" (?:with|of) (?P<p>[^;]{1,120}); " + TAIL + "$"),
+    re.compile(r"repeats wording from (?P<w>.{1,240}?), " + NOUN + r"(?: with| in project .{1,80}? for| for) (?P<p>[^;]{1,120}); " + TAIL + "$"),
+    re.compile(r"is a symbolic link into a project of (?P<p>[^;]{1,120}); " + TAIL + "$"),
+)
+EAR_RE = re.compile(r"A note in [^,;:]{1,120}? (?:names|uses " + NOUN + r" (?:with|of)|quotes " + NOUN + r" (?:with|of)) (?P<p>[^;,:.]{1,120})$")
+LINE_RES = (
+    re.compile(r"^Commit refused: (?P<path>.{1,300}?) (?P<m>(?:names|links|embeds|uses|quotes|writes the path|repeats wording from|is a symbolic link into) .*?)"
+               r"(?:\. (?P<fix>[A-Z].{0,160}commit again[^.]{0,80}\.?))?(?:  \[id [0-9a-f]{6,16}, [a-z]{3,20}\])?$"),
+    re.compile(r"^(?:error|warning) +(?P<path>.{1,300}?): (?P<m>(?:names|links|embeds|uses|quotes|writes the path|repeats wording from|is a symbolic link into) .*)$", re.I),
+    re.compile(r"^\"(?:message|ear)\": \"(?P<m>.{1,600}?)\",?$"),
+    re.compile(r"^(?P<m>(?:names|links|embeds|uses|quotes|writes the path|repeats wording from|is a symbolic link into) .*)$"),
+    re.compile(r"^(?P<m>A note in .*)$"),
+)
 
 
 def own_words_line(ws: Workspace, line: str) -> bool:
-    """Is `line` one the check prints, naming no one but a party by its name or tag? A line of that shape that also
-    holds a person of a party, a domain, an alias or a one-word name is not (fail closed): it is a note's own."""
-    if len(line) > 600 or not OWN_LINE_RE.match(line) or not OWN_ANCHOR_RE.search(line):
+    """Is `line` exactly a line the check prints, naming no one but a party by its name or tag? A line that is
+    anything else, or that also holds a person of a party, a domain, an alias or a one-word name, is a note's own."""
+    if len(line) > 900:
         return False
-    tags = set(ws.context["parties"])
+    stripped = line.strip().strip("`\"'*>- \t") if not line.lstrip().startswith('"') else line.strip().rstrip("`*")
+    stripped = re.sub(r"^[>*\-` \t]+", "", stripped)
+    parties = ws.context["parties"]
     named = set()
-    for tag in tags:
-        for text in (ws.context["parties"][tag].get("party") or "", tag):
+    for tag in parties:
+        for text in (parties[tag].get("party") or "", tag):
             key = " ".join(words(text))
             if key:
                 named.add(key)
+
+    def known(text: str) -> bool:
+        text = text.strip()
+        key = " ".join(words(text[1:-1] if text.startswith("<") and text.endswith(">") else text))
+        return key in named
+
+    ok = False
+    for rx in LINE_RES:
+        m = rx.match(stripped)
+        if not m:
+            continue
+        message = m.group("m")
+        fix = m.groupdict().get("fix")
+        if fix is not None and fix not in {TAKE_OUT} | {f for _, f in STAGED_FIXES}:
+            continue
+        if message.startswith("A note in "):
+            e = EAR_RE.match(message)
+            ok = bool(e) and known(e.group("p"))
+        else:
+            for mrx in MESSAGE_RES:
+                mm = mrx.match(message.rstrip("."))
+                if mm and mm.group("t") in parties and (mm.groupdict().get("p") is None or known(mm.group("p"))):
+                    ok = True
+                    break
+        if ok:
+            break
+    if not ok:
+        return False
     padded = padded_words(fold_format(line))
     for key in sorted(named, key=len, reverse=True):
         padded = re.sub(r"(?<= )%s(?= )" % re.escape(key), "", padded)
-    rest = [(c, f) for found in name_forms(ws, tags).values() for (c, f) in found if f not in named]
-    rest += [(False, f) for found in soft_forms(ws, tags).values() for f in found if f not in named]
+    rest = [(c, f) for c, f in forbidden_forms(ws) if f not in named]
     return not names_hit(padded, [f for f in rest if not f[0]]) and not name_hit(fold_format(line), [f for f in rest if f[0]])
 
 
 def without_own_words(ws: Workspace, text: str) -> str:
-    """`text` without the check's own lines and the wall sentence: not material for the name check or the wording
-    check. Line by line, so the lines either side keep their places; the links stay with the caller's text."""
+    """`text` without the check's own lines and the wall sentence, for the name scan alone (#470): the wording
+    check reads every line. Line by line, so the lines either side keep their places; the links stay with the
+    caller's text."""
     sentence = wall_sentence(ws)
     if sentence and sentence in text:
         text = text.replace(sentence, "")
-    if not OWN_ANCHOR_RE.search(text) and "is walled and" not in text:
+    if "is walled and" not in text and "repeats wording" not in text and "A note in " not in text:
         return text
     return "\n".join("" if own_words_line(ws, line) else line for line in text.split("\n"))
 
@@ -6105,7 +6170,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             got = crossed_by_page[o] = bool(blocked(ws.context, tags, index.tags.get(o, ())))
         return got
 
-    for h in runs(transcript_text(path, without_own_words(ws, text)), shared_link(ws, path)):
+    for h in runs(transcript_text(path, text), shared_link(ws, path)):
         owners = index.owners.get(h)
         if not owners or h in index.common:
             continue
@@ -6403,6 +6468,7 @@ def templates_local_findings(ws: Workspace) -> List[Finding]:
     out = []
     forms = [f for found in name_forms(ws, set(ws.context["parties"])).values() for f in found]
     forms.sort(key=lambda f: (-len(f[1].split()), -len(f[1]), f[1]))
+    owners = quote_index(ws).owners
     for path in walk_files(folder):
         if path.suffix.lower() not in TEXT_SUFFIXES:
             continue
@@ -6413,6 +6479,11 @@ def templates_local_findings(ws: Workspace) -> List[Finding]:
                                "is in System/templates.local/, whose wording every side of a wall may use, but it %s; "
                                "keep a party out of a template" % ("carries a party key" if keyed else "names a party"),
                                "A file in your templates names a party"))
+        elif any(any(o in ws.meetings for o in owners.get(h, ())) for h in file_runs(ws, path, False)):
+            out.append(Finding(WARNING, "walls", rel(ws, path),
+                               "is in System/templates.local/, but repeats eight words a Meetings page holds; that wording "
+                               "is not common, so it is still refused where it is used. Take it out of the template",
+                               "A file in your templates repeats a meeting"))
     return out
 
 

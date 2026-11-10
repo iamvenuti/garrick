@@ -32,11 +32,15 @@ Git holds the old one.
 Raw records are never edited. A raw record under a wiki's `raw/` (or a faded
 one, under `dormant/raw/` or `archive/raw/`) that holds
 OLD is listed, and the wiki pages that rest on it (those that link to it or
-name its path) get `superseded:` in their frontmatter and one line at the
-end, saying that their record holds a value corrected since, and the right
-one, without repeating the wrong one. `superseded:` is the key the waking
-guard reads, so a page that rests on a corrected record does not come back
-into use as though nothing happened.
+name its path) are marked in their frontmatter, with one line at the end,
+saying that their record holds a value corrected since, and the right one,
+without repeating the wrong one. A page whose own text held OLD, and was
+fixed here, gets `corrected:` with the date and the right value: it fades
+and wakes by the ordinary rules, and what pins it still holds. A page whose
+own text did not hold OLD, so that the correction could not fix it, gets
+`superseded:`, the key the waking guard reads, so that it does not come back
+into use as though nothing happened. A page another page replaces is marked
+`superseded:` by hand.
 
 Then it rebuilds what is built from those files: the Meetings wiki's index,
 where a page of it changed, committed with the pages, and the status page,
@@ -64,7 +68,7 @@ writes it, since another session may have changed it, finds the hits again
 when `hits` is None, and never edits a raw record. Each Hit has `path`,
 `kind` (memory, context, hub, thread, todo, wiki or raw), `repo`, `lines` as
 (line number, text), and for a raw record the `pages` that rest on it.
-Applied has `changed`, `superseded`, `commits` as (repository, commit),
+Applied has `changed`, `corrected`, `superseded`, `commits` as (repository, commit),
 `uncommitted` and `refused` as (path, reason), and `rebuilt`. A refusal is a
 ValueError with one line to say.
 
@@ -119,6 +123,7 @@ class Hit:
 @dataclass
 class Applied:
     changed: List[str] = field(default_factory=list)
+    corrected: List[str] = field(default_factory=list)
     superseded: List[str] = field(default_factory=list)
     commits: List[Tuple[str, str]] = field(default_factory=list)
     uncommitted: List[Tuple[str, str]] = field(default_factory=list)
@@ -313,6 +318,34 @@ def superseded(text: str, new: str, why: str, today: str) -> str:
     return text
 
 
+def corrected(text: str, new: str, why: str, today: str) -> str:
+    """The page with `corrected:` in its frontmatter, unless it has one, and a
+    line at its end saying its own text was fixed and its record still holds
+    the value corrected. The wrong value is not repeated."""
+    reason = "%s: the right value is %s.%s" % (today, new, " " + why.strip() if why.strip() else "")
+    line = "**Corrected, %s.** This page was fixed in its own text. Its record still holds the old value. The right one is %s.%s" % (
+        _day(today), new, " " + why.strip() if why.strip() else "")
+    lines = text.split("\n")
+    if lines and lines[0].strip() == "---":
+        end = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r") in ("---", "...")), None)
+        if end is not None and not any(re.match(r"corrected\s*:", l) for l in lines[1:end]):
+            lines.insert(end, "corrected: %s" % _quoted(reason))
+    else:
+        lines = ["---", "corrected: %s" % _quoted(reason), "---", ""] + lines
+    text = "\n".join(lines)
+    if line not in text:
+        text = text.rstrip("\n") + "\n\n" + line + "\n"
+    return text
+
+
+def _has_key(text: str, key: str) -> bool:
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return False
+    end = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r") in ("---", "...")), len(lines))
+    return any(re.match(key + r"\s*:", l) for l in lines[1:end])
+
+
 def _rel(root: Path, path: Path) -> str:
     try:
         return path.resolve().relative_to(root).as_posix()
@@ -365,7 +398,7 @@ def _commit(repo: Path, files: List[Path], message: str, verify: Callable[[Path,
 def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str = "", today: Optional[str] = None,
           commit: bool = True, rebuild: bool = True, verify: Optional[Callable[[Path, List[str]], str]] = None) -> Applied:
     """Put NEW in place of OLD in every live file `hits` names, mark the pages
-    that rest on a raw record holding OLD as superseded, rebuild what is built
+    that rest on a raw record holding OLD as corrected (their own text fixed) or superseded, rebuild what is built
     from them, and commit once per repository. Raw records are never touched.
     Each repository's change is committed only when the walls check, run on
     it staged, says nothing against it (walls_refusal, or the caller's own
@@ -408,12 +441,15 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
         text = _read(page)
         if text is None:
             continue
-        marked = superseded(replaced(text, old, new), new, why, today)
+        fixed = replaced(text, old, new)
+        # Its own text held OLD: fixed just now, in the live-file pass above, or by this call, or by an earlier run.
+        own = fixed != text or page in touched or _has_key(text, "corrected")
+        marked = corrected(fixed, new, why, today) if own else superseded(fixed, new, why, today)
         if marked != text:
             before.setdefault(page, text)
             page.write_text(marked, encoding="utf-8")
             touched.setdefault(page, repo_of(page))
-            done.superseded.append(_rel(root, page))
+            (done.corrected if own else done.superseded).append(_rel(root, page))
             if _rel(root, page) not in done.changed:
                 done.changed.append(_rel(root, page))
     if not touched:
@@ -457,6 +493,7 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
                             f.write_text(before[f], encoding="utf-8")
                             rel_f = _rel(root, f)
                             done.changed = [c for c in done.changed if c != rel_f]
+                            done.corrected = [c for c in done.corrected if c != rel_f]
                             done.superseded = [c for c in done.superseded if c != rel_f]
     status = status_command(root) if rebuild else None
     if status:
@@ -493,7 +530,7 @@ def report(root: Path, old: str, hits: List[Hit]) -> str:
         pages = sorted({_rel(root, p) for h in raw for p in h.pages})
         out.append("%d raw record%s hold it, and stay as they are; %s" % (
             len(raw), "" if len(raw) == 1 else "s",
-            "the page%s resting on them get a superseded line: %s." % ("" if len(pages) == 1 else "s", ", ".join(pages))
+            "the page%s resting on them are marked, corrected where the page's own text is fixed, superseded where it is not: %s." % ("" if len(pages) == 1 else "s", ", ".join(pages))
             if pages else "no page rests on them."))
     out.append("On a yes, run again with --apply: one commit per repository.")
     return "\n".join(out)
@@ -528,7 +565,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(exc, file=sys.stderr)
         return 1
     if a.json:
-        print(json.dumps({"old": a.old, "new": a.new, "changed": done.changed, "superseded": done.superseded,
+        print(json.dumps({"old": a.old, "new": a.new, "changed": done.changed, "corrected": done.corrected, "superseded": done.superseded,
                           "commits": done.commits, "uncommitted": done.uncommitted, "refused": done.refused,
                           "rebuilt": done.rebuilt}, indent=1))
     else:
@@ -544,6 +581,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("Not committed: %s (%s)" % (path, why))
         for repo, why in done.refused:
             print("Refused in %s: %s" % (repo, why))
+        for page in done.corrected:
+            print("Marked corrected: %s" % page)
         for page in done.superseded:
             print("Marked superseded: %s" % page)
     return 1 if done.refused else 0

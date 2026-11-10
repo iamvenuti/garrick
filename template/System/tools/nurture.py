@@ -1098,7 +1098,7 @@ def say_correction(item: Item) -> str:
     if f.get("raw"):
         them = "them" if len(f["raw"]) > 1 else "it"
         line += "; %s kept as %s, %s" % (plural(len(f["raw"]), "raw record"), "they are" if them == "them" else "it is",
-                                         "the pages resting on %s marked superseded" % them if f.get("superseded")
+                                         "the pages resting on %s marked corrected or superseded" % them if f.get("superseded")
                                          else "no page rests on %s" % them)
     if item.said:
         line += "; %s" % item.said
@@ -2096,7 +2096,7 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
         if out["wall"]:
             j["refusal"] = out["wall"]
         if done is not None:
-            j.update({"changed": done.changed, "superseded": done.superseded, "commits": done.commits,
+            j.update({"changed": done.changed, "corrected": done.corrected, "superseded": done.superseded, "commits": done.commits,
                       "uncommitted": done.uncommitted, "refused": done.refused, "rebuilt": done.rebuilt})
         print(json.dumps(j, indent=1, ensure_ascii=False))
         return code
@@ -2132,6 +2132,7 @@ def main_correct(ctx: Ctx, scopes: List[str], a) -> int:
         lines += ["Committed %s in %s" % (sha, repo) for repo, sha in done.commits]
         lines += ["Not committed: %s (%s)" % u for u in done.uncommitted]
         lines += ["Refused in %s: %s" % r for r in done.refused]
+        lines += ["Marked corrected: %s" % p for p in done.corrected]
         lines += ["Marked superseded: %s" % p for p in done.superseded]
     if out["held"]:
         lines += ["Held:"] + ["  %s: %s" % (i.path, i.held) for i in out["held"]]

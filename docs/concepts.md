@@ -120,7 +120,7 @@ Something one session wrote down and later sessions read as fact: a memory entry
 
 ### Correction
 
-What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live copy of the wrong value and on your one yes fixes them all, one commit per repository. A raw record is never edited: the page that rests on it gets `superseded:`. See [Correcting a value](commands.md#correcting-a-value).
+What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live copy of the wrong value and on your one yes fixes them all, one commit per repository. A raw record is never edited: the page that rests on it gets `corrected:`, with the date and the right value, when its own text was fixed, and `superseded:` when the correction could not fix it. A corrected page fades and wakes by the ordinary rules, and what pins it still holds. See [Correcting a value](commands.md#correcting-a-value).
 
 ## The two wikis
 

@@ -36,7 +36,9 @@ lines of its own.
 the notes of a live project, from an open line in a zone's `Todo.md`, or
 carrying `pinned: true`. Each pin can be switched off. A page carrying
 `superseded:` is kept out of working memory whatever pins it, and never
-wakes by use. A dormant page **wakes** when a live thread, a live project or
+wakes by use; `propose` names those pages apart. `corrected:`, which a
+correction writes on a page whose own text it fixed, changes nothing: the
+page fades and wakes by the ordinary rules and its pins hold. A dormant page **wakes** when a live thread, a live project or
 an open action links it, or a working page links it again (a link written
 afresh, without the `dormant/` the fade wrote into it), or it carries
 `pinned: true`. An archived page wakes only on `pinned: true`, which "keep
@@ -902,7 +904,8 @@ def preview(root: Path, memory: Optional[dict] = None, today: Optional[datetime.
     out = {}
     for wiki in WIKIS:
         p = plans.get(wiki)
-        moves = sorted(p.moves if p else [], key=lambda m: (("dormant", "archived", "working").index(m.to),
+        moves = sorted(p.moves if p else [], key=lambda m: (bool(m.page.superseded),     # the proposal names these apart, last
+                                                           ("dormant", "archived", "working").index(m.to),
                                                            m.page.kind, m.page.date or datetime.date.min, m.page.path))
         kept = p.kept if p else []
         out[wiki] = dict(tally(p, s, wiki), moves=len(moves), kept=len(kept),
@@ -1014,6 +1017,26 @@ def proposal_id(wiki: str, moves: List[Move], today: datetime.date) -> str:
 TO_WORDS = {"dormant": "To dormant", "archived": "To the archive", "working": "Waking"}
 
 
+def derived_lines(m: Move, derived: Dict[str, dict]) -> List[str]:
+    """What goes with a move: its record, the pages and links that follow it."""
+    out: List[str] = []
+    d = derived.get(m.page.path, {})
+    if m.raw_to:
+        out.append("  - its record `%s` moves with it" % m.page.raw_sub)
+    if d.get("goes"):
+        out.append("  - goes with it: %s" % ", ".join("`%s`" % x for x in d["goes"]))
+    if d.get("pointed"):
+        out.append("  - pointed at the new path: %s" % ", ".join("`%s`" % x for x in d["pointed"]))
+    if d.get("ticked"):
+        out.append("  - ticked actions pointed at the new path: %s" % ", ".join("`%s`" % x for x in d["ticked"]))
+    if d.get("stays"):
+        out.append("  - stays as written, since its link could mean another note: %s"
+                   % ", ".join("`%s`" % x for x in d["stays"]))
+    if d.get("earlier"):
+        out.append("  - listed under Earlier on %s" % ", ".join("`%s`" % x for x in d["earlier"]))
+    return out
+
+
 def render_proposal(p: Plan, pid: str, derived: Dict[str, dict], today: datetime.date, first: bool,
                     s: dict) -> str:
     out = ["# What would fade: %s, %s" % (p.wiki, today.isoformat()), ""]
@@ -1028,7 +1051,7 @@ def render_proposal(p: Plan, pid: str, derived: Dict[str, dict], today: datetime
         out += ["Fading is switched off for this wiki: only pages someone linked again, or said to keep, "
                 "would wake.", ""]
     for to in ("dormant", "archived", "working"):
-        mine = [m for m in p.moves if m.to == to]
+        mine = [m for m in p.moves if m.to == to and not m.page.superseded]
         if not mine:
             continue
         out += ["## %s, %d" % (TO_WORDS[to], len(mine)), ""]
@@ -1041,21 +1064,19 @@ def render_proposal(p: Plan, pid: str, derived: Dict[str, dict], today: datetime
                                                                                     m.page.path)):
                 out.append("- `%s`, %s, %s: %s" % (m.page.sub, m.page.title,
                                                    m.page.date.isoformat() if m.page.date else "undated", m.why))
-                d = derived.get(m.page.path, {})
-                if m.raw_to:
-                    out.append("  - its record `%s` moves with it" % m.page.raw_sub)
-                if d.get("goes"):
-                    out.append("  - goes with it: %s" % ", ".join("`%s`" % x for x in d["goes"]))
-                if d.get("pointed"):
-                    out.append("  - pointed at the new path: %s" % ", ".join("`%s`" % x for x in d["pointed"]))
-                if d.get("ticked"):
-                    out.append("  - ticked actions pointed at the new path: %s" % ", ".join("`%s`" % x for x in d["ticked"]))
-                if d.get("stays"):
-                    out.append("  - stays as written, since its link could mean another note: %s"
-                               % ", ".join("`%s`" % x for x in d["stays"]))
-                if d.get("earlier"):
-                    out.append("  - listed under Earlier on %s" % ", ".join("`%s`" % x for x in d["earlier"]))
+                out += derived_lines(m, derived)
             out.append("")
+    replaced = [m for m in p.moves if m.page.superseded]
+    if replaced:
+        out += ["## Moving because of `superseded:`, %d" % len(replaced), "",
+                "A page carrying `superseded:` leaves working memory whatever pins it. Each is named here with the "
+                "marker's reason, so you can leave one: say which to keep.", ""]
+        for m in sorted(replaced, key=lambda m: (("dormant", "archived", "working").index(m.to), m.page.kind,
+                                                m.page.date or datetime.date.min, m.page.path)):
+            out.append("- `%s`, %s, %s, %s: %s" % (m.page.sub, m.page.title, m.page.date.isoformat() if m.page.date else "undated",
+                                                  TO_WORDS[m.to].lower(), m.why))
+            out += derived_lines(m, derived)
+        out.append("")
     if p.linked:
         out += ["## Superseded, and still linked from a live note", "",
                 "A link somewhere still points at the old version.", ""]

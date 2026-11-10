@@ -129,6 +129,7 @@ from garrick_lib import (  # noqa: E402
     say_version,
     spoken_clash,
     spoken_of,
+    stale_bands,
     strip_recipients,
     strip_tag,
     record_refusals,
@@ -6933,6 +6934,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         newer = say_newer_release(root)        # what GitHub last said, kept on disk; the check never asks
         if newer:
             print(newer)
+        for line in stale_bands(root):         # the band's own copy, read as the settings name it
+            print(line)
         return 0
     if args.paths:
         findings = run_path_checks(root, args.paths)

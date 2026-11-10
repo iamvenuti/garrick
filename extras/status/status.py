@@ -4246,6 +4246,18 @@ def release_controls(on: bool, every: int) -> str:
             % (" checked" if on else "", "" if on else " disabled", option(1, "Daily"), option(7, "Weekly")))
 
 
+def stale_band_lines(ws: Optional[Path]) -> str:
+    """The band kept outside the workspace, when it is from another commit than
+    the workspace runs: `check.py --version` says the same. Read through the
+    workspace's own garrick_lib, and nothing when its tools cannot say."""
+    found = getattr(workspace_lib(ws), "stale_bands", None) if ws is not None else None
+    try:
+        lines = found(ws) if callable(found) else []
+    except Exception:
+        lines = []
+    return "".join('<p class="setver" id="band-stale">%s</p>' % E(line) for line in lines)
+
+
 def about_garrick(version: str, ws: Optional[Path] = None) -> str:
     """Settings › About Garrick (#227): the release this is, and three links
     to Garrick's GitHub page, opened in the browser, where nothing is sent
@@ -4261,13 +4273,13 @@ def about_garrick(version: str, ws: Optional[Path] = None) -> str:
              ("Release notes", "/releases", "")]
     rows = "".join('<a class="setlink" href="%s" target="_blank" rel="noopener"%s><b>%s</b></a>'
                    % (E(PROJECT + path), ' title="%s"' % E(tip) if tip else "", E(label)) for label, path, tip in links)
-    return ('<section class="setsec" id="about-settings">%s%s<p class="setver" id="garrick-version">%s</p>%s'
+    return ('<section class="setsec" id="about-settings">%s%s<p class="setver" id="garrick-version">%s</p>%s%s'
             '<div class="setlinks">%s</div></section>'
             % (set_head("About Garrick", "about"), help_text("about", 'These open GitHub in your browser. Nothing is sent '
                'until you submit it there. Use invented names (Acme, Birch), never a real client&#39;s. Check for updates '
                'asks GitHub for the newest release when you press it, and updates when there is a newer one. Check for a newer Garrick '
                'is off by default, since it is the only call Garrick makes on its own: it tells you in a notice and on the Repositories card, and never updates.'),
-               E(version), release_controls(*release_choice(ws)) if ws is not None else "", rows))
+               E(version), stale_band_lines(ws), release_controls(*release_choice(ws)) if ws is not None else "", rows))
 
 
 # Each row of Opening a thread carries the icon its way carries on Explore's

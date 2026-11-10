@@ -3014,6 +3014,57 @@ def say_changes(root: PathLike, stamp: dict) -> str:
     return "Of the %d files Garrick wrote, %s since." % (total, " and ".join(parts))
 
 
+def _commit_date(fields: dict) -> Optional[Tuple[str, str]]:
+    """(commit, date) from a VERSION file's or a stamp's fields, or None when
+    no commit is named: a clone's VERSION still holds git's placeholder."""
+    commit = str(fields.get("commit") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{4,40}", commit):
+        return None
+    date = str(fields.get("date") or "").strip()
+    return commit, date if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else ""
+
+
+def _say_commit(found: Tuple[str, str]) -> str:
+    return "%s of %s" % found if found[1] else found[0]
+
+
+def stale_bands(root: PathLike, home: Optional[PathLike] = None) -> List[str]:
+    """The Garrick band the assistant's settings name in CLAUDE_CODE_PLUGIN_DIRS,
+    when it is from another commit than the workspace runs: one sentence per
+    band. Reads the settings, the band's VERSION (two folders above the plugin,
+    the Garrick it came in) and the workspace's stamp, and writes nothing. A file
+    that does not read, or names no commit, says nothing, and neither does a
+    band dated later than the workspace, which is the newer one. The band shows
+    the same line itself (extras/mods/garrick-band)."""
+    stamp = _commit_date(read_version(root))
+    if stamp is None:
+        return []
+    try:
+        env = json.loads((Path(home) if home else Path.home()).joinpath(".claude", "settings.json").read_text(encoding="utf-8")).get("env")
+        value = env.get("CLAUDE_CODE_PLUGIN_DIRS") if isinstance(env, dict) else None
+    except (OSError, ValueError, AttributeError):
+        return []
+    out = []
+    for d in sorted({d for d in re.split(r"[:,]", value) if d.rstrip("/").endswith("garrick-band")} if isinstance(value, str) else ()):
+        band = Path(os.path.expanduser(d))
+        fields = {}
+        try:
+            for line in band.parent.parent.parent.joinpath("VERSION").read_text(encoding="utf-8").splitlines():
+                key, sep, text = line.partition(":")
+                if sep and not line.startswith("#"):
+                    fields[key.strip()] = text.strip()
+        except OSError:
+            continue
+        own = _commit_date(fields)
+        if own is None or own[0].startswith(stamp[0]) or stamp[0].startswith(own[0]):
+            continue
+        if own[1] and stamp[1] and own[1] > stamp[1]:
+            continue
+        out.append("The Garrick band that your settings name (%s) is from %s; the workspace runs %s. "
+                   "Run `python3 update.py` from the newer Garrick, or see Updating." % (d, _say_commit(own), _say_commit(stamp)))
+    return out
+
+
 # What the workspace's settings hold, SETTINGS above: choices that stay, unlike
 # the preview flags in System/garrick-flags.json, which a release drops.
 # {"release-notice": true} lets the status page and the nightly job ask GitHub,

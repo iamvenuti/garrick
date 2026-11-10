@@ -366,6 +366,45 @@ class TestVersion(unittest.TestCase):
             write(Path(tmp) / "System" / "garrick-version.json", "not json")
             self.assertEqual({}, lib.read_version(tmp))
 
+    def fake_band(self, tmp, commit="3b61b83", date="2026-10-01", version=None):
+        """A home with settings that name a band, and the Garrick it came in."""
+        home, garrick = Path(tmp) / "home", Path(tmp) / "older"
+        band = garrick / "extras" / "mods" / "garrick-band"
+        band.mkdir(parents=True)
+        write(home / ".claude" / "settings.json", json.dumps({"env": {"CLAUDE_CODE_PLUGIN_DIRS": str(band)}}))
+        write(garrick / "VERSION", version if version is not None else "# Which Garrick\ncommit: %s\ndate: %s\n" % (commit, date))
+        root = Path(tmp) / "ws"
+        write(root / "System" / "garrick-version.json", '{"commit": "c16b738a", "date": "2026-11-10"}')
+        return home, root, band
+
+    def test_a_band_from_another_commit_is_said_to_be_stale(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, root, band = self.fake_band(tmp)
+            self.assertEqual(["The Garrick band that your settings name (%s) is from 3b61b83 of 2026-10-01; the workspace runs "
+                              "c16b738a of 2026-11-10. Run `python3 update.py` from the newer Garrick, or see Updating." % band],
+                             lib.stale_bands(root, home))
+
+    def test_a_band_that_is_current_or_cannot_be_read_says_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            home, root, band = self.fake_band(tmp, commit="c16b738")           # a prefix of the stamp's commit
+            self.assertEqual([], lib.stale_bands(root, home))
+        for version in ("commit: $Format:%h$\n", "date: 2026-10-01\n", ""):  # a clone, no commit, nothing
+            with tempfile.TemporaryDirectory() as tmp:
+                home, root, band = self.fake_band(tmp, version=version)
+                self.assertEqual([], lib.stale_bands(root, home))
+        with tempfile.TemporaryDirectory() as tmp:
+            home, root, band = self.fake_band(tmp, date="2026-11-12")           # the newer one
+            self.assertEqual([], lib.stale_bands(root, home))
+        with tempfile.TemporaryDirectory() as tmp:
+            home, root, band = self.fake_band(tmp)
+            (band.parent.parent.parent / "VERSION").unlink()
+            self.assertEqual([], lib.stale_bands(root, home))
+            (root / "System" / "garrick-version.json").write_text("{", encoding="utf-8")
+            self.assertEqual([], lib.stale_bands(root, home))
+            self.assertEqual([], lib.stale_bands(root, Path(tmp) / "nowhere"))
+            write(home / ".claude" / "settings.json", "not json")
+            self.assertEqual([], lib.stale_bands(root, home))
+
     def test_fingerprints_leave_out_answers_the_stamp_links_and_git(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -123,7 +123,7 @@ that state: a latched wall stops both sessions, starts them again, and the
 reply is the rules' sentence alone (Asker.wall_stop()). A proposal from a
 conversation that has read a record is offered as a button (Asker.offered()),
 never run; one from a conversation that has read none runs through carry_out(),
-as a command always has. With the flag off, or with Codex, everything below
+as a command always has. With `"ask-agent": false`, or with Codex, everything below
 holds as it did.
 
 **The model proposes, this file disposes.** The session sees only names and

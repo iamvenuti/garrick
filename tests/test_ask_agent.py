@@ -249,10 +249,26 @@ class TestTheFlagFollowsTheHarness(AgentCase):
         spec.loader.exec_module(status)
         self.assertIn("ask-agent", status.FLAGS)
         self.assertIn("next release", status.FLAGS["ask-agent"][1])
+        self.flags()                                            # ask on, Claude, no ask-agent line
         self.assertTrue(status.preview_flags(self.root)["ask-agent"])
+        self.assertIn(">on<", status.preview_section(status.preview_flags(self.root)).split("Ask: one session")[1])
         self.flags(**{"ask-agent": False})
         self.assertFalse(status.preview_flags(self.root)["ask-agent"])
         self.assertFalse(status.preview_flags(self.root)["effort"])
+        write(self.root / "System" / "garrick-flags.json", json.dumps({}))      # Ask itself is off
+        self.assertFalse(status.preview_flags(self.root)["ask-agent"])
+        self.flags()
+        before = os.environ.get("GARRICK_HARNESS")
+        os.environ["GARRICK_HARNESS"] = "codex"
+        try:
+            self.assertFalse(status.preview_flags(self.root)["ask-agent"])
+            shown = status.preview_section(status.preview_flags(self.root)).split("Ask: one session")[1]
+            self.assertIn("does not apply", shown)
+        finally:
+            if before is None:
+                os.environ.pop("GARRICK_HARNESS", None)
+            else:
+                os.environ["GARRICK_HARNESS"] = before
 
 
 class TestAnswers(AgentCase):

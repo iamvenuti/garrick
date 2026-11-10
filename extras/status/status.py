@@ -775,13 +775,21 @@ FLAGS = {
 ON_BY_DEFAULT = ("ask-agent",)
 
 
+def harness_name() -> str:
+    """The assistant Ask runs on, as agent.py names it: GARRICK_HARNESS, `claude` unless it says otherwise."""
+    return (os.environ.get("GARRICK_HARNESS", "claude").strip().lower() or "claude")
+
+
 def preview_flags(ws: Path) -> Dict[str, bool]:
     try:
         data = json.loads(ws.joinpath("System", "garrick-flags.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
     data = data if isinstance(data, dict) else {}
-    return {k: (data.get(k) is not False) if k in ON_BY_DEFAULT else data.get(k) is True for k in FLAGS}
+    out = {k: (data.get(k) is not False) if k in ON_BY_DEFAULT else data.get(k) is True for k in FLAGS}
+    # The one session is what Ask does only with Ask on and Claude as the assistant (#476).
+    out["ask-agent"] = out["ask-agent"] and out["ask"] and harness_name() == "claude"
+    return out
 
 
 _PREFS = None
@@ -4379,12 +4387,17 @@ def follow_settings() -> str:
 def preview_section(flags: Dict[str, bool]) -> str:
     """Settings › Preview features: each flag's name and whether it is on,
     what it does as the row's tooltip (#227), since it is switched in a file."""
+    def chip(k: str, on: bool) -> str:
+        if k == "ask-agent" and harness_name() != "claude":
+            return "does not apply"             # Codex always answers through the fixed steps
+        return "on" if on else "off"
     rows = "".join('<div class="flagrow" title="%s"><b>%s</b><span class="chip%s">%s</span></div>'
-                   % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", "on" if on else "off") for k, on in flags.items())
+                   % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", chip(k, on)) for k, on in flags.items())
     return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
             % (set_head("Preview features", "preview", "Built but not released yet, and switched on in a file."), rows,
                help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Switch one on in '
                '<code>System/garrick-flags.json</code>, for example <code>{"effort": true}</code>, and rebuild the page. '
+               'One flag here, <b>Ask: one session</b>, is released and on until you set it to false. '
                'Point at a feature for what it does.')))
 
 

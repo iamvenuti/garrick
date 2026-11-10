@@ -1005,8 +1005,13 @@ class TestAllowedByYou(StatusCase):
         raw = (self.root / rel).read_bytes()
         return hashlib.sha1(b"blob %d\0" % len(raw) + raw).hexdigest()
 
-    def ledger(self, *entries, version=1):
+    def ledger(self, *entries, version=1, commit=True):
+        """The ledger on disk, and by default committed at the workspace root, which is the copy the page lists."""
         write(self.root / "System" / "walls-allowed.json", json.dumps({"version": version, "allowed": list(entries)}))
+        if commit:
+            if not (self.root / ".git").exists():
+                fixtures.git_init(self.root)
+            fixtures.commit_all(self.root, "ledger")
 
     def entry(self, **kw):
         row = {"path": self.FILE, "id": "3f9a1c2b7d", "blob": self.blob(self.FILE), "rule": "name", "date": "2026-11-10", "by": "terminal"}
@@ -1029,6 +1034,35 @@ class TestAllowedByYou(StatusCase):
         self.assertIn('data-id="3f9a1c2b7d" data-path="Zones/Work/Acme Review/Memo.md"', box)
         self.assertIn('data-unallow="1">Remove</button>', box)
         self.assertNotIn("no longer allows", box)
+
+    def test_only_the_committed_ledger_is_listed(self):
+        self.ledger(self.entry(), commit=True)
+        self.assertIn('id="cxa"', self.page())
+        self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Other.md", id="bbbbbbbbbb"), commit=False)   # on disk only
+        box = self.section(self.page())
+        self.assertIn("Memo.md", box)
+        self.assertNotIn("Other.md", box)                                             # the hook does not honour it, so it is not listed
+        fixtures.commit_all(self.root, "more")
+        self.assertIn("Other.md", self.section(self.page()))
+        (self.root / "System" / "walls-allowed.json").unlink()                      # deleted on disk, still committed: still honoured
+        self.assertIn("Memo.md", self.section(self.page()))
+
+    def test_a_ledger_never_committed_or_no_repository_lists_nothing(self):
+        self.ledger(self.entry(), commit=False)                                       # no repository at all
+        self.assertNotIn('id="cxa"', self.page())
+        fixtures.git_init(self.root)
+        fixtures.commit_all(self.root, "start")                                       # the ledger is committed here, then deleted and committed again
+        (self.root / "System" / "walls-allowed.json").unlink()
+        fixtures.commit_all(self.root, "gone")
+        self.assertNotIn('id="cxa"', self.page())
+
+    def test_the_section_offers_no_way_to_allow(self):
+        self.ledger(self.entry())
+        box = self.section(self.page())
+        self.assertNotIn("walls-allow", box)
+        self.assertEqual(["Remove"], re.findall(r"<button[^>]*>([^<]*)</button>", box))
+        self.assertNotIn("walls-allow'", status.parties_mod().CX_JS)
+        self.assertNotIn("verb:'walls-allow", status.parties_mod().CX_JS)
 
     def test_a_file_edited_since_or_gone_says_so(self):
         self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Gone.md", id="aaaaaaaaaa"))

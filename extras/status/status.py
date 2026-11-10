@@ -1286,18 +1286,25 @@ CHECK_KINDS = (("wall", "Walls", "Take it out"), ("mechanical", "Mechanical", "F
                ("attribution", "Attribution", "Answer"), ("judgment", "Judgment", ""))
 
 
-def check_groups(ws: Path, C: dict, link: "Links") -> str:
+def check_groups(ws: Path, C: dict, link: "Links", projects=frozenset()) -> str:
     """The Checks card's list: one fold per kind, the largest open, and any
-    holding an error."""
+    holding an error. A wall finding in a project the Context tab's Parties
+    view lists links to that project's row, where its parties and their flags are."""
     lib = nurture_lib(ws)
     rows: Dict[str, List[str]] = {}
     errors: Dict[str, int] = {}
     for f in C.get("findings", []):
         for kind, line, act in sorted_finding(ws, lib, f):
+            where = ""
+            if kind == "wall" and projects:
+                m = re.match(r"Zones/([^/]+)/([^/]+)/", line[0])
+                pid = parties_mod().project_id(m.group(1), m.group(2)) if m else ""
+                if pid in projects:
+                    where = ' <a class="cxgo" href="#%s" title="Its parties and their flags, on the Context tab">Parties</a>' % pid
             rows.setdefault(kind, []).append(
-                '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s</li>'
+                '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s%s</li>'
                 % (ICON["critical" if f.get("severity") == "error" else "warning"], link.attrs(ws / line[0]), E(line[0]),
-                   E(line[1]), act))
+                   E(line[1]), where, act))
             errors[kind] = errors.get(kind, 0) + (f.get("severity") == "error")
     if not rows:
         return '<div class="clean">%sNo problems found.</div>' % ICON["good"]
@@ -6998,7 +7005,8 @@ b.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();va
 document.querySelectorAll('.pchev').forEach(chev);
 /* Tabs, when the Todo list is on: one open at a time, remembered in this window. */
 var tabSecs=document.querySelectorAll('main>section.tab'),tabBtns=document.querySelectorAll('.tabs [data-tab]');
-window.StatusTab=function(n){if(!document.getElementById('tab-'+n))n='overview';
+window.StatusTab=function(n){if(n==='parties'){n='questions';window.GarrickCxWant='parties';if(window.GarrickContextView)GarrickContextView('parties')}   /* the Parties tab is a view of Context now: a saved tab or an old link opens it there */
+if(!document.getElementById('tab-'+n))n='overview';
 if(n==='guide'&&window.GarrickGuide)GarrickGuide.mount();       /* the Guide's pages go on the page the first time it opens */
 tabSecs.forEach(function(sec){sec.hidden=sec.id!=='tab-'+n});document.body.dataset.tab=n;
 tabBtns.forEach(function(b){var on=b.dataset.tab===n;b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false')});
@@ -7009,7 +7017,7 @@ var tSaved=null;try{tSaved=localStorage.getItem('garrick-tab')}catch(e){}StatusT
    the Guide shows its page first (GUIDE_JS), so it never leaves the page in any host */
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href^="#"]');if(!a||a.getAttribute('href')==='#')return;
 var id=a.getAttribute('href').slice(1),el=(window.GarrickGuide&&GarrickGuide.reveal(id))||document.getElementById(id),sec=el&&el.closest('section.tab');if(!sec)return;
-StatusTab(sec.id.slice(4));if(!a.closest('nav')){e.preventDefault();var c=el.closest('details');if(c)c.open=true;el.scrollIntoView({block:'start'})}},true);
+StatusTab(sec.id.slice(4));if(window.GarrickCxFor)GarrickCxFor(el);if(!a.closest('nav')){e.preventDefault();var c=el.closest('details');if(c)c.open=true;el.scrollIntoView({block:'start'})}},true);
 /* Settings: a modal dialog sits above the page, so the toast moves into it
    while it is open, or nothing it copies would say so. The app's Settings…
    (⌘,) calls StatusSettings.open(). */
@@ -8234,7 +8242,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
     qdata = questions_data(ws, C, now.date(), link)        # the Context tab (#224), None where it cannot be placed
-    pdata = parties_data(ws, link)                         # the Parties tab (#447), None without a Parties table
+    pdata = parties_data(ws, link)                         # the Context tab's Parties and Who sees what views (#447), None without a Parties table
 
     # ---- what needs attention, worst first
     attn = []
@@ -8540,7 +8548,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     elif C.get("failed"):
         body = '<div class="clean">%sThe check did not run. Run <code>python3 System/tools/check.py</code> to see why.</div>' % ICON["critical"]
     else:
-        body = check_groups(ws, C, link)
+        body = check_groups(ws, C, link, parties_mod().project_ids(pdata))
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
@@ -8733,10 +8741,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     tabs = ('<div class="tabs" role="tablist">' + ('<button type="button" role="tab" data-tab="home">Home</button>' if simple else "")
             + '<button type="button" role="tab" data-tab="overview">Overview</button>%s'
             '<button type="button" role="tab" data-tab="status">Status</button>%s'
-            '%s<button type="button" role="tab" data-tab="guide">Guide</button></div>'
+            '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
-               questions_mod().tab_button() if qdata else "", parties_mod().tab_button(pdata) if pdata else ""))
+               questions_mod().tab_button(parties_mod().dot_title(pdata)) if qdata or pdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
     if qdata:
@@ -8769,10 +8777,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                      + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)
                                + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)
-    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s%s</main>%s'
+    main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s%s</main>%s'
             % (home_tabs, overview, section("todo", True, todo_tab + slots("todo")) if todo_tab else "", status_tab,
-               section("questions", True, questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "",
-               section("parties", True, parties_mod().body(pdata)) if pdata else "",
+               section("questions", True, parties_mod().tab((questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "", pdata)) if qdata or pdata else "",
                section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
@@ -8783,7 +8790,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", parties_mod().JS if pdata else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, SIMPLE_JS, WHERE_JS, MENU_JS, questions_mod().JS if qdata else "", parties_mod().JS + parties_mod().CX_JS if pdata else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

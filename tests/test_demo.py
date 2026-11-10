@@ -315,10 +315,11 @@ class DemoTest(unittest.TestCase):
         run(["git", "-C", work, "add", "-A"])
         refused = run(["git", "-C", work, "commit", "-q", "-m", "Launch plan: renewal call"])
         self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
-        lines = [l for l in refused.stderr.splitlines() if l.strip()]
+        lines = [l for l in refused.stderr.splitlines() if l.startswith("Commit refused")]
         self.assertEqual(len(lines), 1, refused.stderr)
+        self.assertIn("check.py allow", refused.stderr)             # and the command that lets it through once
         self.assertIn("Commit refused: Zones/Work/Birch Entry/Threads/Launch Plan/Launch Plan.md", lines[0])
-        self.assertIn("--no-verify", lines[0])
+        self.assertNotIn("--no-verify", refused.stderr)            # no terminal: the check names the allow command instead
         self.assertEqual(git(copy, "Zones/Work", "rev-parse", "HEAD"), git(self.root, "Zones/Work", "rev-parse", "HEAD"))
         forced = run(["git", "-C", work, "commit", "-q", "--no-verify", "-m", "Launch plan: renewal call"])
         self.assertEqual(forced.returncode, 0, forced.stderr)

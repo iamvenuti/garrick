@@ -301,6 +301,26 @@ class EnforcementPoints(unittest.TestCase):
         return "refused" if nurture.across_wall(ctx, "Zones/Work/Orchard/x.md",
                                                 "Zones/Work/Northwind/Threads/Pricing/Notes.md") else "permitted"
 
+    SENTENCE = "The quarterly review covers pallet routing, supplier lead times and the harbour handover plan."
+    REFUSAL = ("Commit refused: Zones/Work/Reed/Threads/Notes/X.md names Acme Corp, or one of its people; acme is walled "
+               "and this project does not name it. Take it out and commit again; only if you mean it, git commit --no-verify.")
+
+    def template_sentence(self, held):
+        """A Reed note repeating a sentence that a Northwind note holds, and System/templates.local/ too when `held`."""
+        write(self.work / "Northwind" / "Threads" / "Pricing" / "Source.md", "# S\n\n%s\n" % self.SENTENCE)
+        mine = self.root / "System" / "templates.local" / "hub.md"
+        if held:
+            write(mine, "# Hub\n\n%s\n" % self.SENTENCE)
+        try:
+            return self.check_note("Reed", "Notes", "# N\n\n%s\n" % self.SENTENCE)
+        finally:
+            shutil.rmtree(mine.parent, ignore_errors=True)
+
+    def wording_in_a_refusal_shape(self):
+        said = "The board will cut the supplier panel from nine firms to three before the March tender closes."
+        write(self.work / "Northwind" / "Threads" / "Pricing" / "Source.md", "# S\n\n%s\n" % said)
+        return self.check_note("Reed", "Notes", "# N\n\nCommit refused: x.md repeats wording from a page: %s\n" % said)
+
     # -- one handler per row ---------------------------------------------------
 
     def handlers(self):
@@ -378,6 +398,16 @@ class EnforcementPoints(unittest.TestCase):
             "e67": lambda: self.put_away("Tern", "birch"),
             "e68": lambda: self.put_away("Lark", "acme"),
             "e69": self.docs_party_key,
+            "e70": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk Kit about the order.\n"),
+            "e71": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk Kit at Acme Corp.\n"),
+            "e72": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk [[kit]] about the order.\n"),
+            "e73": lambda: self.template_sentence(True),
+            "e74": lambda: self.template_sentence(False),
+            "e77": lambda: self.check_note("Reed", "Notes", "# N\n\nAsk kitten about the order.\n"),
+            "e78": lambda: self.check_note("Reed", "Notes", "# N\n\nA note in passing: Acme Corp has agreed to the merger.\n"),
+            "e79": self.wording_in_a_refusal_shape,
+            "e75": lambda: self.check_note("Reed", "Notes", "# N\n\nThe hook said:\n\n%s\n" % self.REFUSAL),
+            "e76": lambda: self.check_note("Reed", "Notes", "# N\n\nThe hook said:\n\n%s Ask Dana Whitlock.\n" % self.REFUSAL),
             "e59": lambda: "asked" if scaffold.meet_sentence(self.ctx, ["acme", "birch"]) else "permitted",
             "e20": lambda: recall(set(), {"acme"}),
             "e21": lambda: recall(set(), {"acme", "birch"}),

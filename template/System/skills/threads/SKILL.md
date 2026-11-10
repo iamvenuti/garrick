@@ -1219,7 +1219,11 @@ When it refuses:
 - **Never commit with `--no-verify`** unless the user explicitly asks for it,
   in this request. Yes once is not yes next time.
 - **If the refusal looks wrong** (a walled party named in a published context,
-  say), tell the user which file and which wall, and let them decide.
+  say), tell the user which file and which wall, name the command that lets
+  that one refusal through once (`python3 System/tools/check.py allow <path>
+  <id>`; run without an id it lists them; the report prints that command first), and stop. Only the user
+  writes an allowance, in a terminal. Never write
+  one yourself, and never touch `System/walls-allowed.json`.
 
 Git skips the hook when its `core.hooksPath` setting sends commits past it,
 and then nothing checks the walls at commit time. `check.py` warns when that

@@ -133,6 +133,15 @@ from garrick_lib import (  # noqa: E402
     strip_tag,
     blocked,
     record_refusals,
+    refusal_kind,
+    ALLOW_RULES,
+    allow_add,
+    allow_commit,
+    allow_finding_id,
+    allow_may_write,
+    allow_remove,
+    allow_stray,
+    allow_set,
     is_walled,
     hats_of,
     decide,
@@ -271,6 +280,8 @@ class Finding:
     path: str
     message: str
     ear: str = ""
+    fid: str = ""       # the allow-once id, kept from the finding as found when its words are rewritten for an assistant
+    token: str = ""     # what the allow-once id is taken over besides path and kind; the message when empty
 
 
 @dataclass
@@ -305,6 +316,7 @@ class Workspace:
     quick: bool = False  # --quick: leave out the comparison of wording
     zone_notes: Optional[List[Tuple[Path, str]]] = None  # every live note in the zones, read on first use
     forms: Dict[frozenset, dict] = field(default_factory=dict)  # name_forms, by the walled tags asked for
+    soft: Dict[frozenset, dict] = field(default_factory=dict)  # soft_forms, by the walled tags asked for
     ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
     shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
     checkouts: Optional[List[Path]] = None  # the Garrick checkouts inside a project, found on first use
@@ -627,6 +639,8 @@ def is_generated(ws: Workspace, path: Path) -> bool:
 
 
 TEMPLATES = ("System", "templates")
+# The user's own templates, beside the ones Garrick ships: a source of common wording as those are (#470).
+TEMPLATES_LOCAL = ("System", "templates.local")
 
 
 def is_template_path(ws: Workspace, path: Path) -> bool:
@@ -635,7 +649,7 @@ def is_template_path(ws: Workspace, path: Path) -> bool:
     with an underscore (`_project`). The originals a Garrick checkout ships
     are never asked about: the checks leave a checkout out whole (set_apart)."""
     parts = Path(rel(ws, path)).parts
-    if parts[:2] == TEMPLATES:
+    if parts[:2] in (TEMPLATES, TEMPLATES_LOCAL):
         return True
     return bool(parts) and parts[0] == "Zones" and any(p.startswith("_") for p in parts[1:-1])
 
@@ -1402,6 +1416,24 @@ CONTEXT_EFFECT = {
 }
 
 
+# What a one-word People row's finding says, which Nurture reads to ask for the full name (nurture.ONE_WORD_ROW).
+ONE_WORD_ROW = "by one word, which a note refuses only beside the party's name or another of its people"
+
+
+def one_word_people(ws: Workspace, ctx_path: str) -> List[Finding]:
+    """A People row whose name is one word is matched by the walls only beside the party's name, another of its
+    people, or a link to the person's page; on its own it is a warning (#470). Warn about each row, so that
+    Nurture can ask for the full name, which refuses on its own."""
+    out = []
+    for person in ws.context["people"]:
+        key = " ".join(words(person["name"]))
+        if key and len(key.split()) == 1 and person["party"] in ws.context["parties"]:
+            out.append(Finding(WARNING, "context", ctx_path,
+                               "the People table lists `%s` of `%s` %s; give the full name" % (person["name"], person["party"], ONE_WORD_ROW),
+                               "A person in the context file has a one-word name"))
+    return out
+
+
 def check_context(ws: Workspace) -> List[Finding]:
     out = []
     ctx_path = "System/context.md"
@@ -1479,6 +1511,7 @@ def check_context(ws: Workspace) -> List[Finding]:
             out.append(Finding(WARNING, "context", ctx_path,
                                "%s belongs to `%s`, which is not a tag in Parties" % (person["name"], person["party"]),
                                "%s belongs to an unknown party" % person["name"]))
+    out.extend(one_word_people(ws, ctx_path))
     if "none" in parties:
         out.append(Finding(ERROR, "context", ctx_path,
                            "the Parties table has a row for `none`, which is reserved: it says a page is nobody's, "
@@ -4722,7 +4755,8 @@ class QuoteIndex:
 SHARED_FILES = ("AGENTS.md", "Wikis/AGENTS.md", "Wikis/Meetings/AGENTS.md", "System/rules.md", "System/context.md",
                 "AGENTS.local.md", "Wikis/AGENTS.local.md", "Wikis/Meetings/AGENTS.local.md", "System/rules.local.md",
                 "System/garrick-changelog.md")
-SHARED_FOLDERS = ("System/skills", "System/templates", "System/tools", "System/garrick-docs", "Wikis/Knowledge")
+SHARED_FOLDERS = ("System/skills", "System/templates", "System/templates.local", "System/tools", "System/garrick-docs",
+                  "Wikis/Knowledge")
 
 # A Garrick checkout kept inside the workspace is where those files come from.
 # The repository in the project about it, or a release unpacked to read, holds
@@ -4999,11 +5033,15 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
     # file whose working copy differs from git counts only for the wording both
     # versions hold, so an edit left unstaged cannot make a quotation common.
     knowledge = ws.root / "Wikis" / "Knowledge"
+    mine = ws.root.joinpath(*TEMPLATES_LOCAL)
+    local = lambda p: mine in p.parents  # noqa: E731
     for path in shared_files(ws):
         if path.suffix.lower() in TEXT_SUFFIXES or path.suffix.lower() == ".eml":
             found = {h for h in file_runs(ws, path, False) if h in owners}
             if path in view:
                 found &= wording(ws, path, view[path], False)
+            if local(path):     # your own templates: wording a meeting holds is not common (#470)
+                found = {h for h in found if not any(o in ws.meetings for o in owners[h])}
             common |= found
             if knowledge not in path.parents:
                 beyond |= found
@@ -5059,6 +5097,57 @@ def name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, st
 def _in_near_side(form: str, near_side: set) -> bool:
     padded = " %s " % form
     return any(padded in (" %s " % ns) for ns in near_side)
+
+
+def soft_forms(ws: Workspace, walled_tags: set) -> Dict[str, Dict[str, str]]:
+    """For each walled party, the name forms that are one word long and name a single person: {form: that person's
+    name}. A People row with one word in its name (`Kit`); an alias of it is a name like any other and refuses (#470). A party's own name,
+    tag and domains, and the full name of a person, are never in it.
+
+    Such a form is a first name with no surname to tell it from the next person's. On its own it is a reason to
+    warn, never to refuse; it refuses beside the party's name, a longer name of the party's people, or a second
+    one-word person of the party (soft_hit)."""
+    key = frozenset(walled_tags)
+    if key not in ws.soft:
+        ws.soft[key] = _soft_forms(ws, walled_tags)
+    return ws.soft[key]
+
+
+def _soft_forms(ws: Workspace, walled_tags: set) -> Dict[str, Dict[str, str]]:
+    ctx = ws.context
+    out: Dict[str, Dict[str, str]] = {}
+    for tag in sorted(walled_tags):
+        entry = ctx["parties"].get(tag)
+        if entry is None:
+            continue
+        hard = {" ".join(words(f)) for f in [entry.get("party") or "", tag] + list(entry.get("domains", []))}
+        soft: Dict[str, str] = {}
+        for person in ctx["people"]:
+            key = " ".join(words(person["name"]))
+            if person["party"] != tag or not key:
+                continue
+            if len(key.split()) == 1:
+                soft.setdefault(key, key)
+            else:
+                hard.add(key)
+        for key in hard:
+            soft.pop(key, None)
+        if soft:
+            out[tag] = soft
+    return out
+
+
+def soft_hit(text: str, forms: List[Tuple[bool, str]], soft: Dict[str, str],
+             padded: Optional[str] = None) -> Tuple[int, Optional[str]]:
+    """(how many different one-word people of the party `text` names, the first form that does). `forms` are the
+    party's name_forms; `soft` is its soft_forms."""
+    if padded is None:
+        padded = padded_words(text)
+    people = {}
+    for case_sensitive, form in forms:
+        if not case_sensitive and form in soft and " %s " % form in padded:
+            people.setdefault(soft[form], form)
+    return len(people), (next(iter(people.values())) if people else None)
 
 
 def owner_keys(ws: Workspace, first: bool = False) -> set:
@@ -5165,6 +5254,152 @@ def _name_forms(ws: Workspace, walled_tags: set) -> Dict[str, List[Tuple[bool, s
     return out
 
 
+# The check's own words (#470). A note that quotes one of the check's refusal or warning lines, or the sentence the
+# rules give for a wall, repeats words the check printed; they are not material. A refusal names the party and its
+# tag and nothing else, so a line in that shape is passed over when what it holds beyond them is no name of a party.
+WALL_SENTENCE_RE = re.compile(r'in these words: "([^"\n]+)"')
+RULES_SECTION = "## Zones and walls"
+
+
+def forbidden_forms(ws: Workspace) -> List[Tuple[bool, str]]:
+    """Every form that names a party, person, alias or domain of the tables, and every tag."""
+    tags = set(ws.context["parties"])
+    forms = [f for found in name_forms(ws, tags).values() for f in found]
+    forms += [(False, f) for found in soft_forms(ws, tags).values() for f in found]
+    forms += [(False, " ".join(words(t))) for t in tags if words(t)]
+    forms += [(False, " ".join(words(e.get("party") or ""))) for e in ws.context["parties"].values() if words(e.get("party") or "")]
+    return forms
+
+
+def wall_sentence(ws: Workspace) -> str:
+    """The sentence the rules give for a wall: the one quoted after "in these words:" in the *Zones and walls*
+    section of the workspace's own System/rules.md. "" when it is not there, or when it names a party, a tag, a
+    person, an alias or a domain of the tables; then nothing is dropped."""
+    text = read_text(ws.root / "System" / "rules.md") or ""
+    start = text.find(RULES_SECTION)
+    if start < 0:
+        return ""
+    section = text[start + len(RULES_SECTION):]
+    end = re.search(r"(?m)^## ", section)
+    section = section[:end.start()] if end else section
+    found = WALL_SENTENCE_RE.search(section)
+    if not found:
+        return ""
+    sentence = found.group(1)
+    return "" if names_hit(fold_format(sentence), forbidden_forms(ws)) else sentence
+
+
+# What the check prints, exactly (#470). A line is the check's own only when it has one of these shapes whole: the
+# hook's refusal (`Commit refused: <path> <message>. <fix>`), a line of the full report (`error <path>: <message>`),
+# a finding's `message` or `ear` in the JSON, or the ear sentence, and what is named in it is a party by its name
+# or tag. Anything else on the line makes it an ordinary line.
+TAIL = r"(?P<t>\S+) is walled and this (?:project|page) does not name it"
+NOUN = r"(?:a|an) [a-z][a-z ]{1,28}?"
+MESSAGE_RES = (
+    re.compile(r"names (?P<p>.{1,120}?)(?: \(as \"[^\"]{1,60}\"\))?, or one of its people; " + TAIL + "$"),
+    re.compile(r"(?:links|embeds|uses|quotes|writes the path) (?P<w>.{1,240}?), " + NOUN + r" (?:with|of) (?P<p>[^;]{1,120}); " + TAIL + "$"),
+    re.compile(r"repeats wording from (?P<w>.{1,240}?), " + NOUN + r"(?: with| in project .{1,80}? for| for) (?P<p>[^;]{1,120}); " + TAIL + "$"),
+    re.compile(r"is a symbolic link into a project of (?P<p>[^;]{1,120}); " + TAIL + "$"),
+)
+EAR_RE = re.compile(r"A note in [^,;:]{1,120}? (?:names|uses " + NOUN + r" (?:with|of)|quotes " + NOUN + r" (?:with|of)) (?P<p>[^;,:.]{1,120})$")
+LINE_RES = (
+    re.compile(r"^Commit refused: (?P<path>.{1,300}?) (?P<m>(?:names|links|embeds|uses|quotes|writes the path|repeats wording from|is a symbolic link into) .*?)"
+               r"(?:\. (?P<fix>[A-Z].{0,160}commit again[^.]{0,80}\.?))?(?:  \[id [0-9a-f]{6,16}, [a-z]{3,20}\])?$"),
+    re.compile(r"^(?:error|warning) +(?P<path>.{1,300}?): (?P<m>(?:names|links|embeds|uses|quotes|writes the path|repeats wording from|is a symbolic link into) .*)$", re.I),
+    re.compile(r"^\"(?:message|ear)\": \"(?P<m>.{1,600}?)\",?$"),
+    re.compile(r"^(?P<m>(?:names|links|embeds|uses|quotes|writes the path|repeats wording from|is a symbolic link into) .*)$"),
+    re.compile(r"^(?P<m>A note in .*)$"),
+)
+
+
+def own_words_line(ws: Workspace, line: str) -> bool:
+    """Is `line` exactly a line the check prints, naming no one but a party by its name or tag? A line that is
+    anything else, or that also holds a person of a party, a domain, an alias or a one-word name, is a note's own."""
+    if len(line) > 900:
+        return False
+    stripped = line.strip().strip("`\"'*>- \t") if not line.lstrip().startswith('"') else line.strip().rstrip("`*")
+    stripped = re.sub(r"^[>*\-` \t]+", "", stripped)
+    parties = ws.context["parties"]
+    named = set()
+    for tag in parties:
+        for text in (parties[tag].get("party") or "", tag):
+            key = " ".join(words(text))
+            if key:
+                named.add(key)
+
+    def known(text: str) -> bool:
+        text = text.strip()
+        key = " ".join(words(text[1:-1] if text.startswith("<") and text.endswith(">") else text))
+        return key in named
+
+    ok = False
+    for rx in LINE_RES:
+        m = rx.match(stripped)
+        if not m:
+            continue
+        message = m.group("m")
+        fix = m.groupdict().get("fix")
+        if fix is not None and fix not in {TAKE_OUT} | {f for _, f in STAGED_FIXES}:
+            continue
+        if message.startswith("A note in "):
+            e = EAR_RE.match(message)
+            ok = bool(e) and known(e.group("p"))
+        else:
+            for mrx in MESSAGE_RES:
+                mm = mrx.match(message.rstrip("."))
+                if mm and mm.group("t") in parties and (mm.groupdict().get("p") is None or known(mm.group("p"))):
+                    ok = True
+                    break
+        if ok:
+            break
+    if not ok:
+        return False
+    padded = padded_words(fold_format(line))
+    for key in sorted(named, key=len, reverse=True):
+        padded = re.sub(r"(?<= )%s(?= )" % re.escape(key), "", padded)
+    rest = [(c, f) for c, f in forbidden_forms(ws) if f not in named]
+    return not names_hit(padded, [f for f in rest if not f[0]]) and not name_hit(fold_format(line), [f for f in rest if f[0]])
+
+
+def without_own_words(ws: Workspace, text: str) -> str:
+    """`text` without the check's own lines and the wall sentence, for the name scan alone (#470): the wording
+    check reads every line. Line by line, so the lines either side keep their places; the links stay with the
+    caller's text."""
+    sentence = wall_sentence(ws)
+    if sentence and sentence in text:
+        text = text.replace(sentence, "")
+    if "is walled and" not in text and "repeats wording" not in text and "A note in " not in text:
+        return text
+    return "\n".join("" if own_words_line(ws, line) else line for line in text.split("\n"))
+
+
+def assistant_findings(root: Path, findings: List[Finding]) -> List[Finding]:
+    """The findings as an assistant is shown them (`--json`, or a run with no terminal): a walled party by its tag in
+    angle brackets, `<acme>`, never by its name, so that a refusal pasted into a note names nobody. A path is left as
+    it is, and a tag, which already stands in every line. A name that is an everyday word is left alone."""
+    try:
+        ctx = load_context(root)
+    except Exception:
+        return findings
+    skip = STOPWORDS | COMMON_WORD_NAMES | {" ".join(words(z)) for z in ctx.get("zones", {})}
+    names = {}
+    for tag, entry in ctx["parties"].items():
+        name = (entry.get("party") or "").strip()
+        key = " ".join(words(name))
+        if entry.get("walled") and key and key not in skip and key != " ".join(words(tag)):
+            names.setdefault(name.casefold(), tag)
+    if not names:
+        return findings
+    pattern = re.compile(r"(?<![\w<])(%s)(?![\w>])" % "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)), re.I)
+
+    def hide(text: str) -> str:
+        text = pattern.sub(lambda m: "<%s>" % names[m.group(1).casefold()], text)
+        return re.sub(r'(<[^<>\s]+>) \(as "[^"]*"\)', r"\1", text)
+
+    # The id is taken over the finding as found, so the id an assistant or the page is shown is the one the ledger matches.
+    return [Finding(f.severity, f.check, f.path, hide(f.message), hide(f.ear), finding_id(f)) for f in findings]
+
+
 def fold_format(text: str) -> str:
     """`text` with Unicode format characters (zero-width spaces and joiners, bidi marks, soft hyphens) taken out
     and every kind of space made a plain one, so a name cut by one still reads as the name. Initials stay a limit."""
@@ -5189,6 +5424,20 @@ def name_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = N
         elif " %s " % form in padded:
             return form
     return None
+
+
+def name_hits(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> List[str]:
+    """Every one of `forms` that `text` holds: what name_hit stops at the first of."""
+    if padded is None:
+        padded = padded_words(text)
+    found = []
+    for case_sensitive, form in forms:
+        if case_sensitive:
+            if re.search(r"(?<![\w])%s(?![\w])" % re.escape(form), text):
+                found.append(form)
+        elif " %s " % form in padded:
+            found.append(form)
+    return found
 
 
 def names_hit(text: str, forms: List[Tuple[bool, str]], padded: Optional[str] = None) -> bool:
@@ -5757,6 +6006,18 @@ def link_references(ws: Workspace, note: Path, text: str, meetings: "PathIndex")
     return out
 
 
+_DEDUP_OFF = False   # allow once: while set, a party or meeting already named for a file is named again (see _Reported)
+
+
+class _Reported(set):
+    """The walled parties and meetings a file's findings have named. A second finding about one is left out, which is
+    right for a report and wrong for an allowance: allowing the first must not hide the second. While _DEDUP_OFF is
+    set, nothing counts as named, and every finding of the file exists."""
+
+    def __contains__(self, item):
+        return False if _DEDUP_OFF else set.__contains__(self, item)
+
+
 def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: str) -> List[Finding]:
     """Every walls finding for one project file, whose text is `text`."""
     out: List[Finding] = []
@@ -5765,7 +6026,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     tags, where = file_tags(ws, project, ptags, path)
     r = rel(ws, path)
     zone = project.parent.name
-    reported: set = set()  # walled parties and meetings already named for this file
+    reported: set = _Reported()  # walled parties and meetings already named for this file
     unlabelled_hits: set = set()  # linked files with no label already named
     linked = symlink_finding(ws, project, ptags, path)
     if linked is not None:
@@ -5877,7 +6138,7 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
     # Names. Sources/ holds what a party sent, which may name anyone; it is exempt.
     in_sources = "Sources" in Path(rel(ws, path)).parts[3:-1]
     if far and not in_sources:
-        scanned = fold_format(without_party_field(text)) + "\n" + path.name
+        scanned = fold_format(without_party_field(without_own_words(ws, text))) + "\n" + path.name
         padded = padded_words(scanned)
         named_forms = name_forms(ws, far)
         only = tag_only_forms(ws, far)
@@ -5886,19 +6147,33 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             if b in reported:
                 continue
             forms = named_forms.get(b, [])
-            hit = name_hit(scanned, forms, padded) if forms else None
+            soft = soft_forms(ws, far).get(b, {})
+            hard = [f for f in forms if f[0] or f[1] not in soft]   # a one-word person's name is not one of them
+            hit = name_hit(scanned, hard, padded) if hard else None
             if hit is None and b in only:
                 # An everyday-word tag counts as a tag: in `parties:`, a code span or a fenced block.
                 if scoped is None:
                     scoped = fold_format(tag_scope_text(text))
                 hit = name_hit(scoped, [only[b]])
+            if hit is None and soft:
+                # A one-word name refuses beside a second person of the party; alone it is a warning (#470).
+                count, hit = soft_hit(scanned, forms, soft, padded)
+                if hit is not None and count < 2:
+                    out.append(Finding(WARNING, "walls", r,
+                                       "writes a name that is one word in the People table, for someone of %s; %s is walled and "
+                                       "this project does not name it. On its own it is not refused: write the person in full, "
+                                       "or take it out" % (party_name(ws, b), b),
+                                       "A note in %s writes a first name of someone of %s" % (where, party_name(ws, b))))
+                    continue
             if hit is None:
                 continue
             reported.add(b)
-            out.append(Finding(ERROR, "walls", r,
-                               "names %s%s, or one of its people; %s is walled and this project does not name it"
-                               % (party_name(ws, b), as_tag(ws, b, hit), b),
-                               "A note in %s names %s" % (where, party_name(ws, b))))
+            matched = sorted(set(name_hits(scanned, forms, padded)) | ({only[b]} if b in only and hit == only[b] else set()))
+            message = ("names %s%s, or one of its people; %s is walled and this project does not name it"
+                       % (party_name(ws, b), as_tag(ws, b, hit), b))
+            # The id covers every form of the party this file holds, so a name added to an unchanged file is a new id.
+            out.append(Finding(ERROR, "walls", r, message, "A note in %s names %s" % (where, party_name(ws, b)),
+                               token=message + "\0" + "\0".join(matched)))
 
     # Quotes: a run of words held only across a wall, by a meeting page or its
     # raw record or by another project's file, or held by an unfinished page.
@@ -6209,6 +6484,36 @@ def check_walls(ws: Workspace) -> List[Finding]:
     out.extend(form_findings(ws, [(p, None) for p in form_candidates(ws)]))
     out.extend(nested_repositories(ws))
     out.extend(archive_labels(ws))
+    out.extend(templates_local_findings(ws))
+    return out
+
+
+def templates_local_findings(ws: Workspace) -> List[Finding]:
+    """A file in `System/templates.local/` is common wording, read by every side of every wall (#470). Warn about one
+    that names a party the Parties table holds, by its name, tag, domain or a person, or that carries a `party:` or
+    `parties:` key: what a party said does not belong in a template."""
+    folder = ws.root.joinpath(*TEMPLATES_LOCAL)
+    if not folder.is_dir():
+        return []
+    out = []
+    forms = [f for found in name_forms(ws, set(ws.context["parties"])).values() for f in found]
+    forms.sort(key=lambda f: (-len(f[1].split()), -len(f[1]), f[1]))
+    owners = quote_index(ws).owners
+    for path in walk_files(folder):
+        if path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        text = read_text(path) or ""
+        keyed = bool(re.search(r"(?mi)^[ \t]*[\"']?(?:party|parties)[\"']?[ \t]*:", text.split("\n---", 1)[0] if text.startswith("---") else ""))
+        if keyed or names_hit(fold_format(text) + "\n" + path.name, forms):
+            out.append(Finding(WARNING, "walls", rel(ws, path),
+                               "is in System/templates.local/, whose wording every side of a wall may use, but it %s; "
+                               "keep a party out of a template" % ("carries a party key" if keyed else "names a party"),
+                               "A file in your templates names a party"))
+        elif any(any(o in ws.meetings for o in owners.get(h, ())) for h in file_runs(ws, path, False)):
+            out.append(Finding(WARNING, "walls", rel(ws, path),
+                               "is in System/templates.local/, but repeats eight words a Meetings page holds; that wording "
+                               "is not common, so it is still refused where it is used. Take it out of the template",
+                               "A file in your templates repeats a meeting"))
     return out
 
 
@@ -7637,13 +7942,15 @@ ALL_CHECKS = [
 ]
 
 
-def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = None, quick: bool = False) -> List[Finding]:
+def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = None, quick: bool = False,
+               use_ledger: bool = True) -> List[Finding]:
     """Every check, or with `walls_only` the walls check alone. With `staged`, a
     folder inside a git repository, the walls check alone on what it has staged.
     With `quick`, every check but the comparison of wording: whether a project
     file, a person page or a Knowledge page repeats a meeting. That comparison
     reads every meeting and project file, and is most of the time a full check
-    takes on a large workspace; the commit hook still runs it on what is staged."""
+    takes on a large workspace; the commit hook still runs it on what is staged.
+    Findings the user allowed once (System/walls-allowed.json) are dropped, unless `use_ledger` is off."""
     _committing(Path(staged) if staged is not None else None)
     _BLOBS.clear()
     cache = NoteCache.for_repo(Path(staged)) if staged is not None else None
@@ -7653,6 +7960,9 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
     if staged is not None:
         findings = check_walls_staged(ws, Path(staged))
         cache.save()
+        if use_ledger:
+            findings = drop_allowed(ws, findings, allow_repo_top(Path(staged)),
+                                    lambda paths: check_walls_staged(ws, Path(staged)))
     else:
         for check in ([check_walls] if walls_only else ALL_CHECKS):
             try:
@@ -7661,6 +7971,8 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
                 name = check.__name__.replace("check_", "", 1)
                 findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
                                         "A check stopped before it finished"))
+        if use_ledger:
+            findings = drop_allowed(ws, findings, None, lambda paths: run_path_checks(ws.root, paths))   # the touched files only
     order = {c: i for i, (c, _) in enumerate(CHECKS)}
     findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
     return findings
@@ -7835,11 +8147,300 @@ def staged_fix(message: str) -> str:
     return TAKE_OUT
 
 
-def report_staged(findings: List[Finding]) -> str:
-    """For the pre-commit hook: one plain line per wall broken, nothing when clear."""
-    return "\n".join(
-        "Commit refused: %s %s. %s" % (f.path, f.message, staged_fix(f.message))
-        for f in findings if f.severity == ERROR)
+# ---------------------------------------------------------------------------
+# Allow once: a finding the user let through, for as long as its file is as it was
+# ---------------------------------------------------------------------------
+# The ledger is System/walls-allowed.json (garrick_lib.py). The hook reads it once and drops a finding whose path,
+# id and git blob id all match an entry. Nothing here writes it but allow_command(); the page's verb only takes an entry away, and
+# runs without a terminal.
+
+def finding_rule(f: Finding) -> str:
+    """The kind of a finding, as the hook's report and the ledger name it."""
+    return refusal_kind(f.message)
+
+
+def finding_token(f: Finding) -> str:
+    """What a finding's id is taken over besides its path and kind: the text of the finding. The one place to
+    change if a finding comes to carry the matched text on its own."""
+    return f.token or f.message
+
+
+def finding_id(f: Finding) -> str:
+    return f.fid or allow_finding_id(f.path, finding_rule(f), finding_token(f))
+
+
+def allowable(f: Finding) -> bool:
+    """Whether the user may let a finding through: a wall refusal about a file of the workspace, of a kind the
+    ledger holds. A finding about something that could not be read, a file waiting in an inbox, or a repository
+    the walls cannot place is never allowed."""
+    return (f.severity == ERROR and f.check == "walls" and bool(f.path) and not Path(f.path).is_absolute()
+            and finding_rule(f) in ALLOW_RULES and staged_fix(f.message) in ALLOWED_FIXES)
+
+
+# What a refusal ends with when the user may let it through: material to take out (a name, a link, a path, repeated
+# wording), or a file that names no party. A refusal whose fix is a change of the hub, a staging, a finished page or
+# a file that could not be read is not a judgment about the material, and is never allowed.
+ALLOWED_FIXES = {TAKE_OUT, staged_fix("is a file that names no party")}
+
+
+def index_blobs(top: Path) -> Dict[str, str]:
+    """Git's blob id of every file in the index of the repository at `top`, by path in any case: what the commit
+    holds, with nothing hashed here."""
+    listing = _git(["ls-files", "-s", "-z"], top) or ""
+    blobs: Dict[str, str] = {}
+    for entry in listing.split("\0"):
+        meta, _, name = entry.partition("\t")
+        parts = meta.split()
+        if name and len(parts) == 3 and parts[2] == "0":
+            blobs[name.casefold()] = parts[1]
+    return blobs
+
+
+def disk_blob(path: Path) -> Optional[str]:
+    """Git's blob id of a file as it is on disk, from the repository it is in."""
+    got = _git(["hash-object", "--", path.name], path.parent)
+    return got.strip() if got and got.strip() else None
+
+
+def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = None,
+                 rerun: Optional[Callable[[List[str]], List[Finding]]] = None) -> List[Finding]:
+    """The findings left once the allowed ones are taken out. With `top`, the repository being committed, a blob
+    id comes from its index; without, from the file on disk, and only for the files that have a finding the
+    ledger could cover. The ledger is the committed one, read once; a missing or unreadable one drops nothing.
+
+    A file is cleared only when every finding it can have is covered. The report leaves a second finding about a
+    party or meeting already named out, so for a file the ledger touches `rerun` (the walls check again, with that
+    left in) says what the file holds; if anything the ledger does not cover is there, nothing of the file is
+    dropped, and the findings the file really has are shown in place of the first pass's."""
+    global _DEDUP_OFF
+    ledger = allow_set(ws.root)
+    if not ledger:
+        return findings
+    covered = {(p, i) for p, i, _ in ledger}
+    touched = {f.path for f in findings if allowable(f) and (f.path, finding_id(f)) in covered}
+    if not touched:
+        return findings
+    full = findings
+    if rerun is not None:
+        _DEDUP_OFF = True
+        try:
+            full = [f for f in rerun(sorted(touched)) if f.check == "walls"]
+        finally:
+            _DEDUP_OFF = False
+    index: Optional[Dict[str, str]] = None
+    disk: Dict[str, Optional[str]] = {}
+
+    def blob_of(path: str) -> Optional[str]:
+        nonlocal index
+        if top is not None:
+            if index is None:
+                index = index_blobs(top)
+            try:
+                name = (ws.root / path).relative_to(top).as_posix()
+            except ValueError:
+                return None
+            return index.get(name.casefold())
+        if path not in disk:
+            disk[path] = disk_blob(ws.root / path)
+        return disk[path]
+
+    kept = [f for f in findings if f.path not in touched]
+    for path in sorted(touched):
+        kept += [f for f in findings if f.path == path and f.check != "walls"]    # only wall findings are ever dropped
+        here = [f for f in full if f.path == path and f.check == "walls"]
+        mine = [f for f in here if allowable(f)]
+        blob = blob_of(path)
+        if blob is not None and mine and all((path, finding_id(f), blob) in ledger for f in mine):
+            kept += [f for f in here if not allowable(f)]
+        else:
+            kept += here or [f for f in findings if f.path == path and f.check == "walls"]
+    return kept
+
+
+def allow_repo_top(folder: Path) -> Optional[Path]:
+    top = _git(["rev-parse", "--show-toplevel"], folder)
+    return Path(top.strip()).resolve() if top else None
+
+
+def refused_by_file(findings: List[Finding]) -> Dict[str, List[Finding]]:
+    out: Dict[str, List[Finding]] = {}
+    for f in findings:
+        if f.severity == ERROR:
+            out.setdefault(f.path, []).append(f)
+    return out
+
+
+def kind_counts(found: List[Finding]) -> str:
+    counts: Dict[str, int] = {}
+    for f in found:
+        counts[finding_rule(f)] = counts.get(finding_rule(f), 0) + 1
+    return ", ".join("%d %s" % (n, k) for k, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def shell_word(text: str) -> str:
+    return text if re.fullmatch(r"[A-Za-z0-9_./@%+=:,-]+", text) else "'" + text.replace("'", "'\\''") + "'"
+
+
+def allow_prefix() -> str:
+    """The command that allows, written to run from the folder the hook runs in (a zone's), not only from the
+    workspace root: this file's path from there. The path argument stays the workspace's."""
+    tool = Path(__file__).resolve()
+    try:
+        shown = os.path.relpath(str(tool), str(Path.cwd()))
+    except ValueError:
+        shown = str(tool)
+    return "python3 %s allow" % shell_word(shown)
+
+
+def prints_for_assistant(json_out: bool = False, staged: bool = False, ear: bool = False) -> bool:
+    """Whether the check prints for an assistant, not a person at a terminal: `--json`, or the stream it prints to
+    (stderr for the hook's report, else stdout) not a terminal. The one test for what an assistant is not shown."""
+    stream = sys.stderr if staged and not ear else sys.stdout
+    try:
+        return bool(json_out) or not stream.isatty()
+    except (AttributeError, ValueError):
+        return True
+
+
+def hook_fix(message: str) -> str:
+    """staged_fix(), for the hook's own lines. The way past the whole check (`git commit --no-verify`) is the
+    user's, so it is named only where a person is reading (git runs the hook with no stdin, so stdin says nothing):
+    for an assistant the allow command stands in its place."""
+    fix = staged_fix(message)
+    return fix if not prints_for_assistant(False, True) else fix.replace("; only if you mean it, git commit --no-verify", "")
+
+
+def report_short(findings: List[Finding]) -> str:
+    """The hook's report: a file with one refusal keeps its own line; a file with several gets one line with the
+    kind of each and a count. The command that lets one through, once, comes first. The full list is --verbose, from the zone folder."""
+    lines = []
+    first = None
+    for path, found in refused_by_file(findings).items():
+        if len(found) == 1:
+            f = found[0]
+            lines.append("Commit refused: %s %s. %s" % (f.path, f.message, hook_fix(f.message)))
+        else:
+            lines.append("Commit refused: %s holds %d refusals (%s). Take them out and commit again; "
+                         "--verbose lists each." % (path, len(found), kind_counts(found)))
+        if first is None:
+            first = next((f for f in found if allowable(f)), None)
+    if first is not None:        # first, not last: what reads a refusal back (the page, scaffold.py) takes the last line
+        prefix = allow_prefix()
+        lines.insert(0, "To let a refusal through, once, while the file stays as it is: %s <path> [<id>]; "
+                     "with no id it lists each id, for example %s %s %s"
+                     % (prefix, prefix, shell_word(first.path), finding_id(first)))
+    return "\n".join(lines)
+
+
+def report_verbose(findings: List[Finding]) -> str:
+    """Every refusal on a line of its own, as the hook used to print them, with the id that lets it through."""
+    lines = []
+    for f in (f for f in findings if f.severity == ERROR):
+        line = "Commit refused: %s %s. %s" % (f.path, f.message, hook_fix(f.message))
+        lines.append(line + ("  [id %s, %s]" % (finding_id(f), finding_rule(f)) if allowable(f) else ""))
+    return "\n".join(lines)
+
+
+def allow_files(root: Path, path: str):
+    """(findings, blob, top) for a file of the workspace: what the wall check says about it now, the blob id of the
+    file as that check read it, and the repository it is in. Read from the index when the file is staged, else
+    from the file on disk (the walls check of the named file, as an update asks it). None when the file is not
+    in a repository of the workspace."""
+    file = root / path
+    top = _git(["rev-parse", "--show-toplevel"], file.parent if file.parent.is_dir() else root)
+    if top is None:
+        return None
+    top_path = Path(top.strip()).resolve()
+    try:
+        name = file.resolve().relative_to(top_path).as_posix()
+    except ValueError:
+        return None
+    staged = _git(["diff", "--cached", "--name-only", "-z", "--", name], top_path) or ""
+    global _DEDUP_OFF
+    _DEDUP_OFF = True            # every finding the file has, the second about a party already named included
+    try:
+        if staged.strip("\0"):
+            found = run_checks(root, staged=top_path, use_ledger=False)
+            blob = index_blobs(top_path).get(name.casefold())
+        else:
+            found = run_path_checks(root, [path])
+            blob = disk_blob(file)
+    finally:
+        _DEDUP_OFF = False
+    return [f for f in found if f.path == path and allowable(f)], blob, top_path
+
+
+STRAY_SAID = " The ledger on disk differed from the committed one; its uncommitted entries were dropped, not committed."
+
+
+def allow_page(root: Path, path: str, fid: Optional[str], by: str, remove: bool = False) -> Tuple[int, str]:
+    """Write or take away one allowance. (0, what was done) or (1, why not). `by` is "terminal" or "page"; the
+    caller has settled that it is one (allow_may_write). Without an id, lists the file's findings and
+    writes nothing."""
+    root = Path(root).resolve()
+    path = Path(path).as_posix()
+    if path.startswith("/") or ".." in path.split("/") or not path:
+        return 1, "name the file by its path from the workspace root, such as Zones/Work/Acme/Notes.md"
+    if remove:
+        if not fid:
+            return 1, "name the finding to take away: allow --remove <path> <id>"
+        stray = allow_stray(root)
+        if not allow_remove(root, path, fid):
+            return 1, "no allowance for %s with the id %s%s" % (path, fid, STRAY_SAID if stray else "")
+        said = allow_commit(root, "Walls: take away an allowance")
+        return 0, "Allowance taken away.%s%s" % (STRAY_SAID if stray else "", " The ledger was not committed: %s" % said if said else "")
+    got = allow_files(root, path)
+    if got is None:
+        return 1, "%s is not in a repository of this workspace" % path
+    found, blob, _ = got
+    if not found:
+        return 1, "no refusal that can be allowed for %s now" % path
+    if not fid:
+        return 0, "\n".join("%s  %s  %s" % (finding_id(f), finding_rule(f), f.message) for f in found)
+    hit = next((f for f in found if finding_id(f) == fid), None)
+    if hit is None:
+        return 1, "%s has no refusal with the id %s now" % (path, fid)
+    if blob is None:
+        return 1, "git has no blob id for %s, so nothing was allowed; stage the file first" % path
+    stray = allow_stray(root)
+    entry = allow_add(root, path, fid, blob, finding_rule(hit), by)
+    said = allow_commit(root, "Walls: allow one %s refusal once" % entry["rule"])
+    return 0, "Allowed once: %s, a %s refusal. It holds until the file changes.%s%s" % (
+        path, entry["rule"], STRAY_SAID if stray else "", " The ledger was not committed: %s" % said if said else "")
+
+
+def allow_command(argv: List[str]) -> int:
+    """`check.py allow [--root R] [--remove] <path> [<id>]`: from a terminal only."""
+    parser = argparse.ArgumentParser(prog="check.py allow", description="Let one wall refusal through, once, while its "
+                                     "file stays as it is. Without an id, lists the file's refusals.")
+    parser.add_argument("--root", help="workspace root (default: the workspace this script sits in)")
+    parser.add_argument("--remove", action="store_true", help="take the allowance away instead")
+    parser.add_argument("path", help="the file, from the workspace root")
+    parser.add_argument("id", nargs="?", help="the refusal's id, as this command without one lists it")
+    args = parser.parse_args(argv)
+    if not allow_may_write("terminal"):
+        print("check: an allowance is written from a terminal you type in; "
+              "nothing was written", file=sys.stderr)
+        return 2
+    try:
+        root = Path(args.root).expanduser().resolve() if args.root else workspace_root(Path(__file__).resolve().parent)
+    except FileNotFoundError as exc:
+        print("check: %s" % exc, file=sys.stderr)
+        return 2
+    path = args.path
+    if os.path.isabs(path):
+        try:
+            path = Path(path).resolve().relative_to(root).as_posix()
+        except ValueError:
+            pass
+    code, said = allow_page(root, path, args.id, "terminal", remove=args.remove)
+    print(said, file=sys.stderr if code else sys.stdout)
+    return code
+
+
+def report_staged(findings: List[Finding], verbose: bool = False) -> str:
+    """For the pre-commit hook: the short report, nothing when clear; with `verbose`, one line per wall broken."""
+    return report_verbose(findings) if verbose else report_short(findings)
 
 
 def install_hooks(root: Path) -> int:
@@ -7907,6 +8508,9 @@ def walls_cases(root: Path) -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv[:1] == ["allow"]:
+        return allow_command(argv[1:])
     parser = argparse.ArgumentParser(description="Check a Garrick workspace against its rules.")
     parser.add_argument("--root", help="workspace root (default: the workspace this script sits in, else the current folder's)")
     fmt = parser.add_mutually_exclusive_group()
@@ -7927,6 +8531,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                              "Parties table, with its tags in place of the fixture's")
     parser.add_argument("--version", action="store_true",
                         help="say which Garrick the workspace was installed from, for a bug report")
+    parser.add_argument("--verbose", action="store_true",
+                        help="with --staged: one line for every refusal, each with the id that lets it through "
+                             "(`check.py allow <path> <id>`), not the short report")
     args = parser.parse_args(argv)
 
     try:
@@ -7960,8 +8567,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         findings = run_checks(root, walls_only=args.walls_only, staged=Path.cwd() if args.staged else None, quick=args.quick)
     if args.staged and any(f.severity == ERROR for f in findings):
         record_refusals(root, Path.cwd(), [f.message for f in findings if f.severity == ERROR])
+    if args.json or not (sys.stderr if args.staged and not args.ear else sys.stdout).isatty():
+        findings = assistant_findings(root, findings)       # an assistant is shown a walled party by its tag
     if args.staged and not (args.json or args.ear):
-        text = report_staged(findings)
+        text = report_staged(findings, args.verbose)
         if text:
             print(text, file=sys.stderr)
     elif args.json:

@@ -99,7 +99,7 @@ class TestDeclared(unittest.TestCase):
             if spec.commits:
                 # a zone's repository, or, for the Nurture answers (#224), the wikis and zones the answers touch
                 # party-flag writes System/context.md at the workspace root, so its scope is the workspace
-                wide = verb.startswith("nurture-") or verb in ("party-flag", "walls-migrate")
+                wide = verb.startswith("nurture-") or verb in ("party-flag", "walls-migrate", "walls-unallow")
                 self.assertIn(spec.scope, ("zone", "workspace") if wide else ("zone",), verb)
 
     def test_only_the_six_the_page_sends_under_the_lock_keep_a_record(self):

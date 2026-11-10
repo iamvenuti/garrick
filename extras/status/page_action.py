@@ -95,6 +95,11 @@ zone's repository, as the skills would:
                 question; without it the reply is the question and nothing is
                 written. The same checks as release.py update --apply --yes:
                 the study still pending, the commit through the wall check
+    walls-unallow  takes an allowance away (allow once): {"path", "id"}, the file
+                from the workspace root and the refusal's id. The ledger
+                System/walls-allowed.json loses the entry and the refusal comes
+                back at the next commit. There is no verb that adds one: an
+                allowance is written only by `check.py allow`, typed in a terminal
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -288,7 +293,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag", "walls-study", "walls-migrate")
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag", "walls-study", "walls-migrate", "walls-unallow")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -1994,6 +1999,40 @@ def walls_migrate(ws: Path, req: dict) -> dict:
         say += " The walls check now refuses %d thing%s that was committed before: %s" % (
             len(refused), "" if len(refused) == 1 else "s", "; ".join(refused[:5]) + (" ..." if len(refused) > 5 else ""))
     return {"say": say, "ask": False, "written": True, "pending": False, "refused": refused}
+
+
+def walls_allowed_tool(ws: Path):
+    """The workspace's own System/tools/check.py, loaded afresh, or None: the one that takes an allowance away."""
+    src = ws / "System" / "tools" / "check.py"
+    if not src.is_file():
+        return None
+    try:
+        with tools_path(ws):
+            spec = importlib.util.spec_from_file_location("garrick_page_check", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["garrick_page_check"] = mod
+            spec.loader.exec_module(mod)
+    except Exception:
+        return None
+    finally:
+        sys.modules.pop("garrick_page_check", None)
+    return mod if callable(getattr(mod, "allow_page", None)) else None
+
+
+def walls_unallow(ws: Path, req: dict) -> dict:
+    """Take one allowance away (allow once): check.py's own allow_page. Removing an allowance only makes the wall
+    refuse more, so any caller may; writing one is `check.py allow`, typed in a terminal, and has no verb here."""
+    path, fid = req.get("path"), req.get("id")
+    if not isinstance(path, str) or not path or not isinstance(fid, str) or not re.fullmatch(r"[0-9a-f]{10}", fid):
+        raise Refused("name the file and the refusal's id")
+    tool = walls_allowed_tool(ws)
+    if tool is None:
+        raise Refused("this workspace has no check.py that can take an allowance away, so nothing was done")
+    with held("page-action-walls-allow.lock", busy="another change to the allowed refusals is still running"):
+        code, said = tool.allow_page(ws, path, fid, "page", remove=True)
+    if code:
+        raise Refused(said)
+    return {"say": said, "written": True}
 
 
 def asks_how(ws: Path, args: list) -> None:
@@ -5351,6 +5390,8 @@ def act(ws: Path, req, today=None, now=None):
         return walls_study(ws)
     if req["verb"] == "walls-migrate":
         return walls_migrate(ws, req)
+    if req["verb"] == "walls-unallow":
+        return walls_unallow(ws, req)
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":

@@ -31,7 +31,7 @@ With several good ways, name two or three, recommend one, and go ahead.
 - **Cross-zone work happens only when asked**, for that request only. The answer stays in the conversation unless told where to write.
 - **The Knowledge wiki crosses every wall.**
 - If unsure whether a wall applies, ask.
-- **The walls are checked again before every commit.** Each zone's git hook runs `System/tools/check.py --staged --walls-only` and refuses a commit that crosses a wall; remove the material and recommit. Never use `git commit --no-verify` unless the user explicitly asks. Git skips the hook when `core.hooksPath` bypasses it; `check.py` warns.
+- **The walls are checked again before every commit.** Each zone's git hook refuses a commit that crosses a wall; remove the material and recommit. Never use `git commit --no-verify` unless the user explicitly asks. If a refusal looks wrong, name the files and `check.py allow`, then stop. Git skips the hook when `core.hooksPath` bypasses it; `check.py` warns.
 
 ## Ways in
 

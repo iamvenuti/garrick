@@ -189,6 +189,16 @@ A fixture workspace: `Northwind` (hub `near`) and `Harbour` (hub `far`) in the W
 | e67 | check | a Northwind note that links a file of a project put away in the zone's `archive/`, whose hub names `far` | refused | a put-away project keeps its hub's party, so its files stay labelled |
 | e68 | check | the same link to a project put away whose hub names `near` | permitted | the same rule, on the near side |
 | e69 | ask | a page under `System/garrick-docs/` with `Party:` in its frontmatter, found by the docs route | refused | the docs route reads frontmatter as labels() does: a party key in any case makes the page labelled, not published |
+| e70 | check | a Reed note that writes a one-word name of a walled party's person and no other name of that party | permitted | a first name alone gives a warning, not a refusal |
+| e71 | check | a Reed note that writes that one-word name beside the party's name | refused | next to the party's name a one-word name is a name |
+| e72 | check | a Reed note that links the person page of that one-word name | refused | a link to a person page is the person, whatever the page is called |
+| e73 | check | a Reed note that repeats a sentence a walled note holds and `System/templates.local/` holds too | permitted | the user's own templates are common wording |
+| e74 | check | a Reed note that repeats a sentence only a walled note holds | refused | wording held across the wall is a quotation |
+| e75 | check | a Reed note that quotes a refusal line of the check, which names a walled party | permitted | the check's own words are not material |
+| e76 | check | the same line with a person of that party written in it | refused | a line that holds more than the check prints is the note's own |
+| e77 | check | a Reed note that writes an alias of a one-word person of a walled party, alone | refused | an alias is a name like any other; only the People row's own word softens |
+| e78 | check | a Reed note whose line starts like the check's ear sentence and names a walled party in prose | refused | only the exact sentences the check prints are its own |
+| e79 | check | a Reed note that repeats wording only a walled note holds, on a line shaped like a refusal | refused | the wording check reads every line |
 | e20 | recall | search from a scope with no party | Recall's | tested with decide() alone, d07;  a session that began at zone level labelled as a project |
 | e21 | recall | a mixed session read from a project with no party | Recall's | tested with decide() alone, d07 and d12;  a session of two projects labelled with the first |
 | e22 | recall | ranking over rows the scope may not read | Recall's | tested with decide() alone, d01; a row decide() does not admit is not in the scope index, so it ranks nothing;  ranking statistics computed over walled rows |

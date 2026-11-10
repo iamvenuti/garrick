@@ -468,7 +468,10 @@ project behind it offers nothing.
      ```
      When the hook refuses, take the material out and commit again, and
      tell the user only that a wall held something back. Never
-     `--no-verify` unless the user asks for it in this request.
+     `--no-verify` unless the user asks for it in this request. If the
+     refusal looks wrong, name the file and the command that lets that
+     refusal through once (`python3 System/tools/check.py allow <path>
+     <id>`) and stop: only the user writes an allowance, in a terminal.
    - Saving is not sending. Pushing, sending or sharing the brief needs
      the user's yes, every time.
 

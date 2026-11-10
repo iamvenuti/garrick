@@ -285,9 +285,11 @@ class TestStaged(WallCase):
         res = self.staged()
         self.assertEqual(1, res.returncode)
         lines = res.stderr.strip().splitlines()
-        self.assertEqual(1, len(lines), res.stderr)
-        self.assertTrue(lines[0].startswith("Commit refused: Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md names Acme Corp"))
-        self.assertIn("--no-verify", lines[0])
+        self.assertEqual(1, len([l for l in lines if l.startswith("Commit refused")]), res.stderr)
+        self.assertEqual(2, len(lines), res.stderr)              # the command that lets it through once, then the refusal
+        self.assertTrue(lines[1].startswith("Commit refused: Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md names <acme>"))
+        self.assertIn("check.py allow", lines[0])
+        self.assertNotIn("--no-verify", res.stderr)                # no terminal: the allow command stands in its place
         self.assertNotIn("Dana", res.stderr)
 
     def test_only_the_staged_version_counts(self):
@@ -332,7 +334,8 @@ class TestStaged(WallCase):
         res = _run(["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "Board note"], self.zone)
         self.assertEqual(1, res.returncode, res.stderr)
         lines = res.stderr.strip().splitlines()
-        self.assertEqual(1, len(lines), res.stderr)
+        self.assertEqual(1, len([l for l in lines if l.startswith("Commit refused")]), res.stderr)
+        lines = [l for l in lines if l.startswith("Commit refused")]
         self.assertTrue(lines[0].startswith("Commit refused: Zones/Work/Acme Review/Deliverables/260302 - Board note.md "
                                             "repeats wording from meeting 260314-birch-call"), lines[0])
         for word in SECRET_WORDS:
@@ -659,9 +662,9 @@ class TestStagedAgainstDisk(WallCase):
         write(self.acme_note, PLAN + ".\n")
         commit_all(self.zone, "Acme notes")
 
-    def staged(self, cwd=None):
-        return _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"],
-                    cwd or self.zone)
+    def staged(self, cwd=None, verbose=False):
+        return _run([sys.executable, self.root / "System" / "tools" / "check.py", "--staged", "--walls-only"]
+                    + (["--verbose"] if verbose else []), cwd or self.zone)
 
     def stage(self, path):
         git(self.zone, "add", "--", str(path.relative_to(self.zone)))
@@ -739,10 +742,10 @@ class TestStagedAgainstDisk(WallCase):
                                  "Market Sizing/Market Sizing.md names a different party on disk from the one staged")
         self.assertEqual(2, len(res.stderr.strip().splitlines()), res.stderr)
         git(self.zone, "add", "-A")                         # staged, the commit declares it: nothing ambiguous
-        res = self.staged()
+        res = self.staged(verbose=True)                     # a file with several refusals is one line in the short report
         self.assertNotIn("different party", res.stderr)
         self.assertNotIn("repeats wording", res.stderr)
-        self.assertIn("names Birch & Co", res.stderr)       # an Acme project called Birch Entry names Birch
+        self.assertIn("names <birch>", res.stderr)       # an Acme project called Birch Entry names Birch; a run with no terminal says the tag
 
     def test_thread_party_changed_on_disk_only(self):
         self.stage_quote()
@@ -873,8 +876,9 @@ class TestInstalledHook(unittest.TestCase):
         head = self.git(work, "rev-parse", "HEAD").stdout
         res = self.git(work, "commit", "-q", "-m", "Launch Plan: wrap")
         self.assertEqual(1, res.returncode)
-        self.assertEqual(1, len(res.stderr.strip().splitlines()), res.stderr)
-        self.assertIn("Launch Plan.md names Acme Corp", res.stderr)
+        self.assertEqual(1, len([l for l in res.stderr.strip().splitlines() if l.startswith("Commit refused")]), res.stderr)
+        self.assertIn("check.py allow", res.stderr)             # and the one command that lets it through, once
+        self.assertIn("Launch Plan.md names <acme>", res.stderr)
         self.assertNotIn("Dana", res.stderr)
         self.assertEqual(head, self.git(work, "rev-parse", "HEAD").stdout)
 

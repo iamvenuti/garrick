@@ -9,6 +9,8 @@ Garrick's own commits (the status page's actions, the scaffold tool and the sche
 | Protection | How it holds | Where |
 |---|---|---|
 | A commit of a project file that points at a meeting page or at another project's file whose walled party the project does not name. A reference is what the vault resolves: a link (wikilink, Markdown link, embed, HTML link attribute, autolink, `obsidian://open?file=` link), or a token that is the exact path of a file, from the top of the vault, from the note's folder or absolute, with `.md` or without, wherever it is written. A page that faded, dormant or archived, counts as a working one; so do a question in `Wikis/Meetings/questions/` and its raw answer. It names a walled party, person or alias that the project's parties do not include, or repeats eight words in a row held only there. A symbolic link in a project into the Meetings wiki or a walled project is refused too. A glob, a folder, a bare word and a path with an escape in it resolve to nothing, so they are text | | **Code refuses.** Not complete: see [the known gaps](#the-wall-checks-known-gaps) | The pre-commit hook in each zone, and in any git repository inside a project, runs `System/tools/check.py --staged --walls-only`. See [What the check covers](principles.md#what-the-check-covers) |
+| A commit of a note that writes a one-word name from the People table (`Kit`) alone is not refused: it gives a warning. It is refused beside the party's name, a longer name of the party's people, a second one-word person of the party, or as a link to the person's page | **Code warns**, and refuses beside a second name | `soft_forms()` and the name scan in `System/tools/check.py`; Nurture asks for the full name. `System/templates.local/` holds your own common wording; the check warns about a file there that names a party or carries a party key |
+| A line the check itself prints (a refusal, a warning, the wall sentence of the rules), quoted in a note, is not material, as long as it holds no name of a party beyond its name and tag. `check.py --json` and a run with no terminal name a walled party by its tag in angle brackets, not by its name, so a pasted refusal names nobody | **Code passes** the quotation | `own_words_line()` and `assistant_findings()` in `System/tools/check.py` |
 | A commit that links to, or repeats eight words from, a meeting page or a Meetings question with no zone or parties yet | **Code refuses** | The same hook |
 | Answering a wiki question: the answer is filed word for word as a raw record before the question changes, no raw answer is overwritten, and a question whose `pages:` carry walled parties that no one scope names together, or that has no zone and parties the walls know, is refused with the rules' sentence and nothing written; working it in leaves out a Meetings page that does not carry the question's own parties (naming a walled party the question does not, written for nobody or `party: none`, not readable plainly, or not there) and says the wall without a name | **Code refuses** | `question-answer`, `question-later`, `question-close`, `question-work` and `question-done` in `System/status/page_action.py` (the status extra). The pages themselves are changed by the assistant, following the `meetings` and `knowledge` skills, so which pages and what they then say is asked, not enforced |
 | A write that changes wiki pages (a wiki question's answer, later, close or done, and each Nurture answer from the Questions panel): `check.py` and each wiki's lint are counted before and after, and if any count is worse, or a check cannot run, every file is put back byte for byte and a file the write made is removed, with nothing committed | **Code refuses** | `transaction()` in `System/status/page_action.py` (the status extra) |
@@ -58,7 +60,7 @@ Garrick's own commits (the status page's actions, the scaffold tool and the sche
 | Never guessing a zone, a party or a project, and never into a scope that does not name a walled party: asking in one line instead | **Asked** | [Autonomy](../template/System/rules.md#autonomy) and [Ways in](../template/System/skills/intake/SKILL.md#the-rules-for-where-things-go) |
 | Asking before writing outside the project the session was opened in | **Asked**, with the zone guard as an optional reminder | [Autonomy](../template/System/rules.md#autonomy) |
 | Taking a mail's parties from its addresses only when confirmed, and never from personal webmail or your own addresses | **Asked** | [Ways in](../template/System/skills/intake/SKILL.md#the-rules-for-where-things-go) |
-| Never skipping the wall check with `git commit --no-verify` unless you ask | **Asked** | [Zones and walls](../template/System/rules.md#zones-and-walls) |
+| Never skipping the wall check with `git commit --no-verify` unless you ask; and, when a refusal looks wrong, naming the files and the `check.py allow` command and stopping, never writing an allowance | **Asked**. `--no-verify` stays yours. The allowance itself is **Code refuses** for anything but a terminal you type in: `check.py allow` refuses with no terminal on stdin, and the page has no verb that writes an allowance. A shell that fakes a terminal is not stopped: the check is for an honest writer's mistakes | [Zones and walls](../template/System/rules.md#zones-and-walls), and [Allow once](#allow-once) |
 | Never editing anything in a wiki's `raw/` | **Asked**; the check reports a raw record that changed | [Files](../template/System/rules.md#files) |
 | Never printing, writing or committing a secret | **Asked** | [Secrets](../template/System/rules.md#secrets) |
 | Keeping `Todo.md` to actions: a line ticked as it was written, with no outcome added, and no line for work that is already done | **Asked**; the check warns about a ticked line the zone's history never held open, and about a line longer than 200 characters | The `threads` skill's *Wrap* and *Finish*, and the `todo` skill |
@@ -66,6 +68,34 @@ Garrick's own commits (the status page's actions, the scaffold tool and the sche
 | Writing a [checkpoint](concepts.md#checkpoint) when a file is saved for the thread, a decision is stated, or the next action changes | **Asked.** The tool refuses a badly made one, but nothing makes an assistant write one at all; the check warns about a block left unwrapped for more than a week, or on a finished thread | [Threads](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands), and the `threads` skill's *Checkpoint* |
 
 Everything else in `System/rules.md`, and in your `System/rules.local.md`, is asked in the same way.
+
+## Allow once
+
+A refusal that is a false alarm can be let through for one finding of one file, and for as long as the file stays as it is. The user does it; an assistant never does. The allowance is kept in `System/walls-allowed.json`, in the workspace's own repository, so the history says what was let through and when.
+
+```json
+{
+  "version": 1,
+  "allowed": [
+    {
+      "path": "Zones/Work/Acme/Acme.md",
+      "id": "3f9a1c2b7d",
+      "blob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "rule": "name",
+      "date": "2026-11-10",
+      "by": "terminal"
+    }
+  ]
+}
+```
+
+- `path`: the file's path from the workspace root, with forward slashes.
+- `id`: the first ten hex characters of SHA-1 over `path`, `rule` and the finding's matched text, joined by a NUL. For a name, the matched text is every form of the party the file holds, so a name of the party added to an unchanged file is a new id. The matched text is never stored, so the ledger names no party and no person.
+- `blob`: git's blob id of the file as allowed. The hook reads it from the index (`git ls-files -s`) and hashes nothing; a full run hashes only the files that have a finding. An edit changes the blob, so the finding comes back.
+- `rule`: the kind of the finding, one of `link`, `name`, `wording`, `path` or `unlabelled`. A finding that cannot be read, or a file waiting in an inbox, is never allowed.
+- `date`: the day it was written. `by`: `terminal` (typed in a terminal); `page` is kept in the format for a later writer, and nothing writes it today.
+
+An entry covers a finding only when `path`, `id` and `blob` all match, so an allowance for one finding does not cover another in the same file. A file is cleared only when every finding it has is allowed, counting a second finding about a party or meeting the report leaves out as already named: allowing the first of two never lets the second through, and `check.py allow <path>` lists them all. The check reads the ledger as the workspace's own repository holds it at `HEAD`, once a run: a file written by hand or edited and not committed allows nothing, and a workspace with no repository has no allowances. A ledger that is missing, unreadable or of another `version` holds no allowance, and every refusal stands as before. `allow_read` and `allow_add` in `System/tools/garrick_lib.py` read and write the file; `check.py` drops an allowed refusal (`drop_allowed`) and writes one (`allow_page`), and `page_action.py` has the verb `walls-unallow`, which only takes an entry away.
 
 ## The wall check's known gaps
 

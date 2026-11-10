@@ -4,6 +4,34 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.63.0] - 2026-11-10
+
+A wall is now a property of the zone and nothing else. Each zone is walled or open: what is in a walled zone stays in that zone, and what is in an open zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones is split before it is filed. Party flags, labels and the name check are gone.
+
+**Upgrading.**
+- The update stops at a one-time step before it installs anything. It proposes a flag for each zone: walled when the zone's party is walled or its default for new parties is walled, open otherwise.
+- It then runs your workspace's own check and this release's over your records and prints what the zone rule changes. Anything newly refused comes first. The refusals it releases follow, grouped as *inside one zone*, *name only* and *other*. It also lists the Meetings pages whose sources sit in two walled zones. This release's check runs as it will decide after your yes, so a Meetings entity or people page with no zone and no party shows up as newly refused before you answer.
+- Nothing is installed or written until you say yes. With nobody to answer, for example from the status page's update button, it stops and leaves the workspace as it was. `release.py update --apply --yes` answers it from a terminal.
+- On the yes, the Zones table gets a *Walled* column and loses *Party* and *New parties*, and the Parties table loses *Walled*. Then three clean-ups are offered, each on its own yes (`--clean people`, `--clean ledger`, `--clean pages`): one People row per person, allowances whose finding no longer exists, and each mixed Meetings page split into one page per zone.
+- `party:` on hubs, threads and Meetings pages stays where it is. It is an index now, not a wall.
+- A workspace still on 0.59 updates to 0.62.0 first. Until it does, it reads every zone as walled.
+
+### Changed
+
+- **Walls follow the zone** (#480). A file's zone is its path. In a zone's commit the check refuses a link, an embed or a path to a file of another walled zone; a link to a Meetings page of another walled zone, or of none; a file copied whole from another walled zone; and eight words in a row shared with a Meetings page of another walled zone, or of none. People and organisation names are no longer read for walls, so a name typed by hand across zones is not caught. Two projects of one walled zone may share material, and an open zone's material may go anywhere. The allow ledger stays, with a `copy` kind.
+- **Every Meetings page carries one `zone:`** (#481). An entity or people page takes the zone of the sources it cites, or of its party's row. The lint names a page with no zone, and a page whose sources sit in two walled zones, with the split as its fix. `parties:` and `party:` stay as an index.
+- **The Context tab is one view** (#482): *Findings*, with *Allowed by you* under it. The *Parties* and *Who sees what* views, the party flip and the walls card are gone. The Guide shows each zone's flag, read only, with the command that changes it. Questions are grouped by zone.
+- **Ask and Recall are scoped by zone** (#483). A question asked in a zone reads that zone, the open zones, Knowledge and System; one asked from the root or `System/` reads everything. Nothing is stored for a scope. A past session takes the zone of the folder it was opened in.
+- **Scaffold, intake, the meetings skill and Nurture work by zone** (#484). `scaffold.py zone --name <Zone> --walled | --open` sets a zone's flag: open to walled lists what now crosses, and walled to open says how much it releases and writes only with `--yes`. A new zone is walled unless you say `--open`. `project --party` is optional. Intake resolves an item to a zone and asks when a domain is unknown or two walled zones meet, and a mixed conversation is split by zone, one cut per zone. Nurture's wall kind holds only crossings by reference, and it asks about a person only to route mail.
+- **The rules and docs say it in three sentences** (#486). `rules.md` compares zones before material is used, and keeps the wall sentence and the rule against `--no-verify` word for word. `wall-diff.yml` compares zone verdicts. The `wall-check` issue form asks for the two zones and the reference.
+
+### Removed
+
+- `party --walled | --open`, the second-walled-party sentence, the same-name refusal and the remove-party confirm, all in `scaffold.py`.
+- `migrate_walls.py` and the 0.59 pairs path in the update (#485).
+- In `garrick_lib.py`: `labels()`, `blocked()`, the party flags and the name matching used only for walls. The spoken-name helpers stay for voice.
+- Most of the wall check's tests. Three modules hold its cases now: `test_zones`, `test_decide` and `test_walls_cases`.
+
 ## [0.62.0] - 2026-11-10
 
 A wall refusal that is a false alarm can now be let through once, from a terminal, and an assistant no longer reaches for `--no-verify`. The check refuses less where nothing is at stake, and the status page shows the walls in one Context tab, grouped by zone.

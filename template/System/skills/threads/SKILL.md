@@ -1221,7 +1221,7 @@ When it refuses:
 - **If the refusal looks wrong** (a walled party named in a published context,
   say), tell the user which file and which wall, name the command that lets
   that one refusal through once (`python3 System/tools/check.py allow <path>
-  <id>`, ids from `--staged --walls-only --verbose`), and stop. Only the user
+  <id>`; run without an id it lists them; the report prints that command first), and stop. Only the user
   writes an allowance, in a terminal. Never write
   one yourself, and never touch `System/walls-allowed.json`.
 

@@ -140,6 +140,7 @@ from garrick_lib import (  # noqa: E402
     allow_finding_id,
     allow_may_write,
     allow_remove,
+    allow_stray,
     allow_set,
     is_walled,
     hats_of,
@@ -7695,7 +7696,7 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
         cache.save()
         if use_ledger:
             findings = drop_allowed(ws, findings, allow_repo_top(Path(staged)),
-                                    lambda: check_walls_staged(ws, Path(staged)))
+                                    lambda paths: check_walls_staged(ws, Path(staged)))
     else:
         for check in ([check_walls] if walls_only else ALL_CHECKS):
             try:
@@ -7705,7 +7706,7 @@ def run_checks(root: Path, walls_only: bool = False, staged: Optional[Path] = No
                 findings.append(Finding(ERROR, name, "", "the check stopped: %s: %s" % (type(e).__name__, e),
                                         "A check stopped before it finished"))
         if use_ledger:
-            findings = drop_allowed(ws, findings, None, lambda: check_walls(ws))
+            findings = drop_allowed(ws, findings, None, lambda paths: run_path_checks(ws.root, paths))   # the touched files only
     order = {c: i for i, (c, _) in enumerate(CHECKS)}
     findings.sort(key=lambda f: (order.get(f.check, 99), f.severity != ERROR, f.path, f.message))
     return findings
@@ -7936,7 +7937,7 @@ def disk_blob(path: Path) -> Optional[str]:
 
 
 def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = None,
-                 rerun: Optional[Callable[[], List[Finding]]] = None) -> List[Finding]:
+                 rerun: Optional[Callable[[List[str]], List[Finding]]] = None) -> List[Finding]:
     """The findings left once the allowed ones are taken out. With `top`, the repository being committed, a blob
     id comes from its index; without, from the file on disk, and only for the files that have a finding the
     ledger could cover. The ledger is the committed one, read once; a missing or unreadable one drops nothing.
@@ -7957,7 +7958,7 @@ def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = N
     if rerun is not None:
         _DEDUP_OFF = True
         try:
-            full = [f for f in rerun() if f.check == "walls"]
+            full = [f for f in rerun(sorted(touched)) if f.check == "walls"]
         finally:
             _DEDUP_OFF = False
     index: Optional[Dict[str, str]] = None
@@ -7979,13 +7980,14 @@ def drop_allowed(ws: Workspace, findings: List[Finding], top: Optional[Path] = N
 
     kept = [f for f in findings if f.path not in touched]
     for path in sorted(touched):
-        here = [f for f in full if f.path == path]
+        kept += [f for f in findings if f.path == path and f.check != "walls"]    # only wall findings are ever dropped
+        here = [f for f in full if f.path == path and f.check == "walls"]
         mine = [f for f in here if allowable(f)]
         blob = blob_of(path)
         if blob is not None and mine and all((path, finding_id(f), blob) in ledger for f in mine):
             kept += [f for f in here if not allowable(f)]
         else:
-            kept += here or [f for f in findings if f.path == path]
+            kept += here or [f for f in findings if f.path == path and f.check == "walls"]
     return kept
 
 
@@ -8024,17 +8026,27 @@ def allow_prefix() -> str:
     return "python3 %s allow" % shell_word(shown)
 
 
+def prints_for_assistant(json_out: bool = False, staged: bool = False, ear: bool = False) -> bool:
+    """Whether the check prints for an assistant, not a person at a terminal: `--json`, or the stream it prints to
+    (stderr for the hook's report, else stdout) not a terminal. The one test for what an assistant is not shown."""
+    stream = sys.stderr if staged and not ear else sys.stdout
+    try:
+        return bool(json_out) or not stream.isatty()
+    except (AttributeError, ValueError):
+        return True
+
+
 def hook_fix(message: str) -> str:
     """staged_fix(), for the hook's own lines. The way past the whole check (`git commit --no-verify`) is the
-    user's, so it is named only where a terminal is: for an assistant, or with no terminal, the allow command stands
-    in its place."""
+    user's, so it is named only where a person is reading (git runs the hook with no stdin, so stdin says nothing):
+    for an assistant the allow command stands in its place."""
     fix = staged_fix(message)
-    return fix if allow_may_write("terminal") else fix.replace("; only if you mean it, git commit --no-verify", "")
+    return fix if not prints_for_assistant(False, True) else fix.replace("; only if you mean it, git commit --no-verify", "")
 
 
 def report_short(findings: List[Finding]) -> str:
     """The hook's report: a file with one refusal keeps its own line; a file with several gets one line with the
-    kind of each and a count. Then the command that lets one through, once. The full list is --verbose."""
+    kind of each and a count. The command that lets one through, once, comes first. The full list is --verbose, from the zone folder."""
     lines = []
     first = None
     for path, found in refused_by_file(findings).items():
@@ -8049,7 +8061,7 @@ def report_short(findings: List[Finding]) -> str:
     if first is not None:        # first, not last: what reads a refusal back (the page, scaffold.py) takes the last line
         prefix = allow_prefix()
         lines.insert(0, "To let a refusal through, once, while the file stays as it is: %s <path> [<id>]; "
-                     "--verbose gives each id, for example %s %s %s"
+                     "with no id it lists each id, for example %s %s %s"
                      % (prefix, prefix, shell_word(first.path), finding_id(first)))
     return "\n".join(lines)
 
@@ -8092,6 +8104,9 @@ def allow_files(root: Path, path: str):
     return [f for f in found if f.path == path and allowable(f)], blob, top_path
 
 
+STRAY_SAID = " The ledger on disk differed from the committed one; its uncommitted entries were dropped, not committed."
+
+
 def allow_page(root: Path, path: str, fid: Optional[str], by: str, remove: bool = False) -> Tuple[int, str]:
     """Write or take away one allowance. (0, what was done) or (1, why not). `by` is "terminal" or "page"; the
     caller has settled that it is one (allow_may_write). Without an id, lists the file's findings and
@@ -8103,10 +8118,11 @@ def allow_page(root: Path, path: str, fid: Optional[str], by: str, remove: bool 
     if remove:
         if not fid:
             return 1, "name the finding to take away: allow --remove <path> <id>"
+        stray = allow_stray(root)
         if not allow_remove(root, path, fid):
-            return 1, "no allowance for %s with the id %s" % (path, fid)
+            return 1, "no allowance for %s with the id %s%s" % (path, fid, STRAY_SAID if stray else "")
         said = allow_commit(root, "Walls: take away an allowance")
-        return 0, "Allowance taken away.%s" % (" The ledger was not committed: %s" % said if said else "")
+        return 0, "Allowance taken away.%s%s" % (STRAY_SAID if stray else "", " The ledger was not committed: %s" % said if said else "")
     got = allow_files(root, path)
     if got is None:
         return 1, "%s is not in a repository of this workspace" % path
@@ -8120,10 +8136,11 @@ def allow_page(root: Path, path: str, fid: Optional[str], by: str, remove: bool 
         return 1, "%s has no refusal with the id %s now" % (path, fid)
     if blob is None:
         return 1, "git has no blob id for %s, so nothing was allowed; stage the file first" % path
+    stray = allow_stray(root)
     entry = allow_add(root, path, fid, blob, finding_rule(hit), by)
     said = allow_commit(root, "Walls: allow one %s refusal once" % entry["rule"])
-    return 0, "Allowed once: %s, a %s refusal. It holds until the file changes.%s" % (
-        path, entry["rule"], " The ledger was not committed: %s" % said if said else "")
+    return 0, "Allowed once: %s, a %s refusal. It holds until the file changes.%s%s" % (
+        path, entry["rule"], STRAY_SAID if stray else "", " The ledger was not committed: %s" % said if said else "")
 
 
 def allow_command(argv: List[str]) -> int:
@@ -8133,7 +8150,7 @@ def allow_command(argv: List[str]) -> int:
     parser.add_argument("--root", help="workspace root (default: the workspace this script sits in)")
     parser.add_argument("--remove", action="store_true", help="take the allowance away instead")
     parser.add_argument("path", help="the file, from the workspace root")
-    parser.add_argument("id", nargs="?", help="the refusal's id, as --verbose or this command without one lists it")
+    parser.add_argument("id", nargs="?", help="the refusal's id, as this command without one lists it")
     args = parser.parse_args(argv)
     if not allow_may_write("terminal"):
         print("check: an allowance is written from a terminal you type in; "

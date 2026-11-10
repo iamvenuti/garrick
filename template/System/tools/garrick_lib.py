@@ -1475,8 +1475,8 @@ def refusal_counts(root: PathLike, now=None, days: int = 30) -> dict:
 # An entry covers one finding of one file, and only while the file is as it was allowed: it matches on the path,
 # the finding's id and git's blob id of the file together. The id is the first ten hex characters of SHA-1 over
 # `path NUL rule NUL token`; the token is never stored, so the ledger names no party. A ledger that is missing,
-# unreadable or of another version holds no allowance: everything refuses as before. Only a terminal or the status
-# page writes one (allow_may_write); an assistant has neither. What a finding is, and where a blob id comes from,
+# unreadable or of another version holds no allowance: everything refuses as before. Only a terminal writes one
+# (allow_may_write); the status page can only take one away, and an assistant has no terminal. What a finding is, and where a blob id comes from,
 # belongs to check.py (docs/enforced.md describes the format).
 
 ALLOW_LEDGER = ("System", "walls-allowed.json")
@@ -1535,6 +1535,13 @@ def allow_committed(root: PathLike) -> List[dict]:
     return _allow_parse(got.stdout.decode("utf-8", "replace"))
 
 
+def allow_stray(root: PathLike) -> bool:
+    """Whether the ledger on disk is other than the committed one: an entry written by hand, or an edit nobody
+    committed. The writers start from the committed copy, so such an entry is dropped, never committed."""
+    key = lambda es: sorted((e["path"], e["id"], e["blob"], e["rule"], e["date"], e["by"]) for e in es)
+    return key(allow_read(root)) != key(allow_committed(root))
+
+
 def allow_set(root: PathLike) -> frozenset:
     """The committed ledger read once, for lookups: {(path, id, blob)}."""
     return frozenset((e["path"], e["id"], e["blob"]) for e in allow_committed(root))
@@ -1568,7 +1575,7 @@ def allow_add(root: PathLike, path: str, fid: str, blob: str, rule: str, by: str
         raise ValueError("an allowance is written by the terminal or the page, not %r" % by)
     entry = {"path": path, "id": fid, "blob": blob, "rule": rule,
              "date": today or datetime.date.today().isoformat(), "by": by}
-    entries = [e for e in allow_read(root) if (e["path"], e["id"]) != (path, fid)]
+    entries = [e for e in allow_committed(root) if (e["path"], e["id"]) != (path, fid)]   # from HEAD, not the disk copy
     entries.append(entry)
     allow_write(root, entries)
     return entry
@@ -1576,18 +1583,16 @@ def allow_add(root: PathLike, path: str, fid: str, blob: str, rule: str, by: str
 
 def allow_remove(root: PathLike, path: str, fid: str) -> int:
     """Take away the allowance(s) for a path and a finding id, whatever their blob. Returns how many went."""
-    entries = allow_read(root)
+    entries = allow_committed(root)
     kept = [e for e in entries if (e["path"], e["id"]) != (path, fid)]
-    if len(kept) != len(entries):
-        allow_write(root, kept)
+    if len(kept) != len(entries) or allow_stray(root):
+        allow_write(root, kept)             # the disk copy becomes HEAD's less this entry: a stray entry is dropped
     return len(entries) - len(kept)
 
 
 def allow_may_write(by: str, stdin=None) -> bool:
-    """Whether an allowance may be written from here. The page writes through page_action.py (`by="page"`, a click
-    in the app); the terminal only when stdin is a terminal. A run with neither, as an assistant's shell is, refuses."""
-    if by == "page":
-        return True
+    """Whether an allowance may be written from here: only a terminal, when stdin is one. The page has no verb that
+    writes an allowance, so `by="page"` is False; a run with no terminal, as an assistant's shell is, refuses."""
     if by == "terminal":
         stream = sys.stdin if stdin is None else stdin
         try:
@@ -1614,7 +1619,8 @@ def allow_commit(root: PathLike, message: str) -> str:
                               text=True, timeout=120)
     except (OSError, subprocess.SubprocessError) as exc:
         return str(exc)
-    if done.returncode == 0 or "nothing to commit" in (done.stdout + done.stderr):
+    if done.returncode == 0 or "nothing to commit" in (done.stdout + done.stderr) \
+            or "nothing added to commit" in (done.stdout + done.stderr):
         return ""
     return (done.stderr or done.stdout).strip()
 

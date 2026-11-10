@@ -7,7 +7,7 @@ Garrick is a shell around Claude Code or Codex: you work through it, and the age
 3. **The record: Knowledge, Meetings and the threads.** Plain files you own. Mail, files and recordings are filed into it.
 4. **Underneath: Claude or Codex as the model**, reading **the rules** first, with **the commit check** beside it.
 
-The rules, the walls and the model act on the whole record, never on one box of it. The model reads across every zone and both wikis when a request needs it. The rules hold in every zone, project and wiki. The walls are declared once, in `System/context.md`, and hold wherever material is used. The commit check runs in each zone, and compares what is being committed with every meeting page and every project on the far side of a wall, wherever they sit.
+The rules, the walls and the model act on the whole record, never on one box of it. The model reads across every zone and both wikis when a request needs it. The rules hold in every zone, project and wiki. The walls are declared once, in `System/context.md`, and hold wherever material is used. The commit check runs in each zone, and compares what is being committed with the files of every other walled zone, wherever they sit.
 
 The words on this page are defined in [Concepts](concepts.md). [How Garrick keeps context](context.md) follows what the record holds through four stages, from the inbox to the archive.
 
@@ -116,7 +116,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 
 **The guards** are the code that stops something rather than reporting it:
 
-- **The pre-commit wall check.** The installer writes a git hook into each zone and into `Wikis/`, and `check.py --install-hooks` into any git repository inside a project too, and into a wiki installed before without one, that runs `check.py --staged --walls-only` on what is being committed. A project file that links to, names or quotes a party across a declared wall is refused with one line naming the file and the wall, and so is anything from an inbox. It catches specific signs of a crossing, not every crossing: see [the known gaps](enforced.md#the-wall-checks-known-gaps). `check.py --install-hooks` puts a zone's or a wiki's hook back, and the check warns when git's `core.hooksPath` setting sends commits past it.
+- **The pre-commit wall check.** The installer writes a git hook into each zone and into `Wikis/`, and `check.py --install-hooks` into any git repository inside a project too, and into a wiki installed before without one, that runs `check.py --staged --walls-only` on what is being committed. A file that links to, embeds or names the path of a file in another walled zone is refused with one line naming the file and the wall, and so is anything from an inbox. It catches specific signs of a crossing, not every crossing: see [the known gaps](enforced.md#the-wall-checks-known-gaps). `check.py --install-hooks` puts a zone's or a wiki's hook back, and the check warns when git's `core.hooksPath` setting sends commits past it.
 - **The zone guard**, optional. A hook for Claude Code and Codex that stops the assistant once before it edits a file outside the project the session was opened in, so that it asks you. It covers the file-editing tools, not shell commands, and records nothing about your answer. See [the zone guard](../extras/hooks/README.md).
 
 [What is enforced, and what is asked](enforced.md) lists every guard beside the rules that depend on the assistant alone.
@@ -144,7 +144,7 @@ You press Continue on the Garrick App's home, or open a session in your app or t
 
 ### The walls
 
-A party is walled or open, a flag in the Parties table of `System/context.md`, and every project and meeting carries the party tags it is checked against. They are read by the assistant: before it uses a meeting in a project, the rules ask it to compare the project's parties with the meeting's and leave a walled party's material out unless the project names that party, saying only that something was held back. They are enforced, in part, by code: the pre-commit hook in each zone refuses a project file that links to a walled meeting, names a walled party or person the project does not, or repeats eight words held only in material of a walled party the project does not name. A clean paraphrase, a chat reply and anything sent are outside what the hook can see, and the check has known gaps. See [What the check covers](principles.md#what-the-check-covers) and [What is enforced, and what is asked](enforced.md).
+A zone is walled or open, a flag in the Zones table of `System/context.md`, and every Meetings page carries the zone it is checked against. They are read by the assistant: before it uses a meeting in a project, the rules ask it to compare the meeting's zone with the project's and leave a walled zone's material out of any other zone, saying only that something was held back. They are enforced, in part, by code: the pre-commit hook in each zone refuses a file that links to, embeds or names the path of a file of another walled zone, or copies one whole. A clean paraphrase, a chat reply and anything sent are outside what the hook can see, and the check has known gaps. See [What the check covers](principles.md#what-the-check-covers) and [What is enforced, and what is asked](enforced.md).
 
 ### An update
 

@@ -1,4 +1,4 @@
-"""The wall docs stay short, say the same five sentences everywhere, and name no pair.
+"""The wall docs stay short, say the same three sentences everywhere, and name no pair and no party wall.
 
     cd tests && python3 -m unittest test_docs_limits
 
@@ -16,9 +16,14 @@ sys.dont_write_bytecode = True
 
 REPO = Path(__file__).resolve().parent.parent
 DOCS = REPO / "docs"
-FIVE = re.compile(r"^> (Every party you deal with is either .*)$", re.M)
+THREE = re.compile(r"^> (Each zone is either .*)$", re.M)
 BANNED = ("Walls table", "between two parties", "both ways", "not transitive",
-          "walled from", "no wall between")
+          "walled from", "no wall between", "walled party", "walled parties", "label set", "who sees what", "zone party")
+# Pages another branch of 0.63.0 rewrites with its code: the status page's guide and the skills that file and
+# sort. Empty once they have.
+SKIPPED = ("docs/extras/status-page.md", "template/System/tools/walls-cases.md",
+           "template/System/skills/intake/SKILL.md", "template/System/skills/meetings/SKILL.md",
+           "template/System/skills/nurture/SKILL.md", "template/System/skills/threads/SKILL.md")
 
 
 def section(page: str, heading: str) -> str:
@@ -39,23 +44,32 @@ class WallDocLimits(unittest.TestCase):
     def test_principles_walled_use(self):
         self.check_limit("docs/principles.md", "One memory, walled use", 1500)
 
-    def test_concepts_parties_and_walls(self):
-        self.check_limit("docs/concepts.md", "Parties and walls", 600)
+    def test_concepts_zones_and_walls(self):
+        self.check_limit("docs/concepts.md", "Zones and walls", 600)
 
     def test_enforced_known_gaps(self):
         self.check_limit("docs/enforced.md", "The wall check's known gaps", 600)
 
-    def test_five_sentences_identical(self):
+    def test_three_sentences_identical(self):
         found = {}
-        for page in ("docs/principles.md", "docs/concepts.md", "README.md"):
-            hits = FIVE.findall((REPO / page).read_text(encoding="utf-8"))
-            self.assertEqual(1, len(hits), "%s must hold the five sentences once" % page)
+        for page in ("docs/principles.md", "docs/concepts.md", "docs/context.md", "README.md"):
+            hits = THREE.findall((REPO / page).read_text(encoding="utf-8"))
+            self.assertEqual(1, len(hits), "%s must hold the three sentences once" % page)
             found[page] = hits[0]
-        self.assertEqual(1, len(set(found.values())), "the five sentences differ between pages")
-        self.assertEqual(5, len(re.findall(r"[.!?](?:\s|$)", found["README.md"].replace("**", ""))))
+        self.assertEqual(1, len(set(found.values())), "the three sentences differ between pages")
+        self.assertEqual(3, len(re.findall(r"[.!?](?:\s|$)", found["README.md"].replace("**", ""))))
 
-    def test_no_pair_phrases_under_docs(self):
-        for path in sorted(DOCS.rglob("*.md")):
+    def test_the_template_context_and_rules_say_it_in_the_same_words(self):
+        sentence = THREE.search((REPO / "README.md").read_text(encoding="utf-8")).group(1).replace("**", "")
+        for page in ("template/System/context.md", "template/System/rules.md"):
+            text = (REPO / page).read_text(encoding="utf-8").replace("**", "")
+            self.assertIn(sentence.split(" Knowledge")[0], text, page)
+
+    def test_no_pair_or_party_wall_phrases(self):
+        paths = sorted(DOCS.rglob("*.md")) + [REPO / "README.md"] + sorted((REPO / "template").rglob("*.md"))
+        for path in paths:
+            if path.relative_to(REPO).as_posix() in SKIPPED:
+                continue
             text = path.read_text(encoding="utf-8")
             for phrase in BANNED:
                 self.assertNotIn(phrase.lower(), text.lower(),

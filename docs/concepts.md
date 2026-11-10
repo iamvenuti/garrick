@@ -82,25 +82,29 @@ One way to save a thread's place, and one way back. A wrap (also said "I'm being
 
 "What's next", or "what should I do while I wait": one thing worth doing elsewhere while a long turn runs. `System/tools/next_up.py` ranks it by plain rules, never the thread in focus: the thread left most recently today, Todo lines due today or late, chases come due, what waits in an inbox, a thread parked for 30 days, a live one not wrapped for 14. The assistant reads the first pick and offers to open or tick it; it never acts on its own. [The Garrick band](#the-garrick-band) shows the same list while a turn runs, where its *While you wait* preview feature is switched on.
 
-## Parties and walls
+## Zones and walls
 
-> Every party you deal with is either **walled** or **open**. A walled party's material goes only into work that names that party. An open party's material may go anywhere. A file belongs to the parties of its zone and of the note above it, the thread's or the project's. Nothing else to declare: a project is walled when one of its parties is, a conversation with two walled parties waits for you to say where it goes, and a record with no label is used nowhere.
-
-### Party
-
-An organisation or person whose confidences you hold. Each has a tag, one lowercase word, which a project or thread carries in `party:` (one tag or a list) and a meeting page in `parties:`. A project without one cannot draw on the Meetings wiki until it has one.
+> Each zone is either **walled** or **open**. What is in a walled zone stays in that zone; what is in an open zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones is split before it is filed.
 
 ### Wall
 
-A walled party's flag. A walled party's material goes only into work that names that party; an open party's goes anywhere. A zone can name one party, and everything in the zone carries it. Elsewhere a file takes the parties of the nearest note above it: a thread's file the thread note's and the hub's, any other file the hub's. Naming two walled parties on one note is the yes: that project holds both. One company under two hats is two parties with one name, which no note may name together. A conversation with two walled parties waits for your yes, then is cut in the inbox: a file per party and one for both. A filed record is never edited; a part used alone becomes an extract with its own parties. The assistant is asked to follow this, and the [wall check](#the-wall-check) refuses some mistakes at commit. See [One memory, walled use](principles.md#one-memory-walled-use).
+A zone's flag, **Walled**, `yes` or `no`, in the Zones table. A file belongs to the zone it sits in; a Meetings page carries one `zone:`. Material of a walled zone goes only into that zone. A conversation that touches two walled zones waits for your yes, then is cut in the inbox: one file per zone. A filed record is never edited; a part used alone becomes an extract with its own zone. The assistant is asked to follow this, and the [wall check](#the-wall-check) refuses some mistakes at commit. See [One memory, walled use](principles.md#one-memory-walled-use).
+
+### Party
+
+An organisation or person whose confidences you hold. Each has a tag, one lowercase word, which a project or thread may carry in `party:` and a meeting page in `parties:`, as an index: "what did Acme say" finds its pages. A party carries no wall; its zone does.
+
+### The Zones table
+
+The table in `System/context.md` that lists every zone: its name, what it holds and whether it is walled. A new zone is walled. `scaffold.py zone --walled` or `--open` changes the flag.
 
 ### The Parties table
 
-The table in `System/context.md` that lists every party: its name, what it is, its zone, its tag, whether it is walled and the mail domains that name it. A listed domain names its party when mail comes in; personal webmail never does. `scaffold.py party` adds a row and offers the tag and the flag, taking the default from the Zones table.
+The table in `System/context.md` that lists every party: its name, what it is, its zone, its tag and the mail domains that name it. A listed domain names its party and zone when mail comes in; personal webmail never does. It routes mail and holds the names that voice input is matched against.
 
 ### People
 
-The table in `System/context.md` of the people who come up, one row per person and party. The wall check reads it to recognise a walled party's person by name. See [What is enforced](enforced.md#the-wall-checks-known-gaps).
+The table in `System/context.md` of the people who come up, one row per person, by name. The Party cell is context and may be empty. It holds names for voice input; no check reads it as a wall.
 
 ### Aliases
 
@@ -139,7 +143,7 @@ You answer in your own words, in one line, and pick one of four outcomes. The **
 - **Close** (`question-close`) is for a question with nothing to work in, `status: closed`.
 - **Record as a decision** (`question-decide`) is for an answer that settles something. In one transaction it files your sentence as the raw answer, then writes a decision page, `wiki/decisions/<YYMMDD> - <slug>.md` in the Meetings wiki, with `status: valid`, your words under *Decision*, and the question's zone and parties copied exactly, never widened. A decision page has four sections: *Decision*, *Assumptions*, *Options turned down* and *Revisit when*. The assistant may fill in the assumptions and the options it can see, each marked as proposed, and may flag a decision whose revisit condition may be met, with its reason. It never changes `status:`: only you mark a decision `superseded` or `withdrawn`, and a later rewrite reads a settled decision as settled. `check.py` warns when a commit changes a decision's `status:` with no raw answer dated the same day. A Knowledge question has no zone and no parties, so it cannot be recorded as a decision.
 
-Nothing else changes. The pages change in a step of their own: say "work in the questions", and the `meetings` or `knowledge` skill reads each answered question (`question-work`), changes the pages in its `pages:`, cites the raw answer, and sets `status: done` (`question-done`). A Meetings page is changed only if it carries the question's own parties and no others: one naming a walled party the question does not, one written for nobody or not readable plainly is not changed, and the answer says that a wall held something back, in the rule's words, without naming it. A question whose pages name walled parties that no one scope names together is refused with the same sentence, and nothing is written. A Knowledge question has no parties, so every page it names may change. A Meetings raw answer carries its question's zone and parties, and the walls read it as they read the question.
+Nothing else changes. The pages change in a step of their own: say "work in the questions", and the `meetings` or `knowledge` skill reads each answered question (`question-work`), changes the pages in its `pages:`, cites the raw answer, and sets `status: done` (`question-done`). A Meetings page is changed only if it is in the question's own zone: one in another walled zone, one with no zone or not readable plainly is not changed, and the answer says that a wall held something back, in the rule's words, without naming it. A question whose pages sit in two walled zones is refused with the same sentence, and nothing is written. A Knowledge question has no zone, so every page it names may change. A Meetings raw answer carries its question's zone, and the walls read it as they read the question.
 
 ### `raw/`
 
@@ -235,7 +239,7 @@ How the assistant answers when you are listening: when you say so, or the reques
 
 ### The wall check
 
-The part of the check about walls. Each zone's pre-commit hook runs it as `check.py --staged --walls-only` and refuses a commit whose project files link to, name or quote a walled party's material in a project that does not name that party. It has limits and known gaps: see [What the check covers](principles.md#what-the-check-covers) and [What is enforced](enforced.md).
+The part of the check about walls. Each zone's pre-commit hook runs it as `check.py --staged --walls-only` and refuses a commit whose files link to, embed or name the path of a file of another walled zone, or copy one whole. It has limits and known gaps: see [What the check covers](principles.md#what-the-check-covers) and [What is enforced](enforced.md).
 
 ### `System/generated/`
 

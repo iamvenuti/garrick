@@ -21,7 +21,7 @@ The facilitator will help with unfamiliar terms. You do not need to prepare a co
 
 1. **See a brief and a wall.** Try the fictional workspace for a few minutes. See what it should hold back and hear the limits of the checks.
 2. **Install your workspace.** Name the first parties and the boundaries between them. Select your new folder in the app, or open your terminal assistant there.
-3. **Use your own material.** Follow [Your first useful session](first-session.md): file the conversation, check its labels and produce a brief for your project.
+3. **Use your own material.** Follow [Your first useful session](first-session.md): file the conversation, check its zone and produce a brief for your project.
 4. **Save and return.** Tell the assistant the next action, say “wrap it”, then open a fresh chat and ask where you stand.
 5. **Check it together.** Ask the assistant to run the workspace check and explain any finding. Review the brief before sharing it.
 

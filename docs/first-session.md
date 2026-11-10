@@ -19,7 +19,7 @@ With more than one zone that could take it, the same question names the alternat
 Two things it will not decide for you, and both are the point rather than a nuisance:
 
 - **Two of your parties share a name**, which happens when one organisation deals with you in two capacities. The name alone cannot say which, so it asks: "Two of your parties are called Acme Corp: the supplier in Work, and the research client in Consulting. Which one is this call with?"
-- **The same organisation in a second capacity.** It asks whether the two should be kept apart in writing. A yes adds the wall; without one, the workspace check keeps warning you, because a shared name can otherwise carry one capacity's material into the other's.
+- **The same organisation in a second capacity.** It asks whether the two should be kept apart. A yes puts each capacity in a walled zone of its own, because a zone is the only thing that holds material apart.
 
 If the work belongs in a zone you don't have yet, ask for that first: "add a zone called Garden, for the house and the garden." A party can stand for an internal project as well as a company.
 
@@ -29,7 +29,7 @@ If you would rather set the whole workspace up before doing anything with it, sa
 
 > Interview me.
 
-The assistant asks one question at a time: what you do and for whom, whose confidences you hold, and whose material may go anywhere and whose may not, the five things you do every week, who you owe something right now, where your files live today, and what you keep forgetting. It pushes back on vague answers and keeps a record in `System/interviews/` as it goes. Say "stop" when you have said enough. It then proposes parties, walls, projects, first threads and open actions, lists what it still does not know, and sets up only what you say yes to. Allow twenty minutes. Afterwards, pick one of the projects it made and carry on from step 2.
+The assistant asks one question at a time: what you do and for whom, whose confidences you hold, and whose material may go anywhere and whose may not, the five things you do every week, who you owe something right now, where your files live today, and what you keep forgetting. It pushes back on vague answers and keeps a record in `System/interviews/` as it goes. Say "stop" when you have said enough. It then proposes zones, walls, projects, first threads and open actions, lists what it still does not know, and sets up only what you say yes to. Allow twenty minutes. Afterwards, pick one of the projects it made and carry on from step 2.
 
 ## 2. Give it one conversation
 
@@ -39,7 +39,7 @@ Use a short email, transcript or notes from a call that you are allowed to proce
 
 Or save an email as `.eml` in `Zones/Work/Inbox/`, or a text transcript in `Wikis/Meetings/raw/inbox/`, and say “process the inbox”. There is no need to connect your mailbox yet.
 
-Confirm the source, date and parties when asked. These labels let Garrick apply the walled and open flags you have already set; labelling a meeting does not wall a party. Read the filed summary against the original and correct mistakes now.
+Confirm the source, date and zone when asked. The zone lets Garrick apply the walled and open flags you have already set; naming a party on a meeting does not wall it. Read the filed summary against the original and correct mistakes now.
 
 ## 3. Get something useful back
 
@@ -78,6 +78,6 @@ For a clone, start with `cd ~/garrick-source` instead. Then open `~/Garrick-demo
 
 1. Say “Open Birch Entry, Carrier Choice.”
 2. Say “Prep me for Cobalt for this Birch project. Apply the walls before drafting.” The intended result uses the Birch-side call and says some material was held back, without revealing the Acme call's contents.
-3. Ask “Which parties are walled?” It should name the walled parties the demo sets and say that Acme's and Birch's material stays in its own projects. It should not claim that every separate project has a wall.
+3. Ask “Which zones are walled?” It should name the walled zones the demo sets and say that their material stays in its own zone. It should not claim that every separate project has a wall.
 
 This checks how your assistant follows the rules in one example. It is not proof against every leak. [Principles](principles.md#what-the-check-covers) describes the deterministic check and its limits. Return to your own workspace when done.

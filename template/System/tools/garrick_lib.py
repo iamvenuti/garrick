@@ -909,6 +909,9 @@ def load_context(root: PathLike) -> dict:
           "people":  [{"name", "party", "role"}, ...],
           "aliases": {heard (lower case): means},
           "zones":   {zone name: what it holds},
+          "zone_walled": {zone name: bool},   # the zone wall: True when walled (see zone_of, walled, may_flow)
+          "pending": bool,   # True while the Zones table has no Walled column: the flags above were derived (#485)
+          "walls_pending": the pairs of the 0.59 Walls table while the old migration has not run, else None,
           "me":      [your own addresses, lower case],
           "owner":   {"name": "Jo Example", "first": "Jo"}, or None,   # the first sentence of ## Me
           "learned": [{"table", "row", "cell"}, ...],
@@ -922,7 +925,7 @@ def load_context(root: PathLike) -> dict:
     empty collections.
     """
     ctx = {"parties": {}, "zone_parties": {}, "zone_default": {}, "people": [], "aliases": {}, "zones": {}, "me": [], "owner": None, "tables": {},
-           "learned": [], "pending": None}
+           "learned": [], "walls_pending": None, "pending": False, "zone_walled": {}}
     path = Path(root) / "System" / "context.md"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -1004,8 +1007,38 @@ def load_context(root: PathLike) -> dict:
     for key in ("zone_parties", "zone_default"):
         ctx[key] = {canon.get(z.casefold(), z): v for z, v in ctx[key].items()}
     ctx["zone_parties"] = {z: t for z, t in ctx["zone_parties"].items() if t}
-    ctx["pending"] = _pending_pairs(sections)
+    ctx["walls_pending"] = _pending_pairs(sections)
+    ctx["zone_walled"], ctx["pending"] = _zone_flags(ctx, sections, canon)
     return ctx
+
+
+def _zone_flags(ctx: dict, sections: Dict[str, List[str]], canon: Dict[str, str]) -> Tuple[Dict[str, bool], bool]:
+    """`(zone_walled, pending)` of a context. With a Walled column on the Zones table the flags are read from it, and
+    only a plain `no` opens a zone: anything else, an empty cell included, is walled. Without one the table is
+    from before the zone wall (`pending` is True) and each flag is derived as #485 says: a zone is walled when its
+    own party is walled or its default for new parties is walled, and open when neither is; a zone with no cell to
+    read, and every zone of a context that has no party flags at all (0.59 and older), is walled."""
+    header = _table_header(sections.get("zones", [])) or []
+    column = next((h for h in header if h.startswith("walled")), None)
+    rows = _table(sections.get("zones", []))
+    flags: Dict[str, bool] = {}
+    if column is not None:
+        for row in rows:
+            zone = plain_name(_col(row, "zone"))
+            if zone:
+                flags[canon.get(zone.casefold(), zone)] = (row.get(column) or "").strip().strip("`*").strip().lower() != "no"
+        return flags, False
+    parties_header = _table_header(sections.get("parties", [])) or []
+    has_party_flags = any(h.startswith("walled") for h in parties_header)
+    for row in rows:
+        zone = plain_name(_col(row, "zone"))
+        if not zone:
+            continue
+        party = ctx["parties"].get(strip_tag(_col(row, "party")))
+        default = _col(row, "new parties").strip().strip("`*").strip().lower()
+        known = party is not None or default in ("open", "walled")
+        flags[canon.get(zone.casefold(), zone)] = (not has_party_flags or not known or bool(party and party["walled"]) or default != "open")
+    return flags, True
 
 
 def _pending_pairs(sections: Dict[str, List[str]]) -> Optional[set]:
@@ -1320,15 +1353,15 @@ def _tagset(value) -> set:
 
 def is_walled(context: dict, tag: str) -> bool:
     """Is a party walled? A tag the Parties table lacks is, as is a row with no plain `no`."""
-    if context.get("pending") is not None:
-        return any(tag in pair for pair in context["pending"])
+    if context.get("walls_pending") is not None:
+        return any(tag in pair for pair in context["walls_pending"])
     return bool((context.get("parties", {}).get(tag) or {}).get("walled", True))
 
 
 def blocked(context: dict, scope, labels) -> set:
     """The walled tags in `labels` that `scope` lacks: what stops material
     labelled `labels` from going into a record whose parties are `scope`."""
-    if context.get("pending") is not None:
+    if context.get("walls_pending") is not None:
         return _old_rule().legacy_blocked(context, scope, labels)
     held = _tagset(scope)
     return {t for t in _tagset(labels) if t != KNOWLEDGE and t not in held and is_walled(context, t)}
@@ -1372,7 +1405,7 @@ def decide(scope, labels, action: str, context: dict) -> str:
     """
     if action not in ACTIONS:
         raise ValueError("action is read, write or file, not %r" % (action,))
-    if context.get("pending") is not None:
+    if context.get("walls_pending") is not None:
         return _old_rule().legacy_decide(scope, labels, action, context, _self())
     known = set(context.get("parties", {}))
     mine, theirs = _tagset(scope), _tagset(labels)
@@ -1393,6 +1426,88 @@ def decide(scope, labels, action: str, context: dict) -> str:
     if blocked(context, mine, parties):
         return "deny"
     return "confirm" if action == "file" and asked else "permit"
+
+
+# ---------------------------------------------------------------------------
+# The zone wall: a zone is walled or open, and nothing below a zone is walled
+# ---------------------------------------------------------------------------
+
+UNZONED = "<no zone>"   # a Meetings page with no `zone:`, or with more than one: walled, so it flows nowhere
+
+_ZONE_CACHE: Dict[str, Tuple[tuple, Dict[str, str]]] = {}
+
+
+def _zone_names(root: Path) -> Dict[str, str]:
+    """The zone names of a workspace by case-folded name, as `load_context` writes them: the folder under Zones/
+    as it is on disk first, then the Zones table. Kept while `System/context.md` and `Zones/` stay as they are."""
+    try:
+        stamp = (root / "System" / "context.md").stat().st_mtime_ns, (root / "Zones").stat().st_mtime_ns
+    except OSError:
+        stamp = (0, 0)
+    hit = _ZONE_CACHE.get(str(root))
+    if hit and hit[0] == stamp:
+        return hit[1]
+    names = {z.casefold(): z for z in load_context(root)["zones"]}
+    try:
+        names.update({d.name.casefold(): d.name for d in (root / "Zones").iterdir() if d.is_dir()})
+    except OSError:
+        pass
+    _ZONE_CACHE[str(root)] = (stamp, names)
+    return names
+
+
+def zone_of(root: PathLike, path: PathLike) -> Optional[str]:
+    """The zone a file belongs to.
+
+    `Zones/<Zone>/...` is `<Zone>`, the folder as it is on disk. `Wikis/Meetings/...` is the page's `zone:`
+    frontmatter, canonicalised to a zone of the Zones table: `UNZONED` when the page has none, names a zone the
+    table does not know, or names two. That holds for a record under `raw/` as well: it counts by its own `zone:`,
+    and one with none (a transcript in `raw/inbox/` waiting to be split) is `UNZONED`, so never open by default.
+    `Wikis/Knowledge/...`, `System/...`, the root and anything else are `None`: the wall reads no zone there.
+    A relative `path` is read from `root`."""
+    root_p = Path(os.path.abspath(str(root)))
+    full = Path(os.path.abspath(str(path) if os.path.isabs(str(path)) else os.path.join(str(root_p), str(path))))
+    try:
+        rel = full.relative_to(root_p)
+    except ValueError:
+        try:
+            rel = full.resolve().relative_to(root_p.resolve())
+            full = root_p / rel
+        except (ValueError, OSError):
+            return None
+    parts = rel.parts
+    if len(parts) >= 3 and parts[0] == "Zones":
+        return _zone_names(root_p).get(parts[1].casefold(), parts[1])
+    if len(parts) >= 2 and parts[0] == "Wikis" and parts[1] == "Meetings":
+        known = _zone_names(root_p)
+        try:
+            value = parse_frontmatter(full).get("zone")
+        except Exception:
+            return UNZONED
+        items = value if isinstance(value, list) else re.split(r"\s*,\s*", str(value or ""))
+        zones = {known.get(re.sub(r"^\[\[|\]\]$", "", plain_name(str(i))).casefold()) for i in items if plain_name(str(i))}
+        return zones.pop() if len(zones) == 1 and None not in zones else UNZONED
+    return None
+
+
+def walled(context: dict, zone: Optional[str]) -> bool:
+    """Is a zone walled? `None` (System, Knowledge, the root) is not. A zone of `context["zone_walled"]` is as its
+    flag says; any other zone, `UNZONED` included, is walled: a zone nobody declared fails closed."""
+    if zone is None:
+        return False
+    return bool((context.get("zone_walled") or {}).get(zone, True)) if zone != UNZONED else True
+
+
+def may_flow(context: dict, src_zone: Optional[str], dst_zone: Optional[str]) -> bool:
+    """May material of `src_zone` go into `dst_zone`? Material with no zone goes anywhere, and material of an open
+    zone goes anywhere (Knowledge's own rule, that it takes only material with no zone, is applied by the check on
+    top). Material of a walled zone goes only into its own zone, never into `None` or another zone. `UNZONED` is
+    walled and its own destination too: two pages that name no zone do not share one."""
+    if src_zone is None:
+        return True
+    if src_zone == dst_zone:
+        return src_zone != UNZONED
+    return not walled(context, src_zone)
 
 
 # What each wall refusal leaves behind, with no content (#437): when, where, and what kind of finding.
@@ -1648,7 +1763,7 @@ def mail_labels(context: dict, data: bytes) -> Tuple[Optional[frozenset], bool]:
     unknown or `none` makes them None. A mail with neither has none."""
     known = set(context.get("parties", {}))
     header = set(stamped_parties(data))
-    reserved = {"none", "public"} if context.get("pending") is not None else {"none"}      # pending: as v0.59.1
+    reserved = {"none", "public"} if context.get("walls_pending") is not None else {"none"}      # pending: as v0.59.1
     if header and (header - known or header & reserved):
         return None, True
     domains = set()
@@ -1773,7 +1888,7 @@ def labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
     got = _labels(root, path, context, cache)
     if got is not None and len(got) > 1:
         context = context if context is not None else load_context(root)
-        if context.get("pending") is None and hats_of(context, got):      # pending: v0.59.1 had no such rule
+        if context.get("walls_pending") is None and hats_of(context, got):      # pending: v0.59.1 had no such rule
             return None
     return got
 
@@ -1819,13 +1934,13 @@ def _labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
             return None             # a page that carries a party key in any spelling is someone's, not published
         got = _labels_of(fm)
         context = context if context is not None else load_context(root)
-        none = _old_rule().LEGACY_PUBLIC if context.get("pending") is not None else KNOWLEDGE
+        none = _old_rule().LEGACY_PUBLIC if context.get("walls_pending") is not None else KNOWLEDGE
         return None if got is None else frozenset(got or {none})
     if parts[:3] == ("Wikis", "Meetings", "wiki"):
         if full.suffix != ".md" or not full.is_file():
             return None
         context = context if context is not None else load_context(root)
-        return meeting_labels(parse_frontmatter(full), context.get("pending") is not None)
+        return meeting_labels(parse_frontmatter(full), context.get("walls_pending") is not None)
     if parts[:3] == ("Wikis", "Meetings", "raw"):
         key = ("cites", str(root))
         if key not in cache:
@@ -1864,7 +1979,7 @@ def _labels(root: PathLike, path: PathLike, context: Optional[dict] = None,
         if not project.is_dir():
             return None
         context = context if context is not None else load_context(root)
-        if context.get("pending") is not None:
+        if context.get("walls_pending") is not None:
             return _old_rule().legacy_project_labels(root, _self(), parts, cache)
         hub = ("hub", str(project))
         if hub not in cache:

@@ -1062,7 +1062,7 @@ class TestPendingKeepsTheOldRule(Case):
     def test_a_pending_context_gives_the_old_verdicts_at_decide_the_hook_and_ask(self):
         self.link_notes()
         ctx, got, lib = self.verdicts()
-        self.assertIsNotNone(ctx["pending"])
+        self.assertIsNotNone(ctx["walls_pending"])
         # the flags would refuse the first and allow the second; the pairs say the opposite
         self.assertEqual({"client_to_client": "permit", "venture_into_employer": "deny"}, got)
         import ask_scope
@@ -1077,7 +1077,7 @@ class TestPendingKeepsTheOldRule(Case):
                            capture_output=True, text=True, env=self.env)
         self.assertEqual(0, r.returncode, r.stdout + r.stderr)
         ctx, got, lib = self.verdicts()
-        self.assertIsNone(ctx["pending"])
+        self.assertIsNone(ctx["walls_pending"])
         self.assertEqual({"client_to_client": "deny", "venture_into_employer": "permit"}, got)
         self.assertFalse(ask_scope.admits(ctx, {"birch"}, {"acme"}, lib))
         self.assertTrue(ask_scope.admits(ctx, {"emp"}, {"cedar"}, lib))
@@ -1091,7 +1091,7 @@ class TestPendingKeepsTheOldRule(Case):
         page.parent.mkdir(parents=True, exist_ok=True)
         page.write_text("---\ntitle: Open call\ntype: meeting\nzone: Work\nparties: [public]\n---\n\n# Open call\n")
         ctx, got, lib = self.verdicts()
-        self.assertIsNotNone(ctx["pending"])
+        self.assertIsNotNone(ctx["walls_pending"])
         rel = "Wikis/Meetings/wiki/sources/260401-open-call.md"
         label = lib.labels(self.root, rel, ctx)
         self.assertIsNone(label)                        # v0.59.1: a conversation never names `public`
@@ -1111,7 +1111,7 @@ class TestPendingKeepsTheOldRule(Case):
             (folder / "System").mkdir(parents=True)
             (folder / "System" / "context.md").write_text(text)
             ctx = lib.load_context(folder)
-            self.assertEqual(pending, ctx["pending"] is not None, name)
+            self.assertEqual(pending, ctx["walls_pending"] is not None, name)
             self.assertEqual(walled, lib.is_walled(ctx, "a"), name)
 
 

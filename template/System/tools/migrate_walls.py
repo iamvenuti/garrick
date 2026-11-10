@@ -59,7 +59,7 @@ def legacy_pairs(root, lib):
 def legacy_walled(context, tag_a, tag_b):
     if not tag_a or not tag_b or tag_a == tag_b:
         return False
-    return frozenset((tag_a, tag_b)) in (context.get("walls") or context.get("pending") or set())
+    return frozenset((tag_a, tag_b)) in (context.get("walls") or context.get("walls_pending") or set())
 
 
 def _tags(value):
@@ -247,7 +247,7 @@ def propose(root, lib, ctx):
 
 def proposed_context(ctx, prop):
     """The context dict as load_context() would give it once the proposal is written."""
-    new = dict(ctx, pending=None)
+    new = dict(ctx, walls_pending=None)
     new["parties"] = {t: dict(r, walled=prop["flags"][t], flag="yes" if prop["flags"][t] else "no",
                               party=prop.get("renames", {}).get(t, r.get("party")))
                       for t, r in ctx["parties"].items()}

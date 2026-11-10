@@ -247,6 +247,9 @@ class Cases(unittest.TestCase):
         self.assertNotIn(base + "entities/mixed-open.md", found)                                        # l02
         self.assertIn(base + "sources/260313-unzoned-call.md", found)                                   # l03
         self.assertNotIn(base + "entities/whole.md", found)                                             # l04
+        both = found.get(base + "entities/open-and-walled.md")       # an open source forces no split: the walled zone is proposed
+        self.assertIsNotNone(both)
+        self.assertIn("takes Work", both.message)
         pat = found.get(base + "people/pat.md")                                                         # l05
         self.assertIsNotNone(pat)
         self.assertIn("Home", pat.message)

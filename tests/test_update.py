@@ -1172,7 +1172,8 @@ class TestZoneWallsStep(Case):
     def classify_text(self, message, path="Zones/Advisory/BirchAdv/Threads/Entry/Notes.md"):
         lib = update.install.lib()
         return update.classify(self.root, lib, {"path": path, "message": message, "fid": "x", "token": ""},
-                               update._meeting_stems(self.root), {}, list(self.zones.FLAGS))
+                               update._meeting_stems(self.root), {}, list(self.zones.FLAGS),
+                               names=update._party_names(self.context.read_text()))
 
     def test_every_form_of_a_target_is_placed_by_the_zone_of_its_one_file(self):
         hub = "AcmeAdv"
@@ -1197,6 +1198,36 @@ class TestZoneWallsStep(Case):
                 "links [x](obsidian://open?vault=Meetings&file=wiki%2Fsources%2F260312-emp-sync), a meeting",   # another zone
                 "links [x](obsidian://open?vault=Meetings&file=wiki%2Fsources%2Fnone), a meeting",
                 "repeats wording from meeting 260312-emp-sync, a meeting with emp; emp is walled"):
+            self.assertEqual("other", self.classify_text(message), message)
+
+    def masked_fixture(self):
+        """Files named after the walled party Acme Corp: 0.62 printed its name as `<acme>` in every message."""
+        z = self.root / "Zones"
+        self.write(z / "Advisory/Acme Corp OEM/Acme Corp OEM.md", "---\ntitle: Acme Corp OEM\ntype: project\nzone: Advisory\nstatus: active\n---\n\n# Acme Corp OEM\n")
+        self.write(z / "Advisory/Acme Corp OEM/Notes/x.md", "# x\n")
+        self.write(self.root / "Wikis/Meetings/wiki/sources/260512-deal-acme-corp-review.md",
+                   self.zones_meeting("Advisory", "[acme]"))
+        self.write(z / "Advisory/Acme Corp OEM/Threads/A/Acme Corp plan.md", "# a\n")
+        self.write(z / "Advisory/BirchAdv/Threads/Entry/Acme Corp plan.md", "# a\n")
+        self.write(z / "Work/Northwind/Threads/Pricing/Acme Corp Notes.md", "# w\n")
+
+    def test_a_target_whose_party_name_was_masked_as_a_tag_is_found_again(self):
+        self.masked_fixture()
+        for message in (
+                "links [[<acme> OEM]], a note of acme; acme is walled and this project does not name it",
+                "links [[<acme> OEM/<acme> OEM|the hub]], a note; acme is walled",
+                "repeats wording from Zones/Advisory/<acme> OEM/Notes/x.md, in project <acme> OEM for <acme>; <acme> is walled",
+                "links [x](obsidian://open?vault=Wikis&file=Meetings/wiki/sources/260512-deal-<acme>-review), a meeting",
+                "repeats wording from meeting 260512-deal-<acme>-review, a meeting with <acme>; <acme> is walled"):
+            self.assertEqual("inside", self.classify_text(message), message)
+
+    def test_a_masked_target_that_matches_two_files_or_the_wrong_zone_stays_other(self):
+        self.masked_fixture()
+        for message in (
+                "links [[<acme> plan]], a note; acme is walled",                       # two files of that name
+                "links [[<acme> Notes]], a note; acme is walled",                      # one file, in another walled zone
+                "links [[<nobody> OEM]], a note",                                      # a label that names no party
+                "repeats wording from Zones/Advisory/<acme> OEM/../../Work/x.md, a note"):
             self.assertEqual("other", self.classify_text(message), message)
 
     def test_a_wording_check_that_cannot_run_is_said_above_the_groups(self):

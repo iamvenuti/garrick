@@ -468,8 +468,8 @@ focus, as under *No name given*). Then:
    session did and decided, the files it touched, the actions to file and the
    lines to tick, any deliverable that left the workspace and who edits it
    next, and the answer to the question word for word. The brief carries the
-   walls too, since a cold run knows none: the project's `party` (from its
-   hub), the walled parties it does not name (from the Walled column of the Parties table in
+   walls too, since a cold run knows none: the project's zone and whether
+   it is walled (the Walled column of the Zones table in
    `System/context.md`), and any material in this session that a wall held
    back, named only as "held back" with no content, no party and no subject.
    Tell it to do the wall check (*The wall check*, step 4 above) before it
@@ -925,7 +925,7 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    status page, check
    `git -C "Zones/<Zone>" status --porcelain`, stage the new folder by name, and
    commit "New project Birch (birch), first thread Launch plan". Adding Parties
-   or Walls rows is a change outside the zone: commit it separately in the
+   or zone flags is a change outside the zone: commit it separately in the
    workspace root's repository, if it has one.
 
 The new thread is now in focus, as if opened.
@@ -1002,13 +1002,8 @@ python3 System/tools/scaffold.py move --zone <Zone> --project "<From project>" -
    in. If a name could be a thread or a project, or two threads share it, ask
    which. A project is never moved, and Y in another zone is not a move.
 2. **One match goes ahead**: the instruction named it, so do not ask it back.
-3. **Run the script.** It checks the thread's `party:` and the new project's
-   `party:` against the Walled column of the Parties table in `System/context.md` first, and the
-   old project's party, and the parties of the Meetings pages and other
-   projects' files its notes link. If a walled party is not named by the new project, or any party
-   cannot be read plainly, nothing moves:
-   for a wall, say the sentence from *Zones and walls* and nothing more. It
-   also refuses another zone, a thread of that name already in the new project,
+3. **Run the script.** A move stays inside one zone, so no wall stands in its
+   way; a party is an index and decides nothing. It refuses another zone, a thread of that name already in the new project,
    a new project that is parked or finished (and a parked one as the source),
    files of the thread that sit outside its folder, changes not committed, and
    a session mid-turn there; relay the reason as under *New*. Then it moves the
@@ -1174,23 +1169,19 @@ Meetings wiki into a thread note, a hub or a deliverable: quoted, paraphrased,
 summarised, counted or linked. Material from earlier in the session counts. The
 Knowledge wiki needs no check: it carries nobody's confidence.
 
-1. **The project's party.** Read `party` from the hub's frontmatter. Missing,
-   empty or still a placeholder: no meeting material goes in. Say so, and offer
-   to set it.
-2. **Each meeting page's frontmatter.** Read `zone` and `parties`. Either
-   missing or empty: the page is unfinished and stays out. Say that a meeting
-   page is missing its zone or parties, and offer to fill it in with the user.
-   A tag not in the Parties table: cannot be checked, so it stays out; ask what
-   it is.
-3. **Zone.** The meeting's `zone` differs from the thread's zone: it stays out,
-   unless the user asked for that meeting in this thread in this request.
-4. **Walls.** For every tag in the meeting's `parties`, look for a Walls row
-   pairing it with the project's party, in either column. One row found and the
-   whole meeting stays out: not quoted, not paraphrased, not summarised, not
+1. **The project's zone.** The thread's zone is its folder under `Zones/`.
+2. **Each meeting page's frontmatter.** Read `zone`. Missing, unknown or more
+   than one: the page is unfinished and stays out. Say that a meeting page is
+   missing its zone, and offer to fill it in with the user. `parties` is an
+   index and is never asked for.
+3. **Zone.** The meeting's `zone` differs from the thread's zone and is a
+   walled zone: it stays out, unless the user asked for that meeting in this
+   thread in this request. An open zone's pages may be used.
+4. **Walls.** A meeting of another walled zone stays out entirely: not quoted, not paraphrased, not summarised, not
    linked, not mentioned as having happened. A wall holds for the whole page,
-   even when the walled party said little.
-5. **People.** A person page used on its own gets the same check: its party
-   against the project's party.
+   even when the other zone said little.
+5. **People.** A person page used on its own gets the same check: its zone
+   against the project's zone.
 6. **What passes** goes in as the least that serves: link the meeting page, and
    quote only where the wording is the point.
 7. **Say that a wall held something back, in the words the rule gives, and
@@ -1199,18 +1190,16 @@ Knowledge wiki needs no check: it carries nobody's confidence.
    subject or count, even if asked in the same breath. A question put straight
    to the Meetings wiki ("what did Theo say?") is a different request; its
    answer stays in the conversation and is never written here.
-8. **Material the user dictates** into a thread that belongs to a walled party:
-   ask once before writing it. "That sounds like Birch material, and Birch is
-   walled off from Acme. Write it anyway?"
+8. **Material the user dictates** into a thread that belongs to another walled
+   zone: ask once before writing it. "That sounds like Home material, and Home
+   is walled off from Work. Write it anyway?"
 9. **Can't tell** whether a wall applies: ask.
 
 **The same check runs again before every commit, whenever git runs the
 hook.** Each zone's pre-commit hook runs
 `System/tools/check.py --staged --walls-only` on the files being committed. A
-link to a walled meeting, the name of a walled party, person or alias the project does not
-name, or eight words in a row lifted from a walled meeting page,
-its transcript, a meeting page still missing its parties, or a walled
-project's own files stops the commit, with one line naming the file and the
+link, embed or path to a file of another walled zone, a link to a Meetings
+page of another walled zone, or a whole file copied from one, stops the commit, with one line naming the file and the
 wall.
 When it refuses:
 
@@ -1218,7 +1207,7 @@ When it refuses:
   held something back, as in step 7, and nothing more.
 - **Never commit with `--no-verify`** unless the user explicitly asks for it,
   in this request. Yes once is not yes next time.
-- **If the refusal looks wrong** (a walled party named in a published context,
+- **If the refusal looks wrong** (a link to a file of an open zone,
   say), tell the user which file and which wall, name the command that lets
   that one refusal through once (`python3 System/tools/check.py allow <path>
   <id>`; run without an id it lists them; the report prints that command first), and stop. Only the user

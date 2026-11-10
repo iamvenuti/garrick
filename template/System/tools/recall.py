@@ -936,7 +936,7 @@ def tokens(text: str) -> List[str]:
 # Names: a word that settles to a party, person or alias is searched in every form
 # ---------------------------------------------------------------------------
 
-def name_forms(ctx: dict) -> Dict[str, List[str]]:
+def spelling_forms(ctx: dict) -> Dict[str, List[str]]:
     """Every spelling the Parties, People and Aliases tables give a name, with
     and without spaces, under each of them. "Acme Corp", "acme corp" and
     "acmecorp" are three tokenizations of one name, and the tokenizer reads
@@ -1324,7 +1324,7 @@ def search(words: str, *, project: Optional[PathLike], after: Optional[str] = No
     if idx is None:
         return []
     try:
-        terms = widen(idx, build_terms(plain_words, name_forms(ctx)))
+        terms = widen(idx, build_terms(plain_words, spelling_forms(ctx)))
         today = datetime.date.today()
         tiers = [["working"]]
         if reach_of(base) == "dormant":

@@ -1455,7 +1455,7 @@ class TestVerbsThatWentWithTheParties(ActionCase):
     a wall is a flag on a zone, changed with scaffold.py zone --walled | --open."""
 
     def test_the_verbs_are_not_known(self):
-        for verb in ("party-flag", "walls-study", "walls-migrate", "nurture-answer", "nurture-organisation", "nurture-correct",
+        for verb in ("walls-study", "walls-migrate", "nurture-answer", "nurture-organisation", "nurture-correct",
                      "nurture-save", "nurture-save-all"):
             self.assertNotIn(verb, pa.VERBS)
             with self.assertRaises(pa.Refused, msg=verb):

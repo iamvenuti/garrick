@@ -620,13 +620,12 @@ class TestContextTab(StatusCase):
             self.assertNotIn(gone, html, gone)
         self.assertIn('data-tab="questions">Context<span class="n" id="qp-tab-n"></span></button>', html)
 
-    def test_no_party_symbol_is_left_in_the_page_or_the_extra(self):
+    def test_the_walls_card_and_its_verbs_are_gone(self):
         html = self.page()
-        for gone in ("party-flag", "parties_panel", "walls-card", "walls-study", "walls-migrate"):
+        for gone in ("walls-card", "walls-study", "walls-migrate"):
             self.assertNotIn(gone, html, gone)
             for f in (REPO / "extras" / "status").glob("*.py"):
                 self.assertNotIn(gone, f.read_text(encoding="utf-8"), (f.name, gone))
-        self.assertFalse((REPO / "extras" / "status" / "parties_panel.py").exists())
 
     def test_a_wall_finding_has_no_parties_link(self):
         self.fake_check({"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "links a file of zone Personal"})

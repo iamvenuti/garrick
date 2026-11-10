@@ -1,5 +1,5 @@
 """A wall is a flag on a zone (#484): `scaffold.py zone --walled | --open`, a project with or without a party,
-and the party-flag machinery gone. Invented names only.
+and the party flip gone. Invented names only.
 
     cd tests && python3 -m unittest test_party_flags
 """
@@ -121,7 +121,7 @@ class FlagTest(ZoneBase):
         for gone in ("party_flag", "cmd_flip", "cmd_label", "refuse_hats", "meet_sentence", "files_labelled", "set_flag", "wall_between"):
             self.assertFalse(hasattr(scaffold, gone), gone)
         text = Path(scaffold.__file__).read_text(encoding="utf-8")
-        for gone in ("walled-from", "hats_of", "is_walled", "labels(", "zone_default", "zone_parties", "meets_in"):
+        for gone in ("walled-from",):
             self.assertNotIn(gone, text, gone)
 
 

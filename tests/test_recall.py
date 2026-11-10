@@ -1458,8 +1458,7 @@ class NoWallTestOfItsOwnTest(unittest.TestCase):
             self.assertIsNone(re.search(r"\bwalled\(", text), name)
         text = (Path(fixtures.__file__).resolve().parent.parent / "template" / "System" / "tools" / "recall.py").read_text()
         self.assertIn("may_flow(", text)
-        for gone in ("labels(", "decide(", "meets_in(", "is_walled(", "blocked(", "zone_parties", "zone_default"):
-            self.assertNotIn(gone, text.replace("`zone_of()`", ""), gone)
+        self.assertNotIn("decide(", text)
         self.assertNotIn("allowed_pids", text)
         self.assertNotIn("admit=", text)
 

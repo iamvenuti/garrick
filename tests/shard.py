@@ -63,7 +63,7 @@ TOUCH_MAP = {
                                          "test_panel_hardening", "test_decisions",
                                          "test_nurture_panel_actions", "test_question_transaction"],
     "extras/status/parties_panel.py": ["test_status", "test_page_action"],
-    "template/System/tools/migrate_walls.py": ["test_update", "test_decide", "test_migration_names"],
+    "update.py": ["test_update"],
     "extras/status/status.py": ["test_status", "test_status_find", "test_status_finder",
                                 "test_status_graph_3d", "test_status_graph_ignored",
                                 "test_status_more", "test_status_work"],

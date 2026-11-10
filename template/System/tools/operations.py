@@ -256,6 +256,10 @@ DECLARED: Dict[str, Op] = {
     # and commits System/context.md in the workspace's own repository, as party-flag does.
     "walls-study": _op((), (), "none", retry="safe"),
     "walls-migrate": _op(("yes",), (), "workspace", True),
+    # Allow once: one wall refusal let through while its file stays as it is, and the allowance taken away. Both
+    # write System/walls-allowed.json and commit it in the workspace's own repository.
+    "walls-allow": _op(("path", "id"), ("path", "id"), "workspace", True),
+    "walls-unallow": _op(("path", "id"), ("path", "id"), "workspace", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
     # `suggested` asks a first look's suggested request instead (#182).

@@ -58,7 +58,7 @@ Garrick's own commits (the status page's actions, the scaffold tool and the sche
 | Never guessing a zone, a party or a project, and never into a scope that does not name a walled party: asking in one line instead | **Asked** | [Autonomy](../template/System/rules.md#autonomy) and [Ways in](../template/System/skills/intake/SKILL.md#the-rules-for-where-things-go) |
 | Asking before writing outside the project the session was opened in | **Asked**, with the zone guard as an optional reminder | [Autonomy](../template/System/rules.md#autonomy) |
 | Taking a mail's parties from its addresses only when confirmed, and never from personal webmail or your own addresses | **Asked** | [Ways in](../template/System/skills/intake/SKILL.md#the-rules-for-where-things-go) |
-| Never skipping the wall check with `git commit --no-verify` unless you ask | **Asked** | [Zones and walls](../template/System/rules.md#zones-and-walls) |
+| Never skipping the wall check with `git commit --no-verify` unless you ask; and, when a refusal looks wrong, naming the files and the `check.py allow` command and stopping, never writing an allowance | **Asked**. `--no-verify` stays yours. The allowance itself is **Code refuses** for anything but a terminal you type in or a click in the app: `check.py allow` refuses with no terminal on stdin, and `page_action.py` refuses `walls-allow` from the command line or the ask box. A shell that fakes a terminal, or sends the page's own request, is not stopped: the check is for an honest writer's mistakes | [Zones and walls](../template/System/rules.md#zones-and-walls), and [Allow once](#allow-once) |
 | Never editing anything in a wiki's `raw/` | **Asked**; the check reports a raw record that changed | [Files](../template/System/rules.md#files) |
 | Never printing, writing or committing a secret | **Asked** | [Secrets](../template/System/rules.md#secrets) |
 | Keeping `Todo.md` to actions: a line ticked as it was written, with no outcome added, and no line for work that is already done | **Asked**; the check warns about a ticked line the zone's history never held open, and about a line longer than 200 characters | The `threads` skill's *Wrap* and *Finish*, and the `todo` skill |
@@ -93,7 +93,7 @@ A refusal that is a false alarm can be let through for one finding of one file, 
 - `rule`: the kind of the finding, one of `link`, `name`, `wording`, `path` or `unlabelled`. A finding that cannot be read, or a file waiting in an inbox, is never allowed.
 - `date`: the day it was written. `by`: `terminal` (typed in a terminal) or `page` (a click in the app).
 
-An entry covers a finding only when `path`, `id` and `blob` all match, so an allowance for one finding does not cover another in the same file. A ledger that is missing, unreadable or of another `version` holds no allowance, and every refusal stands as before. `allow_read` and `allow_add` in `System/tools/garrick_lib.py` read and write the file.
+An entry covers a finding only when `path`, `id` and `blob` all match, so an allowance for one finding does not cover another in the same file. A ledger that is missing, unreadable or of another `version` holds no allowance, and every refusal stands as before. `allow_read` and `allow_add` in `System/tools/garrick_lib.py` read and write the file; `check.py` drops an allowed refusal (`drop_allowed`) and writes one (`allow_page`), and `page_action.py` has the verbs `walls-allow` and `walls-unallow`.
 
 ## The wall check's known gaps
 

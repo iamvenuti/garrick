@@ -56,6 +56,8 @@ RECENT = 30 * 60
 TAIL = 256 * 1024
 MARKERS = ".garrick-waiting"                  # under the home folder, outside every workspace
 MARKER_LIFE = 24 * 60 * 60
+WAIT_WINDOW = MARKER_LIFE                    # a waiting session stays listed this long; Keep awake still reads RECENT
+UUID_END = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 ASKING = {"AskUserQuestion": "a question", "ExitPlanMode": "an approval for the plan"}
 SAFE = re.compile(r"[^A-Za-z0-9_.:-]")
 
@@ -128,9 +130,9 @@ def read(path: Path) -> dict:
         elif kind == "system" and d.get("subtype") in ("turn_duration", "local_command"):
             found = "idle"
             asked.clear()
-    if codex and found == "working":
+    if codex and found in ("working", "?"):
         found, waits, since = "waiting", codex[0], codex[1]
-    elif asked and found == "working":
+    elif asked and found in ("working", "?"):                    # "?": the tail held no prompt or result
         waits, since = list(asked.values())[-1]
         found = "waiting"
     return {"state": found, "waits": waits, "since": since, "folder": folder, "desktop": "desktop" in entry}
@@ -141,8 +143,8 @@ def state(path: Path) -> str:
     return read(path)["state"]
 
 
-def recent(home: Path, now: Optional[float] = None) -> Optional[List[Path]]:
-    """Transcripts written in the last RECENT seconds, or None when neither folder exists."""
+def recent(home: Path, now: Optional[float] = None, window: float = RECENT) -> Optional[List[Path]]:
+    """Transcripts written in the last `window` seconds (RECENT), or None when neither folder exists."""
     now = time.time() if now is None else now
     folders = [(home / ".claude" / "projects", "*/*.jsonl"), (home / ".codex" / "sessions", "**/*.jsonl")]
     if not any(folder.is_dir() for folder, _ in folders):
@@ -151,7 +153,7 @@ def recent(home: Path, now: Optional[float] = None) -> Optional[List[Path]]:
     for folder, pattern in folders:
         for path in folder.glob(pattern) if folder.is_dir() else []:
             try:
-                if now - path.stat().st_mtime <= RECENT:
+                if now - path.stat().st_mtime <= window:
                     out.append(path)
             except OSError:
                 continue
@@ -180,7 +182,7 @@ def sessions(home: Path, now: Optional[float] = None) -> Optional[List[dict]]:
     """One row per recent session: id, agent, folder, state, waits, since (ISO).
     None when no transcript folder exists."""
     now = time.time() if now is None else now
-    paths = recent(home, now)
+    paths = recent(home, now, WAIT_WINDOW)
     if paths is None:
         return None
     rows = []
@@ -191,10 +193,14 @@ def sessions(home: Path, now: Optional[float] = None) -> Optional[List[dict]]:
         except OSError:
             continue
         agent = "codex" if ".codex" in path.parts else "claude"
-        row = {"id": path.stem, "agent": agent, "folder": got["folder"], "state": got["state"],
+        sid = path.stem
+        if agent == "codex":
+            found = UUID_END.search(sid)                    # cmux knows a Codex session by its id, not its file's name
+            sid = found.group(0) if found else sid
+        row = {"id": sid, "agent": agent, "folder": got["folder"], "state": got["state"],
                "waits": got["waits"], "since": got["since"], "desktop": got["desktop"]}
         if agent == "claude":
-            mark = marker_for(home, path.stem)
+            mark = marker_for(home, sid)
             # The transcript is written again once a tool's answer comes back, so a later record clears the marker.
             if mark and mark["kind"] == "permission_prompt" and now - mark["since"] < MARKER_LIFE \
                     and mtime <= mark["since"] + 2:
@@ -202,6 +208,8 @@ def sessions(home: Path, now: Optional[float] = None) -> Optional[List[dict]]:
                            since=iso(mark["since"]))
         if row["state"] == "waiting" and not row["since"]:
             row["since"] = iso(mtime)
+        if now - mtime > RECENT and row["state"] != "waiting":
+            continue                                        # only a waiting session outlives the 30 minutes
         rows.append(row)
     return rows
 
@@ -276,7 +284,7 @@ def main(argv: List[str]) -> int:
         ws = None
         if "--workspace" in argv and argv.index("--workspace") + 1 < len(argv):
             ws = Path(argv[argv.index("--workspace") + 1])
-        paths = recent(home)
+        paths = recent(home, None, WAIT_WINDOW)
         data = json.dumps({"ok": paths is not None, "sessions": rows_json(home, ws)}, indent=1)
         print(data)
         if "--notify" in argv and ws is not None:

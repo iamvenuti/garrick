@@ -383,6 +383,15 @@ class TestWaiting(Case):
         self.assertNotIn("discount", " ".join(self.told()))
         self.assertEqual(0, n.waiting([dict(self.ROW, id="s2")], self.ws, env={"GARRICK_HEADLESS": "1"}, now=NOON))
 
+    def test_a_senders_own_command_is_told_the_zone_and_skipped_when_none_is_known(self):
+        env = {"GARRICK_NOTIFY_CMD": "/bin/true"}
+        folder = str(self.ws / "Zones" / "Work" / "Acme Review")
+        with mock.patch.object(n, "legacy", return_value=True) as legacy:
+            n.waiting([dict(self.ROW, folder=folder)], self.ws, env=env, now=NOON)
+            self.assertEqual("Work", legacy.call_args[0][0]["zone"])
+            n.waiting([dict(self.ROW, id="s2", folder="/elsewhere")], self.ws, env=env, now=NOON)
+            self.assertEqual(1, legacy.call_count)                           # no zone known: the command is not run
+
     def test_quiet_hours_hold_it_for_the_morning(self):
         self.assertEqual("hold", n.QUIET["waiting"])
         n.waiting([self.ROW], self.ws, env={}, now=NIGHT)

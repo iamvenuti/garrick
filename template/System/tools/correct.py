@@ -324,8 +324,8 @@ def superseded(text: str, new: str, why: str, today: str) -> str:
     else:
         lines = ["---", "superseded: %s" % _quoted(reason), "---", ""] + lines
     text = "\n".join(lines)
-    if line not in text:
-        text = text.rstrip("\n") + "\n\n" + line + "\n"
+    if line not in text and not re.search(r"\*\*Superseded, [^*]*\*\*.*the right one is %s\." % re.escape(new), text):
+        text = text.rstrip("\n") + "\n\n" + line + "\n"          # a re-run on a later day finds the line by its words
     return text
 
 
@@ -334,8 +334,9 @@ def corrected(text: str, new: str, why: str, today: str) -> str:
     line at its end saying its own text was fixed and its record still holds
     the value corrected. The wrong value is not repeated."""
     reason = "%s: the right value is %s.%s" % (today, new, " " + why.strip() if why.strip() else "")
-    line = "**Corrected, %s.** This page was fixed in its own text. Its record still holds the old value. The right one is %s.%s" % (
-        _day(today), new, " " + why.strip() if why.strip() else "")
+    tail = "This page was fixed in its own text. Its record still holds the old value. The right one is %s.%s" % (
+        new, " " + why.strip() if why.strip() else "")
+    line = "**Corrected, %s.** %s" % (_day(today), tail)
     lines = text.split("\n")
     if lines and lines[0].strip() == "---":
         end = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r") in ("---", "...")), None)
@@ -344,9 +345,14 @@ def corrected(text: str, new: str, why: str, today: str) -> str:
     else:
         lines = ["---", "corrected: %s" % _quoted(reason), "---", ""] + lines
     text = "\n".join(lines)
-    if line not in text:
+    if tail not in text:                    # the closing line carries the day, so a re-run on a later day finds it by its words
         text = text.rstrip("\n") + "\n\n" + line + "\n"
     return text
+
+
+def _corrected_for(text: str, new: str) -> bool:
+    """The page already carries `corrected:` and the closing line for this NEW."""
+    return _has_key(text, "corrected") and "Its record still holds the old value. The right one is %s." % new in text
 
 
 def _has_key(text: str, key: str) -> bool:
@@ -453,8 +459,9 @@ def apply(root, old: str, new: str, hits: Optional[List[Hit]] = None, why: str =
         if text is None:
             continue
         fixed = replaced(text, old, new)
-        # Its own text held OLD: fixed just now, in the live-file pass above, or by this call, or by an earlier run.
-        own = fixed != text or page in touched or _has_key(text, "corrected")
+        # Its own text held OLD: fixed just now (this call, or the live-file pass above), or by an earlier run of this
+        # same correction, whose closing line is on the page. A corrected: from another correction is no such proof.
+        own = fixed != text or page in touched or _corrected_for(text, new)
         marked = corrected(fixed, new, why, today) if own else superseded(fixed, new, why, today)
         if marked != text:
             before.setdefault(page, text)

@@ -9,8 +9,12 @@ It runs on four events, reading the event on stdin:
   the kind, the tool's name where the prompt names one, and the time. Nothing
   else from the event is kept: the message can name a file, a command or a
   question, and none of it is written.
-- UserPromptSubmit, PreToolUse and PostToolUse: the next prompt or tool
-  result clears the session's marker.
+- UserPromptSubmit and PostToolUse: the next prompt clears the session's
+  marker, and so does the result of the tool the prompt was for. The result
+  of another tool leaves a permission marker in place, and an idle_prompt
+  never replaces an open permission_prompt: the row stays until the next
+  prompt or that tool's result (the reader also drops a marker once the
+  transcript is written after it).
 
 Garrick's agents_working.py reads the markers, once a minute, with the
 transcripts, and shows a session with an open `permission_prompt` as waiting.
@@ -27,7 +31,7 @@ import time
 from pathlib import Path
 
 KINDS = ("permission_prompt", "idle_prompt")
-CLEARS = ("UserPromptSubmit", "PreToolUse", "PostToolUse")
+CLEARS = ("UserPromptSubmit", "PostToolUse")
 SAFE = re.compile(r"[^A-Za-z0-9_.:-]")
 TOOL = re.compile(r"\buse\s+([A-Za-z0-9_.:-]{1,40})")
 
@@ -48,6 +52,15 @@ def handle(event: dict, now: float = None) -> None:
     name = event.get("hook_event_name")
     mark = folder() / (sid + ".json")
     if name in CLEARS:
+        if name == "PostToolUse":
+            try:
+                have = json.loads(mark.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return
+            tool = event.get("tool_name")
+            if isinstance(have, dict) and have.get("kind") == "permission_prompt" and have.get("tool") \
+                    and tool != have.get("tool"):
+                return                                          # another tool's result: the one asked about still waits
         try:
             mark.unlink()
         except OSError:
@@ -59,6 +72,11 @@ def handle(event: dict, now: float = None) -> None:
     if kind not in KINDS:
         return
     found = TOOL.search(event.get("message") or "") if isinstance(event.get("message"), str) else None
+    try:
+        if kind == "idle_prompt" and json.loads(mark.read_text(encoding="utf-8")).get("kind") == "permission_prompt":
+            return                                              # an idle prompt never replaces an open permission prompt
+    except (OSError, ValueError, AttributeError):
+        pass
     body = {"session": sid, "kind": kind, "tool": found.group(1) if found else "",
             "since": time.time() if now is None else now}
     folder().mkdir(parents=True, exist_ok=True)

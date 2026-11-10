@@ -4735,7 +4735,7 @@ def notify_lib(ws: Path):
 
 def notify_settings(ws: Path, desk: bool = False) -> str:
     """Settings › Notifications (#110, #227): notices go to this Mac and
-    nowhere else, so the section is the five notices you can be told of,
+    nowhere else, so the section is the six notices you can be told of,
     each on or off, the minutes a long task takes, and quiet hours, with
     what they do in one sentence. A session in cmux gets its notice on its
     own tab, with no switch for it. In the app only: what is chosen goes to
@@ -5540,8 +5540,17 @@ def question_card(q: dict, w: dict) -> str:
             % (E(q["file"]), md_inline(ask), '<p>%s</p>' % md_inline(q["context"]) if q["context"] else "", buttons, later))
 
 
+def live_needs_row(r: dict, now: dt.datetime) -> str:
+    """A session waiting on you now, as one more row of Needs you, marked live (#474): the thread, what it waits
+    for and for how long, never the question's text. It goes when the wait ends."""
+    return ('<div class="sh-q sh-live" data-live="%s"><b>%s</b><p><span class="sh-livetag">Live</span> waiting on you for %s, %s</p></div>'
+            % (E(r["id"]), E(r.get("thread") or Path(r.get("folder") or "").name or "A session"),
+               E(r.get("waiting_for") or "an answer"), E(waited(r.get("since") or "", now) or "just now")))
+
+
 def home_section(W: List[dict], today: dt.date, example: Optional[str], local: Optional[str],
-                 yours: Optional[dict] = None) -> str:
+                 yours: Optional[dict] = None, live: Optional[List[dict]] = None,
+                 now: Optional[dt.datetime] = None) -> str:
     """The home: Ask something, Needs you, the note when local sessions are
     off, the work from a folder of the user's waiting to be started and the
     suggestions waiting for an answer (#182), Your work with Add your own
@@ -5550,10 +5559,13 @@ def home_section(W: List[dict], today: dt.date, example: Optional[str], local: O
     shown = [(q, w) for w in W for q in w["questions"] if q["shown"]]
     shown.sort(key=lambda qw: (qw[0]["asked"] or dt.date.min, qw[0]["file"]))
     put_off = sum(1 for w in W for q in w["questions"] if not q["shown"])
-    count = ("%d question%s" % (len(shown), "" if len(shown) == 1 else "s")) if shown else \
+    live = sorted(live or [], key=lambda r: (r.get("since") or "", r["id"]))
+    asked = len(shown) + len(live)
+    count = ("%d question%s" % (asked, "" if asked == 1 else "s")) if asked else \
         ("%d put off" % put_off if put_off else "")
-    needs = ("".join(question_card(q, w) for q, w in shown) if shown
-             else '<div class="sh-empty">Nothing needs you.</div>')
+    needs = ("".join(question_card(q, w) for q, w in shown)
+             + "".join(live_needs_row(r, now or dt.datetime.now(dt.timezone.utc)) for r in live)) if asked \
+        else '<div class="sh-empty">Nothing needs you.</div>'
     off = ('<div class="sh-card sh-warn" id="sh-off" role="status"><b>%s</b><p>%s</p></div>'
            % (E(handoff_mod().LOCAL_OFF_TITLE), E(handoff_mod().LOCAL_OFF))) if local else ""
     start = start_section([w for w in W if w["unstarted"]], any(w["discovered"] and w["first_look"] for w in W),
@@ -6810,7 +6822,7 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 .setrelbox{margin:6px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13px}.setrelbox p{margin:3px 0}.setrelbox ul{margin:3px 0 3px 18px;padding:0}
 .setrelbox a{color:var(--accent)}.wallstext{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:6px 0}
 .setlink:hover{background:var(--wash)}.setlink b{display:block;font-size:13px;font-weight:600}.setlink small{display:block;font-size:12px;color:var(--muted)}
-/* Settings › Notifications: the five notices, the minutes a long task takes, and quiet hours */
+/* Settings › Notifications: the six notices, the minutes a long task takes, and quiet hours */
 #notify-settings [hidden]{display:none!important}
 #notify-settings .nsimple{display:flex;flex-direction:column;gap:8px;margin:4px 0 6px;font-size:13px}
 #notify-settings .nsrow{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
@@ -7136,7 +7148,7 @@ window.ThreadRows={bind:bindRow,chev:chev,close:tClose};
 """
 
 
-# Settings › Notifications (#110, #227), in the app: the five boxes, the
+# Settings › Notifications (#110, #227), in the app: the six boxes, the
 # minutes and quiet hours read into the shape notifications.py keeps, sent
 # with what else Settings changed when it closes (JS's sdReq), where
 # page_action.py checks them through notifications.py's clean().
@@ -8254,6 +8266,7 @@ def waiting_card(rows: List[dict], now: dt.datetime) -> str:
 
 
 WAITING_CSS = r"""
+.sh-livetag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:8px;font-size:11px;font-weight:600;background:var(--wash);color:var(--accent)}
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:12.5px}
 .wrow .act{margin-left:auto}
@@ -8273,7 +8286,14 @@ return d}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
 box.textContent='';if(!rows.length){var p=document.createElement('p');p.className='muted wnone';p.textContent='No session is waiting on you.';box.appendChild(p)}
 rows.forEach(function(r){box.appendChild(row(r))});
-var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=rows.length?rows.length+(rows.length===1?' session':' sessions'):''}
+var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=rows.length?rows.length+(rows.length===1?' session':' sessions'):'';needs(rows)}
+function needs(rows){var n=document.getElementById('sh-needs');if(!n||!n.querySelectorAll)return;
+n.querySelectorAll('.sh-live').forEach(function(e){e.remove()});var e0=n.querySelector('.sh-empty');
+rows.forEach(function(r){if(e0)e0.remove();e0=null;var d=document.createElement('div');d.className='sh-q sh-live';d.dataset.live=r.id;
+var b=document.createElement('b');b.textContent=r.thread||(r.folder||'').split('/').pop()||'A session';d.appendChild(b);
+var p=document.createElement('p'),t=document.createElement('span');t.className='sh-livetag';t.textContent='Live';p.appendChild(t);
+p.appendChild(document.createTextNode(' waiting on you for '+(r.waiting_for||'an answer')+', '+(since(r.since)||'just now')));d.appendChild(p);n.appendChild(d)});
+if(!n.querySelector('.sh-q')&&!n.querySelector('.sh-empty')){var m=document.createElement('div');m.className='sh-empty';m.textContent='Nothing needs you.';n.appendChild(m)}}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
@@ -8850,7 +8870,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     guide_body, guide_pages = guide_tab(ws)
     home_tabs = ""
     if simple:
-        home_tabs = (section("home", False, home_section(HW, now.date(), example, local, your_work_data(ws)))
+        home_tabs = (section("home", False, home_section(HW, now.date(), example, local, your_work_data(ws), waiting_now, now))
                      + section("work", True, "".join(work_page(w, now.date(), kept.get(w["key"])) for w in HW)
                                + discovery_pages(ws, now.date())))
         overview = overview.replace('<section class="tab" id="tab-overview">', '<section class="tab" id="tab-overview" hidden>', 1)

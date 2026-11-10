@@ -41,11 +41,26 @@ class Hook(unittest.TestCase):
         self.assertEqual(0, len(list((self.home / aw.MARKERS).glob(".w-*"))))
 
     def test_the_next_prompt_or_tool_result_clears_it(self):
-        for later in ("UserPromptSubmit", "PostToolUse", "PreToolUse"):
+        for later in ("UserPromptSubmit", "PostToolUse"):
             self.fire(hook_event_name="Notification", session_id="s1", notification_type="idle_prompt", message="waiting")
             self.assertEqual("idle_prompt", self.marker()["kind"])
             self.fire(hook_event_name=later, session_id="s1")
             self.assertIsNone(self.marker(), later)
+
+    def test_an_idle_prompt_never_replaces_an_open_permission_prompt(self):
+        self.fire(hook_event_name="Notification", session_id="s1", notification_type="permission_prompt", message="needs permission to use Bash")
+        self.fire(hook_event_name="Notification", session_id="s1", notification_type="idle_prompt", message="waiting")
+        self.assertEqual(("permission_prompt", "Bash"), (self.marker()["kind"], self.marker()["tool"]))
+
+    def test_another_tools_result_leaves_the_marker_and_the_asked_tools_result_clears_it(self):
+        self.fire(hook_event_name="Notification", session_id="s1", notification_type="permission_prompt", message="needs permission to use Bash")
+        self.fire(hook_event_name="PostToolUse", session_id="s1", tool_name="Read")
+        self.assertIsNotNone(self.marker())
+        self.fire(hook_event_name="PostToolUse", session_id="s1", tool_name="Bash")
+        self.assertIsNone(self.marker())
+        self.fire(hook_event_name="Notification", session_id="s1", notification_type="permission_prompt", message="needs permission to use Bash")
+        self.fire(hook_event_name="UserPromptSubmit", session_id="s1")
+        self.assertIsNone(self.marker())
 
     def test_other_notifications_and_bad_ids_write_nothing(self):
         self.fire(hook_event_name="Notification", session_id="s1", notification_type="auth_success", message="x")

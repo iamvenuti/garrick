@@ -44,7 +44,7 @@ Left out by design: a name typed by hand, which no check matches; a paraphrase; 
 
 The hook must be active in each zone. Git runs a repository's own hooks only while `core.hooksPath` is unset or names that folder. When it points anywhere else, every commit skips the wall check. The installer and the check warn about it, with the command that puts the hooks back.
 
-### One rule for every point
+### One decision for every point
 
 Every point that enforces a wall asks the same three functions in `System/tools/garrick_lib.py`: `zone_of()` says which zone a file belongs to, `walled()` whether that zone is walled, and `may_flow()` whether material of one zone may go into another. The pre-commit check, Ask, Recall, the status page's actions, intake, Nurture and the scaffold tool all use them.
 

@@ -1935,7 +1935,7 @@ class TestCheckOnlyWhatWasWritten(ExtrasCase):
     def test_the_errors_it_reports_for_a_file_are_those_of_a_whole_run(self):
         self.project()
         bad = {"System/skills/threads/SKILL.md": "\nUnfilled {{ZONE}} left here.\n",
-               "Zones/Work/Acme Review/Threads/Intake/note.md": "# Note\n\nTalked with Birch & Co about pricing.\n"}
+               "Zones/Work/Acme Review/Threads/Intake/note.md": "# Note\n\nSee [[Zones/Personal/Todo]] for the dates.\n"}   # a link into another walled zone
         for path, extra in bad.items():
             with (self.root / path).open("a" if (self.root / path).exists() else "w") as f:
                 f.write(extra)
@@ -2019,7 +2019,8 @@ class TestReleases(unittest.TestCase):
                          "run python3 update.py --release-hashes and commit release-hashes.json")
 
     @unittest.skipUnless(shutil.which("git") and has_tag("v0.6.0"), "needs the release tags")
-    def test_a_real_0_6_0_workspace_updates_cleanly(self):
+    def test_a_real_0_6_0_workspace_is_told_to_take_0_62_first(self):
+        """A workspace with a Walls table and no flags, whatever its age, has no way to this Garrick but through 0.62.0."""
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp).resolve()
             (base / "home").mkdir()
@@ -2034,14 +2035,13 @@ class TestReleases(unittest.TestCase):
             r = subprocess.run([sys.executable, str(old / "install.py"), "--config", str(EXAMPLE), "--target", str(ws)],
                                capture_output=True, text=True, env=env)
             self.assertEqual(0, r.returncode, r.stderr)
-            r = subprocess.run([sys.executable, str(INSTALL), "--update", str(ws), "--apply"],
-                               capture_output=True, text=True, env=env)
-            self.assertEqual(0, r.returncode, r.stdout + r.stderr)
-            r = subprocess.run([sys.executable, str(INSTALL), "--update", str(ws)], capture_output=True, text=True, env=env)
-            self.assertIn("Up to date", r.stdout)
-            r = subprocess.run([sys.executable, str(ws / "System/tools/check.py"), "--root", str(ws), "--json"],
-                               capture_output=True, text=True, env=env)
-            self.assertEqual([], [f for f in json.loads(r.stdout)["findings"] if f["severity"] == "error"])
+            before = subprocess.run(["git", "-C", str(ws), "rev-parse", "HEAD"], capture_output=True, text=True).stdout
+            for args in ((), ("--apply",)):
+                r = subprocess.run([sys.executable, str(INSTALL), "--update", str(ws), *args],
+                                   capture_output=True, text=True, env=env)
+                self.assertEqual(1, r.returncode, r.stdout)
+                self.assertIn("Update to Garrick 0.62.0 first", r.stderr)
+            self.assertEqual(before, subprocess.run(["git", "-C", str(ws), "rev-parse", "HEAD"], capture_output=True, text=True).stdout)
 
 
 if __name__ == "__main__":

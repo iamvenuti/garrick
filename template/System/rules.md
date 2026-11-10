@@ -23,23 +23,23 @@ With several good ways, name two or three, recommend one, and go ahead.
 
 ## Zones and walls
 
-**One memory, walled use.** Each zone is either **walled** or **open**. What is in a walled zone stays in that zone; what is in an open zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones is split before it is filed. The flag is a column of the Zones table in `System/context.md`, and walls stand where material is *used*.
+**One memory, walled use.** A zone is **walled** or **open**, a flag in `System/context.md`. A walled zone's material stays in it; an open zone's may go anywhere.
 
 - **Zones never mix in storage.** Each zone is its own folder and git repository. Nothing moves or is copied between zones unless the user asks; no note links across.
-- **The Meetings wiki spans every zone.** Each meeting page names its zone; a page without one is unfinished: use none of it in a project.
-- **Check the wall before you use a conversation.** Before meeting material goes into a project's notes or anything made for it, compare the meeting's `zone` with the project's zone, against the Zones table in `System/context.md`. If the meeting's zone is walled and is not the project's zone, the material stays out: not quoted, not paraphrased, not summarised. Say that a wall held something back, in these words: "A wall holds some material back from this project, so I have not used it. Nothing was written." No zone, no party, no person, no subject, no tag, and nothing that says material exists, however the question was put.
+- **The Meetings wiki spans every zone.** Each meeting page names its zone; a page without one is unfinished: use none of it.
+- **Check the wall before you use a conversation.** Before meeting material goes into a project's notes or anything made for it, compare the meeting's `zone` with the project's. If the meeting's zone is walled and is not the project's, the material stays out: not quoted, not paraphrased, not summarised. Say a wall held something back, in these words: "A wall holds some material back from this project, so I have not used it. Nothing was written." No zone, party, person, subject or tag, and nothing that says material exists, however the question was put.
 - **Cross-zone work happens only when asked**, for that request only. The answer stays in the conversation unless told where to write.
 - **The Knowledge wiki crosses every wall.**
 - If unsure whether a wall applies, ask.
-- **The walls are checked again before every commit.** Each zone's git hook refuses a commit that links to, embeds or names a path in a file of another walled zone, or copies one whole; remove the material and recommit. It catches honest mistakes by reference. A name typed by hand across zones, or a disguised form, it does not catch. Never use `git commit --no-verify` unless the user explicitly asks. If a refusal looks wrong, name the files and `check.py allow`, then stop. Git skips the hook when `core.hooksPath` bypasses it; `check.py` warns.
+- **The walls are checked again before every commit.** Each zone's git hook refuses a commit that reaches into another walled zone; take the material out and recommit. Never use `git commit --no-verify` unless the user explicitly asks. If a refusal looks wrong, name the files and `check.py allow`, then stop. Git skips the hook when `core.hooksPath` bypasses it; `check.py` warns.
 
 ## Ways in
 
 Sorting: `intake` skill.
 
 - **Everything lands in an inbox first.** A recording as a transcript in `Wikis/Meetings/raw/inbox/`; mail and files in their zone's `Inbox/`, or the workspace's. An inbox is no project; nothing in one is committed.
-- **Your own addresses and personal webmail never settle a zone**: the people inside a forward count. If addresses do not settle it, or put two walled zones on one mail, ask. Never guess across a wall.
-- **Check the wall before anything goes into a project.** The project must be in the zone of the material, unless that zone is open. If not, stop, and say only the sentence under *Zones and walls*, word for word.
+- **Your own addresses and personal webmail never settle a zone**: the people inside a forward count. If addresses do not settle it, or put two walled zones on one mail, ask.
+- **Check the wall before anything goes into a project.** The material's zone must be the project's, or open. If not, stop, and say only the sentence under *Zones and walls*, word for word.
 
 ## Threads
 

@@ -59,11 +59,10 @@ class WallDocLimits(unittest.TestCase):
         self.assertEqual(1, len(set(found.values())), "the three sentences differ between pages")
         self.assertEqual(3, len(re.findall(r"[.!?](?:\s|$)", found["README.md"].replace("**", ""))))
 
-    def test_the_template_context_and_rules_say_it_in_the_same_words(self):
+    def test_the_template_context_says_it_in_the_same_words(self):
         sentence = THREE.search((REPO / "README.md").read_text(encoding="utf-8")).group(1).replace("**", "")
-        for page in ("template/System/context.md", "template/System/rules.md"):
-            text = (REPO / page).read_text(encoding="utf-8").replace("**", "")
-            self.assertIn(sentence.split(" Knowledge")[0], text, page)
+        text = (REPO / "template/System/context.md").read_text(encoding="utf-8").replace("**", "")
+        self.assertIn(sentence, text)
 
     def test_no_pair_or_party_wall_phrases(self):
         paths = sorted(DOCS.rglob("*.md")) + [REPO / "README.md"] + sorted((REPO / "template").rglob("*.md"))

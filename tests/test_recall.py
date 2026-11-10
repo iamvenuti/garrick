@@ -341,6 +341,97 @@ class IndexTest(Base):
                 self.assertIn("System/.sessions/", lines.splitlines())
 
 
+class RawRecordTest(Base):
+    """#478: pages only by default, the raw record when no page matches or when asked, per wiki and per search,
+    and the walls as for the pages."""
+
+    RAW_A = "Wikis/Meetings/raw/260401-cedar-call.txt"
+
+    def setUp(self):
+        super().setUp()
+        self.set_flags(work=True, personal=True)
+        sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
+        # One call's page does not hold the word; its transcript holds it twenty times. Another page holds it once.
+        write(sources / "260401-cedar-call.md",
+              meeting_page("Work", "[acme]", "Cedar call").replace("---\n\n#", "raw: raw/260401-cedar-call.txt\n---\n\n#", 1))
+        write(self.root / self.RAW_A, "Dana: kiwiword " * 20 + "\n")
+        write(sources / "260402-pricing-sync.md",
+              meeting_page("Work", "[acme]", "Pricing sync").replace("Decisions.", "Decisions: kiwiword once."))
+        # Birch's own raw record, in the Personal zone.
+        birch = sources / "260312-birch-kickoff.md"
+        birch.write_text(birch.read_text().replace("---\n\n#", "raw: raw/260312-birch-kickoff.txt\n---\n\n#", 1))
+        write(self.root / "Wikis/Meetings/raw/260312-birch-kickoff.txt", "Theo: the wombatraw numbers.\n")
+
+    def config(self, wiki, mode):
+        write(self.root / "Wikis" / wiki / "schema.json", json.dumps({"recall": {"raw": mode}}))
+
+    def test_pages_only_by_default_when_a_page_matches(self):
+        found = self.find("kiwiword")
+        self.assertEqual(["Wikis/Meetings/wiki/sources/260402-pricing-sync.md"], [r.path for r in found])
+        self.assertFalse(any(r.raw for r in found))
+
+    def test_raw_chunks_come_back_with_raw_true_and_the_cli_flag(self):
+        found = self.find("kiwiword", raw="always")
+        self.assertIn(self.RAW_A, [r.path for r in found])
+        self.assertEqual({self.RAW_A}, {r.path for r in found if r.raw})
+        code, out, _ = self.cli(self.root / ACME, "search", "kiwiword", "--raw")
+        self.assertIn("260401-cedar-call.txt", out)
+        self.assertIn("from the raw record", out)
+        code, out, _ = self.cli(self.root / ACME, "search", "kiwiword")
+        self.assertNotIn("260401-cedar-call.txt", out)
+
+    def test_with_no_page_matching_the_raw_record_answers_and_is_marked(self):
+        (hit,) = self.find("numbat")
+        self.assertEqual(("Wikis/Meetings/raw/260310-acme-kickoff.txt", True), (hit.path, hit.raw))
+        code, out, _ = self.cli(self.root / ACME, "search", "numbat")
+        self.assertIn("from the raw record", out)
+        self.assertEqual([], self.find("numbat", raw="never"))
+
+    def test_a_wiki_chooses_its_own_default(self):
+        self.config("Meetings", "always")
+        self.assertIn(self.RAW_A, self.paths("kiwiword"))
+        self.config("Meetings", "never")
+        self.assertEqual([], self.paths("numbat"))
+        self.assertNotIn(self.RAW_A, self.paths("kiwiword", raw=None))
+        self.config("Meetings", "fallback")
+        self.assertEqual(1, len(self.find("numbat")))
+        self.config("Meetings", "sometimes")                       # a value that does not read: the default
+        self.assertEqual(1, len(self.find("numbat")))
+        self.assertNotIn(self.RAW_A, self.paths("kiwiword"))
+        (self.root / "Wikis" / "Meetings" / "schema.json").write_text("{not json")
+        self.assertEqual(1, len(self.find("numbat")))
+
+    def test_the_setting_of_one_wiki_does_not_reach_the_other(self):
+        write(self.root / "Wikis/Knowledge/wiki/sources/a-report.md", "---\ntitle: R\nraw: raw/r.txt\n---\n\n# R\n\nnothing here\n")
+        write(self.root / "Wikis/Knowledge/raw/r.txt", "kiwiword in a frozen report\n")
+        self.config("Knowledge", "always")
+        paths = self.paths("kiwiword")
+        self.assertIn("Wikis/Knowledge/raw/r.txt", paths)           # Knowledge's raw records are in the ranking
+        self.assertNotIn(self.RAW_A, paths)                         # Meetings' are not
+
+    def test_a_fallback_search_admits_no_record_the_scope_would_not(self):
+        """The raw chunks are rows of the scope's own index: whatever the mode, every path found is one
+        that a search with the raw record always in the ranking admits for the same scope, and a walled
+        zone's transcript never shows in another zone's."""
+        for project in (ACME, BIRCH, None):
+            for word in ("numbat", "wombatraw", "kiwiword", "quokkaplan"):
+                with self.subTest(project=project, word=word):
+                    wide = set(self.paths(word, project, raw="always", limit=50))
+                    for mode in (None, "never", "fallback"):
+                        self.assertLessEqual(set(self.paths(word, project, raw=mode, limit=50)), wide)
+        birch_raw = "Wikis/Meetings/raw/260312-birch-kickoff.txt"
+        self.assertEqual([], self.paths("wombatraw", ACME))
+        self.assertEqual([], self.paths("wombatraw", ACME, raw="always"))
+        self.assertEqual([birch_raw], self.paths("wombatraw", BIRCH))
+        self.assertEqual([], self.paths("numbat", BIRCH))
+        self.assertEqual([], self.paths("wombatraw", ACME, wiki="Meetings"))     # nor with the wiki named
+
+    def test_read_reads_a_raw_hit_by_its_id(self):
+        (hit,) = self.find("numbat")
+        self.assertIn("quokkaplan raw words", recall.read(hit.id, project=ACME, root=self.root))
+        self.assertIsNone(recall.read("Meetings:Wikis/Meetings/raw/260312-birch-kickoff.txt", project=ACME, root=self.root))
+
+
 class RankingTest(Base):
     def test_the_raw_chunk_list_folds_into_its_page(self):
         found = self.find("numbat")

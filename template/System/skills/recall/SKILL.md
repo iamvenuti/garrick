@@ -48,9 +48,15 @@ nothing.
 python3 ../../../System/tools/recall.py search "invoice export retry"
 python3 ../../../System/tools/recall.py search "pricing" --after 2026-06-01 --limit 5
 python3 ../../../System/tools/recall.py search "retry flag" --sessions
+python3 ../../../System/tools/recall.py search "who said no to the retry" --raw
 python3 ../../../System/tools/recall.py read "Meetings:Wikis/Meetings/wiki/sources/260310-kickoff.md"
 ```
 
+- A search ranks pages only. A transcript or other raw record answers when no
+  page matches, and the result says "from the raw record". `--raw` ranks the
+  raw records beside the pages: use it when the user wants the exact words said,
+  or a page does not hold the detail. A wiki can set its own default,
+  `"recall": {"raw": "fallback" | "always" | "never"}` in its `schema.json`.
 - `--sessions` adds past sessions. A session opened in a zone reads the past
   sessions of that zone (and of open zones); a session opened at the workspace
   root or in `System/` also reads the ones that span zones, which no zone's

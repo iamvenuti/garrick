@@ -840,8 +840,8 @@ def _table_header(lines: List[str]) -> Optional[List[str]]:
 # The sections of context.md read as tables: the columns each is written
 # with, and the ones the checks cannot do without.
 CONTEXT_TABLES = {
-    "zones": (("Zone", "Holds", "Party", "New parties"), ("zone",)),
-    "parties": (("Party", "What it is", "Zone", "Tag", "Walled", "Domains"), ("tag", "walled")),
+    "zones": (("Zone", "Holds", "Walled"), ("zone",)),
+    "parties": (("Party", "What it is", "Zone", "Tag", "Domains", "Learned"), ("tag",)),
     "people": (("Name", "Party", "Role"), ("name", "party")),
     "aliases": (("Heard", "Means"), ("heard", "means")),
 }
@@ -909,6 +909,7 @@ def load_context(root: PathLike) -> dict:
           "people":  [{"name", "party", "role"}, ...],
           "aliases": {heard (lower case): means},
           "zones":   {zone name: what it holds},
+          "zone_flags": {zone name: the Walled cell as written, lower case},   # empty while `pending`
           "zone_walled": {zone name: bool},   # the zone wall: True when walled (see zone_of, walled, may_flow)
           "pending": bool,   # True while the Zones table has no Walled column: the flags above were derived (#485)
           "walls_pending": the pairs of the 0.59 Walls table while the old migration has not run, else None,
@@ -925,7 +926,7 @@ def load_context(root: PathLike) -> dict:
     empty collections.
     """
     ctx = {"parties": {}, "zone_parties": {}, "zone_default": {}, "people": [], "aliases": {}, "zones": {}, "me": [], "owner": None, "tables": {},
-           "learned": [], "walls_pending": None, "pending": False, "zone_walled": {}}
+           "learned": [], "walls_pending": None, "pending": False, "zone_walled": {}, "zone_flags": {}}
     path = Path(root) / "System" / "context.md"
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -1026,7 +1027,9 @@ def _zone_flags(ctx: dict, sections: Dict[str, List[str]], canon: Dict[str, str]
         for row in rows:
             zone = plain_name(_col(row, "zone"))
             if zone:
-                flags[canon.get(zone.casefold(), zone)] = (row.get(column) or "").strip().strip("`*").strip().lower() != "no"
+                cell = (row.get(column) or "").strip().strip("`*").strip().lower()
+                ctx["zone_flags"][canon.get(zone.casefold(), zone)] = cell
+                flags[canon.get(zone.casefold(), zone)] = cell != "no"
         return flags, False
     parties_header = _table_header(sections.get("parties", [])) or []
     has_party_flags = any(h.startswith("walled") for h in parties_header)
@@ -1034,10 +1037,13 @@ def _zone_flags(ctx: dict, sections: Dict[str, List[str]], canon: Dict[str, str]
         zone = plain_name(_col(row, "zone"))
         if not zone:
             continue
-        party = ctx["parties"].get(strip_tag(_col(row, "party")))
+        tag = strip_tag(_col(row, "party"))
         default = _col(row, "new parties").strip().strip("`*").strip().lower()
-        known = party is not None or default in ("open", "walled")
-        flags[canon.get(zone.casefold(), zone)] = (not has_party_flags or not known or bool(party and party["walled"]) or default != "open")
+        known = ctx["parties"].get(tag)
+        party_walled = True if not has_party_flags or known is None else bool(known["walled"])
+        # the same rule as update.zone_flags (#485): walled when its party is, or when its default says so
+        flags[canon.get(zone.casefold(), zone)] = not (not (tag and party_walled) and default == "open"
+                                                       and (not tag or known is not None))
     return flags, True
 
 
@@ -1393,39 +1399,49 @@ def always_asked(context: dict, tag: str) -> bool:
     return bool(name) and any(t != tag and _name(context, t) == name for t in context.get("parties", {}))
 
 
+def _zones(context: dict, value) -> set:
+    """The zones in `value`, a set or list of zone names (or KNOWLEDGE), as the Zones table writes them: matched
+    without regard to case, backticks taken off. A name the table lacks is kept as it is, and reads as walled."""
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        value = [value]
+    canon = {z.casefold(): z for z in (context.get("zone_walled") or {})}
+    names = {str(v).strip().strip("`").strip() for v in value}
+    return {canon.get(n.casefold(), n) for n in names if n}
+
+
 def decide(scope, labels, action: str, context: dict) -> str:
     """`permit`, `deny` or `confirm`: may `scope` use a record labelled `labels`?
 
-    One rule: material goes into a record whose parties are `scope` only when every walled party on it is one of
-    them. `scope` is None for a project not yet chosen (filing). `labels` is None when they cannot be derived: no
-    label, no permit (`deny` to read and write, `confirm` to file). A tag the Parties table lacks is `deny`.
-    A Knowledge page (KNOWLEDGE) is read by every scope and takes only material with no party. Filing asks
-    (`confirm`) on an item with no label or from a party that is always asked about, and before a project is
-    chosen on one with two walled parties.
+    One rule, the zone's: material of a walled zone goes only into a record of that zone, and material of an open
+    zone goes anywhere (may_flow). `scope` and `labels` are sets of zone names, one zone each; `scope` is None for a
+    project not yet chosen (filing). `labels` is None when the zone cannot be derived: no label, no permit (`deny`
+    to read and write, `confirm` to file). A zone the Zones table lacks is `deny`, as a scope and as a label. A
+    Knowledge page (KNOWLEDGE) is read by every scope and takes only material with no zone. Filing asks (`confirm`)
+    on an item with no label, and before a project is chosen on one with two walled zones.
     """
     if action not in ACTIONS:
         raise ValueError("action is read, write or file, not %r" % (action,))
-    if context.get("walls_pending") is not None:
-        return _old_rule().legacy_decide(scope, labels, action, context, _self())
-    known = set(context.get("parties", {}))
-    mine, theirs = _tagset(scope), _tagset(labels)
+    known = set(context.get("zone_walled") or {})
+    mine, theirs = _zones(context, scope), _zones(context, labels)
     if (scope is not None and mine - known - {KNOWLEDGE}) or (labels is not None and theirs - known - {KNOWLEDGE}):
         return "deny"
     if labels is None:
         return "deny" if action != "file" else "confirm"
-    parties = theirs - {KNOWLEDGE}
-    asked = not theirs or any(always_asked(context, t) for t in parties)
+    material, there = theirs - {KNOWLEDGE}, mine - {KNOWLEDGE}
+    goes = all(may_flow(context, z, d) for z in material for d in there)
     if action == "read":
-        return "permit" if theirs and (not parties or (mine - {KNOWLEDGE} and not blocked(context, mine, parties))) else "deny"
+        return "permit" if theirs and (not material or (there and goes)) else "deny"
     if scope is None and action == "file":      # intake, before a project is chosen
-        return "confirm" if asked or sum(is_walled(context, t) for t in parties) > 1 else "permit"
+        return "confirm" if not theirs or sum(walled(context, z) for z in material) > 1 else "permit"
     if not mine:
-        return "deny"                           # a record with no party takes nothing
+        return "deny"                           # a record in no zone takes nothing
     if mine == {KNOWLEDGE}:
-        return "deny" if parties else "permit"
-    if blocked(context, mine, parties):
+        return "deny" if material else "permit"
+    if not goes:
         return "deny"
-    return "confirm" if action == "file" and asked else "permit"
+    return "confirm" if action == "file" and not theirs else "permit"
 
 
 # ---------------------------------------------------------------------------
@@ -1479,15 +1495,22 @@ def zone_of(root: PathLike, path: PathLike) -> Optional[str]:
     if len(parts) >= 3 and parts[0] == "Zones":
         return _zone_names(root_p).get(parts[1].casefold(), parts[1])
     if len(parts) >= 2 and parts[0] == "Wikis" and parts[1] == "Meetings":
-        known = _zone_names(root_p)
         try:
-            value = parse_frontmatter(full).get("zone")
+            fm = parse_frontmatter(full)
         except Exception:
             return UNZONED
-        items = value if isinstance(value, list) else re.split(r"\s*,\s*", str(value or ""))
-        zones = {known.get(re.sub(r"^\[\[|\]\]$", "", plain_name(str(i))).casefold()) for i in items if plain_name(str(i))}
-        return zones.pop() if len(zones) == 1 and None not in zones else UNZONED
+        return zone_from_frontmatter(root_p, fm)
     return None
+
+
+def zone_from_frontmatter(root: PathLike, fm: dict) -> str:
+    """The zone a Meetings page's frontmatter names, canonicalised to a zone of the workspace: `UNZONED` when it
+    has no `zone:`, names a zone that is not one, or names two."""
+    known = _zone_names(Path(os.path.abspath(str(root))))
+    value = (fm or {}).get("zone")
+    items = value if isinstance(value, list) else re.split(r"\s*,\s*", str(value or ""))
+    zones = {known.get(re.sub(r"^\[\[|\]\]$", "", plain_name(str(i))).casefold()) for i in items if plain_name(str(i))}
+    return zones.pop() if len(zones) == 1 and None not in zones else UNZONED
 
 
 def walled(context: dict, zone: Optional[str]) -> bool:
@@ -1512,14 +1535,15 @@ def may_flow(context: dict, src_zone: Optional[str], dst_zone: Optional[str]) ->
 
 # What each wall refusal leaves behind, with no content (#437): when, where, and what kind of finding.
 REFUSALS = ("System", "generated", "walls", "refusals.jsonl")
-REFUSAL_KINDS = ("link", "name", "wording", "path", "unlabelled", "unreadable")
+REFUSAL_KINDS = ("link", "name", "wording", "path", "unlabelled", "unreadable", "copy")
 
 
 def refusal_kind(message: str) -> str:
     m = (message or "").lower()
-    for kind, words in (("wording", ("repeats wording",)),
+    for kind, words in (("copy", ("is a copy, whole",)),
+                        ("wording", ("repeats wording",)),
                         ("unreadable", ("cannot be read", "cannot read", "cannot be checked", "cannot be placed", "nul bytes")),
-                        ("unlabelled", ("names no party", "no party to check", "has a party", "unfinished", "no party")),
+                        ("unlabelled", ("names no zone", "names no party", "no party to check", "has a party", "unfinished", "no party")),
                         ("name", ("one of its people",)),
                         ("path", ("writes the path", "a path that leads"))):
         if any(w in m for w in words):
@@ -1597,7 +1621,7 @@ def refusal_counts(root: PathLike, now=None, days: int = 30) -> dict:
 ALLOW_LEDGER = ("System", "walls-allowed.json")
 ALLOW_VERSION = 1
 ALLOW_BY = ("terminal", "page")
-ALLOW_RULES = ("link", "name", "wording", "path", "unlabelled")      # the kinds an allowance may cover
+ALLOW_RULES = ("link", "name", "wording", "path", "unlabelled", "copy")      # the kinds an allowance may cover
 ALLOW_ID_LENGTH = 10
 ALLOW_KEYS = ("path", "id", "blob", "rule", "date", "by")
 
@@ -1802,10 +1826,28 @@ def wall_roles(context: dict) -> Dict[str, str]:
     return roles
 
 
+def zone_roles(context: dict) -> Dict[str, str]:
+    """The zones that stand for the roles of the wall cases (tests/walls/cases.md) in a Zones table: `near` and
+    `far`, two walled zones; `open`, an open zone; `ghost`, a zone the table lacks; `unzoned` and `knowledge`.
+    A role the table has no zone for is left out."""
+    flags = context.get("zone_walled") or {}
+    roles = {"ghost": "ghost-zone", "knowledge": KNOWLEDGE, "unzoned": UNZONED}
+    while roles["ghost"] in flags:
+        roles["ghost"] += "-x"
+    closed = sorted(z for z, w in flags.items() if w)
+    if len(closed) >= 2:
+        roles["near"], roles["far"] = closed[:2]
+    free = sorted(z for z, w in flags.items() if not w)
+    if free:
+        roles["open"] = free[0]
+    return roles
+
+
 def run_wall_cases(context: dict, text: str) -> Tuple[int, List[str], List[str]]:
-    """The decide() rows of a wall-cases file, run against a Parties table with its own tags in place of the fixture's roles. Returns (rows run,
-    rows skipped because the table has no tag for a role, the rows that failed)."""
-    roles = wall_roles(context)
+    """The decide() rows of a wall-cases file, run against a Zones table with its own zones in place of the
+    fixture's roles. Returns (rows run, rows skipped because the table has no zone for a role, the rows that
+    failed)."""
+    roles = zone_roles(context)
     ran, skipped, failed = 0, [], []
     for ident, scope, labels_, action, expect, source in wall_cases(text).get("decide()", []):
         def tags(cell):

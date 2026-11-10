@@ -113,7 +113,8 @@ The check is for an honest writer's mistakes, as [the threat model](principles.m
 
 **Merges**
 
-- A fast-forward, a rebase and a cherry-pick bring commits in with no hook that can refuse them. `post-merge` and `post-rewrite` run `check.py --changed` over the files those commits changed, read only, and print what they find: the commits are already in, so they refuse nothing, undo nothing and write nothing, and the report names `git reset --hard ORIG_HEAD` as the way back without running it. A cherry-pick runs neither hook.
+- A fast-forward, a rebase and a cherry-pick bring commits in with no hook that can refuse them. The post hooks run `check.py --changed` over the files those commits changed, read only, and print what they find: the commits are already in, so they refuse nothing, undo nothing and write nothing. `post-merge` covers a merge or a fast-forward (`ORIG_HEAD..HEAD`) and says nothing for `git merge --squash`, which commits nothing and leaves its files to the pre-commit check. `post-rewrite` runs after a rebase, including `git pull --rebase`, and covers the rewritten commits and what the rebase brought in from upstream, and after `git commit --amend`, and covers the amended commit. The report names how to undo it without running it: `git reset --hard ORIG_HEAD` after a merge or a rebase, `git reset --soft HEAD@{1}` after an amend, which sets no `ORIG_HEAD`. A cherry-pick runs neither hook.
+- A merge hook that is the user's own is never replaced: `check.py` warns and says the line to add to it (`--staged --walls-only` for `pre-merge-commit`, `--changed` for the post hooks) and the words in a comment that tell the check the hook runs it.
 
 **By design**
 

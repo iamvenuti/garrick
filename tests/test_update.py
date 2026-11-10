@@ -697,6 +697,26 @@ class TestSafety(Case):
         self.assertIn("post-merge", " ".join(p for p, _ in result["skipped"]))
         self.assertEqual([], self.plan()["hooks"])                                # not stale for a hook that is not ours
 
+    def test_a_garrick_merge_hook_that_git_would_not_run_is_refreshed(self):
+        hook = self.root / "Zones" / "Work" / ".git" / "hooks" / "post-merge"
+        hook.chmod(0o644)
+        self.assertEqual(["Work"], self.plan()["hooks"])
+        self.apply()
+        self.assertTrue(os.access(hook, os.X_OK))
+        self.assertEqual([], self.plan()["hooks"])
+
+    def test_a_wiki_with_a_foreign_merge_hook_is_still_reported_under_the_hooks_installed(self):
+        hooks = self.root / "Wikis" / ".git" / "hooks"
+        (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        (hooks / "pre-merge-commit").unlink(missing_ok=True)
+        p = self.plan()
+        self.assertEqual("refresh", p["wiki_hook"])
+        self.assertIn("the merge hooks", update.report(p))
+        result = update.apply(self.root, p)
+        self.assertIn("Wikis", result["hooks"])
+        self.assertTrue((hooks / "pre-merge-commit").is_file())
+        self.assertIn("--changed ORIG_HEAD..HEAD", " ".join(w for _, w in result["skipped"]))
+
     def wiki_hook(self):
         return self.root / "Wikis" / ".git" / "hooks" / "pre-commit"
 

@@ -98,6 +98,9 @@ from garrick_lib import (  # noqa: E402
     has_wall_hook,
     has_merge_hooks,
     missing_merge_hooks,
+    foreign_merge_hooks,
+    merge_hook_advice,
+    MergeHookNotGarricks,
     inbound_only,
     is_origin,
     memory_entries,
@@ -1566,9 +1569,12 @@ def merge_hooks_finding(ws: Workspace, repo: Path, what: str) -> Finding:
     """A repository with Garrick's pre-commit hook and without its merge hooks: a merge that completes on its own
     runs no pre-commit hook, so the walls are not checked on what it brings in (#497)."""
     names = ", ".join(missing_merge_hooks(repo))
+    foreign = [n for n in foreign_merge_hooks(repo) if n in missing_merge_hooks(repo)]
+    fix = ("a hook of yours is in the place of %s, which --install-hooks leaves alone: %s" % (", ".join(foreign), merge_hook_advice(foreign))
+           if foreign else "run `python3 System/tools/check.py --install-hooks`")
     return Finding(WARNING, "zones" if what != "project repository" else "hooks", rel(ws, repo),
                    "has the pre-commit wall check but not %s, so a merge, a fast-forward or a rebase brings changes in "
-                   "with no wall check; run `python3 System/tools/check.py --install-hooks`" % names,
+                   "with no wall check; %s" % (names, fix),
                    "The %s %s does not check the walls when a merge brings changes in" % (repo.name, what))
 
 
@@ -6899,7 +6905,7 @@ def changed_files(top: Path, specs: List[str]) -> Optional[List[str]]:
     return sorted(names)
 
 
-def changed_command(root: Path, specs: List[str]) -> int:
+def changed_command(root: Path, specs: List[str], after: str = "merge") -> int:
     """`--changed`: after a merge, a fast-forward or a rebase has brought commits in, the walls check on the files
     they changed, read only, as the post-merge and post-rewrite hooks run it. The commits are in, so this refuses
     nothing: it says what the check finds, that the commits are in, and how to undo them, without doing it. Always 0."""
@@ -6924,8 +6930,12 @@ def changed_command(root: Path, specs: List[str]) -> int:
                  "already in, so nothing was refused and nothing was undone:" % (len(by_file), "" if len(by_file) == 1 else "s")]
         lines += ["  %s %s" % (path, found[0].message if len(found) == 1 else "holds %d refusals (%s)" % (len(found), kind_counts(found)))
                   for path, found in by_file.items()]
-        lines.append("To undo what was just brought in, you can run (it is not run for you, and it discards uncommitted "
-                     "changes): git reset --hard ORIG_HEAD")
+        if after == "amend":     # an amend sets no ORIG_HEAD: the old commit is where the reflog says
+            lines.append("To undo the amend, keeping its changes staged, you can run (it is not run for you): "
+                         "git reset --soft HEAD@{1}")
+        else:
+            lines.append("To undo what was just brought in, you can run (it is not run for you, and it discards "
+                         "uncommitted changes): git reset --hard ORIG_HEAD")
         print("\n".join(lines), file=sys.stderr)
     return 0
 
@@ -6940,6 +6950,8 @@ def install_hooks(root: Path) -> int:
         try:
             hook = install_wall_hook(zone)
             print("%s: wall check installed at %s%s" % (zone.name, rel(ws, hook), MERGE_SAID))
+        except MergeHookNotGarricks as exc:      # pre-commit and the other hooks are written; this one is left, and said
+            print("%s: wall check installed at .git/hooks/pre-commit; %s" % (zone.name, exc))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (zone.name, exc), file=sys.stderr)
             code = 1
@@ -6947,6 +6959,8 @@ def install_hooks(root: Path) -> int:
         try:
             hook = install_wall_hook(wiki, wiki=True, root=ws.root)
             print("%s: wall check installed at %s%s" % (rel(ws, wiki), rel(ws, hook), MERGE_SAID))
+        except MergeHookNotGarricks as exc:
+            print("%s: wall check installed at .git/hooks/pre-commit; %s" % (rel(ws, wiki), exc))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (rel(ws, wiki), exc), file=sys.stderr)
             code = 1
@@ -6955,6 +6969,8 @@ def install_hooks(root: Path) -> int:
         try:
             hook = install_wall_hook(repo, nested=True)
             print("%s: wall check installed at %s%s, on %s's side" % (rel(ws, repo), rel(ws, hook), MERGE_SAID, parties))
+        except MergeHookNotGarricks as exc:
+            print("%s: wall check installed at .git/hooks/pre-commit, on %s's side; %s" % (rel(ws, repo), parties, exc))
         except (FileExistsError, FileNotFoundError) as exc:
             print("%s: %s" % (rel(ws, repo), exc), file=sys.stderr)
             code = 1
@@ -7014,6 +7030,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                         help="the walls check, read only, on the files these commits changed in the current folder's "
                              "repository (`A..B` is what changed from A to B), and a report; it refuses nothing, "
                              "for the post-merge and post-rewrite hooks")
+    parser.add_argument("--after", choices=("merge", "rebase", "amend"), default="merge",
+                        help="with --changed: what brought the commits in, which decides how the report says to undo it")
     parser.add_argument("--staged", action="store_true",
                         help="check only the files staged in the current folder's git repository (implies --walls-only)")
     parser.add_argument("--install-hooks", action="store_true",
@@ -7046,7 +7064,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return install_hooks(root)
     if args.changed:
         try:
-            return changed_command(root, args.changed)
+            return changed_command(root, args.changed, args.after)
         except Exception:       # a report after the fact never fails a merge
             return 0
     if args.walls_cases:

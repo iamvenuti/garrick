@@ -197,6 +197,26 @@ class ClassificationTest(Base):
         _, out = self.run_tool("list")
         self.assertEqual("attribution", self.by_path(out["items"], "Pricing/Pricing.md")[0]["kind"])
 
+    def test_a_one_word_people_row_is_asked_for_its_full_name_with_a_proposal_from_its_person_page(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(ctx.read_text().replace("| Theo Marsh | `birch` | Managing partner |\n",
+                                               "| Theo Marsh | `birch` | Managing partner |\n| Kit | `acme` | Buyer |\n"))
+        write(self.wikis / "Meetings" / "wiki" / "people" / "kit-avery.md",
+              "---\ntitle: Kit Avery\ntype: person\nparty: acme\n---\n\n# Kit Avery\n")
+        _, out = self.run_tool("list")
+        item = self.by_path(out["items"], "System/context.md")[0]
+        self.assertEqual("attribution", item["kind"])
+        self.assertEqual("What is the full name of Kit of acme?", item["question"])
+        self.assertEqual("Kit Avery", item["proposal"])
+        self.assertIn(nurture.ONE_WORD_ROW, item["message"])
+        import check
+        self.assertEqual(nurture.ONE_WORD_ROW, check.ONE_WORD_ROW)
+        # two pages that start with the word: nothing is proposed
+        write(self.wikis / "Meetings" / "wiki" / "people" / "kit-bell.md",
+              "---\ntitle: Kit Bell\ntype: person\nparty: acme\n---\n\n# Kit Bell\n")
+        _, out = self.run_tool("list")
+        self.assertEqual("", self.by_path(out["items"], "System/context.md")[0]["proposal"])
+
     def test_a_scope_keeps_to_its_paths(self):
         _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
         self.assertTrue(out["items"])

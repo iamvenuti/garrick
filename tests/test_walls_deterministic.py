@@ -287,7 +287,7 @@ class TestStaged(WallCase):
         lines = res.stderr.strip().splitlines()
         self.assertEqual(1, len([l for l in lines if l.startswith("Commit refused")]), res.stderr)
         self.assertEqual(2, len(lines), res.stderr)              # the command that lets it through once, then the refusal
-        self.assertTrue(lines[1].startswith("Commit refused: Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md names Acme Corp"))
+        self.assertTrue(lines[1].startswith("Commit refused: Zones/Work/Birch Entry/Threads/Market Sizing/Notes.md names <acme>"))
         self.assertIn("check.py allow", lines[0])
         self.assertIn("--no-verify", lines[1])
         self.assertNotIn("Dana", res.stderr)
@@ -745,7 +745,7 @@ class TestStagedAgainstDisk(WallCase):
         res = self.staged(verbose=True)                     # a file with several refusals is one line in the short report
         self.assertNotIn("different party", res.stderr)
         self.assertNotIn("repeats wording", res.stderr)
-        self.assertIn("names Birch & Co", res.stderr)       # an Acme project called Birch Entry names Birch
+        self.assertIn("names <birch>", res.stderr)       # an Acme project called Birch Entry names Birch; a run with no terminal says the tag
 
     def test_thread_party_changed_on_disk_only(self):
         self.stage_quote()
@@ -878,7 +878,7 @@ class TestInstalledHook(unittest.TestCase):
         self.assertEqual(1, res.returncode)
         self.assertEqual(1, len([l for l in res.stderr.strip().splitlines() if l.startswith("Commit refused")]), res.stderr)
         self.assertIn("check.py allow", res.stderr)             # and the one command that lets it through, once
-        self.assertIn("Launch Plan.md names Acme Corp", res.stderr)
+        self.assertIn("Launch Plan.md names <acme>", res.stderr)
         self.assertNotIn("Dana", res.stderr)
         self.assertEqual(head, self.git(work, "rev-parse", "HEAD").stdout)
 

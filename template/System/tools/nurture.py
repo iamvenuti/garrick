@@ -1079,6 +1079,10 @@ def claim_attribution(ctx: Ctx, item: Item) -> bool:
             item.proposal = person_party(ctx, item)
         elif msg.startswith("`type` is"):
             q = "Is %s a person page?" % name
+    elif c == "context" and ONE_WORD_ROW in msg:
+        word, tag = (re.findall(r"`([^`]+)`", msg) + ["", ""])[:2]
+        q = "What is the full name of %s of %s?" % (word, tag)
+        item.proposal = full_name_proposed(ctx, word, tag)
     elif c in ("projects", "threads") and STATUS_RE.match(msg):
         what = Path(item.path).parent.name if c == "projects" else name
         q = "%s has the status %s; is it active, parked or done?" % (what, STATUS_RE.match(msg).group(2))
@@ -1116,6 +1120,27 @@ def claim_attribution(ctx: Ctx, item: Item) -> bool:
         return False
     item.question = q
     return True
+
+
+# What check.py's finding for a People row of one word holds (check.ONE_WORD_ROW).
+ONE_WORD_ROW = "by one word, which a note refuses only beside the party's name or another of its people"
+
+
+def full_name_proposed(ctx: Ctx, word: str, tag: str) -> str:
+    """The one full name a person page of the same party gives a one-word People row: the title of the only page of
+    `tag` whose title starts with that word and has more. Nothing when there are none or several."""
+    found = set()
+    folder = ctx.root / "Wikis" / "Meetings" / "wiki" / "people"
+    for page in sorted(folder.glob("*.md")) if folder.is_dir() else []:
+        try:
+            fm = parse_frontmatter_text(page.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        title = str(fm.get("title") or "").strip()
+        parts = title.split()
+        if strip_tag(str(fm.get("party") or "")) == tag and len(parts) > 1 and parts[0].casefold() == word.casefold():
+            found.add(title)
+    return found.pop() if len(found) == 1 else ""
 
 
 def meeting_zone(ctx: Ctx, item: Item) -> str:

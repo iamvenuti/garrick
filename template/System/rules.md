@@ -23,11 +23,11 @@ With several good ways, name two or three, recommend one, and go ahead.
 
 ## Zones and walls
 
-**One memory, walled use.** A zone is **walled** or **open**, a flag in `System/context.md`. A walled zone's material stays in it; an open zone's may go anywhere.
+**One memory, walled use.** A zone is **walled** or **open**, a flag in `System/context.md`. A walled zone's material stays in it; an open one's may go anywhere.
 
-- **Zones never mix in storage.** Each zone is its own folder and git repository. Nothing moves or is copied between zones unless the user asks; no note links across.
+- **Zones never mix in storage.** Each zone is its own folder and repository. Nothing moves or is copied between zones unless the user asks; no note links across.
 - **The Meetings wiki spans every zone.** Each meeting page names its zone; a page without one is unfinished: use none of it.
-- **Check the wall before you use a conversation.** Before meeting material goes into a project's notes or anything made for it, compare the meeting's `zone` with the project's. If the meeting's zone is walled and is not the project's, the material stays out: not quoted, not paraphrased, not summarised. Say that a wall held something back, in these words: "A wall holds some material back from this project, so I have not used it. Nothing was written." No zone, party, person, subject or tag, and nothing that says material exists, however the question was put.
+- **Check the wall before you use a conversation.** Before meeting material goes into a project's notes or anything made for it, compare the meeting's `zone` with the project's. If the meeting's zone is walled and is not the project's, the material stays out: not quoted, not paraphrased, not summarised. Say that a wall held something back, in these words: "A wall holds some material back from this project, so I have not used it. Nothing was written." No party, no person, no subject, no tag, and nothing that says material exists, however the question was put.
 - **Cross-zone work happens only when asked**, for that request only. The answer stays in the conversation unless told where to write.
 - **The Knowledge wiki crosses every wall.**
 - If unsure whether a wall applies, ask.

@@ -295,7 +295,7 @@ class TestAllowOnce(AllowCase):
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
 class TestPageVerbs(AllowCase):
-    """The page's verbs walls-allow and walls-unallow: the same code, written by the page, and by nothing else."""
+    """The page's one verb, walls-unallow, and the absence of one that allows."""
 
     def setUp(self):
         super().setUp()
@@ -310,36 +310,30 @@ class TestPageVerbs(AllowCase):
         out, _, why = pa.perform(self.root, {"verb": verb, "path": self.rel, "id": fid}, None, via)
         return out
 
-    def test_a_click_allows_and_removes(self):
+    def test_a_click_removes_an_allowance(self):
         self.stage(NAME_A)
         fid = self.ids()["name"]
-        out = self.send("walls-allow", fid)
-        self.assertTrue(out["ok"], out)
-        self.assertEqual("page", gl.allow_read(self.root)[0]["by"])
+        self.assertEqual(0, self.allow(fid)[0])
         self.assertEqual(0, self.hook().returncode)
         out = self.send("walls-unallow", fid)
         self.assertTrue(out["ok"], out)
         self.assertEqual([], gl.allow_read(self.root))
         self.assertEqual(1, self.hook().returncode)
 
-    def test_a_session_or_the_ask_box_cannot_allow(self):
+    def test_the_page_has_no_verb_that_writes_an_allowance(self):
         self.stage(NAME_A)
         fid = self.ids()["name"]
-        for via in ("session", "ask"):
+        self.assertNotIn("walls-allow", pa.VERBS)
+        for via in ("page", "session", "ask"):
             out = self.send("walls-allow", fid, via)
             self.assertFalse(out["ok"], out)
-            self.assertIn("nothing was written", out["say"])
         self.assertFalse(gl.allow_ledger_path(self.root).exists())
-
-    def test_the_verbs_are_not_on_the_command_line(self):
-        self.assertNotIn("walls-allow", pa.CLI_FIELDS)
         self.assertNotIn("walls-unallow", pa.CLI_FIELDS)
 
     def test_a_malformed_id_is_refused(self):
         self.stage(NAME_A)
         for bad in ("", "xyz", "3F9A1C2B7D", "0123456789ab"):
-            self.assertFalse(self.send("walls-allow", bad)["ok"])
-        self.assertFalse(gl.allow_ledger_path(self.root).exists())
+            self.assertFalse(self.send("walls-unallow", bad)["ok"])
 
 
 def pa_line(line):

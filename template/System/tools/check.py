@@ -7853,8 +7853,8 @@ def staged_fix(message: str) -> str:
 # Allow once: a finding the user let through, for as long as its file is as it was
 # ---------------------------------------------------------------------------
 # The ledger is System/walls-allowed.json (garrick_lib.py). The hook reads it once and drops a finding whose path,
-# id and git blob id all match an entry. Nothing here writes it but allow_command() and the page's verbs, and
-# neither runs without a terminal or a click.
+# id and git blob id all match an entry. Nothing here writes it but allow_command(); the page's verb only takes an entry away, and
+# runs without a terminal.
 
 def finding_rule(f: Finding) -> str:
     """The kind of a finding, as the hook's report and the ledger name it."""
@@ -8062,7 +8062,7 @@ def allow_command(argv: List[str]) -> int:
     parser.add_argument("id", nargs="?", help="the refusal's id, as --verbose or this command without one lists it")
     args = parser.parse_args(argv)
     if not allow_may_write("terminal"):
-        print("check: an allowance is written from a terminal you type in, or by a click in the app; "
+        print("check: an allowance is written from a terminal you type in; "
               "nothing was written", file=sys.stderr)
         return 2
     try:

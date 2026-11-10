@@ -95,13 +95,11 @@ zone's repository, as the skills would:
                 question; without it the reply is the question and nothing is
                 written. The same checks as release.py update --apply --yes:
                 the study still pending, the commit through the wall check
-    walls-allow  lets one wall refusal through, once (allow once): {"path", "id"},
-                the file from the workspace root and the refusal's id as
-                `check.py allow <path>` lists it. The ledger System/walls-allowed.json
-                holds it while the file is as it was; an edit brings the refusal
-                back. A click in the app only: a request that came by the command
-                line (--via session) or the ask box is refused
-    walls-unallow  takes an allowance away: {"path", "id"}; the same origin
+    walls-unallow  takes an allowance away (allow once): {"path", "id"}, the file
+                from the workspace root and the refusal's id. The ledger
+                System/walls-allowed.json loses the entry and the refusal comes
+                back at the next commit. There is no verb that adds one: an
+                allowance is written only by `check.py allow`, typed in a terminal
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -295,7 +293,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag", "walls-study", "walls-migrate", "walls-allow", "walls-unallow")
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag", "walls-study", "walls-migrate", "walls-unallow")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -2004,7 +2002,7 @@ def walls_migrate(ws: Path, req: dict) -> dict:
 
 
 def walls_allowed_tool(ws: Path):
-    """The workspace's own System/tools/check.py, loaded afresh, or None: the one that settles what a refusal's id is."""
+    """The workspace's own System/tools/check.py, loaded afresh, or None: the one that takes an allowance away."""
     src = ws / "System" / "tools" / "check.py"
     if not src.is_file():
         return None
@@ -2021,20 +2019,17 @@ def walls_allowed_tool(ws: Path):
     return mod if callable(getattr(mod, "allow_page", None)) else None
 
 
-def walls_allow(ws: Path, req: dict, remove: bool = False) -> dict:
-    """Allow one wall refusal once, or take the allowance away (allow once): check.py's own allow_page, written
-    `by` the page. Only a click in the app writes it: the verb is not on the command line, and a request that
-    came by the ask box or a session is refused, so an assistant that meets a refusal names the command and stops."""
-    if VIA != "page":
-        raise Refused("an allowance is written by a click in the app or a command typed in a terminal, so nothing was written")
+def walls_unallow(ws: Path, req: dict) -> dict:
+    """Take one allowance away (allow once): check.py's own allow_page. Removing an allowance only makes the wall
+    refuse more, so any caller may; writing one is `check.py allow`, typed in a terminal, and has no verb here."""
     path, fid = req.get("path"), req.get("id")
     if not isinstance(path, str) or not path or not isinstance(fid, str) or not re.fullmatch(r"[0-9a-f]{10}", fid):
         raise Refused("name the file and the refusal's id")
     tool = walls_allowed_tool(ws)
     if tool is None:
-        raise Refused("this workspace has no check.py that can allow a refusal once, so nothing was done")
+        raise Refused("this workspace has no check.py that can take an allowance away, so nothing was done")
     with held("page-action-walls-allow.lock", busy="another change to the allowed refusals is still running"):
-        code, said = tool.allow_page(ws, path, fid, "page", remove=remove)
+        code, said = tool.allow_page(ws, path, fid, "page", remove=True)
     if code:
         raise Refused(said)
     return {"say": said, "written": True}
@@ -5395,8 +5390,8 @@ def act(ws: Path, req, today=None, now=None):
         return walls_study(ws)
     if req["verb"] == "walls-migrate":
         return walls_migrate(ws, req)
-    if req["verb"] in ("walls-allow", "walls-unallow"):
-        return walls_allow(ws, req, remove=req["verb"] == "walls-unallow")
+    if req["verb"] == "walls-unallow":
+        return walls_unallow(ws, req)
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":
@@ -5455,7 +5450,6 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake"
                "rename", "move", "delete", "undo")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
-VIA = "page"            # who sent the request being carried out, set by perform(); a direct act() call is the page's
 
 
 def builds_page(req) -> bool:
@@ -5497,9 +5491,8 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
     Returns (the reply, what the audit log says in place of its sentence or
     None, and the refusal or the fault in its own words, "" when there was
     none, for a caller that words a failure itself, as the ask box does)."""
-    global CURRENT, VIA
+    global CURRENT
     out, logged, run, outcome, why = None, None, None, None, ""
-    VIA = via
     try:
         try:
             joined = None

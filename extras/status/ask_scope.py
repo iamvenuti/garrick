@@ -63,11 +63,12 @@ ORDERS = ("recent",)        # a find's `order`: the newest first, for a question
 # A question about time, in the user's own words: the last, the latest, the
 # most recent or newest, what happened since a date, lately, recently, these
 # days, yesterday or today, this, past or last week, month or quarter, so far,
-# anything new, any news. Read when the session's find leaves `order` out, so
+# anything new, any news, what's new, any updates, this morning, days ago. Read when the session's find leaves `order` out, so
 # such a question is ranked by date all the same (#315, #475).
 RECENT = re.compile(
     r"\b(?:last|latest|newest|since|lately|recent(?:ly)?|most\s+recent(?:ly)?|these\s+days|yesterday|today"
-    r"|(?:this|past)\s+(?:week|month|quarter)|so\s+far|anything\s+new|any\s+news)\b", re.I)
+    r"|(?:this|past)\s+(?:week|month|quarter)|so\s+far|anything\s+new|any\s+news"
+    r"|what(?:['\u2019]s|s|\s+is)\s+new|any\s+updates?|this\s+morning|days?\s+ago)\b", re.I)
 MAX_WORDS = 8               # words a find may look for
 MAX_RECORDS = 8             # records one answer is given
 PASSAGE = 1500              # characters of one record an answer is given

@@ -2573,14 +2573,17 @@ class TestWantsRecent(unittest.TestCase):
                      "what is going on these days", "Did we meet yesterday?", "anything today?",
                      "What happened this week?", "this month", "in the past week", "past quarter",
                      "last month", "Anything so far?", "anything new with Acme", "any news on Pricing",
-                     "the latest", "the newest", "the most recent", "since Monday", "the last call"):
+                     "the latest", "the newest", "the most recent", "since Monday", "the last call",
+                     "What's new with Acme?", "whats new", "what is new on Pricing", "any updates from Acme?",
+                     "Any update on the deal", "what happened this morning", "a few days ago", "two day ago"):
             with self.subTest(text=text):
                 self.assertTrue(sc.wants_recent(text))
 
     def test_look_alikes_stay_false(self):
         sc = ask.scope_lib()
         for text in ("sincere thanks", "lastly", "recenter the map", "newsletter", "this weekend",
-                     "anything newer", "so farther", "a todays", "", None):
+                     "anything newer", "so farther", "a todays", "the new pricing", "software updates policy",
+                     "what is newsworthy", "this mourning", "holidays agony", "", None):
             with self.subTest(text=text):
                 self.assertFalse(sc.wants_recent(text))
 

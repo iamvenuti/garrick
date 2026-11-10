@@ -13,7 +13,7 @@ file, run a command or reach the web. The tools:
   zone, a project or a thread (`Work`, `Acme Review`, `Acme Review/Pricing`).
   `order` is `recent` for the last, the latest, since a date, or any question
   about time: lately, recently, these days, yesterday, today, this week or
-  month, so far, anything new. Without a
+  month, so far, anything new, what's new, any updates, this morning, days ago. Without a
   `place` it searches the zone the window answers in. Leave `kind` out unless
   the user asks for one kind: it then reads the notes, the meetings and the
   library together. A `place` narrows the notes only, never the meetings or

@@ -11,11 +11,13 @@ file, run a command or reach the web. The tools:
   is `meetings`, `library` (published material), `threads` (a project's notes
   and documents), `docs` (how Garrick itself works) or `all`. `place` is a
   zone, a project or a thread (`Work`, `Acme Review`, `Acme Review/Pricing`).
-  `order` is `recent` for the last, the latest or since a date. Without a
+  `order` is `recent` for the last, the latest, since a date, or any question
+  about time: lately, recently, these days, yesterday, today, this week or
+  month, so far, anything new. Without a
   `place` it searches the zone the window answers in. Leave `kind` out unless
   the user asks for one kind: it then reads the notes, the meetings and the
   library together. A `place` narrows the notes only, never the meetings or
-  the library. For "the latest on X" use `order` `recent`. It returns ids,
+  the library. For "the latest on X" or "any meeting with X lately?" use `order` `recent`. It returns ids,
   dates, titles and a snippet, and a thread's or project's note comes with
   its Resume here block. A name is found however it is spelled, with or
   without spaces, and near misspellings. Search again with other words when

@@ -1,5 +1,5 @@
-"""Flipping a party's flag, naming a second walled party, the same-name refusal, taking a party off a note, and
-`party:` read as a list (#445). Invented names only.
+"""A wall is a flag on a zone (#484): `scaffold.py zone --walled | --open`, a project with or without a party,
+and the party-flag machinery gone. Invented names only.
 
     cd tests && python3 -m unittest test_party_flags
 """
@@ -8,22 +8,18 @@ from __future__ import annotations
 
 import contextlib
 import io
-import os
 import shutil
 import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import HAVE_GIT, commit_all, git, write  # noqa: E402
+from fixtures import HAVE_GIT, git, write  # noqa: E402
 from walls_fixture import build  # noqa: E402
 
-import check  # noqa: E402
 import garrick_lib as lib  # noqa: E402
-import recall  # noqa: E402
 import scaffold  # noqa: E402
 
 
@@ -53,98 +49,159 @@ class Base(unittest.TestCase):
         return (self.root / "System" / "context.md").read_text(encoding="utf-8")
 
 
-class FlipTest(Base):
+ZONES_WALLED = ("## Zones\n\n| Zone | Holds | Walled |\n|---|---|---|\n| Work | Client work | yes |\n"
+                "| Personal | Everything else | yes |\n")
+
+
+class ZoneBase(Base):
+    """A workspace whose Zones table has the Walled column, and a stand-in for the check that names one file."""
+
+    def setUp(self):
+        super().setUp()
+        import re
+        text = self.context()
+        text = re.sub(r"## Zones\n.*?(?=\n## )", ZONES_WALLED, text, count=1, flags=re.S)
+        (self.root / "System" / "context.md").write_text(text, encoding="utf-8")
+        self.stub(["Zones/Work/Reed/Threads/Notes/Deal.md"])
+
+    def stub(self, paths):
+        findings = [{"path": p, "severity": "error", "check": "walls", "message": "links a file of zone Personal"} for p in paths]
+        (self.root / "System" / "tools" / "check.py").write_text(
+            "import json\nprint(json.dumps({'findings': %r}))\n" % findings, encoding="utf-8")
+
+
+class FlagTest(ZoneBase):
     def test_walled_to_open_names_the_files_it_releases_and_writes_only_on_yes(self):
-        code, said, _ = self.run_scaffold("party", "--tag", "acme", "--open")
+        code, said, _ = self.run_scaffold("zone", "--name", "Work", "--open")
         self.assertEqual(0, code)
         self.assertRegex(said, r"releases \d+ files?")
-        self.assertIn("| `acme` | yes |", self.context())
-        code, said, _ = self.run_scaffold("party", "--tag", "acme", "--open", "--yes")
-        self.assertIn("| `acme` | no |", self.context())
+        self.assertIn("| Work | Client work | yes |", self.context())
+        code, said, _ = self.run_scaffold("zone", "--name", "Work", "--open", "--yes")
+        self.assertIn("| Work | Client work | no |", self.context())
         self.assertIn("released", said)
+        self.assertFalse(lib.walled(lib.load_context(self.root), "Work"))
+
+    def test_the_count_is_the_zones_own_files_and_its_meetings_pages(self):
+        _, said, _ = self.run_scaffold("zone", "--name", "Work", "--open")
+        n = int(said.split("releases ")[1].split(" ")[0])
+        self.assertGreaterEqual(n, 3)                       # the project notes and the Work meetings pages
+        _, other, _ = self.run_scaffold("zone", "--name", "Personal", "--open")
+        self.assertLess(int(other.split("releases ")[1].split(" ")[0]), n)
 
     def test_open_to_walled_writes_and_lists_the_files_now_in_violation(self):
-        write(self.work / "Reed" / "Threads" / "Notes" / "Deal.md", "# Deal\n\nSee [[260310-acme-kickoff]].\n")
-        self.run_scaffold("party", "--tag", "acme", "--open", "--yes")
-        code, said, _ = self.run_scaffold("party", "--tag", "acme", "--walled")
+        self.run_scaffold("zone", "--name", "Work", "--open", "--yes")
+        code, said, _ = self.run_scaffold("zone", "--name", "Work", "--walled")
         self.assertEqual(0, code)
-        self.assertIn("| `acme` | yes |", self.context())
+        self.assertIn("| Work | Client work | yes |", self.context())
         self.assertIn("Zones/Work/Reed/Threads/Notes/Deal.md", said)
-        self.assertIn("refused until each is fixed or its project names the party", said)
+        self.assertIn("1 file now in violation", said)
 
-    def test_walling_a_party_says_when_the_check_could_not_run(self):
+    def test_walling_a_zone_says_when_the_check_could_not_run(self):
+        self.run_scaffold("zone", "--name", "Work", "--open", "--yes")
         (self.root / "System" / "tools" / "check.py").unlink()
-        self.run_scaffold("party", "--tag", "acme", "--open", "--yes")
-        code, _, err = self.run_scaffold("party", "--tag", "acme", "--walled")
+        code, _, err = self.run_scaffold("zone", "--name", "Work", "--walled")
         self.assertEqual(1, code)
         self.assertIn("could not run", err)
-        self.assertIn("| `acme` | yes |", self.context())             # the flag is written, and the user told to run the check
+        self.assertIn("| Work | Client work | yes |", self.context())      # the flag is written, and the user told to run the check
 
-    def test_the_two_hats_cannot_be_opened(self):
-        code, _, err = self.run_scaffold("party", "--tag", "lumen", "--open", "--yes")
+    def test_a_flag_already_set_changes_nothing(self):
+        before = self.context()
+        code, said, _ = self.run_scaffold("zone", "--name", "Work", "--walled")
+        self.assertEqual((0, True), (code, "already walled" in said))
+        self.assertEqual(before, self.context())
+
+    def test_an_unknown_zone_is_refused(self):
+        code, _, err = self.run_scaffold("zone", "--name", "Nowhere", "--walled")
         self.assertEqual(1, code)
-        self.assertIn("both hats stay walled", err)
+        self.assertIn("not a zone yet", err)
+
+    def test_the_party_flag_machinery_is_gone(self):
+        for argv in (("party", "--tag", "acme", "--open"), ("party", "--name", "Fern Co", "--walled"), ("label", "--zone", "Work")):
+            self.assertEqual(2, self.run_scaffold(*argv)[0], argv)      # argparse: not an option, not a verb
+        for gone in ("party_flag", "cmd_flip", "cmd_label", "refuse_hats", "meet_sentence", "files_labelled", "set_flag", "wall_between"):
+            self.assertFalse(hasattr(scaffold, gone), gone)
+        text = Path(scaffold.__file__).read_text(encoding="utf-8")
+        for gone in ("walled-from", "hats_of", "is_walled", "labels(", "zone_default", "zone_parties", "meets_in"):
+            self.assertNotIn(gone, text, gone)
 
 
-class LabelTest(Base):
-    def test_a_second_walled_party_says_the_materials_will_meet_and_writes_on_yes(self):
-        code, _, err = self.run_scaffold("label", "--zone", "Work", "--project", "Northwind", "--add", "birch")
-        self.assertEqual(1, code)
-        self.assertIn("Acme Corp's and Birch & Co's material will meet in this project", err)
-        self.assertNotIn("birch", (self.work / "Northwind" / "Northwind.md").read_text())
-        code, said, _ = self.run_scaffold("label", "--zone", "Work", "--project", "Northwind", "--add", "birch", "--yes")
-        self.assertEqual(0, code)
-        self.assertEqual(["acme", "birch"], lib.tag_list(lib.parse_frontmatter(self.work / "Northwind" / "Northwind.md")["party"]))
+class PendingTest(Base):
+    """The 0.62 context, before the update to zone walls is accepted: a flag is refused and nothing is written."""
 
-    def test_two_hats_on_one_note_are_refused(self):
-        self.run_scaffold("label", "--zone", "Work", "--project", "Northwind", "--add", "lumen", "--yes")
-        code, _, err = self.run_scaffold("label", "--zone", "Work", "--project", "Northwind", "--add", "lumen-adv", "--yes")
-        self.assertEqual(1, code)
-        self.assertIn("one company under two hats", err)
+    def test_a_flag_is_refused_and_writes_nothing_while_the_zones_table_has_no_walled_column(self):
+        before = self.context()
+        for flag in ("--walled", "--open"):
+            code, _, err = self.run_scaffold("zone", "--name", "Work", flag, "--yes")
+            self.assertEqual(1, code)
+            self.assertIn("no Walled column", err)
+        self.assertEqual(before, self.context())
 
-    def test_two_hats_cannot_meet_through_a_hub_and_its_thread(self):
-        self.run_scaffold("label", "--zone", "Work", "--project", "Northwind", "--thread", "Pricing", "--add", "lumen-adv", "--yes")
-        code, _, err = self.run_scaffold("label", "--zone", "Work", "--project", "Northwind", "--add", "lumen", "--yes")
-        self.assertEqual(1, code)
-        self.assertIn("one company under two hats", err)
-        self.assertNotIn("lumen", (self.work / "Northwind" / "Northwind.md").read_text())
 
-    def test_the_check_reports_a_hat_pair_across_a_hub_and_its_thread(self):
-        found = [f for f in check.run_checks(self.root) if "one company under two hats" in f.message]
-        self.assertEqual({"projects", "threads"}, {f.check for f in found})        # the Hats project: on its hub and its thread
-
-    def test_the_check_refuses_a_hub_that_names_both_hats(self):
-        hub = self.work / "Northwind" / "Northwind.md"
-        hub.write_text(hub.read_text().replace("party: acme", "party: [lumen, lumen-adv]"), encoding="utf-8")
-        found = [f for f in check.run_checks(self.root) if f.check == "projects" and "two hats" in f.message and "Northwind" in f.path]
-        self.assertEqual(1, len(found))
-
-    def test_taking_a_party_off_names_the_files_and_writes_only_on_yes(self):
-        self.run_scaffold("label", "--zone", "Work", "--project", "Both", "--remove", "birch")
-        self.assertIn("birch", (self.work / "Both" / "Both.md").read_text())
-        code, said, err = self.run_scaffold("label", "--zone", "Work", "--project", "Both", "--remove", "birch")
-        self.assertIn("file", said)
-        code, said, _ = self.run_scaffold("label", "--zone", "Work", "--project", "Both", "--remove", "birch", "--yes")
-        self.assertEqual(["acme"], lib.tag_list(lib.parse_frontmatter(self.work / "Both" / "Both.md")["party"]))
-        log = (self.root / "System" / "generated" / "label-changes.jsonl").read_text()
-        self.assertIn("Zones/Work/Both/Both.md", log)
-
+class NewZoneTest(Base):
     @unittest.skipUnless(HAVE_GIT, "git is not installed")
-    def test_the_check_refuses_a_dropped_party_that_scaffold_did_not_confirm(self):
-        shutil.rmtree(self.work / ".git", ignore_errors=True)
-        git(self.work, "init", "-q")
-        with mock.patch.dict(os.environ, {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}):
-            commit_all(self.work, "start")
-            hub = self.work / "Both" / "Both.md"
-            hub.write_text(hub.read_text().replace("[acme, birch]", "acme"), encoding="utf-8")
-            git(self.work, "add", "-A")
-            found = [f for f in check.run_checks(self.root, staged=self.work) if f.severity == "error"]
-            self.assertTrue([f for f in found if "without the confirmation" in f.message], found)
-            git(self.work, "reset", "-q", "--hard", "HEAD")
-            self.run_scaffold("label", "--zone", "Work", "--project", "Both", "--remove", "birch", "--yes")
-            git(self.work, "add", "-A")
-            found = [f for f in check.run_checks(self.root, staged=self.work) if "without the confirmation" in f.message]
-            self.assertEqual([], found)
+    def test_a_new_zone_is_walled_unless_it_is_made_open(self):
+        write(self.root / "System" / "templates" / "zone" / ".gitignore", "Inbox/\n")
+        git(self.root, "init", "-q")
+        git(self.root, "config", "user.name", "Sam")
+        git(self.root, "config", "user.email", "sam@example.com")
+        code, said, err = self.run_scaffold("zone", "Garden", "--holds", "The garden")
+        self.assertEqual(0, code, err)
+        self.assertIn("walled", said)
+        code, said, err = self.run_scaffold("zone", "Meadow", "--holds", "The meadow", "--open")
+        self.assertEqual(0, code, err)
+        self.assertIn("open", said)
+        ctx = self.context()
+        self.assertRegex(ctx, r"\| Garden \| The garden \|[^\n]*walled \|")          # the 0.62 shape: the new-parties default
+        self.assertRegex(ctx, r"\| Meadow \| The meadow \|[^\n]*open \|")
+
+
+class OptionalPartyTest(Base):
+    def test_a_project_without_a_party_has_no_party_line_and_its_thread_inherits_none(self):
+        code, said, err = self.run_scaffold("project", "--zone", "Work", "--name", "Fern", "--thread", "Plan")
+        self.assertEqual(0, code, err)
+        hub = self.work / "Fern" / "Fern.md"
+        note = self.work / "Fern" / "Threads" / "Plan" / "Plan.md"
+        for f in (hub, note):
+            self.assertNotIn("party:", f.read_text())
+            self.assertNotIn("{{", f.read_text())
+        code, _, err = self.run_scaffold("thread", "--zone", "Work", "--project", "Fern", "--name", "Budget")
+        self.assertEqual(0, code, err)
+        self.assertNotIn("party:", (self.work / "Fern" / "Threads" / "Budget" / "Budget.md").read_text())
+
+    def test_a_project_may_still_name_a_party_as_an_index(self):
+        code, _, err = self.run_scaffold("project", "--zone", "Work", "--name", "Moss", "--party", "acme", "--thread", "Plan")
+        self.assertEqual(0, code, err)
+        self.assertIn("party: acme", (self.work / "Moss" / "Moss.md").read_text())
+
+    def test_two_parties_of_one_zone_need_no_confirmation(self):
+        code, _, err = self.run_scaffold("project", "--zone", "Work", "--name", "Twin", "--party", "acme,birch", "--thread", "Plan")
+        self.assertEqual(0, code, err)
+        self.assertEqual(["acme", "birch"], lib.tag_list(lib.parse_frontmatter(self.work / "Twin" / "Twin.md")["party"]))
+
+    def test_an_unknown_tag_and_a_party_of_another_zone_are_refused(self):
+        code, _, err = self.run_scaffold("project", "--zone", "Work", "--name", "Ghost", "--party", "zzz", "--thread", "Plan")
+        self.assertEqual((1, True), (code, "not a party tag" in err))
+        code, _, err = self.run_scaffold("project", "--zone", "Work", "--name", "Ghost", "--party", "jo", "--thread", "Plan")
+        self.assertEqual((1, True), (code, "party of Personal" in err))
+
+
+class PartyTest(Base):
+    def test_a_new_party_takes_a_zone_and_what_and_is_not_flagged(self):
+        code, said, err = self.run_scaffold("party", "--name", "Fern Co", "--zone", "Work", "--what", "Supplier")
+        self.assertEqual(0, code, err)
+        self.assertNotIn("walled: only", said)
+        self.assertIn("| Fern Co | Supplier | Work | `fern` |", self.context())
+
+    def test_the_same_name_is_the_same_party_and_never_a_refusal_of_two(self):
+        code, said, _ = self.run_scaffold("party", "--name", "Acme Corp", "--zone", "Work")
+        self.assertEqual((0, True), (code, "already a party" in said))
+        code, said, _ = self.run_scaffold("party", "--name", "Lumen Group", "--zone", "Work")
+        self.assertEqual(0, code)                         # two hats are two rows; asking again is no error
+
+    def test_a_second_hat_is_added_with_also_and_needs_no_wall_sentence(self):
+        code, said, err = self.run_scaffold("party", "--name", "Acme Corp", "--zone", "Personal", "--also")
+        self.assertEqual(0, code, err)
+        self.assertNotIn("stay walled", said)
 
 
 class ListReadersTest(Base):
@@ -152,18 +209,10 @@ class ListReadersTest(Base):
         self.assertIn("Both", scaffold.projects_of(self.root, "birch", "Work"))
         self.assertIn("Both", scaffold.projects_of(self.root, "acme", "Work"))
 
-    def test_check_party_takes_a_list_and_refuses_two_hats(self):
+    def test_check_party_takes_a_list_and_two_hats_of_one_zone_are_only_an_index(self):
         self.assertEqual("[acme, birch]", scaffold.check_party(self.root, "acme,birch", "Work"))
-        with self.assertRaises(scaffold.Refusal):
-            scaffold.check_party(self.root, "lumen, lumen-adv", "Work")
-
-    def test_a_changed_flag_makes_recall_build_its_index_again(self):
-        ctx = lib.load_context(self.root)
-        scope = recall.scopes_of(self.root, ctx)[1]
-        before = recall.policy_stamp(ctx, scope)
-        self.run_scaffold("party", "--tag", "acme", "--open", "--yes")
-        ctx = lib.load_context(self.root)
-        self.assertNotEqual(before, recall.policy_stamp(ctx, recall.scopes_of(self.root, ctx)[1]))
+        self.assertEqual("[lumen, lumen-adv]", scaffold.check_party(self.root, "lumen, lumen-adv", "Work"))
+        self.assertEqual("", scaffold.check_party(self.root, "", "Work"))
 
 
 if __name__ == "__main__":

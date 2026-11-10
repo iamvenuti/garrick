@@ -252,11 +252,28 @@ class TestPropose(MailCase):
         self.assertEqual([], p["parties"])
         self.assertIn("Acme Corp and Birch & Co", " ".join(p["ask"]))
 
-    def test_walled_pair_asks_and_never_picks_a_side(self):
+    def apart(self):
+        """Birch & Co in a zone of its own, walled from Work."""
+        self.ctx["parties"]["birch"]["zone"] = "Personal"
+        self.ctx["zone_walled"] = {"Work": True, "Personal": True}
+
+    def test_two_walled_zones_ask_and_never_pick_a_side(self):
+        self.apart()
         p = self.propose("marta@cobalt.example", "owen.pike@acmecorp.example", "iris.bell@birchco.example")
         self.assertEqual(["acme", "birch"], p["parties"])
-        self.assertEqual(1, len(p["ask"]))
-        self.assertIn("wall", p["ask"][0])
+        self.assertEqual(2, len(p["ask"]), p["ask"])            # the two zones, and the party that is not this inbox's
+        self.assertIn("two walled zones", p["ask"][0])
+
+    def test_two_parties_of_one_walled_zone_are_not_a_question(self):
+        p = self.propose("marta@cobalt.example", "owen.pike@acmecorp.example", "iris.bell@birchco.example")
+        self.assertEqual(["acme", "birch"], p["parties"])
+        self.assertEqual([], [a for a in p["ask"] if "walled" in a])
+
+    def test_a_party_of_an_open_zone_beside_a_walled_one_is_not_a_question(self):
+        self.apart()
+        self.ctx["zone_walled"] = {"Work": True, "Personal": False}
+        p = self.propose("owen.pike@acmecorp.example", "iris.bell@birchco.example")
+        self.assertEqual([], [a for a in p["ask"] if "walled" in a])
 
     def own(self, walled=False):
         """Jo works for Cobalt, open or walled, and forwards from there."""
@@ -279,16 +296,22 @@ class TestPropose(MailCase):
         self.assertEqual(["cobalt"], p["own"]["added"])
 
     def test_own_party_left_off_across_a_wall_without_a_question(self):
-        p = self.forward(self.own(True), "theo@birchco.example")
+        ctx = self.own(True)
+        ctx["parties"]["birch"]["zone"] = "Personal"
+        ctx["zone_walled"] = {"Work": True, "Personal": True}
+        p = self.forward(ctx, "theo@birchco.example")
         self.assertEqual(["birch"], p["parties"])
-        self.assertEqual([], p["ask"])
+        self.assertEqual(["Birch & Co is a Personal party, but this mail is in the Work inbox."], p["ask"])
         self.assertEqual(["cobalt"], p["own"]["tags"])
         self.assertEqual([], p["own"]["added"])
 
-    def test_two_walled_parties_in_the_forward_still_ask(self):
-        p = self.forward(self.own(True), "dana.whitlock@acmecorp.example", "theo@birchco.example")
+    def test_two_walled_zones_in_the_forward_still_ask(self):
+        ctx = self.own(True)
+        ctx["parties"]["birch"]["zone"] = "Personal"
+        ctx["zone_walled"] = {"Work": True, "Personal": True}
+        p = self.forward(ctx, "dana.whitlock@acmecorp.example", "theo@birchco.example")
         self.assertEqual(["acme", "birch"], p["parties"])
-        self.assertIn("wall", " ".join(p["ask"]))
+        self.assertIn("two walled zones", " ".join(p["ask"]))
 
     def test_own_addresses_alone_keep_their_party(self):
         p = self.forward(self.own())
@@ -463,8 +486,7 @@ class TestFileConversation(MailCase):
 
     def test_refusals(self):
         path = self.drop("forecast.eml", eml(plain="x\n"))
-        with self.assertRaises(intake.Refusal):
-            intake.file_conversation(self.root, path, [])  # the parties are never assumed
+        intake.file_conversation(self.root, self.drop("none.eml", eml(plain="y\n")), [])      # parties are an index: none is no refusal, the zone is the inbox's
         with self.assertRaises(intake.Refusal):
             intake.file_conversation(self.root, path, ["cedar"])
         undated = self.drop("undated.eml", eml(date=None, plain="x\n"))
@@ -490,8 +512,8 @@ class TestFileConversation(MailCase):
         self.assertEqual(1, r.returncode)
         self.assertEqual(1, len(r.stderr.strip().splitlines()))
         r = run_intake(self.root, "file-conversation", "--file", self.drop("b.eml", eml(plain="y\n")))
-        self.assertEqual(2, r.returncode)  # --parties is required
-        self.assertTrue((self.inbox / "b.eml").exists())
+        self.assertEqual(0, r.returncode, r.stderr)  # --parties is an index, and optional
+        self.assertNotIn("parties:", (self.root / r.stdout.split("\t")[2].strip()).read_text())
 
 
 # --------------------------------------------------------------------------- something to read
@@ -655,19 +677,20 @@ class TestFileToProject(MailCase):
         self.assertIn("--project", r.stderr)
         self.assertTrue(path.exists())
 
-    def test_refuses_a_walled_project_and_says_nothing_more(self):
+    def test_a_project_of_another_party_in_the_same_zone_takes_it(self):
+        """The zone is the wall: nothing below it is, so Birch's project takes a file for Acme."""
         path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")
-        with self.assertRaises(intake.Refusal) as caught:
-            intake.file_to_project(self.root, path, "Zones/Work/Birch Entry", ["acme"])
-        self.assertIn("wall", str(caught.exception))
-        for word in ("acme", "birch", "seal"):
-            self.assertNotIn(word, str(caught.exception).lower())
-        self.assertTrue(path.exists())
-        self.assertFalse((self.work / "Birch Entry" / "Sources").exists())
+        dest = intake.file_to_project(self.root, path, "Zones/Work/Birch Entry", ["acme"])
+        self.assertTrue(dest.is_file())
+
+    def test_no_party_is_needed(self):
+        path = self.drop("Notes.csv", "a,b\n")
+        dest = intake.file_to_project(self.root, path, "Zones/Work/Acme Review", [])
+        self.assertTrue(dest.is_file())
 
     def test_other_refusals(self):
         path = self.drop("Rates.csv", "lane,rate\n")
-        for project, parties in (("Zones/Work/Acme Review", []), ("Zones/Work/Acme Review", ["cedar"]),
+        for project, parties in (("Zones/Work/Acme Review", ["zzz"]),
                                  ("Zones/Work/Inbox", ["acme"]), ("Zones/Work/Nowhere", ["acme"]),
                                  ("Wikis/Knowledge", ["acme"]), ("Zones/Work", ["acme"])):
             with self.assertRaises(intake.Refusal, msg=project):
@@ -688,9 +711,11 @@ class TestFileToProject(MailCase):
 
     def test_cli(self):
         path = self.drop("Rates.csv", "lane,rate\n")
-        r = run_intake(self.root, "file-to-project", "--file", path, "--project", "Zones/Work/Birch Entry",
+        write(self.root / "Zones" / "Personal" / "House" / "House.md",
+              "---\ntitle: House\ntype: project\nzone: Personal\n---\n")
+        r = run_intake(self.root, "file-to-project", "--file", path, "--project", "Zones/Personal/House",
                        "--parties", "acme")
-        self.assertEqual(1, r.returncode)
+        self.assertEqual(1, r.returncode)                      # zones never mix
         self.assertTrue(path.exists())
         r = run_intake(self.root, "file-to-project", "--file", path, "--project", "Zones/Work/Acme Review",
                        "--parties", "acme")
@@ -733,20 +758,9 @@ class TestMailAsMaterial(MailCase):
         dest = intake.file_to_project(self.root, mail, "Zones/Work/Acme Review", ["acme"], as_material=True)
         self.assertEqual(text, dest.read_text())
 
-    def test_a_walled_project_still_refuses_with_the_standard_sentence(self):
-        mail = self.drop("forecast.eml", self.data)
-        with self.assertRaises(intake.Refusal) as caught:
-            intake.file_to_project(self.root, mail, "Zones/Work/Birch Entry", ["acme"], as_material=True)
-        self.assertEqual(intake.WALL_REFUSAL, str(caught.exception))
-        for word in ("acme", "birch", "dana", "pallet", "tilbury"):
-            self.assertNotIn(word, str(caught.exception).lower())
-        self.assertTrue(mail.exists())
-        self.assertFalse((self.work / "Birch Entry" / "Sources").exists())
-
     def test_the_other_checks_still_hold(self):
         mail = self.drop("forecast.eml", self.data)
-        for project, parties in (("Zones/Work/Acme Review", []), ("Zones/Work/Acme Review", ["cedar"]),
-                                 ("Zones/Work/Nowhere", ["acme"]), (None, ["acme"])):
+        for project, parties in (("Zones/Work/Nowhere", ["acme"]), (None, ["acme"])):
             with self.assertRaises(intake.Refusal, msg=project):
                 intake.file_to_project(self.root, mail, project, parties, as_material=True)
         personal = write(self.root / "Zones" / "Personal" / "House" / "House.md",
@@ -772,11 +786,12 @@ class TestMailAsMaterial(MailCase):
                        "--parties", "acme")
         self.assertEqual(1, r.returncode)
         self.assertIn("--as-material", r.stderr)
-        r = run_intake(self.root, "file-to-project", "--file", mail, "--project", "Zones/Work/Birch Entry",
+        write(self.root / "Zones" / "Personal" / "House" / "House.md",
+              "---\ntitle: House\ntype: project\nzone: Personal\n---\n")
+        r = run_intake(self.root, "file-to-project", "--file", mail, "--project", "Zones/Personal/House",
                        "--parties", "acme", "--as-material")
         self.assertEqual(1, r.returncode)
-        self.assertIn("A wall holds some material back from this project", r.stderr)
-        self.assertNotIn("acme", r.stderr.lower())
+        self.assertIn("Zones never mix", r.stderr)
         r = run_intake(self.root, "file-to-project", "--file", mail, "--project", "Zones/Work/Acme Review",
                        "--parties", "acme", "--as-material")
         self.assertEqual(0, r.returncode, r.stderr)
@@ -823,16 +838,17 @@ class TestExtractAttachment(MailCase):
             intake.extract_attachment(self.root, str(path), "Zones/Work/Acme Review", name="Seal kit quotes.csv")
         self.assertFalse((self.work / "Acme Review" / "Sources" / "Seal kit quotes.csv").exists())
 
-    def test_refuses_a_walled_project(self):
+    def test_refuses_a_project_of_another_zone(self):
         slug, _ = self.filed()
-        with self.assertRaises(intake.Refusal) as caught:
-            intake.extract_attachment(self.root, slug, "Zones/Work/Birch Entry", name="Seal kit quotes.csv")
-        self.assertNotIn("acme", str(caught.exception).lower())
-        self.assertFalse((self.work / "Birch Entry" / "Sources").exists())
+        write(self.root / "Zones" / "Personal" / "House" / "House.md", "---\ntitle: House\ntype: project\nzone: Personal\n---\n")
+        with self.assertRaisesRegex(intake.Refusal, "Zones never mix"):
+            intake.extract_attachment(self.root, slug, "Zones/Personal/House", name="Seal kit quotes.csv")
+        self.assertFalse((self.root / "Zones" / "Personal" / "House" / "Sources").exists())
+
+    def test_a_mail_naming_two_parties_of_one_zone_goes_to_either_project_of_it(self):
         slug, _ = self.filed(parties=("acme", "birch"), name="both.eml")
-        for project in ("Zones/Work/Acme Review", "Zones/Work/Birch Entry"):  # both sides: neither project
-            with self.assertRaises(intake.Refusal):
-                intake.extract_attachment(self.root, slug, project, index=1)
+        for project in ("Zones/Work/Acme Review", "Zones/Work/Birch Entry"):
+            self.assertEqual("saved", intake.extract_attachment(self.root, slug, project, index=1)[0])
 
     def test_other_refusals(self):
         slug, _ = self.filed()
@@ -906,16 +922,6 @@ class TestNeverThroughALink(MailCase):
         self.assertTrue(path.exists())
         self.assertFalse(dangling.exists())
 
-    def test_a_linked_project_is_the_project_it_points_to(self):
-        # The project folder itself is read where it really is, so the wall is
-        # checked against the project the file would actually reach.
-        self.link(self.work / "Acme Mirror", self.work / "Birch Entry")
-        path = self.drop("Seal kit quotes.csv", "maker,price\nKeld,4.10\n")
-        with self.assertRaises(intake.Refusal) as caught:
-            intake.file_to_project(self.root, path, "Zones/Work/Acme Mirror", ["acme"])
-        self.assertIn("wall", str(caught.exception))
-        self.assertTrue(path.exists())
-        self.assertEqual(self.before, self.birch_sources())
 
     def test_an_attachment_into_a_linked_sources_folder(self):
         mail = self.drop("quotes.eml", eml(subject="Seal kit quotes", plain="Attached.\n",

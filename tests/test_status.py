@@ -4107,7 +4107,7 @@ class TestChecksCardActs(StatusCase):
             {"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Other.md", "message": "another"},
             {"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "names birch"})
         card = self.card(self.page())
-        self.assertEqual([(" open", "Walls"), ("", "Mechanical"), ("", "Attribution"), (" open", "Judgment")],
+        self.assertEqual([(" open", "Walls"), ("", "Mechanical"), (" open", "Judgment")],
                          self.groups(card))                              # an error opens its group, and so does the largest
         uri = (self.root / thread).as_uri()
         place = self.root / "Zones/Work/Birch Entry/Threads/Market Sizing"     # a thread's note opens as its row (#318)
@@ -4118,8 +4118,6 @@ class TestChecksCardActs(StatusCase):
         fix = re.search(r'<button class="act primary tacts" type="button" data-act="([^"]+)"', card)
         self.assertEqual({"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"},
                          json.loads(htmllib.unescape(fix.group(1))))
-        self.assertIn(">Zones/Work/Acme Review/Acme Review.md</a>: Which party is the project Acme Review for?</span>", card)
-        self.assertIn('data-request="nurture Work" data-folder="%s" title="Hand “nurture Work” to your assistant">Answer</button>' % self.root, card)
         self.assertIn(">Take it out</button>", card)
         self.assertIn("Memo.md</a>: names birch</span>", card)            # a wall in the check's own words
         self.assertIn("Notes.md</a>: something odd</span></li>", card)     # a judgment is the file to open

@@ -4,15 +4,14 @@
 Landing a transcript, rebuilding the index, logging an ingest and stubbing a
 person page are easy to get wrong by hand (a stray filename, a table row out
 of order, an overwritten page). Everything that takes judgement -- what a
-meeting was about, which zone and parties apply, what was decided -- stays
+meeting was about, which zone applies, what was decided -- stays
 with whoever is running the skill; this script only does the rest.
 
     python3 ingest.py land   --root PATH --inbox FILE --date YYYY-MM-DD --title "..."
-    python3 ingest.py person --root PATH --name "..." [--party TAG] [--organisation ENTITY]
+    python3 ingest.py person --root PATH --name "..." [--zone ZONE] [--party TAG]
     python3 ingest.py index  --root PATH
     python3 ingest.py log    --root PATH --slug YYMMDD-slug --title "..." [--zone Z] [--parties a,b]
-    python3 ingest.py split   --root PATH --inbox FILE --part "cedar:1-40" --part "maple:41-80" --part "cedar,maple:81-100" [--yes]
-    python3 ingest.py extract --root PATH --raw FILE --lines 12-30 --parties cedar [--yes]
+    python3 ingest.py split   --root PATH --inbox FILE --part "Work:1-40" --part "Personal:41-80" [--yes]
 
 Standard library only, Python 3.9 or later. On success prints one line; on
 refusal, one line to stderr and exits 1.
@@ -41,8 +40,7 @@ sys.path.insert(0, str(TOOLS))
 from garrick_lib import (  # noqa: E402
     OffCourse, landing, move_new, parse_frontmatter, workspace_root, write_new, write_over,
 )
-from garrick_lib import hats_of, load_context, organisation_link, organisation_named  # noqa: E402  (the person page's entity link)
-from garrick_lib import labels as record_labels, strip_tag, write_new  # noqa: E402
+from garrick_lib import load_context  # noqa: E402
 
 RAW_EXTS = {".txt", ".md", ".vtt"}
 SLUG_RE = re.compile(r"^\d{6}-[a-z0-9][a-z0-9-]*$")
@@ -242,35 +240,20 @@ def person_slug(name: str) -> str:
     return slugify(name)
 
 
-def ensure_person(root: Path, name: str, party: str, today: str, organisation: str = "",
-                  why: Optional[List[str]] = None) -> Tuple[Path, bool]:
+def ensure_person(root: Path, name: str, party: str, today: str, zone: str = "") -> Tuple[Path, bool]:
     """Create `wiki/people/<slug>.md` if it does not exist yet.
 
-    Never overwrites an existing person page: identity and party, once
+    Never overwrites an existing person page: identity, zone and party, once
     written, are corrected by hand, not regenerated. Returns (path, created).
-
-    A new page links the entity page of where the person works,
-    `organisation:` (#330). With `organisation`, the entity page the user
-    named, by its file name, its link, or a title or alias one page alone
-    goes by, as garrick_lib's organisation_named() finds it: never made
-    here. Without, the entity page of its party, when exactly one entity
-    page names that party (organisation_link). Nothing otherwise: the link
-    is identity alone, and both leave it out where a walled party is not named, such as for a
-    name the People table places under two parties, one of them walled. Why a named entity
-    page was not linked goes into `why`, when given.
+    A new page carries the `zone:` of the sources it summarises, when given; `party:` is an index of who they
+    work for, never a wall.
     """
     path = meetings_root(root) / "wiki" / "people" / ("%s.md" % person_slug(name))
     if path.is_file():
         return path, False
-    party_line = "party: %s\n" % party if party else ""
-    if organisation:
-        link, problem = organisation_named(root, load_context(root), name, party, organisation)
-        if problem and why is not None:
-            why.append(problem)
-    else:
-        link = organisation_link(root, load_context(root), name, party) if party else ""
-    if link:
-        party_line += 'organisation: "%s"\n' % link
+    if zone:
+        zone = _zone_named(root, zone)
+    head = ("zone: %s\n" % zone if zone else "") + ("party: %s\n" % party if party else "")
     text = (
         "---\n"
         "title: %s\n"
@@ -281,7 +264,7 @@ def ensure_person(root: Path, name: str, party: str, today: str, organisation: s
         "---\n\n"
         "# %s\n\n"
         "<Who they are, and which party, in a sentence.>\n"
-    ) % (name, party_line, today, today, name)
+    ) % (name, head, today, today, name)
     try:
         with filing(root):
             write_new(root, meetings_root(root), path, text.encode("utf-8"))
@@ -290,6 +273,15 @@ def ensure_person(root: Path, name: str, party: str, today: str, organisation: s
             return path, False
         raise
     return path, True
+
+
+def _zone_named(root: Path, zone: str) -> str:
+    """The zone of the Zones table a name stands for, in the table's own spelling; a Refusal for one it does not hold."""
+    zones = load_context(root).get("zones", {})
+    found = next((z for z in zones if z.lower() == str(zone).strip().lower()), None)
+    if found is None:
+        raise Refusal("`%s` is not a zone in System/context.md. The zones are %s." % (zone, ", ".join(sorted(zones)) or "none yet"))
+    return found
 
 
 # --------------------------------------------------------------------------- index
@@ -409,14 +401,14 @@ def append_log(root: Path, slug: str, title: str, zone: str = "", parties: Optio
     return log_path
 
 
-# --------------------------------------------------------------------------- split and extract
+# --------------------------------------------------------------------------- split
 #
-# A conversation that carries two walled parties is cut in the inbox, before it is a record, into a file for each
-# label set: one for each party alone and one for what belongs to both. A record already filed is never edited:
-# an extract is a new file cut from it, with its own page and label set, and the original keeps its full labels.
-# The helper does the cutting, by line numbers, and writes each file's frontmatter. Which passage belongs to which
-# party is never decided here, and never by speaker or timestamp alone: whoever runs the skill proposes the cuts
-# and the user decides. Nothing is written without `--yes`, and a run with nobody to answer never writes.
+# A conversation that carries material for two walled zones is cut in the inbox, before it is a record, into one
+# file for each zone: no file belongs to two walled zones, so there is no joint file. A record already filed is never
+# edited, and a filed page has the one zone it was written for. The helper does the cutting, by line numbers, and
+# writes each file's frontmatter. Which passage belongs to which zone is never decided here, and never by speaker or
+# timestamp alone: whoever runs the skill proposes the cuts and the user decides. Nothing is written without `--yes`,
+# and a run with nobody to answer never writes.
 
 
 def parse_ranges(spec: str) -> List[Tuple[int, int]]:
@@ -433,20 +425,6 @@ def parse_ranges(spec: str) -> List[Tuple[int, int]]:
     if not out:
         raise Refusal("A cut needs at least one line range.")
     return out
-
-
-def _tags_of(root: Path, spec: str) -> List[str]:
-    """The parties of one cut, sorted: each a tag of the Parties table, none two hats of one company."""
-    ctx = load_context(root)
-    tags = sorted({strip_tag(t) for t in (spec or "").split(",") if strip_tag(t)})
-    if not tags:
-        raise Refusal("A cut needs the parties it is written for.")
-    unknown = [t for t in tags if t not in ctx.get("parties", {})]
-    if unknown:
-        raise Refusal("`%s` is not a tag in the Parties table, so no wall can see it." % unknown[0])
-    if hats_of(ctx, tags):
-        raise Refusal("`%s` and `%s` are one company in two hats: a record never names both." % hats_of(ctx, tags)[0])
-    return tags
 
 
 def _lines(path: Path) -> Tuple[List[str], int]:
@@ -466,7 +444,7 @@ def _lines(path: Path) -> Tuple[List[str], int]:
 
 
 # The only keys a cut takes from the original's frontmatter: mechanical ones. A title, an attendee
-# line, a summary or any free text can name a party the cut is not written for, so none is carried.
+# line, a summary or any free text can name something the cut's zone does not hold, so none is carried.
 CARRY_KEYS = ("date", "type", "language", "duration")
 # and each only with a value of its own shape, so no free text rides in under a mechanical key
 CARRY_SHAPES = {"date": r"\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?", "language": r"[a-z]{2,3}(-[A-Za-z]{2})?",
@@ -482,26 +460,26 @@ def _carried(line: str) -> bool:
 
 def _neutral_stem(stem: str) -> str:
     """A cut's name keeps only the date its original's name opens with: the rest of a name is free text, and can
-    name a party the cut is not written for."""
+    name something the cut's zone does not hold."""
     m = re.match(r"(\d{6}|\d{4}-\d{2}-\d{2})(?!\d)", stem)
     return m.group(1) if m else "cut"
 
 
 def _origin(stem: str) -> str:
-    """What links a cut or an extract to the file it came from, without naming it: a short hash of its name."""
+    """What links a cut to the file it came from, without naming it: a short hash of its name."""
     return hashlib.sha1(stem.encode("utf-8")).hexdigest()[:10]
 
 
-def _header(suffix: str, tags: List[str], extra: List[Tuple[str, str]], lines: List[str], head: int,
+def _header(suffix: str, zone: str, extra: List[Tuple[str, str]], lines: List[str], head: int,
             title: str = "") -> str:
     """The cut's own head: the original's mechanical keys (CARRY_KEYS) only, then ours, with a title of its own:
-    the one given, or a neutral one built from the date and the cut's parties.
+    the one given, or a neutral one built from the date and the cut's zone.
     A .vtt keeps WEBVTT first and our keys as header lines under it, as the format allows."""
     keep = [l if l.endswith("\n") else l + "\n" for l in (lines[1:head - 1] if head else []) if _carried(l)]
     date = next((l.split(":", 1)[1].strip().strip("\"'") for l in keep if l.split(":", 1)[0].strip().lower() == "date"), "")
-    title = " ".join((title or "").split()) or "Meeting%s, %s" % (" " + date if date else "", ", ".join(tags))
+    title = " ".join((title or "").split()) or "Meeting%s, %s" % (" " + date if date else "", zone)
     own = ["title: %s\n" % ('"%s"' % title.replace('"', "'") if ":" in title or "#" in title else title),
-           "parties: [%s]\n" % ", ".join(tags)] + ["%s: %s\n" % kv for kv in extra]
+           "zone: %s\n" % zone] + ["%s: %s\n" % kv for kv in extra]
     if suffix == ".vtt":
         return "WEBVTT\n" + "".join("%s\n" % l.rstrip("\n").replace("[", "(").replace("]", ")") for l in own) + "\n"
     return "---\n" + "".join(keep) + "".join(own) + "---\n\n"
@@ -524,37 +502,37 @@ def _headless(yes: bool) -> None:
         raise Refusal("A scheduled run has nobody to ask, so it writes nothing: the user's yes is given in a session.")
 
 
-def _name(stem: str, tags: List[str], middle: str = "") -> str:
-    return "-".join([stem] + ([middle] if middle else []) + tags)
+def _name(stem: str, zone: str) -> str:
+    return "-".join([stem, slugify(zone)])
 
 
 def split_plan(root: Path, inbox: "str | Path", parts: List[str], drop: str = "") -> Tuple[Path, List[dict]]:
-    """Check a split of an inbox transcript by label set and say what it would make: [{name, tags, ranges, lines}].
+    """Check a split of an inbox transcript by zone and say what it would make: [{name, zone, ranges, lines}].
     Every line must belong to a cut (or be dropped by name, or be blank) and to one only."""
     src = Path(inbox)
     meetings = meetings_root(root)
     inbox_dir = meetings / "raw" / "inbox"
     if not src.is_file() or src.is_symlink() or src.resolve().parent != inbox_dir.resolve():
         raise Refusal("%s is not a file in Wikis/Meetings/raw/inbox/. Only a transcript there is split: once it is a "
-                      "record it is never cut, only extracted from." % src.name)
+                      "record it is never cut." % src.name)
     if src.suffix.lower() not in RAW_EXTS:
         raise Refusal("%s is not a transcript Garrick reads: use .txt, .md or .vtt." % src.name)
     if len(parts) < 2:
-        raise Refusal("A split has at least two cuts, such as --part cedar:1-40 --part maple:41-80.")
+        raise Refusal("A split has at least two cuts, one for each zone, such as --part Work:1-40 --part Personal:41-80.")
     lines, head = _lines(src)
     plan, seen, owner = [], set(), {}
     for spec in parts:
         who, _, rng = spec.partition(":")
-        tags, ranges = _tags_of(root, who), parse_ranges(rng)
-        if tuple(tags) in seen:
-            raise Refusal("Two cuts are written for the same parties (%s): put their lines in one." % ", ".join(tags))
-        seen.add(tuple(tags))
+        zone, ranges = _zone_named(root, who), parse_ranges(rng)
+        if zone in seen:
+            raise Refusal("Two cuts are written for the same zone (%s): put their lines in one." % zone)
+        seen.add(zone)
         for a, b in ranges:
             for n in range(a, min(b, len(lines)) + 1):
                 if n in owner:
-                    raise Refusal("Line %d is in two cuts; a line belongs to one label set." % n)
-                owner[n] = tuple(tags)
-        plan.append({"name": _name(_neutral_stem(src.stem), tags) + src.suffix.lower(), "tags": tags, "ranges": ranges,
+                    raise Refusal("Line %d is in two cuts; a line belongs to one zone." % n)
+                owner[n] = zone
+        plan.append({"name": _name(_neutral_stem(src.stem), zone) + src.suffix.lower(), "zone": zone, "ranges": ranges,
                      "lines": sum(min(b, len(lines)) - a + 1 for a, b in ranges)})
     if drop:
         for a, b in parse_ranges(drop):
@@ -567,7 +545,7 @@ def split_plan(root: Path, inbox: "str | Path", parts: List[str], drop: str = ""
         raise Refusal("%d line%s belong to no cut, starting at line %d. The original is deleted once it is split, so "
                       "every line goes into a cut or is dropped by name with --drop." % (len(loose), "" if len(loose) == 1 else "s", loose[0]))
     taken = taken_stems(meetings, "raw", "raw/inbox", "wiki/sources")
-    for p in plan:                                  # a second split of the same day and parties is numbered
+    for p in plan:                                  # a second split of the same day and zones is numbered
         stem, n = Path(p["name"]).stem, 2
         name = stem
         while name in taken:
@@ -579,7 +557,7 @@ def split_plan(root: Path, inbox: "str | Path", parts: List[str], drop: str = ""
 
 def split(root: Path, inbox: "str | Path", parts: List[str], drop: str = "", yes: bool = False,
           titles: Optional[List[str]] = None) -> Tuple[List[dict], bool]:
-    """Cut an inbox transcript into one file per label set, in the inbox, each with its own frontmatter, and remove
+    """Cut an inbox transcript into one file per zone, in the inbox, each with its own frontmatter, and remove
     the original: an inbox is no record. With no `yes` it says what it would make and writes nothing.
     Returns (the plan, whether it wrote)."""
     _headless(yes)
@@ -592,61 +570,13 @@ def split(root: Path, inbox: "str | Path", parts: List[str], drop: str = "", yes
         with filing(root):
             for i, p in enumerate(plan):
                 title = titles[i] if titles and i < len(titles) else ""
-                text = _header(src.suffix.lower(), p["tags"], [("split-of", _origin(src.stem))], lines, head, title) + _take(lines, head, p["ranges"], src.suffix.lower())
+                text = _header(src.suffix.lower(), p["zone"], [("split-of", _origin(src.stem))], lines, head, title) + _take(lines, head, p["ranges"], src.suffix.lower())
                 made.append(write_new(root, meetings, src.parent / p["name"], text.encode("utf-8")))
     except BaseException:
         for path in made:
             path.unlink()
         raise
     src.unlink()
-    return plan, True
-
-
-def extract_plan(root: Path, raw: "str | Path", lines_spec: str, parties: str) -> Tuple[Path, dict]:
-    meetings = meetings_root(root)
-    src = Path(raw)
-    raw_dir = meetings / "raw"
-    inbox_dir = raw_dir / "inbox"
-    try:
-        under = src.resolve().relative_to(raw_dir.resolve())
-    except ValueError:
-        under = None
-    if under is None or not src.is_file() or src.is_symlink() or src.resolve().parent == inbox_dir.resolve():
-        raise Refusal("%s is not a filed record in Wikis/Meetings/raw/. An extract is cut from a record; a transcript "
-                      "still in the inbox is split." % src.name)
-    if src.suffix.lower() not in RAW_EXTS:
-        raise Refusal("%s is not a transcript Garrick reads: use .txt, .md or .vtt." % src.name)
-    tags, ranges = _tags_of(root, parties), parse_ranges(lines_spec)
-    held = record_labels(root, src.resolve().relative_to(root.resolve()))
-    if held is None:
-        raise Refusal("%s has no page that cites it, so it has no label set to narrow." % src.name)
-    wider = [t for t in tags if t not in held]
-    if wider:
-        raise Refusal("An extract is never wider than its record: `%s` is not on %s, which is written for %s."
-                      % (wider[0], src.name, ", ".join(sorted(held))))
-    lines, head = _lines(src)
-    for a, b in ranges:
-        _take(lines, head, [(a, b)], src.suffix.lower())          # the same bounds checks
-    stem = _name(_neutral_stem(src.stem), tags, "extract")
-    taken = taken_stems(meetings, "raw", "raw/inbox", "wiki/sources")
-    n, name = 2, stem
-    while name in taken:
-        name, n = "%s-%d" % (stem, n), n + 1
-    return src, {"name": name + src.suffix.lower(), "tags": tags, "ranges": ranges, "of": _origin(src.stem),
-                 "lines": sum(b - a + 1 for a, b in ranges), "held": sorted(held)}
-
-
-def extract(root: Path, raw: "str | Path", lines_spec: str, parties: str, yes: bool = False, title: str = "") -> Tuple[dict, bool]:
-    """A new file in the inbox cut from a filed record, with its own label set. The record is only read: it is never
-    edited, and keeps its full labels. With no `yes` it writes nothing. Returns (the plan, whether it wrote)."""
-    _headless(yes)
-    src, plan = extract_plan(root, raw, lines_spec, parties)
-    if not yes:
-        return plan, False
-    lines, head = _lines(src)
-    text = _header(src.suffix.lower(), plan["tags"], [("extract-of", plan["of"])], lines, head, title) + _take(lines, head, plan["ranges"], src.suffix.lower())
-    with filing(root):
-        write_new(root, meetings_root(root), meetings_root(root) / "raw" / "inbox" / plan["name"], text.encode("utf-8"))
     return plan, True
 
 
@@ -685,9 +615,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     q = sub.add_parser("person", help="create a person page if one does not exist yet")
     q.add_argument("--name", required=True)
-    q.add_argument("--party", default="", help="tag from Parties in System/context.md")
-    q.add_argument("--organisation", default="",
-                   help="the entity page of where they work: its file name in wiki/entities/, or a title or alias")
+    q.add_argument("--zone", default="", help="the zone of the sources the page summarises")
+    q.add_argument("--party", default="", help="tag from Parties in System/context.md: an index of who they work for, optional")
 
     sub.add_parser("index", help="rebuild wiki/index.md from every page's frontmatter")
 
@@ -695,28 +624,21 @@ def main(argv: Optional[List[str]] = None) -> int:
     l.add_argument("--slug", required=True)
     l.add_argument("--title", required=True)
     l.add_argument("--zone", default="")
-    l.add_argument("--parties", default="", help="comma-separated tags")
+    l.add_argument("--parties", default="", help="comma-separated tags: an index, optional")
 
     k = sub.add_parser("link", help="how a Todo.md line in a zone links to a meeting page")
     k.add_argument("--zone", required=True)
     k.add_argument("--slug", required=True)
     k.add_argument("--title", default="", help="the text of the link (default: the slug)")
 
-    sp = sub.add_parser("split", help="cut an inbox transcript into a file for each label set (writes only with --yes)")
+    sp = sub.add_parser("split", help="cut an inbox transcript into a file for each zone (writes only with --yes)")
     sp.add_argument("--inbox", required=True, help="path to the file in raw/inbox/")
-    sp.add_argument("--part", action="append", default=[], metavar="TAGS:LINES",
-                    help="one cut: the parties it is written for and its lines, such as cedar,maple:81-100")
+    sp.add_argument("--part", action="append", default=[], metavar="ZONE:LINES",
+                    help="one cut: the zone it is for and its lines, such as Work:81-100")
     sp.add_argument("--title", action="append", default=[], help="a title for each cut, in the order of the --part flags; "
-                    "without one a cut gets a neutral title from the date and its parties")
+                    "without one a cut gets a neutral title from the date and its zone")
     sp.add_argument("--drop", default="", help="lines to leave out of every cut, named on purpose")
     sp.add_argument("--yes", action="store_true", help="the user said yes in this session: write the files, remove the original")
-
-    ex = sub.add_parser("extract", help="a new inbox file cut from a filed record, with its own label set (writes only with --yes)")
-    ex.add_argument("--raw", required=True, help="the filed record under raw/")
-    ex.add_argument("--lines", required=True, help="the lines to take, such as 12-30,44-50")
-    ex.add_argument("--parties", required=True, help="comma-separated tags the extract is written for; never wider than the record")
-    ex.add_argument("--title", default="", help="the extract's own title; without one it gets a neutral title")
-    ex.add_argument("--yes", action="store_true", help="the user said yes in this session: write the file")
 
     args = ap.parse_args(argv)
     try:
@@ -731,29 +653,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             slug, dest = land(root, args.inbox, args.date, args.title)
             print("%s\t%s" % (slug, dest.relative_to(root)))
         elif args.command == "person":
-            why: List[str] = []
-            path, created = ensure_person(root, args.name, args.party, today, args.organisation, why)
+            path, created = ensure_person(root, args.name, args.party, today, args.zone)
             print("%s\t%s" % ("created" if created else "exists", path.relative_to(root)))
-            for line in why:
-                print("no organisation link: %s" % line, file=sys.stderr)
-            if args.organisation and not created:
-                print("no organisation link: the page was there already, and is changed by hand or by Nurture",
-                      file=sys.stderr)
         elif args.command == "index":
             path, n = rebuild_index(root)
             print("%s: %d page%s" % (path.relative_to(root), n, "" if n == 1 else "s"))
         elif args.command == "split":
             plan, wrote = split(root, args.inbox, args.part, args.drop, args.yes, args.title)
             for p in plan:
-                print("%s\t%s\tlines %s (%d)" % (p["name"], ",".join(p["tags"]), _say_ranges(p["ranges"]), p["lines"]))
+                print("%s\t%s\tlines %s (%d)" % (p["name"], p["zone"], _say_ranges(p["ranges"]), p["lines"]))
             print("Split %s and removed it." % Path(args.inbox).name if wrote else
                   "Nothing was written. Show the user these cuts; on their yes, run it again with --yes.")
-        elif args.command == "extract":
-            plan, wrote = extract(root, args.raw, args.lines, args.parties, args.yes, args.title)
-            print("%s\t%s\tlines %s (%d) of %s, written for %s" % (plan["name"], ",".join(plan["tags"]), _say_ranges(plan["ranges"]),
-                                                              plan["lines"], plan["of"], ", ".join(plan["held"])))
-            print("Wrote it in raw/inbox/; %s is unchanged." % Path(args.raw).name if wrote else
-                  "Nothing was written. Show the user this cut; on their yes, run it again with --yes.")
         elif args.command == "link":
             print(source_link(root, args.zone, args.slug, args.title))
         elif args.command == "log":

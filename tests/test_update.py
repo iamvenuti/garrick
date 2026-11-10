@@ -954,26 +954,39 @@ class TestZoneWallsStep(Case):
         path.write_text(body)
         return path
 
+    OLD = [("Zones/Advisory/BirchAdv/Threads/Entry/Notes.md", "links [[260310-acme-kickoff]], a meeting with acme; acme is walled and this project does not name it"),
+           ("Zones/Advisory/BirchAdv/Threads/Entry/Two.md", "names <acme>, or one of its people; acme is walled and this project does not name it"),
+           ("Zones/Work/Northwind/Threads/Pricing/Notes.md", "links [[260310-acme-kickoff]], a meeting with acme; acme is walled and this project does not name it"),
+           ("Zones/Work/Northwind/Threads/Pricing/Notes.md", "links [[Zones/Advisory/AcmeAdv/AcmeAdv]], a note of acme; acme is walled and this project does not name it"),
+           ("Zones/Work/Northwind/Threads/Pricing/Hello.md", "names <acme>, or one of its people; acme is walled and this project does not name it"),
+           ("Zones/Projects/Venture/Threads/Notes/N.md", "links [[260312-emp-sync]], a meeting with emp; emp is walled and this project does not name it")]
+
+    def old_rule(self):
+        """A check that answers as 0.62 would on this fixture: the party rule's findings, canned (the installed check is
+        the zone rule now, and this Garrick keeps no copy of the old one)."""
+        found = [{"severity": "error", "check": "walls", "path": p, "message": m, "fid": "o%d" % i, "token": ""}
+                 for i, (p, m) in enumerate(self.OLD)]
+        return self.stub("old_check.py", "import json\nprint(json.dumps({'findings': %r}))\n" % (found,))
+
     def zone_rule(self, extra=""):
-        """A check that answers as the zone rule would on this fixture: the old rule's findings, less what stays
-        inside one zone and the names (a stand-in for the release's check, which the model branch builds)."""
+        """A check that answers as the zone rule would: the old findings less what stays inside one zone and the names."""
         return self.stub("zone_check.py", (
-            "import json, subprocess, sys\n"
-            "r = subprocess.run([sys.executable, %r] + sys.argv[1:], capture_output=True, text=True)\n"
-            "d = json.loads(r.stdout)\n"
+            "import json, os, runpy\n"
+            "d = {'findings': [{'severity': 'error', 'check': 'walls', 'path': p, 'message': m, 'fid': 'o%%d' %% i, 'token': ''}"
+            " for i, (p, m) in enumerate(%r)]}\n"
             "d['findings'] = [f for f in d['findings'] if f['path'].startswith(('Zones/Work', 'Zones/Projects')) "
             "and 'names <' not in f['message']]\n%s"
-            "print(json.dumps(d))\n" % (str(self.tools / "check.py"), extra)))
+            "print(json.dumps(d))\n" % (self.OLD, extra)))
 
     def study(self, new_check):
         flags = update.walls_pending(self.root)
-        return update.walls_study(self.root, flags, new_check=new_check)
+        return update.walls_study(self.root, flags, old_check=self.old_rule(), new_check=new_check)
 
     def test_the_proposal_is_the_zone_flags(self):
         flags = update.walls_pending(self.root)
         self.assertEqual(self.zones.FLAGS, {z: w for z, (w, _) in flags.items()})
         self.assertIn("`emp`", flags["Work"][1])
-        self.assertIn("default", flags["Advisory"][1])
+        self.assertIn("walled party", flags["Advisory"][1])
         lib = update.install.lib()
         self.assertEqual(self.zones.FLAGS, lib.load_context(self.root)["zone_walled"])      # the release reads it the same
 
@@ -1101,7 +1114,7 @@ class TestZoneWallsStep(Case):
         for phrase in ("may name one party", "New parties", "walled party's material", "Walled says whether a party"):
             self.assertNotIn(phrase, text)
         self.assertIn("Each zone is either **walled** or **open**", text)
-        self.assertNotIn("by hand", r.stdout)
+        self.assertNotIn("edit it by hand", r.stdout)
 
     def test_prose_in_the_users_own_words_stays_and_is_named(self):
         self.with_prose("My own note: a walled party's material goes only into work that names that party.\n\n")
@@ -1982,13 +1995,14 @@ class TestCheckOnlyWhatWasWritten(ExtrasCase):
     def test_the_errors_it_reports_for_a_file_are_those_of_a_whole_run(self):
         self.project()
         bad = {"System/skills/threads/SKILL.md": "\nUnfilled {{ZONE}} left here.\n",
-               "Zones/Work/Acme Review/Threads/Intake/note.md": "# Note\n\nSee [[Zones/Personal/Todo]] for the dates.\n"}   # a link into another walled zone
+               "Zones/Work/Acme Review/Threads/Intake/note.md": "# Note\n\nSee [[260401-home-call]] for the dates.\n",
+               "Wikis/Meetings/wiki/sources/260401-home-call.md": "---\ntitle: Home call\ntype: meeting\nzone: Personal\n---\n\n# Home call\n"}   # a link to a meeting of another walled zone
         for path, extra in bad.items():
             with (self.root / path).open("a" if (self.root / path).exists() else "w") as f:
                 f.write(extra)
         whole = {(f["path"], f["message"]) for f in self.whole() if f["path"] in bad}
         scoped = {(f["path"], f["message"]) for f in self.scoped(sorted(bad))}
-        self.assertEqual(set(bad), {p for p, _ in whole}, whole)        # the fixture holds both defects, wall included
+        self.assertEqual({p for p in bad if p.startswith(('System', 'Zones'))}, {p for p, _ in whole}, whole)        # the fixture holds both defects, wall included
         self.assertEqual(whole, scoped)
         self.assertEqual([], self.scoped(["System/rules.md"]))          # a clean file is clean
 

@@ -109,8 +109,8 @@ class StatusCase(unittest.TestCase):
         agents.start()
         self.addCleanup(agents.stop)
         # So does its home: the settings that name a band are read from an empty one.
-        (base / "home").mkdir()
-        home = mock.patch.dict(os.environ, {"HOME": str(base / "home")})
+        (base / "empty-home").mkdir()
+        home = mock.patch.dict(os.environ, {"HOME": str(base / "empty-home")})
         home.start()
         self.addCleanup(home.stop)
 

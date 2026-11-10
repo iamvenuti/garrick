@@ -305,6 +305,7 @@ class Workspace:
     quick: bool = False  # --quick: leave out the comparison of wording
     zone_notes: Optional[List[Tuple[Path, str]]] = None  # every live note in the zones, read on first use
     forms: Dict[frozenset, dict] = field(default_factory=dict)  # name_forms, by the walled tags asked for
+    soft: Dict[frozenset, dict] = field(default_factory=dict)  # soft_forms, by the walled tags asked for
     ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
     shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
     checkouts: Optional[List[Path]] = None  # the Garrick checkouts inside a project, found on first use
@@ -5061,6 +5062,61 @@ def _in_near_side(form: str, near_side: set) -> bool:
     return any(padded in (" %s " % ns) for ns in near_side)
 
 
+def soft_forms(ws: Workspace, walled_tags: set) -> Dict[str, Dict[str, str]]:
+    """For each walled party, the name forms that are one word long and name a single person: {form: that person's
+    name}. A People row with one word in its name (`Kit`), and an alias that means such a row. A party's own name,
+    tag and domains, and the full name of a person, are never in it.
+
+    Such a form is a first name with no surname to tell it from the next person's. On its own it is a reason to
+    warn, never to refuse; it refuses beside the party's name, a longer name of the party's people, or a second
+    one-word person of the party (soft_hit)."""
+    key = frozenset(walled_tags)
+    if key not in ws.soft:
+        ws.soft[key] = _soft_forms(ws, walled_tags)
+    return ws.soft[key]
+
+
+def _soft_forms(ws: Workspace, walled_tags: set) -> Dict[str, Dict[str, str]]:
+    ctx = ws.context
+    out: Dict[str, Dict[str, str]] = {}
+    for tag in sorted(walled_tags):
+        entry = ctx["parties"].get(tag)
+        if entry is None:
+            continue
+        hard = {" ".join(words(f)) for f in [entry.get("party") or "", tag] + list(entry.get("domains", []))}
+        soft: Dict[str, str] = {}
+        for person in ctx["people"]:
+            key = " ".join(words(person["name"]))
+            if person["party"] != tag or not key:
+                continue
+            if len(key.split()) == 1:
+                soft.setdefault(key, key)
+            else:
+                hard.add(key)
+        for heard, meaning in ctx["aliases"].items():
+            alias, means = " ".join(words(heard)), " ".join(words(meaning))
+            if alias and means in soft and alias not in hard:
+                soft.setdefault(alias, soft[means])
+        for key in hard:
+            soft.pop(key, None)
+        if soft:
+            out[tag] = soft
+    return out
+
+
+def soft_hit(text: str, forms: List[Tuple[bool, str]], soft: Dict[str, str],
+             padded: Optional[str] = None) -> Tuple[int, Optional[str]]:
+    """(how many different one-word people of the party `text` names, the first form that does). `forms` are the
+    party's name_forms; `soft` is its soft_forms."""
+    if padded is None:
+        padded = padded_words(text)
+    people = {}
+    for case_sensitive, form in forms:
+        if not case_sensitive and form in soft and " %s " % form in padded:
+            people.setdefault(soft[form], form)
+    return len(people), (next(iter(people.values())) if people else None)
+
+
 def owner_keys(ws: Workspace, first: bool = False) -> set:
     """The owner's full name as a word form, never a walled party's or person's name to the check; with `first`,
     their first name too, which only a person's first name gives way to (a party named like it is still a name)."""
@@ -5886,12 +5942,24 @@ def _walls_for_file(ws: Workspace, project: Path, ptags: set, path: Path, text: 
             if b in reported:
                 continue
             forms = named_forms.get(b, [])
-            hit = name_hit(scanned, forms, padded) if forms else None
+            soft = soft_forms(ws, far).get(b, {})
+            hard = [f for f in forms if f[0] or f[1] not in soft]   # a one-word person's name is not one of them
+            hit = name_hit(scanned, hard, padded) if hard else None
             if hit is None and b in only:
                 # An everyday-word tag counts as a tag: in `parties:`, a code span or a fenced block.
                 if scoped is None:
                     scoped = fold_format(tag_scope_text(text))
                 hit = name_hit(scoped, [only[b]])
+            if hit is None and soft:
+                # A one-word name refuses beside a second person of the party; alone it is a warning (#470).
+                count, hit = soft_hit(scanned, forms, soft, padded)
+                if hit is not None and count < 2:
+                    out.append(Finding(WARNING, "walls", r,
+                                       "writes a name that is one word in the People table, for someone of %s; %s is walled and "
+                                       "this project does not name it. On its own it is not refused: write the person in full, "
+                                       "or take it out" % (party_name(ws, b), b),
+                                       "A note in %s writes a first name of someone of %s" % (where, party_name(ws, b))))
+                    continue
             if hit is None:
                 continue
             reported.add(b)

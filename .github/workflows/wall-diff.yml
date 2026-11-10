@@ -11,7 +11,7 @@ on:
       - template/System/tools/check.py
       - template/System/tools/garrick_lib.py
       - tests/wall_diff.py
-      - tests/test_wall_forms.py
+      - tests/walls_forms.py
   workflow_dispatch:
 
 permissions:

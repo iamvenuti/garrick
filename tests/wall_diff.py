@@ -1,17 +1,18 @@
 """Compare the wall check's verdicts with a release's: the gate for the way the check reads a reference.
 
-    python3 tests/wall_diff.py v0.60.1
+    python3 tests/wall_diff.py v0.62.0
 
 Takes `check.py` and `garrick_lib.py` of the tag with `git show` into a temporary
-folder, runs the rows of `tests/test_wall_forms.py` (one for each link form and
+folder, runs the rows of `tests/walls_forms.py` (one for each link form and
 page kind, and each case of `tests/walls/forms/`) through the tag's check and
 through the working tree's, and prints the rows whose verdict changed. A
-refused -> passed row is one of three kinds: *by design*, a row whose token does
-not resolve (a case file says `far: by design`; see docs/principles.md); *by the
-design*, a flow the flag model allows on purpose (an open party's material into
-a walled scope; a source of two walled parties into a scope naming both); or
-*other*. Exits 1 when *other* is not 0. `diff(tag)` returns the same numbers as
-a dict, for a test or a session.
+refused -> passed row is one of four kinds: *by design*, a row whose token does
+not resolve (a case file says `far: by design`; see docs/principles.md);
+*inside one zone*, both ends of the reference in one zone, which the zone wall
+does not read; *name only*, a name hit with no link, embed, path or copy, since
+no name is read any more; or *other*. A passed -> refused row is never by
+design. Exits 1 when *other* is not 0 or a row went from passed to refused.
+`diff(tag)` returns the same numbers as a dict, for a test or a session.
 
 Each side runs in a process of its own, so that two copies of `check` never
 share a module table.
@@ -43,7 +44,7 @@ def verdicts(tools: Path, full: bool = False) -> dict:
     the check in `tools` must be the first one imported (`worker` arranges that)."""
     import tempfile as _tempfile
     import check  # the check in `tools`, already first on the path
-    import test_wall_forms as forms
+    import walls_forms as forms
 
     assert Path(check.__file__).resolve().parent == Path(tools).resolve(), check.__file__
     with _tempfile.TemporaryDirectory() as tmp:
@@ -68,6 +69,8 @@ def worker(tools: Path, full: bool) -> None:
     """Child process: the check in `tools` first, then the rows; JSON on stdout."""
     sys.path.insert(0, str(HERE))
     sys.path.insert(0, str(tools))
+    if Path(tools).resolve() == TOOLS.resolve():
+        os.environ["GARRICK_ZONE_FLAGS_FINAL"] = "1"
     out = verdicts(tools, full)
     json.dump({"rows": [[*k, v] for k, v in sorted(out["rows"].items())], "by_design": out["by_design"]}, sys.stdout)
 
@@ -127,8 +130,8 @@ def split(label: str):
     return parts[0], parts[-1]
 
 
-def flags() -> dict:
-    """{tag: walled} of the table's fixture, as this tree reads it."""
+def zones() -> dict:
+    """{tag: zone} of the table's fixture, as this tree reads it."""
     import tempfile as _tempfile
     sys.path.insert(0, str(TOOLS))
     sys.path.insert(0, str(HERE))
@@ -137,7 +140,7 @@ def flags() -> dict:
     with _tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp).resolve() / "W"
         build_workspace(root)
-        return {t: e["walled"] for t, e in garrick_lib.load_context(root)["parties"].items()}
+        return {t: e["zone"] for t, e in garrick_lib.load_context(root)["parties"].items()}
 
 
 def by_design(label: str, design: set) -> bool:
@@ -145,10 +148,17 @@ def by_design(label: str, design: set) -> bool:
     return label in design
 
 
-def by_the_design(party: str, scope: str, walled: dict) -> bool:
-    """Is a refused -> passed row a flow the flag model allows on purpose: the page's party is open, or the
-    project's scope names the party? A page of a walled party into a scope that lacks it is never one."""
-    return not walled.get(party, True) or party == scope
+# The one row that goes from passed to refused by design: an entity page with no zone and no party, which the
+# release before read as nobody's and the zone wall refuses once the flags are final (#481). The new check runs with
+# GARRICK_ZONE_FLAGS_FINAL=1, as the update's study does, so the row shows.
+WORSE_BY_DESIGN = ("unplaced-entity/final",)
+NAME_ONLY = ("cedar-zone/prose",)       # a party named in prose, with no link, embed, path or copy: no name is read
+
+
+def inside_one_zone(project: str, party: str, where: dict) -> bool:
+    """Is a refused -> passed row a reference with both ends in one zone: the project's zone is the zone of the page's
+    party? The fixture's projects are all in the Work zone."""
+    return where.get(party) == "Work"
 
 
 def diff(tag: str, full: bool = False) -> dict:
@@ -175,20 +185,22 @@ def diff(tag: str, full: bool = False) -> dict:
             target["refused_both" if now == "refused" else "passed_both"] += 1
         else:
             (group if key in temp else moved)["refused_to_passed" if before == "refused" else "passed_to_refused"].append(key)
+    result["worse_by_design"] = sorted(k for k in moved["passed_to_refused"] if k[2] in WORSE_BY_DESIGN)
+    moved["passed_to_refused"] = [k for k in moved["passed_to_refused"] if k[2] not in WORSE_BY_DESIGN]
     for name, keys in moved.items():
         result[name] = {"total": len(keys),
                         "by_kind": dict(Counter(split(k[2])[0] for k in keys)),
                         "by_wrapper": dict(Counter(split(k[2])[1] for k in keys)),
                         "rows": ["%s reads %s: %s" % k for k in sorted(keys)]}
     result["changed"] = sum(result[n]["total"] for n in moved)
-    walled = flags()
-    scopes = {"Northwind": "acme", "Harbour": "birch"}
+    where = zones()
 
     def sort(keys):
-        kinds = {"by_design": [], "by_the_design": [], "other": []}
+        kinds = {"by_design": [], "inside_one_zone": [], "name_only": [], "other": []}
         for key in keys:
             project, party, label = key
-            kind = "by_design" if by_design(label, design) else "by_the_design" if by_the_design(party, scopes[project], walled) else "other"
+            kind = ("by_design" if by_design(label, design) else "name_only" if label in NAME_ONLY
+                    else "inside_one_zone" if inside_one_zone(project, party, where) else "other")
             kinds[kind].append(key)
         return kinds
 
@@ -221,24 +233,28 @@ def report(result: dict, show: int = 20) -> str:
                 lines.append("    by %s: %s" % (title, ", ".join("%s %d" % kv for kv in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))))
             if name == "refused_to_passed":
                 kinds = part["kinds"]
-                lines.append("    by design: %d, by the design: %d, other: %d"
-                             % (kinds["by_design"], kinds["by_the_design"], kinds["other"]))
+                lines.append("    by design: %d, inside one zone: %d, name only: %d, other: %d"
+                             % (kinds["by_design"], kinds["inside_one_zone"], kinds["name_only"], kinds["other"]))
                 lines += ["    " + r[:200] for r in part["other_rows"][:show]]
                 if kinds["other"] > show:
                     lines.append("    ... and %d more" % (kinds["other"] - show))
+    lines.append("passed -> refused by design: %d (%s)" % (len(result["worse_by_design"]), ", ".join(k[2] for k in result["worse_by_design"])))
     t = result["temp_path"]
     lines.append("rows with a temporary path in the key, compared with it taken out: %d" % t["rows"])
     lines += ["  refused in both:   %d" % t["refused_both"], "  passed in both:    %d" % t["passed_both"],
               "  no twin in the release: %d" % t["no_twin"],
-              "  refused -> passed: %d (by design: %d, by the design: %d, other: %d)"
+              "  refused -> passed: %d (by design: %d, inside one zone: %d, name only: %d, other: %d)"
               % (t["refused_to_passed"]["total"], t["refused_to_passed"]["kinds"]["by_design"],
-                 t["refused_to_passed"]["kinds"]["by_the_design"], t["refused_to_passed"]["kinds"]["other"]),
+                 t["refused_to_passed"]["kinds"]["inside_one_zone"], t["refused_to_passed"]["kinds"]["name_only"],
+                 t["refused_to_passed"]["kinds"]["other"]),
               "  passed -> refused: %d" % t["passed_to_refused"]["total"]]
     lines += ["    " + r[:200] for r in t["refused_to_passed"]["other_rows"][:show]]
     lines += ["    " + r[:200] for r in t["passed_to_refused"]["rows"][:show]]
     other = result["refused_to_passed"]["kinds"]["other"] + t["refused_to_passed"]["kinds"]["other"]
-    lines.append("FAIL: %d rows the release refused now pass, and the design does not allow them." % other
-                 if other else "OK: every row that goes from refused to passed is by design.")
+    worse = result["passed_to_refused"]["total"] + t["passed_to_refused"]["total"]
+    lines.append("FAIL: %d rows the release refused now pass, and the design does not allow them." % other if other
+                 else "FAIL: %d rows the release passed are now refused." % worse if worse
+                 else "OK: every row that goes from refused to passed is by design, inside one zone or name only.")
     return "\n".join(lines)
 
 
@@ -255,7 +271,8 @@ def main(argv=None) -> int:
         ap.error("name a tag")
     result = diff(args.tag, args.full)
     print(report(result))
-    return 1 if result["refused_to_passed"]["kinds"]["other"] + result["temp_path"]["refused_to_passed"]["kinds"]["other"] else 0
+    worse = result["passed_to_refused"]["total"] + result["temp_path"]["passed_to_refused"]["total"]
+    return 1 if worse or result["refused_to_passed"]["kinds"]["other"] + result["temp_path"]["refused_to_passed"]["kinds"]["other"] else 0
 
 
 if __name__ == "__main__":

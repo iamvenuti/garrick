@@ -251,6 +251,12 @@ class SameName(Made):
                 self.assertNotIn("[[Pricing", line)
         self.assertEqual([], self.errors())
 
+class FreshInstall(Made):
+    def test_no_instruction_file_is_over_its_word_budget(self):
+        found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
+        self.assertEqual([], [f for f in found if f["check"] == "instructions" and "over its" in f["message"]])
+
+
 class Moved(Made):
     def test_a_move_takes_the_history_folder_with_the_thread_and_its_links_still_lead_where_they_led(self):
         r = self.run_tool("scaffold.py", "project", "--zone", "Work", "--name", "Apex", "--party", "acme", "--thread", "Kickoff")

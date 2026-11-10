@@ -413,8 +413,9 @@ yes comes first, twice.
    python3 System/skills/meetings/compact.py verify "Wikis/Meetings/wiki/sources/<slug>.md"
    ```
    It compares the page with its last committed version and names a number, a
-   date, a quote, an action or a link the new page lacks, and a change to the
-   frontmatter. A page it flags is put right, or put back (`git checkout --`).
+   date written with its month, a quote or a link the new page lacks, a table
+   with fewer rows (rows are counted, not matched, so read the actions yourself),
+   and a change to the frontmatter. A page it flags is put right, or put back (`git checkout --`).
 4. **Then the rest, in batches**, of about fifty pages, one commit per batch in
    the Wikis repository: "Meetings: compact <n> pages, <first date> to <last
    date>". Git keeps every long version. Each batch passes the wall check as

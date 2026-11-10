@@ -1159,7 +1159,8 @@ class TestJournal(ActionCase):
         """What the zone's wall check prints when it refuses: check.py's own
         report_staged(), so the line the handler recognises is the real one."""
         import check            # fixtures puts the tools folder on sys.path
-        return check.report_staged([check.Finding(check.ERROR, "walls", path, message)])
+        report = check.report_staged([check.Finding(check.ERROR, "walls", path, message)])
+        return [l for l in report.splitlines() if l.startswith("Commit refused")][-1]     # the allow command comes first
 
     def test_a_batch_the_wall_check_refuses_ends_on_the_rules_sentence_alone(self):
         """#107, with #116's sentence: no refusal wording of its own, and nothing

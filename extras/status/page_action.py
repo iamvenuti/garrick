@@ -95,6 +95,13 @@ zone's repository, as the skills would:
                 question; without it the reply is the question and nothing is
                 written. The same checks as release.py update --apply --yes:
                 the study still pending, the commit through the wall check
+    walls-allow  lets one wall refusal through, once (allow once): {"path", "id"},
+                the file from the workspace root and the refusal's id as
+                `check.py allow <path>` lists it. The ledger System/walls-allowed.json
+                holds it while the file is as it was; an edit brings the refusal
+                back. A click in the app only: a request that came by the command
+                line (--via session) or the ask box is refused
+    walls-unallow  takes an allowance away: {"path", "id"}; the same origin
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -288,7 +295,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag", "walls-study", "walls-migrate")
+         "nurture-answer", "nurture-organisation", "nurture-correct", "nurture-save", "nurture-save-all", "party-flag", "walls-study", "walls-migrate", "walls-allow", "walls-unallow")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -1994,6 +2001,43 @@ def walls_migrate(ws: Path, req: dict) -> dict:
         say += " The walls check now refuses %d thing%s that was committed before: %s" % (
             len(refused), "" if len(refused) == 1 else "s", "; ".join(refused[:5]) + (" ..." if len(refused) > 5 else ""))
     return {"say": say, "ask": False, "written": True, "pending": False, "refused": refused}
+
+
+def walls_allowed_tool(ws: Path):
+    """The workspace's own System/tools/check.py, loaded afresh, or None: the one that settles what a refusal's id is."""
+    src = ws / "System" / "tools" / "check.py"
+    if not src.is_file():
+        return None
+    try:
+        with tools_path(ws):
+            spec = importlib.util.spec_from_file_location("garrick_page_check", str(src))
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["garrick_page_check"] = mod
+            spec.loader.exec_module(mod)
+    except Exception:
+        return None
+    finally:
+        sys.modules.pop("garrick_page_check", None)
+    return mod if callable(getattr(mod, "allow_page", None)) else None
+
+
+def walls_allow(ws: Path, req: dict, remove: bool = False) -> dict:
+    """Allow one wall refusal once, or take the allowance away (allow once): check.py's own allow_page, written
+    `by` the page. Only a click in the app writes it: the verb is not on the command line, and a request that
+    came by the ask box or a session is refused, so an assistant that meets a refusal names the command and stops."""
+    if VIA != "page":
+        raise Refused("an allowance is written by a click in the app or a command typed in a terminal, so nothing was written")
+    path, fid = req.get("path"), req.get("id")
+    if not isinstance(path, str) or not path or not isinstance(fid, str) or not re.fullmatch(r"[0-9a-f]{10}", fid):
+        raise Refused("name the file and the refusal's id")
+    tool = walls_allowed_tool(ws)
+    if tool is None:
+        raise Refused("this workspace has no check.py that can allow a refusal once, so nothing was done")
+    with held("page-action-walls-allow.lock", busy="another change to the allowed refusals is still running"):
+        code, said = tool.allow_page(ws, path, fid, "page", remove=remove)
+    if code:
+        raise Refused(said)
+    return {"say": said, "written": True}
 
 
 def asks_how(ws: Path, args: list) -> None:
@@ -5351,6 +5395,8 @@ def act(ws: Path, req, today=None, now=None):
         return walls_study(ws)
     if req["verb"] == "walls-migrate":
         return walls_migrate(ws, req)
+    if req["verb"] in ("walls-allow", "walls-unallow"):
+        return walls_allow(ws, req, remove=req["verb"] == "walls-unallow")
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":
@@ -5409,6 +5455,7 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake"
                "rename", "move", "delete", "undo")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
+VIA = "page"            # who sent the request being carried out, set by perform(); a direct act() call is the page's
 
 
 def builds_page(req) -> bool:
@@ -5450,8 +5497,9 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
     Returns (the reply, what the audit log says in place of its sentence or
     None, and the refusal or the fault in its own words, "" when there was
     none, for a caller that words a failure itself, as the ask box does)."""
-    global CURRENT
+    global CURRENT, VIA
     out, logged, run, outcome, why = None, None, None, None, ""
+    VIA = via
     try:
         try:
             joined = None

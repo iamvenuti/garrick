@@ -68,9 +68,12 @@ class ToolCase(scoped.AnswerCase):
             self.tell(told, zone)
         return c
 
-    def tell(self, parties, zone="Work"):
+    ZONE_OF = {"acme": "Work", "birch": "Personal"}      # the fixture's two walled sides, each a zone of its own
+
+    def tell(self, held, zone="Work"):
+        """What the requests named: zones, or the fixture's party tags read as the zone each is in."""
         self.state.mkdir(parents=True, exist_ok=True)
-        (self.state / "in.json").write_text(json.dumps({"zone": zone, "parties": sorted(parties)}))
+        (self.state / "in.json").write_text(json.dumps({"zone": zone, "zones": sorted(self.ZONE_OF.get(h, h) for h in held)}))
 
     def out(self):
         return json.loads((self.state / "out.json").read_text())
@@ -91,7 +94,7 @@ class TestSearch(ToolCase):
         self.assertIn("(from the search index)", text)
         self.assertIn("Acme kick-off", text)
         self.assertNotIn("keyword", text)
-        self.assertEqual({"acme"}, set(self.out()["seen"]))
+        self.assertEqual({"Work"}, set(self.out()["seen"]))
         self.assertRegex(first_id(text), r"^r1-[0-9a-f]{4}$")
 
     def test_no_kind_reads_every_store_the_scope_admits(self):
@@ -138,10 +141,6 @@ class TestSearch(ToolCase):
         self.assertLess(text.index("Acme Review sync"), text.index("Older"))
         self.assertIn(first_id(text), c.handed)
 
-    def test_the_zone_alone_is_no_scope_when_a_wall_stands_inside_it(self):
-        text, bad = self.conv().call("search", {"words": "pallet"})         # nothing names a side
-        self.assertEqual((tools.NAME_A_PLACE, False), (text, bad))
-        self.assertFalse(self.out()["wall"])
 
     def test_a_missing_index_falls_back_to_the_keyword_find_and_says_so(self):
         self.break_index()
@@ -196,7 +195,7 @@ class TestTheWallInTheTools(ToolCase):
         sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
         for n in range(12):
             scoped.write(sources / ("2604%02d-b%d.md" % (10 + n, n)),
-                         scoped.meeting_page("Work", "[birch]", "B%d" % n) + "\npallet launch quote BIRCHMORE\n")
+                         scoped.meeting_page("Personal", "[birch]", "B%d" % n) + "\npallet launch quote BIRCHMORE\n")
         after = ask(2)
         strip = lambda t: re.sub(r"\[r\d+-[0-9a-f]{4}\]", "[id]", t)  # noqa: E731
         self.assertEqual(strip(before), strip(after))
@@ -235,14 +234,13 @@ class TestTheWallInTheTools(ToolCase):
         text, _ = c.call("search", {"words": "pallet", "place": "Personal", "kind": "meetings"})
         self.assertNotIn("Birch at home", text)
 
-    def test_owed_with_a_party_from_the_far_side_is_the_same_check(self):
-        c = self.conv(told={"acme"})
-        self.assertEqual((tools.STOPPED, True), c.call("owed", {"party": "birch"}))
-        self.assertTrue(self.out()["wall"])
-
-    def test_owed_with_a_party_names_it_by_its_label_too(self):
-        c = self.conv(told={"acme"})
-        self.assertEqual(tools.STOPPED, c.call("owed", {"party": "Birch & Co"})[0])
+    def test_owed_with_a_party_only_narrows_the_zones_list(self):
+        """A party is an index: it names no zone, so nothing of another zone comes with it."""
+        for who in ("birch", "Birch & Co"):
+            c = self.conv(told={"acme"})
+            text, bad = c.call("owed", {"party": who})
+            self.assertEqual(("0 items.", False), (text, bad))
+            self.assertFalse(self.out()["wall"])
 
     def test_thread_state_on_a_walled_thread_is_the_same_check(self):
         c = self.conv(told={"acme"})
@@ -252,8 +250,8 @@ class TestTheWallInTheTools(ToolCase):
 
     def test_propose_on_a_walled_place_is_the_same_check(self):
         c = self.conv(told={"acme"})
-        out = c.call("propose", {"action": {"verb": "open", "zone": "Work", "project": "Birch Entry"}})
-        self.assertEqual(("Refused: no project 'Birch Entry' in Work.", False), out)
+        out = c.call("propose", {"action": {"verb": "open", "zone": "Personal", "project": "Birch Entry"}})
+        self.assertEqual(("Refused: no project 'Birch Entry' in Personal.", False), out)
         self.assertFalse((self.state / "proposals.jsonl").exists())
 
     def test_places_leaves_out_the_far_side_without_a_word(self):
@@ -304,10 +302,10 @@ class TestRead(ToolCase):
         self.assertEqual(tools.NOT_GIVEN, c.call("read", {"id": rid})[0])
 
     def test_a_page_that_has_since_moved_across_a_wall_reads_as_an_unknown_id(self):
-        """read() is a lookup in the scope index: the page left it when its parties changed."""
+        """read() is a lookup in the scope index: the page left it when its zone changed."""
         c, rid = self.handed()
         page = self.root / ACME_PAGE
-        page.write_text(page.read_text().replace("[acme]", "[acme, birch]"))
+        page.write_text(page.read_text().replace("zone: Work", "zone: Personal"))
         self.assertEqual((tools.NOT_GIVEN, False), c.call("read", {"id": rid}))
         self.assertFalse(self.out()["wall"])
 
@@ -403,40 +401,27 @@ TODO_LINES = ("# Work\n\n## Inbox\n- [ ] [[Acme Review]] chase Dana on the palle
 class TestTheReviewFindings(ToolCase):
     """The 0.55 release review: places(), describe() and owed() against a conversation that holds nothing, or holds Acme."""
 
-    def test_places_with_nothing_held_does_not_list_both_sides_of_a_wall(self):
+    def test_places_lists_the_window_zone_and_holds_what_it_names(self):
         c = self.conv()
         text, bad = c.call("places", {})
         self.assertFalse(bad)
-        for name in ("Birch", "Acme", "Pricing", "Market Sizing"):
-            self.assertNotIn(name, text)
-        self.assertEqual(tools.NO_PROJECTS, text)
-        self.assertEqual([], self.out()["seen"])
-
-    def test_places_with_acme_held_names_no_birch_and_what_is_listed_is_held(self):
-        text, _ = self.conv(told={"acme"}).call("places", {})
         self.assertIn("Acme Review", text)
         self.assertNotIn("Birch", text)
-        self.assertEqual(["acme"], self.out()["seen"])
+        self.assertEqual(["Work"], self.out()["seen"])
+
+    def test_places_with_another_walled_zone_held_names_nothing_of_the_far_one(self):
+        text, _ = self.conv(told={"acme"}).call("places", {"zone": "Personal"})
+        self.assertNotIn("Birch", text)
+        self.assertEqual(tools.NO_PROJECTS, text)
+        self.assertEqual([], self.out()["seen"])
 
     def test_places_in_a_zone_with_no_wall_lists_it_and_holds_what_it_names(self):
         from fixtures import project_hub
         scoped.write(self.root / "Zones" / "Personal" / "Garden" / "Garden.md", project_hub("Personal", "Garden", party="acme"))
         text, _ = self.conv(zone="Personal").call("places", {})
         self.assertIn("Garden", text)
-        self.assertEqual(["acme"], self.out()["seen"])
+        self.assertEqual(["Personal"], self.out()["seen"])
 
-    def test_a_note_names_its_own_far_side_party(self):
-        own = self.root / "Zones" / "Work" / "Acme Review" / "Notes" / "own.md"
-        scoped.write(own, "---\ntitle: Own\nparties: [birch]\n---\n\nBIRCHOWN41 pallet\n")
-        c = self.conv(told={"acme"})
-        self.assertIn("birch", c.describe("Zones/Work/Acme Review/Notes/own.md", ["pallet"])["parties"])
-        scoped.write(own, "---\ntitle: Own\nparty: nobody-known\n---\n\nUNKNOWN pallet\n")
-        self.assertIsNone(c.describe("Zones/Work/Acme Review/Notes/own.md", ["pallet"]))
-        scoped.write(own, "---\ntitle: Own\nparty: birch\n---\n\nBIRCHOWN41 pallet\n")
-        text, _ = c.call("search", {"words": "pallet"})
-        self.assertNotIn("BIRCHOWN41", text)
-        scoped.write(own, "---\ntitle: Own\nparty: acme\n---\n\nplain pallet\n")
-        self.assertEqual({"acme"}, set(c.describe("Zones/Work/Acme Review/Notes/own.md", ["pallet"])["parties"]))
 
     def test_a_meeting_page_with_a_list_of_zones_cannot_be_placed(self):
         page = self.root / "Wikis/Meetings/wiki/sources/260311-two-zones.md"
@@ -446,12 +431,6 @@ class TestTheReviewFindings(ToolCase):
         scoped.write(page, scoped.meeting_page("[Work]", "[acme]", "One zone") + "\npallet\n")
         self.assertEqual("Work", c.describe("Wikis/Meetings/wiki/sources/260311-two-zones.md")["zone"])
 
-    def test_a_party_less_todo_line_is_dropped_where_a_wall_stands_in_the_zone(self):
-        scoped.write(self.root / "Zones" / "Work" / "Todo.md", TODO_LINES + "- [ ] ZZPARTYLESS renew the parking permit\n")
-        for told in ((), {"acme"}):
-            text, _ = self.conv(told=told).call("owed", {})
-            self.assertNotIn("ZZPARTYLESS", text)
-        self.assertIn("chase Dana", self.conv(told={"acme"}).call("owed", {})[0])
 
     def test_a_party_less_todo_line_is_kept_in_a_zone_without_a_wall_while_nothing_is_held(self):
         from fixtures import project_hub
@@ -480,7 +459,7 @@ class TestAPartyLessLineAcrossZones(ToolCase):
         c = self.conv(zone="Advisory")
         text, _ = c.call("owed", {})
         self.assertIn("BIRCHSECRET", text)
-        self.assertEqual(["birch"], self.out()["seen"])
+        self.assertEqual(["Advisory"], self.out()["seen"])
         later = "\n".join([c.call("search", {"words": "pallet", "place": "Work"})[0],
                            c.call("thread_state", {"place": "Acme Review/Pricing"})[0]])
         self.assertNotIn(ACME, later)
@@ -491,23 +470,12 @@ class TestAPartyLessLineAcrossZones(ToolCase):
         self.todo("- [ ] Send Priya Hartley the memo BIRCHSECRET")
         self.assertNotIn("BIRCHSECRET", self.conv(zone="Advisory", told={"acme"}).call("owed", {})[0])
 
-    def test_a_surname_alone_is_attributed_to_the_persons_party(self):
-        self.todo("- [ ] Send Marsh the memo BIRCHSURNAME")
-        text, _ = self.conv(zone="Advisory", told={"acme"}).call("owed", {})
-        self.assertNotIn("BIRCHSURNAME", text)
-        self.state = Path(self._tmp.name) / "state2"
-        text, _ = self.conv(zone="Advisory").call("owed", {})
-        self.assertIn("BIRCHSURNAME", text)
-        self.assertEqual(["birch"], self.out()["seen"])
 
 
 class TestPlacesSaysTheSameForAnEmptyZone(ToolCase):
-    def test_a_listing_that_spans_a_wall_is_the_text_of_an_empty_zone(self):
-        empty = self.conv(zone="Personal").call("places", {})[0]
-        self.assertEqual(tools.NO_PROJECTS, empty)
-        self.state = Path(self._tmp.name) / "state2"
-        spans = self.conv(zone="Work").call("places", {"zone": "Work"})[0]
-        self.assertEqual(empty.encode(), spans.encode())
+    def test_a_zone_walled_from_what_is_held_is_the_text_of_an_empty_zone(self):
+        far = self.conv(zone="Personal", told={"acme"}).call("places", {})[0]
+        self.assertEqual(tools.NO_PROJECTS, far)
 
 
 class TestTheScopeIndex(ToolCase):
@@ -524,12 +492,12 @@ class TestTheScopeIndex(ToolCase):
             text, _ = c.call("search", {"words": "pallet"})
             c.call("read", {"id": first_id(text)})
         self.assertTrue(opened)
-        self.assertEqual({"work/acme"}, set(opened))
+        self.assertEqual({"work"}, set(opened))
 
     def test_a_walled_row_is_in_no_page_of_the_scope_index_file(self):
         self.conv(told={"acme"}).call("search", {"words": "pallet"})
         rc = self.recall()
-        scope = rc.scope_named(self.root, rc.load_context(self.root), "work/acme")
+        scope = rc.scope_named(self.root, rc.load_context(self.root), "work")
         blob = scope.file(self.root)
         if blob.exists():
             self.assertNotIn(b"BIRCHMARK47", blob.read_bytes())
@@ -662,51 +630,6 @@ class TestAFarSidePlaceLooksAbsent(ToolCase):
         self.assertNotIn("No such place", text)
 
 
-class TestAPlaceThatCannotBePlacedLooksAbsent(ToolCase):
-    """A hub that names no party, and a Birch thread inside it, answer as a place that is not there (fail closed)."""
-
-    def setUp(self):
-        super().setUp()
-        work = self.root / "Zones" / "Work"
-        scoped.write(work / "Harbour" / "Harbour.md", scoped.project_hub("Work", "Harbour", None))
-        scoped.write(work / "Harbour" / "Threads" / "T" / "T.md", scoped.thread_note("Harbour", "T", "birch", "harbourfact wombat"))
-
-    def ask(self, name, args):
-        return self.conv(told={"acme"}).call(name, args)
-
-    def test_each_place_tool_answers_like_a_missing_place(self):
-        for place in ("Harbour", "Harbour/T", "Harbour/Nope"):
-            for name, args in (("thread_state", {"place": place}),
-                               ("search", {"words": "wombat", "place": place}),
-                               ("search", {"words": "wombat", "place": place, "kind": "threads"})):
-                got = self.ask(name, args)
-                self.assertEqual(self.ask(name, dict(args, place="Zzz")), got, (name, place))
-                self.assertEqual(tools.NO_PLACE, got[0], (name, place))
-                self.assertFalse(self.out()["wall"])
-
-    def test_places_does_not_list_the_hub_without_a_party(self):
-        text, _ = self.ask("places", {})
-        self.assertNotIn("Harbour", text)
-
-    def test_propose_writes_nothing_and_refuses_as_for_a_missing_one(self):
-        for extra in ({}, {"thread": "T"}):
-            a = self.ask("propose", {"action": dict({"verb": "open", "zone": "Work", "project": "Harbour"}, **extra)})
-            b = self.ask("propose", {"action": dict({"verb": "open", "zone": "Work", "project": "Zzz"}, **extra)})
-            self.assertEqual(a[0].replace("Harbour", "X"), b[0].replace("Zzz", "X"))
-            self.assertTrue(a[0].startswith("Refused: no project"))
-        for verb in ("park", "wake"):
-            self.assertTrue(self.ask("propose", {"action": {"verb": verb, "zone": "Work", "project": "Harbour"}})[0].startswith("Refused"))
-        self.assertFalse((self.state / "proposals.jsonl").exists())
-
-    def test_a_thread_adding_a_walled_party_is_placed_with_both_and_the_project_with_its_hub(self):
-        scoped.write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Odd" / "Odd.md",
-                     scoped.thread_note("Acme Review", "Odd", "birch", "oddfact"))
-        self.assertNotIn("No such place", self.ask("thread_state", {"place": "Acme Review"})[0])
-
-    def test_a_labelled_own_side_place_still_works(self):
-        self.assertNotIn("No such place", self.ask("thread_state", {"place": "Acme Review/Pricing"})[0])
-        self.assertTrue(self.ask("propose", {"action": {"verb": "open", "zone": "Work", "project": "Acme Review",
-                                                        "thread": "Pricing"}})[0].startswith("Proposed"))
 
 
 class TestTodoProposals(ToolCase):
@@ -716,8 +639,8 @@ class TestTodoProposals(ToolCase):
     def test_no_project_in_another_zone_is_refused(self):
         self.assertIn("Refused", self.add(self.conv(), zone="Personal"))
 
-    def test_no_project_while_the_conversation_holds_a_party_is_refused(self):
-        self.assertIn("Refused", self.add(self.conv(told={"acme"})))
+    def test_no_project_while_the_conversation_holds_another_walled_zone_is_stopped(self):
+        self.assertEqual(tools.STOPPED, self.add(self.conv(told={"birch"})))
         self.assertFalse((self.state / "proposals.jsonl").exists())
 
     def test_a_project_on_the_far_side_is_refused_as_absent(self):

@@ -111,7 +111,7 @@ class Touched(unittest.TestCase):
     def test_the_questions_panel_alone_runs_its_mapped_modules(self):
         got = shard.touched(["extras/status/questions_panel.py"])
         self.assertIn("test_questions_panel", got)
-        self.assertIn("test_questions_panel_all", got)
+        self.assertIn("test_decisions", got)
         self.assertLess(len(got), len(shard.modules()) // 2)
 
     def test_these_run_the_full_suite(self):

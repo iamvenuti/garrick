@@ -171,19 +171,9 @@ class TestWhatTheRequestNamed(MakeCase):
         self.assertEqual("start", self.head())
         self.assertEqual("Personal", asker.zone)
 
-    def test_a_project_across_a_wall_from_what_the_session_holds_is_never_made_for(self):
-        asker = ask.Asker(self.root, FakeSession(json.dumps({"say": "ok", "do": []}),
-                                                 json.dumps({"say": "ok", "do": [self.thread_a()]})))
-        asker.ask("what is going on with Birch Entry?")
-        self.assertIn("birch", asker.holding())
-        out = asker.ask("new thread Budget")
-        self.assertEqual(("clarify", []), (out["kind"], out["done"]))
-        self.assertFalse((self.work / "Acme Review" / "Threads" / "Budget").exists())
-        self.assertNotIn("acme", asker.holding())               # and the session was not told it either
-
     def test_a_named_project_across_a_wall_is_refused_before_it_is_written_when_no_reset_came(self):
         asker = ask.Asker(self.root, FakeSession())
-        asker.heard = {"birch"}
+        asker.heard = {"Personal"}
         asker.heard_for = asker.session.started
         asker.named_parties = set()
         asker.heard_text = "new thread Budget in Acme Review"
@@ -350,7 +340,7 @@ class TestMakingThem(MakeCase):
         self.assertEqual("New project Harbour (birch), first thread Launch Plan", self.head())
         self.assertTrue(self.clean())
         self.assertEqual("Undo", out["choices"][0]["label"])
-        self.assertIn("birch", asker.heard)                  # the session now holds that party, for the wall reset
+        self.assertIn("Work", asker.heard)                   # the session now holds that zone, for the wall reset
 
     def test_no_first_thread_named_is_getting_started(self):
         _, out = self.run_ask("new project Harbour for Birch & Co in Work",
@@ -432,16 +422,6 @@ class TestMakingThem(MakeCase):
         self.assertFalse((self.work / "Harbour").exists())
         self.assertTrue(self.clean())
         self.assertNotIn("acme", (self.jobs / "page-actions.log").read_text())
-
-    def test_a_party_across_a_wall_from_what_the_session_heard_starts_a_fresh_session(self):
-        asker = ask.Asker(self.root, FakeSession(json.dumps({"say": "ok", "do": []}),
-                                                 json.dumps({"say": "Making it.", "do": [
-                                                     {"verb": "new-project", "zone": "Work", "name": "Harbour",
-                                                      "party": "birch"}]})))
-        asker.ask("what is open for Acme Corp")
-        out = asker.ask("new project Harbour for Birch & Co in Work")
-        self.assertEqual("wall", out.get("reset"))                   # before the request reached the session
-        self.assertTrue(out["ok"], out["done"])
 
     def test_the_zone_is_never_guessed(self):
         _, out = self.run_ask("new thread Renewal in Acme Review",

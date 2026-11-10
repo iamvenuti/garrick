@@ -16,6 +16,7 @@ import io
 import json
 import os
 import re
+import shutil
 import signal
 import sys
 import textwrap
@@ -99,21 +100,31 @@ def docx(text: str) -> bytes:
     return buf.getvalue()
 
 
+SPLIT_CONTEXT = CONTEXT.replace("| Work | `birch` |", "| Personal | `birch` |")      # Birch, in a zone of its own
+
+
+def split_birch(root: Path) -> None:
+    """Birch, in a zone of its own: its project moved to Personal, and the Parties table saying so."""
+    shutil.move(str(root / "Zones" / "Work" / "Birch Entry"), str(root / "Zones" / "Personal" / "Birch Entry"))
+    write(root / "Zones" / "Personal" / "Birch Entry" / "Birch Entry.md", project_hub("Personal", "Birch Entry", "birch", ["Market Sizing"]))
+    write(root / "System" / "context.md", SPLIT_CONTEXT)
+
+
 def walled_workspace(root: Path) -> None:
-    """fixtures.build_workspace()'s Acme and Birch, with something on each
-    side of the wall that a prompt can be searched for: a meeting on each
-    side, a published report, a document in Acme's Sources/ and a note in
-    Birch's thread."""
+    """fixtures.build_workspace()'s Acme and Birch, each in a walled zone of its own (Acme in Work, Birch in
+    Personal), with something on each side of the wall that a prompt can be searched for: a meeting on each
+    side, a published report, a document in Acme's Sources/ and a note in Birch's thread."""
+    split_birch(root)
     sources = root / "Wikis" / "Meetings" / "wiki" / "sources"
     write(sources / "260310-acme-kickoff.md", meeting_page("Work", "[acme]", "Acme kick-off")
           + "\nDana said the pallet quote holds at forty a unit. %s\n" % ACME)
-    write(sources / "260312-birch-kickoff.md", meeting_page("Work", "[birch]", "Birch kick-off")
+    write(sources / "260312-birch-kickoff.md", meeting_page("Personal", "[birch]", "Birch kick-off")
           + "\nTheo said the pallet launch moves to May. %s\n" % BIRCH)
     report = root / "Wikis" / "Knowledge" / "wiki" / "sources" / "supply-chain-report.md"
     write(report, report.read_text() + "\nPallet supply stays tight through the winter. %s\n" % KNOWN)
     (root / "Zones" / "Work" / "Acme Review" / "Sources" / "260301 - Pallet terms.docx").write_bytes(
         docx("Pallet terms: ninety days. %s" % SOURCE))
-    write(root / "Zones" / "Work" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md",
+    write(root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md",
           thread_note("Birch Entry", "Market Sizing", "birch", "Pallet volumes doubled. BIRCHTHREAD71"))
 
 
@@ -189,7 +200,7 @@ class TestTheWallReset(AnswerCase):
             self.assertNotIn("<earlier-request>", m)
         for pid in after:
             self.assertIn("<workspace>\n", self.msgs(pid)[0])                 # each told the whole list
-        self.assertEqual({"birch"}, a.seen)
+        self.assertEqual({"Personal"}, a.seen)
 
     def test_last_results_go_with_the_command_process_they_were_said_to(self):
         """From the 0.49.1 review: `heard` went with a command process that
@@ -225,25 +236,27 @@ class TestTheWallReset(AnswerCase):
         self.assertEqual(2, len(self.procs()))                                # one of each, throughout
         said = "\n".join(self.msgs())
         self.assertIn(KNOWN, said)
-        self.assertEqual({"acme"}, a.seen)                                    # Knowledge adds no party
+        self.assertEqual({"Work"}, a.seen)                                    # Knowledge adds no party
 
-    def test_a_question_across_every_zone_reads_one_side_of_the_wall(self):
+    def test_a_question_with_no_names_reads_its_own_zone_and_never_the_other_walled_one(self):
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         out = a.ask("What did I discuss this week?")
-        self.assertEqual("wall", out["reset"])                                # Acme held, so a fresh start
+        self.assertNotIn("reset", out)                                        # the window's zone is the one held
         wall = ask.page_action().wall_refusal(self.root)
-        self.assertTrue(out["say"].endswith(wall), out["say"])                # and the rule's sentence for the rest
-        self.assertEqual("Answered. " + wall, out["say"])                     # with nothing about what it held
+        self.assertFalse(out["say"].endswith(wall), out["say"])               # nothing was held back: Personal is not read
         for p in self.procs():
-            said = "\n".join(self.msgs(p["pid"]))
-            self.assertFalse(ACME in said and BIRCH in said, p)               # never both in one process
-        self.assertEqual({"birch"}, a.seen)                                   # the newest meeting's side
+            self.assertNotIn(BIRCH, "\n".join(self.msgs(p["pid"])), p)
+        self.assertEqual({"Work"}, a.seen)
 
-    def test_a_question_across_every_zone_with_nothing_held_does_not_reset(self):
-        out = self.asker().ask("What did I discuss this week?")
-        self.assertNotIn("reset", out)
-        self.assertTrue(out["say"].endswith(ask.page_action().wall_refusal(self.root)))
+    def test_an_open_zone_is_read_from_any_zone_and_holds_nothing(self):
+        write(self.root / "System" / "context.md", SPLIT_CONTEXT.replace(
+            "| Personal | Everything else | | walled |", "| Personal | Everything else | | open |"))
+        a = self.asker()
+        a.ask("What did Dana say about the pallet quote?")
+        out = a.ask("What did Theo say about the pallet launch?")
+        self.assertNotEqual("wall", out.get("reset"))                         # Personal is open: no wall stands between them
+        self.assertTrue(any(BIRCH in m for m in self.msgs()))
 
     def test_a_pending_confirmation_is_not_confirmed_across_the_wall(self):
         a = self.asker()
@@ -302,8 +315,8 @@ class TestTheWallReset(AnswerCase):
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         with self.assertRaisesRegex(ask.Bad, "a wall stands"):
-            a.admit([{"path": "x.md", "date": "", "parties": ["birch"], "text": BIRCH}], {"birch"})
-        self.assertEqual({"acme"}, a.seen)
+            a.admit([{"path": "x.md", "date": "", "zones": ["Personal"], "text": BIRCH}], {"Personal"})
+        self.assertEqual({"Work"}, a.seen)
 
 
 class TestAnswers(AnswerCase):
@@ -329,7 +342,7 @@ class TestAnswers(AnswerCase):
         a.ask("What did Dana say about the pallet quote?")
         (sonnet,) = [p for p in self.procs() if p["model"] == "sonnet"]
         first = self.msgs(sonnet["pid"])[0]
-        self.assertIn("<workspace>\nPersonal:\nWork:\n- Acme Review", first)
+        self.assertIn("<workspace>\nPersonal:\n- Birch Entry", first)
         self.assertIn("- Birch Entry", first)                                  # every zone's names, as question 12 says
         self.assertIn('<record id="r1" path="Wikis/Meetings/wiki/sources/260310-acme-kickoff.md" date="2026-03-10">', first)      # no `created`: no import date
         self.assertIn("<request>\nWhat did Dana say about the pallet quote?\n</request>", first)
@@ -509,7 +522,7 @@ class TestScopeFirst(AnswerCase):
     """The names are settled before anything is read or sent."""
 
     def test_a_name_that_fits_two_entries_is_asked_about_and_nothing_is_read(self):
-        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        write(self.root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
         a = self.asker()
         out = a.ask("Where does Pricing stand?")
         self.assertEqual(("clarify", "Which do you mean: Acme Review, Pricing or Birch Entry, Pricing?"),
@@ -538,7 +551,7 @@ class TestScopeFirst(AnswerCase):
         self.assertEqual({"acme"}, parties("Acme Review"))                          # the longer name holds the shorter
         self.assertEqual(set(), parties("will dana come"))                          # a first name alone needs its capital
         self.assertEqual(set(), parties("What does the supply chain report say?"))
-        write(self.root / "System" / "context.md", CONTEXT.replace(
+        write(self.root / "System" / "context.md", SPLIT_CONTEXT.replace(
             "| Theo Marsh | `birch` | Managing partner |",
             "| Theo Marsh | `birch` | Managing partner |\n| Robin Vale | `acme` | Auditor |\n| Robin Vale | `birch` | Auditor |"))
         ctx = lib.load_context(self.root)
@@ -577,7 +590,7 @@ class TestScopeFirst(AnswerCase):
         write(home / "Home.md", project_hub("Personal", "Home", party="", threads=["Pricing", "Budget"]))
         for t in ("Pricing", "Budget"):
             write(home / "Threads" / t / (t + ".md"), thread_note("Home", t, ""))
-        write(self.work / "Birch Entry" / "Threads" / "Budget" / "Budget.md", thread_note("Birch Entry", "Budget", "birch"))
+        write(self.root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Budget" / "Budget.md", thread_note("Birch Entry", "Budget", "birch"))
         lib = ask.scope_lib().lib(self.root)
         ctx, names = lib.load_context(self.root), ask.scan(self.root)
 
@@ -610,7 +623,7 @@ class TestScopeFirst(AnswerCase):
         asked = "Where does Pricing stand?"
 
         def settled(rows, answer):
-            write(self.root / "System" / "context.md", CONTEXT.replace("| Birch & Co |", rows + "\n| Birch & Co |"))
+            write(self.root / "System" / "context.md", SPLIT_CONTEXT.replace("| Birch & Co |", rows + "\n| Birch & Co |"))
             ctx = lib.load_context(self.root)
             got = ask.scope_lib().mentions(self.root, asked + "\n" + answer, names, ctx, lib, answer=len(asked) + 1)
             return got.question or got.places
@@ -618,13 +631,11 @@ class TestScopeFirst(AnswerCase):
         self.assertEqual([("Personal", "Home", "Pricing")], settled(own, "The one in Personal."))
         firm = "| Fernwood | Own company | Fernwood | `fernwood` | |"
         self.assertEqual([("Fernwood", "Ledger", "Pricing")], settled(firm, "In Fernwood"))
-        elsewhere = "| Personal | A shop | Work | `shop` | yes | |"                  # named like the zone, of another one
-        self.assertTrue(str(settled(elsewhere, "The one in Personal.")).startswith("Which do you mean"))
 
     def test_a_clarify_is_settled_by_an_option_as_it_was_offered(self):
         """#294: one company under two tags, one in each zone. "What did Dana
         say?" could be settled only by typing the bare tag."""
-        write(self.root / "System" / "context.md", CONTEXT.replace(
+        write(self.root / "System" / "context.md", SPLIT_CONTEXT.replace(
             "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | yes | |\n| Birch & Co |").replace(
             "| Theo Marsh | `birch` | Managing partner |",
             "| Theo Marsh | `birch` | Managing partner |\n| Dana Whitlock | `acme-adv` | Advisory client |"))
@@ -643,7 +654,7 @@ class TestScopeFirst(AnswerCase):
             self.assertEqual(parties, settled(answer), answer)
         for answer in ("Acme Corp", "Work or Personal", "Dana Whitlock of Acme Corp in Work or in Personal",
                        "Dana Whitlock of Acme Corp in Work, please", "Not Dana Whitlock of Acme Corp in Work",
-                       "The Birch one", "The other one"):
+                       "The other one"):
             self.assertEqual(question, settled(answer), answer)               # both options, or neither: asked again
         got = ask.scope_lib().mentions(self.root, "What did Dana say about work?", names, ctx, lib)
         self.assertEqual(question, got.question)                              # a zone counts only in an answer
@@ -660,26 +671,26 @@ class TestScopeFirst(AnswerCase):
         with self.assertRaises(sc.Unclear):
             sc.scope(self.root, {"route": "thread"}, nothing, names, ctx, lib)
         where = sc.scope(self.root, {"route": "meetings", "project": "Birch Entry"}, nothing, names, ctx, lib)
-        self.assertEqual(("Work", {"birch"}, False), (where.zone, where.parties, where.every))
+        self.assertEqual(("Personal", set(), False), (where.zone, where.parties, where.every))
         for route in ("meetings", "thread"):                                  # #317: answered inside one zone
             with self.assertRaisesRegex(sc.Refused, "inside one zone"):
                 sc.scope(self.root, {"route": route} if route == "meetings" else {"route": route, "project": None},
                          nothing, names, ctx, lib) if route == "meetings" else sc.scope(
                     self.root, {"route": "meetings", "zone": None}, nothing, names, ctx, lib)
         where = sc.scope(self.root, {"route": "meetings", "zone": "Work"}, nothing, names, ctx, lib)
-        self.assertEqual(("Work", {"acme", "birch"}, False), (where.zone, where.parties, where.every))
+        self.assertEqual(("Work", set(), False), (where.zone, where.parties, where.every))
         self.assertEqual(set(), sc.scope(self.root, {"route": "knowledge", "project": "Acme Review"}, nothing, names,
                                          ctx, lib).parties)
 
     def test_a_link_out_of_the_scope_is_never_read(self):
         sources = self.work / "Acme Review" / "Sources"
-        (sources / "pallet notes.md").symlink_to(self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md")
+        (sources / "pallet notes.md").symlink_to(self.root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md")
         self.asker().ask("What are the pallet terms in Acme Review?")
         self.assertNotIn("BIRCHTHREAD71", "\n".join(self.msgs()))
 
     def test_an_unfinished_meeting_page_is_never_read(self):
         write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260313-call.md",
-              meeting_page("Work", None, "A call") + "\nThe pallet plan. UNFILEDMARK\n")
+              meeting_page(None, "[acme]", "A call") + "\nThe pallet plan. UNFILEDMARK\n")
         self.asker().ask("What did I discuss this week?")
         self.assertNotIn("UNFILEDMARK", "\n".join(self.msgs()))
 
@@ -691,8 +702,8 @@ class TestOneQuestionManyStores(AnswerCase):
     def put(self, name, text, wiki="Meetings", sub="sources"):
         write(self.root / "Wikis" / wiki / "wiki" / sub / name, text)
 
-    def meeting(self, name, parties, body, date="2026-11-05", title="A call"):
-        page = meeting_page("Work", parties, title).replace("date: 2026-03-10", "date: " + date)
+    def meeting(self, name, parties, body, date="2026-11-05", title="A call", zone="Work"):
+        page = meeting_page(zone, parties, title).replace("date: 2026-03-10", "date: " + date)
         self.put(name, page + "\n" + body + "\n")
 
     def read(self, find_, order=None):
@@ -744,12 +755,6 @@ class TestOneQuestionManyStores(AnswerCase):
         self.assertNotIn("acme", where.groups[0])
         self.assertNotIn("261106-acme-decision.md", self.paths(found))
 
-    def test_a_walled_page_is_not_reached_through_the_place_s_party(self):
-        self.meeting("261106-both.md", "[acme, birch]", "Acme and Birch, WALLEDMARK.", "2026-11-06")
-        found, _, _ = self.read({"route": "thread", "project": "Acme Review", "words": ["acme review"]}, "recent")
-        self.assertNotIn("261106-both.md", self.paths(found))
-        self.assertNotIn("WALLEDMARK", json.dumps(found))
-
     def test_a_meetings_find_also_reads_the_project_and_knowledge(self):
         found, _, _ = self.read({"route": "meetings", "project": "Acme Review", "words": ["pallet"]})
         self.assertTrue(any("Acme Review" in r["path"] for r in found))
@@ -789,9 +794,9 @@ class TestOneQuestionManyStores(AnswerCase):
         # Pages that match the words, spelled as another form, walled from the scope: newest of all.
         for i in range(12):
             self.meeting("2611%02d-walled-%d.md" % (i + 1, i), "[acme, birch]",
-                         "Acme Corp pallet pricing, Dana and Theo, %d. WALLEDMARK" % i, "2026-11-%02d" % (i + 1))
+                         "Acme Corp pallet pricing, Dana and Theo, %d. WALLEDMARK" % i, "2026-11-%02d" % (i + 1), zone="Personal")
             self.meeting("2611%02d-far-%d.md" % (i + 1, i), "[birch]", "Acme Corp pallet Birch %d. WALLEDMARK" % i,
-                         "2026-11-%02d" % (i + 1))
+                         "2026-11-%02d" % (i + 1), zone="Personal")
         after = [self.read(f, o) for f, o in finds]
         for (f0, c0, _), (f1, c1, _) in zip(before, after):
             self.assertEqual(f0, f1)
@@ -799,35 +804,8 @@ class TestOneQuestionManyStores(AnswerCase):
             self.assertNotIn("WALLEDMARK", json.dumps(f1))
         self.assertFalse(any(c[1] for _, c, _ in after))
 
-    def test_a_page_walled_from_one_party_of_the_scope_changes_nothing(self):
-        ctx = self.root / "System" / "context.md"
-        text = ctx.read_text()
-        text = text.replace("\n## People", "| Northwind | Client | Work | `northwind` | yes | northwind.example |\n"
-                            "| Cedar | Client | Work | `cedar` | yes | cedar.example |\n\n## People", 1)
-        text = text.replace("| `acme` | `birch` | Competitors, and both are clients |",
-                            "| `acme` | `birch` | Competitors, and both are clients |\n| `cedar` | `northwind` | Competitors |", 1)
-        write(ctx, text)
-        harbour = self.work / "Harbour"
-        write(harbour / "Harbour.md", project_hub("Work", "Harbour", "acme", ["Intake"]))
-        write(harbour / "Threads" / "Intake" / "Intake.md",
-              thread_note("Harbour", "Intake", "northwind", "Pallet intake runs weekly."))
-        self.meeting("261101-harbour.md", "[acme]", "Pallet delivery agreed.")
-        finds = [{"route": r, "words": ["pallet"], "zone": "Work", "project": "Harbour"} for r in ("thread", "meetings")]
-
-        def outcome(find_, order):
-            found, chosen, _ = self.read(find_, order)
-            return found, chosen
-        before = [outcome(f, o) for f in finds for o in (None, "recent")]
-        for i in range(10):
-            self.meeting("2611%02d-cedar-%d.md" % (i + 10, i), "[acme, cedar]", "pallet pallet pallet pallet CEDARMARK %d" % i,
-                         "2026-11-%02d" % (i + 10))
-        after = [outcome(f, o) for f in finds for o in (None, "recent")]
-        self.assertEqual(before, after)                  # records, order, back, matched and passages
-        self.assertTrue(any("Intake" in r["path"] for r in after[0][0]))
-        self.assertNotIn("CEDARMARK", json.dumps(after))
-
     def test_a_walled_page_matched_only_through_a_name_form_stays_out(self):
-        self.meeting("261106-both.md", "[acme, birch]", "Only the Acme Corp spelling is used here.")
+        self.meeting("261106-both.md", "[acme, birch]", "Only the Acme Corp spelling is used here.", zone="Personal")
         found, _, _ = self.read({"route": "thread", "project": "Acme Review", "words": ["acmecorp"]})
         self.assertNotIn("261106-both.md", self.paths(found))
 
@@ -849,24 +827,6 @@ class TestFailsClosed(AnswerCase):
         """The processes that were sent every one of these."""
         return [p["pid"] for p in self.procs() if all(m in "\n".join(self.msgs(p["pid"])) for m in marks)]
 
-    def test_parties_that_are_not_a_list_of_known_tags_are_never_read(self):
-        for name, parties, mark in (("260313-acme-link.md", '"[[acme]]"', "ACMELINK1"),
-                                    ("260314-both-string.md", "acme, birch", "BOTHSTR2"),
-                                    ("260315-name.md", "[Acme Corp]", "ACMENAME3")):
-            write(self.SOURCES / name, meeting_page("Work", parties, name) + "\nNotes. %s\n" % mark)
-        self.commit()
-        self.asker().ask("What did I discuss this week?")
-        said = "\n".join(self.msgs())
-        for mark in ("ACMELINK1", "BOTHSTR2", "ACMENAME3"):
-            self.assertNotIn(mark, said)
-        self.assertTrue(BIRCH in said)                                     # the finished pages still are
-
-    def test_a_page_on_both_sides_of_a_wall_is_never_read(self):
-        write(self.SOURCES / "260316-both.md", meeting_page("Work", "[acme, birch]", "both") + "\nBOTHLIST4\n")
-        self.commit()
-        self.asker().ask("What did I discuss this week?")
-        self.assertEqual([], self.together("BOTHLIST4"))
-
     def test_a_meeting_with_party_alone_is_unfinished(self):
         write(self.SOURCES / "260317-unfinished.md",
               "---\ntitle: Unfinished\ntype: meeting\ndate: 2026-03-17\nparty: acme\n---\n\nUNFINISHED5 pallet.\n")
@@ -874,16 +834,6 @@ class TestFailsClosed(AnswerCase):
         self.asker().ask("What did Dana say about the pallet quote?")
         self.assertEqual([], self.together("UNFINISHED5"))
         self.assertTrue(self.together(ACME))                               # a finished one is read
-
-    def test_a_person_page_stands_on_its_party_alone(self):
-        lib = ask.scope_lib().lib(self.root)
-        ctx = lib.load_context(self.root)
-        page = lambda fm: ask.scope_lib().page_parties(lib.parse_frontmatter_text("---\n%s\n---\n" % fm), ctx, lib)  # noqa: E731
-        self.assertEqual(["acme"], page("type: person\nparty: acme"))
-        self.assertEqual(["acme"], page("type: meeting\nzone: Work\nparties: [acme]"))
-        for fm in ("type: meeting\nparty: acme", "type: person\nparty: \"[[acme]]\"", "zone: Work\nparties: acme",
-                   "type: meeting\nparties: [acme]", "zone: Work\nparties: [acme, nobody]"):
-            self.assertEqual([], page(fm), fm)
 
     def test_a_knowledge_page_that_carries_a_party_is_not_published(self):
         write(self.root / "Wikis" / "Knowledge" / "wiki" / "sources" / "misfiled.md",
@@ -894,35 +844,6 @@ class TestFailsClosed(AnswerCase):
         a.ask("What does the supply chain report say about pallets?")
         self.assertEqual([], self.together("KNOWBIRCH6"))
         self.assertTrue(self.together(KNOWN))
-
-    def test_a_thread_of_another_party_than_its_hub_is_read_as_both(self):
-        write(self.work / "Acme Review" / "Threads" / "Side Deal" / "Side Deal.md",
-              thread_note("Acme Review", "Side Deal", "birch", "Birch side terms. BIRCHSIDE88"))
-        self.commit()
-        self.rules([["<request>\nWhere does Side Deal", find("thread", [], project="Acme Review", thread="Side Deal")]])
-        a = self.asker()
-        a.ask("What did Dana say about the pallet quote?")
-        out = a.ask("Where does Side Deal stand?")
-        self.assertEqual("wall", out.get("reset"))                         # the thread's party, walled from Acme's
-        self.assertEqual([], self.together(ACME, "BIRCHSIDE88"))
-        self.assertEqual([], self.together(ACME, "BIRCHSIDE88"))           # never in the process that held Acme
-        lib = ask.scope_lib().lib(self.root)
-        self.assertEqual({"acme", "birch"}, set(ask.scope_lib().place_parties(self.root, "Work", "Acme Review", "Side Deal", lib)))
-
-    def test_a_project_with_no_party_is_refused_and_nothing_read(self):
-        from fixtures import project_hub
-        root = self.work / "Loose Ends"
-        write(root / "Loose Ends.md", project_hub("Work", "Loose Ends", party="", threads=["Notes"]))
-        write(root / "Threads" / "Notes" / "Notes.md", thread_note("Loose Ends", "Notes", "", "Notes."))
-        write(root / "Sources" / "memo.md", "Theo's memo for Birch. BIRCHLOOSE99\n")
-        self.commit()
-        self.rules([["<request>\nWhat memo is in Loose", find("thread", ["memo"], project="Loose Ends")]])
-        a = self.asker()
-        a.ask("What did Dana say about the pallet quote?")
-        with self.assertRaisesRegex(ask.Bad, "Loose Ends names no party in its hub, so nothing in it is read"):
-            a.ask("What memo is in Loose Ends?")
-        self.assertEqual([], self.together("BIRCHLOOSE99"))
-        self.assertEqual({"acme"}, a.seen)
 
     def test_the_answer_session_holds_only_its_brief_the_list_and_the_records(self):
         os.environ[ask.MARKER] = "ask"                                      # as serve_locked() sets it
@@ -942,7 +863,7 @@ class TestFailsClosed(AnswerCase):
             self.assertFalse(home.exists())                                # removed when it stops
 
     def test_the_command_session_never_hears_a_record(self):
-        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        write(self.root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
         a = self.asker()
         for q in ("What did Dana say about the pallet quote?", "What are the pallet terms in Acme Review?",
                   "What does the supply chain report say about pallets?", "What did I discuss this week?",
@@ -958,7 +879,7 @@ class TestFailsClosed(AnswerCase):
         """A thread called Budget in Birch Entry and in a Personal project of
         no party, so an Acme name beside it settles neither."""
         from fixtures import project_hub
-        write(self.work / "Birch Entry" / "Threads" / "Budget" / "Budget.md",
+        write(self.root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Budget" / "Budget.md",
               thread_note("Birch Entry", "Budget", "birch", "Birch budget. BIRCHBUDGET21"))
         home = self.root / "Zones" / "Personal" / "Home"
         write(home / "Home.md", project_hub("Personal", "Home", party="", threads=["Budget"]))
@@ -983,11 +904,11 @@ class TestFailsClosed(AnswerCase):
         return [m for ms in self.new_since(before).values() for m in ms]
 
     def pricing_in_two_zones(self):
-        """The issue's case: a project called Pricing in Work, Birch's, and
-        one in Personal of no party, beside Acme Review's Pricing thread, so
+        """The issue's case: a project called Pricing in Personal, Birch's, and
+        one in Work of no party, beside Acme Review's Pricing thread, so
         the question offers "Pricing in Work" and "Pricing in Personal"."""
         from fixtures import project_hub
-        for zone, party in (("Work", "birch"), ("Personal", "")):
+        for zone, party in (("Personal", "birch"), ("Work", "")):
             folder = self.root / "Zones" / zone / "Pricing"
             write(folder / "Pricing.md", project_hub(zone, "Pricing", party=party, threads=["Rates"]))
             write(folder / "Threads" / "Rates" / "Rates.md",
@@ -1006,39 +927,39 @@ class TestFailsClosed(AnswerCase):
         question offered it; sent, it answers about Birch's Pricing, asking
         nothing again."""
         self.pricing_in_two_zones()
-        self.rules([["(Pricing in Work)", find("thread", [], zone="Work", project="Pricing")]])
+        self.rules([["(Pricing in Personal)", find("thread", [], zone="Personal", project="Pricing")]])
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         out = a.ask("Where does Pricing stand?")
-        self.assertEqual(("clarify", "Which do you mean: Pricing in Personal, Pricing in Work or Acme Review, Pricing?"),
+        self.assertEqual(("clarify", "Which do you mean: Pricing in Work, Pricing in Personal or Acme Review, Pricing?"),
                          (out["kind"], out["say"]))
         before, sent = {p["pid"] for p in self.procs()}, len(self.msgs())
         out = a.ask("The Birch one.")
-        self.assert_refilled(out, "Where does Pricing stand? (Pricing in Work)")
+        self.assert_refilled(out, "Where does Pricing stand? (Pricing in Personal)")
         self.assertEqual(sent, len(self.msgs()))                            # not one turn, on any session
         self.assertEqual([], self.sent_since(before))
         self.assertTrue(all(self.gone(pid) for pid in before))              # the sessions that held Acme went
         self.assertEqual((None, set(), set(), []), (a.unclear, a.seen, a.heard, a.passages))
         with mock.patch.dict(os.environ, {ask.LOG_TEXT: "1"}):
-            self.assertNotIn("Pricing in Work", ask.log_line("The Birch one.", out))   # the log never holds it
-        out = a.ask(out["refill"])                                          # the user reads it and sends it
+            self.assertNotIn("Pricing in Personal", ask.log_line("The Birch one.", out))   # the log never holds it
+        out = a.ask(out["refill"], zone="Personal")                         # the user reads it and sends it
         self.assertEqual("answer", out["kind"])
-        self.assertNotIn("reset", out)
+        self.assertNotEqual("wall", out.get("reset"))                       # the sessions were fresh: no wall to cross
         new = self.new_since(before)
-        self.assertIn("<request>\nWhere does Pricing stand? (Pricing in Work)\n</request>", new["haiku"][0])
+        self.assertIn("<request>\nWhere does Pricing stand? (Pricing in Personal)\n</request>", new["haiku"][0])
         self.assertNotIn("<earlier-request>", new["haiku"][0])
         self.assertIn("BIRCHPRICE12", new["sonnet"][0])
         for m in new["haiku"] + new["sonnet"]:
             self.assertNotIn(ACME, m)
             self.assertNotIn("HOMEPRICE13", m)
-        self.assertEqual({"birch"}, a.seen)
+        self.assertEqual({"Personal"}, a.seen)
 
     def test_a_refill_holds_the_question_and_the_option_only(self):
         """An answer that settled nothing, "the other one", is asked about
         again; when the next answer crosses the wall, the refill is the
         question as first asked and the option, not every answer between."""
         self.pricing_in_two_zones()
-        self.rules([["(Pricing in Work)", find("thread", [], zone="Work", project="Pricing")]])
+        self.rules([["(Pricing in Personal)", find("thread", [], zone="Personal", project="Pricing")]])
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         self.assertEqual("clarify", a.ask("Where does Pricing stand?")["kind"])
@@ -1046,7 +967,7 @@ class TestFailsClosed(AnswerCase):
         self.assertEqual("clarify", out["kind"])
         self.assertNotIn("reset", out)
         out = a.ask("The Birch one.")
-        self.assert_refilled(out, "Where does Pricing stand? (Pricing in Work)")
+        self.assert_refilled(out, "Where does Pricing stand? (Pricing in Personal)")
         self.assertIsNone(a.question)
         out = a.ask(out["refill"])
         self.assertEqual("answer", out["kind"])
@@ -1068,7 +989,7 @@ class TestFailsClosed(AnswerCase):
                              ("Where does Pricing stand?  (in Personal)  ", home),
                              ("Where does Pricing stand? (Acme Review, Pricing)",
                               [("Work", "Acme Review", "Pricing"), ("Work", "Acme Review", None)]),
-                             ("Where does Pricing stand? (The Birch one.)", work)):
+                             ("Where does Pricing stand? (The Birch one.)", home)):
             self.assertEqual(places, settled(text), text)
         for text in ("Where does Pricing stand? (not Pricing in Work)", "Where does Pricing stand? (Work or Personal)",
                      "Where does Pricing stand? (the other one)", "Where does Pricing stand? (Pricing in Work",
@@ -1077,13 +998,13 @@ class TestFailsClosed(AnswerCase):
             self.assertTrue(str(settled(text)).startswith("Which do you mean"), text)
         got = ask.scope_lib().mentions(self.root, "Where does Pricing stand?\nThe Birch one.", names, ctx, lib,
                                        answer=len("Where does Pricing stand?") + 1)
-        self.assertEqual(("Pricing in Work", {"birch"}), (got.option, got.parties))
+        self.assertEqual(("Pricing in Personal", {"birch"}), (got.option, got.parties))
 
     def test_a_refill_names_the_option_or_else_the_answer_as_typed(self):
         """The option as the question offered it, whatever the answer said;
         with no option, the answer as typed, used as it is when it does not
         settle as the answer did, for the user to read."""
-        write(self.root / "System" / "context.md", CONTEXT.replace(
+        write(self.root / "System" / "context.md", SPLIT_CONTEXT.replace(
             "| Birch & Co |", "| Acme Corp | Advisory, on the side | Personal | `acme-adv` | yes | |\n| Birch & Co |").replace(
             "| Theo Marsh | `birch` | Managing partner |",
             "| Theo Marsh | `birch` | Managing partner |\n| Dana Whitlock | `acme-adv` | Advisory client |"))
@@ -1100,62 +1021,7 @@ class TestFailsClosed(AnswerCase):
         self.assertEqual("What memo is that? (the Birch one)",
                          a.refilled("What memo is that?  ", "the \n Birch one", named, names)["refill"])
 
-    def test_a_reset_before_reading_puts_the_question_back_and_reads_nothing(self):
-        """The reset that runs when the find, not the request, crosses the
-        wall: the command session had its turn before the scope was known,
-        and after the reset nothing more is sent, nothing is read, and the
-        question comes back. The request is one line in the ledger."""
-        self.budget()
-        write(self.work / "Acme Review" / "Threads" / "Budget" / "Budget.md",
-              thread_note("Acme Review", "Budget", "acme", "Acme budget."))
-        self.commit()
-        # The answer settles Acme's Budget, in Work; the find the session
-        # proposes is Birch's, in the same zone, across the wall.
-        self.rules([["The Acme one", find("meetings", ["pallet"], project="Birch Entry")]])
-        a = self.asker()
-        a.ask("What did Dana say about the pallet quote?")
-        before = {p["pid"] for p in self.procs()}
-        self.assertEqual("clarify", a.ask("Where is the Budget plan " + self.EARLIER)["kind"])
-        sent = len(self.msgs())
-        ledger = ask.agent().ledger_path()
-        lines = len(ledger.read_text().splitlines()) if ledger.exists() else 0
-        out = a.ask("The Acme one.")                                        # no wall named: the find crosses it
-        self.assert_refilled(out, "Where is the Budget plan %s (Acme Review, Budget)" % self.EARLIER)
-        msgs = self.msgs()
-        self.assertEqual(sent + 1, len(msgs))                               # the command turn, before the reset
-        self.assertIn("<earlier-request>", msgs[-1])
-        (old,) = [p["pid"] for p in self.procs() if p["pid"] in before and p["model"] == "haiku"]
-        self.assertEqual(msgs[-1], self.msgs(old)[-1])                     # to the session that was then reset
-        self.assertTrue(self.gone(old))
-        self.assertEqual([], self.sent_since(before))                      # nothing to any process since
-        self.assertNotIn("sonnet", [p["model"] for p in self.procs() if p["pid"] not in before])
-        self.assertEqual(lines + 1, len(ledger.read_text().splitlines()))  # one line, the command turn's
-        self.assertEqual((None, set(), set(), []), (a.unclear, a.seen, a.heard, a.passages))
-        out = a.ask(out["refill"])
-        self.assertNotEqual("clarify", out["kind"])                         # settled: Home's Budget, no question
-        self.assertNotIn("reset", out)
-        (cmd,) = self.new_since(before)["haiku"]
-        self.assertIn('"Budget": the thread Budget of Acme Review in Work', cmd)
 
-    def test_a_wall_reset_after_a_question_back_sends_no_far_name_settled_before_it(self):
-        """#294: a far-side alias settled in the request asked about reaches
-        neither new session. The question waits in the box; nothing is read."""
-        self.budget()
-        a = self.asker()
-        a.ask("What did Dana say about the pallet quote?")
-        before = {p["pid"] for p in self.procs()}
-        self.assertEqual("clarify", a.ask("Did dana whitlaw ask about the Budget quote?")["kind"])
-        sent = len(self.msgs())
-        out = a.ask("The Birch one.")
-        self.assert_refilled(out, "Did dana whitlaw ask about the Budget quote? (Birch Entry, Budget)")
-        self.assertEqual(sent, len(self.msgs()))
-        self.assertEqual([], self.sent_since(before))
-        self.assertEqual([], self.together("BIRCHBUDGET21"))
-        self.assertIsNone(a.unclear)
-        self.assertNotIn("reset", a.ask("open Birch Entry"))                # the next request joins nothing
-        (cmd,) = self.new_since(before)["haiku"]
-        self.assertNotIn("<earlier-request>", cmd)
-        self.assertNotIn("Budget quote", cmd)
 
 
 class TestEitherProcess(AnswerCase):
@@ -1194,7 +1060,7 @@ class TestEitherProcess(AnswerCase):
                 self.assertEqual("wall", out.get("reset"))
                 self.assertTrue(self.gone(heard))
                 self.assertEqual([], self.both())
-                self.assertEqual({"birch"}, a.holding())
+                self.assertEqual({"Personal"}, a.holding())
                 a.stop()
 
     def test_stop_ends_both_sessions_and_what_they_were_told(self):
@@ -1242,7 +1108,7 @@ class TestEitherProcess(AnswerCase):
         out = a.ask("What does the supply chain report say about pallets?")  # and is replaced alone
         self.assertNotIn("reset", out)
         self.assertEqual(heard, a.session.proc.pid)
-        self.assertEqual({"acme"}, a.holding())                              # what the command process heard
+        self.assertEqual({"Work"}, a.holding())                              # what the command process heard
         out = a.ask("What did Theo say about the pallet launch?")
         self.assertEqual("wall", out.get("reset"))
         self.assertTrue(self.gone(heard))
@@ -1254,7 +1120,7 @@ class TestEitherProcess(AnswerCase):
                 self.clear()
                 a = self.asker()
                 a.ask("add call Dana to Acme")
-                self.assertEqual({"acme"}, a.holding())
+                self.assertEqual({"Work"}, a.holding())
                 heard = a.session.proc.pid
                 out = a.ask(second)
                 self.assertEqual("wall", out.get("reset"))
@@ -1267,7 +1133,7 @@ class TestEitherProcess(AnswerCase):
             {"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"}]})]] + HAIKU}))
         a = self.asker()
         a.ask("park the one we discussed")                                    # names nothing; the action names Acme's
-        self.assertEqual({"acme"}, a.holding())
+        self.assertEqual({"Work"}, a.holding())
         heard = a.session.proc.pid
         self.assertEqual("wall", a.ask("What did Theo say about the pallet launch?").get("reset"))
         self.assertTrue(self.gone(heard))
@@ -1281,7 +1147,7 @@ class TestEitherProcess(AnswerCase):
         answers = a.answers.proc.pid
         os.kill(a.session.proc.pid, signal.SIGKILL)                         # the command process goes
         a.session.proc.wait()
-        self.assertEqual({"acme"}, a.holding())
+        self.assertEqual({"Work"}, a.holding())
         self.assertEqual("wall", a.ask("What did Theo say about the pallet launch?").get("reset"))
         self.assertTrue(self.gone(answers))
         self.assertEqual([], self.both())
@@ -1329,9 +1195,9 @@ class TestSealed(AnswerCase):
     def test_the_server_sends_the_refill_and_logs_none_of_it(self):
         """#294: the final line carries the question to put back, the reset
         for the divider, and no renewal; ask.log holds none of the question."""
-        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        write(self.root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
         git(self.work, "add", "-A")
-        git(self.work, "commit", "-q", "-m", "Birch's Pricing")
+        git(self.work, "commit", "-q", "--allow-empty", "-m", "Birch's Pricing")
         t = self.serve_in_thread()
         try:
             self.op("warm")
@@ -1383,15 +1249,15 @@ class TestSealed(AnswerCase):
 
     def test_an_alias_or_a_person_reaches_the_command_session_as_names(self):
         os.environ[ask.MARKER] = "ask"                                      # as serve_locked() sets it
-        self.answers.write_text(json.dumps({"haiku": [['"birchen co": the party Birch & Co in Work',
-                     json.dumps({"say": "Opening Birch Entry.", "do": [{"verb": "open", "zone": "Work",
+        self.answers.write_text(json.dumps({"haiku": [['"birchen co": the party Birch & Co in Personal',
+                     json.dumps({"say": "Opening Birch Entry.", "do": [{"verb": "open", "zone": "Personal",
                                                                         "project": "Birch Entry"}]})],
                     ['"dana whitlaw": the person Dana Whitlock, of Acme Corp',
                      json.dumps({"say": "Added it.", "do": [dict(LINE, text="Call Dana Whitlock")]})]] + HAIKU}))
         a = self.asker()
         out = a.ask("open birchen co")
         self.assertEqual(("command", "Opening Birch Entry."), (out["kind"], out["say"]))
-        self.assertEqual(str(self.root / "Zones" / "Work" / "Birch Entry"), out["launch"][0]["folder"])
+        self.assertEqual(str(self.root / "Zones" / "Personal" / "Birch Entry"), out["launch"][0]["folder"])
         out = a.ask("add call dana whitlaw to the list")
         self.assertEqual(["Added to Inbox: Call Dana Whitlock"], out["done"])
         self.assertEqual("wall", out["reset"])                            # Acme's person, after Birch: a new process
@@ -1401,7 +1267,7 @@ class TestSealed(AnswerCase):
             assert_sealed(self, cmd, self.root)                           # so the prompt is all it knew
         said = [m for cmd in cmds for m in self.msgs(cmd["pid"])]
         self.assertEqual(2, len(said))
-        self.assertIn('<names>\n- "birchen co": the party Birch & Co in Work\n</names>\n<request>', said[0])
+        self.assertIn('<names>\n- "birchen co": the party Birch & Co in Personal\n</names>\n<request>', said[0])
         self.assertIn('- "dana whitlaw": the person Dana Whitlock, of Acme Corp\n', said[1])
         for m in said:                                                    # names only: no role, no domain
             for word in ("Head of procurement", "birchco.example", "Competitors"):
@@ -1486,7 +1352,7 @@ class TestRenewal(AnswerCase):
             t.join(10)
 
     def test_a_question_waiting_for_its_answer_holds_the_renewal(self):
-        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        write(self.root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
         a = self.asker()
         with self.small():
             a.ask("What did Dana say about the pallet quote?")
@@ -1525,6 +1391,12 @@ class TestRenewal(AnswerCase):
 
 class TestCodex(base.AskCase):
     """Question 13: with Codex, commands as before, and a question gets a plain reply."""
+
+    def setUp(self):
+        super().setUp()
+        split_birch(self.root)
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "Birch in its own zone")
 
     def test_a_question_gets_a_plain_reply_and_commands_run(self):
         os.environ["GARRICK_HARNESS"] = "codex"
@@ -1569,7 +1441,7 @@ class TestCodex(base.AskCase):
         """#294: with Codex too, the answer that crossed the wall is not sent,
         and the question comes back for the user to send."""
         os.environ["GARRICK_HARNESS"] = "codex"
-        write(self.work / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
+        write(self.root / "Zones" / "Personal" / "Birch Entry" / "Threads" / "Pricing" / "Pricing.md", thread_note("Birch Entry", "Pricing", "birch"))
         prompts = []
         real = ask.agent().run
         ask.agent().run = lambda tier, prompt, allow=(), cwd=None, job=None, **kw: prompts.append(prompt) or (
@@ -1591,6 +1463,12 @@ class TestCodex(base.AskCase):
 class TestCodexParity(base.AskCase):
     """#261, slice F: with Codex, the one session it has takes part in every
     reset the Claude sessions take part in, and Stop is heard mid-call."""
+
+    def setUp(self):
+        super().setUp()
+        split_birch(self.root)
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "Birch in its own zone")
 
     def codex(self, reply_for):
         os.environ["GARRICK_HARNESS"] = "codex"
@@ -1691,24 +1569,6 @@ class TestProtocol(unittest.TestCase):
         for path in (ask.__file__, SCOPE):                                     # #172: no copy of its own
             self.assertNotIn("Nothing was written", Path(path).read_text(encoding="utf-8"))
 
-    def test_pick_reads_within_one_group(self):
-        sc = ask.scope_lib()
-        lib = sc.lib(REPO)
-        ctx = {"walls": {frozenset(("acme", "birch"))}, "parties": {"acme": {}, "birch": {}}}
-        rec = lambda *p: {"parties": list(p)}  # noqa: E731
-        published = {"parties": [], "public": True}
-        zone = {"acme", "birch"}                  # a zone-wide find: its first record sets the group
-        self.assertEqual(([rec("birch"), published], True), sc.pick([rec("birch"), rec("acme"), published], set(), ctx, lib, start=zone))
-        self.assertEqual(([published], True), sc.pick([rec("birch"), rec("acme"), published], set(), ctx, lib))   # no place, no start
-        self.assertEqual(([published], True), sc.pick([rec("birch"), published], {lib.KNOWLEDGE}, ctx, lib, start=zone))   # holds only Knowledge
-        self.assertEqual(([rec("birch")], True), sc.pick([rec("birch"), rec()], set(), ctx, lib, start=zone))   # no label, no permit
-        self.assertEqual(([rec("acme")], True), sc.pick([rec("birch"), rec("acme")], {"acme"}, ctx, lib))
-        self.assertEqual(([], True), sc.pick([rec("acme", "birch")], set(), ctx, lib, start=zone))     # a page on both sides
-        self.assertEqual(([rec("acme")], False), sc.pick([rec("acme"), rec("acme")], set(), ctx, lib, most=1, start=zone))
-        self.assertEqual(([rec("birch")], False), sc.pick([rec("[[acme]]"), rec("acme corp"), rec("birch")], set(), ctx, lib, start=zone))
-        self.assertEqual(([], True), sc.pick([rec("acme")], {"none"}, ctx, lib, start=zone))    # a scope the table lacks
-
-
 def cites(*claims, incomplete=False):
     """An answer session's reply: (text, ids) for each claim."""
     return json.dumps({"claims": [{"text": t, "cite": list(ids)} for t, ids in claims], "incomplete": incomplete})
@@ -1798,7 +1658,7 @@ class TestCitations(AnswerCase):
         first, out = lines
         self.assertEqual(self.KICKOFF, first["sources"][0]["path"])
         self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))
-        self.assertEqual([{"text": "Theo moved the launch to May.", "ids": ["r1", "r2"]}], out["claims"])
+        self.assertEqual([{"text": "In Personal: Theo moved the launch to May.", "ids": ["r1", "r2"]}], out["claims"])
         self.assertEqual([("r1", "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md"),
                           ("r2", "Wikis/Knowledge/wiki/sources/supply-chain-report.md")],
                          [(s["id"], s["path"]) for s in out["sources"]])     # r1 and r2 of the new process: Birch's, and Knowledge's
@@ -1839,8 +1699,7 @@ class TestCitations(AnswerCase):
     def test_the_wall_sentence_follows_the_claims(self):
         self.sonnet(["this week", cites(("Theo moved the launch.", ["r1"]))])
         out = self.asker().ask("What did I discuss this week?")
-        wall = ask.page_action().wall_refusal(self.root)
-        self.assertEqual(([wall], "Theo moved the launch. " + wall), (out["after"], out["say"]))
+        self.assertEqual(([], "Theo moved the launch."), (out["after"], out["say"]))          # its own zone alone: no wall held anything back
 
     def test_a_thread_note_opens_as_its_row(self):
         from unittest import mock
@@ -1989,7 +1848,7 @@ class TestTheNewestFirst(AnswerCase):
                 self.assertEqual(self.NEWEST, first)
                 self.assertIn("NEWESTMARK", sent)
                 self.assertNotIn("OLDESTMARK", sent)                 # eight newest, never the page that says it most
-                self.assertIn('<records matched="22" given="8" order="recent">', sent)   # twenty, Dana's own page and the kick-off that says only Acme
+                self.assertIn('<records matched="21" given="8" order="recent">', sent)   # twenty, Dana's own page and the kick-off that says only Acme
                 self.assertEqual([self.NEWEST], [s["path"] for s in out["sources"]])
                 self.assertEqual([{"text": "The last meeting with Acme Corp was on 20 April.", "ids": ["r1"]}], out["claims"])
                 a.stop()
@@ -2000,7 +1859,7 @@ class TestTheNewestFirst(AnswerCase):
         self.asker().ask("Tell me about the meeting with Acme Corp")
         (sent,) = [m for m in self.msgs() if "<records " in m]
         self.assertIn("OLDESTMARK", sent.split("</record>")[0])     # as before: most named first
-        self.assertIn('<records matched="22" given="8">', sent)
+        self.assertIn('<records matched="21" given="8">', sent)
 
     def test_from_part_of_the_matches_no_absence_is_claimed(self):
         """The answer session says nothing happened after a date; with 21
@@ -2061,31 +1920,28 @@ class TestTheNewestFirst(AnswerCase):
         self.assertEqual([ask.INCOMPLETE], out["after"])
         self.assertTrue(out["say"].endswith(ask.INCOMPLETE))
 
-    def test_the_count_never_depends_on_a_record_a_wall_held_back(self):
-        import random
-        sc = ask.scope_lib()
-        lib = sc.lib(REPO)
-        parties = ["a", "b", "c", "d", "e"]
-        ctx = {"walls": {frozenset(("a", "b")), frozenset(("c", "d")), frozenset(("b", "e"))},
-               "parties": {p: {} for p in parties}}
-        rnd = random.Random(7)
-        for _ in range(2000):
-            recs = [{"parties": rnd.sample(parties, rnd.choice([1, 1, 1, 2]))} for _ in range(rnd.randint(1, 14))]
-            held = set(rnd.sample(parties, rnd.choice([0, 0, 1])))
-            most = rnd.randint(1, 5)
-            chosen, _, matched = sc.choose(recs, held, ctx, lib, most)
-            group = set(held) | {p for r in chosen for p in r["parties"]}
-            kept = [r for r in recs if not sc.any_wall(ctx, set(r["parties"]), set(r["parties"]) | group, lib)]
-            again, _, recount = sc.choose(kept, held, ctx, lib, most)
-            self.assertEqual((chosen, matched), (again, recount), (recs, held, most))
+class TestChoose(unittest.TestCase):
+    """choose(): the records a process may be given, by zone (#483): its own zone, an open zone, another walled zone."""
 
-    def test_choose_counts_only_what_no_wall_holds_back(self):
+    CTX = {"zone_walled": {"Work": True, "Home": True, "Garden": False}, "pending": False}
+
+    def test_the_cases(self):
         sc = ask.scope_lib()
         lib = sc.lib(REPO)
-        ctx = {"walls": {frozenset(("acme", "birch"))}, "parties": {"acme": {}, "birch": {}}}
-        rec = lambda *p: {"parties": list(p)}  # noqa: E731
-        chosen, back, matched = sc.choose([rec("acme")] * 3 + [rec("birch")] * 5, set(), ctx, lib, most=2, start={"acme", "birch"})
-        self.assertEqual((2, True, 3), (len(chosen), back, matched))   # the five on the far side are not counted
+        rec = lambda *z, **kw: dict({"zones": list(z)}, **kw)  # noqa: E731
+        published = {"zones": [], "public": True}
+        pick = lambda recs, held=(), **kw: sc.choose(recs, set(held), self.CTX, lib, **kw)  # noqa: E731
+        got, back, matched = pick([rec("Work")] * 3 + [rec("Home")] * 5, most=2)      # the first record sets the walled zone
+        self.assertEqual((2, True, 3), (len(got), back, matched))                      # the five of the other zone are not counted
+        self.assertEqual(([rec("Work"), rec("Garden"), published], False), pick([rec("Work"), rec("Garden"), published])[:2])   # open and public pass
+        self.assertEqual(([rec("Garden")], True), pick([rec("Garden"), rec("Work")], {"Home"})[:2])
+        self.assertEqual(([], True), pick([rec("Work", "Home")])[:2])                  # one record in two walled zones
+        self.assertEqual(([published], False), pick([rec(), published])[:2])            # no zone, no permit, unless published
+        self.assertEqual(([rec("Work")], False), pick([rec("Work")], {"Work"})[:2])
+
+    def test_a_zone_the_table_lacks_is_walled(self):
+        sc = ask.scope_lib()
+        self.assertTrue(sc.crosses(self.CTX, {"Work"}, {"Nowhere"}, sc.lib(REPO)))
 
 
 SIZING_TABLE = ("\n| | |\n|---|---|\n| Next action | Call Theo about the volumes |\n| Waiting on | Theo, for the volumes |\n"
@@ -2101,6 +1957,9 @@ class TestActions(AnswerCase):
 
     def setUp(self):
         super().setUp()
+        shutil.move(str(self.root / "Zones" / "Personal" / "Birch Entry"), str(self.work / "Birch Entry"))      # one zone, as the lists are
+        write(self.work / "Birch Entry" / "Birch Entry.md", project_hub("Work", "Birch Entry", "birch", ["Market Sizing"]))
+        write(self.root / "System" / "context.md", CONTEXT)
         todo = self.work / "Todo.md"
         write(todo, todo.read_text().replace(
             "## Done", "- [ ] [[Market Sizing]]: Send the sizing deck 📅 2026-10-13\n"
@@ -2518,7 +2377,7 @@ class TestOneZone(AnswerCase):
         said = "\n".join(self.msgs())
         self.assertIn("CEDARMARK83", said)
         self.assertNotIn(ACME, said)
-        self.assertIn("cedar", a.seen)                                   # Personal's records; Dana's name alone
+        self.assertIn("Personal", a.seen)                                   # Personal's records; Dana's name alone
 
     def test_nothing_to_go_on_asks_which_zone(self):
         a = self.asker(zone=None)
@@ -2531,7 +2390,6 @@ class TestOneZone(AnswerCase):
         said = "\n".join(self.msgs())
         self.assertIn("CEDARMARK83", said)
         self.assertNotIn(ACME, said)
-        self.assertNotIn(BIRCH, said)
         again = a.ask("What did I discuss this week?")                    # the zone last used, kept
         self.assertEqual("Personal", again.get("zone"))
 
@@ -2546,7 +2404,7 @@ class TestOneZone(AnswerCase):
         a.ask("What's the last meeting with Pat?", zone="Personal")
         before = {p["pid"] for p in self.procs()}
         self.assertEqual(["haiku", "sonnet"], sorted(p["model"] for p in self.procs()))
-        self.assertEqual(("Personal", {"cedar"}), (a.zone, a.seen))
+        self.assertEqual(("Personal", {"Personal"}), (a.zone, a.seen))
         out = a.ask("what's open?", zone="Work")                         # the selector moved to Work
         self.assertEqual("zone", out.get("reset"))
         for pid in before:
@@ -2569,14 +2427,14 @@ class TestOneZone(AnswerCase):
         a.ask("What did Dana say about the pallet quote?")
         before = {p["pid"] for p in self.procs()}
         out = a.ask("What's the last meeting with Pat?")
-        self.assertEqual(("zone", "Personal"), (out.get("reset"), out.get("zone")))
+        self.assertEqual(("wall", "Personal"), (out.get("reset"), out.get("zone")))          # both zones walled: a wall reset
         for pid in before:
             self.assertTrue(self.gone(pid))
             self.assertNotIn("CEDARMARK83", self.marks(pid))
         for p in self.procs():
             if p["pid"] not in before:
                 self.assertNotIn(ACME, self.marks(p["pid"]))
-        self.assertEqual({"cedar"}, self.askers[-1].seen)
+        self.assertEqual({"Personal"}, self.askers[-1].seen)
 
     def test_a_zone_the_request_never_says_is_not_the_sessions_to_give(self):
         """The command session copies the window's <zone> into its find: for
@@ -2623,7 +2481,7 @@ class TestOneZone(AnswerCase):
         sent = [m for m in self.msgs() if "discuss this week" in m and "<records" not in m][-1]
         self.assertNotIn("Call Dana", sent)
         self.assertNotIn("<last-results>", sent)
-        self.assertNotIn("reset", a.ask("open Acme Review", zone="Personal"))   # same zone: the conversation goes on
+        self.assertNotIn("reset", a.ask("open Birch Entry", zone="Personal"))   # same zone: the conversation goes on
 
     def test_picking_the_other_zone_leaves_the_first_zones_project_out(self):
         self.answers.write_text(json.dumps({"haiku": [["Pat", find("thread", ["fee"], project="Acme Review")]] + HAIKU}))

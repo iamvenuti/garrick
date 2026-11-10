@@ -530,148 +530,138 @@ class CliTest(unittest.TestCase):
         self.assertIn("is not a file", r.stderr)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 TRANSCRIPT = (
-    "Dana: our renewal floor is a figure we hold back from every supplier this year.\n"      # 1: acme alone
+    "Dana: our renewal floor is a figure we hold back from every supplier this year.\n"      # 1: Work
     "Dana: the second warehouse opens in the spring after the audit is signed off.\n"        # 2
-    "Theo: we plan to enter the northern market with a partner chosen before autumn.\n"      # 3: birch alone
-    "Theo: our launch budget was approved by the board without any outside advice.\n"        # 4
-    "Both: we agree to share the freight lanes from the harbour on a trial basis.\n"         # 5: joint
+    "Theo: we plan to take the garden beds to the northern side before autumn.\n"            # 3: Personal
+    "Theo: our weekend budget was approved by the family without any outside advice.\n"     # 4
+    "Both: we agree to share the freight lanes from the harbour on a trial basis.\n"         # 5: dropped by name
 )
 
 
-class SplitAndExtractTest(unittest.TestCase):
-    """#448: a mixed conversation is cut in the inbox by label set; a filed record gives extracts."""
+class SplitByZoneTest(unittest.TestCase):
+    """#484: a conversation for two walled zones is cut in the inbox by zone, one cut each and no joint file."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve() / "ws"
         fixtures.build_workspace(self.root)
         self.inbox = self.root / "Wikis" / "Meetings" / "raw" / "inbox"
-        self.src = self.inbox / "260310-acme-birch-call.txt"     # a name that names both parties
+        self.src = self.inbox / "260310-work-home-call.txt"
         self.src.write_text(TRANSCRIPT)
-        self.parts = ["acme:1-2", "birch:3-4", "acme,birch:5"]
+        self.parts = ["Work:1-2", "Personal:3-4"]
 
     def tearDown(self):
         self.tmp.cleanup()
 
     def test_nothing_is_written_without_the_yes(self):
-        plan, wrote = ingest.split(self.root, self.src, self.parts)
+        plan, wrote = ingest.split(self.root, self.src, self.parts, drop="5")
         self.assertFalse(wrote)
-        self.assertEqual(["260310-acme-birch.txt", "260310-acme.txt", "260310-birch.txt"], sorted(p["name"] for p in plan))
-        self.assertEqual(["260310-acme-birch-call.txt"], sorted(p.name for p in self.inbox.glob("260310*")))
-        r = run_cli(self.root, "split", "--inbox", str(self.src), *sum((["--part", p] for p in self.parts), []))
+        self.assertEqual(["260310-personal.txt", "260310-work.txt"], sorted(p["name"] for p in plan))
+        self.assertEqual(["260310-work-home-call.txt"], sorted(p.name for p in self.inbox.glob("260310*")))
+        r = run_cli(self.root, "split", "--inbox", str(self.src), "--drop", "5", *sum((["--part", p] for p in self.parts), []))
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("Nothing was written", r.stdout)
         self.assertTrue(self.src.exists())
 
-    def test_the_yes_makes_three_files_three_pages_and_removes_the_original(self):
-        plan, wrote = ingest.split(self.root, self.src, self.parts, yes=True)
+    def test_the_yes_makes_one_file_per_zone_and_removes_the_original(self):
+        plan, wrote = ingest.split(self.root, self.src, self.parts, drop="5", yes=True)
         self.assertTrue(wrote)
         self.assertFalse(self.src.exists())
-        got = {p.name: p.read_text() for p in [q for q in self.inbox.glob("260310-*") if q != self.src]}
-        self.assertEqual({"260310-acme.txt", "260310-birch.txt", "260310-acme-birch.txt"}, set(got))
-        self.assertIn("parties: [acme]\n", got["260310-acme.txt"])
-        self.assertIn("parties: [acme, birch]\n", got["260310-acme-birch.txt"])
-        self.assertIn("split-of: %s\n" % ingest._origin("260310-acme-birch-call"), got["260310-birch.txt"])
-        self.assertTrue(got["260310-acme.txt"].endswith(TRANSCRIPT.splitlines(True)[0] + TRANSCRIPT.splitlines(True)[1]))
-        self.assertNotIn("Theo", got["260310-acme.txt"])
-        self.assertNotIn("Dana", got["260310-birch.txt"])
-        # each is landed and given a page of its own: the labels are the page's
+        got = {p.name: p.read_text() for p in self.inbox.glob("260310-*")}
+        self.assertEqual({"260310-work.txt", "260310-personal.txt"}, set(got))          # no joint file
+        self.assertIn("zone: Work\n", got["260310-work.txt"])
+        self.assertIn("zone: Personal\n", got["260310-personal.txt"])
+        self.assertNotIn("parties:", got["260310-work.txt"])
+        self.assertIn("split-of: %s\n" % ingest._origin("260310-work-home-call"), got["260310-personal.txt"])
+        self.assertTrue(got["260310-work.txt"].endswith(TRANSCRIPT.splitlines(True)[0] + TRANSCRIPT.splitlines(True)[1]))
+        self.assertNotIn("Theo", got["260310-work.txt"])
+        self.assertNotIn("Dana", got["260310-personal.txt"])
+        # each is landed and given a page of its own: its zone is the page's, and the zone of a file is its path or its page
         sys.path.insert(0, str(REPO / "template" / "System" / "tools"))
         import garrick_lib as lib
-        expect = {"260310-acme": {"acme"}, "260310-birch": {"birch"}, "260310-acme-birch": {"acme", "birch"}}
-        for stem, tags in expect.items():
+        for stem, zone in {"260310-work": "Work", "260310-personal": "Personal"}.items():
             slug, dest = ingest.land(self.root, self.inbox / (stem + ".txt"), "2026-03-10", stem)
             page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md")
-            fixtures.write(page, fixtures.meeting_page("Work", "[%s]" % ", ".join(sorted(tags)), stem)
-                           .replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
+            fixtures.write(page, fixtures.meeting_page(zone, None, stem).replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
+            self.assertEqual(zone, lib.zone_of(self.root, page))
 
-    def test_a_cut_that_leaves_a_line_out_or_doubles_one_is_refused(self):
-        for parts, why in ((["acme:1-2", "birch:3"], "belong to no cut"), (["acme:1-3", "birch:3-5"], "in two cuts"),
-                           (["acme:1-2", "acme:3-5"], "same parties"), (["acme:1-2", "ghost:3-5"], "not a tag"),
-                           (["acme:1-5"], "at least two"), (["acme:1-2", "birch:3-9"], "past the end")):
+    def test_a_cut_that_leaves_a_line_out_doubles_one_or_names_no_zone_is_refused(self):
+        for parts, why in ((["Work:1-2", "Personal:3"], "belong to no cut"), (["Work:1-3", "Personal:3-5"], "in two cuts"),
+                           (["Work:1-2", "work:3-5"], "same zone"), (["Work:1-2", "Ghost:3-5"], "not a zone"),
+                           (["Work:1-5"], "at least two"), (["Work:1-2", "Personal:3-9"], "past the end")):
             with self.assertRaisesRegex(ingest.Refusal, why):
                 ingest.split(self.root, self.src, parts, yes=True)
         self.assertTrue(self.src.exists())
         self.assertEqual([], [p.name for p in self.inbox.glob("260310-*") if p != self.src])
-        plan, wrote = ingest.split(self.root, self.src, ["acme:1-2", "birch:3-4"], drop="5", yes=True)    # a named drop
+        plan, wrote = ingest.split(self.root, self.src, self.parts, drop="5", yes=True)    # a named drop
         self.assertTrue(wrote)
 
     def test_a_run_with_nobody_to_answer_writes_nothing(self):
         with mock.patch.dict(os.environ, {"GARRICK_HEADLESS": "1"}):
             with self.assertRaisesRegex(ingest.Refusal, "nobody to ask"):
-                ingest.split(self.root, self.src, self.parts, yes=True)
+                ingest.split(self.root, self.src, self.parts, drop="5", yes=True)
         self.assertTrue(self.src.exists())
 
-    HEAD = ("---\ntitle: Acme and Birch joint budget call\ndate: 2026-03-10\ntype: meeting\n"
-            "attendees: Dana (Acme), Pat (Birch)\nsummary: Acme and Birch budgets\nsource-id: x1\n---\n\n")
+    HEAD = ("---\ntitle: Work and Home joint call\ndate: 2026-03-10\ntype: meeting\n"
+            "attendees: Dana (Acme), Pat (Home)\nsummary: Work and Home budgets\nsource-id: x1\n---\n\n")
 
     def test_a_cut_takes_no_title_or_attendee_line_from_the_original(self):
         self.src.write_text(self.HEAD + TRANSCRIPT)
-        parts = ["acme:10-11", "birch:12-13", "acme,birch:14"]
-        ingest.split(self.root, self.src, parts, yes=True, titles=["Acme budget", ""])
-        got = {p.name: p.read_text() for p in [q for q in self.inbox.glob("260310-*") if q != self.src]}
+        ingest.split(self.root, self.src, ["Work:10-11", "Personal:12-13"], drop="14", yes=True, titles=["Work budget", ""])
+        got = {p.name: p.read_text() for p in self.inbox.glob("260310-*")}
         for name, text in got.items():
             front = text.split("---")[1]
-            for word in ("Birch joint", "Pat", "attendees", "summary", "source-id"):
-                self.assertNotIn(word, front if name != "260310-acme-birch.txt" else front.replace("Acme, Birch", ""), name)
+            for word in ("joint", "Pat", "attendees", "summary", "source-id"):
+                self.assertNotIn(word, front, name)
             self.assertIn("date: 2026-03-10\n", front)
-        self.assertIn("title: Acme budget\n", got["260310-acme.txt"])
-        self.assertIn("title: Meeting 2026-03-10, birch\n", got["260310-birch.txt"])
-        self.assertNotIn("Birch", got["260310-acme.txt"].split("---")[1])
-        self.assertNotIn("Acme and", got["260310-birch.txt"])
+        self.assertIn("title: Work budget\n", got["260310-work.txt"])
+        self.assertIn("title: Meeting 2026-03-10, Personal\n", got["260310-personal.txt"])
+        self.assertNotIn("Home", got["260310-work.txt"].split("---")[1])
 
     def test_a_cut_carries_a_mechanical_key_only_with_a_value_of_its_shape(self):
         """A free-text value under a mechanical key, and the original's name, never reach a narrower cut."""
-        self.src.write_text("---\ndate: 2026-03-10\ntype: Birch call\nlanguage: Theo of Birch\nduration: >\n---\n\n" + TRANSCRIPT)
-        ingest.split(self.root, self.src, ["acme:8-9", "birch:10-11", "acme,birch:12"], yes=True)
-        acme = (self.inbox / "260310-acme.txt").read_text()
-        self.assertNotIn("irch", acme)
-        self.assertNotIn("Theo", acme)
-        self.assertIn("date: 2026-03-10\n", acme)
-        self.assertNotIn("duration", acme)
+        self.src.write_text("---\ndate: 2026-03-10\ntype: Home call\nlanguage: Theo of Home\nduration: >\n---\n\n" + TRANSCRIPT)
+        ingest.split(self.root, self.src, ["Work:8-9", "Personal:10-11"], drop="12", yes=True)
+        work = (self.inbox / "260310-work.txt").read_text()
+        self.assertNotIn("Home", work)
+        self.assertNotIn("Theo", work)
+        self.assertIn("date: 2026-03-10\n", work)
+        self.assertNotIn("duration", work)
 
-    def test_an_extract_takes_no_title_or_attendee_line_either(self):
-        self.src.write_text(self.HEAD + TRANSCRIPT)
-        slug, dest = self.filed()
-        plan, wrote = ingest.extract(self.root, dest, "12-13", "birch", yes=True)
-        front = (self.inbox / plan["name"]).read_text().split("---")[1]
-        self.assertNotIn("Pat", front)
-        self.assertNotIn("Acme", front)
-        self.assertIn("title: Meeting 2026-03-10, birch\n", front)
+    def test_extract_is_gone(self):
+        self.assertFalse(hasattr(ingest, "extract"))
+        r = run_cli(self.root, "extract", "--raw", "x", "--lines", "1", "--parties", "acme")
+        self.assertEqual(2, r.returncode)
 
-    def filed(self):
-        """The call filed as one record under a page of both parties."""
-        slug, dest = ingest.land(self.root, self.src, "2026-03-10", "call")
-        fixtures.write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md"),
-                       fixtures.meeting_page("Work", "[acme, birch]", "Call").replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
-        return slug, dest
 
-    def test_an_extract_leaves_the_original_byte_identical(self):
-        slug, dest = self.filed()
-        before = dest.read_bytes()
-        plan, wrote = ingest.extract(self.root, dest, "3-4", "birch")
-        self.assertFalse(wrote)
-        self.assertFalse((self.inbox / plan["name"]).exists())
-        plan, wrote = ingest.extract(self.root, dest, "3-4", "birch", yes=True)
-        self.assertTrue(wrote)
-        self.assertEqual(before, dest.read_bytes())
-        made = (self.inbox / plan["name"]).read_text()
-        self.assertIn("parties: [birch]\n", made)
-        self.assertIn("extract-of: %s\n" % ingest._origin(slug), made)
-        self.assertNotIn("acme", plan["name"])
-        self.assertIn("Theo: we plan", made)
-        self.assertNotIn("Dana", made)
+class PersonZoneTest(unittest.TestCase):
+    """A person page takes the `zone:` of the sources it summarises; `party:` is an index, and there is no organisation link."""
 
-    def test_an_extract_is_never_wider_than_its_record(self):
-        slug, dest = self.filed()
-        fixtures.write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / (slug + ".md"),
-                       fixtures.meeting_page("Work", "[acme]", "Call").replace("people:", 'transcript: "[[raw/%s]]"\npeople:' % slug))
-        with self.assertRaisesRegex(ingest.Refusal, "never wider"):
-            ingest.extract(self.root, dest, "3-4", "birch", yes=True)
-        with self.assertRaisesRegex(ingest.Refusal, "not a filed record"):
-            ingest.extract(self.root, self.src, "1", "acme", yes=True)
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve() / "ws"
+        fixtures.build_workspace(self.root)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_a_new_page_carries_its_zone_and_an_optional_party(self):
+        path, created = ingest.ensure_person(self.root, "Kit Avery", "acme", "2026-03-10", "work")
+        self.assertTrue(created)
+        text = path.read_text()
+        self.assertIn("zone: Work\nparty: acme\n", text)
+        self.assertNotIn("organisation", text)
+        path, created = ingest.ensure_person(self.root, "Wren Holt", "", "2026-03-10")
+        self.assertNotIn("party:", path.read_text())
+        self.assertNotIn("zone:", path.read_text())
+
+    def test_an_unknown_zone_is_refused(self):
+        with self.assertRaisesRegex(ingest.Refusal, "not a zone"):
+            ingest.ensure_person(self.root, "Kit Avery", "", "2026-03-10", "Nowhere")
+        r = run_cli(self.root, "person", "--name", "Kit Avery", "--organisation", "x")
+        self.assertEqual(2, r.returncode)
+
+
+if __name__ == "__main__":
+    unittest.main()

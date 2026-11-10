@@ -19,7 +19,7 @@ from unittest import mock
 sys.dont_write_bytecode = True
 
 from fixtures import write  # noqa: E402
-from test_nurture_panel_actions import SENTENCE, PanelCase, commit_all, snap  # noqa: E402
+from panel_case import SENTENCE, PanelCase, commit_all, snap  # noqa: E402
 from test_page_action import TODAY, git, pa  # noqa: E402
 from test_questions_panel import ACME, BIRCH, qp, question, status  # noqa: E402
 
@@ -95,12 +95,12 @@ class TestRecordAsADecision(DecisionCase):
         self.assertIn('decision: "[[wiki/decisions/261005 - acme]]"', question_text)
 
     def test_the_decision_carries_the_questions_zone_and_parties_exactly(self):
-        write(self.meetings / Q, question(ACME, zone="Work", parties="[acme, cedar]"))
+        write(self.meetings / Q, question(ACME, zone="Work", parties="[birch]"))
         git(self.meetings, "add", "-A")
         self.decide()
         page = (self.meetings / DECISION).read_text()
-        self.assertIn("zone: Work\nparties: [acme, cedar]\n", page)
-        self.assertIn("parties: [acme, cedar]", (self.meetings / RECORD).read_text())
+        self.assertIn("zone: Work\nparties: [birch]\n", page)
+        self.assertIn("parties: [birch]", (self.meetings / RECORD).read_text())
 
     def test_a_failure_anywhere_puts_every_file_back(self):
         before = snap(self.root)
@@ -134,40 +134,26 @@ class TestRecordAsADecision(DecisionCase):
         self.assertEqual("kept\n", (self.meetings / DECISION).read_text())
         self.assertIn("type: decision", (self.meetings / "wiki/decisions/261005 - acme-2.md").read_text())
 
-    def test_a_question_with_no_zone_or_parties_is_refused_and_writes_nothing(self):
-        for name, text in (("nozone", question("Nozone: where?", zone="")), ("noparties", question("Noparties: whose?", parties="")),
-                           ("unknown", question("Unknown: who?", parties="[zzz]")), ("neither", question("Neither: what?", zone="", parties=""))):
+    def test_a_question_with_no_zone_is_refused_and_writes_nothing(self):
+        for name, text in (("nozone", question("Nozone: where?", zone="")), ("neither", question("Neither: what?", zone="", parties=""))):
             write(self.meetings / ("questions/261001 - %s.md" % name), text)
         commit_all(self.meetings, "unfinished")
         before = snap(self.root)
-        for name in ("nozone", "noparties", "unknown", "neither"):
+        for name in ("nozone", "neither"):
             with self.assertRaisesRegex(pa.Refused, "unfinished|nothing was written", msg=name):
                 self.decide(file="questions/261001 - %s.md" % name)
         self.assertEqual([], self.changed(before))
 
-    def test_a_question_that_names_both_sides_of_a_wall_is_refused_with_the_sentence(self):
+    def test_a_question_of_two_parties_of_one_zone_is_decided_like_any_other(self):
         write(self.meetings / "questions/261001 - mixed.md", question("Mixed: whose figure?", parties="[acme, birch]"))
-        before = snap(self.root)
-        with self.assertRaises(pa.Refused) as caught:
-            self.decide(file="questions/261001 - mixed.md")
-        self.assertEqual(SENTENCE, str(caught.exception))
-        self.assertEqual([], self.changed(before))
+        commit_all(self.meetings, "mixed")
+        self.assertIn("Recorded as a decision", self.decide(file="questions/261001 - mixed.md"))
 
-    def test_a_zone_that_does_not_own_the_parties_is_refused_with_the_sentence(self):
-        write(self.meetings / "questions/261001 - strayed.md", question("Strayed: where?", zone="Personal"))
+    def test_a_question_of_a_zone_the_workspace_does_not_have_is_refused_with_the_sentence(self):
+        write(self.meetings / "questions/261001 - strayed.md", question("Strayed: where?", zone="Nowhere"))
         before = snap(self.root)
-        with self.assertRaises(pa.Refused) as caught:
+        with self.assertRaisesRegex(pa.Refused, "unfinished|nothing was written"):
             self.decide(file="questions/261001 - strayed.md")
-        self.assertEqual(SENTENCE, str(caught.exception))
-        self.assertEqual([], self.changed(before))
-
-    def test_a_question_naming_its_parties_two_ways_is_refused(self):
-        for name, extra in (("both", "party: birch\n"), ("caps", "PARTIES: [birch]\n")):
-            write(self.meetings / ("questions/261001 - %s.md" % name), question("Two: which?", extra=extra))
-        before = snap(self.root)
-        for name in ("both", "caps"):
-            with self.assertRaisesRegex(pa.Refused, "two ways|nothing was written", msg=name):
-                self.decide(file="questions/261001 - %s.md" % name)
         self.assertEqual([], self.changed(before))
 
     def test_a_knowledge_question_is_refused_plainly(self):
@@ -180,18 +166,6 @@ class TestRecordAsADecision(DecisionCase):
 
     def test_the_words_are_not_logged(self):
         self.assertNotIn("words", pa.LOGGED)
-
-
-class TestNoCorrectionTouchesADecision(DecisionCase):
-    def test_nurture_correct_leaves_a_decision_page_as_it_is(self):
-        write(self.meetings / RECORD, answer_record())
-        page = decision(extra="revisit: \"Mira Holt asked again.\"\n").replace("Acme: which volume floor holds?", "Mira Holt: which floor?")
-        write(self.meetings / DECISION, page)
-        commit_all(self.meetings, "decision names a person")
-        pa.act(self.root, dict(verb="nurture-correct", zone="Work", scope="acme",
-                               path="Wikis/Meetings/wiki/people/mira-holt.md", old="Mira Holt", new="Mira Holte"), today=TODAY)
-        self.assertEqual(page, (self.meetings / DECISION).read_text())
-        self.assertIn("Mira Holte", (self.people / "mira-holt.md").read_text())
 
 
 class TestAFadedDecision(DecisionCase):
@@ -417,80 +391,34 @@ class TestWhatThePanelLists(DecisionCase):
     def titles(self, bucket):
         return sorted(d["title"] for d in bucket["decisions"])
 
-    def test_each_bucket_lists_only_decisions_on_its_own_side(self):
+    def test_each_bucket_lists_only_decisions_of_its_own_zone(self):
         d = self.data()
-        self.assertEqual(["Acme: which volume floor holds?"], self.titles(d["buckets"]["Work|acme"]))
-        self.assertEqual(["Birch: which volume floor holds?"], self.titles(d["buckets"]["Work|birch"]))
-        self.assertEqual([], self.titles(d["buckets"]["Work|cedar"]))
+        self.assertEqual(["Acme: which volume floor holds?", "Birch: which volume floor holds?", "Mixed: which volume floor holds?"],
+                         self.titles(d["buckets"]["Work"]))
+        self.assertEqual(["Elsewhere: which volume floor holds?"], self.titles(d["buckets"]["Personal"]))
 
-    def test_no_view_of_all_lists_a_walled_decision(self):
-        d = self.data()
-        sel = d["select"]
-        self.assertTrue(sel["*|*"]["views"])
-        for choice, entry in sel.items():
-            for view in entry["views"]:
-                held = d["buckets"][view["key"]]["decisions"]
-                for item in held:
-                    self.assertEqual(view["zone"], item["zone"], choice)
-                    if view["party"]:
-                        self.assertIn(view["party"], item["parties"], choice)
-                        self.assertEqual(sorted(set(item["parties"])), item["parties"])
-                        self.assertNotIn("birch" if view["party"] == "acme" else "acme", item["parties"], choice)
-        for view in qp.group_views(d["zones"], qp.ALL, qp.ALL):
-            blob = json.dumps(d["buckets"][view["key"]]["decisions"])
-            for hidden in ("Mixed:", "Plain:", "Old:", "Nobody:", "Elsewhere:"):
-                self.assertNotIn(hidden, blob, (view["key"], hidden))
-        self.assertNotIn("Birch:", json.dumps(d["buckets"]["Work|acme"]["decisions"]))
-        self.assertNotIn("Acme:", json.dumps(d["buckets"]["Work|birch"]["decisions"]))
-
-    def test_a_decision_naming_its_parties_two_ways_is_not_listed(self):
-        d = self.meetings / "wiki" / "decisions"
-        write(d / "261005 - twoway.md", decision(extra="party: birch\n").replace("Acme: which", "Twoway: which").replace(
-            "revisit", "revisit").replace("---\n\n#", "revisit: \"x\"\n---\n\n#", 1))
-        write(d / "261005 - caps.md", decision(extra="PARTIES: [birch]\nrevisit: \"x\"\n").replace("Acme: which", "Caps: which"))
-        commit_all(self.meetings, "two ways")
+    def test_a_decision_with_no_flag_a_changed_status_or_no_zone_is_listed_nowhere(self):
         blob = json.dumps(self.data()["buckets"])
-        self.assertNotIn("Twoway:", blob)
-        self.assertNotIn("Caps:", blob)
+        for hidden in ("Plain: which", "Old: which", "Nobody: which"):
+            self.assertNotIn(hidden, blob, hidden)
 
-    def test_the_page_data_holds_no_decision_from_the_far_side_of_a_view(self):
-        d = self.data()
-        for key, far in (("Work|acme", "Birch: which"), ("Work|birch", "Acme: which")):
-            self.assertNotIn(far, json.dumps(d["buckets"][key]))
-        for hidden in ("Mixed: which", "Plain: which", "Old: which", "Nobody: which", "Elsewhere: which"):
-            self.assertNotIn(hidden, json.dumps(d["buckets"]))
+    def test_a_decision_naming_its_parties_two_ways_is_still_listed_by_its_zone(self):
+        d = self.meetings / "wiki" / "decisions"
+        write(d / "261005 - twoway.md", decision(extra="party: birch\nrevisit: \"x\"\n").replace("Acme: which", "Twoway: which"))
+        commit_all(self.meetings, "two ways")
+        self.assertIn("Twoway: which volume floor holds?", self.titles(self.data()["buckets"]["Work"]))
+
+    def test_a_decision_with_a_wall_finding_is_not_listed(self):
+        C = {"findings": [{"check": "walls", "path": "Wikis/Meetings/wiki/decisions/261005 - acme.md", "line": 12, "severity": "error",
+                           "message": "links a file of zone Personal"}]}
+        got = qp.build(self.root, C, status.nurture_lib(self.root), TODAY, status.Links(self.root))
+        self.assertNotIn("Acme: which", json.dumps(got["buckets"]["Work"]["decisions"]))
+        self.assertIn("Birch: which volume floor holds?", self.titles(got["buckets"]["Work"]))
 
     def test_the_not_built_yet_texts_are_gone(self):
         self.assertNotIn("not built yet", qp.JS)
         self.assertIn("go('decide'", qp.JS)
         self.assertIn("decisions to review", qp.JS)
-
-
-import shutil  # noqa: E402
-
-import test_questions_panel_all as allpanel  # noqa: E402
-
-
-@unittest.skipUnless(shutil.which("node"), "node is not installed")
-class TestDecisionsPerGroup(unittest.TestCase):
-    def data(self):
-        d = allpanel.data()
-        flag = lambda t, parties: {"file": "wiki/decisions/%s.md" % t, "title": t, "status": "valid", "decided": "2026-10-05",
-                                   "revisit": "The floor changed.", "zone": "Work", "parties": parties, "href": "#"}
-        d["buckets"]["Work|acme"]["decisions"] = [flag("Acme decision", ["acme"])]
-        d["buckets"]["Work|birch"]["decisions"] = [flag("Birch decision", ["birch"]), flag("Birch second", ["birch"])]
-        return d
-
-    def test_across_a_wall_each_group_counts_its_own_decisions_and_none_is_added(self):
-        got = allpanel.run([["zone", "Work"], ["party", "*"]], d=self.data())[-1]
-        self.assertEqual(3, len(got["counts"]))
-        self.assertIn("1decisions to review", got["counts"][0])
-        self.assertIn("2decisions to review", got["counts"][1])
-        self.assertNotIn("3decisions to review", " ".join(got["counts"]))
-
-    def test_one_party_shown_alone_counts_its_own(self):
-        got = allpanel.run([["zone", "Work"], ["party", "birch"]], d=self.data())[-1]
-        self.assertIn("2decisions to review", " ".join(got["counts"]))
 
 
 if __name__ == "__main__":

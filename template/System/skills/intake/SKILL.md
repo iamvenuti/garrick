@@ -17,7 +17,7 @@ description: >
 Getting content into the workspace is fetching, and decides nothing. This
 skill is where it gets decided, one item at a time, by the rules under
 *The rules for where things go* below and the two in the *Ways in* section of
-`System/rules.md`: everything lands in an inbox first, and the wall is checked
+`System/rules.md`: everything lands in an inbox first, and the zone is checked
 before anything goes into a project. Read both before the first item.
 
 It does no filing of its own. A conversation goes through the `meetings`
@@ -35,13 +35,13 @@ All paths are relative to the workspace root.
 | Mail and any other file, one inbox per zone | `Zones/<Zone>/Inbox/` |
 | Mail sent to one address for every zone, before its zone is settled | `Inbox/` |
 | The rules for where things go | *The rules for where things go*, below, and `System/rules.md`, *Ways in* |
-| Parties (with their mail domains), Walls, People | `System/context.md` |
+| Zones (with their flag), Parties (with their mail domains), People | `System/context.md` |
 | A project's material | `Zones/<Zone>/<Project>/Sources/` |
 | The helper | `System/skills/intake/intake.py` |
 
 The helper does the mechanics: it lists, parses, suggests parties from mail
 domains, and moves an item to the destination you give it, after checking
-the zone and the wall. It never chooses a destination. Every filing command
+the zone. It never chooses a destination. Every filing command
 takes one explicitly, and refuses without it. It never files through a
 symbolic link that leads out of the folder it checked, the project or the
 wiki, and never takes a linked file waiting in an inbox: either is refused
@@ -55,12 +55,12 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 - **Everything lands in an inbox first.** A recording as its transcript in `Wikis/Meetings/raw/inbox/`; mail and any other file in the `Inbox/` of the zone it belongs to, or in the workspace's own `Inbox/` when one address serves every zone: there its zone is settled before anything else, from its parties, confirmed. An inbox is never a project, and nothing in one is committed.
 - **A recording is always a conversation**, filed in Meetings.
 - **Mail and files go where they belong:**
-  - a conversation (a mail exchange with people, notes of a call) is filed in Meetings, with its zone and parties;
-  - something to read (a newsletter, an article, a report) is filed in Knowledge, with no parties. If it comes from a party's domain, ask before treating it as published;
+  - a conversation (a mail exchange with people, notes of a call) is filed in Meetings, with its zone;
+  - something to read (a newsletter, an article, a report) is filed in Knowledge, with no zone. If it comes from a party's domain, ask before treating it as published;
   - material for a project (a client's document, a contract, a data file) goes into that project's `Sources/`. If it came by mail, the mail is filed in Meetings as a conversation too, and only the attachment goes to the project. A mail the Meetings wiki keeps out goes whole into a project's `Sources/` only when the user says it is material, not a conversation.
-- **Parties come from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and a plus tag (`you+acme@`) is a strong hint. Personal webmail never names anyone, and neither do your own addresses (listed under Me in `System/context.md`): they carry what you forward, and the people inside the forward are the ones who count. When the addresses do not settle it, or put two walled parties on one mail, ask.
-- **Check the wall before anything goes into a project.** The project must name every walled party the material came from. If it does not, stop, and say only the sentence under *Zones and walls* in `System/rules.md`, word for word.
-- **Unsure of the kind, the zone, a party or the project: ask**, in one short line. Never guess across a wall.
+- **The zone comes from the addresses, confirmed.** A domain in the Domains column of Parties names its party, and the party's row names its zone; a plus tag (`you+acme@`) is a strong hint. Personal webmail never names anyone, and neither do your own addresses (listed under Me in `System/context.md`): they carry what you forward, and the people inside the forward are the ones who count. Ask when a domain is unknown, when the parties on a mail sit in two walled zones, and for a company that is always asked about.
+- **Check the zone before anything goes into a project.** A walled zone's material goes only into that zone. If the project is in another walled zone, stop, and say only the sentence under *Zones and walls* in `System/rules.md`, word for word.
+- **Unsure of the kind, the zone or the project: ask**, in one short line. Never guess which zone.
 - **Code moves, parses and lists; it never chooses where a thing goes.**
 
 ## "Process the inbox"
@@ -120,17 +120,17 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
    the mail material; then it is filed whole, as step 7 says. No answer,
    or not material: leave it in the Inbox and say why.
 
-5. **Zone and parties.** The zone is the Inbox it sits in. An item in the
+5. **The zone.** The zone is the Inbox it sits in. An item in the
    workspace's own `Inbox/` has none yet: `parse` gives `suggested_zone`,
    the zone its parties point to, or `ask` with why it cannot tell (no party
-   on it, as with personal webmail or only your own addresses; or parties
-   from two zones). Confirm the zone in one line ("Work, from Acme?") or ask
+   on it, as with personal webmail or only your own addresses; a domain no
+   party has; or parties in two zones). Confirm the zone in one line ("Work, from Acme?") or ask
    it ("Which zone is this, Work or Personal?"), then move it there and go
    on from that zone's inbox:
    ```sh
    python3 System/skills/intake/intake.py move-to-zone --file "Inbox/<file>" --zone <Zone>
    ```
-   Something to read may be filed straight from `Inbox/`: it carries no zone. The parties come
+   Something to read may be filed straight from `Inbox/`: it carries no zone. The zone comes
    from `suggested`, confirmed exactly as the `meetings` skill's *File a
    mail*, step 2 sets out, with the same spoken questions. A mail in the
    wrong zone's Inbox: ask, and if the user agrees, move it to the right
@@ -140,10 +140,9 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
    published, or Cobalt writing to you?"
 
 6. **For project material, the project.** The candidates are the projects in
-   that zone whose hub names (`party`, one tag or a list) one of the item's parties. One: use it and
-   say its name. Several, or none: ask. "Acme Review or Supplier Audit?"
-   Never offer a project that does not name a walled party of the item, and
-   never one in another zone.
+   that zone. One: use it and say its name. Several: ask, "Acme Review or
+   Supplier Audit?" A project that names the item's party in its hub's
+   `party:` index is the likelier. Never offer one in another zone.
 
 7. **File it.**
    - **A conversation**: the `meetings` skill, *File a mail* (or *Ingest a
@@ -181,24 +180,23 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
      ```
      It saves the attachment into the project's `Sources/`; the raw record
      keeps its own copy. It refuses a mail with no finished page, a project
-     in another zone, and a project that does not name a walled party of the mail.
+     or a project in another zone.
    - **Material dropped as a file**:
      ```sh
-     python3 System/skills/intake/intake.py file-to-project --file "Zones/<Zone>/Inbox/<file>" --project "Zones/<Zone>/<Project>" --parties <tag>
+     python3 System/skills/intake/intake.py file-to-project --file "Zones/<Zone>/Inbox/<file>" --project "Zones/<Zone>/<Project>" [--parties <tag>]
      ```
-     `--parties` is whose material it is, as the user confirmed. It moves the
+     `--parties` is whose material it is, an index and optional. It moves the
      file into the project's `Sources/`, and refuses a mail, a project in
-     another zone, a walled project, and a name already there (pass `--name`
+     another zone, and a name already there (pass `--name`
      for another).
    - **A mail that is itself material**, only when the user said so (step
      4), the same command with `--as-material`:
      ```sh
-     python3 System/skills/intake/intake.py file-to-project --file "Zones/<Zone>/Inbox/<file>" --project "Zones/<Zone>/<Project>" --parties <tag> --as-material
+     python3 System/skills/intake/intake.py file-to-project --file "Zones/<Zone>/Inbox/<file>" --project "Zones/<Zone>/<Project>" [--parties <tag>] --as-material
      ```
-     It runs the same zone, party and wall checks and saves the mail whole
+     It runs the same zone checks, and asks first when the mail's addresses name a party of another walled zone, and saves the mail whole
      into `Sources/`. A `.eml` gets one header added at the top,
-     `X-Garrick-Parties`, naming the parties given, so the check can still
-     read them with no Meetings page; nothing else in it changes. Never pass
+     `X-Garrick-Parties`, naming the parties given, as an index; nothing else in it changes. Never pass
      the flag to get round the refusal for a mail that is a conversation.
 
    **When a command refuses because of a wall, stop.** Leave the item where
@@ -229,15 +227,14 @@ Recordings, mail and files you drop in. Getting them here is fetching, done by h
 
 ## A mixed conversation
 
-A transcript whose parties are two walled ones is a `confirm`, and a yes is
-not the end of it: the transcript is cut in the inbox, before it is a record,
-by label set. Hand it to the `meetings` skill's *A conversation that carries
-two walled parties, and extracts*: it proposes a file for each party alone
-and one for what belongs to both, with the cut points, and writes nothing
-until the user says yes. Speaker and timestamp alone never decide which
-party a passage belongs to; you propose, the user decides. Then each file is
-filed as its own conversation. Do not file the whole call under one page of
-both parties unless the user asks for exactly that.
+A transcript for two walled zones is a question, and a yes is not the end of
+it: the transcript is cut in the inbox, before it is a record, by zone. Hand
+it to the `meetings` skill's *A conversation that touches two walled zones*:
+it proposes one file for each zone, with the cut points, and writes nothing
+until the user says yes. There is no joint file: no zone can take one.
+Speaker and timestamp alone never decide which zone a passage belongs to;
+you propose, the user decides. Then each file is filed as its own
+conversation.
 
 ## Replies
 
@@ -246,8 +243,8 @@ Spoken, three sentences at most, the answer first:
 "Five waiting: Theo's call and four mails. Filed the call with Theo: the
 board said yes to March, and you owe him the draft by Friday the 9th. The
 newsletter went to the library, Owen's quotes are in Acme Review, and
-Marta's mail copies both Acme and Birch, two walled parties: Acme, Birch, or
-both?"
+Marta's mail copies both Acme and Birch, who sit in two walled zones: Work
+or Home?"
 
 Add a sentence only for what the user must know: a question, a wall that
 held something back, a learned domain, a failed commit.
@@ -267,8 +264,8 @@ aloud; a domain said as its name; dates as a day and a date.
 - **It never fetches.** It holds no credentials and never talks to a mail
   provider. Whatever put an item in the inbox (you, a rule, a script, a
   connector) is outside it.
-- **It never guesses the kind, the zone, a party or a project.** Unsure, it
-  asks one short question. It never guesses which walled party applies.
+- **It never guesses the kind, the zone or the project.** Unsure, it
+  asks one short question. It never guesses which zone applies.
 - **It never puts a mail itself into a project** unless the user said the
   mail is material and not a conversation. Otherwise the mail is a
   conversation, in Meetings, and only its attachment goes to `Sources/`.

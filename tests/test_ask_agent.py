@@ -385,7 +385,7 @@ class TestActions(AgentCase):
 
     def test_a_walled_proposal_is_refused_at_the_server(self):
         self.script([[{"call": "search", "args": {"words": "pallet quote", "kind": "meetings"}}, {"say": "Forty. [$1]"}],
-                     [{"call": "propose", "args": {"action": {"verb": "open", "zone": "Work", "project": "Birch Entry"}}},
+                     [{"call": "propose", "args": {"action": {"verb": "open", "zone": "Personal", "project": "Birch Entry"}}},
                       {"say": "Proposed."}]])
         a = self.agent()
         a.ask("What did Dana say about the quote?")

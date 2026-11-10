@@ -45,7 +45,7 @@ def load(name: str, path: Path):
 
 nurture = load("garrick_nurture", TOOLS / "nurture.py")
 
-WALLED_NOTE = "Theo Marsh said their tender closes on the ninth.\n"
+WALLED_NOTE = "Their tender closes on the ninth, see [[Zones/Personal/Todo]].\n"      # a link to a file of another walled zone: a crossing
 
 
 class Base(unittest.TestCase):
@@ -118,7 +118,6 @@ class ClassificationTest(Base):
         self.assertEqual({"mechanical"}, kinds("Pricing/Pricing.md"))
         self.assertIn("mechanical", kinds("Acme Review/Acme Review.md"))            # Freight, not listed
         self.assertEqual({"mechanical"}, kinds("Deliverables/Rate card.md"))
-        self.assertEqual({"wall"}, kinds("Acme Review/Notes.md"))
         follow_up = self.by_path(items, "260320-follow-up.md")
         self.assertIn("attribution", {i["kind"] for i in follow_up})
         self.assertIn("mechanical", {i["kind"] for i in follow_up})                 # the link the rename broke
@@ -137,16 +136,26 @@ class ClassificationTest(Base):
         self.assertEqual("260305 - Rate card.md", fixes["date"]["to"])               # the day it was first committed
         self.assertEqual(("260310-acme-kickoff", "260310-acme-start"), (fixes["relink"]["target"], fixes["relink"]["to"]))
 
-    def test_a_wall_is_named_by_its_file_and_its_wall_never_its_material(self):
-        _, out = self.run_tool("list")
-        wall = self.by_path(out["items"], "Acme Review/Notes.md")[0]
-        self.assertEqual("birch", wall["wall"])
-        self.assertEqual("", wall["message"])
-        report = (self.root / out["report"]).read_text()
-        for said in (json.dumps(out), report, wall["line"]):
-            for word in ("Theo", "Marsh", "tender", "ninth"):
-                self.assertNotIn(word, said)
-        self.assertIn("Acme Review/Notes.md: the wall around birch", report)
+    def wall_item(self, message, check="walls", path="Zones/Work/Acme Review/Notes.md"):
+        ctx = nurture.Ctx(self.root, today=None)
+        return nurture.sort_item(ctx, nurture.Item("check", check, path, message, severity="error"))
+
+    def test_a_wall_is_a_reference_into_a_walled_zone_named_with_its_file_zone_and_fix(self):
+        for message, fix in (("links Zones/Personal/Todo, a file of zone Personal; cross-zone work happens only when asked", "take the link out"),
+                             ("embeds ![[Zones/Personal/Plan.png]] from zone Personal; cross-zone work happens only when asked", "take the embed out"),
+                             ("repeats eight or more words of Zones/Personal/Home/Notes.md from zone Personal; ", "rewrite it in your own words"),
+                             ("names the path Zones/Personal/Home/Notes.md of zone Personal; ", "take the path out")):
+            item = self.wall_item(message)
+            self.assertEqual("wall", item.kind, message)
+            self.assertEqual("the Personal zone", item.wall)
+            self.assertEqual("", item.message)                                 # never the material
+            self.assertIn(fix, item.line())
+            self.assertIn("Notes.md: points into the Personal zone", item.line())
+            self.assertNotIn("Home", item.line().split(":", 1)[1])
+
+    def test_a_name_is_not_a_wall_and_the_old_name_wording_is_not_claimed(self):
+        item = self.wall_item("birch is walled and this project does not name it", check="projects")
+        self.assertNotEqual("wall", item.kind)
 
     def test_a_word_that_is_no_status_is_asked_not_fixed(self):
         write(self.pricing, thread_note("Acme Review", "Pricing", "acme", status="someday"))
@@ -164,13 +173,9 @@ class ClassificationTest(Base):
         self.assertEqual("attribution", item["kind"])
         self.assertEqual("Which zone does 261015 - floor belong to?", item["question"])
 
-    def test_a_meetings_question_citing_across_its_wall_is_a_wall(self):
-        write(self.wikis / "Meetings" / "questions" / "261015 - floor.md",
-              "---\ntype: question\nasked: 2026-10-15\nstatus: open\nzone: Work\nparties: [acme]\n"
-              "pages: [\"[[wiki/sources/260312-birch-kickoff]]\"]\n---\n\n**Acme: which volume floor holds?**\n")
-        _, out = self.run_tool("list")
-        item = self.by_path(out["items"], "questions/261015 - floor.md")[0]
-        self.assertEqual(("wall", "birch"), (item["kind"], item["wall"]))
+    def test_a_meetings_question_citing_a_page_of_another_zone_is_a_wall(self):
+        item = self.wall_item("cites a meeting from zone Personal; cross-zone work happens only when asked", path="Wikis/Meetings/questions/261015 - floor.md")
+        self.assertEqual(("wall", "the Personal zone"), (item.kind, item.wall))
 
     def test_each_finding_has_a_key_of_its_own_that_holds_across_runs(self):
         # One page, one check, two findings: no zone, and both hats of one company.
@@ -180,9 +185,9 @@ class ClassificationTest(Base):
         write(page, meeting_page(None, "[acme, acme-board]", "Joint call"))
         _, out = self.run_tool("list")
         found = [i for i in self.by_path(out["items"], "260322-joint-call.md") if i["check"] == "meetings"]
-        self.assertEqual({"attribution", "wall"}, {i["kind"] for i in found}, found)
+        self.assertIn("attribution", {i["kind"] for i in found}, found)
         keys = [i["key"] for i in found]
-        self.assertEqual(2, len(set(keys)), found)
+        self.assertEqual(len(keys), len(set(keys)), found)
         for key in keys:
             self.assertRegex(key, r"^[0-9a-f]{%d}$" % nurture.KEY_LENGTH)
             self.assertNotIn("joint", key)
@@ -197,25 +202,21 @@ class ClassificationTest(Base):
         _, out = self.run_tool("list")
         self.assertEqual("attribution", self.by_path(out["items"], "Pricing/Pricing.md")[0]["kind"])
 
-    def test_a_one_word_people_row_is_asked_for_its_full_name_with_a_proposal_from_its_person_page(self):
-        ctx = self.root / "System" / "context.md"
-        ctx.write_text(ctx.read_text().replace("| Theo Marsh | `birch` | Managing partner |\n",
-                                               "| Theo Marsh | `birch` | Managing partner |\n| Kit | `acme` | Buyer |\n"))
-        write(self.wikis / "Meetings" / "wiki" / "people" / "kit-avery.md",
-              "---\ntitle: Kit Avery\ntype: person\nparty: acme\n---\n\n# Kit Avery\n")
-        _, out = self.run_tool("list")
-        item = self.by_path(out["items"], "System/context.md")[0]
-        self.assertEqual("attribution", item["kind"])
-        self.assertEqual("What is the full name of Kit of acme?", item["question"])
-        self.assertEqual("Kit Avery", item["proposal"])
-        self.assertIn(nurture.ONE_WORD_ROW, item["message"])
-        import check
-        self.assertEqual(nurture.ONE_WORD_ROW, check.ONE_WORD_ROW)
-        # two pages that start with the word: nothing is proposed
-        write(self.wikis / "Meetings" / "wiki" / "people" / "kit-bell.md",
-              "---\ntitle: Kit Bell\ntype: person\nparty: acme\n---\n\n# Kit Bell\n")
-        _, out = self.run_tool("list")
-        self.assertEqual("", self.by_path(out["items"], "System/context.md")[0]["proposal"])
+    def test_nobody_is_asked_which_party_a_person_belongs_to_or_works_for(self):
+        for path, check, message in (
+                ("Wikis/Meetings/wiki/people/kit.md", "people", "no `organisation:` link to the entity page of its party"),
+                ("Wikis/Meetings/wiki/people/kit.md", "people", "no `party`"),
+                ("Wikis/Meetings/wiki/entities/larch.md", "meetings", "no `party:`"),
+                ("System/context.md", "context", "Kit is listed by one word, which a note refuses only beside the party's name"),
+                ("Zones/Work/Acme Review/Acme Review.md", "projects", "no `party`")):
+            item = self.wall_item(message, check=check, path=path)
+            self.assertNotEqual("attribution", item.kind, (check, message))
+            self.assertEqual("", item.question)
+
+    def test_a_mail_domain_no_party_has_is_asked_as_which_zone(self):
+        item = self.wall_item("`fernway.example` is a mail domain with no party", check="context", path="System/context.md")
+        self.assertEqual("attribution", item.kind)
+        self.assertEqual("Which zone does mail from fernway.example belong to?", item.question)
 
     def test_a_scope_keeps_to_its_paths(self):
         _, out = self.run_tool("list", "--scope", "Wikis/Meetings")
@@ -233,8 +234,7 @@ class ClassificationTest(Base):
             nurture.main(["list", "--root", str(self.root), "--ear", "--today", "2026-10-17"])
         said = out.getvalue().strip()
         self.assertTrue(said.startswith("In the workspace:"), said)
-        self.assertIn("one wall", said)
-        self.assertIn("4 fixes ready", said)
+        self.assertIn("fixes ready", said)
         self.assertNotIn("/", said)
 
 
@@ -454,11 +454,10 @@ class LinkRulesTest(Base):
 
 
 class WalledLinkTest(Base):
-    """No fix writes a link into a project walled from the note it is in. A
-    path written as code into Birch Entry, from a note of Acme Review, stays
-    for a person; one into Lantern, for a party no wall keeps from Acme, is
-    made a link as before. A parent link whose note was renamed into Birch
-    Entry is not pointed after it."""
+    """No fix writes a link into a walled zone other than the note's own. A
+    path written as code into a Personal project, from a note of Acme Review,
+    stays for a person; one into Lantern, a project of the same zone, is made a
+    link as before."""
 
     def setUp(self):
         super().setUp()
@@ -471,38 +470,36 @@ class WalledLinkTest(Base):
         write(lantern / "Lantern.md", project_hub("Work", "Lantern", "cobalt", ["Survey"]))
         write(lantern / "Threads" / "Survey" / "Survey.md", thread_note("Lantern", "Survey", "cobalt"))
         write(lantern / "Threads" / "Survey" / "Survey plan.md", '---\nparent: "[[Survey]]"\n---\n# Survey plan\n')
-        write(self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Sizing model.md",
-              '---\nparent: "[[Market Sizing]]"\n---\n# Sizing model\n')
+        personal = self.root / "Zones" / "Personal"
+        shutil.rmtree(personal / ".git", ignore_errors=True)
+        git(personal, "init", "-q")
+        write(personal / "Garden" / "Threads" / "Beds" / "Sizing model.md", '---\nparent: "[[Beds]]"\n---\n# Sizing model\n')
         freight = self.acme / "Threads" / "Freight"
         self.routes = write(freight / "Routes.md", '---\nparent: "[[Freight]]"\n---\n# Routes\n\n'
-                                                   "Model in `Birch Entry/Threads/Market Sizing/Sizing model.md`.\n")
+                                                   "Model in `Zones/Personal/Garden/Threads/Beds/Sizing model.md`.\n")
         self.lanes = write(freight / "Lanes.md", '---\nparent: "[[Freight]]"\n---\n# Lanes\n\n'
                                                  "Plan in `Lantern/Threads/Survey/Survey plan.md`.\n")
-        self.draft = write(freight / "Handover.md", '---\nparent: "[[Freight]]"\n---\n# Handover\n')
-        self.sub = write(freight / "Sub.md", '---\nparent: "[[Handover]]"\n---\n# Sub\n')
         git(self.work, "add", "-A", "--", ".", ":!Scratch.md", ":!Birch Entry/Birch Entry.md")
         git(self.work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "notes")
-        git(self.work, "mv", "Acme Review/Threads/Freight/Handover.md", "Birch Entry/Threads/Market Sizing/Handover v2.md")
-        git(self.work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "moved by hand")
 
-    def test_a_link_across_the_wall_is_never_a_mechanical_fix(self):
-        _, out = self.run_tool("list")
-        fixes = {(i["path"].rsplit("/", 1)[-1], i["fix"]["op"]) for i in out["items"] if i["kind"] == "mechanical"}
-        self.assertIn(("Lanes.md", "codelink"), fixes)
-        self.assertNotIn(("Routes.md", "codelink"), fixes)
-        self.assertNotIn(("Sub.md", "relink"), fixes)
-        judged = {i["path"].rsplit("/", 1)[-1] for i in out["items"] if i["kind"] == "judgment" and i["check"] == "links"}
-        self.assertTrue({"Routes.md", "Sub.md"} <= judged, judged)
+    def test_a_link_into_another_walled_zone_is_never_a_mechanical_fix(self):
+        ctx = nurture.Ctx(self.root)
+        self.assertTrue(nurture.across_wall(ctx, "Zones/Work/Acme Review/Threads/Freight/Routes.md",
+                                            "Zones/Personal/Garden/Threads/Beds/Sizing model.md"))
+        self.assertFalse(nurture.across_wall(ctx, "Zones/Work/Acme Review/Threads/Freight/Lanes.md",
+                                             "Zones/Work/Lantern/Threads/Survey/Survey plan.md"))
+        self.assertFalse(nurture.across_wall(ctx, "Zones/Work/Acme Review/Threads/Freight/Lanes.md",
+                                             "Wikis/Knowledge/wiki/concepts/resilience.md"))     # Knowledge reaches every zone
 
-    def test_one_yes_links_the_open_path_and_leaves_the_walled_one(self):
-        routes, sub = self.routes.read_text(), self.sub.read_text()
+    def test_one_yes_links_the_same_zone_path_and_leaves_the_other_zones_one(self):
+        routes = self.routes.read_text()
         code, out = self.run_tool("fix", "--yes")
         self.assertEqual(0, code, out)
         self.assertIn("Plan in [[Lantern/Threads/Survey/Survey plan.md]].", self.lanes.read_text())
-        self.assertEqual((routes, sub), (self.routes.read_text(), self.sub.read_text()))
+        self.assertEqual(routes, self.routes.read_text())
         code, out = self.run_tool("nightly")
         self.assertEqual(0, code, out)
-        self.assertEqual((routes, sub), (self.routes.read_text(), self.sub.read_text()))
+        self.assertEqual(routes, self.routes.read_text())
 
 
 class CorrectionTest(Base):
@@ -520,15 +517,19 @@ class CorrectionTest(Base):
         todo = self.work / "Todo.md"
         todo.write_text(todo.read_text().replace("## Inbox\n", "## Inbox\n\n- [ ] [[Acme Review/Threads/Pricing/Pricing|Pricing]]"
                                                  " send the sheet to acme-corp.example\n"))
-        birch = self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
-        birch.write_text(birch.read_text() + "\nTheo Marsh benchmarked acme-corp.example.\n")
+        personal = self.root / "Zones" / "Personal"
+        shutil.rmtree(personal / ".git", ignore_errors=True)
+        git(personal, "init", "-q")
+        birch = personal / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md"
+        write(birch, thread_note("Birch Entry", "Market Sizing", "birch") + "\nTheo Marsh benchmarked acme-corp.example.\n")
         self.birch_note = birch
+        self.personal = personal
         self.raw = self.wikis / "Meetings" / "raw" / "260310-acme-kickoff.txt"
         self.raw.write_text("Dana: write to acme-corp.example.\n")
         self.page = self.wikis / "Meetings" / "wiki" / "sources" / "260310-acme-start.md"
         self.page.write_text(self.page.read_text() + "\nRecord: [[raw/260310-acme-kickoff]]. Domain acme-corp.example.\n")
         # Commit all but the other session's two files, which stay as they were.
-        for repo in (self.work, self.wikis):
+        for repo in (self.work, self.wikis, self.personal):
             git(repo, "add", "-A", "--", ".", ":!Scratch.md", ":!Birch Entry/Birch Entry.md")
             git(repo, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "values")
         self.raw_before = self.raw.read_bytes()
@@ -556,8 +557,7 @@ class CorrectionTest(Base):
         self.assertIn("Corrections, 1", left)
 
     def test_one_yes_applies_them_in_one_commit_per_repository_of_only_what_it_touched(self):
-        # The Birch note would then name Acme's own domain, which the walls check run before every Nurture
-        # commit refuses (#330); it is left out here, and the refusal has its own test.
+        # The Personal note is left out here: it is another zone's, and has its own test.
         work, wikis = self.log(self.work), self.log(self.wikis)
         code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes", "--why", "no hyphen",
                                   "--leave", str(self.birch_note))
@@ -590,31 +590,18 @@ class CorrectionTest(Base):
         self.assertIn('Correct "acme-corp.example" to "acmecorp.example" in 4 files? Answer: yes, no hyphen.', asked)
         self.assertNotIn("Corrections", text.split("## Left", 1)[1])
 
-    def test_a_correction_the_walls_check_refuses_is_put_back(self):
-        """Every Nurture commit runs the walls check on its staged change first,
-        hook or no hook (#330): the Birch note would name Acme's own domain."""
-        work = self.log(self.work)
-        before = {f: f.read_text() for f in (self.acme / "Acme Review.md", self.work / "Todo.md", self.birch_note)}
-        code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes")
-        self.assertEqual(1, code)
-        self.assertEqual(["Zones/Work"], [r for r, _ in out["refused"]])
-        self.assertIn("the walls check refused it", out["refused"][0][1])
-        self.assertEqual(work, self.log(self.work))
-        self.assertEqual(before, {f: f.read_text() for f in before})
-        self.assertEqual("", git(self.work, "diff", "--cached", "--name-only").strip())
-
     def test_a_file_with_changes_not_committed_is_held(self):
         self.birch_note.write_text(self.birch_note.read_text() + "\nHalf a line.\n")
         code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW, "--yes")
         self.assertEqual(0, code)
-        self.assertEqual(["Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"],
+        self.assertEqual(["Zones/Personal/Birch Entry/Threads/Market Sizing/Market Sizing.md"],
                          [i["path"] for i in out["held"]])
         self.assertIn(self.OLD, self.birch_note.read_text())
         self.assertIn("Half a line.", self.birch_note.read_text())
-        self.assertNotIn("Market Sizing", git(self.work, "show", "--name-only", "--format=", "HEAD"))
+        self.assertEqual(1, len(self.log(self.personal)))                       # nothing was committed there
         self.assertNotIn(self.OLD, (self.acme / "Acme Review.md").read_text())
 
-    def test_a_scope_stops_at_its_walls_and_says_only_the_rules_sentence(self):
+    def test_a_scope_stops_at_a_walled_zone_and_says_only_the_rules_sentence(self):
         # A raw record no page rests on: nobody can tell whose it is, so a scope leaves it out too.
         orphan = self.wikis / "Meetings" / "raw" / "260401-unfiled.txt"
         orphan.write_text("Someone mentioned acme-corp.example.\n")
@@ -650,7 +637,7 @@ class CorrectionTest(Base):
         # With no scope, nothing is held back and no sentence is said.
         code, out = self.run_tool("correct", "--old", self.OLD, "--new", self.NEW)
         self.assertNotIn("refusal", out)
-        self.assertIn("Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md", [h["path"] for h in out["hits"]])
+        self.assertIn("Zones/Personal/Birch Entry/Threads/Market Sizing/Market Sizing.md", [h["path"] for h in out["hits"]])
 
     def test_never_with_nobody_watching(self):
         self.run_tool("correct", "--old", self.OLD, "--new", self.NEW)              # listed, so it waits in the record
@@ -703,7 +690,7 @@ class DebtTest(Base):
         rec = json.loads((self.root / "System" / "generated" / "nurture" / "2026-10-17.json").read_text())
         self.assertEqual(debt, rec["debt"])
         self.assertEqual(len(out["items"]), len(rec["standing"]))
-        for word in ("Theo", "tender"):                                      # a wall is weighed, never quoted
+        for word in ("tender",):                                      # a wall is weighed, never quoted
             self.assertNotIn(word, json.dumps(rec["standing"]))
         report = (self.root / out["report"]).read_text()
         self.assertIn("Context debt: %d (wall 10, attribution 5" % debt["total"], report)
@@ -907,7 +894,7 @@ class NightlyTest(Base):
         self.assertTrue(notice.startswith("digest|Fixed 4 overnight (Wikis 1, Work 3):"), notice)
         self.assertIn("1 status word", notice)
         self.assertIn("Waiting for you: one wall", notice)
-        for word in ("Theo", "tender"):
+        for word in ("tender",):
             self.assertNotIn(word, notice)
         report = (self.root / "System" / "generated" / "nurture").glob("*.md")
         self.assertIn("nobody watching", next(report).read_text())
@@ -960,7 +947,7 @@ class NightlyTest(Base):
         notice = self.notices.read_text()
         self.assertIn("Waiting for you: one wall", notice)
         self.assertRegex(notice, r'\nContext debt \d+, mostly walls in Work\. Say "nurture Work"\.')
-        for word in ("Theo", "tender"):
+        for word in ("tender",):
             self.assertNotIn(word, notice)
 
     def test_pages_that_would_fade_get_a_line_of_their_own_and_never_move(self):

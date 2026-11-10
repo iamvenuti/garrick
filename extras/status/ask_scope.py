@@ -7,8 +7,8 @@ Two things, both settled before the session sees a record.
 **The scope.** mentions() reads the request for the names in it: a party or
 its tag, a person, an alias (the Parties, People and Aliases of
 System/context.md, as garrick_lib.load_context() reads them), a project or
-a thread (ask.py's list of names). Each stands for a party, and a project
-or a thread for a place as well. A name that fits two entries whose parties
+a thread (ask.py's list of names). Each stands for a zone, and a project
+or a thread for a place as well. A name that fits two entries whose zones
 or places differ, and that the other names in the request do not settle,
 is unclear: the box asks which, and nothing is read. The answer settles it
 by another name, by the zone it names, or by an option exactly as the
@@ -17,32 +17,32 @@ question offered it; an answer that names two options is asked again
 does Pricing stand? (Pricing in Work)", settles the same way: it is the
 form the box puts back after a wall reset. scope() then takes the
 session's `find`, the route and the place it proposed, checked against the
-list as ask.py checks an action, and works out the parties it covers.
+list as ask.py checks an action, and works out the zone it reads.
+
+**A scope is a zone.** An answer reads the zone it is asked in, every open
+zone, Knowledge and System. Asked across every zone it reads one walled zone,
+the one its best record is in, with the open ones. A party is an index: it
+says what a name is called and never decides what may be read.
 
 **The records.** search() reads files inside the scope and nowhere else:
 
-    meetings   Wikis/Meetings/wiki/, each page with its parties: a list of
-               tags, and a zone, as check.py's finished() asks; a person or
-               entity page with its `party:` alone. Anything else is
-               unfinished and never read
-    knowledge  Wikis/Knowledge/wiki/: published material, of no party; a page
-               that carries a party or a zone is not published, and is skipped
+    meetings   Wikis/Meetings/wiki/, each page with its `zone:`; a page with
+               none, or with a zone the Zones table lacks, is never read
+    knowledge  Wikis/Knowledge/wiki/: published material, of no zone; a page
+               that carries a zone or a party is not published, and is skipped
     thread     the project's folder, or the thread's with its hub: notes, and
                the documents in a Sources/ folder, Word, PowerPoint and Excel
-               through extract.py. Each file is of its hub's party and, inside
-               a thread, its thread's too, as check.py reads them; a project
-               whose hub names no party is refused, and nothing in it is read
-    docs       System/garrick-docs/: Garrick's own pages, of no party
+               through extract.py. Each file is of its zone, its path
+    docs       System/garrick-docs/: Garrick's own pages, of no zone
 
-**It fails closed.** A record whose parties cannot all be stated, a tag the
-Parties table does not hold, a `parties:` that is not a list, is never read,
-even where check.py only warns about it.
+**It fails closed.** A record whose zone cannot be stated is never read.
 
-It returns passages, each with the parties it carries, and never writes a
-prompt: Asker.admit() in ask.py is the only way a passage reaches one.
-pick() chooses the passages a process may be given: none whose party is
-walled from one it holds already, or from one picked with it, and says
-whether a wall held any back. Nothing here writes a file.
+It returns passages, each with its zone, and never writes a prompt:
+Asker.admit() in ask.py is the only way a passage reaches one. choose()
+picks the passages a process may be given: none from a walled zone other than
+the one it holds already or picked with it, and says whether a wall held any
+back. Nothing is stored: a scope is read from the folders each time. Nothing
+here writes a file.
 
 Standard library only, Python 3.9 or later.
 """
@@ -120,7 +120,7 @@ def _tool(ws: Path, name: str, fits):
 def lib(ws: Path):
     """garrick_lib.py: the context, the walls, the frontmatter and the live files, read as the checks read them."""
     return _tool(ws, "garrick_lib.py", lambda m: all(callable(getattr(m, f, None)) for f in
-                                                     ("load_context", "blocked", "meets_in", "decide", "labels", "meeting_labels", "parse_frontmatter_text", "live_files")))
+                                                     ("load_context", "zone_of", "walled", "may_flow", "parse_frontmatter_text", "live_files")))
 
 
 def extractor(ws: Path):
@@ -128,16 +128,14 @@ def extractor(ws: Path):
     return _tool(ws, "extract.py", lambda m: callable(getattr(m, "text_of", None)) and isinstance(getattr(m, "KINDS", None), dict))
 
 
-def walled_in(ctx: dict, tags: Iterable[str], lib_) -> set:
-    """The walled parties among `tags`; a tag the Parties table lacks counts as walled."""
-    return {t for t in tags if lib_.is_walled(ctx, lib_.strip_tag(t))}
+def walled_zones(ctx: dict, zones: Iterable[Optional[str]], lib_) -> set:
+    """The walled zones among `zones`; a zone the Zones table lacks counts as walled."""
+    return {z for z in zones if z and lib_.walled(ctx, z)}
 
 
-def any_wall(ctx: dict, these: Iterable[str], those: Iterable[str], lib_) -> bool:
-    """Would a process holding `those` meet `these` (what a request names) with more than one walled party
-    between them? No project is known here, so two walled parties stop."""
-    a, b = walled_in(ctx, these, lib_), walled_in(ctx, those, lib_)
-    return bool(a and b and len(a | b) > 1)
+def crosses(ctx: dict, these: Iterable[Optional[str]], those: Iterable[Optional[str]], lib_) -> bool:
+    """Would a process holding `those` meet `these` with more than one walled zone between them?"""
+    return len(walled_zones(ctx, set(these) | set(those), lib_)) > 1
 
 
 # ---------------------------------------------------------------- the names in a request
@@ -153,23 +151,22 @@ def _norm(text: str) -> str:
 
 
 def note_tags(note: Path, lib_) -> frozenset:
-    """The `party:` tags a hub or thread note declares, read as check.py's party_tags() reads them."""
+    """The `party:` tags a hub or thread note names: an index, never a wall."""
     return frozenset(_tags(lib_.parse_frontmatter(note).get("party"), lib_))
 
 
-def hub_parties(ws: Path, zone: str, project: str, lib_) -> frozenset:
-    """The labels of a project's hub, the tags the walls are checked against: garrick_lib's labels(),
-    none when they cannot be derived."""
-    return frozenset(lib_.labels(ws, Path(ws) / "Zones" / zone / project / (project + ".md")) or ())
-
-
 def place_parties(ws: Path, zone: str, project: str, thread: Optional[str], lib_) -> frozenset:
-    """The parties a place is written for: its hub's, and a thread's own as
-    well; for a whole project, every thread's in it, live or not. garrick_lib's
-    labels() derives them; a place whose labels cannot be derived has none."""
+    """The party tags a place is indexed by: its hub's, and a thread's own as well; for a whole project, every
+    thread's too. They only say what a name is called: nothing here decides what may be read."""
     folder = Path(ws) / "Zones" / zone / project
-    got = lib_.labels(ws, folder if thread is None else folder / "Threads" / thread)
-    return frozenset(got or ())
+    out = set(note_tags(folder / (project + ".md"), lib_))
+    threads = [thread] if thread is not None else (sorted(p.name for p in (folder / "Threads").iterdir() if p.is_dir())
+                                                   if (folder / "Threads").is_dir() else [])
+    for t in threads:
+        note = folder / "Threads" / t / (t + ".md")
+        if note.is_file():
+            out |= note_tags(note, lib_)
+    return frozenset(out)
 
 
 def entries(ws: Path, names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> List[Tuple[str, bool, Entry]]:
@@ -189,7 +186,7 @@ def entries(ws: Path, names: Dict[str, Dict[str, dict]], ctx: dict, lib_) -> Lis
             out.append((words[0], True, e))
     for zone, projects in names.items():
         for project, r in projects.items():
-            parties = hub_parties(ws, zone, project, lib_)
+            parties = place_parties(ws, zone, project, None, lib_)
             folder = Path(ws) / "Zones" / zone / project
             e = Entry("project", project, parties, zone, project, None)
             out += [(project, False, e), (_spoken(lib_, folder), False, e)]
@@ -221,7 +218,7 @@ def _order(e: Entry) -> tuple:
 def _unclear(cands: Iterable[Entry]) -> bool:
     cands = list(cands)
     places = {(e.zone, e.project, e.thread) for e in cands if e.kind in ("project", "thread")}
-    return len({e.parties for e in cands}) > 1 or len(places) > 1
+    return len({e.zone for e in cands}) > 1 or len(places) > 1
 
 
 class Mentions:
@@ -361,9 +358,9 @@ def _settle(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dict
 
     def settle(within, asked=None, answered=False):
         settled: Dict[Tuple[int, int], Entry] = {}
-        means: Dict[Tuple[int, int], List[Entry]] = {}     # every entry a settled name stands for, all of one party and place
+        means: Dict[Tuple[int, int], List[Entry]] = {}     # every entry a settled name stands for, all of one zone and place
         for _ in range(2):                      # a name settled in the first pass can settle another
-            parties = set().union(*(e.parties for e in settled.values())) if settled else set()
+            zones = {e.zone for e in settled.values() if e.zone}
             places = {(e.zone, e.project) for e in settled.values() if e.project}
             for span in within:
                 if span in settled:
@@ -376,7 +373,7 @@ def _settle(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dict
                 by_label = offered(cands, ctx, text, answer) if answered else []
                 narrowed = None
                 for way in ([e for e in cands if e.project and (e.zone, e.project) in places]
-                            or [e for e in cands if e.parties & parties], by_zone, by_label):
+                            or [e for e in cands if e.zone in zones], by_zone, by_label):
                     if way:                     # each way that narrows at all, and all of them together
                         narrowed = [e for e in (cands if narrowed is None else narrowed) if e in way]
                 if narrowed and not _unclear(narrowed):
@@ -396,16 +393,14 @@ def _settle(ws: Path, request: str, names: Dict[str, Dict[str, dict]], ctx: dict
             return Mentions([], which(sorted(spans[span], key=_order), ctx))
     option = None
     if asked is not None:                       # what the answer settled it to, as the question offered it
-        option = next((label for label, e in _labels(sorted(spans[asked], key=_order), ctx) if e == settled[asked]), None)
+        option = next((label for label, e in _options(sorted(spans[asked], key=_order), ctx) if e == settled[asked]), None)
     return Mentions([settled[s] for s in kept], heard=[(s[0], s[1], text[s[0]:s[1]], means[s]) for s in kept],
                     option=option)
 
 
 def _all_of(cands: Iterable[Entry], zone: str, ctx: dict) -> bool:
-    """Whether every entry a name stands for is of this zone, and so is every
-    party it stands for: a party tagged like its zone, or named like it."""
-    rows = ctx.get("parties", {})
-    return all(e.zone == zone and all(rows.get(p, {}).get("zone") == zone for p in e.parties) for e in cands)
+    """Whether every entry a name stands for is of this zone."""
+    return all(e.zone == zone for e in cands)
 
 
 def offered(cands: List[Entry], ctx: dict, text: str, answer: int) -> List[Entry]:
@@ -413,10 +408,10 @@ def offered(cands: List[Entry], ctx: dict, text: str, answer: int) -> List[Entry
     word for word, a full stop aside: "Dana Whitlock of Acme Corp in Work".
     An answer that holds anything more names none."""
     body = _norm(text[answer:].strip().rstrip(".!"))
-    return [e for label, e in _labels(cands, ctx) if _norm(label) == body]
+    return [e for label, e in _options(cands, ctx) if _norm(label) == body]
 
 
-def _labels(cands: List[Entry], ctx: dict) -> List[Tuple[str, Entry]]:
+def _options(cands: List[Entry], ctx: dict) -> List[Tuple[str, Entry]]:
     """Each candidate as a question names it, with its zone where two would
     otherwise be said alike."""
     def said(e: Entry) -> str:
@@ -436,7 +431,7 @@ def _labels(cands: List[Entry], ctx: dict) -> List[Tuple[str, Entry]]:
 def which(cands: List[Entry], ctx: dict) -> str:
     """One question for the ear, naming the candidates as they are said."""
     labels: List[str] = []
-    for label, _ in _labels(cands, ctx):
+    for label, _ in _options(cands, ctx):
         if label not in labels:
             labels.append(label)
     labels = labels[:MOST_NAMED]
@@ -447,9 +442,9 @@ def which(cands: List[Entry], ctx: dict) -> str:
 
 
 class Scope:
-    """Where an answer reads. `parties` are the tags it may read for; `every`
-    is a question across every zone, which reads within one group of
-    parties no wall divides. `order` is "recent" for a question about the
+    """Where an answer reads: `zone`, or, with `every`, a question across every
+    zone, which reads within the one walled zone its best record is in. `parties`
+    are the index tags a request names: they only narrow an actions list. `order` is "recent" for a question about the
     last or since (#315), else None; `groups` are the words in groups, two
     spellings of one name in one group (groups())."""
 
@@ -619,20 +614,8 @@ def scope(ws: Path, find, said: Mentions, names: Dict[str, Dict[str, dict]], ctx
     kept = dict(order=order, groups=groups(ws, words, names, ctx, lib_))
     if route in ("knowledge", "docs"):
         return Scope(route, None, None, None, words, set(), **kept)
-    if project is not None:
-        place = place_parties(ws, zone, project, thread, lib_)
-        if not place or not place <= (set(ctx.get("parties", {})) - {"none"}):
-            # Nothing can say which side of a wall its files are on: labels() found none, or a tag the table lacks.
-            raise Refused("%s names no party %s, so nothing in it is read"
-                          % (project, "the Parties table holds" if place else "in its hub"))
-        return Scope(route, zone, project, thread, words, set(place), **kept)
-    rows = ctx.get("parties", {})
-    inside = {p for p in said.parties if zone is None or (rows.get(p, {}).get("zone") or zone) == zone}
-    if inside:                                  # the parties named, those of the zone it answers in (#317)
-        return Scope(route, zone, None, None, words, inside, **kept)
-    if zone is not None:                        # every party of one zone
-        return Scope(route, zone, None, None, words,
-                     {t for t, row in ctx.get("parties", {}).items() if row.get("zone") == zone}, **kept)
+    if project is not None or zone is not None:
+        return Scope(route, zone, project, thread, words, set(), **kept)
     return Scope(route, None, None, None, words, set(), every=True, **kept)
 
 
@@ -785,7 +768,7 @@ def _text(ws: Path, path: Path, sources: bool) -> Optional[str]:
 
 def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     """Every record inside the scope that the words find, best first, as
-    {"path", "date", "imported", "title", "parties", "text"}: the whole of it
+    {"path", "date", "imported", "title", "zones", "text"}: the whole of it
     a prompt or a citation may hold. `date` is when it happened, `imported`
     when it was filed.
 
@@ -800,7 +783,7 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
     found: List[Tuple[tuple, dict]] = []
     looked = [f for g in sc.groups for f in g]            # every form of every name looked for (#397)
 
-    def consider(path: Path, parties: List[str], text: str, home: int, first: bool = False, public: bool = False) -> None:
+    def consider(path: Path, zone: Optional[str], text: str, home: int, first: bool = False, public: bool = False) -> None:
         fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
         body = _body(text) if fm else text
         low = body.lower()
@@ -814,12 +797,14 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
         rank = (lead, date, imported) + words + (home,) if sc.order == "recent" else (lead,) + words + (date, home)
         title = fm.get("title") if isinstance(fm.get("title"), str) and fm.get("title").strip() else path.stem
         record = {"path": path.relative_to(ws).as_posix(), "date": date, "imported": imported,
-                  "title": title.strip(), "parties": sorted(parties), "text": passage(body, looked, own=first)}
+                  "title": title.strip(), "zones": [zone] if zone else [], "text": passage(body, looked, own=first)}
         if public:
-            record["public"] = True             # published: the one record that is read with no party
-        elif parties:
-            record["scoped"] = True             # search() admitted it against its own scope: choose() may start a group from it
+            record["public"] = True             # published: the one record that is read with no zone
         found.append((rank, record))
+
+    def reads(zone: Optional[str]) -> bool:
+        """May a record of this zone be read in this scope: the zone's own, an open zone's, or, across every zone, any."""
+        return bool(zone) and (sc.every or zone == sc.zone or not lib_.walled(ctx, zone))
 
     def knowledge(home: int) -> None:
         root = ws / "Wikis/Knowledge/wiki"
@@ -828,9 +813,9 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             if text is None:
                 continue
             fm = lib_.parse_frontmatter_text(text) if path.suffix.lower() == ".md" else {}
-            if any(fm.get(k) for k in ("parties", "party", "zone")) or lib_.labels(ws, path) != {lib_.KNOWLEDGE}:
+            if _labelled(fm, text):
                 continue                        # a page of someone's, not published: never read as published
-            consider(path, [], text, home, public=True)
+            consider(path, None, text, home, public=True)
 
     def meetings(home: int) -> None:
         root = ws / "Wikis" / "Meetings" / "wiki"
@@ -838,22 +823,10 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             text = _text(ws, path, False)
             if text is None:
                 continue
-            fm = lib_.parse_frontmatter_text(text)
-            parties = page_parties(fm, ctx, lib_)
-            if not parties:
-                continue                        # unfinished, or its parties cannot all be stated: never used
-            if sc.zone and fm.get("zone") and fm.get("zone") != sc.zone:
-                continue
-            if not sc.every and not set(parties) & sc.parties:
-                continue
-            if sc.project is not None and lib_.decide(sc.parties, set(parties), "read", ctx) != "permit":
-                continue                        # a page decide() does not admit against every party of the project's scope (#397)
-            # The wall test, before the page is matched, ranked, counted or
-            # cut: choose() itself, on this page alone and holding nothing, so
-            # that no other page can change whether it is kept (#397).
-            if not choose([{"parties": parties}], set(), ctx, lib_, 1, start=set(parties))[0]:
-                continue
-            consider(path, parties, text, home)
+            zone = lib_.zone_of(ws, path)
+            if zone == getattr(lib_, "UNZONED", None) or not reads(zone):
+                continue                        # no zone, or another walled zone's: never used
+            consider(path, zone, text, home)
 
     def place(home: int) -> None:
         root = ws / "Zones" / sc.zone / sc.project
@@ -864,15 +837,13 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             only = [folder, hub, root / "Sources"]
         else:
             note, only = hub, None
-        cache: dict = {}
         for path in _files(lib_, root, only):
             parts = path.relative_to(root).parts
-            tags = lib_.labels(ws, path, ctx, cache)         # its hub's and its thread's, derived in one place
-            if not tags:
-                continue                                     # no label, no permit: never read
+            if lib_.zone_of(ws, path) != sc.zone:
+                continue                                     # its zone is its path: anything else is never read
             text = _text(ws, path, "Sources" in parts)
             if text is not None:
-                consider(path, sorted(tags), text, home, first=sc.route == "thread" and path == note)
+                consider(path, sc.zone, text, home, first=sc.route == "thread" and path == note)
 
     # Every find with words reads its own place, the Meetings pages its scope
     # admits, and Knowledge; the route only decides which ranks first (#397).
@@ -882,12 +853,12 @@ def search(ws: Path, sc: Scope, ctx: dict, lib_) -> List[dict]:
             text = _text(ws, path, False)
             if text is None:
                 continue
-            if path.suffix.lower() == ".md" and lib_._party_like_key(path):
-                continue                        # a party key in any case or nesting: labelled, not published (#439)
-            consider(path, [], text, 1, public=True)
+            if path.suffix.lower() == ".md" and _labelled(lib_.parse_frontmatter_text(text), text):
+                continue                        # a zone or party key in any case: labelled, not published (#439)
+            consider(path, None, text, 1, public=True)
     elif sc.route == "knowledge":
         knowledge(1)
-        if sc.words and (sc.parties or sc.every):
+        if sc.words and (sc.zone or sc.every):
             meetings(0)
     elif sc.route == "meetings":
         meetings(1)
@@ -909,73 +880,41 @@ def _tags(value, lib_) -> List[str]:
     return sorted({t for t in (lib_.strip_tag(str(v)) for v in values) if t})
 
 
-PARTY_ALONE = ("person", "entity")       # the pages one `party:` may stand for: read on every side of a wall
+_LABEL_KEY = re.compile(r"(?im)^[ \t]*[\"']?(?:zone|party|parties)[\"']?[ \t]*:")
 
 
-def page_parties(fm: dict, ctx: dict, lib_) -> List[str]:
-    """A Meetings page's parties, or none when they cannot all be stated: a
-    finished page has a zone and a list of tags (check.py's finished()); a
-    person or entity page may have its `party:` alone. Every tag must be in
-    the Parties table, since decide() denies a tag it does not hold."""
-    got = lib_.meeting_labels(fm)
-    tags = sorted(got) if got else []
-    return tags if tags and set(tags) <= set(ctx.get("parties", {})) else []
-
-
-def pick(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS,
-         start: Optional[Set[str]] = None) -> Tuple[List[dict], bool]:
-    """The records a process that holds `held` may be given, best first, at
-    most `most`, and whether a wall held any back: choose() without its count."""
-    chosen, back, _ = choose(records, held, ctx, lib_, most, start)
-    return chosen, back
+def _labelled(fm: dict, text: str = "") -> bool:
+    """Whether a page carries a zone or a party key, in any case or nesting: it is someone's, not published."""
+    if any(str(k).strip().lower() in ("zone", "party", "parties") for k in fm):
+        return True
+    m = re.match(r"\ufeff?---\r?\n(.*?)\r?\n---", text, re.S)
+    return bool(m and _LABEL_KEY.search(m.group(1)))
 
 
 def admits(ctx: dict, held: Set[str], adding: Set[str], lib_) -> bool:
-    """May records labelled `adding` be given to a process that holds `held`? decide() says. A process holding
-    nothing is given the group the records set; a record with no party is a published page (Knowledge)."""
-    scope = set(held) or set(adding)
-    return lib_.decide(scope, set(adding) or {lib_.KNOWLEDGE}, "read", ctx) == "permit"
+    """May records of the zones `adding` be given to a process that holds the zones `held`? Not when that would
+    put two walled zones in one process. A record of no zone is published (Knowledge) or Garrick's own docs."""
+    return not crosses(ctx, held, adding, lib_)
 
 
-def starts(where, ctx: dict) -> Set[str]:
-    """The parties a find may start its group from, when the session holds none: a place's own labels,
-    the parties of a zone or of those named, or, across every zone, all of the table's."""
-    return set(where.parties) or set(ctx.get("parties", {}))
-
-
-def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS,
-           start: Optional[Set[str]] = None) -> Tuple[List[dict], bool, int]:
-    """The records a process that holds `held` may be given, best first, at
-    most `most`; whether a wall held any back: one whose parties are walled
-    from each other, from a party held already, or from one picked before
-    it; and how many it could have been given with no `most` (#315), the
-    `matched` the answer session is told beside how many it was given. A
-    record a wall held back is never counted, so the count says nothing of
-    what is on the far side. A question across every zone reads within one
-    group of parties no wall divides, the one its best record starts."""
+def choose(records: List[dict], held: Set[str], ctx: dict, lib_, most: int = MAX_RECORDS) -> Tuple[List[dict], bool, int]:
+    """The records a process that holds the zones `held` may be given, best first, at most `most`; whether a wall
+    held any back: a record of a walled zone other than the one held already, or picked before it; and how many
+    it could have been given with no `most` (#315), the `matched` the answer session is told beside how many it
+    was given. A record a wall held back is never counted, so the count says nothing of what is on the far side.
+    A question across every zone reads one walled zone, the one its best record is in."""
     group, chosen, back, matched = set(held), [], False, 0
-    nothing_held = not held
-    known = (set(ctx.get("parties", {})) - {"none"}) | {lib_.KNOWLEDGE}
     for r in records:
-        parties = set(r["parties"])
-        if not parties <= known:
-            continue                            # a tag no wall can be checked against: never read
-        # No label, no permit: only a published page of Knowledge is read with no party. The first
-        # record admitted sets the group of a question across every zone.
-        labels = parties or ({lib_.KNOWLEDGE} if r.get("public") else set())
-        # The scope is what the session holds. Only when it holds nothing at all may a find that names its
-        # own place (`start`: a place's labels, a zone's parties) begin its group with the first record in it.
-        scope = set(group)
-        if not scope and nothing_held and parties and len(walled_in(ctx, parties, lib_)) <= 1 and (
-                (start is not None and parties <= set(start)) or r.get("scoped")):
-            scope = set(parties)
-        if lib_.decide(scope, labels, "read", ctx) != "permit":
+        zones = {z for z in r["zones"] if z}
+        if not r.get("public") and not zones:
+            continue                            # no zone, no permit: only a published page is read with none
+        if not admits(ctx, group, zones, lib_):
             back = True
             continue
         matched += 1
         if len(chosen) < most:
             chosen.append(r)
-            group |= parties
+            group |= zones
     return chosen, back, matched
 
 

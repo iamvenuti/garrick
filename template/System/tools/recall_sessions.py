@@ -430,8 +430,8 @@ def reaches_sibling(base: Path, s: Session, folders: List[Tuple[str, str]], name
     was not opened in without naming it: a `..` path component, or a glob that
     can match a project's folder (it has a slash, or its fixed start is the
     start of a project name). `named` is whether the session's text names a
-    project outside its own folders, which the labels then carry. Such a
-    session is labelled with no project."""
+    project outside its own folders. Such a
+    session spans zones: only the root scope reads it."""
     zones = set()
     for cwd in s.cwds:
         place = recall.locate(base, Path(cwd)) if Path(cwd).is_absolute() else None

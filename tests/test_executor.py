@@ -113,15 +113,11 @@ class TestTheCommandLine(ExecutorCase):
         code, out, err, spawned = self.session("undo", "--zone", "Work", "--commit", commit)
         self.assertEqual((0, [self.build]), (code, spawned), err)
         self.assertTrue(self.freight.is_file())
-        # a wall: the rule's sentence and nothing else, and nothing written
+        # parties are an index, not a wall: a move to a project of another party in the same zone goes
         code, out, err, spawned = self.session("move", "--zone", "Work", "--project", "Acme", "--thread", "Freight",
                                                "--to", "Birch Entry")
-        self.assertNotEqual(0, code)
-        self.assertIn("A wall holds some material back from this project, so I have not used it. Nothing was written.",
-                      out + err)
-        self.assertNotIn("birch", (out + err).lower())
-        self.assertEqual([], spawned)
-        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertEqual((0, ""), (code, err), out)
+        self.assertEqual("Freight: moved to Birch Entry", self.head())
 
     def test_a_todo_line_is_ticked_by_its_words(self):
         code, out, err, spawned = self.session("todo-done", "--zone", "Work", "--line", "send the lanes")

@@ -1757,6 +1757,74 @@ def rewrite_tables(text, flags):
     return "\n".join(lines) + ("\n" if text.endswith("\n") else "")
 
 
+# Garrick 0.62.0's own prose in a context.md, word for word: the paragraphs that describe the party flags. On the yes
+# each one that is still exactly as shipped is replaced with the new template's wording; one the user changed stays.
+OLD_PROSE = {
+    "zones": ("A zone may name one party, which every file in the zone carries; leave it empty for none. New parties says what "
+              "`scaffold.py party` proposes for a party added in the zone: walled or open."),
+    "parties": ("Every organisation or person whose confidences you hold. The tag is what project and meeting frontmatter use.",
+                "Domains are optional: the part after the @ in their mail addresses. Mail from a listed domain files itself under that "
+                "party. Personal webmail, such as gmail.com, never names a party by itself.",
+                "Walled says whether a party is walled, `yes` or `no`. A walled party's material goes only into work that names that "
+                "party; an open party's material may go anywhere. The assistant checks this column before it uses a conversation in a project."),
+}
+
+
+def _intro(lines, title):
+    """(first, last + 1) of the lines between `## <title>` and its table, or None."""
+    start = next((i for i, l in enumerate(lines) if l.startswith("## ") and l[3:].strip().lower() == title), None)
+    if start is None:
+        return None
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("|") or lines[i].startswith("## ")), len(lines))
+    return start + 1, end
+
+
+def _paragraphs(lines):
+    out, cur = [], []
+    for l in lines:
+        if l.strip():
+            cur.append(l)
+        elif cur:
+            out.append(" ".join(x.strip() for x in cur))
+            cur = []
+    if cur:
+        out.append(" ".join(x.strip() for x in cur))
+    return out
+
+
+def refresh_prose(text):
+    """(text, notes): the 0.62 paragraphs about party flags replaced with the new template's, when they are Garrick's
+    own words exactly; a paragraph that says the old thing in other words stays, and a note names its section."""
+    try:
+        new = (TEMPLATE / "System" / "context.md").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return text, []
+    lines, notes = text.splitlines(), []
+    for title in ("zones", "parties"):
+        span, fresh = _intro(lines, title), _intro(new, title)
+        if span is None or fresh is None:
+            continue
+        old = OLD_PROSE[title]
+        old = (old,) if isinstance(old, str) else old
+        paras = _paragraphs(lines[span[0]:span[1]])
+        new_paras = _paragraphs(new[fresh[0]:fresh[1]])
+        kept, changed = [], False
+        for para in paras:
+            if para in old:
+                changed = True
+                continue
+            if re.search(r"may name one party|New parties|walled party's material|Walled says", para):
+                notes.append("The %s section of System/context.md still describes the party flags in your own words; edit it by hand." % title.capitalize())
+            kept.append(para)
+        if changed:
+            merged = new_paras + [p for p in kept if p not in new_paras]
+            block = [""]
+            for para in merged:
+                block += [para, ""]
+            lines[span[0]:span[1]] = block
+    return "\n".join(lines) + ("\n" if text.endswith("\n") else ""), notes
+
+
 def duplicate_people(text):
     """(the text without them, the rows taken out): a People row that repeats a name already listed above it. The
     first row of a person stays; the Party cell was a wall's and is context now."""
@@ -2216,14 +2284,14 @@ def walls_step(root, answer, apply_changes, as_json=False, only=False):
             "keeps deciding every flow, as it did. Once you have read the changes above, run " \
             "python3 System/tools/release.py update --apply --yes (or answer yes at the terminal).", data
     context = root / "System" / "context.md"
-    text = rewrite_tables(context.read_text(encoding="utf-8"), flags)
+    text, prose_notes = refresh_prose(rewrite_tables(context.read_text(encoding="utf-8"), flags))
     why = commit_files(root, {"System/context.md": (text.encode("utf-8"), context.stat().st_mode & 0o777)},
                        "Garrick: a Walled flag on each zone, in System/context.md")
     if why:
         return False, (said + "\n\n" if said else "") + "Nothing was installed and nothing was written: System/context.md: %s." % why, data
     data["written"] = True
     return True, (said + "\n\n" if said else "") + "Wrote the Walled column of the Zones table, and took the Party and New parties " \
-                                                    "columns and the Parties table's Walled column out.", data
+                                                    "columns and the Parties table's Walled column out." + "".join("\n" + n for n in prose_notes), data
 
 
 def find_workspace(path):

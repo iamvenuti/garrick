@@ -1086,6 +1086,29 @@ class TestZoneWallsStep(Case):
         self.assertIn("People rows that repeat a person", r.stdout)       # the lists are proposed, not applied
         self.assertIn("| Dana Whitlock | `emp` |", self.context.read_text())
 
+    def with_prose(self, parties_extra=""):
+        text = self.context.read_text()
+        text = text.replace("## Zones\n\n", "## Zones\n\n" + update.OLD_PROSE["zones"] + "\n\n", 1)
+        text = text.replace("## Parties\n\n", "## Parties\n\n" + "\n\n".join(update.OLD_PROSE["parties"]) + "\n\n" + parties_extra, 1)
+        self.context.write_text(text)
+        self.commit(self.root, "0.62 prose")
+
+    def test_the_prose_about_party_flags_goes_on_the_yes(self):
+        self.with_prose()
+        r = self.run_update("--apply", "--yes")
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        text = self.context.read_text()
+        for phrase in ("may name one party", "New parties", "walled party's material", "Walled says whether a party"):
+            self.assertNotIn(phrase, text)
+        self.assertIn("Each zone is either **walled** or **open**", text)
+        self.assertNotIn("by hand", r.stdout)
+
+    def test_prose_in_the_users_own_words_stays_and_is_named(self):
+        self.with_prose("My own note: a walled party's material goes only into work that names that party.\n\n")
+        r = self.run_update("--apply", "--yes")
+        self.assertIn("walled party's material goes only into work that names that party.", self.context.read_text())
+        self.assertIn("The Parties section of System/context.md still describes the party flags in your own words; edit it by hand.", r.stdout)
+
     def test_a_second_run_changes_nothing(self):
         self.run_update("--apply", "--yes")
         written, head = self.context.read_bytes(), self.head(self.root)

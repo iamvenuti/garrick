@@ -73,7 +73,7 @@ class BackupTest(unittest.TestCase):
         self.notify = notify.start()
         self.addCleanup(notify.stop)
         write(self.ws / "Wikis" / "Meetings" / "wiki" / "sources" / "260312-birch-call.md",
-              meeting_page("Work", "[birch]", "Birch call"))
+              meeting_page("Personal", "[]", "Birch call"))   # a Meetings page of another walled zone
 
     def run_backup(self, now=None):
         return backup.run(self.ws, now=now, folder=self.jobs, say=self.said.append)
@@ -92,7 +92,7 @@ class BackupTest(unittest.TestCase):
 
     def test_a_walled_file_is_held_back_and_the_rest_backed_up(self):
         acme = self.work / "Acme Review"
-        write(acme / "Notes.md", "Background: [[260312-birch-call]]\n")
+        write(acme / "Notes.md", "Background: [[260312-birch-call]]\n")      # a link into another walled zone
         self.assertEqual(backup.HELD, self.run_backup())
         tracked = git(self.work, "ls-files").split("\n")
         self.assertIn("Acme Review/Acme Review.md", tracked)

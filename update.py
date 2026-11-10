@@ -95,6 +95,7 @@ import datetime
 import fnmatch
 import hashlib
 import http.client
+import itertools
 import json
 import os
 import plistlib
@@ -2160,7 +2161,7 @@ def _party_zones(text):
     return out
 
 
-_OBSIDIAN = re.compile(r"obsidian://open\?[^\s)\]>]+")
+_OBSIDIAN = re.compile(r"obsidian://open\?[^\s)\]]+")   # a `<tag>` may stand in it
 
 
 def _zone_stems(root):
@@ -2173,25 +2174,24 @@ def _zone_stems(root):
     return stems
 
 
-def _resolve(root, target, stems, zstems, meeting_only=False):
-    """The one file a link, path, Obsidian address or wiki name stands for, read only; None when it stands for no
-    file, or for more than one. A name is looked for among the Meetings pages and the notes under Zones/, a
+def _candidates(root, target, stems, zstems, meeting_only=False):
+    """The set of files a link, path, Obsidian address or wiki name stands for, read only. A name is looked for among the Meetings pages and the notes under Zones/, a
     `Project/Note` name by the end of its path."""
     target = target.strip().strip("`").rstrip(",;").strip()
     if target.lower().startswith("obsidian://"):
         query = parse_qs(urlparse(target).query)
         name, vault = (query.get("file") or [""])[0], (query.get("vault") or [""])[0]
         if not name or ".." in Path(name).parts:
-            return None
+            return set()
         bases = [root, root / "Wikis"] + ([root / "Wikis" / vault] if vault and ".." not in vault else [])
         found = {(b / n).resolve() for b in bases for n in (name, name + ".md") if (b / n).is_file()}
-        return found.pop() if len(found) == 1 else None
+        return found
     target = unquote(target)
     if not target or ".." in Path(target).parts:
-        return None
+        return set()
     if target.startswith(("Zones/", "Wikis/")):
         found = {(root / n).resolve() for n in (target, target + ".md") if (root / n).is_file()}
-        return found.pop() if len(found) == 1 else None
+        return found
     stem = Path(target).name.casefold()
     stem = stem[:-3] if stem.endswith(".md") else stem
     found = {p.resolve() for p in stems.get(stem, [])}
@@ -2202,10 +2202,66 @@ def _resolve(root, target, stems, zstems, meeting_only=False):
         tail = "/" + (target if target.casefold().endswith(".md") else target + ".md").casefold()
         found |= {p.resolve() for p in zstems.get(stem, [])
                   if "/" not in target or ("/" + p.relative_to(root).as_posix().casefold()).endswith(tail)}
-    return found.pop() if len(found) == 1 else None
+    return found
 
 
-def _target_zone(root, lib, finding, stems, parties, zones, zstems=None):
+_LABEL = re.compile(r"<([^<>\s]+)>")
+
+
+def _party_names(text):
+    """{tag: the Party cell, plain text} from the Parties table: what the 0.62 check read when it put a tag in the
+    place of a walled party's name in the messages it prints."""
+    header, rows = _table_rows(text.splitlines(), "parties")
+    tag_at, name_at = _column(header, "tag"), _column(header, "party")
+    out = {}
+    if tag_at is None or name_at is None:
+        return out
+    for row in rows:
+        if len(row) > max(tag_at, name_at):
+            out[_plain(row[tag_at]).lstrip("#").lower()] = _plain(row[name_at])
+    return out
+
+
+def _unmasked(target, names):
+    """The spellings a target may have had before 0.62 put `<tag>` in the place of a party's name: for each label the
+    name as written, in lower case, and as a hyphenated slug, every combination. [] when a label names no party, or
+    there are more than four labels. The target itself when it holds none."""
+    labels = _LABEL.findall(target)
+    if not labels:
+        return [target]
+    if len(labels) > 4 or any(t.lower() not in names or not names[t.lower()] for t in labels):
+        return []
+    forms = []
+    for t in labels:
+        name = names[t.lower()]
+        forms.append(sorted({name, name.lower(), name.replace(" ", "-"), name.lower().replace(" ", "-")}))
+    out = set()
+    for combo in itertools.product(*forms):
+        text, it = target, iter(combo)
+        out.add(_LABEL.sub(lambda m: next(it), text))
+    return sorted(out)
+
+
+def _resolve(root, target, stems, zstems, meeting_only=False, names=None):
+    """The one file a link, path, Obsidian address or wiki name stands for, read only; None when it stands for no
+    file, or for more than one across every spelling it may have had before a party's name was masked as a tag, or
+    for a file outside the workspace."""
+    found = set()
+    for form in _unmasked(target, names or {}):
+        found |= _candidates(root, form, stems, zstems, meeting_only)
+    top = Path(root).resolve()
+    same = {}
+    for p in found:                  # one file by its inode: a case-blind volume answers to every spelling
+        try:
+            if top in p.parents:
+                st = p.stat()
+                same.setdefault((st.st_dev, st.st_ino), p)
+        except OSError:
+            continue
+    return next(iter(same.values())) if len(same) == 1 else None
+
+
+def _target_zone(root, lib, finding, stems, parties, zones, zstems=None, names=None):
     """The zone of what a finding points at or names: the one zone of the files its links, paths and Obsidian
     addresses resolve to, and of the page or file a wording finding repeats. Every target must resolve to exactly
     one file, else None: an unresolved or ambiguous target is never placed. With no target at all, the zone of the
@@ -2223,7 +2279,7 @@ def _target_zone(root, lib, finding, stems, parties, zones, zstems=None):
     if targets:
         zones_found = set()
         for target, meeting in targets:
-            hit = _resolve(root, target, stems, zstems, meeting_only=meeting)
+            hit = _resolve(root, target, stems, zstems, meeting_only=meeting, names=names)
             if hit is None:
                 return None
             zones_found.add(lib.zone_of(root, hit))
@@ -2259,10 +2315,10 @@ def near_wording(root, tools, findings):
         return None
 
 
-def classify(root, lib, finding, stems, parties, zones, near=frozenset(), zstems=None):
+def classify(root, lib, finding, stems, parties, zones, near=frozenset(), zstems=None, names=None):
     """"inside", "name" or "other" for a finding the zone rule releases."""
     src = lib.zone_of(root, finding.get("path") or "")
-    target = _target_zone(root, lib, finding, stems, parties, zones, zstems)
+    target = _target_zone(root, lib, finding, stems, parties, zones, zstems, names)
     if src is not None and target == src:
         return "inside"
     if src is not None and _kind(finding) == "wording" and (finding.get("path") or "", _source(finding)) in near:
@@ -2313,11 +2369,11 @@ def walls_study(root, flags, old_check=None, new_check=None):
     released, refused = diff_findings(old, new)
     text = (root / "System" / "context.md").read_text(encoding="utf-8", errors="replace")
     stems, parties, zones = _meeting_stems(root), _party_zones(text), list(flags)
-    zstems = _zone_stems(root)
+    zstems, names = _zone_stems(root), _party_names(text)
     kinds = {k: [] for k, _ in WALL_KINDS}
     near = near_wording(root, Path(new_check).parent, released)
     for f in released:
-        kinds[classify(root, lib, f, stems, parties, zones, near or frozenset(), zstems)].append(f)
+        kinds[classify(root, lib, f, stems, parties, zones, near or frozenset(), zstems, names)].append(f)
     mixed = mixed_pages(root, lib, flags)
     study = {"flags": {z: w for z, (w, _) in flags.items()}, "released": {k: len(v) for k, v in kinds.items()},
              "newly_refused": len(refused), "mixed_pages": [p for p, _ in mixed], "old": len(old), "new": len(new),

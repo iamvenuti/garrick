@@ -279,6 +279,7 @@ class Finding:
     path: str
     message: str
     ear: str = ""
+    fid: str = ""       # the allow-once id, kept from the finding as found when its words are rewritten for an assistant
 
 
 @dataclass
@@ -5328,7 +5329,8 @@ def assistant_findings(root: Path, findings: List[Finding]) -> List[Finding]:
         text = pattern.sub(lambda m: "<%s>" % names[m.group(1).casefold()], text)
         return re.sub(r'(<[^<>\s]+>) \(as "[^"]*"\)', r"\1", text)
 
-    return [Finding(f.severity, f.check, f.path, hide(f.message), hide(f.ear)) for f in findings]
+    # The id is taken over the finding as found, so the id an assistant or the page is shown is the one the ledger matches.
+    return [Finding(f.severity, f.check, f.path, hide(f.message), hide(f.ear), finding_id(f)) for f in findings]
 
 
 def fold_format(text: str) -> str:
@@ -8062,7 +8064,7 @@ def finding_token(f: Finding) -> str:
 
 
 def finding_id(f: Finding) -> str:
-    return allow_finding_id(f.path, finding_rule(f), finding_token(f))
+    return f.fid or allow_finding_id(f.path, finding_rule(f), finding_token(f))
 
 
 def allowable(f: Finding) -> bool:

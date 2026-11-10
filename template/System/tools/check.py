@@ -4307,8 +4307,24 @@ LEDGER_HEADER_RE = re.compile(r"(?mi)^[ \t]*\|[ \t]*date[ \t]*\|[ \t]*file[ \t]*
                               r"[ \t]*recipients[ \t]*\|[ \t]*authoritative[ \t]*\|[ \t]*$")
 
 
-# Where no run of words crosses: a Markdown heading, or a ledger's header row.
-STRUCTURE_RE = re.compile(r"(?mi)%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:]))
+# A bold label at the start of a line ("**Where it stands, 10 November 2026.**",
+# "**Decision.**"), and the date that opens a dated entry when it is not bold
+# ("10 November 2026." or "2026-11-10:"). A thread note is made of these as it
+# is made of headings: the template's labels and every entry's date are the
+# same in every note, and a run that took in the last words of one entry, the
+# next entry's date and the first words of that entry read two walled notes as
+# quoting each other on structure alone (#498). Only a label that opens a line:
+# bold inside a sentence is part of it.
+_MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
+BOLD_LABEL_RE = re.compile(r"(?m)^ {0,3}\*\*[^*\n]+\*\*")
+ENTRY_DATE_RE = re.compile(r"(?m)^ {0,3}(?:\d{1,2} (?:%s) \d{4}|\d{4}-\d{2}-\d{2})(?![0-9])[.:]?" % _MONTHS)
+
+
+# Where no run of words crosses: a Markdown heading, a ledger's header row, a bold label that opens a line, or the
+# date that opens an entry. What each break holds is read on its own, as a heading's words are: a label or heading
+# the templates under System/templates/ also hold is common wording, found in a shared file, so it never counts.
+STRUCTURE_RE = re.compile(r"(?mi)%s|%s|%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:],
+                                                BOLD_LABEL_RE.pattern[4:], ENTRY_DATE_RE.pattern[4:]))
 
 
 # What `scaffold.py checkpoint` writes around a person's items, exactly as
@@ -4442,10 +4458,14 @@ def _runs_between_breaks(text: str, resume_rows: bool = True) -> set:
     last = 0
     under_resume = False
     for m in STRUCTURE_RE.finditer(text):
-        out.update(_resume_runs(text[last:m.start()]) if under_resume else shingles(words(text[last:m.start()])))
+        before = text[last:m.start()]
+        out.update(_resume_runs(before) if under_resume else shingles(words(before)))
         out.update(shingles(words(m.group(0))))
         last = m.end()
-        under_resume = resume_rows and RESUME_HEAD_RE.match(m.group(0)) is not None
+        if m.group(0).lstrip().startswith("#") or LEDGER_HEADER_RE.match(m.group(0)):
+            under_resume = resume_rows and RESUME_HEAD_RE.match(m.group(0)) is not None
+        elif under_resume and RESUME_RULE_RE.search(before):
+            under_resume = False        # a label or a date below the rule: the block is over
     out.update(_resume_runs(text[last:]) if under_resume else shingles(words(text[last:])))
     return out
 

@@ -598,7 +598,7 @@ class TestTabs(StatusCase):
 
 
 class TestParties(StatusCase):
-    """The Parties tab (#447): each party with its flag and the notes that name it, nothing else."""
+    """The Parties view of the Context tab (#447): each zone, its projects, their parties with their flags, nothing else."""
 
     def setUp(self):
         super().setUp()
@@ -606,56 +606,106 @@ class TestParties(StatusCase):
         tools.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / "template" / "System" / "tools" / "garrick_lib.py", tools / "garrick_lib.py")
 
+    def view(self, html, name="parties"):
+        """One view of the Context tab: from its container to the next view's, or to the end of the tab."""
+        start = html.index('<div class="cx-view" id="cx-%s"' % name)
+        nxt = html.find('<div class="cx-view" id="cx-', start + 10)
+        return html[start:nxt if nxt > 0 else html.index('<section class="tab" id="tab-guide"', start)]
+
     def tab(self, html):
-        start = html.index('<section class="tab" id="tab-parties"')
-        return html[start:html.index("</section>", start)]
+        return self.view(html, "parties")
 
-    def article(self, html, tag):
-        start = self.tab(html).index('data-tag="%s"' % tag)
-        block = self.tab(html)[start:]
-        return block[:block.index("</article>")]
+    def row(self, html, project):
+        """The row of one project in the Parties view."""
+        rows = self.tab(html).split('<li class="pp-proj"')[1:]
+        return next(r for r in rows if re.search(r">%s</a>" % re.escape(project), r.split("</a>")[0] + "</a>"))
 
-    def test_the_tab_lists_each_party_with_its_flag_and_who_names_it(self):
+    def chip(self, html, tag):
+        view = self.tab(html)
+        start = view.index('<span class="pp-chip')  if tag is None else view.index('data-tag="%s"' % tag)
+        return view[start:view.index("</button></span>", start)]
+
+    def test_parties_is_a_view_of_context_not_a_tab(self):
         html = self.page()
-        self.assertIn('data-tab="parties">Parties</button>', html)               # no dot while every party has a flag
-        self.assertIn('id="tab-parties" hidden', html)
-        acme = self.article(html, "acme")
+        self.assertEqual(["overview", "todo", "status", "questions", "guide"], re.findall(r'role="tab" data-tab="([a-z]+)"', html))
+        self.assertNotIn('data-tab="parties"', html)
+        self.assertNotIn('id="tab-parties"', html)
+        switch = html[html.index('id="cx-switch"'):]
+        switch = switch[:switch.index("</div>")]
+        self.assertEqual([("findings", "true", "Findings"), ("parties", "false", "Parties")],
+                         re.findall(r'data-view="(\w+)" aria-pressed="(\w+)">([^<]+)<', switch))
+        self.assertIn('data-tab="questions">Context<span class="n" id="qp-tab-n"></span></button>', html)   # no dot while every party has a flag
+        self.assertIn('<div class="cx-view" id="cx-parties" data-cx-view="parties" hidden>', html)
+        self.assertIn('<div class="cx-view" id="cx-findings" data-cx-view="findings">', html)
+        self.assertIn('id="qp"', self.view(html, "findings"))
+        self.assertIn('id="checks"', self.view(html, "findings"))              # the Checks card stays under the findings
+
+    def test_the_zone_block_and_a_row_for_each_project_with_its_flag(self):
+        html = self.page()
+        view = self.tab(html)
+        self.assertIn('<section class="pp-zone" data-zone="Work"><h3>Work <small>no party of its own · new parties walled</small></h3>', view)
+        acme = self.row(html, "Acme Review")
         self.assertIn("Acme Corp", acme)
         self.assertIn(">walled<", acme)
-        self.assertIn("Acme Review", acme)
-        self.assertIn("Acme Review / Pricing", acme)                              # its thread, beside its project
         self.assertIn('data-flip="open"', acme)                                   # a walled party offers the other flag
-        self.assertNotIn("Birch Entry", acme)
-        zones = self.tab(html)
-        self.assertIn("<caption>Zones</caption>", zones)
-        self.assertIn("<td>Work</td><td><span class=\"muted\">none</span></td><td>walled</td>", zones)
+        self.assertNotIn("Birch", acme)
+        self.assertNotIn("Pricing", acme)                                         # its thread names only the hub's party: not shown
+        self.assertNotIn("<details", acme)
+        self.assertLess(view.index("Acme Review"), view.index("Birch Entry"))
+        self.assertNotIn("<caption>Zones</caption>", view)                        # the zones table is gone: each zone's heading says it
+
+    def test_a_zone_heading_names_its_party_and_default(self):
+        path = self.root / "System" / "context.md"
+        path.write_text(path.read_text().replace("| Work | Client work | | walled |", "| Work | Client work | `acme` | open |"))
+        self.assertIn("<h3>Work <small><code>acme</code> · new parties open</small></h3>", self.tab(self.page()))
+
+    def test_a_thread_shows_only_where_it_names_a_party_its_hub_does_not(self):
+        note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text().replace("party: acme", "party: [acme, birch]"))
+        html = self.page()
+        acme = self.row(html, "Acme Review")
+        self.assertIn('<details class="pp-threads"><summary>1 thread names another party</summary>', acme)
+        self.assertIn(">Pricing</a>", acme)
+        self.assertIn('data-tag="birch"', acme)                                   # the party the hub does not name
+        self.assertEqual(1, len(re.findall(r'<span class="pp-chip[^"]*" data-tag="acme"', acme)))   # the hub's own is not repeated on the thread
+        self.assertNotIn("<details", self.row(html, "Birch Entry"))
 
     def test_an_open_party_offers_the_other_flag(self):
         path = self.root / "System" / "context.md"
         path.write_text(path.read_text().replace("`birch` | yes", "`birch` | no"))
-        birch = self.article(self.page(), "birch")
+        birch = self.chip(self.page(), "birch")
         self.assertIn(">open<", birch)
         self.assertIn('data-flip="walled"', birch)
 
-    def test_a_party_with_no_flag_stands_out_and_the_tab_has_a_dot(self):
+    def test_a_party_with_no_flag_stands_out_and_the_context_tab_has_a_dot(self):
         path = self.root / "System" / "context.md"
         path.write_text(path.read_text().replace(" Walled |", "").replace("| yes |", "|"))
         html = self.page()
-        self.assertIn('data-tab="parties">Parties<span class="dot critical"', html)
-        self.assertIn('class="pp-party pp-flagless" data-tag="acme"', self.tab(html))
-        self.assertIn("no flag", self.article(html, "acme"))
+        self.assertIn('data-tab="questions">Context<span class="n" id="qp-tab-n"></span><span class="dot critical"', html)
+        self.assertIn('<span class="pp-chip pp-flagless pp-none" data-tag="acme">', self.tab(html))
+        self.assertIn("no flag", self.chip(html, "acme"))
 
-    def test_a_party_no_note_names_and_a_note_naming_none_stand_out(self):
+    def test_a_party_no_note_names_stands_under_unused_in_its_zone(self):
         path = self.root / "System" / "context.md"
-        path.write_text(path.read_text().replace("## People", "## People\n\n| Name | Party | Role |\n|---|---|---|\n", 0)
-                        .replace("| Birch & Co |", "| Cedar Ltd | Supplier | Work | `cedar` | no | |\n| Birch & Co |", 1))
+        path.write_text(path.read_text().replace("| Birch & Co |", "| Cedar Ltd | Supplier | Work | `cedar` | no | |\n| Birch & Co |", 1))
+        view = self.tab(self.page())
+        unused = view[view.index('<div class="pp-unused">'):]
+        unused = unused[:unused.index("</section>")]
+        self.assertIn("<h4>Unused</h4>", unused)
+        self.assertIn("Cedar Ltd", unused)
+        self.assertNotIn("Acme Corp", unused)
+        self.assertEqual(1, view.count('<div class="pp-unused">'))                 # a party that is named never shows there
+        self.assertNotIn("Cedar Ltd", view[:view.index('<div class="pp-unused">')])
+
+    def test_a_note_naming_none_stands_out_grouped_by_zone(self):
         write(self.root / "Zones" / "Work" / "Orphan" / "Orphan.md", project_hub("Work", "Orphan", "", ["Loose"]))
         write(self.root / "Zones" / "Work" / "Orphan" / "Threads" / "Loose" / "Loose.md", thread_note("Orphan", "Loose", ""))
         html = self.page()
-        self.assertIn("No project or thread names this party.", self.article(html, "cedar"))
-        tab = self.tab(html)
-        self.assertIn("Names no party", tab)
-        self.assertIn("Orphan / Loose", tab)
+        warn = self.tab(html)
+        warn = warn[warn.index("Names no party</h3>"):]
+        self.assertIn("<h4>Work</h4>", warn)
+        self.assertIn("Orphan / Loose", warn)
+        self.assertIn("names no party", self.row(html, "Orphan"))
 
     def test_two_parties_of_one_name_on_a_note_give_the_tab_a_dot(self):
         path = self.root / "System" / "context.md"
@@ -663,14 +713,17 @@ class TestParties(StatusCase):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Acme Review.md"
         note.write_text(note.read_text().replace("party: acme", "party: [acme, acme-adv]"))
         html = self.page()
-        self.assertIn('data-tab="parties">Parties<span class="dot critical"', html)
-        self.assertIn("Names two parties with one name", self.tab(html))
+        self.assertIn('id="qp-tab-n"></span><span class="dot critical"', html)
+        warn = self.tab(html)
+        self.assertIn("Names two parties with one name", warn)
+        self.assertIn("<h4>Work</h4>", warn[warn.index("Names two parties with one name"):])
 
-    def test_no_parties_table_no_tab(self):
+    def test_no_parties_table_no_views(self):
         (self.root / "System" / "context.md").write_text("# Context\n")
         html = self.page()
-        self.assertNotIn('data-tab="parties"', html)
-        self.assertNotIn('id="tab-parties"', html)
+        self.assertNotIn('id="cx"', html)
+        self.assertNotIn('id="cx-parties"', html)
+        self.assertNotIn("garrick-context-view", html)
 
     def test_the_tab_script_is_small_and_names_are_text(self):
         pp = status.parties_mod()
@@ -685,6 +738,60 @@ class TestParties(StatusCase):
 
     def test_a_rebuilt_page_is_the_same_page(self):
         self.assertEqual(self.tab(self.page()), self.tab(self.page()))
+
+    def test_an_old_link_to_the_parties_tab_opens_context_on_parties(self):
+        # a saved tab and a link written for the old tab both say "parties": the page opens Context and that view
+        self.assertIn("if(n==='parties'){n='questions';window.GarrickCxWant='parties';", status.JS)
+        self.assertIn("if(window.GarrickCxFor)GarrickCxFor(el);", status.JS)      # and a link into a view shows the view first
+
+    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
+    def test_the_switch_shows_one_view_and_a_saved_choice_wins_over_the_first(self):
+        harness = r"""
+        const vm = require("vm");
+        const [js, want, open] = JSON.parse(process.argv[1]);
+        function view(name) { return { name, hidden: false, getAttribute: a => a === "data-cx-view" ? name : null,
+          closest: s => s === "[data-cx-view]" ? this : null }; }
+        const views = ["findings", "parties", "who"].map(view);
+        views.forEach(v => { v.closest = s => s === "[data-cx-view]" ? v : null; });
+        const buttons = views.map(v => { const b = { v: v.name, pressed: "", getAttribute: a => a === "data-view" ? v.name : null,
+          setAttribute: (a, x) => { if (a === "aria-pressed") b.pressed = x; } }; return b; });
+        const cx = { querySelectorAll: s => s === "[data-cx-view]" ? views : s === "#cx-switch button" ? buttons : [], addEventListener() {} };
+        const store = {}, calls = [];
+        const window = { GarrickCxWant: want, GarrickQuestions: { open: () => calls.push("opened") } };
+        const ctx = { window, document: { getElementById: id => id === "cx" ? cx : null },
+          sessionStorage: { getItem: k => store[k] || null, setItem: (k, v) => { store[k] = v; } }, JSON, Object };
+        vm.createContext(ctx);
+        vm.runInContext(js, ctx);
+        const shown = () => views.filter(v => !v.hidden).map(v => v.name);
+        const out = { first: shown(), pressed: buttons.map(b => b.pressed), want: window.GarrickCxWant };
+        window.GarrickCxFor(views[2]);                       // a link into the Who sees what view
+        out.link = shown();
+        window.GarrickContextView("nothing");                // a name that is not a view reads as the first
+        out.bad = shown();
+        window.GarrickContextView("parties");
+        if (open) window.GarrickQuestions.open();            // the menu's Context row lands on Findings
+        out.menu = shown(); out.calls = calls; out.saved = store["garrick-context-view"];
+        process.stdout.write(JSON.stringify(out));
+        """
+        pp = status.parties_mod()
+
+        def run(want, open_=False):
+            done = subprocess.run(["node", "-e", harness, json.dumps([pp.CX_JS, want, open_])], capture_output=True, text=True, timeout=30)
+            self.assertEqual(0, done.returncode, done.stderr)
+            return json.loads(done.stdout)
+
+        plain = run(None)
+        self.assertEqual(["findings"], plain["first"])
+        self.assertEqual(["true", "false", "false"], plain["pressed"])
+        self.assertEqual(["who"], plain["link"])
+        self.assertEqual(["findings"], plain["bad"])
+        old = run("parties")                                                    # StatusTab('parties') left its wish
+        self.assertEqual(["parties"], old["first"])
+        self.assertIsNone(old["want"])                                          # and it is spent
+        menu = run(None, True)
+        self.assertEqual(["findings"], menu["menu"])
+        self.assertEqual(["opened"], menu["calls"])
+        self.assertEqual("findings", menu["saved"])
 
     def test_no_panel_script_opens_a_browser_dialog(self):
         # the Mac app's web view shows none: a confirm answers false at once, an alert and a prompt say nothing (#456)

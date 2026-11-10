@@ -140,7 +140,7 @@ class Moving(Fixture):
         text = self.a.read_text(encoding="utf-8")
         lines = [l for l in text.split("\n") if l.startswith("*Older entries:")]
         self.assertEqual(1, len(lines))
-        self.assertRegex(lines[0], r"^\*Older entries: \[\[Pricing history 20\d\d-Q[1-4]\]\](, \[\[Pricing history 20\d\d-Q[1-4]\]\])*\.\*$")
+        self.assertRegex(lines[0], r"^\*Older entries: \[\[Northwind/Threads/Pricing/history/Pricing history 20\d\d-Q[1-4]\]\](, \[\[Northwind/Threads/Pricing/history/Pricing history 20\d\d-Q[1-4]\]\])*\.\*$")
         years = [int(q[:4]) for q in __import__("re").findall(r"(\d{4})-Q", lines[0])]
         self.assertEqual(sorted(years, reverse=True), years)
         kept = self.entries_of(self.a)
@@ -154,7 +154,7 @@ class Moving(Fixture):
         self.assertEqual("---", lines[0])
         shut = lines.index("---", 1)
         fm = lines[1:shut]
-        self.assertEqual(["type: history", 'parent: "[[Pricing]]"', 'project: "[[Northwind]]"', "party: acme"], fm[:4])
+        self.assertEqual(["type: history", 'parent: "[[Northwind/Threads/Pricing/Pricing|Pricing]]"', 'project: "[[Northwind]]"', "party: acme"], fm[:4])
         self.assertTrue(fm[4].startswith("created: "))
         self.assertFalse(any(l.startswith("status:") for l in fm))
         rest = [l for l in lines[shut + 1:] if l.strip()]
@@ -377,6 +377,45 @@ class Notes(Fixture):
         found = history.notes_in(self.root, "Zones/Work")
         self.assertIn(self.a, found)
         self.assertFalse([p for p in found if "history" in p.parts])
+
+
+class Guards(Fixture):
+    def test_a_history_folder_that_is_a_link_stops_the_note_and_nothing_is_written(self):
+        self.put(self.a, thread("Pricing", "Northwind", "acme", [1, 2, 3, 4, 5, 400]))
+        elsewhere = self.root / "Zones" / "Home" / "Garden" / "Threads" / "Beds" / "elsewhere"
+        elsewhere.mkdir(parents=True)
+        os.symlink(str(elsewhere), str(self.a.parent / "history"))
+        snap = self.a.read_bytes()
+        res = history.apply(self.root, self.a, TODAY)
+        self.assertFalse(res.done)
+        self.assertIn("link", res.skipped)
+        self.assertEqual(snap, self.a.read_bytes())
+        self.assertEqual([], list(elsewhere.iterdir()))
+
+    def test_a_history_file_that_is_a_link_out_of_the_folder_stops_the_note(self):
+        self.put(self.a, thread("Pricing", "Northwind", "acme", [1, 2, 3, 4, 5, 400]))
+        (self.a.parent / "history").mkdir()
+        target = self.root / "Zones" / "Home" / "Garden" / "other.md"
+        target.write_text("x\n", encoding="utf-8")
+        os.symlink(str(target), str(self.a.parent / "history" / "Pricing history 2025-Q1.md"))
+        self.assertIn("link", history.apply(self.root, self.a, TODAY).skipped)
+
+    def test_identical_entries_on_one_date_all_reach_the_history_file(self):
+        text = thread("Pricing", "Northwind", "acme", [1, 2, 3, 4, 5])
+        old = "**%s.** Parked.\n\n**%s.** Parked.\n\n**%s.** Woken.\n" % ((stamp(day(400)),) * 3)
+        self.put(self.a, text + "\n" + old)
+        res = history.apply(self.root, self.a, TODAY)
+        self.assertTrue(res.done, res.error)
+        (path,) = list((self.a.parent / "history").glob("*.md"))
+        body = path.read_text(encoding="utf-8")
+        self.assertEqual(2, body.count("Parked."))
+        self.assertEqual(1, body.count("Woken."))
+        self.assertNotIn("Parked.", self.a.read_text(encoding="utf-8"))
+
+    def test_the_confirmation_counts_lines_not_looks_them_up(self):
+        said = history.unconfirmed("a\nb\nb\n", "a\n", ["b\n"])
+        self.assertIn(history.UNCONFIRMED, said)
+        self.assertEqual("", history.unconfirmed("a\nb\nb\n", "a\n", ["b\nb\n"]))
 
 
 class Skills(unittest.TestCase):

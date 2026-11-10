@@ -135,6 +135,7 @@ class Verify(unittest.TestCase):
         self.assertIn("a link is gone: wiki/people/dana", said)
         self.assertTrue([s for s in said if s.startswith("the table has")])
         self.assertIn("the frontmatter changed", said)
+        self.assertIn("a date is gone: 15 September", compact.verify_text(self.old, self.old.replace("15 September", "mid month")))
         self.path.write_text(text, encoding="utf-8")
         self.assertEqual(1, self.run_verify())
 

@@ -79,7 +79,7 @@ class Made(Installed):
         fm_end = text.index("\n---\n") + 5                 # the end of the frontmatter
         rule = text.index("\n---\n", fm_end)               # the rule under the Resume here block
         head, sep = text[:rule], "\n---\n"
-        thread = self.zones[zone][1].lower()
+        thread = zone.lower()          # the zone's own words, so only the thread names are shared
         entries = []
         for i in range(count):
             d = day(i * 9)
@@ -204,14 +204,57 @@ class Renamed(Made):
         text = (new / "Renewal.md").read_text(encoding="utf-8")
         line = next(l for l in text.split("\n") if l.startswith("*Older entries:"))
         for q in quarters:
-            self.assertIn("[[Renewal history %s]]" % q[:-3], line)
+            self.assertIn("[[Northwind/Threads/Renewal/history/Renewal history %s]]" % q[:-3], line)
         self.assertNotIn("Pricing history", text)
         one = (new / "history" / files[0]).read_text(encoding="utf-8")
-        self.assertIn('parent: "[[Renewal]]"', one)
+        self.assertIn('parent: "[[Northwind/Threads/Renewal/Renewal|Renewal]]"', one)
         self.assertIn("# Renewal: history, %s" % files[0].rsplit(" ", 1)[1][:-3], one)
         self.assertNotIn("Pricing", "\n".join(one.split("\n")[:12]))       # the header: parent, heading
         self.assertEqual("", self.git("Work", "status", "--porcelain").stdout)
         self.assertEqual([], self.errors())
+
+
+class SameName(Made):
+    """Threads of one name in two walled zones and an open one: every link a history file or a link line holds
+    names its own zone's file (a path from the project), so the wall check reads none of them as crossing."""
+
+    def setUp(self):
+        super().setUp()
+        for zone, (project, thread, party) in list(self.zones.items()):
+            if thread == "Pricing":
+                continue
+            new = (project, "Pricing", party)
+            self.run_tool("scaffold.py", "rename", "--zone", zone, "--project", project, "--thread", thread, "--to", "Pricing")
+            self.zones[zone] = new
+            self.write_long(zone)
+            self.git(zone, "add", "-A")
+            self.git(zone, "commit", "-q", "-m", "long note")
+
+    def test_each_zone_moves_its_own_thread_in_any_order_and_every_link_stays_home(self):
+        for n, order in enumerate((("Work", "Home", "Ventures"), ("Ventures", "Home", "Work"))):
+            for zone in order:
+                project = self.zones[zone][0]
+                note = self.note(zone)
+                if n:                                         # long again, so the second order moves it again
+                    self.write_long(zone)
+                    self.git(zone, "add", "-A")
+                    self.git(zone, "commit", "-q", "-m", "long again")
+                r = self.history("apply", note.relative_to(self.root).as_posix(), "--commit", "%s: older entries moved" % zone)
+                self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+                text = note.read_text(encoding="utf-8")
+                line = next(l for l in text.split("\n") if l.startswith("*Older entries:"))
+                files = sorted((note.parent / "history").glob("*.md"))
+                self.assertTrue(files)
+                for path in files:
+                    self.assertIn("[[%s/Threads/Pricing/history/%s]]" % (project, path.stem), line)
+                    self.assertIn('parent: "[[%s/Threads/Pricing/Pricing|Pricing]]"' % project, path.read_text(encoding="utf-8"))
+                self.assertNotIn("[[Pricing", line)
+        self.assertEqual([], self.errors())
+
+class FreshInstall(Made):
+    def test_no_instruction_file_is_over_its_word_budget(self):
+        found = json.loads(self.run_tool("check.py", "--json").stdout)["findings"]
+        self.assertEqual([], [f for f in found if f["check"] == "instructions" and "over its" in f["message"]])
 
 
 class Moved(Made):
@@ -222,7 +265,7 @@ class Moved(Made):
         self.git("Work", "commit", "-q", "-m", "apex")
         note = self.note("Work")
         (note.parent / "Deliverables").mkdir()
-        (note.parent / "Deliverables" / "pricing-memo.md").write_text("# Memo\n", encoding="utf-8")
+        (note.parent / "Deliverables" / "work-memo.md").write_text("# Memo\n", encoding="utf-8")
         self.git("Work", "add", "-A")
         self.git("Work", "commit", "-q", "-m", "memo")
         self.assertEqual(0, self.history("apply", note.relative_to(self.root).as_posix(), "--commit", "m").returncode)

@@ -313,6 +313,7 @@ class Workspace:
     zone_notes: Optional[List[Tuple[Path, str]]] = None  # every live note in the zones, read on first use
     ignored: Optional[set] = None  # what the workspace's repositories ignore, listed on first use
     shared_links: Optional["PathIndex"] = None  # the shared files, indexed for links on first use
+    template_labels: Optional[tuple] = None     # (test, fingerprint) of the labels the installed templates hold
     checkouts: Optional[List[Path]] = None  # the Garrick checkouts inside a project, found on first use
     apart: Optional[set] = None  # what the checks leave out of a project's own files, listed on first use
     raw_records: Optional[Dict[str, List[Path]]] = None  # Meetings raw records by stem, any depth, on first use
@@ -4353,24 +4354,59 @@ LEDGER_HEADER_RE = re.compile(r"(?mi)^[ \t]*\|[ \t]*date[ \t]*\|[ \t]*file[ \t]*
                               r"[ \t]*recipients[ \t]*\|[ \t]*authoritative[ \t]*\|[ \t]*$")
 
 
-# A bold label at the start of a line ("**Where it stands, 10 November 2026.**",
-# "**Decision.**"), and the date that opens a dated entry when it is not bold
-# ("10 November 2026." or "2026-11-10:"). A thread note is made of these as it
-# is made of headings: the template's labels and every entry's date are the
-# same in every note, and a run that took in the last words of one entry, the
-# next entry's date and the first words of that entry read two walled notes as
-# quoting each other on structure alone (#498). Only a label that opens a line:
-# bold inside a sentence is part of it.
+# What ends a run besides a heading (#498): the bold date that opens a dated entry (`**10 November 2026.**` or
+# `**2026-11-10**`, as history.py reads an entry), and a bold label that opens a line and that an installed
+# template under System/templates/ holds, such as the thread template's "Where it stands, <D Month YYYY>." A
+# thread note is made of these as it is made of headings, and a run that crossed one read two walled notes as
+# quoting each other on structure alone. Any other bold opener, a plain date and a log line that starts with a date
+# are wording like the rest of the line: a copied log must still be found. With no template to read, no label breaks.
 _MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
 BOLD_LABEL_RE = re.compile(r"(?m)^ {0,3}\*\*[^*\n]+\*\*")
-ENTRY_DATE_RE = re.compile(r"(?m)^ {0,3}(?:\d{1,2} (?:%s) \d{4}|\d{4}-\d{2}-\d{2})(?![0-9])[.:]?" % _MONTHS)
+ENTRY_DATE_RE = re.compile(r"(?mi)^ {0,3}\*\*(?:\d{1,2} (?:%s) \d{4}|\d{4}-\d{2}-\d{2})[^*\n]*\*\*" % _MONTHS)
 
 
-# Where no run of words crosses: a Markdown heading, a ledger's header row, a bold label that opens a line, or the
-# date that opens an entry. What each break holds is read on its own, as a heading's words are: a label or heading
-# the templates under System/templates/ also hold is common wording, found in a shared file, so it never counts.
-STRUCTURE_RE = re.compile(r"(?mi)%s|%s|%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:],
-                                                BOLD_LABEL_RE.pattern[4:], ENTRY_DATE_RE.pattern[4:]))
+# Where no run of words crosses: a Markdown heading, a ledger's header row, or the date that opens an entry (and, with
+# the templates' labels, see `breaks`). What each break holds is read on its own, as a heading's words are.
+STRUCTURE_RE = re.compile(r"(?mi)%s|%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER_RE.pattern[5:], ENTRY_DATE_RE.pattern[5:]))
+
+
+def breaks(text: str, labels: Optional[Callable[[str], bool]] = None) -> list:
+    """The matches in `text` where no run crosses: STRUCTURE_RE's, and, when `labels` says a bold label opening a
+    line is held by an installed template, that label's."""
+    found = list(STRUCTURE_RE.finditer(text))
+    if labels is not None:
+        taken = [(m.start(), m.end()) for m in found]
+        for m in BOLD_LABEL_RE.finditer(text):
+            if labels(m.group(0)) and not any(a <= m.start() < b for a, b in taken):
+                found.append(m)
+        found.sort(key=lambda m: m.start())
+    return found
+
+
+def template_labels(ws: "Workspace") -> Tuple[Optional[Callable[[str], bool]], str]:
+    """(a test for a bold label held by an installed template, a fingerprint of the labels). The labels are the
+    bold openers of lines in System/templates/ and System/templates.local/; a `<placeholder>` in one matches any
+    words. None when there are no templates to read."""
+    if ws.template_labels is None:
+        found = set()
+        for top in (TEMPLATES, TEMPLATES_LOCAL):
+            folder = ws.root.joinpath(*top)
+            for path in (walk_files(folder) if folder.is_dir() else []):
+                if path.suffix.lower() == ".md":
+                    for m in BOLD_LABEL_RE.finditer(read_text(path) or ""):
+                        found.add(" ".join(m.group(0).strip().strip("*").casefold().split()))
+        if not found:
+            ws.template_labels = (None, "")
+        else:
+            exact = {f for f in found if "<" not in f}
+            loose = [re.compile("^" + ".+?".join(re.escape(x) for x in re.split(r"<[^>]*>", f)) + "$")
+                     for f in found if "<" in f]
+
+            def held(label: str) -> bool:
+                key = " ".join(label.strip().strip("*").casefold().split())
+                return key in exact or any(r.match(key) for r in loose)
+            ws.template_labels = (held, hashlib.sha1("\0".join(sorted(found)).encode("utf-8")).hexdigest()[:12])
+    return ws.template_labels
 
 
 # What `scaffold.py checkpoint` writes around a person's items, exactly as
@@ -4474,7 +4510,7 @@ def without_link_targets(text: str, shared: Optional[Callable[[str], bool]] = No
     return WEB_RE.sub(" ", MDLINK_RE.sub("] ", text))
 
 
-def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
+def runs(text: str, shared: Optional[Callable[[str], bool]] = None, labels: Optional[Callable[[str], bool]] = None) -> set:
     """Every shingle of `text`, links reduced to the words a reader sees (see
     without_link_targets), and no run crossing a Markdown heading: the
     headings of a note are its template's structure ("State of play", "Resume
@@ -4490,20 +4526,20 @@ def runs(text: str, shared: Optional[Callable[[str], bool]] = None) -> set:
     out: set = set()
     last = 0
     for start, end in checkpoint_spans(text):
-        out.update(_runs_between_breaks(text[last:start]))
-        out.update(_checkpoint_runs(text[start:end]))
+        out.update(_runs_between_breaks(text[last:start], labels=labels))
+        out.update(_checkpoint_runs(text[start:end], labels))
         last = end
-    out.update(_runs_between_breaks(text[last:]))
+    out.update(_runs_between_breaks(text[last:], labels=labels))
     return out
 
 
-def _runs_between_breaks(text: str, resume_rows: bool = True) -> set:
+def _runs_between_breaks(text: str, resume_rows: bool = True, labels: Optional[Callable[[str], bool]] = None) -> set:
     """The shingles of `text`, none crossing a heading or a ledger's header,
     nor, with `resume_rows`, a row of the table under a Resume here heading."""
     out: set = set()
     last = 0
     under_resume = False
-    for m in STRUCTURE_RE.finditer(text):
+    for m in breaks(text, labels):
         before = text[last:m.start()]
         out.update(_resume_runs(before) if under_resume else shingles(words(before)))
         out.update(shingles(words(m.group(0))))
@@ -4533,7 +4569,7 @@ def _resume_runs(text: str) -> set:
     return out
 
 
-def _checkpoint_runs(block: str) -> set:
+def _checkpoint_runs(block: str, labels: Optional[Callable[[str], bool]] = None) -> set:
     """The shingles of one checkpoint block, from its opening marker to its
     closing one. The two markers and the line straight under the opening one
     are not read; an item is read as its own words; anything else is read."""
@@ -4545,10 +4581,10 @@ def _checkpoint_runs(block: str) -> set:
     out: set = set()
     last = 0
     for m in CHECKPOINT_ITEM_RE.finditer(text):
-        out.update(_runs_between_breaks(text[last:m.start()], resume_rows=False))
+        out.update(_runs_between_breaks(text[last:m.start()], resume_rows=False, labels=labels))
         out.update(shingles(words(next(g for g in m.groups() if g is not None))))
         last = m.end()
-    out.update(_runs_between_breaks(text[last:], resume_rows=False))
+    out.update(_runs_between_breaks(text[last:], resume_rows=False, labels=labels))
     return out
 
 
@@ -4651,7 +4687,10 @@ def wording(ws: Workspace, path: Path, text: str, body: bool) -> set:
     transcript, a mail or a page reads (transcript_text), and with `body`
     without its frontmatter."""
     text = transcript_text(path, text)
-    return runs(body_of(text) if body else text, shared_link(ws, path))
+    return runs(body_of(text) if body else text, shared_link(ws, path), template_labels(ws)[0])
+
+
+LABELS_KEY = "\0labels:"
 
 
 def file_runs(ws: Workspace, path: Path, body: bool) -> Iterable[int]:
@@ -4671,11 +4710,15 @@ def file_runs(ws: Workspace, path: Path, body: bool) -> Iterable[int]:
             return asked[target]
 
         text = transcript_text(path, read_text(path) or "")
-        found = runs(body_of(text) if body else text, ask)
+        found = runs(body_of(text) if body else text, ask, template_labels(ws)[0])
+        asked[LABELS_KEY + template_labels(ws)[1]] = True        # the templates' labels are read too
         return array("q", sorted(found)).tobytes(), sorted(asked.items())
 
-    held, _ = ws.cache.get("body" if body else "text", path, make,
-                           lambda v: all(link(target) == answer for target, answer in v[1]))
+    def valid(v: tuple) -> bool:
+        return all((target == LABELS_KEY + template_labels(ws)[1]) if target.startswith(LABELS_KEY) else link(target) == answer
+                   for target, answer in v[1])
+
+    held, _ = ws.cache.get("body" if body else "text", path, make, valid)
     found = array("q")
     found.frombytes(held)
     return found
@@ -4770,7 +4813,7 @@ def meeting_wording(ws: Workspace, text: str, exempt: set, source: Path) -> List
     the runs in `exempt`."""
     index = quote_index(ws)
     found = set()
-    for h in runs(text, shared_link(ws, source)):
+    for h in runs(text, shared_link(ws, source), template_labels(ws)[0]):
         if h in exempt:
             continue
         found.update(o for o in index.owners.get(h, ()) if o in ws.meetings and finished(ws.meetings[o]))
@@ -4956,7 +4999,7 @@ def wording_findings(ws: Workspace, path: Path, text: str, dest: str) -> List[Fi
             got = crossed_by_file[o] = any(not may_flow(ws.context, z, dest) for z in index.tags.get(o, ()))
         return got
 
-    for h in runs(transcript_text(path, text), shared_link(ws, path)):
+    for h in runs(transcript_text(path, text), shared_link(ws, path), template_labels(ws)[0]):
         owners = index.owners.get(h)
         if not owners or h in index.common:
             continue
@@ -5028,7 +5071,7 @@ def near_wording(root: Path, pairs: List[Tuple[str, str]]) -> List[bool]:
             dest = zone_of(ws.root, path)
             if text and project is not None and dest not in (None, UNZONED):
                 project, sent = project[0], _in_sources(project[0], path)
-                for h in runs(transcript_text(path, text), shared_link(ws, path)):
+                for h in runs(transcript_text(path, text), shared_link(ws, path), template_labels(ws)[0]):
                     owners = index.owners.get(h)
                     if not owners or h in index.common:
                         continue

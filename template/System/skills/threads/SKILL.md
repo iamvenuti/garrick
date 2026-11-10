@@ -649,9 +649,10 @@ focus, as under *No name given*). Then:
     changes nothing for a note with nothing to move, and nothing for one it
     cannot read for certain, which it reports in a line: say that line in the
     reply and carry on. The files it wrote go in this wrap's commit below, with
-    the thread's own files: the `history/` folder beside the note. Then, if its
-    output or `python3 System/tools/history.py resume "<note>"` says the
-    Resume here block is over `resume-max-words` (400), offer the shrink in
+    the thread's own files: the `history/` folder beside the note. Then run
+    `python3 System/tools/history.py resume "<note>"`, which prints the
+    block's words and the limit as JSON; if it says `"over": true` (the block is
+    over `resume-max-words`, 400), offer the shrink in
     one line after the wrap: "The Resume block is 920 words, over its 400.
     Want a shorter one?" On a yes, show the proposed block as a diff before
     writing it: *Where it stands* says now, *Keep in mind* loses what is

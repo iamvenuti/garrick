@@ -127,6 +127,7 @@ def plan(root: Path, include_pinned: bool = False, limit: Optional[int] = None, 
 
 NUMBER_RE = re.compile(r"\b\d[\d.,:/%]*\d\b|\b\d\b")
 QUOTE_RE = re.compile(r"“([^”\n]{3,})”|\"([^\"\n]{3,})\"")
+DATE_RE = re.compile(r"\b\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December)(?: \d{4})?\b")
 LINK_RE = re.compile(r"\[\[([^\]|#]+)|\]\(\s*<?([^)\s>]+)")
 
 
@@ -171,6 +172,8 @@ def verify_text(old: str, new: str) -> List[str]:
         out.append("the frontmatter changed")
     for n in sorted(numbers(ob) - numbers(nb)):
         out.append("a number is gone: %s" % n)
+    for d in sorted(set(DATE_RE.findall(ob)) - set(DATE_RE.findall(nb))):
+        out.append("a date is gone: %s" % d)
     for q in sorted(quotes(ob) - quotes(nb)):
         out.append("a quoted phrase is gone: “%s”" % q[:60])
     for l in sorted(links(old) - links(new)):

@@ -46,14 +46,18 @@ class Runs(unittest.TestCase):
 
     def test_a_run_ends_at_a_bold_label_that_opens_a_line(self):
         text = "One two three four five six.\n\n**Decision.** Seven eight nine ten eleven twelve.\n"
-        self.assertEqual(set(), check.runs(text))
+        self.assertEqual(set(), check.runs(text, labels=lambda label: True))     # a label an installed template holds
+        self.assertTrue(check.runs(text))                                          # any other bold opener is words
         self.assertTrue(check.runs("One two three four five six seven eight nine ten.\n"))
 
     def test_a_run_ends_at_the_date_that_opens_an_entry(self):
         last = "Both sides agreed, scope frozen."
-        for date in ("**10 November 2026.**", "10 November 2026.", "2026-11-10:"):
+        for date in ("**10 November 2026.**", "**2026-11-10**"):
             with self.subTest(date=date):
                 self.assertEqual(set(), check.runs("%s\n\n%s Thread opened and drafted.\n" % (last, date)))
+        for date in ("10 November 2026.", "2026-11-10:"):                          # not bold: a log line, words like the rest
+            with self.subTest(date=date):
+                self.assertTrue(check.runs("%s\n\n%s Thread opened and drafted.\n" % (last, date)))
 
     def test_bold_inside_a_line_is_not_a_break(self):
         self.assertTrue(check.runs("The plan was to send the **memo** to Dana before the end of the week.\n"))
@@ -61,7 +65,7 @@ class Runs(unittest.TestCase):
     def test_eight_words_inside_one_paragraph_are_still_a_run(self):
         paragraph = "**Decision.** The Nordic depot volumes are split before the regional board handover meets."
         self.assertTrue(check.runs(paragraph))
-        self.assertEqual(check.runs(paragraph), check.runs("Intro.\n\n" + paragraph))
+        self.assertTrue(check.runs(paragraph) <= check.runs("Intro.\n\n" + paragraph))
 
     def test_a_resume_table_is_still_read_row_by_row_under_a_bold_lead_in(self):
         block = ("### Resume here\n\n**Where it stands, 10 November 2026.** Drafting.\n\n" + TABLE % ("a path", "Rowan to call")
@@ -128,6 +132,26 @@ class TwoThreadNotes(unittest.TestCase):
         shared = "the Nordic depot volumes are split before the regional board handover"
         self.both(a_earlier="The memo notes %s today." % shared, b_earlier="The plan notes %s today." % shared)
         self.assertEqual({self.a.relative_to(self.root).as_posix(), self.b.relative_to(self.root).as_posix()}, self.refused())
+
+    SHORT_LOGS = (
+        "2026-11-03: Acme asked for five percent discount.\n2026-11-04: Birch wanted the volumes split.\n2026-11-05: Dana confirmed the depot lease.\n",
+        "**Call:** Acme asked for five percent discount today.\n**Call:** Birch wanted the volumes split again.\n**Call:** Dana confirmed the depot lease.\n",
+        "**Acme** agreed the five percent discount on volumes.\n**Birch** wanted the volumes split before the board.\n**Dana** confirmed the depot lease terms.\n",
+    )
+
+    def test_a_copied_short_line_log_is_still_refused_across_two_walled_zones(self):
+        for log in self.SHORT_LOGS:
+            with self.subTest(log=log[:20]):
+                self.both()
+                for p in (self.a, self.b):
+                    write(p, p.read_text(encoding="utf-8") + "\n## Log\n\n" + log)
+                self.assertEqual({self.a.relative_to(self.root).as_posix(), self.b.relative_to(self.root).as_posix()}, self.refused())
+
+    def test_a_bold_dated_entry_under_eight_words_passes_by_design(self):
+        self.both()
+        for p in (self.a, self.b):
+            write(p, p.read_text(encoding="utf-8") + "\n**10 November 2026.** Call held.\n\n**9 November 2026.** Plan sent out.\n")
+        self.assertEqual(set(), self.refused())
 
     def test_eight_words_after_a_bold_lead_in_still_refuse(self):
         shared = "the Nordic depot volumes are split before the regional board handover"

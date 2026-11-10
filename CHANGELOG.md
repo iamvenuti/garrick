@@ -4,6 +4,36 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.62.0] - 2026-11-10
+
+A wall refusal that is a false alarm can now be let through once, from a terminal, and an assistant no longer reaches for `--no-verify`. The check refuses less where nothing is at stake, and the status page shows the walls in one Context tab, grouped by zone.
+
+**Upgrading.**
+- Nothing to do. With no `System/walls-allowed.json`, the check refuses exactly what 0.61.0 refuses, except the three cases under *Fewer false refusals*.
+- To let your own old templates count as template text, put them in `System/templates.local/`.
+- `check.py` now warns once for each People row whose name is one word, and Nurture asks you for the full name.
+
+### Added
+
+- **Allow once.** When a refusal is a false alarm, type `python3 System/tools/check.py allow <path> <id>` in a terminal. The command the hook prints already holds the path and the id. The check lets that one finding of that one file through for as long as the file stays as it is. Edit the file and the refusal comes back. `allow --remove` takes an allowance back, and so does *Remove* on the page.
+  - Allowances go in `System/walls-allowed.json`, which the command commits. The check counts only the committed copy.
+  - Each allowance holds the file, the finding's id and git's id for the file's content. It never holds the words that were refused.
+  - Nothing without a terminal can write one. An assistant that meets a refusal names the files and the command, then stops. `--no-verify` is still there for you.
+- **Who sees what**, in the Context tab. Pick a project to see which parties' material it may hold and which projects it may draw from. The answer comes from the wall check's own `labels()` and `decide()`.
+
+### Changed
+
+- **The hook's report is short.** It starts with the allow command, then prints one line for each file, with the kind of refusal and a count. `check.py allow <path>` lists every refusal of that file with its id. When a program or an assistant reads the report (`--json`, or output that is not a terminal), a walled party shows as its tag in angle brackets, so a pasted refusal names nobody, and the line no longer suggests `--no-verify`. The status page reads the check's JSON, so its Checks card shows walled parties by tag too.
+- **Fewer false refusals at the source.**
+  - A one-word name from the People table, alone, now gives a warning. It still refuses next to its party's name, tag or domain, next to a longer name of one of its people or a second one-word person of the same party, or as a link to the person's page. Aliases and full names refuse as before.
+  - `System/templates.local/`, when it exists, counts as template text, like `System/templates/`. A sentence a Meetings page also holds is never template text. `check.py` warns about a file there that names a party or carries a party key.
+  - A line in the exact form the check prints, and the wall sentence of `System/rules.md`, are not material. A note that quotes a refusal is not refused for the party the quote names. The eight-word wording check still reads those lines.
+- **One Context tab.** Parties is now a view of Context: the *Show* switch reads *Findings*, *Parties*, *Who sees what*.
+  - Parties is grouped by zone. Each zone's heading names its own party and its default for new parties. Each project gets one row, with its parties and their flags. A thread shows under its project only when it names a party its hub does not.
+  - A party no project names shows under *Unused*. *Make it open* and *Make it walled* stay on each party.
+  - *Findings* lists *Allowed by you*, with a *Remove* for each allowance. A wall finding links to its project's row.
+  - A saved window or a link to the old Parties tab opens Context on Parties.
+
 ## [0.61.0] - 2026-11-10
 
 The wall check now treats as a reference only what the vault resolves, so globs, bold text and code no longer refuse a commit. The status page gets one place to answer findings, and every session used today wraps its own thread when you close for the day.

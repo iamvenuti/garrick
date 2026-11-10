@@ -4929,10 +4929,13 @@ def _in_sources(project: Path, path: Path) -> bool:
 COPY_MIN = 32   # below this many bytes, identical content proves nothing
 
 
+ZONE_PLACEHOLDER = (b"{" * 2) + b"ZONE" + (b"}" * 2)   # written in parts, so no placeholder stands in an installed file
+
+
 def shipped_hashes(ws: Workspace, zone: Optional[str]) -> set:
     """The content hashes of the files Garrick ships, as installed: everything under System/templates/ of the workspace
     (the zone, project and thread templates), and under the folder GARRICK_TEMPLATES_DIR names, which the update sets
-    to the release it is installing. Each is hashed as it is and with `{{ZONE}}` filled in as each zone's name, the way
+    to the release it is installing. Each is hashed as it is and with the zone placeholder filled in as each zone's name, the way
     the installer writes it. Such a file is the same in every zone, so it is never a copy from another one."""
     folders = [ws.root.joinpath(*TEMPLATES)]
     if os.environ.get("GARRICK_TEMPLATES_DIR"):
@@ -4947,7 +4950,7 @@ def shipped_hashes(ws: Workspace, zone: Optional[str]) -> set:
                     continue
                 found.add(hashlib.sha256(data).hexdigest())
                 for name_ in {z.name for z in ws.zones} | ({zone} if zone else set()):
-                    found.add(hashlib.sha256(data.replace(b"{{ZONE}}", name_.encode("utf-8"))).hexdigest())
+                    found.add(hashlib.sha256(data.replace(ZONE_PLACEHOLDER, name_.encode("utf-8"))).hexdigest())
     return found
 
 

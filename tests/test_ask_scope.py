@@ -251,7 +251,8 @@ class TestTheWallReset(AnswerCase):
 
     def test_an_open_zone_is_read_from_any_zone_and_holds_nothing(self):
         write(self.root / "System" / "context.md", SPLIT_CONTEXT.replace(
-            "| Personal | Everything else | | walled |", "| Personal | Everything else | | open |"))
+            "| Personal | Everything else | | walled |", "| Personal | Everything else | | open |").replace(
+            "| Personal | `birch` | yes |", "| Personal | `birch` | no |"))      # a zone holding a walled party is walled
         a = self.asker()
         a.ask("What did Dana say about the pallet quote?")
         out = a.ask("What did Theo say about the pallet launch?")

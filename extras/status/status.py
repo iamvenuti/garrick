@@ -2083,6 +2083,7 @@ WORK_CSS = r"""
 #work .wspin{flex:none;width:11px;height:11px;margin-top:3px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:wspin .8s linear infinite}
 @keyframes wspin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#work .wspin{animation:none;border-right-color:currentColor;opacity:.6}}
 #work .wx{flex:none;background:none;border:0;color:inherit;font:inherit;font-size:16px;line-height:1;padding:0 2px;cursor:pointer;opacity:.7}#work .wx:hover{opacity:1}
+#work .wdet{margin-top:4px;font-size:12px}#work .wdet summary{cursor:pointer;color:color-mix(in srgb,var(--surface) 72%,transparent)}#work .wdet p{margin:4px 0 0;overflow-wrap:anywhere}
 """
 
 # Its own script, after MANAGE_JS, so it wraps every window.GarrickActed set
@@ -2128,11 +2129,24 @@ return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
 function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});
 Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)})}
+/* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
+   The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
+function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'';
+if(/^A wall holds some material back/.test(t))return{say:t,next:'',raw:'',act:''};
+if(e.q.verb==='continue')return{say:'Claude did not open.',next:'Try again',raw:t,act:'retry'};
+if(k==='lost')return{say:'This page did not hear back, so we cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
+if(k==='unknown')return{say:'We cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
+if(k==='refused')return{say:'This was not saved: the check refused it.',next:'Show why',raw:t,act:'why'};
+return{say:'This was not saved: the action stopped before it finished.',next:'Try again',raw:t,act:'retry'}}
 function shown(e,now){return!!e.out||!e.q.keys||!!e.shown||now-e.t0>=TOAST*1000}
 function render(){var now=Date.now(),html='';if(box){html=W.map(function(e,i){if(!shown(e,now))return'';
-if(e.out)return'<div class="wk '+(e.out.ok?'ok':e.out.again?'ask':'bad')+'" data-i="'+i+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(e.out.say)
-+'</span>'+(!e.out.ok&&e.lines&&e.lines.length?'<small>'+esc(e.lines.filter(String).join(' · '))+'</small>':'')
-+(e.out.again?'<button type="button" class="wagain" data-again="'+i+'">Do it again</button>':'')+'</div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
+if(e.out&&!e.out.ok&&!e.out.again){var f=plain(e);
+return'<div class="wk bad" data-i="'+i+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(f.say)+'</span>'
++(f.next?'<button type="button" class="wagain" data-next="'+i+'">'+esc(f.next)+'</button>':'')
++(f.raw?'<details class="wdet" data-d="'+i+'"'+(e.open?' open':'')+'><summary>Details</summary><p>'+esc(f.raw)+'</p>'+(e.lines&&e.lines.length?'<p>'+esc(e.lines.filter(String).join(' · '))+'</p>':'')+'</details>':(e.lines&&e.lines.length?'<small>'+esc(e.lines.filter(String).join(' · '))+'</small>':''))
++'</div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>'}
+if(e.out)return'<div class="wk '+(e.out.ok?'ok':'ask')+'" data-i="'+i+'"><div class="wbody"><small>'+esc(e.say.replace(/…$/,''))+', '+took(e.done-e.t0)+'</small><span>'+esc(e.out.say)
++'</span>'+(e.out.again?'<button type="button" class="wagain" data-again="'+i+'">Do it again</button>':'')+'</div><button type="button" class="wx" data-wx="'+i+'" aria-label="Dismiss" title="Dismiss">×</button></div>';
 return'<div class="wk"><span class="wspin" aria-hidden="true"></span><div class="wbody"><span>'+esc(e.say)+'<span class="wt" data-t0="'+e.t0+'" aria-hidden="true">'+took(now-e.t0)+'</span></span>'
 +((e.phase===undefined?now-e.t0>=WHY*1000&&['continue','start'].indexOf(e.q.verb)<0:e.phase==='checking')?'<small>Committing: the wall check can take a minute.</small>':'')+'</div></div>'}).join('');
 box.innerHTML=html;box.hidden=!html;document.body.style.setProperty('--work-h',html?box.offsetHeight+8+'px':'0px')}hold()}
@@ -2140,7 +2154,7 @@ box.innerHTML=html;box.hidden=!html;document.body.style.setProperty('--work-h',h
    and a card that says saved gone TOAST after it came, unless the pointer is on it */
 function sweep(){var now=Date.now(),changed=false;W.slice().forEach(function(e){
 if(e.out){if(e.fade&&now>=e.fade&&HOV!==e){W.splice(W.indexOf(e),1);changed=true}return}
-if(now-e.t0>LOST*1000){e.out={ok:false,say:'No reply after '+took(LOST*1000)+'. Look at git status in '+e.q.zone+' before trying again.'};e.done=now;changed=true}
+if(now-e.t0>LOST*1000){e.out={ok:false,outcome:'lost',say:'No reply after '+took(LOST*1000)+'. Look at git status in '+e.q.zone+' before trying again.'};e.done=now;changed=true}
 else if(!e.why&&now-e.t0>=WHY*1000){e.why=1;changed=true}
 if(e.q.keys&&!e.shown&&now-e.t0>=TOAST*1000){e.shown=1;changed=true}});if(changed)keep();return changed}
 /* the ticks queued in a zone go as one request once the zone is free and BATCH seconds have passed since the last of them:
@@ -2167,10 +2181,10 @@ e={q:{verb:r.verb,zone:r.zone,op:r.op},op:r.op,say:r.label||'Working…',t0:Math
 if(keys){e.q.keys=keys;e.lines=keys.map(function(k){return words(r.zone,k)});if(!end)keys.forEach(function(k){paint(r.zone,k,r.verb==='todo-done')})}}
 /* a batch that saved while the page was away: the same small notice as one heard here, and no card */
 if(end&&keys&&r.outcome==='saved'){if(!e.out){W.splice(W.indexOf(e),1);toast(r.say||'Saved')}mark(r.op);return}
-if(end){if(!e.out){e.out={ok:r.outcome==='saved',say:r.say||''};e.done=Math.round((r.done||r.at)*1000);if(e.out.ok)e.fade=now+TOAST*1000;else if(e.q.keys)back(e)}mark(r.op)}
+if(end){if(!e.out){e.out={ok:r.outcome==='saved',outcome:r.outcome||'',say:r.say||''};e.done=Math.round((r.done||r.at)*1000);if(e.out.ok)e.fade=now+TOAST*1000;else if(e.q.keys)back(e)}mark(r.op)}
 else if(!e.out)e.phase=r.phase||''});
 W.forEach(function(e){if(e.out||!e.op||by[e.op]||(OPS.verbs||[]).indexOf(e.q.verb)<0||now-e.t0<=UNKNOWN*1000)return;
-e.out={ok:false,say:(OPS.lost||'No record of this action was found. Look at git status in {zone} before trying again.').replace('{zone}',e.q.zone)};e.done=now;mark(e.op)})}
+e.out={ok:false,outcome:'lost',say:(OPS.lost||'No record of this action was found. Look at git status in {zone} before trying again.').replace('{zone}',e.q.zone)};e.done=now;mark(e.op)})}
 function run(){var on=W.some(function(e){return!e.out||e.fade})||Q.length>0;if(on&&!timer)timer=setInterval(tick,1000);if(!on&&timer){clearInterval(timer);timer=null}}
 window.GarrickBusy=function(z){var e=running(z);return e?e.say:''};
 window.GarrickHeld=function(q){var e=zoned(q)&&running(q.zone);if(e)toast(q.zone+' is still busy: '+e.say);return!!e};
@@ -2194,16 +2208,25 @@ if(e.q.keys){j.q.keys=e.q.keys;j.lines=e.lines}W.push(j)}
 keep();render();run();return}
 /* a success is the record's outcome "saved"; with no record, the reply's ok, as before. A request the record holds already
    comes back asking whether it is meant again (`again`), and stays, however quick, with the button that confirms it */
+/* Saved means saved (#511): a reply with no outcome for an action the record keeps is not taken as saved. The record is asked
+   for, and says it; until then the action stays running, and the rows move only once the record has said so */
+if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,Object.assign({},out,{ok:false}));return}
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
 if(e.q.keys&&ok&&!again){W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
-else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok&&KEEP.indexOf(e.q.verb)>=0){e.out={ok:ok,say:out&&out.say||'That did not work.',again:again};e.done=now;
+else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again};e.done=now;
 if(ok&&!again)e.fade=now+TOAST*1000;else if(e.q.keys&&!again)back(e);var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
 /* Do it again: the same request, once more, with `confirm` naming the action it was asked about (operations.py) */
 if(box)box.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('[data-again]');
 if(a&&a.dataset.again!==undefined){var w=W[+a.dataset.again];if(w&&w.out&&w.out.again){W.splice(W.indexOf(w),1);keep();render();
 GarrickAct(Object.assign({},w.q,{op:'',confirm:w.out.again}),w.say,w.lines)}return}
+var n=e.target.closest&&e.target.closest('[data-next]');
+if(n&&n.dataset.next!==undefined){var u=W[+n.dataset.next];if(!u||!u.out)return;var a=plain(u).act;
+if(a==='why'){u.open=true;keep();render()}
+else if(a==='refresh'){W.splice(W.indexOf(u),1);keep();render();host.postMessage({rebuild:true});toast('Refreshing the page…')}
+else if(a==='retry'){W.splice(W.indexOf(u),1);keep();render();GarrickAct(Object.assign({},u.q,{op:''}),u.say,u.lines)}return}
 var x=e.target.closest&&e.target.closest('[data-wx]');if(!x)return;W.splice(+x.dataset.wx,1);keep();render()});
+if(box)box.addEventListener('toggle',function(e){var d=e.target;if(d&&d.dataset&&d.dataset.d!==undefined&&W[+d.dataset.d])W[+d.dataset.d].open=d.open},true);
 /* the pointer on a card that says saved holds it; off it, the card has TOAST seconds more */
 if(box){box.addEventListener('mouseover',function(e){var c=e.target.closest&&e.target.closest('[data-i]');HOV=c?W[+c.dataset.i]||null:null});
 box.addEventListener('mouseout',function(e){var to=e.relatedTarget,c=to&&to.closest&&to.closest('[data-i]');if(c&&HOV&&W[+c.dataset.i]===HOV)return;
@@ -6919,7 +6942,11 @@ theme(st.get('garrick-status-theme')||'auto');document.querySelectorAll('.seg bu
 var only=document.getElementById('only');only.checked=st.get('garrick-status-only')==='1';function apply(){var t=document.getElementById('tab-status')||document.body;t.classList.toggle('only',only.checked);st.set('garrick-status-only',only.checked?'1':'0')}only.onchange=apply;apply();
 document.querySelectorAll('details[id]').forEach(function(d){var s=st.get('garrick-fold-'+d.id);if(s==='0')d.open=false;if(s==='1')d.open=true;d.addEventListener('toggle',function(){st.set('garrick-fold-'+d.id,d.open?'1':'0')})});
 var h=(Date.now()-new Date(document.body.dataset.built))/36e5,el=document.getElementById('age');if(el)el.textContent=h<1?Math.max(1,Math.round(h*60))+' min ago':h<48?Math.round(h)+' h ago':Math.round(h/24)+' days ago';
-if(h>36){var s=document.getElementById('stale');s.style.display='block';s.textContent='Built '+Math.round(h)+' hours ago, so it may be out of date. Run status.py again to refresh it.'}
+if(h>36){var s=document.getElementById('stale');s.style.display='block';s.textContent='';
+var m=document.createElement('span');m.textContent='This page is '+Math.round(h)+' hours old, so what it shows may have changed. ';s.appendChild(m);
+var rb=document.createElement('button');rb.type='button';rb.className='act';rb.textContent='Refresh';rb.onclick=function(){var c=document.getElementById('rebuild');if(c)c.click()};s.appendChild(rb);
+var d=document.createElement('details');d.className='stdet';var sm=document.createElement('summary');sm.textContent='Details';d.appendChild(sm);
+var dp=document.createElement('p');dp.textContent='Built '+document.body.dataset.built+'. Refresh rebuilds it in the Mac app; in a browser it copies the command to run status.py again.';d.appendChild(dp);s.appendChild(d)}
 var tip=document.getElementById('tip');function show(e){var t=e.target.closest&&e.target.closest('[data-tip]');if(!t){tip.style.opacity=0;return}tip.textContent=t.dataset.tip;tip.style.opacity=1;
 var r=t.getBoundingClientRect(),x=e.type==='focusin'?r.left+r.width/2:e.clientX,y=e.type==='focusin'?r.top:e.clientY,w=tip.offsetWidth;tip.style.left=Math.min(innerWidth-w-8,Math.max(8,x-w/2))+'px';tip.style.top=(y-tip.offsetHeight-12)+'px'}
 document.addEventListener('mousemove',show);document.addEventListener('focusin',show);document.addEventListener('scroll',function(){tip.style.opacity=0},true);

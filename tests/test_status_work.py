@@ -91,6 +91,7 @@ HARNESS = textwrap.dedent(r"""
       if (what === "tick" && interval) interval();
       if (what === "reload") load();
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
+      if (what === "next") box.listeners.click({ target: { closest: (sel) => (sel === "[data-next]" ? { dataset: { next: String(a) } } : null) } });
       if (what === "again") box.listeners.click({ target: { closest: (sel) => (sel === "[data-again]" ? { dataset: { again: String(a) } } : null) } });
       if (what === "busy") r = ctx.window.GarrickBusy(a);
       if (what === "click") {                // TODO_JS's click on a row's box
@@ -193,9 +194,9 @@ class TestWorkUnderNode(NodeCase):
                         ("new-thread", {"verb": "new-thread", "zone": "Work", "project": "Acme", "name": "Freight"})):
             out = self.run_js(("act", 0, q, "Working…"), ("reply", 1, q, {"ok": False, "say": "Refused."}), ("tick", 30))
             self.assertIn("Refused.", out[-1]["box"], verb)
-        # a quick refusal of anything else is the host's toast, as before; and so is a quick success of these
+        # a quick refusal of anything else stays too, in plain words (#511); a quick success of these is the host's toast
         out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 1, PARK, {"ok": False, "say": "Refused."}))
-        self.assertEqual("", out[-1]["box"])
+        self.assertIn("This was not saved", out[-1]["box"])
         out = self.run_js(("act", 0, rename, "Renaming Pricing…"), ("reply", 1, rename, {"ok": True, "say": "Renamed."}))
         self.assertEqual("", out[-1]["box"])
 
@@ -620,6 +621,109 @@ class TestWorkHosts(unittest.TestCase):
         self.assertIn('let reply = said ?? ["ok": false, "say": "That did not work."]\n\t\t\t\tself.acted(request, reply)', act)
         self.assertIn('acted(request, ["ok": false, "say": "Cannot run \\(python)"])', act)
         self.assertNotIn("asyncAfter", act)                                  # no limit of its own on page_action.py
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestFailuresInPlainWords(NodeCase):
+    """#511: each way an action can fail shows one plain sentence and one next step the page already has. The tool's
+    own text is under Details, closed. A refused save never shows as saved."""
+
+    TOOL = "Not done. Commit refused: the wall check found 2 errors in Zones/Work/Acme/Acme.md; commit again once they are fixed."
+
+    def failed(self, outcome, verb_q=PARK, text=None):
+        return self.run_js(("act", 0, verb_q, "Parking Birch Entry…"),
+                           ("reply", 3, verb_q, {"ok": False, "outcome": outcome, "say": text or self.TOOL}))[1]["box"]
+
+    def details(self, html):
+        """(what shows outside Details, what is inside it, whether it is open)."""
+        m = re.search(r"<details[^>]*>(.*?)</details>", html, re.S)
+        outside = re.sub(r"<details.*?</details>", "", html, flags=re.S)
+        return re.sub(r"<[^>]+>", " ", outside), (re.sub(r"<[^>]+>", " ", m.group(1)) if m else ""), bool(m and " open" in m.group(0).split(">")[0])
+
+    def test_refused_says_the_check_refused_it_and_offers_to_show_why(self):
+        box = self.failed("refused")
+        outside, inside, opened = self.details(box)
+        self.assertIn("This was not saved: the check refused it.", outside)
+        self.assertIn("Show why", outside)
+        self.assertNotIn("wall check", outside)                              # the tool's words are not on the card
+        self.assertIn("wall check found 2 errors", inside)                   # they are under Details
+        self.assertFalse(opened)                                             # closed by default
+
+    def test_a_crash_says_the_action_stopped_and_offers_to_try_again(self):
+        outside, inside, opened = self.details(self.failed("crashed", text="That did not work: Traceback (most recent call last) git failed."))
+        self.assertIn("This was not saved: the action stopped before it finished.", outside)
+        self.assertIn("Try again", outside)
+        self.assertNotIn("Traceback", outside)
+        self.assertIn("Traceback", inside)
+        self.assertFalse(opened)
+
+    def test_an_unknown_end_says_so_and_offers_a_refresh(self):
+        outside, inside, _ = self.details(self.failed("unknown", text="We do not know whether the change went through. Run git log -1 in Work."))
+        self.assertIn("We cannot tell whether this went through.", outside)
+        self.assertIn("Refresh", outside)
+        self.assertNotIn("git log", outside)
+        self.assertIn("git log -1 in Work", inside)
+
+    def test_no_reply_at_all_says_the_page_did_not_hear_back(self):
+        out = self.run_js(("act", 0, ACME, "Making Acme…"), ("tick", status.ACTION_LOST + 1))[1]["box"]
+        outside, inside, opened = self.details(out)
+        self.assertIn("This page did not hear back, so we cannot tell whether this went through.", outside)
+        self.assertIn("Refresh", outside)
+        self.assertNotIn("git status", outside)
+        self.assertIn("No reply after 16 min", inside)
+        self.assertFalse(opened)
+
+    def test_a_hand_off_that_did_not_open_says_claude_did_not_open(self):
+        cont = {"verb": "continue", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}
+        raw = "Claude's desktop app did not open: exit 1 /usr/local/bin/claude --resume 0b7e6f1c"
+        box = self.run_js(("act", 0, cont, "Opening Acme Review in Claude…"),
+                          ("reply", 3, cont, {"ok": False, "say": raw}))[1]["box"]
+        outside, inside, opened = self.details(box)
+        self.assertIn("Claude did not open.", outside)
+        self.assertIn("Try again", outside)
+        self.assertNotIn("/usr/local/bin", outside)                          # no command or path outside Details
+        self.assertIn("/usr/local/bin/claude", inside)
+        self.assertFalse(opened)
+
+    def test_a_host_failure_with_no_outcome_is_not_saved_either(self):
+        outside, inside, _ = self.details(self.failed("", text="That did not work."))
+        self.assertIn("This was not saved", outside)
+        self.assertIn("Try again", outside)
+
+    def test_the_rules_sentence_for_a_wall_stands_alone(self):
+        wall = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+        outside, inside, _ = self.details(self.failed("refused", text=wall))
+        self.assertIn(wall, outside)
+        self.assertNotIn("Show why", outside)
+        self.assertNotIn("Details", outside)
+
+    def test_show_why_opens_details_try_again_sends_it_afresh_and_refresh_rebuilds(self):
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 3, PARK, {"ok": False, "outcome": "refused", "say": self.TOOL}),
+                          ("next", 4, 0))
+        self.assertTrue(self.details(out[2]["box"])[2])                      # opened by the button
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 3, PARK, {"ok": False, "outcome": "crashed", "say": "x"}),
+                          ("next", 4, 0))
+        self.assertEqual(2, out[2]["posted"])                                # the same request, once more
+        self.assertIn("wspin", out[2]["box"])
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 3, PARK, {"ok": False, "outcome": "unknown", "say": "x"}),
+                          ("next", 4, 0))
+        self.assertIn({"rebuild": True}, out[2]["sent"])                      # the page's own rebuild
+
+    def test_a_refused_save_never_shows_as_saved(self):
+        for outcome in ("refused", "crashed", "unknown"):
+            box = self.failed(outcome)
+            text = re.sub(r"<[^>]+>", " ", box)
+            for m in SUCCESS.finditer(text):
+                self.assertRegex(text[:m.start()], r"(?i)\b(not|no)\s+$", text)
+
+    def test_a_reply_with_no_outcome_is_not_saved_until_the_record_says_so(self):
+        # The record keeps park, so a reply that says ok with no outcome is not taken as saved: the entry stays
+        # running and the record is asked; only the record's own outcome ends it.
+        out = self.run_js(("ops", 1, reply()), ("act", 2, PARK, "Parking Birch Entry…"),
+                          ("reply", 3, PARK, {"ok": True, "say": "Birch Entry is parked"}),
+                          ("ops", 5, reply(record(OP, state="completed", outcome="saved", done=1005.0, say="Birch Entry is parked"))), reads=True)
+        self.assertIn("wspin", out[2]["box"])                                 # still running: nothing said saved yet
+        self.assertGreater(out[2]["asked"], out[1]["asked"])                  # and the record was asked for
 
 
 if __name__ == "__main__":

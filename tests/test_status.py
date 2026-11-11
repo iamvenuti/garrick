@@ -1851,6 +1851,19 @@ class TestNoCatchUpButton(StatusCase):
         self.assertIn("intake", menu)
 
 
+class TestAnOldPageSaysSoPlainly(StatusCase):
+    """#511: a page built long ago says it is old, with Refresh and the build time under Details."""
+
+    def test_the_banner_is_a_sentence_a_refresh_and_details(self):
+        js = status.JS
+        self.assertIn("' hours old, so what it shows may have changed. '", js)
+        self.assertIn("rb.textContent='Refresh'", js)
+        self.assertIn("document.getElementById('rebuild')", js)                  # the page's own rebuild, or its copy of the command
+        self.assertIn("sm.textContent='Details'", js)
+        self.assertNotIn("Run status.py again to refresh it", js)                # the tool's words moved under Details
+        self.assertNotIn("Built '+Math.round(h)+' hours ago", js)
+
+
 class TestLaunchers(StatusCase):
     """Open in Claude, Codex or cmux: offered for what is installed, chosen in Settings."""
 

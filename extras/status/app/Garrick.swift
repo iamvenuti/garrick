@@ -1857,7 +1857,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 
 	// An action: the note's link to macOS, or the folder to an app, as the
 	// card's button opens it. Claude on a thread with its note (`oc`) is the
-	// simple home's Continue (#180): page_action.py primes a session that
+	// Continue (#180): page_action.py primes a session that
 	// asks where the thread stands and opens the desktop app on its answer,
 	// and its reply, or its refusal, is the toast that follows.
 	@discardableResult

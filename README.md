@@ -10,7 +10,7 @@ Garrick keeps track of where each piece of your work stands. It reads what comes
 
 An assistant is only as useful as what it knows about your work. Yours remembers your projects, but it can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “wrap it” when someone interrupts you and “back” when you return.
 
-The [Garrick app](docs/extras/simple-home.md)'s home lists your work, most recent first, each with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen. Ask something reaches across all of your work, and Needs you holds only the questions Garrick is waiting on you to answer.
+The [Garrick app](docs/extras/status-page.md) opens on your work, most recent first, each piece with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen.
 
 Behind the home, Garrick holds three things in one place: what you're working on, in your files; what was said, in a record of your meetings; and what you read, in a library of what you've studied. It files what comes in, such as mail, transcripts and documents, into the right one, and a piece of work's page shows which of its files are new, changed or missing since you last continued. It keeps the record up to date and asks before it corrects anything written there. Finished work steps aside without anything in it being lost, and old meetings and reading fade out of the way in stages, still findable.
 

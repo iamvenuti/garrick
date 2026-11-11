@@ -15,22 +15,22 @@ The words on this page are defined in [Concepts](concepts.md). [How Garrick keep
 
 **The Garrick App** is the control panel over your zones, projects and threads: where each stands, what is due, and what is waiting on you. It is not where the work happens. It opens a piece of work in the app you work in, and the work is done there.
 
-The Garrick App's home lists your work, most recent first, each with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen. Ask something reaches across all of your work, and Needs you holds only the questions Garrick is waiting on you to answer. That is **the simple home**, which a new workspace opens on. See [The simple home](extras/simple-home.md).
+The Garrick App opens on your work, most recent first, each piece with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen.
 
-*More*, or *Settings › Home*, opens **the full page**, in four tabs:
+Below that is **the full page**, in four tabs:
 
 - **Overview**: every live thread, one column per zone, each with at most two chips, *todo* for its open actions and *check* for an error the page can explain and fix; open actions and the inboxes beside them; and *Explore*, the graph of the notes in one zone or one wiki at a time.
 - **Todo**: each zone's `Todo.md`, to tick, date and add to. A workspace with no `Todo.md` has no Todo tab.
 - **Status**: the machinery: the scheduled jobs and the assistant's calls, and the state of each repository.
 - **Guide**: these pages, as the release the workspace runs shipped them, in `System/garrick-docs/`.
 
-The Garrick App is one HTML page, `System/generated/status.html`, built by `status.py` from the workspace's own files. It shows in **the Mac app**, *Garrick.app*, or in a browser. A workspace installed with this Garrick has it from the start: the installer puts the extra in `System/status/` and builds the page once, and "Set up Garrick" offers to build the Mac app. A workspace installed before the simple home keeps what it had. The code keeps its old name, `status.py` in `extras/status/`. See [The Garrick App](extras/status-page.md).
+The Garrick App is one HTML page, `System/generated/status.html`, built by `status.py` from the workspace's own files. It shows in **the Mac app**, *Garrick.app*, or in a browser. A workspace installed with this Garrick has it from the start: the installer puts the extra in `System/status/` and builds the page once, and "Set up Garrick" offers to build the Mac app. The code keeps its old name, `status.py` in `extras/status/`. See [The Garrick App](extras/status-page.md).
 
 The layers below do not depend on it. Without the Garrick App, the same work is done by asking the assistant: "what's open", "park X", "process the inbox".
 
 #### The Garrick App's actions
 
-In the Mac app and in Obsidian, its buttons act: they tick, date and add Todo lines, park and wake threads, make, rename and delete projects and threads, answer a question in Needs you, and hand a piece of work to Claude. In a browser the page can change nothing, so there the buttons copy what to say instead.
+In the Mac app and in Obsidian, its buttons act: they tick, date and add Todo lines, park and wake threads, make, rename and delete projects and threads, and hand a piece of work to Claude. In a browser the page can change nothing, so there the buttons copy what to say instead.
 
 Every action, from a button, the Ask box or a skill, goes through `page_action.py` in the status extra, and every one is declared in one table, `DECLARED` in `System/tools/operations.py`. A row per verb names the fields a request may carry, which of them say what the request is, what it may touch, whether it commits, whether a retry is safe, and what must still be true for it to run. Validation is closed: a request that carries a field its verb does not declare is refused, and the field is named. Park, wake and the four Todo verbs, the subset `OPS`, also keep a durable record in `operations.jsonl` in the jobs folder, so a reloaded page can find an action still running or learn how it ended, and so the same request sent again is recognised: joined or answered inside a double click's window, and past it, for as long as any client could still be waiting, asked about rather than done twice. That folder is outside the workspace, so the record is never committed; the notes and git stay the record of what changed. A launcher, such as *Open in Claude*, is reported the same honest way: the page says only that it is opening, and the Mac app, which alone knows how it went, says what opened. A Mac app built before that change says nothing back, so the opening line is all there is until it is rebuilt.
 
@@ -57,7 +57,7 @@ The root's `.gitignore` leaves `Zones/` and `Wikis/` out, so each repository has
 
 **Mail, files and recordings** are filed into the record by the `intake` skill, from an inbox: see [Material coming in](#material-coming-in).
 
-Your folders stay as they are. A project can point at a folder you already keep, with `folder:` in its hub, and Garrick reads it and writes nothing there unless you ask it to move the files in: see [Your own work](extras/simple-home.md#your-own-work). Garrick's own record is plain Markdown in folders on your Mac, and updates keep your edits.
+Your folders stay as they are. A project can point at a folder you already keep, with `folder:` in its hub, and Garrick reads it and writes nothing there unless you ask it to. Garrick's own record is plain Markdown in folders on your Mac, and updates keep your edits.
 
 ## Underneath
 
@@ -123,7 +123,7 @@ The cmux extra adds a tenth, `desk`, under [Where you work](#where-you-work).
 
 ## The extras
 
-**The extras** are optional, in the repository's `extras/`, and core Garrick never depends on any of them. The installer puts in one, the Garrick App's, because a new workspace opens on its simple home; the rest you add when they solve a problem you have. See [Extras](extras/index.md).
+**The extras** are optional, in the repository's `extras/`, and core Garrick never depends on any of them. The installer puts in one, the Garrick App's, because a new workspace opens on it; the rest you add when they solve a problem you have. See [Extras](extras/index.md).
 
 | Extra | Layer |
 |---|---|

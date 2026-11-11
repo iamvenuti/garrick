@@ -405,7 +405,8 @@ class AddedToAWorkspaceTest(unittest.TestCase):
         """#208: the installer builds the page once, and again once the example is
         in, so the first page a new user opens already shows it."""
         page = (self.root / "System" / "generated" / "status.html").read_text(encoding="utf-8")
-        self.assertIn('<body class="simple" data-tab="home"', page)
+        self.assertNotIn('class="simple"', page)                      # the Garrick App opens on the full page (#503)
+        self.assertIn('id="tab-overview">', page)
         for project in WORK:
             self.assertIn(project, page)
 

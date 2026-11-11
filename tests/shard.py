@@ -81,7 +81,6 @@ FULL_ONLY = {
     "test_autonomy", "test_check_conventions", "test_check_rules", "test_cleanroom",
     "test_cleanroom_worktree", "test_demo", "test_example", "test_git_env", "test_install",
     "test_jobs", "test_onboarding", "test_rules_map", "test_setup",
-    "test_simple_home", "test_split", "test_update",
     "test_party_flags", "test_checkpoint", "test_cmux", "test_cmux_sidebar", "test_decide", "test_executor",
     "test_fetch", "test_knowledge_skill", "test_lib", "test_meetings", "test_memory_canary",
     "test_mod", "test_nested_checkout", "test_open_sections",

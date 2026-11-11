@@ -12,15 +12,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import textwrap
 import unittest
-from pathlib import Path
 
 sys.dont_write_bytecode = True
 

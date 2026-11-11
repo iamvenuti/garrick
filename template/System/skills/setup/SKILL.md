@@ -129,9 +129,8 @@ mode* in the `threads` skill describes.
    - Anything else the probe flagged: say what it means, and what it would
      take, then leave it unless the user asks.
 6. **Offer the Mac app**, as the last question before you hand over, and
-   only where `System/garrick-settings.json` says `"home": "simple"`,
-   `System/status/app/make-app.sh` is there, this is a Mac, and
-   `~/Applications/Garrick.app` is not there yet. The simple home is the
+   only where `System/status/app/make-app.sh` is there, this is a Mac, and
+   `~/Applications/Garrick.app` is not there yet. The Garrick App is the
    status page: the installer put it in `System/status/` and built it once,
    and the app that shows it in a window of its own is built here, on a yes.
    Ask in one plain sentence: "Shall I make your Garrick home an app on this

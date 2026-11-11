@@ -1792,6 +1792,30 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertIn("has changes of yours, so it is left as it is", report)
         self.assertTrue((folder / "notes.md").is_file() and (folder / "main.js").is_file())
 
+    def test_the_home_setting_goes_and_the_update_says_so_in_one_line(self):
+        """#503: the simple home is gone. The update takes "home" out of the settings file, keeps every other key, and names
+        the projects whose Files/ folder it leaves where it is."""
+        settings = self.root / "System" / "garrick-settings.json"
+        settings.write_text(json.dumps({"home": "simple", "launchers": {"note": True}}))
+        files = self.root / "Zones" / "Work" / "Acme" / "Files"
+        files.mkdir(parents=True)
+        (files / "price sheet.xlsx").write_text("mine")
+        (self.root / "Zones" / "Work" / "Birch" / "Files").mkdir(parents=True)      # empty: nothing to name
+        report = self.report_of(self.plan())
+        self.assertIn('Remove "home" from System/garrick-settings.json: the Garrick App opens on the full page only', report)
+        self.assertIn("stay where they are, in Work/Acme;", report)
+        self.assertNotIn("Work/Birch", report)
+        self.assertEqual({"home": "simple", "launchers": {"note": True}}, json.loads(settings.read_text()))     # the report changes nothing
+        result = self.apply()
+        self.assertEqual({"launchers": {"note": True}}, json.loads(settings.read_text()))
+        self.assertIn('Removed "home" from System/garrick-settings.json: the Garrick App opens on the full page only.', result["then"])
+        self.assertEqual("mine", (files / "price sheet.xlsx").read_text())             # what the user put there is where it was
+        self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if '"home"' in w])     # done: nothing left
+
+    def test_no_home_key_means_no_step(self):
+        (self.root / "System" / "garrick-settings.json").write_text(json.dumps({"launchers": {"note": True}}))
+        self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "home" in w])
+
     def test_a_desk_link_to_another_copy_is_pointed_at_the_workspaces(self):
         self.install_extra("cmux")
         old = self.base / "old-garrick" / "extras" / "cmux" / "desk.py"

@@ -127,7 +127,7 @@ NEW_SUFFIX = ".new"
 KINDS = ("replace", "add", "merge", "split", "yours", "restore", "retired")
 
 # The extras that live in the workspace: the installer's table, which it reads
-# to put the status page in place on the simple home. An extra counts as
+# to put the status page in place. An extra counts as
 # installed when one of its folders is in the workspace; its files are then
 # updated as the core's are, and any it lacks are added.
 EXTRAS = install.EXTRAS
@@ -1538,6 +1538,7 @@ def next_steps(root, p, done=None):
                 steps.append(("Point the desk command, %s, at the workspace's %s, in place of %s" % (link, DESK, target),
                               lambda link=link: relink(link, mine)))
 
+    steps.extend(home_steps(root))
     steps.extend(before_quit_steps(root))
 
     for what, path in outside_copies(root):
@@ -1580,6 +1581,51 @@ def before_quit_commands(root):
         elif isinstance(c, list) and c and all(isinstance(a, str) for a in c):
             out.append(shlex.join(c))
     return out or None
+
+
+def home_steps(root):
+    """The simple home is gone (#503): the Garrick App opens on the full page only, so a `"home"` key in
+    System/garrick-settings.json is removed and the update says so in one line. Files a project holds under its
+    own Files/ folder, from a copy kept or files moved in, stay where they are, and the projects that have them
+    are named."""
+    steps = []
+    settings = root.joinpath(*install.lib().SETTINGS)
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict) and "home" in data:
+        steps.append(('Remove "home" from System/garrick-settings.json: the Garrick App opens on the full page only',
+                      lambda: remove_home_key(root)))
+    kept = []
+    zones = root / "Zones"
+    try:
+        for zone in sorted(zones.iterdir()):
+            for project in sorted(zone.iterdir()) if zone.is_dir() and not zone.name.startswith((".", "_")) else []:
+                files = project / "Files"
+                if project.is_dir() and not project.name.startswith((".", "_")) and files.is_dir() \
+                        and any(not f.name.startswith(".") for f in files.iterdir()):
+                    kept.append("%s/%s" % (zone.name, project.name))
+    except OSError:
+        pass
+    if kept:
+        steps.append(("Files kept under a project's Files/ folder stay where they are, in %s; they are ordinary files in the "
+                      "project's folder" % ", ".join(kept), None))
+    return steps
+
+
+def remove_home_key(root):
+    """Take `"home"` out of System/garrick-settings.json, and nothing else."""
+    settings = root.joinpath(*install.lib().SETTINGS)
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or "home" not in data:
+            return 'System/garrick-settings.json has no "home" to remove.'
+        del data["home"]
+        settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return 'Could not remove "home" from System/garrick-settings.json: %s.' % exc
+    return 'Removed "home" from System/garrick-settings.json: the Garrick App opens on the full page only.'
 
 
 def before_quit_steps(root):

@@ -1542,7 +1542,7 @@ def save_settings(ws: Path, req: dict) -> str:
         except ValueError as e:         # a garrick_lib older than the choice: "not a kept choice: home"
             raise Refused("%s; update Garrick to keep it" % e)
     if "home" in new and set(new) == {"home"} and "desk-agent" not in req:
-        return "Garrick now opens on %s" % ("the simple home" if new["home"] == "simple" else "the full page")
+        return "Garrick opens on the full page"
     if "zones" in new:
         colour = lambda zones, z: zones.get(z, {}).get("color") if isinstance(zones.get(z), dict) else None
         changed = sorted(z for z in set(before) | set(new["zones"]) if colour(before, z) != colour(new["zones"], z))
@@ -3695,13 +3695,13 @@ def owner_party(ws: Path, zone: Path, name: str) -> str:
     context = ws / "System" / "context.md"
     before = context.read_bytes() if context.is_file() else b""
     scaffold(ws, "party", "--name", name, "--zone", zone.name, "--what",
-             "Whose work is kept in %s, as said on the simple home" % zone.name)
+             "Whose work is kept in %s" % zone.name)
     tag, _ = found()
     if not tag:
         context.write_bytes(before)
         raise Refused("Garrick could not note whose work this is. Ask Claude to set up your workspace")
     if (ws / ".git").exists():
-        commit(ws, context, before, "New party %s (%s), in %s, from the simple home" % (name, tag, zone.name),
+        commit(ws, context, before, "New party %s (%s), in %s" % (name, tag, zone.name),
                wall=wall_refusal(ws))
     return tag
 

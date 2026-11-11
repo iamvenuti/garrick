@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(24, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
+        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1695,7 +1695,7 @@ class TestSettingsLayout(StatusCase):
     them beside it (#205): a link per section, grouped by what people come
     for, and the one being read marked."""
 
-    ORDER = ["home-settings", "launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings", "wait-settings",
+    ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings", "wait-settings",
              "notify-settings", "memory-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
@@ -1710,7 +1710,7 @@ class TestSettingsLayout(StatusCase):
         built = re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"', dialog)
         self.assertEqual(built, listed)                                             # every section, once, in its order
         self.assertEqual([k for k in self.ORDER if k in built], built)
-        for must in ("home-settings", "launcher-settings", "zone-settings", "menu-settings", "notify-settings",
+        for must in ("launcher-settings", "zone-settings", "menu-settings", "notify-settings",
                      "memory-settings", "about-settings", "preview-settings"):
             self.assertIn(must, built)
         heads = dict(re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"[^>]*><h3>([^<]+)<', dialog))

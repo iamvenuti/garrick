@@ -156,7 +156,7 @@ Open a terminal in the workspace and start your assistant: `cd ~/Garrick`, then 
 
 A thread that was just created has no history, so opening it only tells you its Resume here block is still blank. Do some work, wrap it, and the next open has something to say.
 
-While a wrap runs, it holds a small lock file in `System/generated/` (`wrap-<note path>.lock`), which the wrap removes when it ends; a lock older than ten minutes counts as gone. It is never committed.
+While a wrap runs, it holds a small lock file in `System/generated/` (`wrap-<note path>.lock`), which the wrap removes when it ends; a lock older than ten minutes counts as gone. It is never committed. The time a wrap finished (`wrap-<note path>.done`) is written only once the wrap's commit has succeeded: a wrap that failed or whose commit was refused releases the lock and records nothing, so the band still offers *Wrap*.
 
 After the new dated entry, the wrap runs `python3 System/tools/history.py apply <note>`: entries older than `history-months` (6) go to history files, then the oldest until the note is under `note-max-words` (4,000); the newest five always stay. It confirms every moved line is in a history file before it finishes, and puts the note back if not. It is part of the wrap's commit. If the Resume here block is over `resume-max-words` (400), the wrap offers a shorter one as a diff and writes it only on your yes. Park moves old entries first, in a commit of its own, and leaves the block alone.
 

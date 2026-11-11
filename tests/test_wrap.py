@@ -219,6 +219,90 @@ class SkillTest(unittest.TestCase):
         self.assertIn("After two wraps it is the later one", back)
 
 
+BAND = REPO / "extras" / "mods" / "garrick-band" / "hooks" / "register.tsx"
+
+
+def band_slot(done, turn):
+    """The band's choice between Wrap and Resume for a live thread, as `bandSlot` in
+    register.tsx makes it from the two times (the decision lines are checked below)."""
+    if turn is None:
+        return "resume"
+    if done is None:
+        return "wrap"
+    return "resume" if done >= turn else "wrap"
+
+
+class FailedWrapTest(unittest.TestCase):
+    """A wrap that failed or was refused releases the lock and records no success (#wrap-marker):
+    releasing the lock and declaring the wrap finished are two things."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+        self.done = wl.done_path(self.root, NOTE)
+
+    def test_a_failed_wrap_cleans_up_and_leaves_no_record_so_the_band_still_offers_wrap(self):
+        self.assertTrue(wl.start(self.root, NOTE))
+        wl.end(self.root, NOTE, abandon=True)                       # step 13 after a refused commit
+        self.assertFalse(wl.lock_path(self.root, NOTE).exists())    # cleanup ran
+        self.assertFalse(self.done.exists())                        # and recorded nothing
+        self.assertIsNone(wl.finished(self.done))
+        self.assertEqual("wrap", band_slot(wl.finished(self.done), 2000.0))
+
+    def test_the_earlier_record_stands_and_is_older_than_the_failed_attempt(self):
+        self.assertTrue(wl.start(self.root, NOTE, now=1000.0))
+        wl.end(self.root, NOTE, now=1000.0)                         # a wrap that landed
+        earlier = wl.finished(self.done)
+        self.assertEqual(1000.0, earlier)
+        self.assertTrue(wl.start(self.root, NOTE, now=5000.0))
+        wl.end(self.root, NOTE, now=5000.0, abandon=True)           # a later wrap whose commit was refused
+        self.assertEqual(earlier, wl.finished(self.done))           # still the first one's time, not the attempt's
+        self.assertFalse(wl.lock_path(self.root, NOTE).exists())
+        self.assertEqual("wrap", band_slot(wl.finished(self.done), 4000.0))   # work since: Wrap, not Resume
+
+    def test_a_wrap_that_landed_is_recorded_and_the_band_offers_resume(self):
+        self.assertTrue(wl.start(self.root, NOTE, now=1000.0))
+        wl.end(self.root, NOTE, now=3000.0)                         # step 13 after a successful commit
+        self.assertFalse(wl.lock_path(self.root, NOTE).exists())
+        self.assertEqual(3000.0, wl.finished(self.done))
+        self.assertEqual("resume", band_slot(wl.finished(self.done), 2000.0))
+
+    def test_the_command_line_abandon_writes_no_record(self):
+        import io
+        from contextlib import redirect_stdout
+        out = io.StringIO()
+        with redirect_stdout(out):
+            self.assertEqual(0, wl.main(["start", NOTE, "--root", str(self.root)]))
+            self.assertEqual(0, wl.main(["end", "--abandon", NOTE, "--root", str(self.root)]))
+        self.assertEqual(["locked", "unlocked"], out.getvalue().split())
+        self.assertFalse(self.done.exists())
+
+    def test_the_band_decides_as_the_replica_says(self):
+        text = BAND.read_text(encoding="utf-8")
+        for line in ("if (s.turnMs === null) return 'resume'", "if (s.doneMs === null) return 'wrap'",
+                     "return s.doneMs >= s.turnMs ? 'resume' : 'wrap'"):
+            self.assertIn(line, text, line)
+
+    def test_the_skill_records_the_finish_only_after_the_commit_and_abandons_on_failure(self):
+        wrap = " ".join((REFERENCE / "wrap.md").read_text(encoding="utf-8").split())
+        step = wrap[wrap.index("13. **Release the lock**"):wrap.index("Spoken, when the wrap runs in the background")]
+        self.assertIn("**The commit succeeded:** `end` removes the lock and writes the time the wrap finished", step)
+        self.assertIn("**Anything else:** the commit was refused or failed", step)
+        self.assertIn("`end --abandon` removes the lock and writes no record, and leaves an earlier record as it was", step)
+        self.assertIn("python3 System/tools/wrap_lock.py end --abandon", step)
+        self.assertIn("Never use `end` to clean up after a failure", step)
+        self.assertIn("the record is written only after step 12's commit has succeeded", wrap)
+        self.assertNotIn("**Remove the lock**, whatever happened above", wrap)
+        self.assertLess(wrap.index("12. **Commit in the zone's repository.**"), wrap.index("13. **Release the lock**"))
+
+    def test_the_bands_own_prompts_release_the_lock_the_same_way(self):
+        text = BAND.read_text(encoding="utf-8")
+        self.assertNotIn("and remove it as the last step", text)
+        self.assertIn("wrap_lock.py end --abandon ${n.rel}", text)             # the lock the band took
+        self.assertIn("end --abandon\\` when the wrap failed or the commit was refused", text)   # the lock the wrap takes
+
+
 class WordsTest(unittest.TestCase):
     """One vocabulary (#367): Wrap and Resume, and no stack, in the pages and the band's README."""
 

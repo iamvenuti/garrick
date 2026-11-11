@@ -154,8 +154,10 @@ focus, as under *No name given*). Then:
    steps to the letter, to touch nothing outside this thread, and to end with
    step 13. The foreground run needs none of this: it has the session. Where the assistant has no background run, do the steps yourself,
    in the foreground, as a wrap always was.
-- **The last act of the wrap, success or failure,** is step 13: remove the
+- **The last act of the wrap, success or failure,** is step 13: release the
    lock. A wrap that died leaves the lock behind, and it expires by itself.
+   Releasing the lock and recording that the wrap finished are two things:
+   the record is written only after step 12's commit has succeeded.
 
 **The steps:**
 
@@ -364,14 +366,25 @@ focus, as under *No name given*). Then:
     ```
     The message says what changed. One zone per commit. Never push: that leaves
     the machine and needs the user's yes.
-13. **Remove the lock**, whatever happened above:
-    ```sh
-    python3 System/tools/wrap_lock.py end "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
-    ```
-    The same note as the lock in step 1, hub included.
-    `end` also writes the time the wrap finished (`wrap-<note>.done`). That
-    record, not the note's last write, is what says a wrap landed: the band and
-    Close read it.
+13. **Release the lock**, whatever happened above. Which call it is depends
+    on how step 12 ended. The note is the same as the lock's in the first step,
+    hub included.
+    - **The commit succeeded:** `end` removes the lock and writes the time the
+      wrap finished (`wrap-<note>.done`).
+      ```sh
+      python3 System/tools/wrap_lock.py end "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
+      ```
+    - **Anything else:** the commit was refused or failed, the wrap stopped
+      before it, or it was interrupted. `end --abandon` removes the lock and
+      writes no record, and leaves an earlier record as it was.
+      ```sh
+      python3 System/tools/wrap_lock.py end --abandon "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
+      ```
+    That record, not the note's last write and not the release of the lock, is
+    what says a wrap landed: the band and Close read it. A failed wrap leaves
+    no new record, so the band still offers Wrap. Never use `end` to clean up
+    after a failure, and never take the removal of the lock as proof that the
+    wrap succeeded.
 
 Spoken, when the wrap runs in the background: "Acme pricing is being wrapped.
 Say back when you're done." When it runs in the foreground, or when the

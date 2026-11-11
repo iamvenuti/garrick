@@ -25,6 +25,8 @@ The script installs a fresh workspace from `config.json` with the real installer
 
 When the build finishes, `python3 System/tools/check.py` inside the workspace reports no problems.
 
+The build ends by building the status page of the finished workspace, `System/generated/status.html` in the target, which is the page the Garrick app opens on that folder. It shows the demo's live threads and actions and the waiting transcript and mails. It is built with an empty jobs folder and no assistant sessions, so nothing of the machine the demo was built on, no scheduled job and no open session, appears on it.
+
 ### Its dates
 
 `content/` and the plan are written as September 2026: installed on Tuesday 1 September, the last commit on Saturday 26 September, Theo's call and the mails on Monday 28 September. The build moves all of it forward by whole weeks, so the 28th lands on the day you build or in the six days before it, and an assistant opened on the demo reads it as last week's work, not as work abandoned a month ago. Whole weeks keep each weekday true: Friday 2 October becomes another Friday. Every date of the story moves, in whatever form it is written, file names and links included. What is background stays as written: dates before September 2026, month names outside the story, years in titles, and the seasons, so the story reads best built in the autumn. To build as if on another day, for a recording planned for tomorrow, add `--today YYYY-MM-DD`. The dates in this README are the ones `content/` is written with.

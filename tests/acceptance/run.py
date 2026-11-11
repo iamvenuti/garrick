@@ -556,7 +556,7 @@ class Run:
             except Exception as exc:       # an older release's Ask: the row says so
                 row = {"id": q["id"], "outcome": "error", "paths": [], "wall": False, "texts": [],
                        "bad": ["%s: %s" % (type(exc).__name__, str(exc)[:120])]}
-            row["q"], row["kind"] = q["q"], q["kind"]
+            row["q"], row["kind"] = "%s (%s)" % (q["q"], q["window"] + " window" if q.get("window") else "no window"), q["kind"]
             if self.model == "claude" and q.get("cites"):
                 row["cites"] = self.cited(root, q)
                 row["bad"] += [c for c in row["cites"].get("missing", [])]

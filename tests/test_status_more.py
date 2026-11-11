@@ -2866,7 +2866,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
 
     def test_a_window_with_nothing_saved_takes_the_new_order(self):
         out = self.run_js(None)
-        self.assertEqual(["waiting-now", "threads"], out["slots"]["top"])          # #143: Threads leads, after the sessions waiting on you (#474)
+        self.assertEqual(["waiting-now", "your-work", "threads"], out["slots"]["top"])          # #143: Threads leads, after the sessions waiting on you (#474)
         self.assertEqual(["todo"], out["slots"]["left"])
         self.assertEqual(["inboxes"], out["slots"]["right"])
         self.assertEqual(["graph"], out["slots"]["bottom"])
@@ -2875,7 +2875,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
 
     def test_a_saved_layout_loses_only_the_cards_that_are_gone(self):
         out = self.run_js(self.BEFORE_143)
-        self.assertEqual(["waiting-now"], out["slots"]["top"])          # Recent work and Due and overdue go; the card they never named stays
+        self.assertEqual(["waiting-now", "your-work"], out["slots"]["top"])          # Recent work and Due and overdue go; the card they never named stays
         self.assertEqual(["inboxes", "todo"], out["slots"]["left"])     # A thought goes; Inboxes stays where it was dragged
         self.assertEqual([], out["slots"]["right"])                     # Waiting on you goes, hidden or not
         self.assertEqual(["threads", "graph"], out["slots"]["bottom"])  # Threads stays where this window put it
@@ -2896,7 +2896,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         self.assertEqual([], out["slots"]["right"])
         self.assertEqual(["wikis"], out["slots"]["status-bottom"])
         self.assertEqual(["wikis"], out["hidden"])          # still hidden, and still where it was put
-        self.assertEqual(["waiting-now", "graph", "threads"], out["slots"]["top"])
+        self.assertEqual(["waiting-now", "your-work", "graph", "threads"], out["slots"]["top"])
 
     def test_a_card_the_layout_never_named_keeps_the_place_the_build_gave_it(self):
         out = self.run_js({"v": 2, "c": {"top": [], "left": ["inboxes"], "right": [], "bottom": ["threads"]}, "h": []})
@@ -2905,12 +2905,12 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
 
     def test_a_layout_naming_a_card_that_is_gone_is_read_without_harm(self):
         out = self.run_js({"v": 2, "c": {"top": ["ghost", "threads"]}, "h": ["ghost"]})
-        self.assertEqual(["waiting-now", "threads"], out["slots"]["top"])
+        self.assertEqual(["waiting-now", "your-work", "threads"], out["slots"]["top"])
         self.assertEqual([], out["hidden"])
 
     def test_an_older_layout_than_the_one_in_use_is_not_replayed(self):
         out = self.run_js({"v": 1, "c": {"top": ["todo"]}, "h": ["threads"]})
-        self.assertEqual(["waiting-now", "threads"], out["slots"]["top"])     # v1 is ignored, as it always was
+        self.assertEqual(["waiting-now", "your-work", "threads"], out["slots"]["top"])     # v1 is ignored, as it always was
         self.assertEqual([], out["hidden"])
         self.assertIn("{v:2,c:c,", status.LAYOUT_JS)                 # and v2 is still what save() writes
         self.assertIn("if(L&&L.v===2)", status.LAYOUT_JS)

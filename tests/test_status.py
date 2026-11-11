@@ -959,7 +959,7 @@ class TestOpensOnTheWork(StatusCase):
         html = self.page()
         tab = overview(html)
         self.assertEqual(["threads", "todo", "inboxes", "graph"], card_order(tab))
-        self.assertIn('<div class="slot full" data-slot="top"><details class="card" id="waiting-now" open>', tab)   # #474: the sessions waiting on you first
+        self.assertIn('<div class="slot full" data-slot="top"><details class="card nowait" id="waiting-now" open>', tab)   # #474: the sessions waiting on you first
         self.assertLess(tab.index('id="waiting-now"'), tab.index('<details class="card" id="threads" open>'))
         self.assertIn('<div class="slot stack left" data-slot="left"><details class="card" id="todo"', tab)
         for gone in ("recent", "due", "thought", "waiting"):
@@ -1206,9 +1206,9 @@ class TestOpensOnTheWork(StatusCase):
         self.assertEqual(["start", "threads", "todo", "inboxes", "graph"], card_order(tab))
         start = self.rows(html, "start")
         self.assertIn("help me prepare my next supplier call", start)              # the skill's own request
-        self.assertIn("Nothing there yet: from an ordinary request to a saved brief", start)
-        self.assertIn("System/skills/meetings/SKILL.md", start)
-        self.assertIn("written there, not here", start)
+        self.assertIn("Your next step is that one request", start)               # the user's step, in plain words
+        for internal in ("SKILL.md", "System/skills", "Nothing there yet"):       # no internal skill file or procedure (#503)
+            self.assertNotIn(internal, start)
         for step in ("scaffold.py party", "git commit", "Shall I add it as a party"):   # the route is not copied here
             self.assertNotIn(step, html, step)
 

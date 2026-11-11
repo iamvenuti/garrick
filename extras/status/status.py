@@ -5007,17 +5007,13 @@ def check_pop(r: dict, name: str) -> str:
 
 
 def start_card() -> str:
-    """A workspace with no projects: the one request that makes the first one,
-    and where the route is written. The route is the meetings skill's, and is
-    not repeated here."""
+    """A workspace with no projects: the one request that makes the first one."""
     ask = "help me prepare my next supplier call"
     return card("start", "Start here", "nothing is set up yet, and nothing needs to be",
                 '<p>Ask your assistant for the thing you actually need, in your own words. There is no tag, zone or '
                 'thread to learn first.</p><p class="hsay">“%s”</p><div class="hacts">%s</div>'
-                '<p class="hint">That one request is the route: your assistant follows <i>Nothing there yet: from an '
-                'ordinary request to a saved brief</i> in <code>System/skills/meetings/SKILL.md</code>, which asks one '
-                'question and leaves you a party, a project, its first thread and the brief in that thread note. It is '
-                'written there, not here.</p>'
+                '<p class="hint">Your next step is that one request. Your assistant asks you one question, then sets up '
+                'your first project and saves the brief in it. Your work then lists here, with what to do next.</p>'
                 % (E(ask), copy("Copy the request", ask, "Copied the request. Paste it to your assistant.")))
 
 
@@ -8191,6 +8187,34 @@ def waiting_row(r: dict, now: dt.datetime) -> str:
                E(r.get("since") or ""), E(waited(r.get("since") or "", now)), go))
 
 
+def work_list_card(W: List[dict], today: dt.date) -> str:
+    """Your work, the Overview's opening list: each live piece of work with its next action, who it waits on and
+    Continue (#503). The rows are the ones works() builds and the `continue` action carries out; nothing is
+    read or kept for this card. A project of one thread is one piece of work, as page_action.py's work_name() counts it."""
+    rows = ""
+    for w in W:
+        nxt = md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'
+        waits = ('<span class="ywait" title="Waiting on %s">Waiting on %s</span>' % (E(w["waiting"]), E(waiting_badge(w["waiting"])))
+                 if w["waiting"] and not w.get("mine") else '<span class="ywait none"></span>')
+        phrase = "Where am I on %s?" % w["name"]
+        go = (act_button(json.dumps({"verb": "continue", "zone": w["zone"], "file": w["rel"]}), "Continue",
+                         "Opening %s in Claude…" % w["name"], "act primary apponly")
+              + '<span class="webonly">%s</span>' % copy("Copy “Where am I?”", phrase, "Copied “%s”. Paste it to your assistant." % phrase))
+        rows += ('<div class="yrow" data-w="%s"><span class="yname">%s%s</span><span class="ynext">%s</span>%s<span class="yact">%s</span></div>'
+                 % (E(w["id"]), E(w["name"]), '<span class="ytag">Example</span>' if w["example"] else "", nxt, waits, go))
+    return card("your-work", "Your work", "%d piece%s, most recent first" % (len(W), "" if len(W) == 1 else "s"),
+                '<div class="yrows">%s</div>' % rows)
+
+
+YOURWORK_CSS = r"""
+.yrow{display:grid;grid-template-columns:minmax(120px,1.1fr) minmax(160px,2.4fr) minmax(90px,.9fr) auto;gap:6px 14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
+.yrow:last-child{border-bottom:0}.yname{font-weight:600;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere}
+.ywait{color:var(--ink2);font-size:12.5px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:11px;background:var(--wash);color:var(--accent)}
+.yact{justify-self:end}
+@media(max-width:720px){.yrow{grid-template-columns:1fr auto}.ynext,.ywait{grid-column:1/-1}}
+"""
+
+
 def waiting_card(rows: List[dict], now: dt.datetime) -> str:
     """The Waiting on you now card: one row per waiting session, oldest first."""
     rows = sorted(rows, key=lambda r: (r.get("since") or "", r["id"]))
@@ -8366,8 +8390,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # whether Claude's desktop app can open work on this Mac.
     layout = home_layout(ws)
     simple = layout == "simple"
+    HW = works(ws, T, now.date())
     if simple:
-        HW = works(ws, T, now.date())
         kept = handoff_mod().load(ws).get("sessions")
         kept = kept if isinstance(kept, dict) else {}
         local = handoff_mod().local_off(ws, managed)
@@ -8762,7 +8786,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    lead = waiting_card(waiting_now or [], now) + (threads_card if anything else start_card() + threads_card)
+    listed = [w for w in HW if not w["unstarted"]]
+    lead = waiting_card(waiting_now or [], now) + ((work_list_card(listed, now.date()) if listed else "") + threads_card
+                                                    if anything else start_card() + threads_card)
+
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
                        '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, todo_card, inbox_card, graph_card))
@@ -8829,7 +8856,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body%s data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + WAITING_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + SIMPLE_CSS + WHERE_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 (' class="simple" data-tab="home"%s' % (' data-local="%s"' % local if local else "")) if simple else "",
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, layout, link, GK, GS),

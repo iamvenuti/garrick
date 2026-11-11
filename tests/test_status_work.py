@@ -12,15 +12,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import textwrap
 import unittest
-from pathlib import Path
 
 sys.dont_write_bytecode = True
 
@@ -90,9 +87,8 @@ HARNESS = textwrap.dedent(r"""
       if (what === "ops") ctx.window.GarrickActed({ verb: "operations" }, a);
       if (what === "tick" && interval) interval();
       if (what === "reload") load();
-      // as the Obsidian plugin does it, once the page's script has already run
-      if (what === "host") { ctx.GarrickReads = true; if (ctx.window.GarrickReady) ctx.window.GarrickReady(); }
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
+      if (what === "next") box.listeners.click({ target: { closest: (sel) => (sel === "[data-next]" ? { dataset: { next: String(a) } } : null) } });
       if (what === "again") box.listeners.click({ target: { closest: (sel) => (sel === "[data-again]" ? { dataset: { again: String(a) } } : null) } });
       if (what === "busy") r = ctx.window.GarrickBusy(a);
       if (what === "click") {                // TODO_JS's click on a row's box
@@ -195,9 +191,9 @@ class TestWorkUnderNode(NodeCase):
                         ("new-thread", {"verb": "new-thread", "zone": "Work", "project": "Acme", "name": "Freight"})):
             out = self.run_js(("act", 0, q, "Working…"), ("reply", 1, q, {"ok": False, "say": "Refused."}), ("tick", 30))
             self.assertIn("Refused.", out[-1]["box"], verb)
-        # a quick refusal of anything else is the host's toast, as before; and so is a quick success of these
+        # a quick refusal of anything else stays too, in plain words (#511); a quick success of these is the host's toast
         out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 1, PARK, {"ok": False, "say": "Refused."}))
-        self.assertEqual("", out[-1]["box"])
+        self.assertIn("This was not saved", out[-1]["box"])
         out = self.run_js(("act", 0, rename, "Renaming Pricing…"), ("reply", 1, rename, {"ok": True, "say": "Renamed."}))
         self.assertEqual("", out[-1]["box"])
 
@@ -533,7 +529,7 @@ class TestWorkFromTheRecord(NodeCase):
         self.assertEqual(0, out[4]["posted"])                                 # and asking sends no request that acts
 
     def test_a_host_that_does_not_say_it_reads_is_never_asked(self):
-        """An app or plugin from 0.26.0 toasts and rebuilds the page for every
+        """An app from 0.26.0 toasts and rebuilds the page for every
         request it passes on, so asking it to read would do that every POLL
         seconds. It is not asked, and the page behaves as it did."""
         out = self.run_js(("tick", 0), ("act", 1, PARK, "Parking Birch Entry…"), ("tick", 2), ("tick", 12), ("tick", 60),
@@ -546,14 +542,6 @@ class TestWorkFromTheRecord(NodeCase):
         self.assertIn("Parking Birch Entry…", out[5]["box"])                  # a reload keeps it from sessionStorage alone
         self.assertNotIn("recoverable", "".join(o["toast"] for o in out))     # and is never told the record is missing
         self.assertIn("No reply after 16 min", out[6]["box"])                 # ACTION_LOST is still the fallback
-
-    def test_a_host_that_says_so_after_the_page_loaded_is_asked_then(self):
-        """The Obsidian plugin sets the flag on dom-ready, after this script ran."""
-        out = self.run_js(("tick", 0), ("host", 1), ("ops", 2, reply(record(OP, phase="checking"))), reads=False)
-        self.assertEqual(0, out[0]["asked"])
-        self.assertEqual(1, out[1]["asked"])                                  # the flag's own kick asks
-        self.assertIn("Parking Birch Entry…", out[2]["box"])                  # and reattaches, as on the app
-        self.assertIn("Committing: the wall check can take a minute.", out[2]["box"])
 
     def test_a_reload_keeps_what_was_seen(self):
         done = record(OP, state="completed", outcome="saved", done=1000.0, say="Birch Entry is parked")
@@ -576,11 +564,8 @@ class TestWorkOnThePage(StatusCase):
         self.assertEqual(10, status.ACTION_WHY)
         self.assertIn("TOAST=4,WHY=10,LOST=%d," % status.ACTION_LOST, status.WORK_JS)
         self.assertNotIn("@", status.WORK_JS)                                # every constant filled in
-        # No reply is given up only after every host's own wait and page_action.py's longest:
-        # the lock, then scaffold.py's commit, then the new folder's.
-        plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
-        wait = int(re.search(r"cwd: this\.root\(\), timeout: (\d+) \}", plugin).group(1))
-        self.assertLess(wait, status.ACTION_LOST * 1000)
+        # No reply is given up before page_action.py's longest: the lock, then scaffold.py's commit, then the
+        # new folder's. The app waits as long as the script takes.
         longest = page_action.LOCK_WAIT + page_action.COMMIT_TIMEOUT + page_action.GIT_TIMEOUT + page_action.COMMIT_TIMEOUT
         self.assertLess(longest, status.ACTION_LOST)
 
@@ -611,19 +596,13 @@ class TestWorkOnThePage(StatusCase):
 
 
 class TestWorkHosts(unittest.TestCase):
-    def test_each_host_says_it_can_answer_a_request_that_reads(self):
+    def test_the_app_says_it_can_answer_a_request_that_reads(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn("window.GarrickReads=true;", swift)
         self.assertIn("injectionTime: .atDocumentStart", swift)               # before the page's own scripts
         self.assertIn('["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
         self.assertIn("window.GarrickReadsMemory=true;", swift)
         self.assertIn("window.GarrickReadsNotes=true;", swift)                # Explore's Preview (#206)
-        plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn('"dom-ready"', plugin)
-        self.assertIn('window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()', plugin)
-        self.assertIn('["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].includes(request.verb)', plugin)
-        self.assertIn("window.GarrickReadsMemory=true;", plugin)
-        self.assertIn("window.GarrickReadsNotes=true;", plugin)
 
     def test_a_note_opened_from_its_preview_toasts_and_rebuilds_nothing(self):
         # A rebuild would reload the page under the preview (#206); opening changes nothing the page shows.
@@ -632,9 +611,6 @@ class TestWorkHosts(unittest.TestCase):
         act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	func acted(")]
         self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', act)     # #344
         self.assertIn("if toasting && !reading(request) { toast(", swift)     # note-open still toasts
-        plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn('return !this.reading(request) && !(request && request.verb === "note-open");', plugin)
-        self.assertIn("if (this.rebuilds(request) && said.built === undefined) this.rebuild(true);", plugin)
 
     def test_the_app_hands_every_reply_to_the_page(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
@@ -643,43 +619,108 @@ class TestWorkHosts(unittest.TestCase):
         self.assertIn('acted(request, ["ok": false, "say": "Cannot run \\(python)"])', act)
         self.assertNotIn("asyncAfter", act)                                  # no limit of its own on page_action.py
 
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_the_plugin_hands_every_reply_to_the_page(self):
-        harness = textwrap.dedent(r"""
-            const Module = require("module");
-            const [plugin_path] = process.argv.slice(2);
-            const replies = JSON.parse(process.env.REPLIES), ran = [];
-            const stubs = {
-              obsidian: { Plugin: class {}, ItemView: class {}, PluginSettingTab: class {}, Setting: class {}, Notice: class {}, addIcon: () => {} },
-              electron: { shell: {}, clipboard: {} },
-              child_process: { execFile: (cmd, args, opts, done) => { const [err, out] = replies.shift(); done(err, out); return { stdin: { end() {} } }; },
-                               spawn: () => ({}) },
-            };
-            const load = Module._load;
-            Module._load = function (req, ...rest) { return stubs[req] || load.call(this, req, ...rest); };
-            const Plugin = require(plugin_path);
-            const p = new Plugin();
-            p.settings = { workspace: "/ws", python: "/usr/bin/python3", script: __filename, flags: "", hideParked: true };
-            p.root = () => "/ws";
-            p.rebuild = () => {};
-            const view = { toast: (t) => ran.push(["toast", t]), web: { executeJavaScript: (s) => { ran.push(["page", s]); return Promise.resolve(); } } };
-            require("fs").writeFileSync(require("path").join(require("path").dirname(__filename), "page_action.py"), "");
-            for (let i = 0; i < 3; i++) p.act(view, { verb: "park", zone: "Work", file: "Birch Entry/Birch Entry.md" });
-            process.stdout.write(JSON.stringify(ran));
-        """)
-        replies = [[None, '{"ok": true, "say": "Parked"}'], [{"code": 1}, "Traceback"], [{"killed": True}, ""]]
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "harness.js"
-            path.write_text(harness)
-            done = subprocess.run(["node", str(path), str(HERE / "obsidian" / "main.js")], capture_output=True, text=True, timeout=30,
-                                  env=dict(os.environ, REPLIES=json.dumps(replies)))
-        self.assertEqual(0, done.returncode, done.stderr)
-        ran = json.loads(done.stdout)
-        self.assertEqual(["toast", "page"] * 3, [k for k, _ in ran])          # each reply reaches the page, a failed one too
-        self.assertEqual("Parked", ran[0][1])
-        self.assertEqual("That did not work.", ran[2][1])
-        self.assertIn('"ok":false', ran[3][1])
-        self.assertIn("fifteen minutes", ran[4][1])
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestFailuresInPlainWords(NodeCase):
+    """#511: each way an action can fail shows one plain sentence and one next step the page already has. The tool's
+    own text is under Details, closed. A refused save never shows as saved."""
+
+    TOOL = "Not done. Commit refused: the wall check found 2 errors in Zones/Work/Acme/Acme.md; commit again once they are fixed."
+
+    def failed(self, outcome, verb_q=PARK, text=None):
+        return self.run_js(("act", 0, verb_q, "Parking Birch Entry…"),
+                           ("reply", 3, verb_q, {"ok": False, "outcome": outcome, "say": text or self.TOOL}))[1]["box"]
+
+    def details(self, html):
+        """(what shows outside Details, what is inside it, whether it is open)."""
+        m = re.search(r"<details[^>]*>(.*?)</details>", html, re.S)
+        outside = re.sub(r"<details.*?</details>", "", html, flags=re.S)
+        return re.sub(r"<[^>]+>", " ", outside), (re.sub(r"<[^>]+>", " ", m.group(1)) if m else ""), bool(m and " open" in m.group(0).split(">")[0])
+
+    def test_refused_says_the_check_refused_it_and_offers_to_show_why(self):
+        box = self.failed("refused")
+        outside, inside, opened = self.details(box)
+        self.assertIn("This was not saved: the check refused it.", outside)
+        self.assertIn("Show why", outside)
+        self.assertNotIn("wall check", outside)                              # the tool's words are not on the card
+        self.assertIn("wall check found 2 errors", inside)                   # they are under Details
+        self.assertFalse(opened)                                             # closed by default
+
+    def test_a_crash_says_the_action_stopped_and_offers_to_try_again(self):
+        outside, inside, opened = self.details(self.failed("crashed", text="That did not work: Traceback (most recent call last) git failed."))
+        self.assertIn("This was not saved: the action stopped before it finished.", outside)
+        self.assertIn("Try again", outside)
+        self.assertNotIn("Traceback", outside)
+        self.assertIn("Traceback", inside)
+        self.assertFalse(opened)
+
+    def test_an_unknown_end_says_so_and_offers_a_refresh(self):
+        outside, inside, _ = self.details(self.failed("unknown", text="We do not know whether the change went through. Run git log -1 in Work."))
+        self.assertIn("We cannot tell whether this went through.", outside)
+        self.assertIn("Refresh", outside)
+        self.assertNotIn("git log", outside)
+        self.assertIn("git log -1 in Work", inside)
+
+    def test_no_reply_at_all_says_the_page_did_not_hear_back(self):
+        out = self.run_js(("act", 0, ACME, "Making Acme…"), ("tick", status.ACTION_LOST + 1))[1]["box"]
+        outside, inside, opened = self.details(out)
+        self.assertIn("This page did not hear back, so we cannot tell whether this went through.", outside)
+        self.assertIn("Refresh", outside)
+        self.assertNotIn("git status", outside)
+        self.assertIn("No reply after 16 min", inside)
+        self.assertFalse(opened)
+
+    def test_a_hand_off_that_did_not_open_says_claude_did_not_open(self):
+        cont = {"verb": "continue", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}
+        raw = "Claude's desktop app did not open: exit 1 /usr/local/bin/claude --resume 0b7e6f1c"
+        box = self.run_js(("act", 0, cont, "Opening Acme Review in Claude…"),
+                          ("reply", 3, cont, {"ok": False, "say": raw}))[1]["box"]
+        outside, inside, opened = self.details(box)
+        self.assertIn("Claude did not open.", outside)
+        self.assertIn("Try again", outside)
+        self.assertNotIn("/usr/local/bin", outside)                          # no command or path outside Details
+        self.assertIn("/usr/local/bin/claude", inside)
+        self.assertFalse(opened)
+
+    def test_a_host_failure_with_no_outcome_is_not_saved_either(self):
+        outside, inside, _ = self.details(self.failed("", text="That did not work."))
+        self.assertIn("This was not saved", outside)
+        self.assertIn("Try again", outside)
+
+    def test_the_rules_sentence_for_a_wall_stands_alone(self):
+        wall = "A wall holds some material back from this project, so I have not used it. Nothing was written."
+        outside, inside, _ = self.details(self.failed("refused", text=wall))
+        self.assertIn(wall, outside)
+        self.assertNotIn("Show why", outside)
+        self.assertNotIn("Details", outside)
+
+    def test_show_why_opens_details_try_again_sends_it_afresh_and_refresh_rebuilds(self):
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 3, PARK, {"ok": False, "outcome": "refused", "say": self.TOOL}),
+                          ("next", 4, 0))
+        self.assertTrue(self.details(out[2]["box"])[2])                      # opened by the button
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 3, PARK, {"ok": False, "outcome": "crashed", "say": "x"}),
+                          ("next", 4, 0))
+        self.assertEqual(2, out[2]["posted"])                                # the same request, once more
+        self.assertIn("wspin", out[2]["box"])
+        out = self.run_js(("act", 0, PARK, "Parking Birch Entry…"), ("reply", 3, PARK, {"ok": False, "outcome": "unknown", "say": "x"}),
+                          ("next", 4, 0))
+        self.assertIn({"rebuild": True}, out[2]["sent"])                      # the page's own rebuild
+
+    def test_a_refused_save_never_shows_as_saved(self):
+        for outcome in ("refused", "crashed", "unknown"):
+            box = self.failed(outcome)
+            text = re.sub(r"<[^>]+>", " ", box)
+            for m in SUCCESS.finditer(text):
+                self.assertRegex(text[:m.start()], r"(?i)\b(not|no)\s+$", text)
+
+    def test_a_reply_with_no_outcome_is_not_saved_until_the_record_says_so(self):
+        # The record keeps park, so a reply that says ok with no outcome is not taken as saved: the entry stays
+        # running and the record is asked; only the record's own outcome ends it.
+        out = self.run_js(("ops", 1, reply()), ("act", 2, PARK, "Parking Birch Entry…"),
+                          ("reply", 3, PARK, {"ok": True, "say": "Birch Entry is parked"}),
+                          ("ops", 5, reply(record(OP, state="completed", outcome="saved", done=1005.0, say="Birch Entry is parked"))), reads=True)
+        self.assertIn("wspin", out[2]["box"])                                 # still running: nothing said saved yet
+        self.assertGreater(out[2]["asked"], out[1]["asked"])                  # and the record was asked for
 
 
 if __name__ == "__main__":

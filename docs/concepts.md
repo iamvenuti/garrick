@@ -28,7 +28,7 @@ One line of work inside a project, in `Threads/<Thread>/`, with a note of the sa
 
 ### Piece of work
 
-The word the [simple home](#the-simple-home) uses for a thread, and the only unit it shows. Underneath, a piece of work is a project with one thread; a project with several live threads shows one row for each, as *Project, Thread*. "Thread" is the word in the rules and in these pages, for someone who splits a piece of work.
+The word the Garrick App's *Your work* list uses for a thread, and the only unit it shows. Underneath, a piece of work is a project with one thread; a project with several live threads shows one row for each, as *Project, Thread*. "Thread" is the word in the rules and in these pages, for someone who splits a piece of work.
 
 ### Spoken form
 
@@ -130,7 +130,7 @@ What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live cop
 
 ### Wiki questions
 
-When an ingest or a lint finds something only you can answer, such as who decides, or which of two figures holds, it writes the question as a file in the wiki's `questions/` folder, `<YYMMDD> - <slug>.md`, and adds no line to the page. A question has the form of a [*Needs you*](extras/simple-home.md#needs-you) question, plus `origin:`, the raw record that raised it, and `pages:`, the pages the answer would change. A Meetings question also carries the zone and parties of the pages it comes from, and the walls read it as they read a page. A Knowledge question carries neither, as nothing in Knowledge does. The schemas are in each wiki's `AGENTS.md`.
+When an ingest or a lint finds something only you can answer, such as who decides, or which of two figures holds, it writes the question as a file in the wiki's `questions/` folder, `<YYMMDD> - <slug>.md`, and adds no line to the page. A question has the form of a short ask with one answer per option, plus `origin:`, the raw record that raised it, and `pages:`, the pages the answer would change. A Meetings question also carries the zone and parties of the pages it comes from, and the walls read it as they read a page. A Knowledge question carries neither, as nothing in Knowledge does. The schemas are in each wiki's `AGENTS.md`.
 
 You answer in your own words, in one line, and pick one of four outcomes. The **Context tab** in the Garrick App does it (see [the status page](extras/status-page.md#the-context-tab)), and so does the command line, with `page_action.py` in `System/status/`. Either way each write is one transaction: after it, `check.py` and the wiki lint are counted again, and if any count is worse every file goes back as it was, byte for byte, and a file the write made is removed:
 
@@ -253,31 +253,23 @@ An optional hook for Claude Code and Codex. Before the assistant edits a file ou
 
 ### Extras
 
-Optional tools the repository ships in `extras/` for a workspace to take on, such as the Garrick App, scheduled jobs, desk and the zone guard. Core Garrick never depends on any of them. The installer puts in one, the Garrick App's, in a workspace that opens on the simple home; the rest you add yourself. See [Extras](extras/index.md).
+Optional tools the repository ships in `extras/` for a workspace to take on, such as the Garrick App, scheduled jobs, desk and the zone guard. Core Garrick never depends on any of them. The installer puts in one, the Garrick App's; the rest you add yourself. See [Extras](extras/index.md).
 
 ### The Garrick App
 
-The control panel over your zones, projects and threads, and not where the work happens: it opens a piece of work in the app you work in. It is one HTML page, built by `status.py` into `System/generated/status.html`, shown in the Mac app, in Obsidian or in a browser. It opens on the [simple home](#the-simple-home) or on the full page, whose tabs are Overview, Todo, Status and the [Guide](#the-guide). Its buttons can also act, such as parking a thread or ticking a Todo line, each through one declared operation and committed in the zone; in a browser they copy what to say instead. Its code keeps the old name, the status page, in `extras/status/`. See [the Garrick App](extras/status-page.md).
+The control panel over your zones, projects and threads, and not where the work happens: it opens a piece of work in the app you work in. It is one HTML page, built by `status.py` into `System/generated/status.html`, shown in the Mac app, in Obsidian or in a browser. It opens on your work, with tabs for Overview, Todo, Status and the [Guide](#the-guide). Its buttons can also act, such as parking a thread or ticking a Todo line, each through one declared operation and committed in the zone; in a browser they copy what to say instead. Its code keeps the old name, the status page, in `extras/status/`. See [the Garrick App](extras/status-page.md).
 
 ### The Mac app
 
 *Garrick.app*, which shows the Garrick App in a window of its own, in the Dock and the menu bar. It rebuilds the page when it is old, and its buttons act. `make-app.sh` builds it on your Mac, signed for that Mac only, and "Set up Garrick" offers to run it. See [A Mac app](extras/status-page.md#a-mac-app).
 
-### The simple home
+### Your work
 
-What a new workspace's Garrick App opens on: *Your work*, every live piece of work, most recent first, each with its next action; *Ask something*, one box for a question about any of your work; and *Needs you*, the questions Garrick is waiting on you to answer. Everything else is under *More*, and *Settings › Home* switches between *Simple* and *Full*. See [The simple home](extras/simple-home.md).
+The list the Garrick App's Overview opens on: every live piece of work, most recent first, each with its next action, who it waits on, and *Continue*. See [Your work](extras/status-page.md#what-it-shows).
 
 ### Continue
 
-The button on a piece of work in the simple home, and *Open in Claude* on the full page. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. *Ask something* works the same way, with your words. See [Continue](extras/simple-home.md#continue).
-
-### Needs you
-
-A question Garrick is waiting on you to answer, blocking one piece of work. Each is a file in that work's `Needs you/` folder, committed like any note, with its options as buttons on the home. An answer sets the work's next action and commits; *Not now* brings it back the next day. Warnings and check findings never go there. See [Needs you](extras/simple-home.md#needs-you).
-
-### Stop using this
-
-The button at the foot of a piece of work's page that puts Garrick's record of it away: its project moves into the zone's `archive/`, in one commit, and its folder of files is left as it was. *Bring it back* returns the record where it stood. Nothing is deleted. See [Your own work](extras/simple-home.md#your-own-work).
+The button on a piece of work in Your work, and *Open in Claude* on a thread. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. See [Continue](extras/status-page.md#continue).
 
 ### The Guide
 
@@ -285,7 +277,7 @@ The Garrick App's fourth tab: these pages, as the release your workspace runs sh
 
 ### The worked example
 
-Robin Hale's made-up work at Quillfield Furniture, in a zone of its own called `Example`, for trying Garrick before your own work is in it. `install.py --example` adds it, its pieces of work are marked *Example*, and *Remove the example*, or `System/tools/example.py archive`, puts it away without touching anything of yours. See [The example](extras/simple-home.md#the-example).
+Robin Hale's made-up work at Quillfield Furniture, in a zone of its own called `Example`, for trying Garrick before your own work is in it. `install.py --example` adds it, its pieces of work are marked *Example*, and *Remove the example*, or `System/tools/example.py archive`, puts it away without touching anything of yours.
 
 ### Desk
 

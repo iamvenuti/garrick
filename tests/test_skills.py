@@ -479,14 +479,15 @@ class SkillsTest(unittest.TestCase):
         for word in ("push", "reset", "checkout"):
             self.assertNotIn(word, offer[0])
 
-    def test_setup_offers_the_mac_app_at_its_end_on_the_simple_home(self):
+    def test_setup_offers_the_mac_app_at_its_end(self):
         """#208: the installer puts the status page in place and builds it; the
         app is the setup skill's to offer, once, in one plain sentence, and to
         build only on a yes, with make-app.sh from the workspace's own copy."""
         text = (SKILLS / "setup" / "SKILL.md").read_text(encoding="utf-8")
         steps = section(text, '## "Set up Garrick"')
         offer = flat(steps[steps.index("6. **Offer the Mac app**"):steps.index("7. **Hand over.**")])
-        for needle in ('`"home": "simple"`', "`System/status/app/make-app.sh` is there", "this is a Mac",
+        self.assertNotIn("simple", offer)                       # asked as for any other workspace (#503)
+        for needle in ("`System/status/app/make-app.sh` is there", "this is a Mac",
                        "`~/Applications/Garrick.app` is not there yet", "the last question before you hand over",
                        "in one plain sentence", "On a yes",
                        '`System/status/app/make-app.sh --workspace "<this workspace>"`', "downloads nothing",

@@ -52,13 +52,15 @@ the core's are, and the report names the extras it found. Once the files are
 written, the update does what an extra needs next, and the report says so
 first: it rebuilds Garrick.app with the flags it was built with, rebuilds the
 status page with the same flags when anything in `System/status` changed, so
-no page drawn by the replaced code stays up, refreshes the Obsidian plugin in
-each vault that has it, and points a `desk` command linked
+no page drawn by the replaced code stays up, removes the Obsidian plugin from
+each vault where it is as Garrick wrote it (the Garrick App is the page's only
+host; a plugin with changes of yours stays, and the report names it), and
+points a `desk` command linked
 to another copy at the workspace's. What it cannot do, it prints: a merge to
 make first, or the zone guard and the Garrick band, which run from a Garrick
 kept outside the workspace.
 
-Nothing is written without `--apply`, and nothing is ever deleted. Each
+Nothing is written without `--apply`, and nothing is ever deleted, but the Obsidian plugin folder just described. Each
 repository the update touches gets one commit of its own, holding only the
 files the update wrote, `.new` files included, so `git revert` undoes it.
 `System/context.md` is never read or written, but for one step: when its
@@ -125,7 +127,7 @@ NEW_SUFFIX = ".new"
 KINDS = ("replace", "add", "merge", "split", "yours", "restore", "retired")
 
 # The extras that live in the workspace: the installer's table, which it reads
-# to put the status page in place on the simple home. An extra counts as
+# to put the status page in place. An extra counts as
 # installed when one of its folders is in the workspace; its files are then
 # updated as the core's are, and any it lacks are added.
 EXTRAS = install.EXTRAS
@@ -967,7 +969,10 @@ def say_applied(p, result):
 APP_ID = "local.garrick.status"                 # make-app.sh's bundle identifier
 APP_SOURCES = ("System/status/app/", "System/status/status.py")     # the app's code, and the page that draws its icon
 PLUGIN = (".obsidian", "plugins", "garrick-status")
+PLUGIN_FILES = ("main.js", "manifest.json")    # what Garrick shipped in the plugin folder, as System/status/obsidian/ held them
 PLUGIN_SOURCE = "System/status/obsidian/"
+PLUGIN_ID = "garrick-status"
+PLUGIN_KEPT = ("data.json",)                   # what Obsidian itself writes there, which goes with the plugin
 DESK = "System/cmux/desk.py"
 STATUS_FOLDER = "System/status/"
 STATUS_PY = "System/status/status.py"
@@ -1339,8 +1344,12 @@ def outside_copies(root):
             dirs |= {d for d in re.split(r"[:,]", value) if d.rstrip("/").endswith("garrick-band")}
     for d in sorted(dirs):
         there = Path(os.path.expanduser(d))
-        if there.is_dir() and band.is_dir() and not same_place(there, band) and any(
-                read(there / f.relative_to(band)) != read(f) for f in band.rglob("*") if f.is_file()):
+        if not (there.is_dir() and band.is_dir() and not same_place(there, band)):
+            continue
+        # The band says it is stale from the commit in its download's VERSION, so a download of an older
+        # release is refreshed even when every band file matches (#515): the update and the band decide alike.
+        if any(read(there / f.relative_to(band)) != read(f) for f in band.rglob("*") if f.is_file()) \
+                or band_refresh(there, root) is not None:
             found.append(("the Garrick band", str(there)))
     return found
 
@@ -1511,35 +1520,18 @@ def next_steps(root, p, done=None):
                 if apps else "with the flags its last build used, as no Garrick.app is built for this workspace"),
                 lambda cmd=cmd: say_page(cmd)))
 
-    sources = sorted(path for path in p["files"] if path.startswith(PLUGIN_SOURCE))
+    # The Obsidian plugin is gone (#508): the Garrick App is the page's only host. A copy in a vault that is
+    # still as a released Garrick wrote it is removed; one with changes stays, and the report names it.
     known = known_hashes()
-    refreshed = False
-    for copy in plugin_copies(root) if sources else []:
+    for copy in plugin_copies(root):
         vault = os.path.relpath(copy.parent.parent.parent, root)
         vault = "the workspace's top" if vault == "." else vault
-        stale, foreign = [], []
-        for path in sources:
-            data = p["files"][path][0]
-            have = read(copy / path[len(PLUGIN_SOURCE):])
-            if have == data:
-                continue
-            if path not in ours:
-                foreign.append(path)                        # the workspace's copy is not this Garrick's yet
-            elif have is None or digest(have) in known.get(path, ()) or digest(have) == p["recorded"].get(path):
-                stale.append(path)
-            else:
-                foreign.append(path)
-        if stale:
-            refreshed = True
-            steps.append(("Refresh the Obsidian plugin in %s: %s" % (vault, ", ".join(x[len(PLUGIN_SOURCE):] for x in stale)),
-                          lambda copy=copy, stale=stale: refresh_plugin(root, copy, stale, p)))
-        if foreign:
-            steps.append(("The Obsidian plugin in %s has %s unlike any Garrick's, so it is left as it is; copy them "
-                          "from System/status/obsidian/ to refresh it" % (
-                              vault, ", ".join(x[len(PLUGIN_SOURCE):] for x in foreign)), None))
-    if refreshed:
-        steps.append(("In Obsidian, switch Garrick off and on in Settings > Community plugins, or restart Obsidian, "
-                      "to load the refreshed plugin", None))
+        if plugin_unchanged(copy, known):
+            steps.append(("Remove the Obsidian plugin in %s, which is as Garrick wrote it: the Garrick App is the page's only "
+                          "host now" % vault, lambda copy=copy: remove_plugin(root, copy)))
+        else:
+            steps.append(("The Obsidian plugin in %s has changes of yours, so it is left as it is; delete "
+                          ".obsidian/plugins/garrick-status in that vault when you no longer use it" % vault, None))
 
     if "cmux" in p.get("extras", ()) and DESK in ours:
         mine = (root / DESK).resolve() if (root / DESK).exists() else root / DESK
@@ -1548,6 +1540,7 @@ def next_steps(root, p, done=None):
                 steps.append(("Point the desk command, %s, at the workspace's %s, in place of %s" % (link, DESK, target),
                               lambda link=link: relink(link, mine)))
 
+    steps.extend(home_steps(root))
     steps.extend(before_quit_steps(root))
 
     for what, path in outside_copies(root):
@@ -1590,6 +1583,51 @@ def before_quit_commands(root):
         elif isinstance(c, list) and c and all(isinstance(a, str) for a in c):
             out.append(shlex.join(c))
     return out or None
+
+
+def home_steps(root):
+    """The simple home is gone (#503): the Garrick App opens on the full page only, so a `"home"` key in
+    System/garrick-settings.json is removed and the update says so in one line. Files a project holds under its
+    own Files/ folder, from a copy kept or files moved in, stay where they are, and the projects that have them
+    are named."""
+    steps = []
+    settings = root.joinpath(*install.lib().SETTINGS)
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict) and "home" in data:
+        steps.append(('Remove "home" from System/garrick-settings.json: the Garrick App opens on the full page only',
+                      lambda: remove_home_key(root)))
+    kept = []
+    zones = root / "Zones"
+    try:
+        for zone in sorted(zones.iterdir()):
+            for project in sorted(zone.iterdir()) if zone.is_dir() and not zone.name.startswith((".", "_")) else []:
+                files = project / "Files"
+                if project.is_dir() and not project.name.startswith((".", "_")) and files.is_dir() \
+                        and any(not f.name.startswith(".") for f in files.iterdir()):
+                    kept.append("%s/%s" % (zone.name, project.name))
+    except OSError:
+        pass
+    if kept:
+        steps.append(("Files kept under a project's Files/ folder stay where they are, in %s; they are ordinary files in the "
+                      "project's folder" % ", ".join(kept), None))
+    return steps
+
+
+def remove_home_key(root):
+    """Take `"home"` out of System/garrick-settings.json, and nothing else."""
+    settings = root.joinpath(*install.lib().SETTINGS)
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or "home" not in data:
+            return 'System/garrick-settings.json has no "home" to remove.'
+        del data["home"]
+        settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return 'Could not remove "home" from System/garrick-settings.json: %s.' % exc
+    return 'Removed "home" from System/garrick-settings.json: the Garrick App opens on the full page only.'
 
 
 def before_quit_steps(root):
@@ -1645,27 +1683,48 @@ def say_page(cmd):
         last or "status.py failed", cmd[1])
 
 
-def refresh_plugin(root, copy, paths, p):
-    """Copy this Garrick's plugin files into one vault's plugin folder. Where
-    git tracks them, the change is committed as the update's own are."""
-    targets = [copy / path[len(PLUGIN_SOURCE):] for path in paths]
+def plugin_unchanged(copy, known):
+    """Whether a vault's garrick-status folder holds Garrick's main.js and manifest.json as a released Garrick
+    shipped them, and nothing else but what Obsidian writes itself."""
+    try:
+        names = {x.name for x in copy.iterdir()}
+    except OSError:
+        return False
+    if not set(PLUGIN_FILES) <= names or names - set(PLUGIN_FILES) - set(PLUGIN_KEPT):
+        return False
+    return all(not (copy / f).is_symlink() and digest(read(copy / f) or b"") in known.get(PLUGIN_SOURCE + f, ())
+               for f in PLUGIN_FILES)
+
+
+def remove_plugin(root, copy):
+    """Delete one vault's garrick-status plugin folder and take the plugin out of that vault's
+    community-plugins.json. Where git tracks them, the change is committed as the update's own are."""
     if lib_link(root, copy):
         return "Skipped the Obsidian plugin in %s: a symbolic link stands on the way to it." % copy
+    listing = copy.parent.parent / "community-plugins.json"
     repo = repo_of(root, os.path.relpath(copy, root))
-    rels = [os.path.relpath(t, repo) for t in targets]
-    tracked = [rel for rel in rels if git(repo, "ls-files", "--error-unmatch", "--", rel, check=False).returncode == 0]
-    if any(status(repo, rel) for rel in tracked):
+    rel = os.path.relpath(copy, repo)
+    tracked = git(repo, "ls-files", "--", rel, check=False).stdout.strip() != ""
+    if tracked and status(repo, rel):
         return "Skipped the Obsidian plugin in %s: it has changes not committed." % copy
     try:
-        for path, target in zip(paths, targets):
-            data, mode = p["files"][path]
-            write_bytes(target, data, mode)
+        text = listing.read_text(encoding="utf-8") if listing.is_file() else None
+        enabled = json.loads(text) if text else None
         if tracked:
-            git(repo, "add", "--", *tracked)
-            git(repo, "commit", "-q", "-m", "Garrick: refresh the Obsidian plugin", "--", *tracked)
-    except (OSError, UpdateError) as exc:
-        return "The Obsidian plugin in %s could not be refreshed: %s." % (copy, exc)
-    return "Refreshed the Obsidian plugin in %s." % copy
+            git(repo, "rm", "-r", "-q", "--", rel)
+        shutil.rmtree(str(copy), ignore_errors=True)
+        if isinstance(enabled, list) and PLUGIN_ID in enabled:
+            listing.write_text(json.dumps([x for x in enabled if x != PLUGIN_ID], indent=2) + "\n", encoding="utf-8")
+        if tracked:
+            paths = [rel]
+            lrel = os.path.relpath(listing, repo)
+            if git(repo, "ls-files", "--error-unmatch", "--", lrel, check=False).returncode == 0:
+                git(repo, "add", "--", lrel)
+                paths.append(lrel)
+            git(repo, "commit", "-q", "-m", "Garrick: remove the Obsidian plugin", "--", *paths)
+    except (OSError, ValueError, UpdateError) as exc:
+        return "The Obsidian plugin in %s could not be removed: %s." % (copy, exc)
+    return "Removed the Obsidian plugin in %s." % copy
 
 
 def lib_link(root, path):

@@ -22,6 +22,7 @@ import textwrap
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -30,6 +31,7 @@ from fixtures import write  # noqa: E402
 from test_page_action import git  # noqa: E402
 
 ask = scoped.ask
+REAL_AGENT_ON = ask.agent_on          # AskCase makes the fixed pipeline of the Claude stand-in; these cases want the real choice
 ACME, BIRCH = scoped.ACME, scoped.BIRCH
 
 FAKE_AGENT = textwrap.dedent("""\
@@ -89,11 +91,14 @@ FAKE_AGENT = textwrap.dedent("""\
 class AgentCase(scoped.AnswerCase):
     def setUp(self):
         super().setUp()
+        real = mock.patch.object(ask, "agent_on", REAL_AGENT_ON)
+        real.start()
+        self.addCleanup(real.stop)
         self.fake.write_text(FAKE_AGENT)
         self.steps = Path(self._tmp.name) / "steps.json"
         os.environ["FAKE_STEPS"] = str(self.steps)
         self.addCleanup(os.environ.pop, "FAKE_STEPS", None)
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True, "ask-agent": True}))
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
         self.script([])
 
     def script(self, turns):
@@ -195,9 +200,9 @@ class TestOneSession(AgentCase):
         self.assertIn(ask.tools_lib().INDEX_DOWN, got["text"])
 
 
-class TestTheFlagFollowsTheHarness(AgentCase):
-    """#476: the one session is how Ask works with Claude, `"ask-agent": false` turns it off for one release,
-    Codex is always the fixed pipeline, and a change reaches the running server on the next request."""
+class TestTheHarnessChoosesTheSession(AgentCase):
+    """#476: the one session is how Ask works with Claude and the fixed pipeline is Codex's, chosen by the
+    harness. A stale `ask-agent` line in System/garrick-flags.json is ignored."""
 
     def flags(self, **flags):
         write(self.root / "System" / "garrick-flags.json", json.dumps(dict({"ask": True}, **flags)))
@@ -207,18 +212,16 @@ class TestTheFlagFollowsTheHarness(AgentCase):
         self.assertIsInstance(ask.session_for(self.root), ask.AgentSession)
         (self.root / "System" / "garrick-flags.json").write_text("{not json")
         self.assertIsInstance(ask.session_for(self.root), ask.AgentSession)
-        self.flags(**{"ask-agent": True})
+
+    def test_a_stale_ask_agent_line_is_ignored_and_left_in_the_file(self):
+        for value in (False, True, None, 0, "false", []):
+            self.flags(**{"ask-agent": value})
+            self.assertIsInstance(ask.session_for(self.root), ask.AgentSession, value)
+        before = (self.root / "System" / "garrick-flags.json").read_text()
         self.assertIsInstance(ask.session_for(self.root), ask.AgentSession)
+        self.assertEqual(before, (self.root / "System" / "garrick-flags.json").read_text())     # not rewritten
 
-    def test_false_is_the_off_switch_and_nothing_else_is(self):
-        self.flags(**{"ask-agent": False})
-        self.assertNotIsInstance(ask.session_for(self.root), ask.AgentSession)
-        self.assertIsInstance(ask.session_for(self.root), ask.ClaudeSession)
-        for other in (None, 0, "false", []):
-            self.flags(**{"ask-agent": other})
-            self.assertIsInstance(ask.session_for(self.root), ask.AgentSession, other)
-
-    def test_codex_is_the_fixed_pipeline_whatever_the_flag_says(self):
+    def test_codex_is_the_fixed_pipeline(self):
         before = os.environ.get("GARRICK_HARNESS")
         os.environ["GARRICK_HARNESS"] = "codex"
         self.addCleanup(lambda: os.environ.__setitem__("GARRICK_HARNESS", before) if before is not None
@@ -227,48 +230,14 @@ class TestTheFlagFollowsTheHarness(AgentCase):
             self.flags(**flags)
             self.assertIsInstance(ask.session_for(self.root), ask.OnceSession, flags)
 
-    def test_a_changed_flag_reaches_the_next_request_and_reset(self):
-        self.flags()
-        a = ask.Asker(self.root, ask.session_for(self.root))
-        self.askers.append(a)
-        first = a.session
-        self.assertFalse(ask.fit(a, self.root))                 # the flag and the session agree
-        self.assertIs(first, a.session)
-        self.flags(**{"ask-agent": False})
-        self.assertTrue(ask.fit(a, self.root))                  # the next request
-        self.assertIsInstance(a.session, ask.ClaudeSession)
-        self.assertNotIsInstance(a.session, ask.AgentSession)
-        self.assertFalse(ask.fit(a, self.root))
-        self.flags()
-        self.assertTrue(ask.fit(a, self.root))                  # and the next reset
-        self.assertIsInstance(a.session, ask.AgentSession)
-
-    def test_settings_lists_it_on_by_default_and_off_on_false(self):
+    def test_settings_no_longer_lists_the_flag(self):
         spec = importlib.util.spec_from_file_location("garrick_status_for_agent", scoped.REPO / "extras" / "status" / "status.py")
         status = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(status)
-        self.assertIn("ask-agent", status.FLAGS)
-        self.assertIn("next release", status.FLAGS["ask-agent"][1])
-        self.flags()                                            # ask on, Claude, no ask-agent line
-        self.assertTrue(status.preview_flags(self.root)["ask-agent"])
-        self.assertIn(">on<", status.preview_section(status.preview_flags(self.root)).split("Ask: one session")[1])
+        self.assertNotIn("ask-agent", status.FLAGS)
         self.flags(**{"ask-agent": False})
-        self.assertFalse(status.preview_flags(self.root)["ask-agent"])
-        self.assertFalse(status.preview_flags(self.root)["effort"])
-        write(self.root / "System" / "garrick-flags.json", json.dumps({}))      # Ask itself is off
-        self.assertFalse(status.preview_flags(self.root)["ask-agent"])
-        self.flags()
-        before = os.environ.get("GARRICK_HARNESS")
-        os.environ["GARRICK_HARNESS"] = "codex"
-        try:
-            self.assertFalse(status.preview_flags(self.root)["ask-agent"])
-            shown = status.preview_section(status.preview_flags(self.root)).split("Ask: one session")[1]
-            self.assertIn("does not apply", shown)
-        finally:
-            if before is None:
-                os.environ.pop("GARRICK_HARNESS", None)
-            else:
-                os.environ["GARRICK_HARNESS"] = before
+        self.assertNotIn("ask-agent", status.preview_flags(self.root))
+        self.assertNotIn("Ask: one session", status.preview_section(status.preview_flags(self.root)))
 
 
 class TestAnswers(AgentCase):

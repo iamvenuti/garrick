@@ -785,7 +785,7 @@ class InteractiveTest(unittest.TestCase):
             self.assertLess(r.stdout.index(asked[0]), r.stdout.index("Go ahead?"))
             target = box.home / "ws-asked"
             self.assertFalse((target / ".claude" / "settings.json").exists())
-            self.assertNotIn("allowed-commands", recorded_settings(target))     # only which page opens (#175)
+            self.assertNotIn("allowed-commands", recorded_settings(target))     # nothing of the page is recorded (#503)
             self.assertIn("No command is allowed in advance", r.stdout)
         finally:
             box.close()
@@ -856,21 +856,20 @@ class AllowlistTest(unittest.TestCase):
         self.addCleanup(self.box.close)
         self.declined = self.box.config("declined", **{"allow-commands": False})
 
-    def test_a_new_workspace_opens_on_the_simple_home(self):
-        """#175: the status page opens a workspace made now on the simple
-        home, and the choice is committed with the rest of System/. Saying
+    def test_a_new_workspace_records_no_home_setting(self):
+        """#503: the Garrick App opens on the full page only, so the installer writes no "home" setting. Saying
         no to the commands changes nothing about it."""
         for name, config in (("allowed", None), ("declined", self.declined)):
             target, r = self.box.install(name, **({"config": config} if config else {}))
             self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual("simple", recorded_settings(target).get("home"), name)
+            self.assertNotIn("home", recorded_settings(target), name)
             self.assertEqual("", git(target, "status", "--porcelain"), name)
 
     def test_a_config_that_declines_writes_nothing_about_permissions(self):
         target, r = self.box.install("declined", config=self.declined)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertFalse((target / ".claude" / "settings.json").exists())
-        self.assertNotIn("allowed-commands", recorded_settings(target))     # only which page opens (#175)
+        self.assertNotIn("allowed-commands", recorded_settings(target))     # nothing of the page is recorded (#503)
         self.assertIn("No command is allowed in advance", r.stdout)
         self.assertEqual("", git(target, "status", "--porcelain"))
 
@@ -903,7 +902,7 @@ class AllowlistTest(unittest.TestCase):
         self.assertEqual(1, r.returncode)
         self.assertIn("not JSON Garrick can add to", r.stderr)
         self.assertEqual("{ not json", settings.read_text())
-        self.assertNotIn("allowed-commands", recorded_settings(target))     # only which page opens (#175)
+        self.assertNotIn("allowed-commands", recorded_settings(target))     # nothing of the page is recorded (#503)
 
     def test_it_refuses_a_folder_that_is_not_a_workspace(self):
         r = run([INSTALL, "--allowlist", self.box.work], self.box.env)
@@ -1127,9 +1126,7 @@ class ZoneTest(unittest.TestCase):
 
 
 class ZoneTodoTest(unittest.TestCase):
-    """A zone's list starts with the zone template's example line, there to show
-    the shape, on the full home only. On the simple home nobody reads the list
-    as a file, and an assistant asked what is owed would report the sample."""
+    """A zone's list always starts with the zone template's example line, there to show the shape (#503)."""
 
     EXAMPLE = "- [ ] [[<Thread>]]: <action>"
     NOTE = "The line below is an example"
@@ -1144,50 +1141,26 @@ class ZoneTodoTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.box.close()
 
-    def zone(self, name, home):
-        settings = self.root / "System" / "garrick-settings.json"
-        kept = settings.read_text()
-        data = json.loads(kept)
-        data.pop("home", None)
-        data.update({"home": home} if home else {})
-        settings.write_text(json.dumps(data, indent=2) + "\n")
-        try:
-            r = run([self.root / "System" / "tools" / "scaffold.py", "zone", name, "--holds", "Anything"],
-                    self.box.env, cwd=self.root)
-        finally:
-            settings.write_text(kept)
-        self.assertEqual(r.returncode, 0, r.stderr)
-        return (self.root / "Zones" / name / "Todo.md").read_text()
-
-    def test_an_install_on_the_simple_home_starts_each_list_without_it(self):
-        self.assertEqual("simple", recorded_settings(self.root)["home"])
+    def test_an_install_starts_each_list_with_the_template_line(self):
+        self.assertNotIn("home", recorded_settings(self.root))
+        template = (self.root / "System" / "templates" / "zone" / "Todo.md").read_text()
         for zone in ("Work", "Personal"):
             text = (self.root / "Zones" / zone / "Todo.md").read_text()
-            self.assertNotIn(self.EXAMPLE, text, zone)
-            self.assertNotIn(self.NOTE, text, zone)
-            self.assertNotIn("<", text, zone)
-            self.assertIn("One line per action, Obsidian Tasks style.", text)
-            self.assertIn("\n\n## Inbox\n\n## Done\n", text)
-            self.assertNotIn("\n\n\n", text)
-        # The template keeps it, for a zone added to a workspace on the full home.
-        template = (self.root / "System" / "templates" / "zone" / "Todo.md").read_text()
-        self.assertIn(self.EXAMPLE, template)
-        self.assertIn(self.NOTE, template)
+            self.assertIn(self.EXAMPLE, text, zone)
+            self.assertIn(self.NOTE, text, zone)
+            self.assertEqual(template.replace("{{ZONE}}", zone), text)
 
-    def test_a_zone_added_later_follows_the_home(self):
-        self.assertNotIn(self.EXAMPLE, self.zone("Garden", "simple"))
-        for name, home in (("Studio", "full"), ("Travel", None)):    # no "home": a workspace from before #175
-            text = self.zone(name, home)
-            self.assertIn(self.EXAMPLE, text, name)
-            self.assertIn(self.NOTE, text, name)
-            template = (self.root / "System" / "templates" / "zone" / "Todo.md").read_text()
-            self.assertEqual(template.replace("{{ZONE}}", name), text)
+    def test_a_zone_added_later_starts_the_same_way(self):
+        r = run([self.root / "System" / "tools" / "scaffold.py", "zone", "Garden", "--holds", "Anything"], self.box.env, cwd=self.root)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        text = (self.root / "Zones" / "Garden" / "Todo.md").read_text()
+        template = (self.root / "System" / "templates" / "zone" / "Todo.md").read_text()
+        self.assertEqual(template.replace("{{ZONE}}", "Garden"), text)
 
 
 class HomePageTest(unittest.TestCase):
-    """#208: a workspace that opens on the simple home gets the page itself, the
-    status extra in System/status, committed with the rest, and the page built
-    once. One installed without the simple home gets neither, as before."""
+    """#208: a new workspace gets the page itself, the status extra in System/status, committed with the
+    rest, and the page built once. It opens on the full page (#503)."""
 
     PAGE = Path("System") / "generated" / "status.html"
 
@@ -1200,11 +1173,9 @@ class HomePageTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.box.close()
 
-    def in_process(self, name, home, env=None, **patches):
-        """An install from this module, with NEW_HOME set to `home`, in the
-        sandbox's environment and `env`: (root, what it said)."""
+    def in_process(self, name, env=None, **patches):
+        """An install from this module, in the sandbox's environment and `env`: (root, what it said)."""
         installer = load_installer()
-        installer.NEW_HOME = home
         for key, value in patches.items():
             setattr(installer, key, value)
         out = io.StringIO()
@@ -1213,9 +1184,9 @@ class HomePageTest(unittest.TestCase):
             root = installer.install(json.loads(EXAMPLE.read_text()), self.box.work / name)
         return root, out.getvalue()
 
-    def test_a_simple_home_install_has_the_status_page_and_a_built_page(self):
+    def test_an_install_has_the_status_page_and_a_built_page(self):
         self.assertEqual(self.result.returncode, 0, self.result.stderr)
-        self.assertEqual("simple", recorded_settings(self.root)["home"])
+        self.assertNotIn("home", recorded_settings(self.root))
         sys.path.insert(0, str(REPO))
         try:
             import update
@@ -1233,9 +1204,10 @@ class HomePageTest(unittest.TestCase):
         self.assertEqual(sorted(extra), sorted(tracked))            # committed with the rest
         stamp = json.loads((self.root / "System" / "garrick-version.json").read_text())["files"]
         self.assertTrue(set(extra) <= set(stamp))                   # fingerprinted, so an update can tell it as written
-        # Built once, on the simple home, where git leaves it out.
+        # Built once, where git leaves it out.
         page = (self.root / self.PAGE).read_text(encoding="utf-8")
-        self.assertIn('<body class="simple" data-tab="home"', page)
+        self.assertNotIn('class="simple"', page)
+        self.assertIn('id="tab-overview">', page)
         self.assertEqual("", git(self.root, "status", "--porcelain", "--untracked-files=all"))
         self.assertIn("Your home page is built, in System/generated/status.html", self.result.stdout)
         self.assertIn('"Set up Garrick" offers to make it a Mac app.', self.result.stdout)
@@ -1245,19 +1217,9 @@ class HomePageTest(unittest.TestCase):
         self.assertEqual(["status"], p["extras"])
         self.assertEqual({k: [] for k in update.KINDS}, p["actions"])
 
-    def test_a_classic_install_has_neither(self):
-        root, said = self.in_process("classic", "full")
-        self.assertEqual("full", recorded_settings(root)["home"])
-        self.assertFalse((root / "System" / "status").exists())
-        self.assertFalse((root / self.PAGE).exists())
-        self.assertFalse((root / "System" / "generated").exists())
-        self.assertNotIn("home page", said)
-        stamp = json.loads((root / "System" / "garrick-version.json").read_text())["files"]
-        self.assertFalse([rel for rel in stamp if rel.startswith("System/status/")])
-
     def test_a_page_that_does_not_build_leaves_the_install_and_says_how(self):
         asked = []
-        root, said = self.in_process("unbuilt", "simple",
+        root, said = self.in_process("unbuilt",
                                      build_page=lambda r: asked.append(r) or "status.py stopped: no luck")
         self.assertEqual([root], asked)
         self.assertTrue((root / "System" / "status" / "status.py").is_file())
@@ -1269,7 +1231,7 @@ class HomePageTest(unittest.TestCase):
 
     def test_the_suites_switch_puts_the_page_in_place_unbuilt(self):
         asked = []
-        root, said = self.in_process("switched", "simple", env={"GARRICK_INSTALL_NO_PAGE": "1"},
+        root, said = self.in_process("switched", env={"GARRICK_INSTALL_NO_PAGE": "1"},
                                      build_page=lambda r: asked.append(r) or "")
         self.assertEqual([], asked)
         self.assertTrue((root / "System" / "status" / "status.py").is_file())

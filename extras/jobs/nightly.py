@@ -21,8 +21,7 @@
    and is executable. Garrick never ships or changes it. Without it the
    step is skipped, and that is no fault.
 5. **status**: `System/status/status.py --same-flags`, so the page shows
-   what the first four found, with the flags the Mac app or the Obsidian
-   plugin last gave it. It runs its own quick check (check.py --quick), as
+   what the first four found, with the flags the Mac app last gave it. It runs its own quick check (check.py --quick), as
    every rebuild does, so the page shows the state after the fixes.
    Skipped when the status page extra is not there.
 

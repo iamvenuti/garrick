@@ -1842,7 +1842,8 @@ class TestBandKeptOutside(ExtrasCase):
         for name, text in (("install.py", "# installer\n"), ("update.py", "# updater\n"),
                            ("VERSION", "# Which Garrick\ncommit: %s\ndate: 2026-11-01\n" % commit),
                            ("CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n## [%s] - 2026-11-01\n\n- A change.\n" % release),
-                           ("extras/mods/garrick-band/hooks/register.tsx", "// %s %s\n" % (band, release))):
+                           ("extras/mods/garrick-band/hooks/register.tsx",
+                            "// %s\n" % band if getattr(self, "same_band", False) else "// %s %s\n" % (band, release))):
             f = Path(folder) / name
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(text, encoding="utf-8")
@@ -1899,6 +1900,28 @@ class TestBandKeptOutside(ExtrasCase):
         self.assertIn("// the band 0.63.1", (self.kept / "extras/mods/garrick-band/hooks/register.tsx").read_text())
         self.assertEqual(["v0.60.0", "v0.63.1"], [u.rsplit("/", 1)[1][:-4] for u in self.fetched])
         self.assertEqual([], self.band_steps())                              # the settings' path is current now
+
+    def same_band_releases(self):
+        """Two releases whose band files are the same, as 0.63.1 and 0.64.0 were."""
+        self.same_band = True
+        self.release_tree(self.ours, *self.NEW)
+        (self.ours / "VERSION").write_text("commit: %s\n" % self.NEW[1])
+        self.release_tree(self.kept, *self.OLD)
+
+    def test_an_update_between_releases_with_the_same_band_files_refreshes_the_download_too(self):
+        """#515: the band warns from the commit in its download's VERSION, so the update refreshes the download
+        whenever that commit is not the release's, even with every band file the same."""
+        self.same_band_releases()
+        ((what, fn),) = self.band_steps()
+        self.assertIn("Refresh the Garrick band kept at %s, a download of Garrick 0.60.0" % self.kept, what)
+        self.assertIn("is now Garrick 0.63.1", fn())
+        self.assertIn("commit: %s" % self.NEW[1], (self.kept / "VERSION").read_text())     # what the band reads
+        self.assertEqual([], self.band_steps())                                         # no stale warning is left
+
+    def test_a_download_of_the_same_release_is_left_alone(self):
+        self.same_band_releases()
+        self.release_tree(self.kept, self.NEW[0], "bbbb222")
+        self.assertEqual([], self.band_steps())
 
     def test_a_copy_with_changes_of_its_own_is_left_as_it_is_with_the_command(self):
         (self.kept / "extras/mods/garrick-band/hooks/register.tsx").write_text("// mine\n")

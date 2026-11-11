@@ -1337,8 +1337,12 @@ def outside_copies(root):
             dirs |= {d for d in re.split(r"[:,]", value) if d.rstrip("/").endswith("garrick-band")}
     for d in sorted(dirs):
         there = Path(os.path.expanduser(d))
-        if there.is_dir() and band.is_dir() and not same_place(there, band) and any(
-                read(there / f.relative_to(band)) != read(f) for f in band.rglob("*") if f.is_file()):
+        if not (there.is_dir() and band.is_dir() and not same_place(there, band)):
+            continue
+        # The band says it is stale from the commit in its download's VERSION, so a download of an older
+        # release is refreshed even when every band file matches (#515): the update and the band decide alike.
+        if any(read(there / f.relative_to(band)) != read(f) for f in band.rglob("*") if f.is_file()) \
+                or band_refresh(there, root) is not None:
             found.append(("the Garrick band", str(there)))
     return found
 

@@ -8,7 +8,7 @@
 
 Garrick keeps track of where each piece of your work stands. It reads what comes in, keeps it up to date, and lets finished work step aside, so Claude picks up where you stopped.
 
-An assistant is only as useful as what it knows about your work. Yours remembers your projects, but it can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “wrap it” when someone interrupts you and “back” when you return.
+An assistant is only as useful as what it knows about your work. Yours remembers your projects, but it can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “wrap it” when someone interrupts you and “open [thread]” when you return.
 
 The [Garrick app](docs/extras/simple-home.md)'s home lists your work, most recent first, each with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen. Ask something reaches across all of your work, and Needs you holds only the questions Garrick is waiting on you to answer.
 
@@ -50,7 +50,7 @@ Already set up? [Your first useful session](docs/first-session.md) takes one con
 
 ## What Garrick keeps for you
 
-- **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving or when you're interrupted, and “open [thread]” or “back” when you return.
+- **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving or when you're interrupted, and “open [thread]” when you return.
 - **Two kinds of memory.** Meetings keeps conversations and correspondence with their sources. Knowledge keeps published material you read. [How Garrick keeps context](docs/context.md) shows how a conversation, a correction and an old page are each handled.
 - **Walled zones.** You mark a zone as walled, and its material stays in it. The assistant checks those rules before using a conversation for a project. In supported text files, a commit check catches links, embeds and paths that point into another walled zone, and files copied whole from one.
 - **Files you own.** Notes and history stay in the workspace. Claude Code and Codex can read the same record; their private chat history and app settings are separate.

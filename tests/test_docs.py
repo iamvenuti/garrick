@@ -364,3 +364,53 @@ class LinkTest(unittest.TestCase):
         self.assertTrue(any("a.md#there names no heading" in f for f in found))
         self.assertTrue(any("#nope names no heading" in f for f in found))
         self.assertTrue(any("leaves the repository" in f for f in found))
+
+
+def current_pages():
+    """The README and every page under docs/: what a reader is taught from. The changelog is history."""
+    pages = [REPO / "README.md"] + sorted((REPO / "docs").rglob("*.md")) + sorted((REPO / "docs").rglob("*.html"))
+    return [(p.relative_to(REPO).as_posix(), p.read_text(encoding="utf-8")) for p in pages]
+
+
+# The status page's page is the app branch's file in 0.65.0: its two lines that name these phrases go in that
+# branch's change (the release notes list them), and this entry goes when they are gone.
+APP_BRANCH_PAGES = {"docs/extras/status-page.md"}
+
+QUIET_COMMANDS = re.compile(
+    r"""["“”']back["“”']|["“”']back to\b|where was I\b|what['’]s next|what is next|catch me up""", re.I)
+
+
+class QuietCommandsTest(unittest.TestCase):
+    """#514: "back", "where was I", "what's next" and "catch me up" keep working, and no page teaches them
+    but the commands reference, which lists them under *Also understood*, one line each."""
+
+    def test_no_page_teaches_them_but_the_commands_reference(self):
+        found = []
+        for page, text in current_pages():
+            if page == "docs/commands.md" or page in APP_BRANCH_PAGES:
+                continue
+            for m in QUIET_COMMANDS.finditer(text):
+                found.append("%s: %s" % (page, m.group(0)))
+        self.assertEqual([], found)
+
+    def test_the_commands_reference_lists_each_once_under_also_understood(self):
+        text = (REPO / "docs" / "commands.md").read_text(encoding="utf-8")
+        self.assertEqual(1, text.count("\n### Also understood\n"))
+        block = text.split("\n### Also understood\n", 1)[1].split("\n## ", 1)[0]
+        bullets = [line for line in block.splitlines() if line.startswith("- ")]
+        self.assertEqual(3, len(bullets), bullets)
+        for line, phrase in zip(bullets, ('"Back"', '"What\'s next"', '"Catch me up"')):
+            self.assertIn(phrase, line)
+            self.assertNotIn("catch me up on", line.lower())             # no example
+        self.assertIn("the thread whose note was written most recently and is not finished or parked", block)
+
+    def test_the_skill_and_the_tools_still_answer_to_them(self):
+        skill = (REPO / "template" / "System" / "skills" / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        head = " ".join(skill.split("---", 2)[1].split())
+        for phrase in ('"back"', '"where was I"', '"what\'s next"', '"catch me up"'):
+            self.assertIn(phrase, head, phrase)
+        for tool in ("next_up.py", "briefing.py"):
+            self.assertTrue((REPO / "template" / "System" / "tools" / tool).is_file(), tool)
+        architecture = (REPO / "docs" / "architecture.md").read_text(encoding="utf-8")
+        self.assertIn("`briefing.py`", architecture)                      # the tools are named, without the commands
+        self.assertIn("`next_up.py`", architecture)

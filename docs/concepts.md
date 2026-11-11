@@ -72,19 +72,11 @@ Every hub and thread note carries `status:` in its frontmatter, with one of thre
 
 ### Wrap and Resume
 
-One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. The note's last write is the only record of where you were, so there is nothing else to keep right. *While you wait* rests on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### History file
 
 `history/<Note> history <YYYY>-Q<n>.md`, beside a hub or thread note. It holds the dated entries the note moved out, whole and unchanged, one file for each calendar quarter, under a heading and its frontmatter (`type: history`, no `status:`). The note keeps its newest five entries and one line that links the files. `history.py` moves them, at the wrap and when a thread is parked. See [Opening and wrapping](commands.md#opening-and-wrapping).
-
-### Catch up
-
-"Catch me up": what changed in a zone's threads over a period, from their history, their notes and the Todo list, one section per thread that moved, each statement linked to the record it rests on. `System/tools/briefing.py` gathers it and carries the judgment of what deserves attention; the `threads` skill writes it. Shown, not saved: say "save that" to keep it. See [Opening and wrapping](commands.md#opening-and-wrapping).
-
-### What's next
-
-"What's next", or "what should I do while I wait": one thing worth doing elsewhere while a long turn runs. `System/tools/next_up.py` ranks it by plain rules, never the thread in focus: the thread left most recently today, Todo lines due today or late, chases come due, what waits in an inbox, a thread parked for 30 days, a live one not wrapped for 14. The assistant reads the first pick and offers to open or tick it; it never acts on its own. [The Garrick band](#the-garrick-band) shows the same list while a turn runs, where its *While you wait* preview feature is switched on.
 
 ## Zones and walls
 

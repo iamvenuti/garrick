@@ -67,6 +67,7 @@ SIDE_ACME, SIDE_BIRCH = "261027-cobalt-renewal-for-acme", "261103-cobalt-norther
 OLD_FACT, NEW_FACT = "twelve hundred pallets", "fourteen hundred pallets"
 NEXT_ACTION = "Send Ruth the distributor questions before her first call; Sam's."
 HOST_JOB = "zz-host-nightly"
+WALL_SAID = "A wall holds some material back from this project"
 CLAUDE_KEEP = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_BASE_URL")
 
 
@@ -180,12 +181,28 @@ class Run:
         tags = r.stdout.split()
         if not tags:
             raise Skip("this clone has no release tag to update from (fetch the tags)")
-        version = (self.cand / "VERSION").read_text(encoding="utf-8") if (self.cand / "VERSION").is_file() else ""
-        # The newest tag that is not the candidate's own.
+        # The newest release tag that is an ancestor of the candidate and does not point at it.
+        mine = self.candidate_commit()
         for t in tags:
-            if "tag: %s" % t not in version:
-                return t
-        return tags[0]
+            at = sh(["git", "rev-parse", "%s^{commit}" % t], cwd=REPO, check=False).stdout.strip()
+            if not at or (mine and at == mine):
+                continue
+            if mine and sh(["git", "merge-base", "--is-ancestor", at, mine], cwd=REPO, check=False).returncode != 0:
+                continue
+            return t
+        raise Fail("no release tag is an ancestor of the candidate other than its own commit")
+
+    def candidate_commit(self):
+        """The candidate's full commit, from the commit given or the `commit:` line a release zip carries; "" when unknown."""
+        if self.args.candidate:
+            m = re.search(r"(?m)^commit: *([0-9a-f]{7,40})\s*$", (self.cand / "VERSION").read_text(encoding="utf-8")) \
+                if (self.cand / "VERSION").is_file() else None
+            short = m.group(1) if m else ""
+        else:
+            short = self.args.commit or "HEAD"
+        if not short:
+            return ""
+        return sh(["git", "rev-parse", "%s^{commit}" % short], cwd=REPO, check=False).stdout.strip()
 
     # -- helpers on a workspace
 
@@ -374,7 +391,7 @@ class Run:
                 raise Fail("the wrap's dated entry is missing from the thread note")
             if NEXT_ACTION not in (root / "Zones" / ZONE / "Todo.md").read_text(encoding="utf-8"):
                 raise Fail("the Next action has no line in the zone's Todo.md")
-            if "Next action" not in self.page(root) and NEXT_ACTION.split(";")[0][:30] not in self.page(root):
+            if NEXT_ACTION.split(";")[0][:30] not in self.page(root):
                 raise Fail("the rebuilt page does not show the thread's Next action")
         if re.search(r"status: *(parked|done)", self.thread_note(root).read_text(encoding="utf-8")):
             raise Fail("the wrapped thread is no longer active")
@@ -422,8 +439,11 @@ class Run:
         target = self.tmp / "updating"
         sh([sys.executable, old / "install.py", "--config", old / "examples" / "acme.json", "--target", target],
            env=self.env, cwd=old, timeout=900)
+        stamp_before = json.loads((target / "System" / "garrick-version.json").read_text(encoding="utf-8")).get("commit")
         sh([sys.executable, self.cand / "update.py", "--apply", "--yes", target], env=self.env, cwd=self.cand, timeout=900)
         stamp = json.loads((target / "System" / "garrick-version.json").read_text(encoding="utf-8"))
+        if stamp.get("commit") == stamp_before:
+            raise Fail("the installed and the updated version stamps are both %s: nothing was updated" % stamp_before)
         last = (stamp.get("updates") or [{}])[-1]
         if not last.get("to"):
             raise Fail("the update recorded no step in the version stamp")
@@ -448,17 +468,19 @@ class Run:
                 raise Fail("page_action.py gave no reply: %s" % (r.stderr or r.stdout).strip()[:160])
             if reply.get("ok"):
                 raise Fail("the save was reported as made although the wall check refuses it")
-            if reply.get("outcome") not in (None, "refused"):
-                raise Fail("the save ended as %r, not as refused" % reply.get("outcome"))
+            if not str(reply.get("say", "")).startswith(WALL_SAID):
+                raise Fail("the save was refused, but not by the wall check: %r" % str(reply.get("say"))[:120])
+            if reply.get("outcome") != "refused" or not reply.get("op"):
+                raise Fail("the refusal carries no operation record of kind refused: %r" % (reply.get("outcome"),))
             if self.git(root, "Zones/" + ZONE, "rev-parse", "HEAD").stdout.strip() != head:
                 raise Fail("the refused save reached the zone's history")
             if re.search(r"(?m)^status: *parked", note.read_text(encoding="utf-8")):
                 raise Fail("the refused save left the thread parked")
-            records = (self.jobs / "operations.jsonl")
-            if records.is_file():
-                last = [json.loads(l) for l in records.read_text(encoding="utf-8").splitlines() if l.strip()][-1]
-                if last.get("state") == "completed":
-                    raise Fail("the operation record of the refused save says completed")
+            records = self.jobs / "operations.jsonl"
+            lines = [json.loads(l) for l in records.read_text(encoding="utf-8").splitlines() if l.strip()] if records.is_file() else []
+            mine = [l for l in lines if l.get("op") == reply.get("op")]
+            if not mine or mine[-1].get("state") != "failed" or mine[-1].get("outcome") != "refused":
+                raise Fail("the operation record of this save does not say failed and refused")
         finally:
             note.write_text(original, encoding="utf-8")
         self.build_page(root)
@@ -648,9 +670,9 @@ class Run:
             lines.append("| %s | %s | %s |" % (st.title, mark[st.status], st.why.replace("|", "/").replace("\n", " ")))
         failed = [s.title for s in self.steps if s.status == "fail"]
         skipped = [s.title for s in self.steps if s.status == "skipped"]
-        lines += ["", "**%s.** %d passed, %d failed, %d skipped." % (
-            "FAILED at: " + ", ".join(failed) if failed else "Passed",
-            sum(s.status == "pass" for s in self.steps), len(failed), len(skipped))]
+        head = ("FAILED at: " + ", ".join(failed)) if failed else \
+            ("Passed, with %d skipped: %s" % (len(skipped), ", ".join(skipped)) if skipped else "Passed")
+        lines += ["", "**%s.** %d passed, %d failed, %d skipped." % (head, sum(s.status == "pass" for s in self.steps), len(failed), len(skipped))]
         if skipped:
             lines.append("Skipped: " + "; ".join("%s (%s)" % (s.title, s.why) for s in self.steps if s.status == "skipped"))
         if self.ask_rows:
@@ -696,6 +718,7 @@ def main(argv=None):
     ap.add_argument("--previous", metavar="TAG", help="the tag the update step starts from (default: the newest other tag)")
     ap.add_argument("--steps", metavar="LIST", help="only these steps, comma-separated: " + ", ".join(STEPS))
     ap.add_argument("--workdir", metavar="DIR", help="work in this folder instead of a temporary one, and keep it")
+    ap.add_argument("--strict", action="store_true", help="exit 1 when any step is skipped, as well as when one fails")
     ap.add_argument("--keep", action="store_true", help="keep the temporary folder")
     args = ap.parse_args(argv)
     if args.steps:
@@ -712,7 +735,8 @@ def main(argv=None):
     print(text)
     if args.report:
         Path(args.report).write_text(text, encoding="utf-8")
-    return 1 if any(s.status == "fail" for s in run.steps) else 0
+    bad = {"fail", "skipped"} if args.strict else {"fail"}
+    return 1 if any(s.status in bad for s in run.steps) else 0
 
 
 if __name__ == "__main__":

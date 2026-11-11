@@ -133,12 +133,67 @@ class WiringTest(unittest.TestCase):
     def test_the_release_steps_and_the_workflow_name_the_run(self):
         agents = (REPO / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("tests/acceptance/run.py --candidate /tmp/garrick.zip", agents)
+        self.assertIn("--strict", agents)
         self.assertLess(agents.index("tests/acceptance/run.py"), agents.index("gh release create"))
         flow = (REPO / ".github" / "workflows" / "acceptance.yml").read_text(encoding="utf-8")
         self.assertIn("tests/acceptance/run.py --model stub", flow)
         self.assertIn("startsWith(github.head_ref, 'release-')", flow)
         self.assertIn("workflow_dispatch", flow)
         self.assertIn("macos-latest", flow)
+
+
+class ReviewFixesTest(unittest.TestCase):
+    def args(self, **kw):
+        return mock.Mock(model="stub", candidate=None, commit=None, steps=None, compare=None, previous=None, **kw)
+
+    def test_the_previous_tag_is_never_the_candidates_own(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "r"
+            repo.mkdir()
+            env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_AUTHOR_NAME="a", GIT_AUTHOR_EMAIL="a@x", GIT_COMMITTER_NAME="a",
+                       GIT_COMMITTER_EMAIL="a@x")
+
+            def git(*a):
+                return subprocess.run(["git", "-C", str(repo), *a], env=env, capture_output=True, text=True, check=True)
+            git("init", "-q")
+            for n, tag in ((1, "v0.1.0"), (2, "v0.2.0"), (3, None)):
+                (repo / "f").write_text(str(n))
+                git("add", "-A")
+                git("commit", "-q", "-m", str(n))
+                if tag:
+                    git("tag", tag)
+            git("tag", "v0.3.0")
+            with mock.patch.object(acceptance, "REPO", repo), mock.patch.object(acceptance, "sh", wraps=acceptance.sh):
+                r = acceptance.Run(self.args(workdir=str(Path(tmp) / "w")))
+                r.args.commit = "v0.3.0"
+                self.assertEqual("v0.2.0", r.previous_tag())      # the candidate's own tag is skipped
+                r.args.commit = "v0.2.0"
+                self.assertEqual("v0.1.0", r.previous_tag())
+                r.args.commit = "v0.1.0"
+                with self.assertRaises(acceptance.Fail):
+                    r.previous_tag()
+
+    def test_the_headline_names_what_was_skipped_and_strict_fails_on_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            r = acceptance.Run(self.args(workdir=str(Path(tmp) / "w")))
+            r.commit = "x"
+            ok, sk = acceptance.Step("a", "Alpha"), acceptance.Step("b", "Beta")
+            ok.status, sk.status, sk.why = "pass", "skipped", "no tag"
+            r.steps = [ok, sk]
+            self.assertIn("Passed, with 1 skipped: Beta.", r.report())
+        for flag, code in (([], 0), (["--strict"], 1)):
+            res = run_acceptance("--steps", "resume", *flag)
+            self.assertEqual(code, res.returncode, res.stdout)
+            self.assertIn("Passed, with 11 skipped", res.stdout)
+
+    def test_the_refused_save_must_be_the_walls_sentence(self):
+        src = RUN.read_text(encoding="utf-8")
+        self.assertIn('startswith(WALL_SAID)', src)
+        self.assertEqual("A wall holds some material back from this project", acceptance.WALL_SAID)
+
+    def test_the_resume_page_check_reads_the_action_text_alone(self):
+        src = RUN.read_text(encoding="utf-8")
+        self.assertNotIn('"Next action" not in self.page(root)', src)
 
 
 class BrokenStepTest(unittest.TestCase):

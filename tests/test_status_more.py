@@ -725,7 +725,7 @@ class TestReplacedWhileBuilding(StatusCase):
 
     def test_a_build_whose_code_is_replaced_during_its_settle_wait_draws_with_the_new_code(self):
         copy = self.root / "System" / "status"
-        shutil.copytree(REPO / "extras" / "status", copy, ignore=shutil.ignore_patterns("app", "obsidian", "__pycache__"))
+        shutil.copytree(REPO / "extras" / "status", copy, ignore=shutil.ignore_patterns("app", "__pycache__"))
         script = copy / "status.py"
         self.assertEqual(1, script.read_text(encoding="utf-8").count(self.OLD_NAME))
         home = self.root.parent / "home"
@@ -1769,10 +1769,6 @@ class TestParkLandsAtOnce(StatusCase):
         self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", acted)
         self.assertLess(act.index("self.acted(request, reply)"), act.index("self.freshen(force: true)"))   # at once, then the rebuild
         self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', act)   # unless the reply built it (#344)
-        plugin = (Path(status.__file__).parent / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn("window.GarrickActed&&window.GarrickActed(a[0],a[1])", plugin)
-        self.assertIn("this.rebuild(true);", plugin)
-        self.assertIn("said.built === undefined", plugin)
         page = self.page()
         self.assertLess(page.index("window.ThreadRows="), page.index("window.GarrickActed="))   # PARK_JS after the rows it moves
 
@@ -1781,8 +1777,6 @@ class TestParkLandsAtOnce(StatusCase):
         self.assertIn("if force || age >= maxAge { rebuild(queue: force) }", swift)
         self.assertIn("guard !rebuilding else { again = again || queue; return }", swift)
         self.assertIn("if self.again { self.again = false; self.rebuild() }", swift)
-        plugin = (Path(status.__file__).parent / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn("if (queue) this.again = true;", plugin)
 
 
 # RENAME_JS (#184), with PARK_JS before it and FIND_JS after, as the page
@@ -3080,13 +3074,9 @@ class TestWhatALaunchSays(StatusCase):
     Issue #104."""
 
     SWIFT = REPO / "extras" / "status" / "app" / "Garrick.swift"
-    PLUGIN = REPO / "extras" / "status" / "obsidian" / "main.js"
 
     def swift(self):
         return self.SWIFT.read_text(encoding="utf-8")
-
-    def plugin(self):
-        return self.PLUGIN.read_text(encoding="utf-8")
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_the_page_says_it_is_opening_never_that_it_opened(self):
@@ -3158,10 +3148,8 @@ class TestWhatALaunchSays(StatusCase):
         self.assertIn('act(["verb": "continue", "zone": oc[0], "file": oc[1]])', run)
         self.assertLess(run.index('act(["verb": "continue"'), run.index("launch(k, f,"))      # before the deep link
 
-    def test_both_hosts_say_the_same_words(self):
-        # One page, two hosts: the sentences are the same in each, so what a
-        # launcher tells you does not depend on where the page is being shown.
-        swift, plugin = self.swift(), self.plugin()
+    def test_the_app_says_what_a_launcher_did_in_these_words(self):
+        swift = self.swift()
         for sentence in ('” typed in. Press Enter to send it.',                 # Claude: the phrase is in the session, not sent
                          '. The clipboard now holds “',                          # Codex and cmux: replaced, and said
                          '; paste it to resume.',
@@ -3172,14 +3160,9 @@ class TestWhatALaunchSays(StatusCase):
                          'Claude did not say its window was ready within forty seconds. Opened ',
                          'if the session came up empty, the phrase that resumes it is “'):
             self.assertIn(sentence, swift, sentence)
-            self.assertIn(sentence, plugin, sentence)
-        # and the same waits, so one host does not give up where the other goes on
         self.assertIn('let claudeReadyMark = "boot: done"', swift)
-        self.assertIn('const CLAUDE_READY = "boot: done"', plugin)
         self.assertIn("let claudeReadyCeiling: TimeInterval = 40", swift)
-        self.assertIn("ceiling: 40000", plugin)
         self.assertIn("let claudeReadyFallback: TimeInterval = 15", swift)
-        self.assertIn("fallback: 15000", plugin)
 
     def test_a_cold_claude_is_started_and_waited_for(self):
         swift = self.swift()
@@ -3214,7 +3197,6 @@ class TestWhatALaunchSays(StatusCase):
         self.assertIn("Nothing was copied; the phrase that resumes it is", swift)
         # A launch's own phrase is never copied twice: the handler leaves it to the launcher.
         self.assertIn('if let text = body["copy"] as? String, !text.isEmpty, body["launch"] == nil {', swift)
-        self.assertIn('typeof body.copy === "string" && body.copy && typeof body.launch !== "string"', self.plugin())
 
     def test_no_launcher_route_passes_without_saying_what_it_did(self):
         # Every arm of the switch reports, and so does every failure in it.

@@ -435,14 +435,12 @@ class TestWhatThePageSends(unittest.TestCase):
 
     def test_what_is_built_outside_status_py_is_declared(self):
         """The hosts and the ask box build their own, where no scan of
-        status.py reaches: an open by folder from the app and the plugin, and
+        status.py reaches: an open by folder from the app, and
         what ask.py proposes. The threads skill's JSON is checked by hand
         against its SKILL.md below."""
-        host = {"verb", "folder", "prompt"}                    # Garrick.swift act(), obsidian/main.js
+        host = {"verb", "folder", "prompt"}                    # Garrick.swift act()
         self.assertEqual(set(), host - self.declared("open"))
-        for name, text in (("app/Garrick.swift", (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text()),
-                           ("obsidian/main.js", (REPO / "extras" / "status" / "obsidian" / "main.js").read_text())):
-            self.assertIn("verb", text, name)
+        self.assertIn("verb", (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(), "app/Garrick.swift")
         ask = (REPO / "extras" / "status" / "ask.py").read_text(encoding="utf-8")
         for m in re.finditer(r"\{\s*\"verb\"\s*:", ask):
             pairs = dict(_pairs(_literal(ask, m.start())))

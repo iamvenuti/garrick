@@ -1743,32 +1743,54 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertIn("To do: The status page: merge the .new files under System/status first, then rebuild it with "
                       "python3 System/status/status.py.", result["then"])
 
-    def test_the_obsidian_plugin_is_refreshed_where_it_is_as_garrick_wrote_it(self):
+    def test_the_obsidian_plugin_is_removed_where_it_is_as_garrick_wrote_it(self):
+        """#508: the plugin is retired. A copy still as a released Garrick wrote it goes, with its entry in that
+        vault's community-plugins.json; one with changes stays and the report names it."""
         self.install_extra("status")
-        main = "System/status/obsidian/main.js"
-        new_main = (self.root / main).read_bytes()
-        manifest = (self.root / "System/status/obsidian/manifest.json").read_bytes()
-        self.as_if_older(main, "// the older plugin\n")
+        main, manifest = b"// the plugin Garrick shipped\n", b'{"id": "garrick-status"}\n'
+        known = {update.PLUGIN_SOURCE + "main.js": [update.digest(main)], update.PLUGIN_SOURCE + "manifest.json": [update.digest(manifest)]}
         wikis = self.root / "Wikis" / ".obsidian" / "plugins" / "garrick-status"
         wikis.mkdir(parents=True)
-        (wikis / "main.js").write_text("// the older plugin\n")
+        (wikis / "main.js").write_bytes(main)
         (wikis / "manifest.json").write_bytes(manifest)
+        (wikis / "data.json").write_text("{}")                       # what Obsidian itself keeps there goes with it
+        listing = self.root / "Wikis" / ".obsidian" / "community-plugins.json"
+        listing.write_text(json.dumps(["dataview", "garrick-status"]))
         self.commit(self.root / "Wikis", "plugin")
         top = self.root / ".obsidian" / "plugins" / "garrick-status"
         top.mkdir(parents=True)
         (top / "main.js").write_text("// my own plugin\n")
         (top / "manifest.json").write_bytes(manifest)
-        self.commit(self.root, "plugin")
-        report = self.report_of(self.plan())
-        self.assertIn("Refresh the Obsidian plugin in Wikis: main.js.", report)
-        self.assertIn("The Obsidian plugin in the workspace's top has main.js unlike any Garrick's", report)
-        result = self.apply()
-        self.assertEqual(new_main, (wikis / "main.js").read_bytes())
-        self.assertEqual("// my own plugin\n", (top / "main.js").read_text())
+        (top.parent.parent / "community-plugins.json").write_text(json.dumps(["garrick-status"]))
+        with mock.patch.object(update, "known_hashes", return_value=known):
+            report = self.report_of(self.plan())
+            self.assertIn("Remove the Obsidian plugin in Wikis, which is as Garrick wrote it", report)
+            self.assertIn("The Obsidian plugin in the workspace's top has changes of yours, so it is left as it is", report)
+            self.assertTrue(wikis.is_dir())                            # the report changes nothing
+            result = self.apply()
+        self.assertFalse(wikis.exists())
+        self.assertEqual(["dataview"], json.loads(listing.read_text()))
+        self.assertEqual("// my own plugin\n", (top / "main.js").read_text())          # a plugin with changes stays
+        self.assertEqual(["garrick-status"], json.loads((top.parent.parent / "community-plugins.json").read_text()))
         self.assertEqual("", self.git(self.root / "Wikis", "status", "--porcelain"))
-        self.assertEqual("Garrick: refresh the Obsidian plugin", self.git(self.root / "Wikis", "log", "-1", "--format=%s"))
-        self.assertIn("Refreshed the Obsidian plugin in %s." % wikis, result["then"])
-        self.assertTrue(any("switch Garrick off and on" in line for line in result["then"]))
+        self.assertEqual("Garrick: remove the Obsidian plugin", self.git(self.root / "Wikis", "log", "-1", "--format=%s"))
+        self.assertIn("Removed the Obsidian plugin in %s." % wikis, result["then"])
+        self.assertFalse(any("switch Garrick off and on" in line for line in result["then"]))
+
+    def test_an_obsidian_plugin_with_a_file_of_the_users_stays(self):
+        self.install_extra("status")
+        main = b"// the plugin Garrick shipped\n"
+        known = {update.PLUGIN_SOURCE + "main.js": [update.digest(main)], update.PLUGIN_SOURCE + "manifest.json": [update.digest(b"{}")]}
+        folder = self.root / ".obsidian" / "plugins" / "garrick-status"
+        folder.mkdir(parents=True)
+        (folder / "main.js").write_bytes(main)
+        (folder / "manifest.json").write_bytes(b"{}")
+        (folder / "notes.md").write_text("mine\n")
+        with mock.patch.object(update, "known_hashes", return_value=known):
+            report = self.report_of(self.plan())
+            self.apply()
+        self.assertIn("has changes of yours, so it is left as it is", report)
+        self.assertTrue((folder / "notes.md").is_file() and (folder / "main.js").is_file())
 
     def test_a_desk_link_to_another_copy_is_pointed_at_the_workspaces(self):
         self.install_extra("cmux")

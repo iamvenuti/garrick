@@ -74,8 +74,6 @@ let codexBundle = "com.openai.codex"
 // loading, so a cold Claude is started and the link waits for the window.
 // Claude's own log writes `boot: done` once the window has loaded; where that
 // log cannot be read, the fixed delay stands in and the link goes anyway.
-// extras/status/obsidian/main.js waits the same way and says the same words,
-// so the two hosts of one page behave alike.
 let claudeLog = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Claude/main.log")
 let claudeReadyMark = "boot: done"
 let claudeReadyPoll: TimeInterval = 0.5
@@ -1115,8 +1113,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// What a launcher says when it is done. Every sentence names the phrase one
 	// way or another, so no launcher leaves the phrase to be rebuilt: Claude
 	// types it into the session, Codex and cmux put it on the clipboard and say
-	// so, and Finder, which can take nothing, names it. The Obsidian plugin
-	// says the same words; tests/test_status_more.py compares the two.
+	// so, and Finder, which can take nothing, names it.
 	func opened(_ app: String, _ name: String, _ phrase: String) -> String {
 		if phrase.isEmpty { return "Opened \(app) in \(name)." }
 		if app == "Claude" { return "Opened Claude in \(name) with “\(phrase)” typed in. Press Enter to send it." }

@@ -46,8 +46,7 @@ lives in System/generated/, never committed and outside the wall check.
 a note, a file or a folder is a file link (#318), and nothing opens Obsidian
 unless it was chosen: in Garrick.app a project's hub or a thread's note opens
 as its row does, through the default Settings › Opening a thread picks, and
-anything else in the app macOS opens it in, a folder in Finder; in Obsidian's
-tab the plugin opens a note there; in a browser the link is the browser's. In
+anything else in the app macOS opens it in, a folder in Finder; in a browser the link is the browser's. In
 Garrick.app (see `app/`), projects and threads also offer Reveal in
 Finder and Open in Claude, Codex or cmux, for each one installed and switched
 on in Settings, where one of them can also be what clicking a thread's name
@@ -67,7 +66,7 @@ files opens on GitHub at the release the workspace runs, and the pages cost
 the other tabs nothing until the Guide is opened.
 
 The buttons that act are carried out by page_action.py beside this file, for
-the Mac app and the Obsidian plugin. Preview features (FLAGS) stay off until
+the Mac app. Preview features (FLAGS) stay off until
 System/garrick-flags.json switches them on. With the cmux extra beside this folder
 (../cmux/cmuxlib.py), the page shows which projects and threads have a
 session open, and its buttons can drive the desk. `--settle` lets a burst of
@@ -2026,8 +2025,8 @@ var q0=null;try{q0=sessionStorage.getItem(KEY)}catch(e){}if(q0){box.value=q0;ren
 # the host's toast as before (#107). What
 # runs, and what waits to be seen, is kept in this window's sessionStorage, so
 # the rebuild after a request, or one asked for meanwhile, does not lose it. A
-# request with no reply after ACTION_LOST seconds, past the Obsidian plugin's
-# fifteen minutes, is taken as lost. ZONE_VERBS are the requests page_action.py
+# request with no reply after ACTION_LOST seconds, past the longest page_action.py
+# takes (a test pins the sum), is taken as lost. ZONE_VERBS are the requests page_action.py
 # runs under the zone's lock.
 #
 # The page's memory is a cache. page_action.py keeps a durable record of park,
@@ -2046,8 +2045,7 @@ var q0=null;try{q0=sessionStorage.getItem(KEY)}catch(e){}if(q0){box.value=q0;ren
 # same request once more with `confirm` naming the action it was asked about.
 #
 # It asks only a host that has said it can answer a request that reads: the
-# host sets window.GarrickReads as the page loads, and calls window.GarrickReady
-# once it has, when that is after this script ran. An older app or plugin, which
+# host sets window.GarrickReads as the page loads. An older app, which
 # toasts and rebuilds the page for every request it passes on, says nothing, is
 # asked nothing, and behaves exactly as it did in 0.26.0, with ACTION_LOST as
 # the fallback. The record is still written, and is there to be read as soon as
@@ -2160,8 +2158,6 @@ function tick(){var sent=flush();if(sweep()||sent)render();else if(box)[].forEac
 function poll(first){var now=Date.now();if(!window.GarrickReads||OPS.durable===false)return;
 if(!first&&(now-(OPS.asked||0)<POLL*1000-200||!W.some(function(e){return!e.out})))return;
 OPS.asked=now;keep();host.postMessage({act:{verb:'operations'}})}
-/* a host whose flag is set after this script has run says so, and the first ask is made then */
-window.GarrickReady=function(){poll(true)};
 function heard(out){if(!out||!out.ok||out.durable===false){OPS.durable=false;if(!OPS.said){OPS.said=1;toast('Actions are not recoverable here: if this page reloads while one is running, look at git status in its zone.')}keep();run();return}
 OPS.durable=true;OPS.verbs=out.verbs||[];OPS.lost=out.lost||'';reconcile(out.ops||[]);keep();render();run()}
 function reconcile(ops){var now=Date.now(),by={};ops.forEach(function(r){by[r.op]=r});
@@ -3780,7 +3776,7 @@ def bundle_id(app: Path) -> Optional[str]:
 
 
 # Codex opens a folder through its own launcher inside the app bundle, as
-# Garrick.app and the Obsidian plugin both run it. An app without one is
+# Garrick.app runs it. An app without one is
 # installed but cannot be opened into a folder, so the page does not offer it:
 # a launcher that cannot work is disabled with its reason on it, rather than
 # offered and refused after the click.
@@ -3830,8 +3826,7 @@ class Links:
     is itself a symlink stays one and Garrick.app refuses it, as it refuses a
     cited record that is. Nothing here asks Obsidian, or any other app, where
     a note should open: Garrick.app opens a hub or a thread's note as its row
-    does and anything else in the app macOS opens it in, the Obsidian plugin
-    opens a note of its vault in Obsidian, and a browser follows the link."""
+    does and anything else in the app macOS opens it in, and a browser follows the link."""
 
     def __init__(self, ws: Path):
         self.ws = ws
@@ -6824,8 +6819,7 @@ color:var(--ink);background:var(--surface);border:1px solid var(--line);border-r
 # Inside Garrick.app (extras/status/app/), which answers to
 # window.webkit.messageHandlers.garrick, a project or thread with a folder
 # (`f`, there only where cmux is installed) also gets Open in cmux: a cmux tab
-# in that folder, with the phrase that resumes it on the clipboard. There, and
-# in the Obsidian plugin, which gives the page the same bridge, the apps take
+# in that folder, with the phrase that resumes it on the clipboard. There, the app takes
 # the place of Copy "open X"; a browser, which can only copy, keeps it.
 # Open in Claude on a thread (`oc`, its note) is the one launcher that acts
 # (#180): where the build found Claude Code's command-line tool (the body's
@@ -7539,13 +7533,13 @@ window.GarrickMemory={changed:function(){return changed},request:request,saved:f
 
 
 # Park and Wake land on the threads list at once, with no wait for the
-# rebuild: Garrick.app and the Obsidian plugin hand page_action.py's reply to
+# rebuild: Garrick.app hands page_action.py's reply to
 # window.GarrickActed, and a request that was done moves its row. It runs
 # after JS, whose rows it moves and binds through window.ThreadRows.
 PARK_JS = r"""
 (function(){var R=window.ThreadRows||{bind:function(){},chev:function(){},close:function(){}};
 /* Park and Wake land on the list at once. When the host says the request was done (window.GarrickActed, called by
-   Garrick.app and the Obsidian plugin with the request and page_action.py's reply), the row moves to its zone's
+   Garrick.app with the request and page_action.py's reply), the row moves to its zone's
    Parked fold or back, a project with every thread in it, its card says what it now is, and the counts follow.
    It stays greyed until the rebuild brings the real row; a reload of a page built before that moves it again. */
 function cardOf(r){try{return JSON.parse(r.dataset.card)}catch(e){return null}}
@@ -7734,7 +7728,7 @@ sync();
 
 # Preview (#206): a node's note read inside Garrick, over the graph, as Quick
 # Look reads a file. The card offers it where the host reads a note for it
-# (window.GarrickReadsNotes, set by Garrick.app and the Obsidian plugin); a
+# (window.GarrickReadsNotes, set by Garrick.app); a
 # browser cannot read one, so it never offers it, and neither does a card
 # while Settings › Opening a thread has it switched off (#219: `preview`,
 # among the launchers). The card draws it as a magnifier. The note is read by
@@ -8374,7 +8368,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     open_actions = sum(sum(t["counts"].values()) for t in TD.values())
 
     flags_on = preview_flags(ws)
-    acting = True       # the buttons that act; only a host that carries them out (the app, Obsidian) shows them
+    acting = True       # the buttons that act; only a host that carries them out (the app) shows them
     lists = todo_list(ws, link, now.date())
     ZS = zone_styles(ws)        # each zone's colour and icon, from Settings › Zones
     GS = graph_styles(ws)       # each kind's colour, from Settings › Graph colours (#291)
@@ -8789,7 +8783,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     listed = [w for w in HW if not w["unstarted"]]
     lead = waiting_card(waiting_now or [], now) + ((work_list_card(listed, now.date()) if listed else "") + threads_card
                                                     if anything else start_card() + threads_card)
-
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
                        '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, todo_card, inbox_card, graph_card))

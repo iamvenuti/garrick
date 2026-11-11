@@ -1841,11 +1841,9 @@ class TestNoCatchUpButton(StatusCase):
         for name in ("catch_lib", "catch_button", "catch_dialog", "CATCH_JS", "CATCH_CSS"):
             self.assertFalse(hasattr(status, name), name)
 
-    def test_the_app_and_obsidian_have_no_command_for_it(self):
+    def test_the_app_has_no_command_for_it(self):
         swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
-        main = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
-        for text in (swift, main):
-            self.assertNotRegex(text, r"(?i)catch.?up")
+        self.assertNotRegex(swift, r"(?i)catch.?up")
 
     def test_the_menu_keeps_process_the_inbox(self):
         menu = json.loads(htmllib.unescape(re.search(r'id="menu-data">(.*?)</script>', self.page(launchers=("claude",)), re.S).group(1)))
@@ -3425,8 +3423,6 @@ class TestLinksOpenAsChosen(StatusCase):
         self.assertEqual(str(self.root / "Zones/Work/Acme Review/Threads/Pricing"), nodes["Pricing"]["pl"])
         self.assertEqual(str(self.root / "Zones/Work/Acme Review"), nodes["Acme Review"]["pl"])
         self.assertNotIn("pl", nodes["dana-whitlock"] if "dana-whitlock" in nodes else nodes["Dana Whitlock"])
-        plugin = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn('if (typeof body.open === "string") return this.follow(body.open);', plugin)   # Obsidian's tab opens it there
 
     def test_the_app_opens_a_link_as_chosen(self):
         swift = self.SWIFT.read_text(encoding="utf-8")

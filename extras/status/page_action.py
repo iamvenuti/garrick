@@ -4,7 +4,7 @@
     echo '{"verb": "todo-done", "zone": "Work", "file": "Todo.md", "key": "…"}' | \\
         python3 page_action.py --workspace ~/Garrick
 
-Garrick.app, or the Obsidian plugin beside this file, runs it when a button
+Garrick.app runs it when a button
 on the page asks; nothing else can, because a browser has no way to reach it.
 The ask preview (ask.py) runs what it proposes through perform(), the same
 check and the same record. A session runs it too (#344), with the verb and its
@@ -66,7 +66,7 @@ zone's repository, as the skills would:
                 {"project": "Teal"}}, a colour for each kind of note Explore
                 draws, the whole section; a kind left out keeps its default.
                 Kept in System/garrick-settings.json, committed with the
-                workspace, so the app, Obsidian and the cmux desk agree. A zone
+                workspace, so the app and the cmux desk agree. A zone
                 whose colour changed has its open cmux workspace recoloured,
                 when the cmux extra and cmux are there. Settings ›
                 Notifications: {"notifications": {"tell": {...}, "after": 2,
@@ -335,7 +335,7 @@ REKEY_HOURS = 1
 # the same zone. A commit runs the zone's wall check, which on a large
 # workspace reads every meeting and project file the first time (see
 # check.py's NoteCache): a minute or more while another job has the disk.
-# The Obsidian plugin gives a request longer than all of them together. The
+# The Mac app waits as long as the script takes. The
 # first two are operations.py's clock, read below once ops_lib() is defined.
 LOCK_WAIT = 45
 # A lock with no record of its own, left by an older job.py, holds for the

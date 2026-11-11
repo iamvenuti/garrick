@@ -90,8 +90,6 @@ HARNESS = textwrap.dedent(r"""
       if (what === "ops") ctx.window.GarrickActed({ verb: "operations" }, a);
       if (what === "tick" && interval) interval();
       if (what === "reload") load();
-      // as the Obsidian plugin does it, once the page's script has already run
-      if (what === "host") { ctx.GarrickReads = true; if (ctx.window.GarrickReady) ctx.window.GarrickReady(); }
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
       if (what === "again") box.listeners.click({ target: { closest: (sel) => (sel === "[data-again]" ? { dataset: { again: String(a) } } : null) } });
       if (what === "busy") r = ctx.window.GarrickBusy(a);
@@ -533,7 +531,7 @@ class TestWorkFromTheRecord(NodeCase):
         self.assertEqual(0, out[4]["posted"])                                 # and asking sends no request that acts
 
     def test_a_host_that_does_not_say_it_reads_is_never_asked(self):
-        """An app or plugin from 0.26.0 toasts and rebuilds the page for every
+        """An app from 0.26.0 toasts and rebuilds the page for every
         request it passes on, so asking it to read would do that every POLL
         seconds. It is not asked, and the page behaves as it did."""
         out = self.run_js(("tick", 0), ("act", 1, PARK, "Parking Birch Entry…"), ("tick", 2), ("tick", 12), ("tick", 60),
@@ -546,14 +544,6 @@ class TestWorkFromTheRecord(NodeCase):
         self.assertIn("Parking Birch Entry…", out[5]["box"])                  # a reload keeps it from sessionStorage alone
         self.assertNotIn("recoverable", "".join(o["toast"] for o in out))     # and is never told the record is missing
         self.assertIn("No reply after 16 min", out[6]["box"])                 # ACTION_LOST is still the fallback
-
-    def test_a_host_that_says_so_after_the_page_loaded_is_asked_then(self):
-        """The Obsidian plugin sets the flag on dom-ready, after this script ran."""
-        out = self.run_js(("tick", 0), ("host", 1), ("ops", 2, reply(record(OP, phase="checking"))), reads=False)
-        self.assertEqual(0, out[0]["asked"])
-        self.assertEqual(1, out[1]["asked"])                                  # the flag's own kick asks
-        self.assertIn("Parking Birch Entry…", out[2]["box"])                  # and reattaches, as on the app
-        self.assertIn("Committing: the wall check can take a minute.", out[2]["box"])
 
     def test_a_reload_keeps_what_was_seen(self):
         done = record(OP, state="completed", outcome="saved", done=1000.0, say="Birch Entry is parked")
@@ -576,11 +566,8 @@ class TestWorkOnThePage(StatusCase):
         self.assertEqual(10, status.ACTION_WHY)
         self.assertIn("TOAST=4,WHY=10,LOST=%d," % status.ACTION_LOST, status.WORK_JS)
         self.assertNotIn("@", status.WORK_JS)                                # every constant filled in
-        # No reply is given up only after every host's own wait and page_action.py's longest:
-        # the lock, then scaffold.py's commit, then the new folder's.
-        plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
-        wait = int(re.search(r"cwd: this\.root\(\), timeout: (\d+) \}", plugin).group(1))
-        self.assertLess(wait, status.ACTION_LOST * 1000)
+        # No reply is given up before page_action.py's longest: the lock, then scaffold.py's commit, then the
+        # new folder's. The app waits as long as the script takes.
         longest = page_action.LOCK_WAIT + page_action.COMMIT_TIMEOUT + page_action.GIT_TIMEOUT + page_action.COMMIT_TIMEOUT
         self.assertLess(longest, status.ACTION_LOST)
 
@@ -611,19 +598,13 @@ class TestWorkOnThePage(StatusCase):
 
 
 class TestWorkHosts(unittest.TestCase):
-    def test_each_host_says_it_can_answer_a_request_that_reads(self):
+    def test_the_app_says_it_can_answer_a_request_that_reads(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn("window.GarrickReads=true;", swift)
         self.assertIn("injectionTime: .atDocumentStart", swift)               # before the page's own scripts
         self.assertIn('["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
         self.assertIn("window.GarrickReadsMemory=true;", swift)
         self.assertIn("window.GarrickReadsNotes=true;", swift)                # Explore's Preview (#206)
-        plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn('"dom-ready"', plugin)
-        self.assertIn('window.GarrickReads=true;window.GarrickReadsFiles=true;window.GarrickReady&&window.GarrickReady()', plugin)
-        self.assertIn('["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].includes(request.verb)', plugin)
-        self.assertIn("window.GarrickReadsMemory=true;", plugin)
-        self.assertIn("window.GarrickReadsNotes=true;", plugin)
 
     def test_a_note_opened_from_its_preview_toasts_and_rebuilds_nothing(self):
         # A rebuild would reload the page under the preview (#206); opening changes nothing the page shows.
@@ -632,9 +613,6 @@ class TestWorkHosts(unittest.TestCase):
         act = swift[swift.index("	func act(_ request: [String: Any]) {"):swift.index("	func acted(")]
         self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', act)     # #344
         self.assertIn("if toasting && !reading(request) { toast(", swift)     # note-open still toasts
-        plugin = (HERE / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn('return !this.reading(request) && !(request && request.verb === "note-open");', plugin)
-        self.assertIn("if (this.rebuilds(request) && said.built === undefined) this.rebuild(true);", plugin)
 
     def test_the_app_hands_every_reply_to_the_page(self):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
@@ -642,44 +620,6 @@ class TestWorkHosts(unittest.TestCase):
         self.assertIn('let reply = said ?? ["ok": false, "say": "That did not work."]\n\t\t\t\tself.acted(request, reply)', act)
         self.assertIn('acted(request, ["ok": false, "say": "Cannot run \\(python)"])', act)
         self.assertNotIn("asyncAfter", act)                                  # no limit of its own on page_action.py
-
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_the_plugin_hands_every_reply_to_the_page(self):
-        harness = textwrap.dedent(r"""
-            const Module = require("module");
-            const [plugin_path] = process.argv.slice(2);
-            const replies = JSON.parse(process.env.REPLIES), ran = [];
-            const stubs = {
-              obsidian: { Plugin: class {}, ItemView: class {}, PluginSettingTab: class {}, Setting: class {}, Notice: class {}, addIcon: () => {} },
-              electron: { shell: {}, clipboard: {} },
-              child_process: { execFile: (cmd, args, opts, done) => { const [err, out] = replies.shift(); done(err, out); return { stdin: { end() {} } }; },
-                               spawn: () => ({}) },
-            };
-            const load = Module._load;
-            Module._load = function (req, ...rest) { return stubs[req] || load.call(this, req, ...rest); };
-            const Plugin = require(plugin_path);
-            const p = new Plugin();
-            p.settings = { workspace: "/ws", python: "/usr/bin/python3", script: __filename, flags: "", hideParked: true };
-            p.root = () => "/ws";
-            p.rebuild = () => {};
-            const view = { toast: (t) => ran.push(["toast", t]), web: { executeJavaScript: (s) => { ran.push(["page", s]); return Promise.resolve(); } } };
-            require("fs").writeFileSync(require("path").join(require("path").dirname(__filename), "page_action.py"), "");
-            for (let i = 0; i < 3; i++) p.act(view, { verb: "park", zone: "Work", file: "Birch Entry/Birch Entry.md" });
-            process.stdout.write(JSON.stringify(ran));
-        """)
-        replies = [[None, '{"ok": true, "say": "Parked"}'], [{"code": 1}, "Traceback"], [{"killed": True}, ""]]
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "harness.js"
-            path.write_text(harness)
-            done = subprocess.run(["node", str(path), str(HERE / "obsidian" / "main.js")], capture_output=True, text=True, timeout=30,
-                                  env=dict(os.environ, REPLIES=json.dumps(replies)))
-        self.assertEqual(0, done.returncode, done.stderr)
-        ran = json.loads(done.stdout)
-        self.assertEqual(["toast", "page"] * 3, [k for k, _ in ran])          # each reply reaches the page, a failed one too
-        self.assertEqual("Parked", ran[0][1])
-        self.assertEqual("That did not work.", ran[2][1])
-        self.assertIn('"ok":false', ran[3][1])
-        self.assertIn("fifteen minutes", ran[4][1])
 
 
 if __name__ == "__main__":

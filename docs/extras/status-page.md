@@ -147,7 +147,7 @@ The pages wait as text at the end of the page and are laid out only when the tab
 
 ## Preview features
 
-Some features are in Garrick's source before they are in a release. They are off until you switch them on in `System/garrick-flags.json`, and *Settings* lists each one and whether it is on. One flag, `ask-agent`, is the exception: it is released and on until you set it to `false`, and Settings shows it on only while `ask` is on and Claude is the assistant, and "does not apply" with Codex. To switch one on, write its name there and rebuild the page:
+Some features are in Garrick's source before they are in a release. They are off until you switch them on in `System/garrick-flags.json`, and *Settings* lists each one and whether it is on. To switch one on, write its name there and rebuild the page:
 
 ```json
 {"effort": true}
@@ -166,7 +166,7 @@ Some features are in Garrick's source before they are in a release. They are off
 - **`while-you-wait`**: the [Garrick band](../../extras/mods/README.md#while-you-wait-a-preview-feature)'s suggestion line while a long turn runs in Claude Code, with `/garrick next`, `open`, `tick` and `later`, and [*While you wait*](#settings) in Settings. Parked rather than released: off, the band shows no such line and the four words say the feature is off. "What's next" answers either way, from the same `System/tools/next_up.py`.
 
 - **`ask`**: a box that the Ask hotkey (⌘G unless you set another) opens from any app answers a request in plain words and acts on it, in the Mac app only. The fields of the menu and the panel only find, with the preview on or off. See [Ask](#ask).
-- **`ask-agent`**: released and on by default with Claude: with `ask` on, Ask is one session with read tools that Garrick serves and checks. `"ask-agent": false` turns it off for this release; the next removes the flag. See [One session that reads with tools](#one-session-that-reads-with-tools).
+
 
 A preview feature may still change. When one is released it is switched on for everyone and its flag goes away. The [Todo tab](#the-todo-tab), its buttons and the [menu bar](#in-the-menu-bar) went that way, so `todo-list`, `page-actions` and `menu-bar` left in the file change nothing.
 
@@ -383,7 +383,7 @@ To try it from a terminal: `python3 System/status/ask.py --workspace ~/Garrick a
 
 #### Answers from your records
 
-This is the fixed pipeline: how Ask answers with Codex, and with Claude when `"ask-agent": false` is in `System/garrick-flags.json` (see [One session that reads with tools](#one-session-that-reads-with-tools)).
+This is the fixed pipeline: how Ask answers with Codex. With Claude, Ask is [one session that reads with tools](#one-session-that-reads-with-tools).
 
 The box also answers a question about what your records hold: "what did Dana say about the pallet quote?", "where does Pricing stand?", "what does the supply chain report say?", "how do I park a thread?". A request for the same worded as an instruction is a question too: "summarise Pricing", "give me a summary of Pricing", "brief me on Pricing", "tell me about Pricing" and "what's the latest on Pricing" read where Pricing stands, and never act on it. Nothing is read when the session starts. The records are read for each question, and only inside its scope.
 
@@ -400,9 +400,7 @@ The box also answers a question about what your records hold: "what did Dana say
 
 #### One session that reads with tools
 
-With Claude as the assistant, this is how Ask works: nothing to switch on beyond `"ask": true`. The fixed shapes go: no command session turns a request into an action, a find or an actions list before anything is read, and no second session answers from one search. Every request of a conversation goes to one session, which has six read tools that Garrick serves and checks, and nothing else: no workspace instructions, no file tools, no shell, no other MCP server. So a follow-up ("tell me more about the second one"), a remark ("I just updated the note from the 20th"), a question about Ask itself ("what can you do?") and a question that needs two kinds of record ("is the pricing thread waiting on anyone, and what did they last say?") all find the session holding the whole conversation. With Codex, Ask runs the fixed pipeline of the sections above.
-
-For this release one switch remains: `"ask-agent": false` in `System/garrick-flags.json` turns the one session off and gives Claude the fixed pipeline too. It is read for each request and for *New conversation*, so a change takes effect on the next one with no restart, and it goes in the next release.
+With Claude as the assistant, this is how Ask works: nothing to switch on beyond `"ask": true`. The fixed shapes go: no command session turns a request into an action, a find or an actions list before anything is read, and no second session answers from one search. Every request of a conversation goes to one session, which has six read tools that Garrick serves and checks, and nothing else: no workspace instructions, no file tools, no shell, no other MCP server. So a follow-up ("tell me more about the second one"), a remark ("I just updated the note from the 20th"), a question about Ask itself ("what can you do?") and a question that needs two kinds of record ("is the pricing thread waiting on anyone, and what did they last say?") all find the session holding the whole conversation. With Codex, Ask runs the fixed pipeline of the sections above, chosen by the assistant and not by a setting.
 
 - **The tools.** `search` finds meetings, the library, threads and documents, and Garrick's docs, and returns ids, dates and titles with a snippet; `read` returns a record's text; `places` lists the projects and threads with their status; `thread_state` returns a thread's Resume here block; `owed` returns what you owe or wait on, as the list above is built; `propose` offers an action. All are read-only, and `propose` writes nothing either: it returns a proposal. The session may search two or three times for one question. The tools are `System/status/ask_tools.py`, a Model Context Protocol server over standard input and output in Python's standard library, started by the session's `--mcp-config` as its child. The session is given `--tools ""`, `--strict-mcp-config` and `--allowedTools` naming these six alone, and the same seal as the other sessions: the deny profile and no settings, no memory, an empty folder outside the workspace.
 - **Search opens the conversation's scope index.** `search` and `read` open one file, the scope index of `System/tools/recall.py` for the zone the window answers in; nothing else is searched. It holds the zone's notes and the Meetings and Knowledge pages that zone may read, and no others, so nothing of another walled zone can rank, count or order what Ask finds. With no `kind`, `search` reads all of them; `kind` narrows and never defaults to one store, and a `place` narrows only the notes of its own project or thread, never Meetings or Knowledge. Names are expanded before the query: a party, person or alias is searched in every spelling your Parties, People and Aliases tables give, with or without spaces, and a word the index does not know is widened to near spellings through a trigram table. A result that is a hub or thread note carries its Resume here block. `read(id)` is a lookup of the id in the scope index. Where the index cannot be opened, `search` falls back to the keyword find Ask used before, and its result says so.

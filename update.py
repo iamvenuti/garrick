@@ -596,7 +596,9 @@ def first_missing(root, path):
 # an update writes them in the same step as the rules, and holds the rules back
 # when it cannot: a rule must never stand in neither place.
 RULES = "System/rules.md"
-RULE_SKILLS = tuple("System/skills/%s/SKILL.md" % name for name in ("threads", "intake", "nurture", "desk"))
+RULE_SKILLS = tuple("System/skills/%s/SKILL.md" % name for name in ("threads", "intake", "nurture", "desk")) + tuple(
+    "System/skills/threads/reference/%s.md" % name
+    for name in ("open", "wrap", "lifecycle", "correct", "catch-up", "wall-check"))
 
 
 def apply(root, p, only=None, today=None):

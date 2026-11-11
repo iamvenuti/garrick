@@ -32,7 +32,7 @@ The word the [simple home](#the-simple-home) uses for a thread, and the only uni
 
 ### Spoken form
 
-The `spoken:` line in a hub or thread note's frontmatter: how a name that does not say how it is said is heard, such as `spoken: fourth quarter planning` for Q4 Planning. A request matches it as well as the name. `scaffold.py` asks for one when a project or thread name needs it, and refuses a zone name that cannot be said aloud, since a zone has no note to carry one. See [Voice](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
+The `spoken:` line in a hub or thread note's frontmatter: how a name that does not say how it is said is heard, such as `spoken: fourth quarter planning` for Q4 Planning. A request matches it as well as the name. `scaffold.py` asks for one when a project or thread name needs it, and refuses a zone name that cannot be said aloud, since a zone has no note to carry one. See [Voice](../template/System/skills/threads/reference/lifecycle.md#the-rules-behind-this-request) in the `threads` skill.
 
 ### Hub note
 
@@ -68,7 +68,7 @@ The row for what is only in your head: a decision half made and why, a doubt, or
 
 ### Status
 
-Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
+Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/skills/threads/reference/lifecycle.md#the-rules-behind-this-request) in the `threads` skill.
 
 ### Wrap and Resume
 

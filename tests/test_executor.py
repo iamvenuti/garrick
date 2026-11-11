@@ -377,7 +377,8 @@ class TestTheAppFollowsEveryCaller(unittest.TestCase):
 
 class TestTheSkillsDegrade(unittest.TestCase):
     def setUp(self):
-        self.threads = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        folder = SKILLS / "threads"
+        self.threads = "\n".join(f.read_text(encoding="utf-8") for f in [folder / "SKILL.md"] + sorted((folder / "reference").glob("*.md")))
         self.todo = (SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8")
 
     def flat(self, text):

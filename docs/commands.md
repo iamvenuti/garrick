@@ -162,7 +162,7 @@ After the new dated entry, the wrap runs `python3 System/tools/history.py apply 
 
 `history.py` has three actions. `dry-run [--scope PATH]` lists every note it would trim with words before and after, and writes nothing. `apply [NOTE...] [--scope PATH] [--commit MESSAGE]` does the move. `resume NOTE` gives the block's words and limit. A note with no `---` rule under State of play, an unreadable entry date or a history file it did not write is skipped and said.
 
-The full procedure, including how it resolves a mangled or ambiguous name, is `System/skills/threads/SKILL.md`.
+The full procedure, including how it resolves a mangled or ambiguous name, is `System/skills/threads/SKILL.md`, which names the reference for each request in `System/skills/threads/reference/`.
 
 ## What a project published
 

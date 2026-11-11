@@ -451,7 +451,8 @@ class TestWhatThePageSends(unittest.TestCase):
                 self.assertEqual(set(), set(pairs) - self.declared(verb), (verb, sorted(pairs)))
 
     def test_the_threads_skill_sends_what_the_table_declares(self):
-        skill = (REPO / "template" / "System" / "skills" / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        folder = REPO / "template" / "System" / "skills" / "threads"
+        skill = "\n".join(f.read_text(encoding="utf-8") for f in [folder / "SKILL.md"] + sorted((folder / "reference").glob("*.md")))
         for m in re.finditer(r"\{\s*\"verb\"\s*:", skill):
             line = skill[m.start():skill.index("\n", m.start())]
             verb = re.search(r"\"verb\"\s*:\s*\"([\w-]+)\"", line).group(1)

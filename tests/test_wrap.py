@@ -25,6 +25,7 @@ sys.dont_write_bytecode = True
 REPO = Path(__file__).resolve().parent.parent
 TOOL = REPO / "template" / "System" / "tools" / "wrap_lock.py"
 SKILL = REPO / "template" / "System" / "skills" / "threads" / "SKILL.md"
+REFERENCE = SKILL.parent / "reference"
 _spec = importlib.util.spec_from_file_location("garrick_wrap_lock", str(TOOL))
 wl = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(wl)
@@ -157,8 +158,12 @@ class LockTest(unittest.TestCase):
 class SkillTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.text = SKILL.read_text(encoding="utf-8")
-        cls.head = cls.text.split("---", 2)[1]
+        cls.dispatcher = SKILL.read_text(encoding="utf-8")
+        cls.head = cls.dispatcher.split("---", 2)[1]
+        wrap_ref = (REFERENCE / "wrap.md").read_text(encoding="utf-8")
+        cls.wrap = wrap_ref[wrap_ref.index("## Wrap:"):wrap_ref.index("## Close for the day")]
+        cls.back = (REFERENCE / "catch-up.md").read_text(encoding="utf-8").split("## Back:", 1)[1]
+        cls.text = "\n".join(f.read_text(encoding="utf-8") for f in [SKILL] + sorted(REFERENCE.glob("*.md")))
 
     def test_the_trigger_phrases_still_work(self):
         for phrase in ("I'm being interrupted", "hold this", "hold X", "back", "where was I", "back to X",
@@ -177,7 +182,7 @@ class SkillTest(unittest.TestCase):
         self.assertNotRegex(self.text, r'"verb": "(interrupt|back|stack)"')
 
     def test_the_wrap_asks_nothing_before_it_takes_the_lock(self):
-        wrap = self.text[self.text.index("## Wrap:"):self.text.index("## Back:")]
+        wrap = self.wrap
         self.assertIn("**Ask nothing.**", wrap)
         self.assertLess(wrap.index("**Ask nothing.**"), wrap.index("wrap_lock.py start"))
         self.assertNotIn("Anything only in your head", wrap)
@@ -188,12 +193,12 @@ class SkillTest(unittest.TestCase):
         self.assertIn("or `nothing`", wrap)
 
     def test_what_the_user_says_with_the_request_goes_into_keep_in_mind(self):
-        wrap = " ".join(self.text[self.text.index("## Wrap:"):self.text.index("## Back:")].split())
+        wrap = " ".join(self.wrap.split())
         self.assertIn("goes into *Keep in mind* as said", wrap)
         self.assertIn("I was leaning towards the lower tier", wrap)
 
     def test_the_background_brief_carries_the_walls(self):
-        wrap = self.text[self.text.index("## Wrap:"):self.text.index("## Back:")]
+        wrap = self.wrap
         brief = " ".join(wrap[wrap.index("Brief the subagent"):wrap.index("The last act of the wrap")].split())
         for needed in ("the project's zone and whether it is walled", "Walled column of the Zones table in `System/context.md`", 'named only as "held back"',
                        "wall check (*The wall check*, step 4 above) before it writes anything",
@@ -201,13 +206,13 @@ class SkillTest(unittest.TestCase):
             self.assertIn(needed, brief)
 
     def test_the_wrap_takes_and_releases_the_lock(self):
-        wrap = self.text[self.text.index("## Wrap:"):self.text.index("## Back:")]
+        wrap = self.wrap
         self.assertIn("wrap_lock.py start", wrap)
         self.assertIn("wrap_lock.py end", wrap)
         self.assertIn("ten minutes", wrap)
 
     def test_back_goes_by_the_notes_modification_time(self):
-        back = self.text[self.text.index("## Back:"):self.text.index("## Close for the day")]
+        back = self.back
         self.assertIn("written most recently", back)
         self.assertIn("never the answer", back)
         self.assertIn("stat -f %m", back)
@@ -252,7 +257,8 @@ class WordsTest(unittest.TestCase):
         self.assertIn("the thread whose note was written most recently and is not finished or parked", text)
 
     def test_no_shipped_page_or_skill_says_the_wrap_asks_a_question(self):
-        for page in self.PAGES + ("template/System/skills/threads/SKILL.md",):
+        skill = "template/System/skills/threads/"
+        for page in self.PAGES + (skill + "SKILL.md",) + tuple(skill + "reference/" + f.name for f in sorted(REFERENCE.glob("*.md"))):
             text = (REPO / page).read_text(encoding="utf-8")
             self.assertNotIn("Anything only in your head?", text, page)
             self.assertNotRegex(text, r"(?i)\bwrap\b[^.]{0,40}\basks one line", page)
@@ -266,8 +272,7 @@ class BackTest(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.root = Path(self._tmp.name)
-        text = SKILL.read_text(encoding="utf-8")
-        back = text[text.index("## Back:"):text.index("## Close for the day")]
+        back = (REFERENCE / "catch-up.md").read_text(encoding="utf-8").split("## Back:", 1)[1]
         self.script = re.search(r"```sh\n\s*(find Zones.*?)```", back, re.S).group(1)
 
     def note(self, thread, status="active", at=0, project="Acme"):

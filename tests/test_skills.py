@@ -52,6 +52,34 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+THREADS = SKILLS / "threads"
+
+
+def threads_files() -> list:
+    """The threads skill: its dispatcher, then one reference per request (#512)."""
+    return [THREADS / "SKILL.md"] + sorted((THREADS / "reference").glob("*.md"))
+
+
+def threads_all() -> str:
+    """The whole skill as one text, for a test that asks whether a sentence is in it somewhere."""
+    return "\n".join(f.read_text(encoding="utf-8") for f in threads_files())
+
+
+def threads_rules() -> str:
+    """The rules behind the commands: the dispatcher's own, and each reference's."""
+    text = section((THREADS / "SKILL.md").read_text(encoding="utf-8"), "## The rules behind the commands")
+    for f in sorted((THREADS / "reference").glob("*.md")):
+        body = f.read_text(encoding="utf-8")
+        if "\n## The rules behind this request\n" in body:
+            text += "\n" + section(body, "## The rules behind this request")
+    return text
+
+
+def skill_text(name: str) -> str:
+    """A skill's text; the threads skill's is its dispatcher and its references together."""
+    return threads_all() if name == "threads" else (SKILLS / name / "SKILL.md").read_text(encoding="utf-8")
+
+
 def listing_snippet() -> str:
     """The shell lines the threads skill gives for listing every thread."""
     text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
@@ -195,12 +223,12 @@ class SkillsTest(unittest.TestCase):
         phrases = triggers(SKILLS / "threads")
         for phrase in ("wrap it", "wrap this", "wrap up", "pick up x", "wake x", "unpark x"):
             self.assertIn(phrase, phrases, phrase)
-        text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        text = flat(threads_all())
         self.assertIn('**No name given** ("wrap it", "wrap this", "wrap up")', text)
         self.assertIn('## Park: "park X", "put X aside"; wake: "wake X", "unpark X"',
-                      (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+                      threads_all())
         self.assertNotIn("up again", text)
-        rules = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"), "## The rules behind the commands"))
+        rules = flat(threads_rules())
         for needle in ('**"wrap it"** for the thread in hand', '**"Wake X"** or **"unpark X"**'):
             self.assertIn(needle, rules, needle)
 
@@ -235,7 +263,7 @@ class SkillsTest(unittest.TestCase):
             self.assertIn(phrase, phrases, phrase)
         self.assertFalse([p for p in phrases if p.startswith("brief")])
         self.assertIn("brief me for x", triggers(SKILLS / "meetings"))
-        text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        text = threads_all()
         catch = flat(section(text, '## Catch up: "catch me up", "catch me up on X", "since Monday", "this week"'))
         for needle in ("python3 System/tools/briefing.py --zone Work", "`System/briefing.local.md`, when it",
                        "`judgment` is what to raise", "writes nothing", "never opened, quoted or summarised",
@@ -252,7 +280,7 @@ class SkillsTest(unittest.TestCase):
         name and what it holds are given; the interview hands over to it."""
         for phrase in ("add a zone called x", "new zone x"):
             self.assertIn(phrase, triggers(SKILLS / "threads"), phrase)
-        text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        text = threads_all()
         new_zone = flat(section(text, '## New zone: "add a zone called X", "new zone X"'))
         for needle in ('python3 System/tools/scaffold.py zone "<Zone>" --holds "<what it holds>"',
                        "**A name and what it holds is enough to go ahead**", "never `git add -A`",
@@ -261,14 +289,14 @@ class SkillsTest(unittest.TestCase):
         self.assertIn("offer to add it (*New zone*, below)", flat(text))
         interview = flat((SKILLS / "interview" / "SKILL.md").read_text(encoding="utf-8"))
         self.assertIn("through the `threads` skill's *New zone* procedure", interview)
-        for path in (SKILLS / "threads" / "SKILL.md", SKILLS / "interview" / "SKILL.md"):
+        for path in threads_files() + [SKILLS / "interview" / "SKILL.md"]:
             body = flat(path.read_text(encoding="utf-8"))
             self.assertNotIn("not this skill's job", body, path)
             self.assertNotIn("does not create zones", body, path)
 
     def test_threads_names_no_template_folders(self):
         """`_zone`, `_project` and `_thread` live only in this repository, never in a workspace."""
-        text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        text = threads_all()
         for name in ("`_zone`", "`_project`", "`_thread`"):
             self.assertNotIn(name, text, name)
         self.assertIn("A folder whose name starts with `_` is not part of the work", flat(text))
@@ -307,9 +335,9 @@ class SkillsTest(unittest.TestCase):
     def test_the_hook_is_only_as_good_as_git_running_it(self):
         """A `core.hooksPath` setting sends commits past the zone's hook; the check warns
         then, and neither the rules nor the threads skill promises more than that."""
-        rules = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"),
+        rules = flat(section(threads_all(),
                              "## The wall check"))
-        threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        threads = flat(threads_all())
         for text in (rules, threads):
             self.assertIn("Git skips the hook when its `core.hooksPath` setting sends commits past it", text)
             self.assertIn("`check.py` warns when", text)
@@ -319,7 +347,7 @@ class SkillsTest(unittest.TestCase):
         """"Close X" means wrap, and a parked thread keeps its pointer; the rule for
         System/generated/ lives in the rules, and the root AGENTS.md points to it."""
         rules = (REPO / "template" / "System" / "rules.md").read_text(encoding="utf-8")
-        threads = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"), "## The rules behind the commands"))
+        threads = flat(threads_rules())
         self.assertIn("one entry per live or parked thread", threads)
         self.assertIn("Delete the entry when the thread is finished.", threads)
         self.assertNotIn("when the thread closes", threads)
@@ -333,7 +361,7 @@ class SkillsTest(unittest.TestCase):
         self.assertNotIn("never edit", row[0].lower())
 
     def test_parked_threads_are_not_live(self):
-        text = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        text = flat(threads_all())
         for needle in ("A thread is **live** unless its frontmatter says `status: done` (finished) or "
                        "`status: parked`", "Parked threads are not live", "Skip threads marked done or parked"):
             self.assertIn(needle, text, needle)
@@ -345,7 +373,7 @@ class SkillsTest(unittest.TestCase):
         writers = [REPO / "template" / "System" / "templates" / "zone" / "Todo.md"] + [
             SKILLS / name / "SKILL.md" for name in ("threads", "meetings", "interview")]
         for path in writers:
-            text = flat(path.read_text(encoding="utf-8"))
+            text = flat(skill_text("threads") if path.parent.name == "threads" else path.read_text(encoding="utf-8"))
             lines = re.findall(r"- \[ \] \[\[<Thread>\]\]: <action>[^`\n]*?<YYYY-MM-DD>", text)
             self.assertTrue(lines, path)
             # the thread first, the date last as Obsidian Tasks reads it; a meeting adds its page as the source
@@ -354,7 +382,7 @@ class SkillsTest(unittest.TestCase):
                                               "- [ ] [[<Thread>]]: <action> · [<short title>]"
                                               "(../../Wikis/Meetings/wiki/sources/<slug>.md) 📅 <YYYY-MM-DD>"}, path)
             self.assertNotIn("<project>, <thread>", text, path)
-        threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        threads = flat(threads_all())
         for needle in ("that is how a later wrap or finish finds its lines", "Touch no line that names another thread",
                        "unticked lines that name this thread"):
             self.assertIn(needle, threads, needle)
@@ -363,7 +391,7 @@ class SkillsTest(unittest.TestCase):
         """A wrap or a finish ticks a line as it was written and writes no line
         for work already done; what came of it is the thread note's. The todo
         skill says the same, and names the check that holds them to it."""
-        threads = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        threads = threads_all()
         wrap = flat(section(threads, '## Wrap: "close X", "wrap X", "I\'m being interrupted", "hold this", "hold X"'))
         finish = flat(section(threads, '## Finish: "finish X", "X is done"'))
         todo = (SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8")
@@ -381,20 +409,20 @@ class SkillsTest(unittest.TestCase):
     def test_a_wrap_archives_before_it_commits(self):
         """So a zone the nightly sweep never reaches still loses the lines ticked
         on an earlier day, and the archive goes in the wrap's own commit."""
-        threads = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        threads = threads_all()
         step = section(threads, '## Wrap: "close X", "wrap X", "I\'m being interrupted", "hold this", "hold X"').split("\n12. ", 1)[1].split("\n13. ", 1)[0]
         command = "python3 System/skills/todo/todo.py archive --zone <Zone>"
         self.assertIn(command, step)
         self.assertLess(step.index(command), step.index('git -C "Zones/<Zone>" add'))
         self.assertIn("`archive/` when the archive moved a line", flat(step))
-        self.assertIn("beyond that archive", flat(section(threads, "## What this skill does not do")))
+        self.assertIn("beyond that archive", flat(section(threads, "## What a wrap does not do")))
 
     def test_the_example_line_goes_with_the_first_real_action(self):
         """A new zone's list opens with an example line to show the shape. It is a
         task like any other, so every skill that writes a real action takes it out
         in the same edit, and the list's own header says so."""
         for name in ("todo", "threads", "meetings", "interview"):
-            text = flat((SKILLS / name / "SKILL.md").read_text(encoding="utf-8"))
+            text = flat(skill_text(name))
             self.assertIn("**The example line goes with the first real action.**", text, name)
             self.assertIn("delete it in the same edit that writes the first real line", text, name)
         todo = flat((SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8"))
@@ -426,11 +454,11 @@ class SkillsTest(unittest.TestCase):
         lib = (tools / "garrick_lib.py").read_text(encoding="utf-8")
         for decides in ("def is_path_safe(", "def is_display_name(", "def is_sayable("):
             self.assertIn(decides, lib, decides)
-        rules = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"), "## The rules behind the commands"))
+        rules = flat(threads_rules())
         for needle in ("a full stop inside an acronym", "`spoken:` in the note's frontmatter",
                        "a zone name has to say how it is said"):
             self.assertIn(needle, rules, needle)
-        threads = flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"))
+        threads = flat(threads_all())
         for needle in ("the `spoken:` form in its note", "as `spoken:`", "--spoken"):
             self.assertIn(needle, threads, needle)
         self.assertIn("spoken: %s", (tools / "scaffold.py").read_text(encoding="utf-8"))
@@ -474,13 +502,62 @@ class SkillsTest(unittest.TestCase):
     def test_no_dashes_in_the_new_prose(self):
         for path in (SKILLS / "intake" / "SKILL.md", SKILLS / "interview" / "SKILL.md",
                      SKILLS / "knowledge" / "SKILL.md", SKILLS / "meetings" / "SKILL.md",
-                     SKILLS / "threads" / "SKILL.md", SKILLS / "setup" / "SKILL.md", SKILLS / "update" / "SKILL.md",
+                     *threads_files(), SKILLS / "setup" / "SKILL.md", SKILLS / "update" / "SKILL.md",
                      REPO / "template" / "System" / "rules.md",
                      REPO / "template" / "AGENTS.md", REPO / "template" / "System" / "templates" / "zone" / "Todo.md",
                      REPO / "AGENTS.md"):
             text = path.read_text(encoding="utf-8")
             self.assertNotIn("—", text, path)
             self.assertNotIn("–", text, path)
+
+
+class ThreadsDispatcherTest(unittest.TestCase):
+    """#512: `threads/SKILL.md` is a short dispatcher, and each request is carried
+    out by one reference that stands alone."""
+
+    def table(self):
+        text = (THREADS / "SKILL.md").read_text(encoding="utf-8")
+        rows = []
+        for line in section(text, "## Which reference to read").splitlines():
+            m = re.match(r"\|\s*([^|]+?)\s*\|\s*`(reference/[a-z-]+\.md)`\s*\|", line)
+            if m:
+                rows.append(([r.strip() for r in m.group(1).split(",")], m.group(2)))
+        return rows
+
+    def test_the_dispatcher_is_short(self):
+        words = len((THREADS / "SKILL.md").read_text(encoding="utf-8").split())
+        self.assertLess(words, 1500, "SKILL.md is %d words; a request's procedure belongs in a reference" % words)
+
+    def test_every_reference_is_named_in_the_table_once(self):
+        files = sorted("reference/" + f.name for f in (THREADS / "reference").glob("*.md"))
+        self.assertEqual(files, sorted(ref for _, ref in self.table()))
+
+    def test_each_request_maps_to_one_reference_that_carries_it(self):
+        seen = {}
+        for requests, ref in self.table():
+            for request in requests:
+                self.assertNotIn(request, seen, request)
+                seen[request] = ref
+                body = (THREADS / ref).read_text(encoding="utf-8")
+                self.assertRegex(body, r"(?m)^## %s\b" % re.escape(request), "%s is not in %s" % (request, ref))
+        for request in ("Open", "Wrap", "Checkpoint", "Close for the day", "Finish", "Park", "New", "Rename",
+                        "Move", "Delete", "New zone", "Correct", "List", "Next", "Catch up", "Find", "Back",
+                        "The wall check"):
+            self.assertIn(request, seen, request)
+
+    def test_the_dispatcher_keeps_what_every_request_needs(self):
+        text = (THREADS / "SKILL.md").read_text(encoding="utf-8")
+        for heading in ("## Where things are", "## The rules behind the commands", "## Resolving a name",
+                        "## Listening mode", "## Which reference to read"):
+            self.assertIn("\n" + heading + "\n", text, heading)
+        self.assertEqual(1, len(re.findall(r"(?m)^description:", text)))      # one trigger list
+
+    def test_a_wrap_reads_the_dispatcher_and_one_reference(self):
+        """The wrap carries what it runs on: the executor, the wall check, the lock and its last step."""
+        wrap = flat((THREADS / "reference" / "wrap.md").read_text(encoding="utf-8"))
+        for needle in ("## Running an action", "## The wall check", "python3 System/tools/wrap_lock.py start",
+                       "python3 System/tools/wrap_lock.py end", "python3 System/tools/history.py apply"):
+            self.assertIn(needle, wrap, needle)
 
 
 class RepositoryInstructionsTest(unittest.TestCase):

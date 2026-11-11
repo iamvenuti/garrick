@@ -32,7 +32,7 @@ The word the [simple home](#the-simple-home) uses for a thread, and the only uni
 
 ### Spoken form
 
-The `spoken:` line in a hub or thread note's frontmatter: how a name that does not say how it is said is heard, such as `spoken: fourth quarter planning` for Q4 Planning. A request matches it as well as the name. `scaffold.py` asks for one when a project or thread name needs it, and refuses a zone name that cannot be said aloud, since a zone has no note to carry one. See [Voice](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
+The `spoken:` line in a hub or thread note's frontmatter: how a name that does not say how it is said is heard, such as `spoken: fourth quarter planning` for Q4 Planning. A request matches it as well as the name. `scaffold.py` asks for one when a project or thread name needs it, and refuses a zone name that cannot be said aloud, since a zone has no note to carry one. See [Voice](../template/System/skills/threads/reference/lifecycle.md#the-rules-behind-this-request) in the `threads` skill.
 
 ### Hub note
 
@@ -68,23 +68,15 @@ The row for what is only in your head: a decision half made and why, a doubt, or
 
 ### Status
 
-Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
+Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/skills/threads/reference/lifecycle.md#the-rules-behind-this-request) in the `threads` skill.
 
 ### Wrap and Resume
 
-One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. The note's last write is the only record of where you were, so there is nothing else to keep right. *While you wait* rests on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### History file
 
 `history/<Note> history <YYYY>-Q<n>.md`, beside a hub or thread note. It holds the dated entries the note moved out, whole and unchanged, one file for each calendar quarter, under a heading and its frontmatter (`type: history`, no `status:`). The note keeps its newest five entries and one line that links the files. `history.py` moves them, at the wrap and when a thread is parked. See [Opening and wrapping](commands.md#opening-and-wrapping).
-
-### Catch up
-
-"Catch me up": what changed in a zone's threads over a period, from their history, their notes and the Todo list, one section per thread that moved, each statement linked to the record it rests on. `System/tools/briefing.py` gathers it and carries the judgment of what deserves attention; the `threads` skill writes it. Shown, not saved: say "save that" to keep it. See [Opening and wrapping](commands.md#opening-and-wrapping).
-
-### What's next
-
-"What's next", or "what should I do while I wait": one thing worth doing elsewhere while a long turn runs. `System/tools/next_up.py` ranks it by plain rules, never the thread in focus: the thread left most recently today, Todo lines due today or late, chases come due, what waits in an inbox, a thread parked for 30 days, a live one not wrapped for 14. The assistant reads the first pick and offers to open or tick it; it never acts on its own. [The Garrick band](#the-garrick-band) shows the same list while a turn runs, where its *While you wait* preview feature is switched on.
 
 ## Zones and walls
 
@@ -116,7 +108,7 @@ The table in `System/context.md` that maps names your dictation gets wrong to wh
 
 ### `System/context.md`
 
-Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says which party a zone carries, if any, and whether new parties there start walled or open. It is yours, filled in from your answers at install, and every session reads it.
+Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says what each zone holds and whether it is walled or open. It is yours, filled in from your answers at install, and every session reads it.
 
 ### Learned entry
 

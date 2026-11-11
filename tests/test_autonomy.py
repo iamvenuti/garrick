@@ -302,9 +302,17 @@ NEW_VOCABULARY = ("approval matrix", "standing permission", "standing approval",
                   "pre-approved", "pre-authorised", "pre-authorized", "scope token", "blanket consent")
 
 
+def read_skill(path: Path) -> str:
+    """A file's text; the threads skill's (#512) is its dispatcher and its references together."""
+    if path == SKILLS / "threads" / "SKILL.md":
+        files = [path] + sorted((path.parent / "reference").glob("*.md"))
+        return "\n".join(f.read_text(encoding="utf-8") for f in files)
+    return path.read_text(encoding="utf-8")
+
+
 def wording(where: str) -> str:
     path, heading = SOURCES[where]
-    text = path.read_text(encoding="utf-8")
+    text = read_skill(path)
     return flat(text if heading is None else section(text, heading))
 
 
@@ -393,7 +401,7 @@ class CheckpointDialogueTest(unittest.TestCase):
         return [i for i in block["items"] if kind is None or i["kind"] == kind]
 
     def wrap_wording(self):
-        return flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"),
+        return flat(section(read_skill(SKILLS / "threads" / "SKILL.md"),
                             '## Wrap: "close X", "wrap X", "I\'m being interrupted", "hold this", "hold X"'))
 
     # -- the dialogues -----------------------------------------------------
@@ -444,8 +452,8 @@ class CheckpointDialogueTest(unittest.TestCase):
         self.assertEqual(self.before, self.todo.read_bytes())            # and never the list itself
         # The two places the wording has to agree: the row that is not a
         # deadline, and the line that reaches the list.
-        rules = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"),
-                             "## The rules behind the commands"))
+        rules = flat(section((SKILLS / "threads" / "reference" / "wrap.md").read_text(encoding="utf-8"),
+                             "## The rules behind this request"))
         self.assertIn('The Deadline row reads "not given" where nobody has dated the work, and "none" only '
                       "where somebody said there is none.", rules)
         self.assertIn("| Deadline | <date, and what breaks if it slips; none; or not given> |", self.wrap_wording())
@@ -519,7 +527,7 @@ class AutonomyTest(unittest.TestCase):
     def test_no_policy_vocabulary_was_invented(self):
         """A rule in plain words, not a mechanism. Nothing keeps a record of an answer."""
         texts = {"rules": flat(self.rules).lower(),
-                 "threads skill": flat((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")).lower()}
+                 "threads skill": flat(read_skill(SKILLS / "threads" / "SKILL.md")).lower()}
         for name, text in texts.items():
             for word in NEW_VOCABULARY:
                 self.assertNotIn(word, text, "%s: %s" % (name, word))
@@ -528,7 +536,7 @@ class AutonomyTest(unittest.TestCase):
         """The skills that file a conversation carry out the writes the scope sentence
         covers; none of them restates the rule, which would bring the question back."""
         for name in ("intake", "meetings", "threads", "todo", "knowledge"):
-            text = flat((SKILLS / name / "SKILL.md").read_text(encoding="utf-8"))
+            text = flat(read_skill(SKILLS / name / "SKILL.md"))
             self.assertNotIn("outside the project the session was opened in", text, name)
             self.assertNotIn("Writing outside the project", text, name)
 
@@ -561,7 +569,9 @@ class WallRefusalTest(unittest.TestCase):
               SKILLS / "meetings" / "SKILL.md",
               SKILLS / "intake" / "SKILL.md",
               SKILLS / "intake" / "intake.py",
-              SKILLS / "threads" / "SKILL.md",
+              SKILLS / "threads" / "reference" / "wall-check.md",
+              SKILLS / "threads" / "reference" / "wrap.md",
+              SKILLS / "threads" / "reference" / "lifecycle.md",
               SKILLS / "nurture" / "SKILL.md",
               REPO / "template" / "System" / "tools" / "operations.py",
               REPO / "template" / "System" / "tools" / "scaffold.py",           # a thread moved into a walled project (#354)
@@ -751,7 +761,7 @@ class WallRefusalTest(unittest.TestCase):
 
 class ThreadsSkillTest(unittest.TestCase):
     def setUp(self):
-        self.text = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        self.text = read_skill(SKILLS / "threads" / "SKILL.md")
 
     def test_rename_keeps_its_steps_and_their_numbers(self):
         """Step 2 changed its answer, not its place: resolving first, the script third."""

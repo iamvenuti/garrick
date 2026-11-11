@@ -364,3 +364,105 @@ class LinkTest(unittest.TestCase):
         self.assertTrue(any("a.md#there names no heading" in f for f in found))
         self.assertTrue(any("#nope names no heading" in f for f in found))
         self.assertTrue(any("leaves the repository" in f for f in found))
+
+
+def current_pages():
+    """The README and every page under docs/: what a reader is taught from. The changelog is history."""
+    pages = [REPO / "README.md"] + sorted((REPO / "docs").rglob("*.md")) + sorted((REPO / "docs").rglob("*.html"))
+    return [(p.relative_to(REPO).as_posix(), p.read_text(encoding="utf-8")) for p in pages]
+
+
+# The status page's page is the app branch's file in 0.65.0: its two lines that name these phrases go in that
+# branch's change (the release notes list them), and this entry goes when they are gone.
+APP_BRANCH_PAGES = {"docs/extras/status-page.md"}
+
+QUIET_COMMANDS = re.compile(
+    r"""["“”']back["“”']|["“”']back to\b|where was I\b|what['’]s next|what is next|catch me up""", re.I)
+
+
+class QuietCommandsTest(unittest.TestCase):
+    """#514: "back", "where was I", "what's next" and "catch me up" keep working, and no page teaches them
+    but the commands reference, which lists them under *Also understood*, one line each."""
+
+    def test_no_page_teaches_them_but_the_commands_reference(self):
+        found = []
+        for page, text in current_pages():
+            if page == "docs/commands.md" or page in APP_BRANCH_PAGES:
+                continue
+            for m in QUIET_COMMANDS.finditer(text):
+                found.append("%s: %s" % (page, m.group(0)))
+        self.assertEqual([], found)
+
+    def test_the_commands_reference_lists_each_once_under_also_understood(self):
+        text = (REPO / "docs" / "commands.md").read_text(encoding="utf-8")
+        self.assertEqual(1, text.count("\n### Also understood\n"))
+        block = text.split("\n### Also understood\n", 1)[1].split("\n## ", 1)[0]
+        bullets = [line for line in block.splitlines() if line.startswith("- ")]
+        self.assertEqual(3, len(bullets), bullets)
+        for line, phrase in zip(bullets, ('"Back"', '"What\'s next"', '"Catch me up"')):
+            self.assertIn(phrase, line)
+            self.assertNotIn("catch me up on", line.lower())             # no example
+        self.assertIn("the thread whose note was written most recently and is not finished or parked", block)
+
+    def test_the_skill_and_the_tools_still_answer_to_them(self):
+        skill = (REPO / "template" / "System" / "skills" / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        head = " ".join(skill.split("---", 2)[1].split())
+        for phrase in ('"back"', '"where was I"', '"what\'s next"', '"catch me up"'):
+            self.assertIn(phrase, head, phrase)
+        for tool in ("next_up.py", "briefing.py"):
+            self.assertTrue((REPO / "template" / "System" / "tools" / tool).is_file(), tool)
+        architecture = (REPO / "docs" / "architecture.md").read_text(encoding="utf-8")
+        self.assertIn("`briefing.py`", architecture)                      # the tools are named, without the commands
+        self.assertIn("`next_up.py`", architecture)
+
+
+# Instructions of an older Garrick that a current page must not give (the changelog keeps them as history).
+RETIRED = (
+    "pairs of parties",
+    "party tag and mark both as walled",
+    "its own party tag",
+    "walls between the parties",
+    "whether a wall belongs between it and any existing party",
+    "ask whether it is walled",
+    "brings every tab back",
+    "brings the tabs back",
+    "desk start",
+    "four tabs",
+    "The wall is between parties",
+)
+
+
+class RetiredWallModelsTest(unittest.TestCase):
+    """A zone is walled or open; a party tag is an index; work that must stay apart goes in separate walled
+    zones. No current page asks a reader for a party wall, a pair of walls or a restored set of tabs."""
+
+    def test_no_current_page_gives_a_retired_instruction(self):
+        found = []
+        for page, text in current_pages():
+            flat = " ".join(text.split())
+            for phrase in RETIRED:
+                if phrase in flat and page not in APP_BRANCH_PAGES:
+                    found.append("%s: %s" % (page, phrase))
+        skills = REPO / "template" / "System" / "skills" / "threads"
+        for f in [skills / "SKILL.md"] + sorted((skills / "reference").glob("*.md")):
+            flat = " ".join(f.read_text(encoding="utf-8").split())
+            for phrase in RETIRED:
+                if phrase in flat:
+                    found.append("%s: %s" % (f.relative_to(REPO).as_posix(), phrase))
+        self.assertEqual([], found)
+
+    def test_the_readme_puts_separate_work_in_separate_walled_zones(self):
+        text = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
+        self.assertIn("put each in its own walled zone", text)
+
+    def test_the_architecture_page_names_the_full_pages_tabs_as_the_page_builds_them(self):
+        text = (REPO / "docs" / "architecture.md").read_text(encoding="utf-8")
+        block = text.split("opens **the full page**", 1)[1].split("\n\n", 2)[1]
+        named = re.findall(r"^- \*\*(\w+)\*\*", block, re.M)
+        self.assertEqual(["Overview", "Todo", "Status", "Context", "Guide"], named)
+        built = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        panel = (REPO / "extras" / "status" / "questions_panel.py").read_text(encoding="utf-8")
+        for label, data_tab in (("Overview", "overview"), ("Status", "status"), ("Guide", "guide")):
+            self.assertIn('data-tab="%s">%s' % (data_tab, label), built, label)
+        self.assertIn('data-tab="questions">Context', panel)
+        self.assertIn('data-tab="todo">Todo', built)

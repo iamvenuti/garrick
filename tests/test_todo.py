@@ -267,7 +267,8 @@ class TodoTest(unittest.TestCase):
         import io
         import shlex
         from contextlib import redirect_stdout
-        skill = (REPO / "template" / "System" / "skills" / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        folder = REPO / "template" / "System" / "skills" / "threads"
+        skill = "\n".join(f.read_text(encoding="utf-8") for f in [folder / "SKILL.md"] + sorted((folder / "reference").glob("*.md")))
         line = next(l.strip() for l in skill.splitlines() if "todo/todo.py archive" in l)
         argv = shlex.split(line.replace("<Zone>", "Work"))
         self.assertEqual(["python3", "System/skills/todo/todo.py"], argv[:2])

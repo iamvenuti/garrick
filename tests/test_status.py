@@ -348,26 +348,19 @@ class TestGraph(StatusCase):
         self.assertIn("theta=SWAY*Math.sin(phase)", js)             # it sways, so a wide fit holds while it moves
         self.assertNotIn("Math.random", js)                         # seeded, so the same notes lie the same way
 
-    def test_the_graph_has_a_3d_view_beside_the_flat_one(self):
-        # #372: a button, 2D the default, drawn by the page's own perspective and no library.
+    def test_the_graph_has_one_flat_view_and_no_library(self):
+        # #509: no 3D button; a window left in 3D opens flat and its stored value is dropped.
         js = status.GRAPH_JS
-        self.assertIn("var d3=st.get('garrick-graph-3d')==='1'", js)           # off unless this window chose it
-        self.assertIn("function view3(on){d3=on;st.set('garrick-graph-3d',on?'1':'0');", js)
-        self.assertIn("if(d3)ysw=SWAY3*Math.sin(phase);else theta=SWAY*Math.sin(phase)", js)   # a slow turn round the vertical axis
-        self.assertIn("function toWorld(x,y,zc){", js)                         # the inverse of toScreen, at a depth
-        self.assertIn("ord.sort(function(a,b){return P[b.i][2]-P[a.i][2]||a.i-b.i})", js)   # far notes first
-        self.assertIn("function shade(f){", js)                                # far notes and links fainter
-        self.assertIn("if(d3&&!e.shiftKey){yaw=", js)                          # dragging empty space turns, shift-drag moves
-        self.assertIn("var w=toWorld(h.x,h.y,down.zc)", js)                    # a note moves in the plane facing the viewer
+        self.assertIn("localStorage.removeItem('garrick-graph-3d')", js)
         for lib in ("three.js", "THREE.", "https://", "http://", "import("):
             self.assertNotIn(lib, js)
-        self.assertIn('<button id="gspin"></button><button id="g3d" type="button"></button><button id="gfit">Fit</button>', self.page())
+        self.assertIn('<button id="gspin"></button><button id="gfit">Fit</button>', self.page())
 
     def test_names_do_not_cover_each_other(self):
         js = status.GRAPH_JS
         # Placed in order: the note in focus, its links, projects, hubs, then every other note drawn, at any zoom (#252).
         self.assertIn("want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c&&(!op||op.indexOf(n.k)>=0)?3:4,n])", js)   # a match found as its links are (#250)
-        self.assertIn("want.sort(function(a,b){return a[0]-b[0]||(d3?P[a[1].i][2]-P[b[1].i][2]:0)||b[1].deg-a[1].deg||a[1].i-b[1].i})", js)   # in 3D the nearer first, then the most linked
+        self.assertIn("want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i})", js)   # then the most linked
         self.assertIn("if(free(b)){got=tries[i]", js)                 # below, above, then beside the note
         self.assertIn("if(got<0&&(n===f||n.h||few&&M[n.i])){got=0", js)   # the focus, projects and a few matches are never left out
         self.assertIn("return out.reverse()", js)                     # the most wanted is drawn last, on top
@@ -381,8 +374,7 @@ class TestGraph(StatusCase):
         self.assertIn("if(V.length>BIG){var t=tree();V.forEach(function(n){shove(t,n,S)})}", js)
         self.assertIn("if(!inside&&q.s*q.s<.81*d2)", js)              # a far group pushes as one, from its centre
         self.assertIn("for(var i=0;i<(V.length>BIG?160:400);i++)tick();", js)
-        self.assertIn("function tick(){if(d3)step3();else step()}", js)     # 3D lays out with its own step and an octree (#372)
-        self.assertIn("if(V.length>BIG){var t=tree3();V.forEach(function(n){shove3(t,n,S)})}", js)
+        self.assertIn("function tick(){step()}", js)
 
     def test_a_still_graph_stops_drawing(self):
         # Measured in headless Chrome on the demo with rotation paused: no frame
@@ -390,7 +382,7 @@ class TestGraph(StatusCase):
         js = status.GRAPH_JS
         self.assertIn("if(moving)requestAnimationFrame(frame);else running=false", js)
         for wakes in ("setPointerCapture(e.pointerId);wake()", "if(down||h.n!==hover)wake()", "scale*=k;wake()",
-                      "function close(){sel=null;pop.hidden=true;wake()}", "auto=true;theta=phase=0;yaw=ysw=0;tilt=T0;wake()"):
+                      "function close(){sel=null;pop.hidden=true;wake()}", "auto=true;theta=phase=0;wake()"):
             self.assertIn(wakes, js)
         self.assertIn("new MutationObserver(recolor)", js)            # a still graph follows the theme switch
 

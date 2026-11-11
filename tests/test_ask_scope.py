@@ -1645,17 +1645,14 @@ class TestCitations(AnswerCase):
         forged = ["r1", "r2", "r0", self.KICKOFF, "260310-acme-kickoff", "Acme kick-off", "acme", "../" + self.KICKOFF]
         self.sonnet(["pallet launch", cites(("Theo moved the launch to May.", forged))],
                     ["pallet quote", cites(("Dana gave a price.", ["r1"]))])
-        import contextlib
         lines = []
+        t = self.serve_in_thread()          # in this process, so it is the fixed pipeline the case selects
         try:
             for q in ("What did Dana say about the pallet quote?", "What did Theo say about the pallet launch?"):
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    ask.main(["--workspace", str(self.root), "--json", "ask", "--zone", "Work", "--", q])
-                lines.append(json.loads(buf.getvalue().splitlines()[-1]))
+                lines.append(ask.call(self.root, "ask", q, zone="Work"))
         finally:
-            with contextlib.redirect_stdout(io.StringIO()):
-                ask.main(["--workspace", str(self.root), "stop"])
+            ask.call(self.root, "stop", start=False)
+            t.join(10)
         first, out = lines
         self.assertEqual(self.KICKOFF, first["sources"][0]["path"])
         self.assertEqual(("answer", "wall"), (out["kind"], out["reset"]))

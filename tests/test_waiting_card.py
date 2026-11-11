@@ -13,7 +13,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -24,7 +23,6 @@ from fixtures import build_workspace  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "extras" / "status"))
-import agents_working as aw  # noqa: E402
 
 
 def _load():
@@ -62,17 +60,6 @@ class Card(unittest.TestCase):
         self.assertEqual(['data-wgo="c"'], re.findall(r'data-wgo="[^"]*"', html))
         self.assertIn("Claude&#x27;s desktop app, in Pricing", html)
         self.assertIn("Codex, in Freight", html)
-
-    def test_the_simple_homes_needs_you_gets_a_live_row_for_a_waiting_session_and_none_without(self):
-        today = dt.date(2026, 11, 10)
-        none = status.home_section([], today, None, None, {})
-        self.assertIn("Nothing needs you.", none)
-        html = status.home_section([], today, None, None, {}, [row("a", "2026-11-10T09:00:00Z", thread="Acme Review, Pricing")], NOW)
-        self.assertIn('data-live="a"', html)
-        self.assertIn("Live</span> waiting on you for a question, 1 h", html)
-        self.assertIn("1 question", html)
-        self.assertNotIn("Nothing needs you.", html)
-        self.assertNotIn("Birch", html)
 
     def test_with_no_session_waiting_the_card_is_built_out_of_sight_and_says_nothing(self):
         html = status.waiting_card([], NOW)

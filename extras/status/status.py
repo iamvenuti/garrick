@@ -6988,14 +6988,7 @@ function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='wait
 box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});
 var card=document.getElementById('waiting-now');if(card)card.classList.toggle('nowait',!rows.length);
-var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=rows.length?rows.length+(rows.length===1?' session':' sessions'):'';needs(rows)}
-function needs(rows){var n=document.getElementById('sh-needs');if(!n||!n.querySelectorAll)return;
-n.querySelectorAll('.sh-live').forEach(function(e){e.remove()});var e0=n.querySelector('.sh-empty');
-rows.forEach(function(r){if(e0)e0.remove();e0=null;var d=document.createElement('div');d.className='sh-q sh-live';d.dataset.live=r.id;
-var b=document.createElement('b');b.textContent=r.thread||(r.folder||'').split('/').pop()||'A session';d.appendChild(b);
-var p=document.createElement('p'),t=document.createElement('span');t.className='sh-livetag';t.textContent='Live';p.appendChild(t);
-p.appendChild(document.createTextNode(' waiting on you for '+(r.waiting_for||'an answer')+', '+(since(r.since)||'just now')));d.appendChild(p);n.appendChild(d)});
-if(!n.querySelector('.sh-q')&&!n.querySelector('.sh-empty')){var m=document.createElement('div');m.className='sh-empty';m.textContent='Nothing needs you.';n.appendChild(m)}}
+var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=rows.length?rows.length+(rows.length===1?' session':' sessions'):''}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};

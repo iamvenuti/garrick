@@ -31,8 +31,10 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.dont_write_bytecode = True
@@ -551,8 +553,39 @@ def git_env(when):
         # scaffold.py would start a page build after each project and thread,
         # which outlives this script and writes into the workspace it built (#243).
         "GARRICK_CALLER_BUILDS_PAGE": "1",
+        # install.py would build the empty page; build() builds the finished one (see rebuild_page).
+        "GARRICK_INSTALL_NO_PAGE": "1",
     })
     return env
+
+
+def isolated_env(home):
+    """The environment of the page build: no job result, session or assistant
+    state of the machine it runs on, so a demo never shows the host's own
+    workspace. Everything the page reads from outside the workspace is `home`."""
+    env = {k: v for k, v in os.environ.items()
+           if not (k.startswith(("CMUX_", "CLAUDE", "GARRICK_")) or k in ("XDG_STATE_HOME", "XDG_CONFIG_HOME"))}
+    env.update({
+        "HOME": str(home), "GARRICK_HOME": str(home), "GARRICK_JOBS_DIR": str(Path(home) / "jobs"),
+        "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "PYTHONDONTWRITEBYTECODE": "1",
+    })
+    return env
+
+
+def rebuild_page(root):
+    """Build the status page of the finished demo, in System/generated/, which git leaves out.
+    The installer built it empty, before the month was replayed (#209)."""
+    tool = root / "System" / "status" / "status.py"
+    if not tool.is_file():
+        raise BuildError(f"{tool} is missing: the demo has no status page to build.")
+    home = Path(tempfile.mkdtemp(prefix="garrick-demo-page-"))
+    try:
+        r = subprocess.run([sys.executable, str(tool), "--workspace", str(root)], cwd=str(root),
+                           env=isolated_env(home), stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+    if r.returncode != 0:
+        raise BuildError(f"building the status page failed: {(r.stderr or r.stdout).strip()}")
 
 
 def run(args, cwd, when, what):
@@ -808,6 +841,7 @@ def build(target, today=None):
         dst = root / rel
         if not dst.is_file() or dst.read_bytes() != dated.read(rel):
             raise BuildError(f"{rel} did not end up as it is in content/; check the plan in build.py")
+    rebuild_page(root)
     for repo in ("", "Wikis", "Zones/Work", "Zones/Birch", "Zones/Personal"):
         status = run(["git", "status", "--porcelain", "--untracked-files=all"], root / repo if repo else root,
                      installed, "git status")

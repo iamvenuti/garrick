@@ -195,13 +195,12 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    Terms in Acme, parked. Wake that, or make a new one here?" It is a warning,
    not a refusal: two projects can each have a Pricing thread, so a new one is
    made if the user still wants it.
-3. **A new party:** offer to add it to Parties before scaffolding, and ask
-   whether it is walled: "Birch isn't a party yet. Add it to the Work zone,
-   walled, so only a project that names it holds its material, or open?" With the answer, re-read
+3. **A new party:** offer to add it to Parties before scaffolding: "Birch
+   isn't a party yet. Add it to the Work zone?" A party is an index and carries
+   no wall: its zone does, and a zone is walled or open. With the answer, re-read
    `System/context.md`, then run
    `python3 System/tools/scaffold.py party --name "<Party>" --zone <Zone> --what "<what it is>"`,
-   which writes the row and offers the tag itself, with `--walled` or `--open`
-   for the flag; commit `System/context.md` on its own before the project, which
+   which writes the row and offers the tag itself; commit `System/context.md` on its own before the project, which
    is refused until the row is there. Never scaffold with a made-up tag. Where
    the user did not ask for a project at all but for help with a piece of work,
    the short route sets up the party, the project and the thread on one
@@ -459,5 +458,5 @@ and then nothing checks the walls at commit time. `check.py` warns when that
 is so: tell the user what it says, and until it is fixed treat this
 procedure as the only check.
 
-The wall is between parties, not between the user and their own memory. It
+The wall is between zones, not between the user and their own memory. It
 decides what is written into a project, never what the user may know.

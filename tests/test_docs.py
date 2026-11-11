@@ -414,3 +414,55 @@ class QuietCommandsTest(unittest.TestCase):
         architecture = (REPO / "docs" / "architecture.md").read_text(encoding="utf-8")
         self.assertIn("`briefing.py`", architecture)                      # the tools are named, without the commands
         self.assertIn("`next_up.py`", architecture)
+
+
+# Instructions of an older Garrick that a current page must not give (the changelog keeps them as history).
+RETIRED = (
+    "pairs of parties",
+    "party tag and mark both as walled",
+    "its own party tag",
+    "walls between the parties",
+    "whether a wall belongs between it and any existing party",
+    "ask whether it is walled",
+    "brings every tab back",
+    "brings the tabs back",
+    "desk start",
+    "four tabs",
+    "The wall is between parties",
+)
+
+
+class RetiredWallModelsTest(unittest.TestCase):
+    """A zone is walled or open; a party tag is an index; work that must stay apart goes in separate walled
+    zones. No current page asks a reader for a party wall, a pair of walls or a restored set of tabs."""
+
+    def test_no_current_page_gives_a_retired_instruction(self):
+        found = []
+        for page, text in current_pages():
+            flat = " ".join(text.split())
+            for phrase in RETIRED:
+                if phrase in flat and page not in APP_BRANCH_PAGES:
+                    found.append("%s: %s" % (page, phrase))
+        skills = REPO / "template" / "System" / "skills" / "threads"
+        for f in [skills / "SKILL.md"] + sorted((skills / "reference").glob("*.md")):
+            flat = " ".join(f.read_text(encoding="utf-8").split())
+            for phrase in RETIRED:
+                if phrase in flat:
+                    found.append("%s: %s" % (f.relative_to(REPO).as_posix(), phrase))
+        self.assertEqual([], found)
+
+    def test_the_readme_puts_separate_work_in_separate_walled_zones(self):
+        text = " ".join((REPO / "README.md").read_text(encoding="utf-8").split())
+        self.assertIn("put each in its own walled zone", text)
+
+    def test_the_architecture_page_names_the_full_pages_tabs_as_the_page_builds_them(self):
+        text = (REPO / "docs" / "architecture.md").read_text(encoding="utf-8")
+        block = text.split("opens **the full page**", 1)[1].split("\n\n", 2)[1]
+        named = re.findall(r"^- \*\*(\w+)\*\*", block, re.M)
+        self.assertEqual(["Overview", "Todo", "Status", "Context", "Guide"], named)
+        built = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        panel = (REPO / "extras" / "status" / "questions_panel.py").read_text(encoding="utf-8")
+        for label, data_tab in (("Overview", "overview"), ("Status", "status"), ("Guide", "guide")):
+            self.assertIn('data-tab="%s">%s' % (data_tab, label), built, label)
+        self.assertIn('data-tab="questions">Context', panel)
+        self.assertIn('data-tab="todo">Todo', built)

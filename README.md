@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/54996021-8e82-4c7e-b5be-fe9be6f3167e
 
 ## Start small
 
-![Start small. Climb when you want to. Level 1, Organise: Claude or Codex in its desktop app and the Garrick folders, for a resume point for every piece of work, meetings and knowledge kept locally, and walls between the parties you declare. Level 2, Feed it: inbox folders, mail alias ingestion and recorder transcripts, so conversations and mail are filed for you. Level 3, Own the interface: Obsidian to browse, cmux for parallel sessions and the status page to see it all, so your work no longer lives inside one vendor's app and one page shows where it all stands. Level 4, Work from anywhere: the assistants' remote and voice features, so your workspace answers from your phone. Each level works on its own.](docs/assets/adoption-ladder.png)
+![Start small. Climb when you want to. Level 1, Organise: Claude or Codex in its desktop app and the Garrick folders, for a resume point for every piece of work, meetings and knowledge kept locally, and walls around the zones you mark walled. Level 2, Feed it: inbox folders, mail alias ingestion and recorder transcripts, so conversations and mail are filed for you. Level 3, Own the interface: Obsidian to browse, cmux for parallel sessions and the status page to see it all, so your work no longer lives inside one vendor's app and one page shows where it all stands. Level 4, Work from anywhere: the assistants' remote and voice features, so your workspace answers from your phone. Each level works on its own.](docs/assets/adoption-ladder.png)
 
 1. **Organise:** [first steps](docs/first-steps.md), then [your first useful session](docs/first-session.md).
 2. **Feed it:** [ways in](docs/extras/ways-in.md) for mail and files, and [a meeting recorder](docs/extras/meeting-recorder.md).
@@ -62,7 +62,7 @@ Already set up? [Your first useful session](docs/first-session.md) takes one con
 
 People who already use Claude or Codex every day and run several lines of work at once: a few projects, partners and internal asks, put down and picked up all day. If you have one line of work, your assistant's own project memory is probably enough.
 
-It matters most when that work holds other people's confidences: advisors, account managers, people working with partners under NDA, and members of a team who handle separate internal projects. For two internal projects to have a wall, give each its own party tag and mark both as walled, even if both belong to one company.
+It matters most when that work holds other people's confidences: advisors, account managers, people working with partners under NDA, and members of a team who handle separate internal projects. For two internal projects to have a wall, put each in its own walled zone, even if both belong to one company. A party tag is an index and holds nothing back.
 
 At work, use the assistant and account your employer approves. Files stay on your disk, but content the assistant reads goes to its provider. Garrick does not control the provider's retention or training settings.
 

@@ -108,7 +108,7 @@ The table in `System/context.md` that maps names your dictation gets wrong to wh
 
 ### `System/context.md`
 
-Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says which party a zone carries, if any, and whether new parties there start walled or open. It is yours, filled in from your answers at install, and every session reads it.
+Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says what each zone holds and whether it is walled or open. It is yours, filled in from your answers at install, and every session reads it.
 
 ### Learned entry
 

@@ -502,7 +502,7 @@ and then nothing checks the walls at commit time. `check.py` warns when that
 is so: tell the user what it says, and until it is fixed treat this
 procedure as the only check.
 
-The wall is between parties, not between the user and their own memory. It
+The wall is between zones, not between the user and their own memory. It
 decides what is written into a project, never what the user may know.
 
 ## What a wrap does not do

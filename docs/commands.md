@@ -111,7 +111,7 @@ python3 System/tools/scaffold.py label --zone Work --project Acme --add birch --
 python3 System/tools/scaffold.py label --zone Work --project Acme --thread Pricing --remove birch --yes
 ```
 
-Working with an assistant instead of the command line, just ask: "new project Acme for acme in Work, first thread pricing." The `threads` skill resolves the request, runs the script and commits for you. If the party doesn't exist yet, it offers to add a row to `System/context.md` first, and asks whether a wall belongs between it and any existing party.
+Working with an assistant instead of the command line, just ask: "new project Acme for acme in Work, first thread pricing." The `threads` skill resolves the request, runs the script and commits for you. If the party doesn't exist yet, it offers to add a row to `System/context.md` first. A party is an index: a wall belongs to a zone, so work that must stay apart goes in separate walled zones.
 
 ## Another zone
 

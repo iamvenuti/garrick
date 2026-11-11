@@ -1,0 +1,321 @@
+{
+  "about": "The fixed Ask set on the demo workspace (#513). Each question is asked in a zone's window, or in none. `find` is what the assistant's first step hands the retrieval for it: a route, the words to look for, and where. The run does not ask a model for it, so the same questions reach the same retrieval on every release. `expect` is what the retrieval must admit: `first` the record ranked first, `any` records that must be among those admitted, `none` records that must never be, `outcome` records, none (nothing found) or asks (the box asks which zone or which name, and reads nothing), `wall` whether the search reported a record held back by a wall (a window reads its own zone only, so the other side's records are never candidates: for those the check is `none`), `has` and `lacks` text the admitted records must hold or must not. Paths are matched as a part of the record's path. `cites` is what an answer must cite, checked with --model claude.",
+  "questions": [
+    {
+      "id": "lately-acme",
+      "kind": "lately",
+      "window": "Work",
+      "q": "What happened lately with Acme?",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "acme"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "first": "261105-acme-supplier-map-review",
+        "none": [
+          "Birch"
+        ],
+        "wall": false,
+        "order": "recent"
+      }
+    },
+    {
+      "id": "recently-birch",
+      "kind": "recently",
+      "window": "Birch",
+      "q": "What did we discuss recently with Birch?",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "birch"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "first": "261106-birch-board-paper-review",
+        "none": [
+          "acme-"
+        ],
+        "wall": false,
+        "order": "recent"
+      }
+    },
+    {
+      "id": "lately-kitchen",
+      "kind": "lately",
+      "window": "Personal",
+      "q": "Any news on the kitchen lately?",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "kitchen"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "wall": false,
+        "order": "recent",
+        "any": [
+          "261102-kitchen-go-ahead"
+        ],
+        "none": [
+          "acme-",
+          "birch-"
+        ]
+      }
+    },
+    {
+      "id": "recent-thread",
+      "kind": "recently",
+      "window": "Birch",
+      "q": "What have I done recently on Launch Plan?",
+      "find": {
+        "route": "thread",
+        "project": "Birch Entry",
+        "thread": "Launch Plan",
+        "words": [
+          "launch"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "first": "Launch Plan/Launch Plan.md",
+        "none": [
+          "Zones/Work"
+        ],
+        "wall": false
+      }
+    },
+    {
+      "id": "thread-state",
+      "kind": "thread",
+      "window": "Work",
+      "q": "Where does Supplier Map stand?",
+      "find": {
+        "route": "thread",
+        "project": "Acme Review",
+        "thread": "Supplier Map",
+        "words": [
+          "supplier"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "first": "Supplier Map/Supplier Map.md",
+        "wall": false
+      }
+    },
+    {
+      "id": "no-window",
+      "kind": "ambiguous",
+      "window": null,
+      "q": "What did Cobalt say?",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "cobalt"
+        ]
+      },
+      "expect": {
+        "outcome": "asks"
+      }
+    },
+    {
+      "id": "name-two-kinds",
+      "kind": "ambiguous",
+      "window": "Personal",
+      "q": "What did Pell quote?",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "pell",
+          "quote"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "first": "261021-pell-kitchen-quote",
+        "none": [
+          "Birch",
+          "acme-"
+        ],
+        "wall": false
+      }
+    },
+    {
+      "id": "wall-birch-side",
+      "kind": "two zones",
+      "window": "Birch",
+      "q": "Prep me for Cobalt",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "cobalt"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "none": [
+          "261027-cobalt-renewal-for-acme"
+        ],
+        "any": [
+          "261103-cobalt-northern-lane-for-birch"
+        ]
+      }
+    },
+    {
+      "id": "wall-acme-side",
+      "kind": "two zones",
+      "window": "Work",
+      "q": "Prep me for Cobalt",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "cobalt"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "none": [
+          "261103-cobalt-northern-lane-for-birch"
+        ],
+        "any": [
+          "261027-cobalt-renewal-for-acme"
+        ]
+      }
+    },
+    {
+      "id": "wall-person",
+      "kind": "two zones",
+      "window": "Birch",
+      "q": "What did Dana Whitlock say about the pallet forecast?",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "dana",
+          "pallet",
+          "forecast"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "none": [
+          "acme",
+          "dana-whitlock",
+          "261027",
+          "261014",
+          "Zones/Work"
+        ]
+      }
+    },
+    {
+      "id": "corrected-fact",
+      "kind": "corrected",
+      "window": "Work",
+      "q": "What pallet commitment did Cobalt ask Acme for?",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "pallets",
+          "commitment",
+          "acme"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "first": "261027-cobalt-renewal-for-acme",
+        "has": [
+          "fourteen hundred pallets"
+        ],
+        "lacks": [
+          "twelve hundred pallets"
+        ]
+      },
+      "cites": [
+        "261027-cobalt-renewal-for-acme"
+      ]
+    },
+    {
+      "id": "no-answer",
+      "kind": "no answer",
+      "window": "Work",
+      "q": "What did Acme say about the moon landing?",
+      "find": {
+        "route": "meetings",
+        "words": [
+          "moon",
+          "landing"
+        ]
+      },
+      "expect": {
+        "outcome": "none",
+        "wall": false
+      }
+    },
+    {
+      "id": "knowledge-index",
+      "kind": "library",
+      "window": "Work",
+      "q": "What does the freight rate outlook say about indexation?",
+      "find": {
+        "route": "knowledge",
+        "words": [
+          "indexation",
+          "freight"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "any": [
+          "freight-rate-indexation",
+          "pellow-strand-freight-rate-outlook"
+        ],
+        "none": [
+          "Wikis/Meetings"
+        ]
+      }
+    },
+    {
+      "id": "knowledge-recent",
+      "kind": "recently",
+      "window": "Work",
+      "q": "What have I read recently about carriers?",
+      "find": {
+        "route": "knowledge",
+        "words": [
+          "carriers"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "any": [
+          "freight-ledger-carriers-race-for-nordic-capacity"
+        ],
+        "none": [
+          "Wikis/Meetings"
+        ]
+      }
+    },
+    {
+      "id": "docs",
+      "kind": "docs",
+      "window": null,
+      "q": "What is a wall?",
+      "find": {
+        "route": "docs",
+        "words": [
+          "wall"
+        ]
+      },
+      "expect": {
+        "outcome": "records",
+        "any": [
+          "garrick-docs"
+        ]
+      }
+    }
+  ]
+}

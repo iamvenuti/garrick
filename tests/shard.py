@@ -71,6 +71,7 @@ TOUCH_MAP = {
     "extras/status/agents_working.py": ["test_agents_working", "test_waiting_card"],
     "extras/status/app/": ["test_status_finder", "test_status_graph_3d", "test_status_more"],
     "tests/shard.py": ["test_shard"],
+    "tests/acceptance/": ["test_acceptance"],
     "tests/shard-times.json": ["test_shard"],
     "docs/": ["test_docs", "test_docs_limits"],
     "template/System/skills/": ["test_skills", "test_docs"],

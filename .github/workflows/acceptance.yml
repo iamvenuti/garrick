@@ -1,0 +1,48 @@
+name: Acceptance
+
+# The path a user takes in a day, run on the release candidate (#513): install, build the
+# demo, file, brief, wrap, restart, resume, correct, update from the last tag, a refused
+# save, and the fixed Ask set. The steps that need a model use a stand-in here (--model
+# stub); the report says which. A failed step fails the job; a skipped step is printed.
+# It runs on release pull requests and by hand, not on every branch.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: Acceptance run, macOS
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'release-')
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Fetch the tags
+        run: git fetch --tags --force
+      - name: Run the acceptance run on this commit
+        run: |
+          set +e
+          /usr/bin/python3 tests/acceptance/run.py --model stub --commit HEAD --report acceptance-report.md
+          status=$?
+          {
+            echo "### Acceptance run"
+            echo
+            cat acceptance-report.md 2>/dev/null
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-report
+          path: acceptance-report.md
+          if-no-files-found: ignore

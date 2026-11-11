@@ -47,6 +47,7 @@ git add release-hashes.json
 git commit -m "Release hashes for 0.25.0"
 git push origin main v0.25.0
 git archive --format=zip --prefix=garrick/ -o /tmp/garrick.zip v0.25.0
+python3 tests/acceptance/run.py --candidate /tmp/garrick.zip --report /tmp/acceptance.md   # stops on a failed step
 gh release create v0.25.0 /tmp/garrick.zip --title "Garrick 0.25.0" --notes-file <release-notes.md>
 ```
 

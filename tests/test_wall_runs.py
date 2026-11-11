@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -150,6 +151,39 @@ class TwoThreadNotes(unittest.TestCase):
     def test_eight_words_shared_inside_one_paragraph_still_refuse(self):
         self.both(a_newer="The memo notes %s today." % SHARED, b_newer="The plan notes %s today." % SHARED)
         self.assertEqual(self.both_paths(), self.refused())
+
+    def test_the_real_commit_hook_passes_the_two_notes_and_refuses_a_shared_paragraph(self):
+        tools = self.root / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        for name in ("check.py", "garrick_lib.py"):
+            shutil.copy2(REPO / "template" / "System" / "tools" / name, tools / name)
+        self.both()
+        notes = {p: p.read_text(encoding="utf-8") for p in (self.a, self.b)}
+        for p in notes:
+            p.unlink()
+        for zone in (self.work, self.home):
+            git(zone, "init", "-q")
+            commit_all(zone, "start")
+        installed = subprocess.run([sys.executable, str(tools / "check.py"), "--root", str(self.root), "--install-hooks"],
+                                   capture_output=True, text=True)
+        for zone in (self.work, self.home):      # the other zones of the fixture are not repositories: the exit code says so
+            self.assertTrue((zone / ".git" / "hooks" / "pre-commit").is_file(), installed.stdout + installed.stderr)
+        for p, text in notes.items():
+            write(p, text)
+
+        def commit(zone, message):
+            git(zone, "add", "-A")
+            return subprocess.run(["git", "-C", str(zone), "commit", "-q", "-m", message], capture_output=True, text=True)
+
+        self.assertEqual(0, commit(self.home, "Beds").returncode)
+        done = commit(self.work, "Pricing")
+        self.assertEqual(0, done.returncode, done.stderr)
+        # The same two notes with eight shared words inside one paragraph: the hook refuses a commit of either.
+        for p, who in ((self.a, "memo"), (self.b, "plan")):
+            write(p, p.read_text(encoding="utf-8") + "\nThe %s notes %s today.\n" % (who, SHARED))
+        refused = commit(self.home, "Beds again")
+        self.assertNotEqual(0, refused.returncode)
+        self.assertIn("Commit refused", refused.stderr)
 
     # What must not get through.
 

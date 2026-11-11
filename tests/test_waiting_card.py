@@ -74,8 +74,12 @@ class Card(unittest.TestCase):
         self.assertNotIn("Nothing needs you.", html)
         self.assertNotIn("Birch", html)
 
-    def test_an_empty_card_says_so(self):
-        self.assertIn("No session is waiting on you.", status.waiting_card([], NOW))
+    def test_with_no_session_waiting_the_card_is_built_out_of_sight_and_says_nothing(self):
+        html = status.waiting_card([], NOW)
+        self.assertIn('class="card nowait" id="waiting-now"', html)
+        self.assertNotIn("No session is waiting on you.", html)
+        self.assertIn('aria-live="polite"', html)                              # the region stays, so a new row is announced
+        self.assertNotIn("nowait", status.waiting_card([row("a", "2026-11-10T09:00:00Z")], NOW))
 
     def test_a_name_from_a_transcript_cannot_break_the_markup(self):
         html = status.waiting_card([row("a", "2026-11-10T09:00:00Z", thread='<img src=x onerror="1">')], NOW)
@@ -93,7 +97,7 @@ class Card(unittest.TestCase):
                 full = status.build(root, now=dt.datetime(2026, 11, 10, 10, 0), folder=jobs,
                                     waiting_now=[row("a", "2026-11-10T09:00:00Z")])
         self.assertIn('id="waiting-now"', bare)
-        self.assertIn("No session is waiting on you.", bare)
+        self.assertNotIn("No session is waiting on you.", bare)
         self.assertIn("window.GarrickWaiting=", bare)
         self.assertIn('data-wgo="a"', full)
         self.assertLess(full.index('id="waiting-now"'), full.index('id="threads"'))      # first on the Overview
@@ -132,16 +136,17 @@ class El {
   querySelectorAll() { return []; }
 }
 const box = new El("div");
+const card = { classList: { on: null, toggle(c, on) { card.classList.on = on; } } };
 const sent = [];
 const ctx = { window: { webkit: { messageHandlers: { garrick: { postMessage: (m) => sent.push(m) } } } }, setInterval: () => 0, Date,
-  document: { getElementById: (id) => (id === "wrows" ? box : null), createElement: (t) => new El(t), querySelector: () => null } };
+  document: { getElementById: (id) => (id === "wrows" ? box : id === "waiting-now" ? card : null), createElement: (t) => new El(t), querySelector: () => null } };
 vm.createContext(ctx);
 vm.runInContext(js, ctx);
 ctx.window.GarrickWaiting(data);
 const rows = box.children.map((r) => ({ id: r.dataset.id, text: r.textContent, go: r.children.filter((c) => c.dataset && c.dataset.wgo).map((c) => c.dataset.wgo) }));
 const target = { closest: () => ({ dataset: { wgo: "c" } }) };
 box.listeners.click({ target });
-process.stdout.write(JSON.stringify({ rows, sent }));
+process.stdout.write(JSON.stringify({ rows, sent, out: card.classList.on }));
 """
 
 
@@ -163,7 +168,10 @@ class CardScript(unittest.TestCase):
     def test_a_name_is_text_and_an_empty_minute_says_so(self):
         out = self.run_js([row("a", "2026-11-10T09:00:00Z", thread="<b>x</b>", where="terminal")])
         self.assertIn("<b>x</b>", out["rows"][0]["text"])                    # shown as text, never read as markup
-        self.assertEqual(["No session is waiting on you."], [r["text"] for r in self.run_js([])["rows"]])
+        empty = self.run_js([])
+        self.assertEqual([], empty["rows"])                                  # no line for an empty minute
+        self.assertTrue(empty["out"])                                        # the card goes out of sight with the last row
+        self.assertFalse(self.run_js([row("a", "2026-11-10T09:00:00Z")])["out"])     # and shows with the first
 
 
 if __name__ == "__main__":

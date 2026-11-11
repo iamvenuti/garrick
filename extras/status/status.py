@@ -6633,9 +6633,9 @@ background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4
 .only [data-ok="1"]{display:none}
 .only .rows:not(:has([data-ok="0"]))::after,.only .zone:not(:has([data-ok="0"]))::after,.only .tiles:not(:has([data-ok="0"]))::after{content:"Nothing wrong here.";display:block;color:var(--muted);font-size:12px;padding:8px 2px}
 .slot{display:flex;flex-direction:column;gap:16px;min-width:0}.slot.full{grid-column:span 12}.slot .card{grid-column:auto}
-.slot:not(:has(>.card:not([hidden]))){display:none}
+.slot:not(:has(>.card:not([hidden]):not(.nowait))){display:none}
 /* one column takes the width when the other is empty, except while a card is dragged: then both show, side by side */
-body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]))) .stack.left,body:not(.dragging) .grid:not(:has(.stack.left>.card:not([hidden]))) .stack.right{grid-column:span 12}
+body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait))) .stack.left,body:not(.dragging) .grid:not(:has(.stack.left>.card:not([hidden]):not(.nowait))) .stack.right{grid-column:span 12}
 .stack .zones{grid-template-columns:1fr}[hidden]{display:none!important}
 .head .tools{display:flex;gap:2px;align-items:center;opacity:0;transition:opacity .12s;margin-left:2px}
 .head:hover .tools,.head:focus-within .tools{opacity:1}
@@ -8194,9 +8194,10 @@ def waiting_row(r: dict, now: dt.datetime) -> str:
 def waiting_card(rows: List[dict], now: dt.datetime) -> str:
     """The Waiting on you now card: one row per waiting session, oldest first."""
     rows = sorted(rows, key=lambda r: (r.get("since") or "", r["id"]))
-    body = ("".join(waiting_row(r, now) for r in rows)) or '<p class="muted wnone">No session is waiting on you.</p>'
-    return card("waiting-now", "Waiting on you now", "%d session%s" % (len(rows), "" if len(rows) == 1 else "s") if rows else "",
-                '<div class="wrows" id="wrows" aria-live="polite">%s</div>' % body)
+    html = card("waiting-now", "Waiting on you now", "%d session%s" % (len(rows), "" if len(rows) == 1 else "s") if rows else "",
+                '<div class="wrows" id="wrows" aria-live="polite">%s</div>' % "".join(waiting_row(r, now) for r in rows))
+    # Built out of sight (the class, since a card's own Hide uses `hidden`) when no session waits (#510); GarrickWaiting shows it with the first row and hides it with the last.
+    return html if rows else html.replace('<details class="card" id="waiting-now"', '<details class="card nowait" id="waiting-now"', 1)
 
 
 WAITING_CSS = r"""
@@ -8204,6 +8205,7 @@ WAITING_CSS = r"""
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:12.5px}
 .wrow .act{margin-left:auto}
+#waiting-now.nowait{display:none}
 """
 
 WAITING_JS = r"""
@@ -8218,8 +8220,9 @@ if(r.where==='cmux'){var b=document.createElement('button');b.type='button';b.cl
 else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app)+', in '+((r.folder||'').split('/').pop()||'a folder')));
 return d}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
-box.textContent='';if(!rows.length){var p=document.createElement('p');p.className='muted wnone';p.textContent='No session is waiting on you.';box.appendChild(p)}
+box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});
+var card=document.getElementById('waiting-now');if(card)card.classList.toggle('nowait',!rows.length);
 var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=rows.length?rows.length+(rows.length===1?' session':' sessions'):'';needs(rows)}
 function needs(rows){var n=document.getElementById('sh-needs');if(!n||!n.querySelectorAll)return;
 n.querySelectorAll('.sh-live').forEach(function(e){e.remove()});var e0=n.querySelector('.sh-empty');

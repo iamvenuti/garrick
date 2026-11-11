@@ -3,7 +3,7 @@ name: interview
 description: >
   Interview the user one question at a time about what they do, for whom,
   and whose confidences they hold, keep a record as it goes, then propose
-  the first parties, which are walled, projects, threads and open actions, and set them
+  the first parties, which zones are walled, projects, threads and open actions, and set them
   up only on a yes. The opening move in a new workspace, and useful again
   when a new side of work starts. Use when the user says "interview me",
   "get to know me", "ask me about my work", "help me set up my workspace",
@@ -67,11 +67,11 @@ installer already answered; confirm it instead.
 2. **Whose confidences you hold.** Every organisation or person who tells you
    things they would not want the others to see: clients, an employer's
    projects, a board you sit on, a friend's business. For each one, what it
-   is and which zone it belongs to. Then ask, for each: "Whose material may
-   go anywhere, and whose may not?" A party whose material may not is walled;
-   the rest are open. Ask about one party at a time, by name, and never
-   infer a flag. Inside one employer, two internal projects can be walled
-   parties too.
+   is and which zone it belongs to. Then ask, for each zone: "Whose material may
+   go anywhere, and whose may not?" A zone whose material may not is walled;
+   the rest are open. Ask about one zone at a time, by name, and never
+   infer a flag. Work that must stay apart, such as two internal projects of
+   one employer, goes in separate walled zones.
 3. **The five things you do every week.** Recurring work, not projects.
 4. **Who you owe something right now**, what it is, and by when.
 5. **Where your files and notes live today.** Folders, mail, apps, paper.
@@ -117,10 +117,10 @@ end of the record under `## Proposal`, then show it.
 
 1. **Parties** to add to `System/context.md`: name, what it is, zone, tag, and
    mail domains if the user gave them. Check each tag is one lowercase word.
-2. **Walled or open**: the flag for each party in item 1, and why. Mark
+2. **Walled or open**: the flag for each zone, and why. Mark
    any flag you inferred rather than heard, and ask about it by name. Never
-   mark a party open that the user did not say is open, and never leave
-   open a party they asked to protect. When unsure, propose walled.
+   mark a zone open that the user did not say is open, and never leave
+   open a zone they asked to protect. When unsure, propose walled.
 3. **People and aliases** heard during the interview.
 4. **Projects and first threads**, zone by zone: the project, its party, its
    first thread. Names can be the ones the work already has, Q4 Planning and
@@ -144,7 +144,7 @@ what it holds. On a yes it is made first, through the `threads` skill's
 *New zone* procedure.
 
 Spoken: "I'd set up three projects in Work and one in Personal, with four
-parties, two of them walled, Acme and Birch. The thing I still need most is
+parties, in two walled zones, Work and Personal. The thing I still need most is
 who owns the Cobalt contract. Shall I set it up?"
 
 Written: the whole proposal, as it stands in the record, and the record's
@@ -158,13 +158,14 @@ was accepted, in this order. Every commit stages its files by name, never
 step 7, and another session may have changes of its own in any repository.
 
 1. **Zones**, if the proposal adds any, one at a time through the `threads`
-   skill's *New zone* procedure, before anything names them.
-2. **Parties with their flags, People, Aliases.** Re-read `System/context.md` right
+   skill's *New zone* procedure, before anything names them, and each
+   zone's flag, with `scaffold.py zone --name <Zone> --walled` or `--open`.
+2. **Parties, People, Aliases.** Re-read `System/context.md` right
    before editing it, then add the rows. Commit it alone in the workspace
    root's repository:
    ```sh
    git add -- System/context.md
-   git commit -m "Interview: four parties, two walled"
+   git commit -m "Interview: four parties"
    ```
 3. **Projects and threads**, through the scaffolding script, one at a time, as
    the `threads` skill's *New* procedure says. When it refuses a name, relay
@@ -201,7 +202,7 @@ step 7, and another session may have changes of its own in any repository.
 
 Never push. That leaves the machine and needs its own yes.
 
-Spoken: "Set up: four parties, two walled, four projects. Say 'what's open' to
+Spoken: "Set up: four parties, four projects. Say 'what's open' to
 see them, or 'open' and a project's name to start."
 
 ## What this skill does not do

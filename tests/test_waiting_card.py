@@ -67,6 +67,10 @@ class Card(unittest.TestCase):
         self.assertNotIn("No session is waiting on you.", html)
         self.assertIn('aria-live="polite"', html)                              # the region stays, so a new row is announced
         self.assertNotIn("nowait", status.waiting_card([row("a", "2026-11-10T09:00:00Z")], NOW))
+        rule = re.search(r"#waiting-now\.nowait\{[^}]*\}", status.WAITING_CSS).group(0)
+        self.assertNotIn("display:none", rule)                                 # the live region stays in the accessibility tree
+        self.assertNotIn("visibility:hidden", rule)
+        self.assertIn("clip", rule)
 
     def test_a_name_from_a_transcript_cannot_break_the_markup(self):
         html = status.waiting_card([row("a", "2026-11-10T09:00:00Z", thread='<img src=x onerror="1">')], NOW)

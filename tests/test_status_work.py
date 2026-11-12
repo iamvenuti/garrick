@@ -37,7 +37,7 @@ spec.loader.exec_module(page_action)
 HARNESS = textwrap.dedent(r"""
     const vm = require("vm");
     const [js, steps, reads, drawn] = JSON.parse(process.argv[1]);
-    const store = {}, posted = [], asked = [], out = [];
+    const store = {}, posted = [], asked = [], out = [], oks = [];
     let toasts = 0;
     let clock = 1000000, ctx, box, toast, style, interval, chained = [], rows = [];
     function row(r) {
@@ -73,7 +73,7 @@ HARNESS = textwrap.dedent(r"""
               setTimeout: () => 0, clearTimeout: () => {} };
       ctx.window = ctx;                    // as in a browser, the page's globals are the window's
       ctx.webkit = { messageHandlers: { garrick: { postMessage: (m) => (m.act && m.act.verb === "operations" ? asked : posted).push(m) } } };
-      ctx.GarrickActed = (q, o) => chained.push(q.verb);
+      ctx.GarrickActed = (q, o) => { chained.push(q.verb); oks.push(!!(o && o.ok)); };
       if (reads) ctx.GarrickReads = true;        // as the Mac app sets it, before the page's scripts run
       vm.createContext(ctx);
       vm.runInContext(js, ctx);
@@ -100,7 +100,7 @@ HARNESS = textwrap.dedent(r"""
       if (what === "hover") box.listeners.mouseover({ target: card(a) });
       if (what === "leave") box.listeners.mouseout({ target: card(a), relatedTarget: null });
       out.push({ r, box: box.hidden ? "" : box.innerHTML, toast: toast.textContent, opacity: toast.style.opacity,
-                 hold: style ? style.textContent : "", posted: posted.length, asked: asked.length, toasts, sent: posted.slice(), ticking: !!interval, chained: chained.slice(),
+                 hold: style ? style.textContent : "", posted: posted.length, asked: asked.length, toasts, sent: posted.slice(), ticking: !!interval, chained: chained.slice(), oks: oks.slice(),
                  done: Object.fromEntries(rows.map((x) => [x.dataset.k, x.classList.contains("done")])),
                  labels: Object.fromEntries(rows.map((x) => [x.dataset.k, x.tick.label])) });
     }
@@ -721,6 +721,18 @@ class TestFailuresInPlainWords(NodeCase):
                           ("ops", 5, reply(record(OP, state="completed", outcome="saved", done=1005.0, say="Birch Entry is parked"))), reads=True)
         self.assertIn("wspin", out[2]["box"])                                 # still running: nothing said saved yet
         self.assertGreater(out[2]["asked"], out[1]["asked"])                  # and the record was asked for
+        self.assertEqual(["park"], out[2]["chained"])                          # the other wrappers still hear the reply, as ok
+        self.assertEqual([True], out[2]["oks"])
+        self.assertIn("Birch Entry is parked", out[3]["box"])                  # the record's own sentence says saved
+
+    def test_a_rename_with_no_outcome_still_reaches_the_undo_wrapper_and_ends_on_the_record(self):
+        rename = {"verb": "rename", "zone": "Work", "project": "Acme", "thread": "Pricing", "to": "Renewal"}
+        verbs = ["park", "wake", "todo-done", "todo-undo", "todo-date", "todo-add", "rename"]
+        done = record(OP, state="completed", outcome="saved", done=1005.0, say="Renamed", verb="rename")
+        out = self.run_js(("ops", 1, reply(verbs=verbs)), ("act", 2, rename, "Renaming Pricing…"),
+                          ("reply", 3, rename, {"ok": True, "say": "Renamed Pricing"}), ("ops", 5, reply(done, verbs=verbs)))
+        self.assertEqual((["rename"], [True]), (out[2]["chained"], out[2]["oks"]))   # the undo record is made from this call
+        self.assertIn("wspin", out[2]["box"])                                         # but nothing says saved yet
 
 
 if __name__ == "__main__":

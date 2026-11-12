@@ -2206,9 +2206,10 @@ if(e.q.keys){j.q.keys=e.q.keys;j.lines=e.lines}W.push(j)}
 keep();render();run();return}
 /* a success is the record's outcome "saved"; with no record, the reply's ok, as before. A request the record holds already
    comes back asking whether it is meant again (`again`), and stays, however quick, with the button that confirms it */
-/* Saved means saved (#511): a reply with no outcome for an action the record keeps is not taken as saved. The record is asked
-   for, and says it; until then the action stays running, and the rows move only once the record has said so */
-if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,Object.assign({},out,{ok:false}));return}
+/* Saved means saved (#511): a reply with no outcome for an action the record keeps is not worded as saved. The record is asked
+   for, and says it; until then the action stays running. The other wrappers get the reply as they always did, so
+   a row's follow-ups (the list, the undo record) are made as for a plain ok reply */
+if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,out);return}
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
 if(e.q.keys&&ok&&!again){W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
 else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again};e.done=now;
@@ -6970,7 +6971,8 @@ WAITING_CSS = r"""
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:12.5px}
 .wrow .act{margin-left:auto}
-#waiting-now.nowait{display:none}
+/* out of sight but in the accessibility tree, so its aria-live region announces the first row (#510) */
+#waiting-now.nowait{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 """
 
 WAITING_JS = r"""

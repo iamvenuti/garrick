@@ -4,6 +4,43 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-11-12
+
+This release takes things out. The simple home, the Obsidian plugin, the 3D graph and the `ask-agent` flag are gone, the threads skill is split by request, and the app says what failed in plain words. Nothing new was added.
+
+**Upgrading.**
+- The simple home is gone. The Garrick App opens on the full page, whose Overview now starts with your work: each piece with its next action, what it waits on and *Continue*. The update removes the `home` setting and says so. If a project has files under `Files/`, the update names it and leaves the files where they are.
+- The Obsidian status plugin is gone, and the Mac app is the page's only host. The update deletes the plugin from each vault where it is as Garrick shipped it, and takes it out of that vault's `community-plugins.json`. A plugin you changed stays, and the update names it. Obsidian still works for reading your notes.
+- The `ask-agent` flag is gone. With Claude, Ask is always the one session; with Codex, it keeps the fixed steps. A leftover `"ask-agent"` line in `System/garrick-flags.json` does nothing.
+- The 3D view of the graph is gone. A page left in 3D opens on the flat graph.
+
+### Removed
+
+- **The simple home** (#503). The *Home* tab, *More*, *Settings › Home*, *Needs you*, *Add your own work* and the page of a piece of work are gone, and so is `docs/extras/simple-home.md`. The installer writes no `home` setting and always puts the status page in place, and a new zone's `Todo.md` keeps the template's example line. The setup skill asks about the Mac app the same way for every workspace.
+- **The Obsidian plugin** (#508). `extras/status/obsidian/` is gone, with the plugin's own tests and the page code that kept the two hosts in step.
+- **The `ask-agent` flag** (#476). Settings no longer lists *Ask: one session*.
+- **The 3D graph view** (#509). Explore has one graph, and its bar has no *3D* button.
+- **The empty *Waiting on you now* card** (#510). The card shows when a session waits and goes when the last one is answered. "No session is waiting on you." is gone. The screen reader still announces a new wait.
+
+### Changed
+
+- **The Overview opens on your work** (#503). The list shows each piece of work with its next action, who it waits on and *Continue*, from the same data and the same action the simple home used. The first-use card says what to do next and names no skill file.
+- **Failures in plain words** (#511). A save the check refused says "This was not saved: the check refused it.", with *Show why*. One that stopped says so, with *Try again*. One whose outcome is unknown says so, with *Refresh*. A *Continue* that failed says "Claude did not open.", with *Try again*. An old page says how old it is, with *Refresh*. The tool's own text sits under *Details*, closed by default. A save shows as saved only once the operation record says so. The wall sentence is said alone and word for word, as before.
+- **The threads skill is split by request** (#512). `SKILL.md` is a short dispatcher, and each request reads one reference in `System/skills/threads/reference/`: open, wrap, lifecycle, correct, catch-up and the wall check. A wrap reads about half the words it used to. The procedures and the phrases that start them are unchanged. An update brings the references with the rules.
+- **The guides teach the commands people use** (#514). "Back", "where was I", "what's next" and "catch me up" still work, but the README, the first-steps page, the architecture page, the glossary and the cmux page no longer teach them. The commands reference lists them under *Also understood*.
+- **One wall model everywhere.** A zone is walled or open, a party tag is an index, and work that must stay apart goes in separate walled zones. The README, the first-steps page, the threads skill and the interview skill no longer ask for a party wall or a pair of walls. The architecture page names the full page's tabs as they are, Context among them, and no page says "start the day" brings tabs back.
+
+### Fixed
+
+- **A failed wrap no longer looks finished.** A wrap records its finish only after its commit succeeded, or when there was nothing to commit, and releases its lock with `end --abandon` when the wrap failed or the commit was refused. The band's Wrap prompts do the same, so a failed wrap leaves no finish record and the band keeps offering Wrap.
+- **No stale warning from a band kept outside the workspace** (#515). The update refreshes the band's download whenever its `VERSION` is not the release being installed, even when the band's files match.
+- **Template wording no longer refuses two walled notes** (#498). The thread template's labels and lines, and the bold date that opens an entry, carry no weight when the wall check counts eight shared words, and the words on either side still add up. A log copied across two walled zones, and eight shared words inside one paragraph, are refused as before.
+- **The demo's page shows the demo.** The demo builder builds the status page after the month is replayed, from a home and a jobs folder of its own, so it shows the demo's work and nothing of the machine it was built on.
+
+### Release
+
+- **An acceptance run before each tag** (#513). `tests/acceptance/run.py` takes a release candidate through the daily path in a temporary folder: install, the demo, filing a conversation, a brief, a wrap, a resume, a correction, an update from the previous release and a save the check refuses, then a fixed set of fifteen Ask questions compared with the last release. Steps that need a model use a stand-in unless `--model claude` is given, and the report says which part. `--strict` fails on any skipped step. A workflow runs it on release pull requests.
+
 ## [0.64.0] - 2026-11-11
 
 With Claude, Ask now runs as one session by default. Recall reads pages before transcripts, long notes move their old entries into history files, and the status page shows which sessions are waiting on you.

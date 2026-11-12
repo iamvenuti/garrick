@@ -374,7 +374,7 @@ def current_pages():
 
 # The status page's page is the app branch's file in 0.65.0: its two lines that name these phrases go in that
 # branch's change (the release notes list them), and this entry goes when they are gone.
-APP_BRANCH_PAGES = {"docs/extras/status-page.md"}
+APP_BRANCH_PAGES = set()
 
 QUIET_COMMANDS = re.compile(
     r"""["“”']back["“”']|["“”']back to\b|where was I\b|what['’]s next|what is next|catch me up""", re.I)
@@ -457,7 +457,7 @@ class RetiredWallModelsTest(unittest.TestCase):
 
     def test_the_architecture_page_names_the_full_pages_tabs_as_the_page_builds_them(self):
         text = (REPO / "docs" / "architecture.md").read_text(encoding="utf-8")
-        block = text.split("opens **the full page**", 1)[1].split("\n\n", 2)[1]
+        block = text.split("**the full page**", 1)[1].split("\n\n", 2)[1]
         named = re.findall(r"^- \*\*(\w+)\*\*", block, re.M)
         self.assertEqual(["Overview", "Todo", "Status", "Context", "Guide"], named)
         built = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")

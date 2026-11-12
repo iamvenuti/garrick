@@ -650,27 +650,24 @@ class TestSettings(ActionCase):
                          json.loads(self.path().read_text())["launchers"])
 
 
-class TestWaitSettings(ActionCase):
-    """Settings › While you wait (#111), checked by next_up.py and kept beside the rest."""
+class TestNoWaitSettings(ActionCase):
+    """While you wait is gone (#529): the page no longer saves it, and what an older workspace kept stays unread."""
 
     def path(self):
         return self.root / "System" / "garrick-settings.json"
 
-    def test_saved_checked_and_beside_the_rest(self):
-        self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
-        said = self.act(verb="settings", **{"while-you-wait": {"on": False, "threshold": 90, "same-zone": True,
-                                                                 "sources": ["due", "back"], "parked-days": 60}})
-        self.assertEqual("Settings saved", said)
-        saved = json.loads(self.path().read_text())
-        self.assertEqual("cmux", saved["default"])                                   # the rest stays
-        self.assertEqual({"on": False, "threshold": 90, "same-zone": True, "sources": ["due", "back"],
-                          "parked-days": 60, "wrap-days": 14}, saved["while-you-wait"])
-
-    def test_refused_with_the_reason(self):
-        for wait in ({"threshold": 2}, {"sources": ["mail"]}, {"same-zone": "yes"}, {"colour": "Teal"}, "on"):
-            with self.assertRaises(pa.Refused, msg=wait):
-                self.act(verb="settings", **{"while-you-wait": wait})
+    def test_the_save_no_longer_takes_it(self):
+        with self.assertRaises(pa.Refused):
+            self.act(verb="settings", **{"while-you-wait": {"on": False}})
         self.assertFalse(self.path().exists())
+        self.assertFalse(hasattr(pa, "next_up_lib"))
+
+    def test_a_leftover_block_stays_when_the_rest_is_saved(self):
+        write(self.path(), json.dumps({"while-you-wait": {"on": False, "threshold": 90}}))
+        self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux"], default="cmux"))
+        saved = json.loads(self.path().read_text())
+        self.assertEqual("cmux", saved["default"])
+        self.assertEqual({"on": False, "threshold": 90}, saved["while-you-wait"])      # ignored, never dropped
 
     def test_a_pick_ticks_through_todo_done(self):
         shutil.copy2(REPO / "template" / "System" / "tools" / "next_up.py", self.root / "System" / "tools" / "next_up.py")
@@ -704,6 +701,26 @@ class TestCatchUpSettings(ActionCase):
             self.act(verb="settings", **{"catch-up": {"period": "week"}})
         with self.assertRaises(pa.Refused):
             pa.save_settings(self.root, {"verb": "settings", "catch-up": {"period": "week"}})
+        self.assertFalse(self.path().exists())
+
+
+class TestAskSwitch(ActionCase):
+    """#528: Settings › Menu bar › Answer in the Ask box is `"ask"` in the settings file, a true or a false."""
+
+    def path(self):
+        return self.root / "System" / "garrick-settings.json"
+
+    def test_off_and_on_are_kept_beside_the_rest(self):
+        write(self.path(), json.dumps({"home": "full"}))
+        self.assertEqual("Settings saved", self.act(verb="settings", ask=False))
+        self.assertEqual({"home": "full", "ask": False}, json.loads(self.path().read_text()))
+        self.assertEqual("Settings saved", self.act(verb="settings", ask=True))
+        self.assertEqual({"home": "full", "ask": True}, json.loads(self.path().read_text()))
+
+    def test_only_a_boolean_is_kept(self):
+        for bad in ("false", 0, None, "off"):
+            with self.assertRaises(pa.Refused):
+                self.act(verb="settings", ask=bad)
         self.assertFalse(self.path().exists())
 
 
@@ -1217,6 +1234,43 @@ class TestJournal(ActionCase):
         listed = t.ops.read(self.jobs)["ops"]
         self.assertEqual([keys], [r["keys"] for r in listed])                           # what a reload is told is pending
         self.assertIn('keys=["%s", "%s"]' % tuple(keys), (self.jobs / "page-actions.log").read_text())
+
+    def commits(self):
+        return int(git(self.work, "rev-list", "--count", "HEAD"))
+
+    def test_ticks_already_done_are_no_reason_to_refuse_and_write_nothing(self):
+        """#524: a key whose line is already in the state the verb asks for is done."""
+        keys = [self.key("Send the revised"), self.key("Invoice")]
+        base = {"zone": "Work", "file": "Todo.md"}
+        for key in keys:                                                        # two batches, so the request below is a new one
+            self.assertTrue(self.run_script(dict(base, verb="todo-done", keys=[key]))["ok"])
+        head, text = self.commits(), (self.work / "Todo.md").read_bytes()
+        again = self.run_script(dict(base, verb="todo-done", keys=keys, op="b19f3c80"))
+        self.assertEqual((True, "saved", "Already done: 2 lines"), (again["ok"], again["outcome"], again["say"]))
+        self.assertEqual((head, text), (self.commits(), (self.work / "Todo.md").read_bytes()))     # no write, no commit
+        for key in keys:
+            self.assertTrue(self.run_script(dict(base, verb="todo-undo", keys=[key]))["ok"])
+        head = self.commits()
+        again = self.run_script(dict(base, verb="todo-undo", keys=keys, op="d19f3c80"))
+        self.assertEqual((True, "saved", "Already open: 2 lines"), (again["ok"], again["outcome"], again["say"]))
+        self.assertEqual(head, self.commits())
+
+    def test_a_mixed_batch_saves_the_rest_and_says_how_many_were_done(self):
+        done, fresh = self.key("Send the revised"), self.key("Invoice")
+        self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [done]})
+        head = self.commits()
+        reply = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [done, fresh], "op": "e19f3c80"})
+        self.assertEqual((True, "saved", "Saved 1, 1 already done"), (reply["ok"], reply["outcome"], reply["say"]))
+        self.assertEqual(head + 1, self.commits())
+        self.run_script({"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "keys": [done, fresh]})
+        head = self.commits()
+        reply = self.run_script({"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "keys": [done, "0" * 16], "op": "f19f3c80"})
+        self.assertFalse(reply["ok"])                                           # a key that matches no line refuses all
+        self.assertIn("changed since the page was built", reply["say"])
+        self.assertEqual(head, self.commits())
+        self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [fresh]})
+        mixed = self.run_script({"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "keys": [done, fresh], "op": "a29f3c80"})
+        self.assertEqual("Saved 1, 1 already open", mixed["say"])
 
     def test_a_stale_line_is_refused_in_the_record_too(self):
         key = self.key("Send the revised")

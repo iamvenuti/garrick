@@ -39,7 +39,7 @@ HARNESS = textwrap.dedent(r"""
     const [js, steps, reads, drawn] = JSON.parse(process.argv[1]);
     const store = {}, posted = [], asked = [], out = [], oks = [];
     let toasts = 0;
-    let clock = 1000000, ctx, box, toast, style, interval, chained = [], rows = [];
+    let old = null, clock = 1000000, ctx, box, toast, style, interval, chained = [], rows = [];
     function row(r) {
       const cls = new Set(r.done ? ["trow", "done"] : ["trow"]);
       const tick = { label: (r.done ? "Reopen: " : "Mark done: ") + r.text,
@@ -87,6 +87,8 @@ HARNESS = textwrap.dedent(r"""
       if (what === "ops") ctx.window.GarrickActed({ verb: "operations" }, a);
       if (what === "tick" && interval) interval();
       if (what === "reload") load();
+      if (what === "second") { old = { interval, rows }; load(); }     // a second copy of the page, the first still running
+      if (what === "tickold") old.interval();
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
       if (what === "next") box.listeners.click({ target: { closest: (sel) => (sel === "[data-next]" ? { dataset: { next: String(a) } } : null) } });
       if (what === "again") box.listeners.click({ target: { closest: (sel) => (sel === "[data-again]" ? { dataset: { again: String(a) } } : null) } });
@@ -355,6 +357,31 @@ class TestTicksUnderNode(NodeCase):
         self.assertEqual(["todo-undo"], [a["verb"] for a in acts(after)[1:]])   # and goes; the second click on line 1 was dropped
         self.assertIn(WALL, later["box"])                                     # a failure stays
         self.assertIn(WALL, rebuilt["box"])
+
+    def test_ticks_that_were_sent_are_never_queued_and_sent_again(self):
+        """#524: a second copy of the page (or a rebuild that read the queue before
+        the first copy flushed) holds ticks the first has already sent. Without the
+        guard the second sends them again, and the zone refuses a line already ticked."""
+        out = self.run_rows(("click", 0, K[0]), ("click", 1, K[1]), ("click", 2, K[2]),
+                            ("second", 11),                                   # a rebuild reads the queue: three ticks waiting
+                            ("tickold", 13),                                  # the first copy sends them
+                            ("tick", 14))                                     # and the second copy's turn
+        self.assertEqual([K[:3]], [a["keys"] for a in acts(out[4])])
+        self.assertEqual(1, out[5]["posted"])                                 # sent once, not twice
+        self.assertEqual(1, len(acts(out[5])))
+
+    def test_a_tick_sent_and_refused_may_be_sent_again_and_a_reopen_is_not_blocked(self):
+        refused = {"ok": False, "say": WALL, "op": "x", "state": "failed", "outcome": "refused"}
+        req = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [K[0]]}
+        out = self.run_rows(("click", 0, K[0]), ("tick", 12), ("reply", 13, req, refused),
+                            ("click", 20, K[0]), ("tick", 33),
+                            ("reply", 34, req, {"ok": True, "say": "Done", "op": "x", "state": "completed", "outcome": "saved"}),
+                            ("click", 40, K[0]), ("tick", 52),
+                            ("reply", 53, dict(req, verb="todo-undo"), {"ok": True, "say": "Reopened", "op": "x", "state": "completed", "outcome": "saved"}),
+                            ("click", 60, K[0]), ("tick", 72))
+        self.assertEqual(["todo-done", "todo-done"], [a["verb"] for a in acts(out[4])])    # the refused tick goes again
+        last = acts(out[-1])
+        self.assertEqual(["todo-done", "todo-done", "todo-undo", "todo-done"], [a["verb"] for a in last])
 
     def test_a_second_click_before_it_went_sends_nothing(self):
         out = self.run_rows(("click", 0, K[0]), ("click", 1, K[0]), ("tick", 4), ("tick", 8))

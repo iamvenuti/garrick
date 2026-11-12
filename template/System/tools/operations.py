@@ -194,6 +194,10 @@ DECLARED: Dict[str, Op] = {
     # They are here so that one table answers what a verb accepts, and so the
     # test that enumerates what the page sends has something to check against.
     "new-project": _op(("zone", "name", "party", "thread", "spoken", "thread_spoken"), ("name",), "zone", True, "safe"),
+    # The same, with a party added first on the user's own choice in the page's dialog (#522): `perform` refuses it
+    # from any caller but the page.
+    "new-project-party": _op(("zone", "name", "thread", "spoken", "thread_spoken", "new_party", "party_what"),
+                             ("name",), "zone", True, "safe"),
     "new-thread": _op(("zone", "project", "name", "spoken"), ("project", "name"), "zone", True, "safe"),
     "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken"),
                       ("kind", "name", "to"), "none"),
@@ -204,8 +208,8 @@ DECLARED: Dict[str, Op] = {
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
-    "settings": _op(("launchers", "default", "zones", "graph", "notifications", "while-you-wait", "home", "memory",
-                     "desk-agent", "release-notice", "release-notice-every"), (), "workspace"),
+    "settings": _op(("launchers", "default", "zones", "graph", "notifications", "home", "memory",
+                     "desk-agent", "release-notice", "release-notice-every", "ask"), (), "workspace"),
     # Settings › About Garrick (#410): Check for updates asks GitHub now and writes only the kept answer; the update
     # that follows a newer release runs release.py's own, which commits in each repository it changes.
     "release-check": _op((), (), "workspace", retry="safe"),

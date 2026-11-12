@@ -6,7 +6,7 @@
 
 Garrick.app runs it when a button
 on the page asks; nothing else can, because a browser has no way to reach it.
-The ask preview (ask.py) runs what it proposes through perform(), the same
+Ask (ask.py) runs what it proposes through perform(), the same
 check and the same record. A session runs it too (#344), with the verb and its
 options in place of JSON, and reads the sentence it prints:
 
@@ -72,12 +72,13 @@ zone's repository, as the skills would:
                 Notifications: {"notifications": {"tell": {...}, "after": 2,
                 "quiet": {...}}}, which notices this Mac shows, checked and
                 kept by System/tools/notifications.py.
-                Settings › While you wait: {"while-you-wait": {...}},
-                checked by System/tools/next_up.py. Settings › Home:
+                Settings › Home:
                 {"home": "simple"} or "full", the page Garrick opens on.
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
                 System/tools/fade.py keeps; saving moves no page.
+                Settings › Menu bar › Answer in the Ask box: {"ask": false}, on
+                unless saved off; the Ask box reads it at each use.
                 {"desk-agent": "codex"}, which assistant a cmux tab starts,
                 written by the cmux extra's desk.py into System/desk.json
     release-check  Settings › About Garrick's Check for updates (#410):
@@ -284,7 +285,7 @@ except ImportError:             # not on Windows, where the status app does not 
 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
-         "new-project", "new-thread", "check-name", "rename", "move", "delete", "undo",
+         "new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo",
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
@@ -313,7 +314,7 @@ RELEASE_CADENCES = (1, 7)
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones", "graph",
-          "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
+          "name", "party", "new_party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
           "do", "id", "answer", "suggested", "path", "version", "agent", "wiki")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
@@ -802,9 +803,20 @@ def todo(ws: Path, req: dict) -> str:
     with zone_lock(zone):
         before = note.read_bytes()
         found = [live_key(tl, zone, rel, key, req["verb"]) for key in keys]
+        already = []
+        if req["verb"] in ("todo-done", "todo-undo"):
+            other = "todo-undo" if req["verb"] == "todo-done" else "todo-done"
+            for i, key in enumerate(keys):      # a line already in the state the verb asks for is done, not stale
+                if not found[i] and live_key(tl, zone, rel, key, other):
+                    already.append(key)
+                    found[i] = "-"
         why = stale_why(ws, req["verb"], req, all(found))
         if why:
             raise Refused(why)
+        found = [f for f in found if f != "-"]
+        if not found:                           # nothing to write, nothing to commit
+            return "%s: %d line%s" % ("Already done" if req["verb"] == "todo-done" else "Already open",
+                                      len(already), "" if len(already) == 1 else "s")
         said, messages = [], []
         try:
             for key in found:
@@ -819,6 +831,8 @@ def todo(ws: Path, req: dict) -> str:
         else:
             message = "%s: %s, %d actions" % (zone.name, "done" if req["verb"] == "todo-done" else "reopened", len(messages))
         commit(zone, note, before, message[:200], wall=wall_refusal(ws))
+    if already:
+        return "Saved %d, %d already %s" % (len(said), len(already), "done" if req["verb"] == "todo-done" else "open")
     return said[0] if len(said) == 1 else "Saved %d" % len(said)
 
 
@@ -1172,32 +1186,6 @@ def notifications_lib(ws: Path):
     return _NOTIFY[key]
 
 
-_NEXT_UP = {}
-
-
-def next_up_lib(ws: Path):
-    """System/tools/next_up.py, which checks Settings › While you wait: found
-    as notifications_lib() finds its module. None when there is none."""
-    key = Path(ws)
-    if key not in _NEXT_UP:
-        found = None
-        for src in (key / "System" / "tools" / "next_up.py", Path(__file__).resolve().parent.parent / "tools" / "next_up.py",
-                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "next_up.py"):
-            if not src.is_file():
-                continue
-            try:
-                spec = importlib.util.spec_from_file_location("garrick_next_up", str(src))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            if callable(getattr(mod, "clean", None)):
-                found = mod
-                break
-        _NEXT_UP[key] = found
-    return _NEXT_UP[key]
-
-
 # Settings › Memory (#108). System/tools/fade.py, the workspace's own, owns
 # graded oblivion: its settings() keeps what is saved merged over its
 # defaults, and counts() says what a set of them would do now. What the page
@@ -1470,15 +1458,20 @@ def save_settings(ws: Path, req: dict) -> str:
     page. A way it does not list is on, as on the page. Settings › Home:
     {"home": "simple"} or "full", which the page opens on (#175).
     {"graph": {"project": "Teal"}}, Settings › Graph colours (#291).
+    {"ask": false}, Settings › Menu bar › Answer in the Ask box (on unless saved off).
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
-    if not {"launchers", "zones", "graph", "notifications", "while-you-wait", "home", "memory", "desk-agent",
-            "release-notice", "release-notice-every"} & set(req):
+    if not {"launchers", "zones", "graph", "notifications", "home", "memory", "desk-agent",
+            "release-notice", "release-notice-every", "ask"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
         raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), req["desk-agent"]))
     new = {}
+    if "ask" in req:
+        if not isinstance(req["ask"], bool):
+            raise Refused("Ask is on or off")
+        new["ask"] = req["ask"]
     if "release-notice" in req:
         if not isinstance(req["release-notice"], bool):
             raise Refused("the check for a newer Garrick is on or off")
@@ -1516,14 +1509,6 @@ def save_settings(ws: Path, req: dict) -> str:
             raise Refused("cannot find System/tools/notifications.py, or it is older than this page; update Garrick")
         try:
             new["notifications"] = notify.clean(req["notifications"])
-        except ValueError as e:
-            raise Refused(str(e))
-    if "while-you-wait" in req:
-        wait = next_up_lib(ws)
-        if wait is None:
-            raise Refused("cannot find System/tools/next_up.py; update Garrick")
-        try:
-            new[wait.KEY] = wait.clean(req["while-you-wait"])
         except ValueError as e:
             raise Refused(str(e))
     if "memory" in req:
@@ -1796,6 +1781,47 @@ def scaffold(ws: Path, *args) -> str:
     return r.stdout.strip()
 
 
+def first_thread() -> str:
+    """The name of a project's first thread when none is given: ask.py's FIRST_THREAD, the box's own, read from
+    its file beside this one so that the page and the box never name it twice. Refused where ask.py is not there."""
+    try:
+        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', (HERE / "ask.py").read_text(encoding="utf-8"), re.M)
+    except OSError:
+        found = None
+    if not found:
+        raise Refused("no first thread given, and ask.py, which names the default one, is not beside this file")
+    return found.group(1)
+
+
+def new_party(ws: Path, zone: Path, name: str, what: Optional[str]) -> str:
+    """The tag of a party the user added in the New project dialog: `scaffold.py party` writes the row in
+    System/context.md, and it is committed on its own in the workspace's repository, before the project is made,
+    as docs/commands.md asks. Refused, nothing is left behind: the file is put back as it was, and the reply is
+    the reason. A context.md with changes of its own not committed is refused first, so that no one else's edit
+    is filed under this commit."""
+    context = ws / "System" / "context.md"
+    if not (ws / ".git").exists():
+        raise Refused("this workspace has no repository at its top folder, so the new party cannot be committed on its own")
+    if context.is_file() and uncommitted(ws, context):
+        raise Refused("System/context.md has changes not committed yet, so a party is not added: commit them first")
+    before = context.read_bytes() if context.is_file() else b""
+    try:
+        scaffold(ws, "party", "--name", name, "--zone", zone.name, "--what", what or "<What %s is>" % name)
+    except Refused:
+        context.write_bytes(before)
+        raise
+    tag = None
+    for t, p in (context_of(ws).get("parties") or {}).items():
+        if " ".join(str(p.get("party") or "").split()).casefold() == " ".join(name.split()).casefold() \
+                and str(p.get("zone") or "").strip().casefold() == zone.name.casefold():
+            tag = t
+    if not tag:
+        context.write_bytes(before)
+        raise Refused("the new party's row could not be found in System/context.md, so nothing was changed")
+    commit(ws, context, before, ("New party %s (%s), in %s" % (name, tag, zone.name))[:200], wall=wall_refusal(ws))
+    return tag
+
+
 def manage(ws: Path, req: dict) -> str:
     verb = req["verb"]
     zone = zone_dir(ws, req.get("zone"))
@@ -1812,19 +1838,49 @@ def manage(ws: Path, req: dict) -> str:
 def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     verb, z = req["verb"], zone.name
     flag = ["--check"] if check else []
-    if verb == "new-project":
-        name, thread = field(req, "name"), field(req, "thread")
+    if verb in ("new-project", "new-project-party"):
+        name = field(req, "name")
+        # A first thread left empty is the one the ask box gives (ask.py's FIRST_THREAD, read from there), and a
+        # party left out is none: scaffold.py's --party is optional, an index.
+        thread = field(req, "thread", required=False) or first_thread()
+        party = field(req, "party", required=False)
         made = [p for p in (zone / name,) if not p.exists()]
         spoken = [*(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
                   *(["--thread-spoken", field(req, "thread_spoken")] if req.get("thread_spoken") is not None else [])]
-        args = ["project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread, *spoken]
-        if not check:
+        args = ["project", "--zone", z, "--name", name, *(["--party", party] if party else []), "--thread", thread, *spoken]
+        if verb == "new-project-party":
+            if party:
+                raise Refused("pick a party from the list, or add a new one, not both")
+            pname, what = field(req, "new_party"), field(req, "party_what", required=False)
+            if not check:
+                asks_how(ws, args)
+            said_party = scaffold(ws, "party", "--name", pname, "--zone", z, "--what", what or "<What %s is>" % pname,
+                                  "--check")
+            if "is already a party" in said_party:
+                # The match may sit in another zone, and its zone and project names are that zone's: the reply
+                # names nothing of it. Only a match found in this dialog's own zone keeps the full sentence.
+                found = re.search(r"`([^`]+)`", said_party)
+                owner = (context_of(ws).get("parties") or {}).get(found.group(1)) if found else None
+                if owner is None or str(owner.get("zone") or "").strip().casefold() != z.casefold():
+                    raise Refused("That name is already taken in another zone. Choose another name.")
+                raise Refused(first_line(said_party) + " Pick it from the list instead.")
+            if check:
+                return said_party
+            party = new_party(ws, zone, pname, what)
+            args = ["project", "--zone", z, "--name", name, "--party", party, "--thread", thread, *spoken]
+        elif not check:
             asks_how(ws, args)
-        said = scaffold(ws, *args, *flag)
-        if not check:
-            commit_new(zone, [name], "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
-                       made, {}, wall=wall_refusal(ws))
-            return first_line(said)
+        try:
+            said = scaffold(ws, *args, *flag)
+            if not check:
+                commit_new(zone, [name], "New project %s%s, first thread %s" % (name, " (%s)" % party if party else "", thread),
+                           made, {}, wall=wall_refusal(ws))
+                return first_line(said)
+        except Refused as e:
+            if verb == "new-project-party" and not check:
+                # The party is committed already: say so, naming the user's own typed name.
+                raise Refused("%s The party %s was added and committed, so it stays." % (str(e).rstrip(), pname))
+            raise
         return said
     if verb == "new-thread":
         project, name = field(req, "project"), field(req, "name")
@@ -4685,7 +4741,7 @@ def act(ws: Path, req, today=None, now=None):
         return files_progress(ws, req)
     if req["verb"] == "work-file":
         return work_file(ws, req, today or dt.date.today())
-    if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "move", "delete", "undo"):
+    if req["verb"] in ("new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo"):
         return manage(ws, req)
     return todo(ws, req)
 
@@ -4693,7 +4749,7 @@ def act(ws: Path, req, today=None, now=None):
 # The verbs whose reply asks for the page to be built (#344): what a page, the
 # ask box or a session changes that the page shows. Every other verb leaves the
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
-PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
+PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "rename", "move", "delete", "undo")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
@@ -4743,6 +4799,10 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
     try:
         try:
             joined = None
+            if isinstance(req, dict) and req.get("verb") == "new-project-party" and via != "page":
+                # A party decides which side of a wall material lands on: only the dialog, on the user's own
+                # choice, adds one. The ask box and a session never do (#522).
+                raise Refused("a party is added only from the New project dialog on the page")
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS:
                 try:
                     run, joined = start_record(ops, req, via)

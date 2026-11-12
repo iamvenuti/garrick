@@ -42,7 +42,6 @@ The `[-]` at the band's right end is Claude Code's own: it folds the band, and `
 
 - `/garrick resume` asks the assistant to read the Resume here block and say where the thread stands and what comes next, the rules' "Open X", as saying "open X" does. You get the answer in the conversation, where you can carry on from it.
 - `/garrick note` shows the whole Resume here block of the thread note in a pane. It reads the file and sends nothing to the model. The pane draws it as a reply is drawn, with tables and emphasis, and wikilinks and file paths become links that a click opens. Its *Open in Obsidian* and *Reveal in Finder* show the whole note.
-`/garrick next`, `open`, `tick` and `later` act on [While you wait](#while-you-wait-a-preview-feature), a preview feature.
 
 In the assistant's replies, a path in backticks becomes a link, so Cmd-click opens the file in its default app, or a folder in Finder:
 
@@ -52,7 +51,7 @@ In the assistant's replies, a path in backticks becomes a link, so Cmd-click ope
 - The index is one `find` over the workspace when the session starts and after every turn. It skips `.git`, `.obsidian`, `node_modules`, `__pycache__` and `.trash`, and `find` doesn't follow symlinks, so a cloud folder linked into the workspace is never walked.
 - Only the drawing changes. The stored reply keeps its plain text.
 
-How it finds the note: from the folder the session started in (a `cd` the assistant runs in a command does not move it) it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and the usage figure, and never calls a model. *Wrap*, *Close* (when it needs a wrap) and `/garrick resume` send a prompt in your name, only when you ask. It runs these processes: that `find`; `open` when you press *Finder* or *Obsidian*; `desk close --session <id> --yes` when you press *Close* in cmux; and, with While you wait switched on, `python3` on `System/tools/next_up.py`, which only reads, and on `System/status/page_action.py` when you open or tick a suggestion.
+How it finds the note: from the folder the session started in (a `cd` the assistant runs in a command does not move it) it walks up to the workspace root, the first folder holding `System/rules.md`. The first folder on the way that holds a note with its own name, `<Folder>/<Folder>.md`, is the thread or project. To show the band it only reads files and the usage figure, and never calls a model. *Wrap*, *Close* (when it needs a wrap) and `/garrick resume` send a prompt in your name, only when you ask. It runs these processes: that `find`; `open` when you press *Finder* or *Obsidian*; `desk close --session <id> --yes` when you press *Close* in cmux.
 
 ## Close
 
@@ -69,37 +68,6 @@ How it finds the note: from the folder the session started in (a `cd` the assist
    | a plain terminal | runs `/exit`; if Claude Code will not run it from a mod, "Wrapped. Type /exit to close this session." |
 
 The conversation is never deleted: `/resume` brings it back, and in the desktop app so does the archive.
-
-## While you wait, a preview feature
-
-While you wait is parked: it is off unless you switch it on in `System/garrick-flags.json`, as the status page's [preview features](../../docs/extras/status-page.md#preview-features) are:
-
-```json
-{"while-you-wait": true}
-```
-
-The band reads the file at the start of each turn. Off, it shows no suggestion line, and `/garrick next`, `open`, `tick` and `later` answer that While you wait is a preview feature and is off. Saying "what's next" works either way: the `threads` skill runs the same script.
-
-A long turn, a wrap, an ingest or a build, can run for minutes. With the feature on, once a turn has run longer than a threshold, 45 seconds unless you change it, one line appears above the buttons with one thing worth doing elsewhere in those minutes:
-
-```
-While you wait: Renewal: Reply on the renewal dates (Work, due today) /garrick open next tick later
-```
-
-It comes from `System/tools/next_up.py`, which ranks by six plain rules and asks no model: the live thread whose note was written most recently today, Todo lines due today or late, a reply or a chase before a line that names a deliverable, chases that have come due, what waits in an Inbox, a parked thread left alone for 30 days ("Park or finish?"), and a live thread not wrapped for 14 ("Wrap?"). A suggestion names a thread and an action in a few words, never quotes a meeting, and never names the thread the session is in. It is drawn from every zone unless *Same zone only* is on.
-
-Four words act on it, typed as `/garrick next`, `/garrick open`, `/garrick tick` and `/garrick later`, which run at once while the turn goes on, or clicked on the line:
-
-- *next* shows the following suggestion. The band reads the list once when the line appears, and again on *next* only when that answer is more than a minute old.
-- *open* opens it elsewhere, the way Settings › Opening a thread says: the default first, then the first of the others switched on that the band can run here, cmux, the note, Finder, in that order. *Open in cmux* is the thread's own cmux tab with the [desk](../../docs/extras/cmux.md), and an Inbox opens a tab on "process the inbox"; *Open the note* is the note by its file, in the app your Mac opens a `.md` file in, never Obsidian's own link: only the *Obsidian* button, pressed, opens that; *Reveal in Finder* shows the note in its folder, or an Inbox's folder. Codex and Claude are not among them. When none switched on can open it, it says so and opens nothing. With no `launchers` saved, it goes as before Settings had the section: the cmux tab, else the note in the Mac's default app for it.
-- *tick* ticks a Todo line through the status page's `page_action.py`, as the page does, committed in its zone. A tick in the zone the turn is working in waits for the turn to end, so the two commits never meet, and the band says so; a session outside any zone holds every tick.
-- *later* puts the line away for this turn.
-
-None of them sends anything to the running session. When the turn ends, the line goes, and a toast says the turn has finished and what any held tick did.
-
-The letter keys of the band's own buttons are not used for these. Whether a band's keys fire while a turn runs is not something the mods API promises, and `o` is already *Obsidian*; `/garrick` is registered to run mid-turn, so the words are the way that works.
-
-Settings › While you wait, on the status page while the flag is on, switches it on or off and sets the threshold, *Same zone only*, which sources count and in what order, and how old a parked or an unwrapped thread must be. They are kept in `System/garrick-settings.json` under `while-you-wait`, which the band reads at the start of each turn. In a session without the band, ask "what's next": the `threads` skill runs the same script, so the answer is the band's first pick.
 
 ## Load it
 

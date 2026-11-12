@@ -88,7 +88,8 @@ class RefusalRecord(unittest.TestCase):
         with self.record.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(old) + "\n")
         got = lib.refusal_counts(self.root)
-        self.assertEqual({"link": len(self.rows()) - 1}, got["kinds"])        # the old line is outside the 30 days
+        self.assertEqual({"link": 1}, got["kinds"])        # one refusal, whatever its lines; the old line is outside the 30 days
+        self.assertEqual(1, got["refusals"])
         self.assertEqual(1, got["overridden"])
         self.assertEqual(1, len(got["days"]))
 
@@ -102,6 +103,45 @@ class RefusalRecord(unittest.TestCase):
         self.assertIn("Wall refusals, 30 days", shown)
         self.assertIn("link", shown)
         self.assertNotIn("Plan", shown)
+
+    def lines(self, at, n, zone="Work", repo="zone", kind="link"):
+        self.record.parent.mkdir(parents=True, exist_ok=True)
+        with self.record.open("a", encoding="utf-8") as fh:
+            for _ in range(n):
+                fh.write(json.dumps({"at": at, "zone": zone, "repo": repo, "kind": kind, "walled": True}) + "\n")
+
+    def test_refusals_are_counted_not_lines_and_nested_and_outside_repositories_are_apart(self):
+        now = datetime.datetime.now().astimezone()
+        at = lambda h: (now - datetime.timedelta(hours=h)).isoformat(timespec="seconds")
+        self.lines(at(5), 3, kind="wording")                     # one refusal, three lines
+        self.lines(at(5), 2, kind="link")                        # the same refusal, another kind
+        self.lines(at(9), 1, kind="name")                        # a kind this release no longer produces
+        self.lines(at(7), 4000, repo="nested", kind="path")      # one refused commit of fixtures in a nested repository
+        self.lines(at(7), 50, zone="", repo="nested", kind="copy")    # a repository outside the workspace
+        self.lines(at(3), 1, zone="Garden", repo="wiki", kind="link")
+        got = lib.refusal_counts(self.root, now=now)
+        self.assertEqual(3, got["refusals"])
+        self.assertEqual({"wording": 1, "link": 2, "name": 1}, got["kinds"])
+        self.assertEqual(1, got["nested"])
+        self.assertEqual({"path": 1}, got["nested_kinds"])
+        self.assertEqual(["name"], got["older"])
+        self.assertNotIn("copy", got["kinds"])
+        self.assertNotIn("copy", got["nested_kinds"])
+
+    def test_the_card_says_refusals_with_one_unit_and_marks_an_older_kind(self):
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "extras" / "status"))
+        import status
+        now = datetime.datetime.now().astimezone()
+        self.lines((now - datetime.timedelta(hours=2)).isoformat(timespec="seconds"), 500, kind="name")
+        self.lines((now - datetime.timedelta(hours=1)).isoformat(timespec="seconds"), 900, repo="nested", kind="path")
+        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        (self.root / "System" / "tools" / "garrick_lib.py").write_text(Path(lib.__file__).read_text(encoding="utf-8"), encoding="utf-8")
+        shown = status.refusals_block(self.root)
+        self.assertIn("1 refusal, of kinds name 1 (older release)", shown)
+        self.assertIn("Overridden: 0 of 1", shown)
+        self.assertIn("1 refusal in repositories nested in a zone, of kinds path 1", shown)
+        self.assertNotIn("500", shown)
+        self.assertNotIn("900", shown)
 
 
 if __name__ == "__main__":

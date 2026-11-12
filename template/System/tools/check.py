@@ -2057,12 +2057,13 @@ def check_threads(ws: Workspace) -> List[Finding]:
 def check_history(ws: Workspace) -> List[Finding]:
     """A hub or thread note over `note-max-words`, and a Resume here block over `resume-max-words` (#502): each
     finding names the note, its words and the limit. The first is mechanical (history.py moves the older dated
-    entries); the second is a rewrite that only the user's yes makes."""
+    entries); the second is a rewrite: with `resume-trim` `ask` only the user's yes makes it, with `auto` an attended session does."""
     try:
         import history
     except ImportError:
         return []
     cap = history.limits(ws.root)
+    mode = history.trim_mode(ws.root)       # "ask" under GARRICK_HEADLESS=1, whatever the file says (#527)
     out: List[Finding] = []
     for project, fm in ws.projects:
         notes = [("projects", project / (project.name + ".md"), project.name)]
@@ -2077,7 +2078,7 @@ def check_history(ws: Workspace) -> List[Finding]:
                                    "%s is %d words long, over its limit of %d" % (spoken, words, cap["note-max-words"])))
             block = history.resume_words(text)
             if block > cap["resume-max-words"]:
-                out.append(Finding(WARNING, "resume", rel(ws, note), history.resume_over(block, cap["resume-max-words"]),
+                out.append(Finding(WARNING, "resume", rel(ws, note), history.resume_over(block, cap["resume-max-words"], mode),
                                    "The resume point of %s is %d words long, over its limit of %d"
                                    % (spoken, block, cap["resume-max-words"])))
     return out

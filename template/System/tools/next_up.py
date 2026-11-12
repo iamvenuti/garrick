@@ -1,18 +1,14 @@
 #!/usr/bin/env python3
-"""next_up.py: one thing worth doing while a long turn runs, ranked by plain rules.
+"""next_up.py: one thing worth doing next, ranked by plain rules.
 
     python3 System/tools/next_up.py                       every zone, as JSON
-    python3 System/tools/next_up.py --zone Work           the session's zone, which
-                                                          "same zone only" narrows to
+    python3 System/tools/next_up.py --zone Work           the session's zone, said back in the output
     python3 System/tools/next_up.py --exclude Zones/Work/Acme/Threads/Pricing
                                                           never the thread the turn works on
     python3 System/tools/next_up.py --say                 the first pick, said in one line
 
-It prints the list, best first, and changes nothing. The Garrick band runs it
-once a turn has run past the threshold, and the threads skill runs it for
-"what's next" in a session without the band, so both offer the same first
-pick. No model is asked: the order is six rules, each a source that can be
-switched off in Settings › While you wait.
+It prints the list, best first, and changes nothing. The threads skill runs it
+for "what's next". No model is asked: the order is six fixed rules.
 
 1. back     the live thread whose note was written most recently today: the
             one "back" opens. The note's modification time is the record
@@ -30,15 +26,13 @@ one its digest uses, so there is one Todo reader. A pick names a thread and an
 action in a few words and never quotes a meeting: a link to a meeting page,
 a source link, an aside after " — " and a quotation are left out. A pick in
 the folder named by `--exclude`, the thread the running turn works on, is
-never made. With "same zone only" switched on and `--zone` given, only that
-zone's picks are made; otherwise every zone's.
+never made. Every zone's picks are made; `--zone` only names the session's
+zone in the output.
 
 Each pick is {"id", "rule", "source", "say", "zone", "project", "thread",
 "note"}, with "tick", the request page_action.py takes on stdin to tick it,
-on a Todo line. The settings are in System/garrick-settings.json under
-"while-you-wait": {"on", "threshold" (seconds), "same-zone", "sources" (in
-their order), "parked-days", "wrap-days"}; clean() checks them as the status
-page saves them. Standard library only, Python 3.9 or later.
+on a Todo line. Nothing is read from System/garrick-settings.json. Standard
+library only, Python 3.9 or later.
 """
 
 from __future__ import annotations
@@ -59,19 +53,9 @@ sys.path.insert(0, str(HERE))
 
 import garrick_lib as gl  # noqa: E402
 
-KEY = "while-you-wait"
 SOURCES = ("back", "due", "chase", "inbox", "parked", "wrap")
-SOURCE_LABELS = {
-    "back": "The thread left most recently today",
-    "due": "Todo lines due today or late",
-    "chase": "Chases that have come due",
-    "inbox": "What waits in an Inbox",
-    "parked": "Parked threads left alone",
-    "wrap": "Live threads not wrapped lately",
-}
-DEFAULTS = {"on": True, "threshold": 45, "same-zone": False, "sources": list(SOURCES), "parked-days": 30, "wrap-days": 14}
-THRESHOLD = (10, 600)           # seconds a turn runs before the band offers anything
-DAYS = (1, 365)
+# The rules as they are fixed. The output still carries them under "settings", as it did, so a reader of it sees no change.
+FIXED = {"on": True, "threshold": 45, "same-zone": False, "sources": list(SOURCES), "parked-days": 30, "wrap-days": 14}
 SKIP = {"archive", "Inbox", "Sources", "Deliverables"}
 PARKED, DONE = "parked", "done"
 
@@ -87,59 +71,6 @@ ISO = re.compile(r"\b(\d{4}-\d\d-\d\d)\b")
 SPOKEN_DATE = re.compile(r"\b(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{4})\b")
 MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
           "november", "december")
-
-
-# ---- settings -----------------------------------------------------------------
-
-def clean(given) -> dict:
-    """Settings › While you wait as the page sends it, checked: every key
-    named, each the right kind and in range. Raises ValueError with the
-    sentence the page shows."""
-    if not isinstance(given, dict):
-        raise ValueError("While you wait: not a set of choices")
-    unknown = sorted(set(given) - set(DEFAULTS))
-    if unknown:
-        raise ValueError("While you wait has no setting called %s" % ", ".join(repr(k) for k in unknown))
-    out = dict(DEFAULTS, sources=list(SOURCES))
-    for flag in ("on", "same-zone"):
-        if flag in given:
-            if not isinstance(given[flag], bool):
-                raise ValueError("While you wait: %s is on or off" % flag)
-            out[flag] = given[flag]
-    for name, (low, high), what in (("threshold", THRESHOLD, "seconds"), ("parked-days", DAYS, "days"),
-                                    ("wrap-days", DAYS, "days")):
-        if name in given:
-            value = given[name]
-            if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
-                raise ValueError("While you wait: %s is a whole number of %s from %d to %d" % (name, what, low, high))
-            out[name] = value
-    if "sources" in given:
-        sources = given["sources"]
-        if isinstance(sources, list):
-            sources = ["back" if s == "stack" else s for s in sources]     # saved before the stack went (#367)
-        if not isinstance(sources, list) or not all(isinstance(s, str) for s in sources) or len(set(sources)) != len(sources):
-            raise ValueError("While you wait: the sources are a list of names, each once")
-        bad = [s for s in sources if s not in SOURCES]
-        if bad:
-            raise ValueError("While you wait has no source called %s" % ", ".join(repr(s) for s in bad))
-        out["sources"] = list(sources)
-    return out
-
-
-def settings(root: Path) -> dict:
-    """The choices as saved, each one that is missing or does not read taken
-    from DEFAULTS, so a hand-edited file never stops the band."""
-    saved = gl.read_settings(root).get(KEY)
-    out = dict(DEFAULTS, sources=list(SOURCES))
-    if not isinstance(saved, dict):
-        return out
-    for key in DEFAULTS:
-        if key in saved:
-            try:
-                out[key] = clean({key: saved[key]})[key]
-            except ValueError:
-                pass
-    return out
 
 
 # ---- reading the workspace ----------------------------------------------------
@@ -391,7 +322,7 @@ def next_up(root: Path, zone: Optional[str] = None, exclude: Optional[str] = Non
     """The ranked picks, and the settings they were made under."""
     root = Path(root).resolve()
     today = today or datetime.date.today()
-    chosen = settings(root)
+    chosen = dict(FIXED, sources=list(SOURCES))
     if exclude:
         ex = Path(exclude)
         ex = ex.resolve() if ex.is_absolute() else (root / ex).resolve()
@@ -418,23 +349,20 @@ def next_up(root: Path, zone: Optional[str] = None, exclude: Optional[str] = Non
             found = from_unwrapped(notes, today, chosen["wrap-days"])
         picks += found
     picks = [p for p in picks if not inside(p["note"], exclude)]
-    narrowed = bool(chosen["same-zone"] and zone)
-    if narrowed:
-        picks = [p for p in picks if p["zone"] is not None and p["zone"].casefold() == zone.casefold()]
     seen, out = set(), []
     for p in picks:
         if p["id"] in seen or (p["source"] == "back" and any(o["source"] == "back" for o in out)):
             continue                    # the latest thread alone: the first the running turn leaves
         seen.add(p["id"])
         out.append(p)
-    return {"on": chosen["on"], "threshold": chosen["threshold"], "zone": zone, "same_zone": narrowed,
+    return {"on": chosen["on"], "threshold": chosen["threshold"], "zone": zone, "same_zone": False,
             "exclude": exclude, "settings": chosen, "picks": out}
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    ap = argparse.ArgumentParser(description="What to do while a long turn runs, ranked by plain rules.")
+    ap = argparse.ArgumentParser(description="What to do next, ranked by plain rules.")
     ap.add_argument("--root", help="the workspace (default: the one this script sits in)")
-    ap.add_argument("--zone", help="the session's zone; with \"same zone only\" on, only its picks")
+    ap.add_argument("--zone", help="the session's zone, said back in the output")
     ap.add_argument("--exclude", help="the thread the running turn works on: its folder or its note")
     ap.add_argument("--today", help="YYYY-MM-DD, for tests")
     ap.add_argument("--say", action="store_true", help="the first pick in one line, for the ear")

@@ -285,7 +285,7 @@ def shapes(text, line0=1):
 
 # The verbs each shape can carry, and the fields it adds where no scanner can
 # read them. Keyed by the text of the `verb` value, exactly as the file has it.
-ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
+ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread",
          "rename", "move", "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start",
          "stop-using", "bring-back", "files")
 SHAPES = {
@@ -293,6 +293,7 @@ SHAPES = {
     # MANAGE_JS: the dialogs, each sent from the Make it / Rename / Delete button
     "onclick: 'new-thread'": {"new-thread": ()},
     "onclick: 'new-project'": {"new-project": ()},
+    "onclick: 'new-project-party'": {"new-project-party": ()},       # the New party… choice of the New project dialog (#522)
     "onclick: 'rename'": {"rename": ()},
     "onclick: 'move'": {"move": ()},
     "onclick: 'park'": {"park": ()},                     # del(): Park instead
@@ -308,6 +309,7 @@ SHAPES = {
     "onTick: verb": {"todo-done": (), "todo-undo": ()},
     "request: 'settings'": {"settings": ()},             # PANEL_JS GarrickPrefs.request()
     "window.TaddSend: 'todo-add'": {"todo-add": ()},     # JS: the Todo list's + button
+    "tell: 'settings'": {"settings": ("ask",)},          # MENU_SETTINGS_JS: Settings › Menu bar › Answer in the Ask box (#528)
     "sdReq: 'settings'": {"settings": ("memory", "release-notice", "release-notice-every")},      # JS: what Settings closes with, zones and notifications alone,
                                                          # Memory's form assigned to it (#108)
     # --- 3. data-act built by desk() and by JSON.stringify(q) -------------
@@ -332,19 +334,18 @@ SHAPES = {
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"run"': ("run",),
-             # Continue, on Your work (#503)
-             '"continue"': ("continue",),
              # a `check` chip's Fix on the Threads card (#179)
              '"fix"': ("fix",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
-SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'", "onclick: 'move'",
+SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'new-project-party'", "onclick: 'rename'", "onclick: 'move'",
                          "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'"},
            "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
                        "flush: one.verb"},
            "TODO_JS": {"send: verb", "held: verb", "onTick: verb"},
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
+           "MENU_SETTINGS_JS": {"tell: 'settings'"},
            "MEMORY_JS": {"ask: 'memory-preview'"},
            "RELEASE_JS": {"btn.onclick: 'release-check'", "window.GarrickActed: 'release-update'"},
            "NOTE_JS": {"read: 'note-read'", "openIn: 'note-open'"}}

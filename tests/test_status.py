@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Guide's, Preview's, the graph's
+        self.assertEqual(21, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1270,7 +1270,8 @@ class TestCheckpointChip(StatusCase):
     def touched(self, html, name):
         """What Recent on the Threads card sorts a row by: its data-r."""
         card = 'data-card="%s' % htmllib.escape('{"n":"%s"' % name, quote=True)
-        tag = html[html.index(card):]
+        threads = html[html.index('<details class="card" id="threads"'):]    # Your work draws the same card data above it
+        tag = threads[threads.index(card):]
         return re.search(r' data-r="([^"]*)"', tag[:tag.index(">")]).group(1)
 
     def test_the_chip_says_when_the_work_was_recorded(self):
@@ -1647,7 +1648,7 @@ class TestSettings(StatusCase):
         self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
         self.assertIn("q.setAttribute('aria-expanded',String(!p.hidden))", status.JS)
         for key, lede in (("launchers", "Which apps a project or thread can open in"),
-                          ("preview", "Built but not released yet, and switched on in a file.")):
+                          ("preview", "Off until you switch them on in a file.")):
             self.assertRegex(dialog, r'aria-controls="help-%s"[^>]*>\?</button></h3><p class="setlede">%s' % (key, lede))  # said, not asked for
 
     def test_explanations_keep_their_words(self):
@@ -1695,7 +1696,7 @@ class TestSettingsLayout(StatusCase):
     them beside it (#205): a link per section, grouped by what people come
     for, and the one being read marked."""
 
-    ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings", "wait-settings",
+    ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
              "notify-settings", "memory-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
@@ -1757,77 +1758,30 @@ class TestSettingsLayout(StatusCase):
         self.assertEqual(0, done.returncode, done.stderr)
 
 
-class TestWaitSettings(StatusCase):
-    """Settings › While you wait (#111): next_up.py's keys, drawn and read back,
-    while its preview flag is on (#247)."""
+class TestNoWaitSettings(StatusCase):
+    """While you wait is gone (#529): no Settings section, no flag, and what an
+    older workspace left in its files does nothing."""
 
-    def setUp(self):
-        super().setUp()
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"while-you-wait": True}))
-
-    def section(self):
-        html = self.page()
-        start = html.index('<section class="setsec apponly" id="wait-settings">')
-        return html[start:html.index("</section>", start)]
-
-    def lib(self):
-        return status.wait_lib(self.root)
-
-    def test_the_defaults_as_next_up_has_them(self):
-        sec = self.section()
-        self.assertIn('<input type="checkbox" id="w-on" checked>', sec)
-        self.assertIn('<input type="checkbox" id="w-zone">', sec)
-        self.assertIn('data-wnum="threshold" min="10" max="600" value="45"', sec)
-        self.assertIn('data-wnum="parked-days" min="1" max="365" value="30"', sec)
-        self.assertIn('data-wnum="wrap-days" min="1" max="365" value="14"', sec)
-        self.assertEqual(list(self.lib().SOURCES), re.findall(r'data-wsrc="([a-z]+)"', sec))
-        self.assertEqual(6, sec.count('data-won checked'))
-
-    def test_what_was_saved_is_shown_in_its_order(self):
-        write(self.root / "System" / "garrick-settings.json", json.dumps({"while-you-wait": {
-            "on": False, "threshold": 120, "same-zone": True, "sources": ["inbox", "due"], "wrap-days": 21}}))
-        sec = self.section()
-        self.assertIn('<input type="checkbox" id="w-on">', sec)
-        self.assertIn('<input type="checkbox" id="w-zone" checked>', sec)
-        self.assertIn('value="120"', sec)
-        self.assertIn('data-wnum="wrap-days" min="1" max="365" value="21"', sec)
-        order = re.findall(r'data-wsrc="([a-z]+)"', sec)
-        self.assertEqual(["inbox", "due"], order[:2])                      # the chosen first, in their order
-        self.assertEqual(set(self.lib().SOURCES), set(order))              # the rest after, switched off
-        self.assertEqual(2, sec.count('data-won checked'))
-
-    def test_the_form_reads_back_into_next_ups_keys(self):
-        for key in self.lib().DEFAULTS:
-            self.assertIn(key, status.WAIT_JS)
-        self.assertIn("window.GarrickWait=", status.WAIT_JS)
-        self.assertIn("q['while-you-wait']=W.request()", status.JS)        # sent with the rest when Settings closes
-
-    def test_its_own_block(self):
+    def test_no_section_script_or_request(self):
         page = self.page()
-        self.assertIn(status.WAIT_CSS.strip()[:60], page)
-        self.assertIn("window.GarrickWait=", page)
-        self.assertEqual(1, page.count('id="wait-settings"'))
+        for gone in ('id="wait-settings"', "window.GarrickWait=", "while-you-wait", "wsrc"):
+            self.assertNotIn(gone, page)
+        self.assertNotIn("While you wait", page)
+        self.assertFalse(hasattr(status, "wait_settings"))
 
-    def test_left_out_while_the_preview_is_off(self):
-        for flags in ({}, {"while-you-wait": False}, {"while-you-wait": "yes"}):
-            write(self.root / "System" / "garrick-flags.json", json.dumps(flags))
-            page = self.page()
-            self.assertNotIn('id="wait-settings"', page)
-            self.assertRegex(page, r'While you wait</b><span class="chip">off</span>')
-        (self.root / "System" / "garrick-flags.json").unlink()
+    def test_a_leftover_flag_does_nothing(self):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"while-you-wait": True}))
+        self.assertNotIn("while-you-wait", status.preview_flags(self.root))
+        page = self.page()
+        self.assertNotIn("While you wait", page)
+        self.assertNotIn('id="wait-settings"', page)
+
+    def test_a_leftover_setting_does_nothing(self):
         write(self.root / "System" / "garrick-settings.json", json.dumps({"while-you-wait": {"on": False, "threshold": 120}}))
-        self.assertNotIn('id="wait-settings"', self.page())                # what was saved is kept, not shown
-        self.assertEqual(120, self.lib().settings(self.root)["threshold"])
-
-    def test_left_out_without_next_up(self):
-        with mock.patch.object(status, "wait_lib", lambda ws: None):
-            self.assertNotIn('id="wait-settings"', self.page())
-
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_the_script_parses(self):
-        done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=status.WAIT_JS,
-                              capture_output=True, text=True, timeout=30)
-        self.assertEqual(0, done.returncode, done.stderr)
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"while-you-wait": True}))
+        page = self.page()
+        self.assertNotIn('id="wait-settings"', page)
+        self.assertNotIn("While you wait", page)
 
 
 class TestNoCatchUpButton(StatusCase):
@@ -2011,7 +1965,7 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort", "Ask", "While you wait"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertEqual(["Effort"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
         self.assertIn('<code>{"effort": true}</code>', html)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
@@ -3135,7 +3089,7 @@ class TestApp(unittest.TestCase):
         swift = (self.APP / "Garrick.swift").read_text()
         self.assertIn("statusItem == nil }", swift)                           # with the icon, closing the window keeps the app
         self.assertIn("RegisterEventHotKey(", swift)                          # a hotkey without Accessibility permission
-        dictation = swift[swift.index("	// MARK: dictation (preview ask)"):swift.index("	// File › Ask Garrick… is there only")]
+        dictation = swift[swift.index("	// MARK: dictation"):swift.index("	// File › Ask Garrick… is there only")]
         self.assertEqual(swift.count("AXIsProcessTrusted"), dictation.count("AXIsProcessTrusted"))   # asked for only to press a dictation key
         self.assertIn("SMAppService.mainApp", swift)                          # open at login, as a login item
         self.assertIn("final class RowView: NSView", swift)                   # a row is clicked and opens a submenu
@@ -3148,7 +3102,7 @@ class TestApp(unittest.TestCase):
 
     def test_the_ask_box_can_start_dictation(self):
         swift = (self.APP / "Garrick.swift").read_text()
-        show = swift[swift.index("	@objc func showAsk("):swift.index("	// MARK: dictation (preview ask)")]
+        show = swift[swift.index("	@objc func showAsk("):swift.index("	// MARK: dictation")]
         self.assertIn("let opening = !(p.isVisible && p.isKeyWindow)", show)   # a second press never stops a tool that toggles
         self.assertLess(show.index("p.makeFirstResponder(askField)"), show.index("if opening { startDictation() }"))   # the field first
         start = swift[swift.index("	func startDictation()"):swift.index("	func setDictation(")]
@@ -3252,7 +3206,7 @@ class TestApp(unittest.TestCase):
         self.assertIn('let askDefault: [String: Any] = ["code": "KeyG", "mods": ["cmd"], "label": "⌘G"]', swift)
         self.assertIn("if let set = defaults.dictionary(forKey: kAskHotkey) { return set[\"code\"] == nil ? nil : set }", swift)  # set, or none
         self.assertIn("return sameKey(defaults.dictionary(forKey: kHotkey), askDefault) ? nil : askDefault", swift)   # ⌘G gives way to the menu's
-        self.assertIn("let wanted = askOn() && !checking && !recording ? askSpec() : nil", swift)   # with the preview, not while recording
+        self.assertIn("let wanted = askOn() && !checking && !recording ? askSpec() : nil", swift)   # with Ask on, not while recording
         self.assertIn("if register(wanted, 2, &askKey) == noErr", swift)
         self.assertIn("if which == 2 { return showAsk() }", swift)
         self.assertIn("askMenuItem?.keyEquivalent = key", swift)                      # File › Ask Garrick… shows what is set
@@ -3293,7 +3247,7 @@ class TestApp(unittest.TestCase):
         self.assertIn('let menuReport = jobsDir.appendingPathComponent("garrick-app-menu.json")', swift)
         rows = swift[swift.index("	func fillRows("):swift.index("	func header(")]
         self.assertIn('reportMenu("menu", query: text, rows: menu.items.filter { $0.view is RowView }.count)', rows)
-        panel = swift[swift.index("	func fillPanel("):swift.index("	// MARK: ask (preview, ask)")]
+        panel = swift[swift.index("	func fillPanel("):swift.index("	// MARK: ask")]
         self.assertIn('reportMenu("panel", query: m.filter, rows: m.zones.reduce(0) { $0 + $1.rows.count })', panel)
         report = swift[swift.index("	func reportMenu("):swift.index("	// A row's actions, as its card offers them")]
         self.assertIn("guard !checking else { return }", report)                          # a check never writes over the app's
@@ -3884,7 +3838,7 @@ class TestMemorySettings(StatusCase):
         page = self.page()
         self.assertIn(status.MEMORY_CSS.strip()[:60], page)
         self.assertEqual(1, page.count('id="memory-settings"'))
-        self.assertLess(page.index("window.GarrickWait="), page.index("window.GarrickMemory="))
+        self.assertIn("window.GarrickMemory=", page)
 
     def test_the_page_and_its_script_say_the_counts_alike(self):
         c = {"on": True, "working": 3, "dormant": 2, "archived": 1, "to_dormant": 0, "to_archive": 4, "to_wake": 0}
@@ -4016,25 +3970,68 @@ class TestContextDebt(StatusCase):
         self.assertNotIn("dmiss", b)
 
     def test_one_spike_does_not_flatten_the_rest(self):
-        """#321: a night at 164 against a usual 40 to 65 is an open dot at the
+        """#321: a night at 900 against a usual 40 to 65 is an open dot at the
         cap with its value written, and the rest use over half the height."""
-        for back, total in enumerate((52, 45, 64, 40, 164, 58, 42, 61, 50, 65)):
+        for back, total in enumerate((52, 45, 64, 40, 900, 58, 42, 61, 50, 65)):
             self.record(back, total)
         b = self.block(self.page())
         dots, labels = self.chart(b)
         self.assertEqual(1, b.count('class="dd over"'))
         self.assertEqual(1, b.count('class="dhole"'))
-        self.assertEqual("164", labels["dspike"])
-        rest = [y for (x, y), v in zip(dots, (65, 50, 61, 42, 58, 164, 40, 64, 45, 52)) if v != 164]
+        self.assertEqual("900", labels["dspike"])
+        rest = [y for (x, y), v in zip(dots, (65, 50, 61, 42, 58, 900, 40, 64, 45, 52)) if v != 900]
         self.assertGreaterEqual(max(rest) - min(rest), (64 - 2 * 5) / 2)            # over at least half the plot
         spike = dots[5][1]
         self.assertLess(spike, min(rest))                                            # at the top, above every other night
         self.assertGreaterEqual(spike, 0)
-        bottom, top, cap = status.debt_scale([52, 45, 64, 40, 164, 58, 42, 61, 50, 65], 40)
+        bottom, top, cap = status.debt_scale([52, 45, 64, 40, 900, 58, 42, 61, 50, 65], 40)
         self.assertEqual(80, cap)                                                    # twice the threshold
         self.assertLess(bottom, 40)
         self.assertGreater(top, 80)
         self.assertEqual(65, status.debt_scale([52, 45, 64, 40, 50, 65], 5)[2])      # a low threshold: the highest ordinary night
+
+    def test_a_run_of_high_nights_is_drawn_at_its_height_and_only_the_spikes_are_capped(self):
+        """#525: over 17 nights, 144 to 164 are drawn where they are and only 2,435 and 3,253 are capped."""
+        series = (20, 28, 35, 41, 47, 52, 58, 61, 64, 70, 76, 144, 152, 156, 164, 2435, 3253)
+        bottom, top, cap = status.debt_scale(list(series), 40)
+        self.assertEqual(164, cap)
+        for back, total in enumerate(reversed(series)):
+            self.record(back, total)
+        b = self.block(self.page())
+        dots, labels = self.chart(b)
+        self.assertEqual(2, len(re.findall(r'class="dd[^"]* over"', b)))       # the latest, 3,253, is "dd now over"
+        self.assertEqual(2, b.count('class="dhole"'))
+        ys = dict(zip(series, [y for _, y in dots]))                  # oldest first, as the chart draws them
+        self.assertGreater(len({ys[144], ys[152], ys[156], ys[164]}), 3)          # four heights, not one
+        self.assertEqual(ys[2435], ys[3253])                                       # the two spikes at the cap
+        self.assertLess(ys[3253], ys[164] + 0.01)
+        self.assertEqual("threshold 40", labels["dthr"])
+        self.assertIn(".dthr{right:0;", status.DEBT_CSS)                           # at the dashed line's right end
+
+    def test_the_header_counts_wall_findings_the_list_does_not_show_and_names_none(self):
+        """#525: a count and a link, from the latest record's standing walls that the quick check's list lacks."""
+        day = self.now.date()
+        write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "debt": {
+            "total": 76, "kinds": {"wall": 30}, "scopes": {"Zones/Harbour": {"wall": 30}}, "whole": True, "threshold": 40},
+            "standing": [{"kind": "wall", "path": "Zones/Harbour/Cedar/Notes.md", "message": "repeats wording from Maple"},
+                         {"kind": "wall", "path": "Zones/Harbour/Cedar/Plan.md", "message": "repeats wording from Maple"},
+                         {"kind": "wall", "path": "Zones/Harbour/Cedar/Plan2.md", "message": "repeats wording from Maple"},
+                         {"kind": "judgment", "path": "System/x.md", "message": "stale"}]}))
+        quick = {"findings": [], "errors": 0, "warnings": 0}
+        b = status.debt_block(self.root, day, quick)
+        self.assertIn('<a href="#qp">3 wall findings from last night&#x27;s run, not in this list</a>', b.replace("&#39;", "&#x27;"))
+        for leaked in ("Cedar", "Maple", "Notes", "Plan", "wording"):
+            self.assertNotIn(leaked, b)
+        # one of the three is in the list as a wall: the line counts the other two
+        shown = [("wall", ("Zones/Harbour/Cedar/Notes.md", "x"), "")]
+        with mock.patch.object(status, "sorted_finding", lambda ws, lib, f: shown):
+            b = status.debt_block(self.root, day, {"findings": [{"path": "Zones/Harbour/Cedar/Notes.md"}]})
+        self.assertIn("2 wall findings from last night", b)
+        with mock.patch.object(status, "sorted_finding", lambda ws, lib, f: [("wall", (p, "x"), "") for p in (
+                "Zones/Harbour/Cedar/Notes.md", "Zones/Harbour/Cedar/Plan.md", "Zones/Harbour/Cedar/Plan2.md")]):
+            b = status.debt_block(self.root, day, {"findings": [{"path": "a"}]})
+        self.assertNotIn("dwallmiss", b)                                       # nothing missing, no line
+        self.assertNotIn("dwallmiss", status.debt_block(self.root, day))       # no check result, no line
 
     def test_a_missing_night_is_marked(self):
         for back in (5, 4, 2, 1, 0):
@@ -4087,6 +4084,18 @@ class TestContextLink(StatusCase):
         self.assertNotIn("Birch", b)                                         # a group with nothing open is not named
         self.assertIn("Nothing is open.", status.context_link({"menu_groups": {"Work": [{"h": "Work", "n": 0}]}}))
         self.assertEqual("", status.context_link(None))                      # no tab, no link
+
+    def test_the_page_hides_the_button_on_the_context_tab_and_points_up_there(self):
+        """#526: the builder's output is one, wherever the card sits; the CSS decides on the page."""
+        data = {"menu_groups": {"Work": [{"h": "Work", "n": 2}]}, "menu_findings": {}}
+        b = status.context_link(data)
+        self.assertIn('<span class="hint hint-away">Nurture runs every night; what it leaves is answered in the Context tab. Work: 2 questions.</span>', b)
+        self.assertIn('<span class="hint hint-here">Nurture runs every night; what it leaves is answered in the panel above. Work: 2 questions.</span>', b)
+        self.assertEqual(b, status.context_link(data))
+        css = status.DEBT_CSS
+        self.assertIn("#tab-questions .review .act,#tab-questions .review .hint-away{display:none}", css)
+        self.assertIn("#tab-questions .review .hint-here{display:inline}", css)
+        self.assertIn(".review .hint-here{display:none}", css)                 # on any other tab only the first reading shows
 
     def test_the_card_has_no_review_button_and_reads_no_record(self):
         write(self.root / "System" / "nurture-review.md",

@@ -1809,6 +1809,63 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         (self.root / "System" / "garrick-settings.json").write_text(json.dumps({"launchers": {"note": True}}))
         self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "home" in w])
 
+    def ask_flags(self, flags):
+        (self.root / "System" / "garrick-flags.json").write_text(json.dumps(flags))
+
+    def test_ask_false_in_the_flags_becomes_the_switch_off(self):
+        """#528: Ask is released. A leftover "ask": false is read once and written as the Settings switch, off; the flags
+        file is not rewritten and nothing else in it is read."""
+        settings = self.root / "System" / "garrick-settings.json"
+        settings.write_text(json.dumps({"launchers": {"note": True}}))
+        self.ask_flags({"ask": False, "effort": True})
+        before = (self.root / "System" / "garrick-flags.json").read_text()
+        report = self.report_of(self.plan())
+        self.assertIn('Switch Ask off in System/garrick-settings.json', report)
+        self.assertEqual({"launchers": {"note": True}}, json.loads(settings.read_text()))     # the report changes nothing
+        result = self.apply()
+        self.assertEqual({"launchers": {"note": True}, "ask": False}, json.loads(settings.read_text()))
+        self.assertTrue(any("Ask is off" in line for line in result["then"]))
+        self.assertEqual(before, (self.root / "System" / "garrick-flags.json").read_text())
+        self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "Ask" in w])     # done: once
+
+    def test_ask_false_carried_file_is_written_as_the_page_writes_it(self):
+        """The carried file has the page's formatting, so a later save from the page shows no reformatting diff."""
+        settings = self.root / "System" / "garrick-settings.json"
+        settings.write_text(json.dumps({"launchers": {"note": True}}))
+        self.ask_flags({"ask": False})
+        self.apply()
+        carried = settings.read_text()
+        lib = update.install.lib()
+        lib.save_preferences(self.root, {"launchers": {"note": True}})
+        self.assertEqual(carried, settings.read_text())
+
+    def test_ask_false_with_no_settings_file_still_switches_it_off(self):
+        settings = self.root / "System" / "garrick-settings.json"
+        if settings.exists():
+            settings.unlink()
+        self.ask_flags({"ask": False})
+        self.apply()
+        self.assertEqual({"ask": False}, json.loads(settings.read_text()))
+
+    def test_ask_true_or_no_line_leaves_the_switch_on(self):
+        settings = self.root / "System" / "garrick-settings.json"
+        for flags in ({"ask": True}, {"effort": True}, {}, {"ask": "false"}):
+            settings.write_text(json.dumps({"home": "full"}))
+            self.ask_flags(flags)
+            self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "Ask" in w], flags)
+            self.apply()
+            self.assertNotIn("ask", json.loads(settings.read_text()), flags)
+        (self.root / "System" / "garrick-flags.json").unlink()                      # no flags file at all
+        self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "Ask" in w])
+
+    def test_a_switch_the_user_already_set_is_not_overwritten(self):
+        settings = self.root / "System" / "garrick-settings.json"
+        settings.write_text(json.dumps({"ask": True}))
+        self.ask_flags({"ask": False})
+        self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "Ask" in w])
+        self.apply()
+        self.assertEqual({"ask": True}, json.loads(settings.read_text()))
+
     def test_a_desk_link_to_another_copy_is_pointed_at_the_workspaces(self):
         self.install_extra("cmux")
         old = self.base / "old-garrick" / "extras" / "cmux" / "desk.py"

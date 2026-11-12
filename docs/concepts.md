@@ -28,7 +28,7 @@ One line of work inside a project, in `Threads/<Thread>/`, with a note of the sa
 
 ### Piece of work
 
-The word the Garrick App's *Your work* list uses for a thread, and the only unit it shows. Underneath, a piece of work is a project with one thread; a project with several live threads shows one row for each, as *Project, Thread*. "Thread" is the word in the rules and in these pages, for someone who splits a piece of work.
+The word the Garrick App's *Your work* list uses for a thread, and the only unit it shows. Underneath, a piece of work is a project with one thread; a project with several live threads shows one row for each, with the zone and project in grey above the thread's name in bold. "Thread" is the word in the rules and in these pages, for someone who splits a piece of work.
 
 ### Spoken form
 
@@ -72,7 +72,7 @@ Every hub and thread note carries `status:` in its frontmatter, with one of thre
 
 ### Wrap and Resume
 
-One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. The note's last write is the only record of where you were, so there is nothing else to keep right. *While you wait* rests on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. The note's last write is the only record of where you were, so there is nothing else to keep right. The *back* rule of `next_up.py` rests on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### History file
 
@@ -265,11 +265,11 @@ The control panel over your zones, projects and threads, and not where the work 
 
 ### Your work
 
-The list the Garrick App's Overview opens on: every live piece of work, most recent first, each with its next action, who it waits on, and *Continue*. See [Your work](extras/status-page.md#what-it-shows).
+The list the Garrick App's Overview opens on: every live piece of work, most recent first, each with its next action, who it waits on, its open actions, and the way to open it that you chose in Settings. See [Your work](extras/status-page.md#what-it-shows).
 
 ### Continue
 
-The button on a piece of work in Your work, and *Open in Claude* on a thread. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. See [Continue](extras/status-page.md#continue).
+*Open in Claude* on a thread, and on a piece of work in Your work when Claude is the way you chose to open things. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. See [Continue](extras/status-page.md#continue).
 
 ### The Guide
 

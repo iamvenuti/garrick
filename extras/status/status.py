@@ -759,11 +759,6 @@ def todo(ws: Path) -> Dict[str, dict]:
 FLAGS = {
     "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
                "time, read from Claude Code's own transcripts. The nightly job, gr-nightly, records them, so days outlive their clean-up."),
-    "ask": ("Ask", "In the Garrick app: the panel's field, and the box ⌘G opens, answer a request in plain words and act "
-            "on it, through a warm assistant session under the scheduled jobs' caps (ask.py). Off, the field opens your assistant."),
-    "while-you-wait": ("While you wait", "Parked: the Garrick band's line during a long turn in Claude Code, one thing worth doing "
-                       "elsewhere, with /garrick next, open, tick and later, and its section in Settings. Off, neither shows; "
-                       "\"what's next\" answers either way."),
 }
 
 
@@ -1117,14 +1112,16 @@ DEBT_LEAST = 3         # fewer records than this and the figure stands alone, wi
 
 def debt_scale(values: List[float], threshold: float) -> Tuple[float, float, float]:
     """(bottom, top, cap) of the chart's vertical scale (#321). The cap is
-    twice the threshold, or the highest value that is no spike (at most twice
-    the median), whichever is larger; a value above it is drawn at the cap.
+    twice the threshold, or the highest value that is no spike (at most five
+    times the median, #525), whichever is larger; a value above it is drawn at
+    the cap. Only a night far outside the rest is a spike: a run of nights at
+    two or three times the median is drawn at its height.
     The scale runs from a little under the lowest value or the threshold to a
     little over the cap, so one night far above the rest leaves the
     difference between the others to be seen."""
     ordered = sorted(values)
     median = ordered[len(ordered) // 2]
-    usual = [v for v in values if v <= 2 * median] or ordered[:1]
+    usual = [v for v in values if v <= 5 * median] or ordered[:1]
     cap = max(2 * threshold, max(usual), 1)
     low = min(min(v for v in values if v <= cap) if any(v <= cap for v in values) else cap, threshold)
     bottom = max(0.0, low - (cap - low) * 0.1)
@@ -1205,10 +1202,30 @@ def debt_kinds(debt: dict) -> str:
         '<span%s>%s %s</span>' % (' class="dwall"' if k == "wall" else "", E(k), E(str(debt_points(kinds[k])))) for k in order))
 
 
-def debt_block(ws: Path, today: dt.date) -> str:
+def walls_not_listed(ws: Path, day: dt.date, C: Optional[dict]) -> int:
+    """How many wall findings the Nurture record of `day` holds that the card's own list (the quick check, `C`)
+    does not show as walls (#525). A count and nothing else: no path, no wording, so no material of a walled zone
+    reaches the card that the list did not show. 0 without a record, a check or nurture.py."""
+    lib = nurture_lib(ws)
+    N = lib[0] if lib is not None else None
+    if N is None or not C or C.get("failed") or C.get("pending") or not getattr(N, "REPORTS", None):
+        return 0
+    try:
+        rec = json.loads(Path(ws).joinpath(*N.REPORTS, "%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        walls = [re.sub(r":\d+$", "", str(f.get("path") or "")) for f in rec.get("standing") or []
+                 if isinstance(f, dict) and f.get("kind") == "wall"]
+        shown = {path for f in C.get("findings", []) for kind, (path, _), _ in sorted_finding(ws, lib, f) if kind == "wall"}
+    except (OSError, ValueError, AttributeError):
+        return 0
+    return sum(1 for path in walls if path not in shown)
+
+
+def debt_block(ws: Path, today: dt.date, C: Optional[dict] = None) -> str:
     """The figure, what it is made of, its trend over the last DEBT_DAYS days
     and the scopes carrying most of it, for the Checks card; "" with no
-    record."""
+    record. With the card's own check result `C`, a line says how many wall
+    findings the last run holds that the list below does not show, and links
+    to Nurture's findings on the Context tab (#525)."""
     history, said = debt_history(ws, today)
     if not history:
         return ""
@@ -1225,6 +1242,12 @@ def debt_block(ws: Path, today: dt.date) -> str:
     outcome = nurture_outcome(ws, day) or {}
     does = nurture_said((outcome.get("scopes") or {}).get(heavy[0], {})) if heavy and phrase else ""
     lines = ""
+    missing = walls_not_listed(ws, day, C)
+    if missing:
+        # Counts and a link only. The Findings view lists what the quick check found, so it has no wall findings of
+        # this run to point at; the link goes to the view itself.
+        lines += ('<p class="hint dwallmiss"><a href="#qp">%s</a></p>'
+                  % E("%s from last night's run, not in this list" % counted(missing, "wall finding")))
     if does:
         lines += '<p class="hint">%s</p>' % E("One pass over %s: %s." % (said(heavy[0])[0], does))
     if outcome:
@@ -1364,22 +1387,41 @@ def context_link(qdata: Optional[dict]) -> str:
             if n or f:
                 said.append("%s: %s" % (g["h"], ", ".join(x for x in ("%d question%s" % (n, "" if n == 1 else "s") if n else "",
                                                                     "%d finding%s" % (f, "" if f == 1 else "s") if f else "") if x)))
-    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a><span class="hint">%s</span></div>'
-            % E("Nurture runs every night; what it leaves is answered in the Context tab. " + ("; ".join(said) + "." if said else "Nothing is open.")))
+    open_now = "; ".join(said) + "." if said else "Nothing is open."
+    # The card is moved between tabs (#443), so the page decides which of the two readings shows (#526): on the
+    # Context tab, where the panel is above it, the button would only link to where it already is, and the hint
+    # points up; on any other tab the link keeps working and the hint names the tab.
+    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a>'
+            '<span class="hint hint-away">%s</span><span class="hint hint-here">%s</span></div>'
+            % (E("Nurture runs every night; what it leaves is answered in the Context tab. " + open_now),
+               E("Nurture runs every night; what it leaves is answered in the panel above. " + open_now)))
 
 
 def refusals_block(ws: Path) -> str:
-    """The last 30 days of wall refusals for the Checks card: by kind, the days they fell, and the commits that
-    landed within ten minutes of one (overridden). Counts only; the record holds no path, name or text."""
+    """The last 30 days of wall refusals for the Checks card (#525): refusals, not finding lines (one per time and
+    repository, as garrick_lib's refusal_counts() counts them), the kinds within them, the days they fell, and
+    the refusals a commit followed within ten minutes (overridden), so the figures share one unit. A repository
+    nested in a zone is said apart; a kind this release no longer produces is marked as from an older release.
+    Counts only; the record holds no path, name or text."""
     lib = workspace_lib(ws)
     count = getattr(lib, "refusal_counts", None)
     got = count(ws) if count else None
-    if not got or not got["kinds"]:
+    if not got or not (got["kinds"] or got.get("nested")):
         return ""
-    kinds = ", ".join("%s %d" % (k, n) for k, n in sorted(got["kinds"].items()))
-    days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
-    return ('<div class="hint" id="refusals">Wall refusals, 30 days: %s. Days: %s. Overridden: %d.</div>'
-            % (E(kinds), E(days), got["overridden"]))
+    older = set(got.get("older") or ())
+
+    def kinds(d):
+        return ", ".join("%s %d%s" % (k, n, " (older release)" if k in older else "") for k, n in sorted(d.items()))
+    text = ""
+    if got["kinds"]:
+        n = got.get("refusals", 0)
+        days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
+        text = "Wall refusals, 30 days: %s, of kinds %s. Days: %s. Overridden: %d of %d." % (
+            counted(n, "refusal"), kinds(got["kinds"]), days, got["overridden"], n)
+    if got.get("nested"):
+        text += "%s %s in repositories nested in a zone, of kinds %s." % (
+            " " if text else "Wall refusals, 30 days:", counted(got["nested"], "refusal"), kinds(got.get("nested_kinds") or {}))
+    return '<div class="hint" id="refusals">%s</div>' % E(text)
 
 
 DEBT_CSS = r"""
@@ -1395,10 +1437,12 @@ DEBT_CSS = r"""
 .dchart .dd.over{stroke-width:8}.dchart .dhole{stroke:var(--surface);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke;pointer-events:none}
 .dval,.dthr{position:absolute;font-size:11px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
 .dval{color:var(--ink2);font-weight:600;transform:translateY(-150%)}.dfirst{left:0}.dlast{right:0}.dspike{transform:translate(8px,-50%)}
-.dthr{left:50%;transform:translate(-50%,-130%);color:var(--muted)}
+.dthr{right:0;transform:translateY(30%);color:var(--muted)}   /* at the dashed line's right end, below it: clear of the line */
 .dmiss{position:absolute;bottom:-3px;width:9px;height:8px;margin-left:-4.5px;background:linear-gradient(var(--muted),var(--muted)) center/1.5px 100% no-repeat}
+.dwallmiss a{color:var(--critical);font-weight:600}
 .dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
 .review{align-items:center;margin:0 0 12px}
+.review .hint-here{display:none}#tab-questions .review .act,#tab-questions .review .hint-away{display:none}#tab-questions .review .hint-here{display:inline}
 """
 
 
@@ -1683,7 +1727,7 @@ TCHIP_JS = r"""
 function pop(b){return document.getElementById(b.getAttribute('aria-controls'))}
 function set(b,o){var p=pop(b);if(!p)return;p.hidden=!o;b.setAttribute('aria-expanded',o?'true':'false')}
 function keep(id){try{if(id)sessionStorage.setItem(KEY,id);else sessionStorage.removeItem(KEY)}catch(e){}}
-document.querySelectorAll('.tview').forEach(function(v){v.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button.tchip');if(!b)return;
+document.querySelectorAll('.tview,.yrows').forEach(function(v){v.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button.tchip');if(!b)return;
 e.preventDefault();e.stopPropagation();var p=pop(b);if(!p)return;var o=p.hidden,row=b.closest('.thread');
 [].forEach.call(document.querySelectorAll('button.tchip[aria-expanded="true"]'),function(x){set(x,false)});
 set(b,o);keep(o?p.id:'');if(o&&window.ThreadRows)ThreadRows.close();if(o&&row)row.classList.remove('on')})});
@@ -1816,14 +1860,30 @@ d.querySelector('#mg-zone').onchange=projects;projects();watch(d);d.querySelecto
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
 if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');if(busy(d,q.zone))return;
 d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
-function newProject(){var zs=zoneNames(),z=zoneOf();if(!zs.length){say('There is no zone yet.');return}
-var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP+'<div id="mg-pt"></div>'+field('mg-thread','Its first thread'),
+function newProject(){var zs=zoneNames(),z=zoneOf(),NEW='__new__';if(!zs.length){say('There is no zone yet.');return}
+/* D.first is the name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, put in the page's data */
+var first=D.first||'',
+d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP+'<div id="mg-pt"></div>'
++'<div id="mg-np" hidden>'+field('mg-newparty','The party’s name')+'<p class="mg-msg mg-dup" id="mg-pdup" role="status" hidden></p>'+field('mg-what','What it is')+'</div>'
++'<label class="tlab" for="mg-thread">Its first thread, if you want one</label><input type="text" id="mg-thread" autocomplete="off" placeholder="'
++esc(first?'Empty gives '+first:'Empty gives a first thread of its own')+'">',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
-function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];d.querySelector('#mg-pt').innerHTML=p.length?select('mg-party','For',p,''):'<p class="mg-msg">No party belongs to this zone yet: add it to System/context.md first.</p>'}
-d.querySelector('#mg-zone').onchange=parties;parties();watch(d);d.querySelector('#mg-name').focus();
-d.querySelector('[data-go]').onclick=function(){var q={verb:'new-project',zone:val(d,'mg-zone'),name:val(d,'mg-name'),party:val(d,'mg-party'),thread:val(d,'mg-thread')};
-if(!q.name||!q.party||!q.thread)return bad(d,'A project needs a name, its party and its first thread.');if(busy(d,q.zone))return;
-d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+' for '+q.party+' in '+q.zone+', first thread '+q.thread,'Copied the phrase. Paste it to your assistant.')}}
+function names(){return((D.zones[val(d,'mg-zone')]||{}).parties||[]).map(function(x){return x[1]})}
+/* a party name close to one this zone has, by the test the project names get: it warns, and Make it still makes it */
+function pdup(){var m=d.querySelector('#mg-pdup'),n=val(d,'mg-newparty'),F=window.GarrickFind,hits=F&&n?names().filter(function(x){return F.soundsAlike(n,x)}):[];
+m.hidden=!hits.length;m.innerHTML=hits.length?'Already there: '+esc(hits.join('; '))+'.':''}
+function pick(){d.querySelector('#mg-np').hidden=val(d,'mg-party')!==NEW;pdup()}
+function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];
+d.querySelector('#mg-pt').innerHTML=select('mg-party','For',[['','None']].concat(p,[[NEW,'New party…']]),'');d.querySelector('#mg-party').onchange=pick;pick()}
+d.querySelector('#mg-zone').onchange=parties;parties();watch(d);d.querySelector('#mg-newparty').addEventListener('input',pdup);d.querySelector('#mg-name').focus();
+d.querySelector('[data-go]').onclick=function(){var pt=val(d,'mg-party'),np=pt===NEW,th=val(d,'mg-thread'),w=val(d,'mg-what'),z2=val(d,'mg-zone'),nm=val(d,'mg-name'),q;
+if(!nm)return bad(d,'A project needs a name.');
+/* two shapes, one request each: only the New party… choice sends the verb that adds a party (#522) */
+if(np){var r={verb:'new-project-party',zone:z2,name:nm};r.new_party=val(d,'mg-newparty');if(!r.new_party)return bad(d,'Give the new party a name.');
+if(th)r.thread=th;if(w)r.party_what=w;q=r}
+else{var o={verb:'new-project',zone:z2,name:nm};if(pt)o.party=pt;if(th)o.thread=th;q=o}
+if(busy(d,q.zone))return;
+d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
 function rename(mg){var old=mg[2]||mg[1],kind=mg[2]?'thread':'project';
 var d=dialog('Rename '+old,field('mg-name','New name, one you can say',old)+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. The old name stays a heard name for it.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy the phrase')+'</button>');var i=d.querySelector('#mg-name');i.focus();i.select();
@@ -1860,7 +1920,7 @@ var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
-else if(q.verb==='new-project'&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}}
+else if((q.verb==='new-project'||q.verb==='new-project-party')&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}}
 /* Undo, for a minute after a deletion or a rename from the page: the app rebuilds the page after
    every request, so the commit to revert is kept in this browser until then */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
@@ -2067,8 +2127,8 @@ ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
-ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-thread", "undo")
-ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename", "move",
+ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-project-party", "new-thread", "undo")
+ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread", "rename", "move",
               "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
               "bring-back", "files")
 
@@ -2093,13 +2153,23 @@ WORK_CSS = r"""
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={},
-BATCH=@BATCH@,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
+BATCH=@BATCH@,SENTFOR=180,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
 try{OPS=JSON.parse(sessionStorage.getItem(KEY+'-ops')||'{}')||{}}catch(e){}
 try{Q=JSON.parse(sessionStorage.getItem(KEY+'-ticks')||'[]')||[]}catch(e){}
 function keep(){try{sessionStorage.setItem(KEY,JSON.stringify(W));sessionStorage.setItem(KEY+'-seen',JSON.stringify(SEEN.slice(-60)));sessionStorage.setItem(KEY+'-ops',JSON.stringify(OPS));
 sessionStorage.setItem(KEY+'-ticks',JSON.stringify(Q))}catch(e){}}
+/* the ticks this window has sent, by zone, note and key, with their verb and time, read from the storage each time it is asked:
+   a second copy of the page, or a rebuild that read the queue before a flush was stored, may hold a tick this one has sent (#524) */
+function sentRead(){var s={},n=Date.now();try{s=JSON.parse(sessionStorage.getItem(KEY+'-sent')||'{}')||{}}catch(e){}
+Object.keys(s).forEach(function(i){if(!s[i]||n-s[i].t>SENTFOR*1000)delete s[i]});return s}
+function sentWrite(s){try{sessionStorage.setItem(KEY+'-sent',JSON.stringify(s))}catch(e){}}
+function sentId(q,k){return JSON.stringify([q.zone,q.file,k])}
+function sentHas(q,k){var s=sentRead()[sentId(q,k)];return!!s&&s.v===q.verb}
+/* the oldest of what was sent goes first once there are too many */
+function sentAdd(q,keys){var s=sentRead(),n=Date.now();keys.forEach(function(k){s[sentId(q,k)]={v:q.verb,t:n}});sentWrite(s)}
+function sentDrop(q,keys){var s=sentRead();keys.forEach(function(k){delete s[sentId(q,k)]});sentWrite(s)}
 /* the operation ids this window has already shown the end of, so the record never shows one twice */
 function mark(){[].forEach.call(arguments,function(o){if(o&&SEEN.indexOf(o)<0)SEEN.push(o)})}
 function mint(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.floor(Math.random()*16));return s}
@@ -2125,7 +2195,7 @@ if(b){b.title=d?'Reopen':'Mark done';b.setAttribute('aria-label',b.title+String(
 function words(z,k){var r=rows(z,k)[0],b=r&&r.querySelector('.tick'),s=b?String(b.getAttribute('aria-label')||'').replace(/^[^:]*:\s*/,''):'';
 return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
-function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});
+function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});sentDrop(e.q,e.q.keys||[]);
 Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)})}
 /* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
    The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
@@ -2160,8 +2230,10 @@ if(e.q.keys&&!e.shown&&now-e.t0>=TOAST*1000){e.shown=1;changed=true}});if(change
 function flush(){var now=Date.now(),sent=false;
 Q.map(function(x){return x.q.zone}).filter(function(z,i,a){return a.indexOf(z)===i}).forEach(function(z){var mine=Q.filter(function(x){return x.q.zone===z});
 if(running(z)||mine.some(function(x){return now-x.t<BATCH*1000}))return;
-var one=mine[0].q,go=mine.filter(function(x){return x.q.verb===one.verb&&x.q.file===one.file}),keys=go.map(function(x){return x.q.key}),n=keys.length;
-Q=Q.filter(function(x){return go.indexOf(x)<0});var q={verb:one.verb,zone:z,file:one.file,keys:keys,op:mint()};host.postMessage({act:q});
+var one=mine[0].q,go=mine.filter(function(x){return x.q.verb===one.verb&&x.q.file===one.file}),all=go;
+go=go.filter(function(x){return!sentHas(x.q,x.q.key)});     /* a tick this window has already sent is never sent twice */
+Q=Q.filter(function(x){return all.indexOf(x)<0});if(!go.length){sent=true;return}
+var keys=go.map(function(x){return x.q.key}),n=keys.length;sentAdd(one,keys);var q={verb:one.verb,zone:z,file:one.file,keys:keys,op:mint()};host.postMessage({act:q});
 W.push({q:q,op:q.op,say:(q.verb==='todo-done'?'Ticking ':'Reopening ')+(n===1?'it…':n+' lines…'),t0:now,lines:keys.map(function(k){return words(z,k)})});sent=true});
 if(sent)keep();return sent}
 function tick(){var sent=flush();if(sweep()||sent)render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});poll();run()}
@@ -2192,6 +2264,7 @@ W.push({q:q,op:q.op,say:said||'Working…',t0:Date.now(),lines:lines||undefined}
    A second click on a line still queued takes the first back, and nothing is sent for it */
 window.GarrickTick=function(q){if(!q||TICKS.indexOf(q.verb)<0||typeof q.zone!=='string'||typeof q.key!=='string')return false;
 var was=Q.filter(function(x){return x.q.zone===q.zone&&x.q.file===q.file&&x.q.key===q.key})[0];
+if(!was&&sentHas(q,q.key)){keep();return true}   /* already sent, for this verb: the line is as asked */
 if(was){if(was.q.verb!==q.verb)Q.splice(Q.indexOf(was),1)}else Q.push({q:{verb:q.verb,zone:q.zone,file:q.file,key:q.key},t:Date.now()});
 keep();run();return true};
 /* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside.
@@ -2355,8 +2428,8 @@ function send(verb,r,more,said){var q={verb:verb,zone:r.dataset.z,file:r.dataset
 if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(said)}
 /* a zone still busy with another request (WORK_JS) says so, and the row stays as it is */
 function held(verb,r){return!!(window.GarrickHeld&&GarrickHeld({verb:verb,zone:r.dataset.z}))}
-/* where a line is drawn: the Todo tab, and the list a thread's todo chip opens on the Threads card (#179), which ticks and dates the same way */
-var places=[todo].concat([].slice.call(document.querySelectorAll('.tview')));
+/* where a line is drawn: the Todo tab, and the list a thread's todo chip opens on the Threads card (#179) and on a Your work row (#523), which tick and date the same way */
+var places=[todo].concat([].slice.call(document.querySelectorAll('.tview,.yrows')));
 function twins(r){return[].filter.call(document.querySelectorAll('.trow'),function(x){return x===r||x.dataset.z===r.dataset.z&&x.dataset.f===r.dataset.f&&x.dataset.k===r.dataset.k})}
 /* a tick is queued with the ticks around it (WORK_JS's GarrickTick, #107), even while the zone is busy; without it, sent at once as before.
    Every place the line is drawn is struck through with it */
@@ -2461,7 +2534,7 @@ MENU_SETTINGS_JS = r"""
 var box=document.getElementById('menu-settings');if(!host||!box)return;box.hidden=false;
 function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
 var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey'),style=document.getElementById('menu-style');
-var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app, with the preview ask on',
+var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app',
 dictationkey:'Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys'};
 var dict=document.getElementById('menu-dictation'),dkey=document.getElementById('menu-dictkey'),FIELD={hotkey:'menu-hotkey',askhotkey:'menu-askkey',dictationkey:'menu-dictkey'};
 /* what the box does once it opens, said under the choice */
@@ -2474,6 +2547,7 @@ function note(which,s){var n=document.getElementById(FIELD[which]+'-note');if(n)
 function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.checked=!!a.login;login.disabled=a.login==null;
 /* an app built before the panel says no style, and its row stays hidden; one built before the Ask hotkey, that row */
 if(style){style.closest('.launcher-row').style.display='style' in a?'':'none';style.value=a.style||'icon';style.disabled=!a.menubar}
+var onb=document.getElementById('menu-ask');if(onb){onb.closest('.launcher-row').style.display='ask' in a?'':'none';onb.checked=a.ask!==false}
 if(ask){ask.closest('.launcher-row').style.display='askhotkey' in a?'':'none';ask.value=a.askhotkey||''}
 var said=a.said||{};note('hotkey',said.hotkey);note('askhotkey',said.askhotkey||(a.askdefault?NOTE.askhotkey+'. ⌘G until you set another':''));
 /* how the Ask box closes (#411): the last ticked box cannot be unticked, and says why */
@@ -2494,6 +2568,7 @@ window.GarrickAppSet=function(a){window.GarrickApp=a;fill()};fill();
 function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
 show.addEventListener('change',function(e){tell(e,{menubar:show.checked})});
 if(style)style.addEventListener('change',function(e){tell(e,{style:style.value})});
+var askb=document.getElementById('menu-ask');if(askb)askb.addEventListener('change',function(e){e.stopPropagation();host.postMessage({act:{verb:'settings',ask:askb.checked}})});
 if(dict)dict.addEventListener('change',function(e){tell(e,{dictation:dict.value})});
 function closeWith(e){var ce=document.getElementById('menu-askclose-esc'),cc=document.getElementById('menu-askclose-click');
 if(!ce.checked&&!cc.checked){(e.target||ce).checked=true;return}tell(e,{askclose:ce.checked&&cc.checked?'both':ce.checked?'escape':'click'})}
@@ -3996,6 +4071,17 @@ def open_naming(zone: Path, names: set) -> int:
     return n
 
 
+def first_thread() -> str:
+    """The name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, read from its file so that
+    the dialog and the Ask box name it once. "" when ask.py is not beside this file."""
+    src = Path(__file__).with_name("ask.py")
+    try:
+        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', src.read_text(encoding="utf-8"), re.M)
+    except OSError:
+        return ""
+    return found.group(1) if found else ""
+
+
 def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
     """For the New project and New thread dialogs: each zone's projects and
     the parties a project there can be for; and whether the app acts, or the
@@ -4006,7 +4092,7 @@ def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
         parties = sorted([[tag, p.get("party") or tag] for tag, p in ctx.get("parties", {}).items()
                           if (p.get("zone") or "").strip().lower() in ("", zone.lower())], key=lambda x: x[1].casefold())
         zones[zone] = {"projects": projects, "parties": parties}
-    return {"zones": zones, "acting": acting}
+    return {"zones": zones, "acting": acting, "first": first_thread()}
 
 
 def find_data(T: Dict[str, dict], link: "Links", styles: Dict[str, dict], folders: bool, today: dt.date) -> dict:
@@ -4142,8 +4228,8 @@ def set_head(name: str, key: str, lede: str = "") -> str:
 def menu_settings() -> str:
     """Settings › Menu bar, shown in Garrick.app
     only: the icon or a panel at a screen edge, opening at login, the
-    shortcut that opens either, the one that opens the Ask box (preview
-    ask), and the dictation the box starts once it opens. The app keeps
+    shortcut that opens either, the one that opens the Ask box, whether it
+    answers, and the dictation the box starts once it opens. The app keeps
     them all, so they hold when the window is closed."""
     return ('<section class="setsec apponly" id="menu-settings" hidden>' + set_head("Menu bar", "menu", 'Keep your live projects '
             'one click away from any app: in the menu bar, or in a panel at the edge of the screen.') + help_text("menu", 'A menu of the live '
@@ -4161,8 +4247,10 @@ def menu_settings() -> str:
             'or the panel from any app</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-hotkey" readonly placeholder="Click, then press keys" aria-label="Hotkey">'
             '<button class="act" type="button" id="menu-hotkey-clear">Clear</button></span></div>'
+            '<div class="launcher-row" style="display:none"><label class="launcher-choice"><input type="checkbox" id="menu-ask"> <span>Answer in the Ask box'
+            '<small>Keeps a warm assistant session that spends model calls. Off, no Ask box, no key held, and the panel\'s field opens your assistant</small></span></label></div>'
             '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-askkey"><span>Ask hotkey<small id="menu-askkey-note">'
-            'Opens the Ask box from any app, with the preview ask on</small></span></label>'
+            'Opens the Ask box from any app</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-askkey" readonly placeholder="None" aria-label="Ask hotkey">'
             '<button class="act" type="button" id="menu-askkey-clear">Clear</button></span></div>'
             '<div class="launcher-row" style="display:none"><span class="launcher-choice"><span>Close the Ask box with'
@@ -4396,7 +4484,7 @@ def preview_section(flags: Dict[str, bool]) -> str:
     rows = "".join('<div class="flagrow" title="%s"><b>%s</b><span class="chip%s">%s</span></div>'
                    % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", chip(k, on)) for k, on in flags.items())
     return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
-            % (set_head("Preview features", "preview", "Built but not released yet, and switched on in a file."), rows,
+            % (set_head("Preview features", "preview", "Off until you switch them on in a file."), rows,
                help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Switch one on in '
                '<code>System/garrick-flags.json</code>, for example <code>{"effort": true}</code>, and rebuild the page. '
                'Point at a feature for what it does.')))
@@ -4444,7 +4532,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     """The Settings dialog: which apps to open
     projects in, whether Explore follows the zone in view (with the graph),
     each zone's colour and icon, the colour of each kind of note Explore
-    draws (`kinds`, with the graph), the menu bar, While you wait; which notices
+    draws (`kinds`, with the graph), the menu bar; which notices
     this Mac shows; how older material fades (`link` opens the full list);
     About Garrick, and the preview features with which are switched on;
     Reset view at the foot. Each section shows its choices and one line at
@@ -4453,8 +4541,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     agent = desk_agent(ws) if "cmux" in installed and CMUXLIB.is_file() else None
     filed = {"look": [launcher_choices(installed, agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
-                      graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings(),
-                      wait_settings(ws)],
+                      graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
              "tell": [notify_settings(ws, CMUXLIB.is_file())],
              "keep": [memory_settings(ws, link)],
              "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
@@ -4947,13 +5034,15 @@ def age_said(days, what: str) -> str:
     return "%d day%s since %s moved: a figure, not a fault" % (days, "" if days == 1 else "s", what)
 
 
-def row_id(r: dict) -> str:
+def row_id(r: dict, scope: str = "") -> str:
     """A row's own name for the lists its chips open, the same on every build,
-    so a list left open stays open across the rebuild a tick brings."""
-    return hashlib.sha1(("%s/%s" % (r["zone"], r["rel"])).encode("utf-8")).hexdigest()[:10]
+    so a list left open stays open across the rebuild a tick brings. A card
+    that draws a thread's chip again (Your work) gives its own `scope`, so
+    the page never holds two lists under one id."""
+    return hashlib.sha1(("%s%s/%s" % (scope, r["zone"], r["rel"])).encode("utf-8")).hexdigest()[:10]
 
 
-def todo_chip(r: dict, today: dt.date) -> str:
+def todo_chip(r: dict, today: dt.date, scope: str = "") -> str:
     """`todo N`, for a thread with open actions: green when none is late, red
     when one is. Colour is not the only signal: the red chip's tooltip says
     which lines are late and since when."""
@@ -4969,10 +5058,10 @@ def todo_chip(r: dict, today: dt.date) -> str:
     else:
         tip = "%d open action%s, none late" % (n, "" if n == 1 else "s")
     return ('<button type="button" class="chip tchip todo %s" aria-expanded="false" aria-controls="tp-%s" title="%s">todo %d</button>'
-            % ("late" if late else "ok", row_id(r), E(tip + ". Click to list them"), n))
+            % ("late" if late else "ok", row_id(r, scope), E(tip + ". Click to list them"), n))
 
 
-def todo_pop(r: dict, today: dt.date, actions: bool) -> str:
+def todo_pop(r: dict, today: dt.date, actions: bool, scope: str = "") -> str:
     """The list a `todo` chip opens: the thread's open lines, late first, each
     drawn by todo_row() as the Todo tab draws it, with its box and date in the
     app and the late ones saying since when. A tick here goes the Todo tab's
@@ -4983,7 +5072,7 @@ def todo_pop(r: dict, today: dt.date, actions: bool) -> str:
     late = sum(1 for a in mine if a["late"])
     head = "%d open%s" % (len(mine), " · %d late" % late if late else ", none late")
     return ('<div class="tpop" id="tp-%s" hidden><p class="tpop-h">%s</p><div class="trows">%s</div></div>'
-            % (row_id(r), head, "".join(todo_row(dict(a, label=None, unsure=False), today, actions, said_late=True)
+            % (row_id(r, scope), head, "".join(todo_row(dict(a, label=None, unsure=False), today, actions, said_late=True)
                                         for a in mine)))
 
 
@@ -5132,11 +5221,39 @@ def allowed_data(ws: Path, link: "Links") -> list:
 OWNER_TAIL = re.compile(r"[;,]\s*(?:the\s+)?[A-Z]?[\w.-]+(?:\s+[\w.-]+){0,2}[\u2019']s\s*\.?\s*$")
 
 
-def without_owner(text: Optional[str]) -> Optional[str]:
-    """A next action without the whose-it-is tail the Resume block adds."""
+# The same owner said first: "Robin's: send the sheet", "The assistant's: …" (a possessive head, always taken), or
+# "Robin: send the sheet" where Robin is a person or party the workspace knows. Any other label before a colon
+# ("Note:", "Q3:", "Decide:") is the user's own text and stays.
+OWNER_HEAD = re.compile(r"^\s*(?P<who>(?:[Tt]he\s+[\w.-]+|[A-Z][\w.-]*(?:\s+[A-Z][\w.-]*){0,2}))(?P<poss>[\u2019']s)?:\s+(?=\S)")
+
+
+def known_owners(ctx: Optional[dict], me: str = "") -> set:
+    """The names a bare "Name:" head may be: the people and parties of System/context.md (full name and first
+    name), and the user's own name, lower case."""
+    names = set()
+    for person in (ctx or {}).get("people") or []:
+        full = str(person.get("name") or "").strip()
+        if full:
+            names.update((full.casefold(), full.split()[0].casefold()))
+    for party in ((ctx or {}).get("parties") or {}).values():
+        full = str((party or {}).get("party") or "").strip()
+        if full:
+            names.add(full.casefold())
+    if (me or "").strip():
+        names.update((me.strip().casefold(), me.split()[0].casefold()))
+    return names
+
+
+def without_owner(text: Optional[str], owners: Optional[set] = None) -> Optional[str]:
+    """A next action without the whose-it-is the Resume block adds, at its tail or at its head. A possessive
+    head is always removed; a bare "Name:" only when Name is in `owners`."""
     if not text:
         return text
-    return OWNER_TAIL.sub("", text).rstrip() or text
+    said = OWNER_TAIL.sub("", text).rstrip() or text
+    head = OWNER_HEAD.match(said)
+    if head and (head.group("poss") or head.group("who").casefold() in (owners or set())):
+        return said[head.end():].strip() or said
+    return said
 
 
 def waiting_on(text: str) -> Optional[str]:
@@ -5178,7 +5295,12 @@ def waiting_badge(waiting: str) -> str:
     """The first clause of a Waiting on row, for the badge (#342): the text
     before the first colon or semicolon. The whole row is the badge's title
     and the work's own page."""
-    return re.split(r"[:;]", waiting, maxsplit=1)[0].strip() or waiting
+    lead = re.match(r"\s*\*\*[^*]+\*\*", waiting)             # a colon inside bold is not the cut: the pair stays whole
+    start = lead.end() if lead else 0
+    clause = waiting[:start] + re.split(r"[:;]", waiting[start:], maxsplit=1)[0]
+    if clause.count("**") % 2:                                  # an unpaired marker would be drawn as it is
+        clause = clause.replace("**", "")
+    return clause.strip() or waiting
 
 
 def work_name_for(r: dict) -> str:
@@ -5226,6 +5348,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
         me = ask_scope_mod().user_name(ws)
     except Exception:
         me = ""
+    owners = known_owners(workspace_context(ws), me)
     out = []
     for zone, data in T.items():
         for r in data["rows"]:
@@ -5240,8 +5363,9 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                 "id": work_id(work_name_for(r), key),
                 "name": work_name_for(r), "zone": zone, "project": r["project"], "thread": r["thread"],
                 "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": key,
-                "example": zone == example, "next": without_owner(nxt), "waiting": waiting,
+                "example": zone == example, "next": without_owner(nxt, owners), "waiting": waiting,
                 "mine": waits_on_user(waiting, me), "moved": r.get("touched") or r.get("updated"),
+                "actions": r.get("actions") or [], "row": r,         # the lines and the card the Threads card shows for this thread
             })
     out.sort(key=lambda w: (-(w["moved"] or dt.date.min).toordinal(), w["name"].casefold()))
     return out
@@ -5615,10 +5739,18 @@ function deskReq(o,v){var q={verb:v,zone:o.dk[0],project:o.dk[1]};if(o.dk[2])q.t
 function desk(o,v){return esc(JSON.stringify(deskReq(o,v)))}
 /* data-k names the app, so Garrick.app can draw the button as its icon, as its menu bar does; data-d marks the default */
 function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
-function acts(o,pre){var a=(pre||'')+(prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>');
+function noteLink(o){return'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>'}
+function acts(o,pre){var a=(pre||'')+(prefs().note===false?'':noteLink(o));
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 /* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
 if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
+/* One way to open, for a row of Your work (#523): the main button runs Settings' Default, and a list beside it offers the others
+   that are on and installed, each drawn by launch() as the card draws it. One way on: one plain button. */
+function opener(o){var ways=(prefs().note===false?[]:['note']).concat(o.f&&host?chosen():[]),d=GarrickPrefs.def();
+if(!ways.length)ways=['note'];if(ways.indexOf(d)<0)d=ways[0];
+function one(k){return k==='note'?noteLink(o):launch(k,o)}
+var rest=ways.filter(function(k){return k!==d});
+return one(d)+(rest.length?'<details class="ymore"><summary class="act" title="Other ways to open" aria-label="Other ways to open">▾</summary><div class="ymenu">'+rest.map(one).join('')+'</div></details>':'')}
 /* a thread by its note (pa), or a project by its name (pp), its hub then holding every thread in it */
 function park(o){var s=o.h?o.hp:o.s,v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
 k=o.h?o.pp[0]+'/'+o.pp[1]+'/'+o.pp[1]+'.md':o.pa[0]+'/'+o.pa[1];
@@ -5653,7 +5785,7 @@ var row=a.closest('.thread,.sres'),o;try{o=JSON.parse(row.dataset.card)}catch(x)
 e.preventDefault();e.stopPropagation();if(d==='cmux'&&o.dk){if(o.f&&window.GarrickExpect)GarrickExpect('live:'+o.f);host.postMessage({act:deskReq(o,'open')});return}
 var q=d==='claude'&&cont(o);if(q){if(window.GarrickHeld&&GarrickHeld(q))return;if(!(window.GarrickAct&&GarrickAct(q,going(o)))){host.postMessage({act:q});if(window.GarrickSay)GarrickSay(going(o))}return}
 host.postMessage({launch:d,folder:o.f,phrase:phrase(o)})},true);
-return{esc:esc,acts:acts,head:head}})();
+return{esc:esc,acts:acts,head:head,opener:opener}})();
 """
 
 JS = r"""
@@ -5763,13 +5895,13 @@ sd.addEventListener('close',function(){document.body.appendChild(toast);if(!sdCh
 /* Notifications that would be refused stay in the dialog, unsent, with the reason, rather than lost to a rebuild */
 var N=window.GarrickNotify,bad=N&&N.changed()&&N.problem();if(bad){say(bad+' Nothing was saved yet.');return}
 sdChanged=false;var q=sdReq();if(q)host.postMessage({act:q});else host.postMessage({rebuild:true})});
-/* What Settings has to save, as one request: the apps, the zones, the graph's colours, the notifications, While you wait,
+/* What Settings has to save, as one request: the apps, the zones, the graph's colours, the notifications,
    Memory, each only when it changed. null when there is nothing. */
-function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),W=window.GarrickWait,w=!!(W&&W.changed()),M=window.GarrickMemory,m=!!(M&&M.changed()),R=window.GarrickRelease,rl=!!(R&&R.changed());
-if(!(lpChanged||zChanged||gChanged||daChanged||n||w||m||rl))return null;
+function sdReq(){var N=window.GarrickNotify,n=!!(N&&N.changed()),M=window.GarrickMemory,m=!!(M&&M.changed()),R=window.GarrickRelease,rl=!!(R&&R.changed());
+if(!(lpChanged||zChanged||gChanged||daChanged||n||m||rl))return null;
 var q=lpChanged?GarrickPrefs.request():{verb:'settings'};if(zChanged)q.zones=zreq();if(gChanged)q.graph=greq();if(n)q.notifications=N.request();
 if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}
-if(w){q['while-you-wait']=W.request();W.saved()}if(m){q.memory=M.request();M.saved()}
+if(m){q.memory=M.request();M.saved()}
 if(rl){var rq=R.request();q['release-notice']=rq.on;q['release-notice-every']=rq.every;R.saved()}
 lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}
 sd.addEventListener('click',function(e){if(e.target!==sd)return;var r=sd.getBoundingClientRect();   /* the backdrop, not the padding */
@@ -5888,121 +6020,6 @@ sec.addEventListener('input',function(e){if(e.target.matches('input[type=number]
 window.GarrickNotify={changed:function(){return changed},request:request,problem:problem,saved:function(){changed=false}};
 })();
 """
-
-
-# ---- Settings › While you wait (#111) ------------------------------------------
-# One block, kept apart from the rest of Settings: what the Garrick band offers
-# while a long turn runs. System/tools/next_up.py owns the keys, their defaults
-# and their check; this block only draws them and reads the form back. The
-# page sends them with what else Settings changed when it closes (JS's sdReq
-# asks window.GarrickWait), and page_action.py checks them through the same
-# module before they are kept in System/garrick-settings.json.
-_WAIT: Dict[Path, object] = {}
-
-
-def wait_lib(ws: Path):
-    """System/tools/next_up.py, found as notify_lib() finds its module. None
-    when there is none, and then the section is left out."""
-    key = Path(ws)
-    if key not in _WAIT:
-        found = None
-        for src in (key / "System" / "tools" / "next_up.py", Path(__file__).resolve().parent.parent / "tools" / "next_up.py",
-                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "next_up.py"):
-            if not src.is_file():
-                continue
-            try:
-                spec = importlib.util.spec_from_file_location("garrick_status_next_up", str(src))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            if callable(getattr(mod, "settings", None)) and hasattr(mod, "SOURCE_LABELS"):
-                found = mod
-                break
-        _WAIT[key] = found
-    return _WAIT[key]
-
-
-def wait_settings(ws: Path) -> str:
-    """Settings › While you wait: on or off, how long a turn runs before the
-    band offers anything, same zone only, which sources count and in what
-    order, and when a parked or an unwrapped thread is old enough to name.
-    In the app only, as the other sections that save are. A preview feature
-    since #247, so only while System/garrick-flags.json switches it on; what
-    is saved stays as it is either way."""
-    if not preview_flags(ws).get("while-you-wait"):
-        return ""
-    lib = wait_lib(ws)
-    if lib is None:
-        return ""
-    cfg = lib.settings(ws)
-    box = lambda attr, on, label="": '<input type="checkbox" %s%s%s>' % (
-        attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "")
-    num = lambda key, value, low, high, label: (
-        '<input type="number" data-wnum="%s" min="%d" max="%d" value="%d" aria-label="%s">' % (key, low, high, value, E(label)))
-    order = list(cfg["sources"]) + [s for s in lib.SOURCES if s not in cfg["sources"]]
-    rows = "".join(
-        '<li class="wsrc" data-wsrc="%s"><label>%s %s</label><span class="wmove">'
-        '<button class="act" type="button" data-wup aria-label="Move %s up" title="Earlier">&#8593;</button>'
-        '<button class="act" type="button" data-wdown aria-label="Move %s down" title="Later">&#8595;</button></span></li>'
-        % (s, box("data-won", s in cfg["sources"], lib.SOURCE_LABELS[s]), E(lib.SOURCE_LABELS[s]), E(lib.SOURCE_LABELS[s]),
-           E(lib.SOURCE_LABELS[s])) for s in order)
-    return ('<section class="setsec apponly" id="wait-settings">%s%s'
-            '<div class="launcher-row"><label class="launcher-choice">%s <span>Suggest something while a turn runs'
-            '<small>One line in the Garrick band, once a turn has run longer than this</small></span></label>'
-            '<span class="wafter">%s seconds</span></div>'
-            '<div class="launcher-row"><label class="launcher-choice">%s <span>Same zone only'
-            '<small>Only what is in the zone the session works in; off, every zone</small></span></label></div>'
-            '<h4 class="nsub">What counts, first to last</h4><ol class="wsrcs">%s</ol>'
-            '<div class="launcher-row"><span class="wdays">A parked thread untouched for %s days, a live one not wrapped for %s days'
-            '</span></div></section>'
-            % (set_head("While you wait", "wait", "While your assistant works through a long turn, Garrick can suggest one "
-                        "thing worth doing elsewhere."), help_text("wait", 'While a turn runs longer than the threshold, the Garrick '
-               'band shows one thing worth doing elsewhere: the thread you left most recently today, a Todo line due today or late, a chase '
-               'that has come due, what waits in an Inbox, a parked thread to park or finish, a live one to wrap. It is said in a few '
-               'words, never quotes a meeting and never names the thread the turn is working on. <code>/garrick next</code>, '
-               '<code>open</code>, <code>tick</code> and <code>later</code> act on it, and none of them touches the running session. '
-               'In a session without the band, ask &#8220;what&#39;s next&#8221;: the answer comes from the same list, '
-               '<code>python3 System/tools/next_up.py</code>. Saved in <code>%s</code>.' % E(prefs().FILE)),
-               box('id="w-on"', cfg["on"]), num("threshold", cfg["threshold"], lib.THRESHOLD[0], lib.THRESHOLD[1],
-                                                 "Seconds a turn runs first"),
-               box('id="w-zone"', cfg["same-zone"]), rows,
-               num("parked-days", cfg["parked-days"], lib.DAYS[0], lib.DAYS[1], "Days a parked thread is left alone"),
-               num("wrap-days", cfg["wrap-days"], lib.DAYS[0], lib.DAYS[1], "Days since a live thread was wrapped")))
-
-
-WAIT_CSS = r"""
-/* Settings › While you wait: the switches, then the sources in their order, each with a box and two arrows */
-#wait-settings input[type=number]{font:inherit;font-size:12.5px;width:56px;padding:2px 5px;color:var(--ink);background:var(--surface);
-border:1px solid var(--line);border-radius:7px}
-#wait-settings .wafter,#wait-settings .wdays{font-size:12.5px;color:var(--ink2)}
-.wsrcs{list-style:none;margin:0 0 6px;padding:0}.wsrc{display:flex;align-items:center;gap:8px;padding:3px 0;border-bottom:1px solid var(--line);font-size:12.5px}
-.wsrc label{flex:1;display:flex;align-items:center;gap:6px}.wsrc input{accent-color:var(--accent)}.wsrc.woff label{opacity:.5}
-.wmove{display:flex;gap:3px}.wmove .act{padding:0 6px;min-width:0;line-height:20px}
-"""
-
-# Read back as next_up.py's clean() takes it. A number out of range is brought
-# into range here, so nothing the form can hold is refused when Settings closes.
-WAIT_JS = r"""
-(function(){var sec=document.getElementById('wait-settings');if(!sec)return;var changed=false,list=sec.querySelector('.wsrcs');
-function paint(){list.querySelectorAll('.wsrc').forEach(function(r,i,all){r.classList.toggle('woff',!r.querySelector('[data-won]').checked);
-r.querySelector('[data-wup]').disabled=i===0;r.querySelector('[data-wdown]').disabled=i===all.length-1})}
-sec.addEventListener('change',function(){changed=true;paint()});
-sec.addEventListener('input',function(e){if(e.target.matches('input[type=number]'))changed=true});
-sec.addEventListener('click',function(e){var b=e.target.closest('[data-wup],[data-wdown]');if(!b)return;e.preventDefault();var r=b.closest('.wsrc');
-if(b.hasAttribute('data-wup')&&r.previousElementSibling)list.insertBefore(r,r.previousElementSibling);
-else if(b.hasAttribute('data-wdown')&&r.nextElementSibling)list.insertBefore(r.nextElementSibling,r);else return;
-changed=true;paint();b.focus();var d=document.getElementById('settings');if(d)d.dispatchEvent(new Event('change'))});
-function n(k){var e=sec.querySelector('[data-wnum="'+k+'"]'),v=parseInt(e.value,10);if(isNaN(v))v=parseInt(e.defaultValue,10);
-return Math.max(+e.min,Math.min(+e.max,v))}
-function request(){var src=[];list.querySelectorAll('.wsrc').forEach(function(r){if(r.querySelector('[data-won]').checked)src.push(r.dataset.wsrc)});
-return{on:document.getElementById('w-on').checked,threshold:n('threshold'),'same-zone':document.getElementById('w-zone').checked,
-sources:src,'parked-days':n('parked-days'),'wrap-days':n('wrap-days')}}
-paint();
-window.GarrickWait={changed:function(){return changed},request:request,saved:function(){changed=false}};
-})();
-"""
-# ---- end of Settings › While you wait ---------------------------------------------
 
 
 # ---- Settings › About Garrick: Check for updates (#410) ----------------------------
@@ -6929,31 +6946,62 @@ def waiting_row(r: dict, now: dt.datetime) -> str:
                E(r.get("since") or ""), E(waited(r.get("since") or "", now)), go))
 
 
-def work_list_card(W: List[dict], today: dt.date) -> str:
-    """Your work, the Overview's opening list: each live piece of work with its next action, who it waits on and
-    Continue (#503). The rows are the ones works() builds and the `continue` action carries out; nothing is
-    read or kept for this card. A project of one thread is one piece of work, as page_action.py's work_name() counts it."""
+def work_name_lines(w: dict) -> str:
+    """The name column, in two lines: the zone and the project in grey, then the thread in bold. A project of one
+    thread has the zone alone above and the project in bold below; the example zone's tag stays on the bold line."""
+    one = w["name"] == w["project"]
+    above = E(w["zone"]) if one else "%s / %s" % (E(w["zone"]), E(w["project"]))
+    return ('<span class="yname"><small class="yzone">%s</small><span class="yline"><b>%s</b>%s</span></span>'
+            % (above, E(w["project"] if one else w["thread"]), '<span class="ytag">Example</span>' if w["example"] else ""))
+
+
+def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=None) -> str:
+    """Your work, the Overview's opening list: each live piece of work with its next action, who it waits on, its
+    open actions and the way to open it (#503, #523). The rows are the ones works() builds; nothing is read or kept
+    for this card. A project of one thread is one piece of work, as page_action.py's work_name() counts it.
+    The `todo N` chip and its list are the thread's on the Threads card, drawn from the same lines; the way to open
+    is that card's own (PANEL_JS's Panel.opener), which follows Settings, drawn by YOURWORK_JS from the card's data
+    (`card_of(row)`, the JSON thread_card() gives the Threads card). In a browser the row copies the phrase instead."""
     rows = ""
     for w in W:
         nxt = md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'
-        waits = ('<span class="ywait" title="Waiting on %s">Waiting on %s</span>' % (E(w["waiting"]), E(waiting_badge(w["waiting"])))
-                 if w["waiting"] and not w.get("mine") else '<span class="ywait none"></span>')
+        waits = ('<span class="ywait" title="Waiting on %s">Waiting on %s</span>' % (E(w["waiting"]), md_inline(waiting_badge(w["waiting"])))
+                 if w["waiting"] and not w.get("mine") else "")
+        row = dict(w["row"], actions=w.get("actions") or [])
+        chip = todo_chip(row, today, "yw")
+        pop = todo_pop(row, today, acting, "yw")
+        why = ('<span class="ywhy">%s%s</span>' % (waits, '<span class="tchips">%s</span>' % chip if chip else "")) if waits or chip \
+            else '<span class="ywhy"></span>'
         phrase = "Where am I on %s?" % w["name"]
-        go = (act_button(json.dumps({"verb": "continue", "zone": w["zone"], "file": w["rel"]}), "Continue",
-                         "Opening %s in Claude…" % w["name"], "act primary apponly")
-              + '<span class="webonly">%s</span>' % copy("Copy “Where am I?”", phrase, "Copied “%s”. Paste it to your assistant." % phrase))
-        rows += ('<div class="yrow" data-w="%s"><span class="yname">%s%s</span><span class="ynext">%s</span>%s<span class="yact">%s</span></div>'
-                 % (E(w["id"]), E(w["name"]), '<span class="ytag">Example</span>' if w["example"] else "", nxt, waits, go))
+        data = card_of(w["row"]) if card_of else ""
+        go = ('<span class="yopen apponly" data-card="%s"></span>' % E(data) if data else "") + \
+            '<span class="webonly">%s</span>' % copy("Copy “Where am I?”", phrase, "Copied “%s”. Paste it to your assistant." % phrase)
+        rows += ('<div class="yrow" data-w="%s">%s<span class="ynext">%s</span>%s<span class="yact">%s</span>%s</div>'
+                 % (E(w["id"]), work_name_lines(w), nxt, why, go, pop))
     return card("your-work", "Your work", "%d piece%s, most recent first" % (len(W), "" if len(W) == 1 else "s"),
                 '<div class="yrows">%s</div>' % rows)
 
 
 YOURWORK_CSS = r"""
-.yrow{display:grid;grid-template-columns:minmax(120px,1.1fr) minmax(160px,2.4fr) minmax(90px,.9fr) auto;gap:6px 14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
-.yrow:last-child{border-bottom:0}.yname{font-weight:600;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere}
-.ywait{color:var(--ink2);font-size:12.5px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:11px;background:var(--wash);color:var(--accent)}
-.yact{justify-self:end}
-@media(max-width:720px){.yrow{grid-template-columns:1fr auto}.ynext,.ywait{grid-column:1/-1}}
+.yrow{display:grid;grid-template-columns:minmax(140px,.8fr) minmax(200px,2.6fr) minmax(110px,1fr) auto;gap:6px 14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
+.yrow:last-child{border-bottom:0}.yname{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere}
+.yzone{font-size:12px;font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
+.ywhy{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}.ywhy .tchips{display:inline-flex;gap:4px}.ywhy .chip{margin:0}
+.ywait{color:var(--ink2);font-size:12.5px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:11px;font-weight:400;background:var(--wash);color:var(--accent)}
+.yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
+.ymore{position:relative}.ymore>summary.act{display:inline-block;padding:0 7px}
+.ymenu{position:absolute;right:0;top:100%;z-index:6;margin-top:4px;display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--raise);box-shadow:var(--shadow);white-space:nowrap}
+.yrow .tpop{grid-column:1/-1}
+@media(max-width:720px){.yrow{grid-template-columns:1fr auto}.ynext,.ywhy{grid-column:1/-1}}
+"""
+
+# Draws each row's way to open from the card's data, as the Threads card's hover card does, and again when the
+# pointer enters the row, so a change in Settings shows without a rebuild. One list open at a time.
+YOURWORK_JS = r"""
+(function(){if(typeof Panel==='undefined'||!Panel.opener)return;
+function draw(el){var o;try{o=JSON.parse(el.dataset.card)}catch(e){return}if(!el.querySelector('details[open]'))el.innerHTML=Panel.opener(o)}
+[].forEach.call(document.querySelectorAll('.yrow'),function(r){var y=r.querySelector('.yopen[data-card]');if(!y)return;draw(y);r.addEventListener('mouseenter',function(){draw(y)})});
+document.addEventListener('click',function(e){[].forEach.call(document.querySelectorAll('.ymore[open]'),function(d){if(!d.contains(e.target)||e.target.closest('.ymenu .act'))d.open=false})})})();
 """
 
 
@@ -7332,7 +7380,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
-    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + refusals_block(ws) + context_link(qdata) + body)
+    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date(), C) + refusals_block(ws) + context_link(qdata) + body)
 
     # ---- open actions and inboxes
     tb = ""
@@ -7506,7 +7554,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    lead = waiting_card(waiting_now or [], now) + ((work_list_card(HW, now.date()) if HW else "") + threads_card
+    lead = waiting_card(waiting_now or [], now) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
+                                                        r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
+                                                        cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
                                                     if anything else start_card() + threads_card)
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
@@ -7561,13 +7611,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # and WORK_JS after all three. NOTE_JS, Explore's Preview, in an element of its
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
-    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, MENU_JS, questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + WAIT_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS),
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))

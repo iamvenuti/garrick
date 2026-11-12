@@ -69,8 +69,8 @@ Once the page says the desk is ready (the extra and cmux), everything in Garrick
 | *Open in cmux* on a card, in the graph's panel, and a thread's name when cmux is the default | "open Acme Review, Pricing" |
 | A cmux icon in the menu bar menu or the panel, and a row's name when cmux is the default | the same |
 | *Process the Inbox*, in the menu and the panel, when cmux is the assistant | "process the inbox", in a tab at the workspace root |
-| The menu's or the panel's field, with the preview `ask` off and cmux the assistant | the words you typed, at the workspace root |
-| Ask, with the preview `ask` on, opening a project or thread in cmux | "open Acme Review, Pricing" |
+| The menu's or the panel's field, with Ask switched off in Settings and cmux the assistant | the words you typed, at the workspace root |
+| Ask, opening a project or thread in cmux | "open Acme Review, Pricing" |
 
 A tab at the workspace root goes to the *System* workspace (the `neutral` setting), named for what it does: *Inbox* for *Process the Inbox*, and the first few words of anything else it starts on, so two of them are told apart and "close the Inbox tab" works. Opened by hand without a name, it is *Workspace*, never the folder's name. desk opens the root only when given its full path, so a heard name never lands there. If a tab is already open in that folder, desk brings it forward, and sends the words only when its session is idle. Without the desk, each of these opens the folder in cmux with the phrase on the clipboard, as before.
 

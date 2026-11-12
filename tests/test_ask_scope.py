@@ -1777,7 +1777,8 @@ class TestTheWindowCites(unittest.TestCase):
         self.assertIn("var listed = false", self.swift)
         cited = self.body("askCited")
         self.assertIn('let between = turn.listed ? "\\n" : " "', cited)
-        self.assertIn('(first ? "" : between) + text', cited)                            # each claim, the rest's too
+        self.assertIn("out.append(askInline(text, said))", cited)                          # each claim, the rest's too, after its gap
+        self.assertIn('NSAttributedString(string: first ? "" : between, attributes: said))\n\t\t\t\tout.append(askInline', cited)
         self.assertIn('string: first ? "" : between', cited)                             # "And N more." on its own line
         self.assertLess(cited.index("claimed(turn.claims)"), cited.index("for sentence in turn.after"))
         self.assertLess(cited.index("for sentence in turn.after"), cited.index("claimed(turn.rest)"))

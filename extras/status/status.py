@@ -1307,14 +1307,18 @@ CHECK_KINDS = (("wall", "Walls", "Take it out"), ("mechanical", "Mechanical", "F
                ("attribution", "Attribution", "Answer"), ("judgment", "Judgment", ""))
 
 
-def check_groups(ws: Path, C: dict, link: "Links") -> str:
+def check_groups(ws: Path, C: dict, link: "Links", fixes: Optional[List[Tuple[str, str]]] = None) -> str:
     """The Checks card's list: one fold per kind, the largest open, and any
-    holding an error."""
+    holding an error. `fixes`, when given, gets the (zone, file) of each Fix the list offers (#535): what the *Fix them*
+    button runs."""
     lib = nurture_lib(ws)
     rows: Dict[str, List[str]] = {}
     errors: Dict[str, int] = {}
     for f in C.get("findings", []):
         for kind, line, act in sorted_finding(ws, lib, f):
+            at = re.match(r"Zones/([^/]+)/(.+\.md)$", line[0])
+            if fixes is not None and kind == "mechanical" and at:      # the finding the Fix button on its row fixes
+                fixes.append((at.group(1), at.group(2)))
             rows.setdefault(kind, []).append(
                 '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s</li>'
                 % (ICON["critical" if f.get("severity") == "error" else "warning"], link.attrs(ws / line[0]), E(line[0]),
@@ -1490,22 +1494,108 @@ def trend_chip(word: str) -> str:
         " late" if word == "rising" else "", E("The context debt over the last %d nights" % TREND_DAYS), E(word.capitalize()))
 
 
-def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[str], Tuple[str, str]]) -> str:
-    """The card's lines (#530): one for each scope that needs the user, with its Nurture button, or "Nothing needs
-    you."; then when the last nurture ran. Names of places, counts, minutes and a date only: no path, project or
-    finding text of any zone. Nothing without a record, which would only be guessing that nothing needs the user."""
+_FQ = None
+
+
+def queue_mod():
+    """finding_queue.py, beside this file: the plain wording of a finding and the answers to it (#535)."""
+    global _FQ
+    if _FQ is None:
+        spec = importlib.util.spec_from_file_location("garrick_finding_queue", str(Path(__file__).with_name("finding_queue.py")))
+        _FQ = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_FQ)
+    return _FQ
+
+
+def forecast_items(ws: Path, day: dt.date) -> List[dict]:
+    """The standing findings of the Nurture record of `day` that weigh anything, each with its scope: the one-pass
+    forecast, as nurture.py's day_outcome() counts it. The list the card's lines and the queue are both made from, so
+    a line's number and its queue's are one. [] without a record or a nurture.py that keeps them."""
+    lib = nurture_lib(ws)
+    N = lib[0] if lib is not None else None
+    if N is None or not getattr(N, "REPORTS", None) or not callable(getattr(N, "debt_settings", None)) or not callable(getattr(N, "debt_scope", None)):
+        return []
+    try:
+        rec = json.loads(Path(ws).joinpath(*N.REPORTS, "%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        weights, _ = N.debt_settings(Path(ws))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for f in rec.get("standing") or [] if isinstance(rec, dict) else []:
+        kind = str(f.get("kind", "")) if isinstance(f, dict) else ""
+        if kind and weights.get(kind, getattr(N, "UNKNOWN_WEIGHT", 1)):
+            path = re.sub(r":\d+$", "", str(f.get("path", "")))
+            out.append({"kind": kind, "path": path, "line": str(f.get("line") or ""), "check": str(f.get("check") or ""),
+                        "scope": N.debt_scope(path)})
+    return out
+
+
+def quick_messages(ws: Path, C: Optional[dict]) -> Dict[Tuple[str, str], str]:
+    """The quick check's own text for each finding, by (path, check), a wall's by (path, "wall"): what the queue's
+    Details and its figures use where the card has them. Nothing run: the card's check result, as it is."""
+    out: Dict[Tuple[str, str], str] = {}
+    lib = nurture_lib(ws)
+    words = tuple(getattr(lib[0], "WALL_WORDS", ())) if lib is not None else ()
+    for f in (C or {}).get("findings", []) if C and not C.get("failed") and not C.get("pending") else []:
+        path, message, check = re.sub(r":\d+$", "", str(f.get("path") or "")), str(f.get("message") or ""), str(f.get("check") or "")
+        wall = check == "walls" or any(w in message for w in words)
+        out.setdefault((path, "wall" if wall else check), message)
+    return out
+
+
+def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[dict], today: dt.date,
+                   said: Callable[[str], Tuple[str, str]]) -> Optional[Dict[str, List[dict]]]:
+    """{scope: its questions} for every scope that needs the user, from the forecast's findings, each enriched with
+    the quick check's text where it has the same path and check (a wall: the same path); None when this page has no
+    queue to build, and the card then keeps its Nurture button. Built for every scope at page build, as the findings
+    list was: it shows no more than that list did."""
+    if not history:
+        return {}
+    try:
+        fq = queue_mod()
+        items = forecast_items(ws, history[-1][0])
+        quick = quick_messages(ws, C)
+        for it in items:
+            plain = fq.plain_kind(it)
+            message = quick.get((it["path"], "wall" if it["kind"] == "wall" else it["check"]))
+            it["ask"] = said(it["scope"])[1]
+            if it["kind"] == "wall":
+                it["listed"] = message is not None
+            if message:
+                it["message"] = message
+            elif plain in fq.PLAIN_KINDS and it["kind"] != "wall":
+                it["message"] = it["line"][len(it["path"]) + 2:] if it["line"].startswith(it["path"] + ": ") else it["line"]
+        return fq.forecast_questions(items, fq.later_hidden(ws, today))
+    except Exception:
+        return None
+
+
+def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[str], Tuple[str, str]],
+               queues: Optional[Dict[str, List[dict]]] = None) -> str:
+    """The card's lines (#530): one for each scope that needs the user, with its button, or "Nothing needs you.";
+    then when the last nurture ran. The button opens the scope's queue (#535), *Go through them*; without a queue
+    (a page built without one) it hands Nurture's request to the assistant. The number on a line is the number of
+    questions in its queue: one list. Names of places, counts, minutes and a date only: no path, project or finding
+    text of any zone. Nothing without a record, which would only be guessing that nothing needs the user."""
     if not history:
         return ""
     day = history[-1][0]
-    scopes = (nurture_outcome(ws, day) or {}).get("scopes") or {}
-    rows = needing_you(scopes)
+    if queues is None:
+        rows = needing_you((nurture_outcome(ws, day) or {}).get("scopes") or {})
+    else:
+        rows = needing_you({sc: {"wall": sum(1 for q in qs if q["id"] == "wall"), "judgment": sum(1 for q in qs if q["id"] != "wall")}
+                            for sc, qs in queues.items()})
     out = ""
     for n in rows:
         name, phrase = said(n["scope"])
-        out += ('<div class="need"><span class="nsay">%s: %s</span>%s</div>'
-                % (E(name[:1].upper() + name[1:]), E(need_said(n)), request_button("Nurture", phrase, ws, "act dask") if phrase else ""))
-    out = out or '<p class="hint nonee">Nothing needs you.</p>'
-    return out + '<p class="hint nlast">Last nurture: %s</p>' % E(day.strftime("%a %d %b"))
+        button = ('<button class="act primary" type="button" data-qopen="%s">Go through them</button>' % E(n["scope"])
+                  if queues is not None else request_button("Nurture", phrase, ws, "act dask") if phrase else "")
+        out += '<div class="need"><span class="nsay">%s: %s</span>%s</div>' % (E(name[:1].upper() + name[1:]), E(need_said(n)), button)
+    return (out or '<p class="hint nonee">Nothing needs you.</p>')
+
+
+def last_nurture(history: List[Tuple[dt.date, dict]]) -> str:
+    return '<p class="hint nlast">Last nurture: %s</p>' % E(history[-1][0].strftime("%a %d %b")) if history else ""
 
 
 def override_times(ws: Path) -> List[str]:
@@ -7500,6 +7590,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
 
 
     # ---- checks
+    fixes: List[Tuple[str, str]] = []
     if C is None:
         body = '<p class="muted">No <code>System/tools/check.py</code> in this workspace.</p>'
     elif C.get("pending"):
@@ -7507,7 +7598,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     elif C.get("failed"):
         body = '<div class="clean">%sThe check did not run. Run <code>python3 System/tools/check.py</code> to see why.</div>' % ICON["critical"]
     else:
-        body = check_groups(ws, C, link)
+        body = check_groups(ws, C, link, fixes)
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
@@ -7516,10 +7607,15 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # The card says what needs the user (#530); the figures, the chart, the refusals and the list are in the Findings view.
     history, said_scope = debt_history(ws, now.date())
     listed = bool(C) and not C.get("failed") and not C.get("pending")
+    queues = finding_queues(ws, history, C, now.date(), said_scope)
+    queue_names = {sc: said_scope(sc)[0][:1].upper() + said_scope(sc)[0][1:] for sc in (queues or {})}
+    fq = queue_mod() if queues is not None else None
     checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
-                       need_lines(ws, history, said_scope) + override_note(ws) + context_link(qdata) + FINDINGS_LINK + ("" if listed else body),
+                       need_lines(ws, history, said_scope, queues) + (fq.fix_block(fixes, str(ws)) if fq else "") + last_nurture(history)
+                       + override_note(ws) + context_link(qdata) + FINDINGS_LINK + ("" if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
     findings_view = findings_dialog(debt_block(ws, now.date(), C) + refusals_block(ws) + body)
+    queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names) if fq else ""
 
     # ---- open actions and inboxes
     tb = ""
@@ -7751,14 +7847,14 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, CHECKS_JS, questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + findings_view,
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + findings_view + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

@@ -4275,8 +4275,8 @@ class TestChecksSaysWhatNeedsYou(StatusCase):
                           "The Meetings wiki: 1 judgment call, about 5 minutes",
                           "System: 1 judgment call, about 5 minutes"], lines)       # zones by name, the wikis, then System
         self.assertNotIn("Birch", card)                                            # only mechanical findings: no line
-        self.assertIn('data-request="nurture Work" data-folder="%s"' % self.root, card)
-        self.assertIn(">Nurture</button>", card)
+        self.assertIn('data-qopen="Zones/Work"', card)                              # the line's button opens that scope's queue (#535)
+        self.assertEqual(4, card.count(">Go through them</button>"))
         self.assertNotIn("Nothing needs you.", card)
         self.assertIn("Last nurture: %s" % self.now.strftime("%a %d %b"), card)
         for leaked in ("Acme", "Notes.md", ".md"):

@@ -22,6 +22,7 @@
   "test_extract": 3.3,
   "test_fade": 11.2,
   "test_fetch": 0.8,
+  "test_finding_queue": 30.0,
   "test_install": 34.6,
   "test_intake": 13.7,
   "test_jobs": 39.2,

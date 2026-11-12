@@ -606,6 +606,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
         # Taking an allowance away edits the workspace's own ledger under its own lock.
         unzoned |= {"walls-unallow"}
+        # An answer to a finding on the Checks card's queue (#535) is sent by finding_queue.py's script, and names a path.
+        unzoned |= {"finding"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

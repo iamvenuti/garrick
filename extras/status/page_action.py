@@ -157,6 +157,18 @@ zone's repository, as the skills would:
                 (GARRICK_HEADLESS=1), so it applies only the mechanical kind,
                 commits in the zone and puts the note back when the wall
                 check refuses; under the zone's lock
+    finding     an answer to a finding on the Checks card's queue (#535):
+                {"kind", "path", "answer"}, closed by finding_queue.py's table,
+                which says for each kind of finding which answers this verb
+                takes. move-older applies System/tools/history.py to the note and
+                commits it in its zone, as the page commits anything: the
+                wall check runs, and a refusal puts the note back. preview says
+                what it would move, as counts, and writes nothing. install runs
+                check.py --install-hooks. later is Not now: the finding is hidden
+                for a week in System/generated/status-later.json, which holds a
+                key for each finding and the day it returns, never a path, and
+                which no check reads. A wall finding has no answer here: it is
+                handed to the assistant, or opened with note-open
     files       where a piece of work's files live (#189), from its page:
                 {"zone", "file", "do"}, do one of copy, refresh, media-in,
                 media-out, move, undo, keep-copy, delete-copy. A copy and
@@ -290,7 +302,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "walls-unallow")
+         "walls-unallow", "finding")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -4680,6 +4692,143 @@ def fix_finding(ws: Path, req: dict) -> str:
     return "Fixed: %s" % "; ".join(str(i.get("said") or i.get("line") or "") for i in fixed)
 
 
+# ---- an answer to a finding on the queue (#535) ------------------------------------------------------------------
+_FQ = None
+FINDING_RUN = 240       # seconds a history.py or check.py run may take, apart from its commit
+
+
+def finding_queue():
+    """finding_queue.py, beside this file: which answers each kind of finding takes."""
+    global _FQ
+    if _FQ is None:
+        spec = importlib.util.spec_from_file_location("garrick_finding_queue", str(HERE / "finding_queue.py"))
+        _FQ = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_FQ)
+    return _FQ
+
+
+def finding_tool(ws: Path, *name: str) -> Path:
+    tool = ws.joinpath("System", "tools", *name)
+    if not tool.is_file():
+        raise Refused("System/tools/%s is missing; update Garrick" % "/".join(name))
+    return tool
+
+
+def finding_run(ws: Path, args: list) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run([sys.executable] + [str(a) for a in args], capture_output=True, text=True, timeout=FINDING_RUN,
+                              stdin=subprocess.DEVNULL, cwd=str(ws), env=dict(os.environ, GARRICK_HEADLESS="1"))
+    except subprocess.TimeoutExpired:
+        raise Refused("%s was still running after %s and was stopped" % (Path(str(args[0])).name, how_long(FINDING_RUN)))
+
+
+def finding_path(ws: Path, req: dict) -> tuple:
+    """(the path as sent, the file) for a path from the workspace's root: relative, inside it, and there."""
+    rel = req.get("path")
+    if not isinstance(rel, str) or not rel or rel.startswith(("/", "~")) or "\\" in rel or "\0" in rel or ".." in rel.split("/"):
+        raise Refused("not a path in this workspace")
+    full = (ws / rel).resolve()
+    if ws.resolve() not in full.parents or not full.exists():
+        raise Refused("that file or folder is not there any more; the page rebuilds now")
+    return rel, full
+
+
+def finding_note(ws: Path, rel: str) -> tuple:
+    """(the zone, the note) for a hub or a thread note of a zone."""
+    parts = rel.split("/")
+    if len(parts) < 3 or parts[0] != "Zones":
+        raise Refused("only a note in a zone can be answered here")
+    zone = zone_dir(ws, parts[1])
+    return zone, live_note(zone, "/".join(parts[2:]))
+
+
+def finding_preview(ws: Path, rel: str) -> dict:
+    tool = finding_tool(ws, "history.py")
+    r = finding_run(ws, [tool, "--root", ws, "dry-run", rel, "--json"])
+    try:
+        plan = json.loads(r.stdout)[0]
+    except (ValueError, IndexError, TypeError):
+        said = (r.stderr or r.stdout).strip().splitlines()
+        raise Refused(said[-1] if said else "history.py did not answer")
+    if plan.get("skipped"):
+        raise Refused("nothing can move here: %s" % plan["skipped"])
+    n = int(plan.get("entries_moved") or 0)
+    if not n:
+        return {"say": "Nothing would move: no dated entry is old enough to leave this page.", "detail": ""}
+    detail = finding_run(ws, [tool, "--root", ws, "dry-run", rel]).stdout.strip()
+    about = finding_queue().about
+    return {"say": "%d older entr%s would move to history, taking the page from %s words to %s words." % (
+        n, "y" if n == 1 else "ies", about(int(plan.get("words_before") or 0)), about(int(plan.get("words_after") or 0))),
+        "detail": detail}
+
+
+def finding_move(ws: Path, rel: str) -> str:
+    """Move a note's older entries to history files, committed in its zone by the page's own commit, so the wall check
+    runs and a refusal puts every file back as it was."""
+    zone, note = finding_note(ws, rel)
+    tool = finding_tool(ws, "history.py")
+    with zone_lock(zone):
+        r = finding_run(ws, [tool, "--root", ws, "dry-run", rel, "--json"])
+        try:
+            plan = json.loads(r.stdout)[0]
+        except (ValueError, IndexError, TypeError):
+            raise Refused("history.py did not answer")
+        if plan.get("skipped"):
+            raise Refused("nothing can move here: %s" % plan["skipped"])
+        if not plan.get("entries_moved"):
+            raise Refused("nothing is old enough to move, so the note is as it was")
+        folder = note.parent / "history"
+        writes = [note] + [folder / ("%s history %s.md" % (note.stem, q)) for q in plan.get("quarters") or []]
+        before = {f: (f.read_bytes() if f.is_file() else None) for f in writes}
+        r = finding_run(ws, [tool, "--root", ws, "apply", rel, "--json"])
+        try:
+            done = json.loads(r.stdout)[0]
+        except (ValueError, IndexError, TypeError):
+            raise Refused("history.py did not answer; look at git status in %s" % zone.name)
+        if done.get("error") or done.get("skipped") or not done.get("done"):
+            raise Refused("not moved: %s" % (done.get("error") or done.get("skipped") or "history.py moved nothing"))
+        try:
+            commit_all(zone, [(f, before[f]) for f in writes if f.is_file()],
+                       "%s: older entries of %s moved to history" % (zone.name, note.stem), wall=wall_refusal(ws))
+        except Refused:
+            if folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
+            raise
+    return "Moved %d older entr%s of %s to history" % (done["entries_moved"], "y" if done["entries_moved"] == 1 else "ies", note.stem)
+
+
+def finding_hooks(ws: Path, rel: str) -> dict:
+    tool = finding_tool(ws, "check.py")
+    r = finding_run(ws, [tool, "--root", ws, "--install-hooks"])
+    said = (r.stdout + r.stderr).strip()
+    if r.returncode:
+        lines = said.splitlines()
+        raise Refused(lines[-1] if lines else "the wall check was not installed")
+    return {"say": "The wall check is installed where it was missing", "detail": said}
+
+
+def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
+    """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
+    table, so an unknown one is refused by name and nothing runs."""
+    fq = finding_queue()
+    kind, answer = req.get("kind"), req.get("answer")
+    if not isinstance(kind, str) or kind not in fq.VERB_ANSWERS:
+        raise Refused("not a kind of finding Garrick answers")
+    if not isinstance(answer, str) or answer not in fq.VERB_ANSWERS[kind]:
+        raise Refused("not an answer Garrick offers for this finding")
+    rel, _ = finding_path(ws, req)
+    if answer == "later":
+        until = fq.later_put(ws, fq.later_key(kind, rel), today)
+        return "Put off until %s" % dt.date.fromisoformat(until).strftime("%a %d %b")
+    if answer == "preview":
+        return finding_preview(ws, rel)
+    if answer == "move-older":
+        return finding_move(ws, rel)
+    if answer == "install":
+        return finding_hooks(ws, rel)
+    raise Refused("not an answer Garrick offers for this finding")
+
+
 def act(ws: Path, req, today=None, now=None):
     """Carry out one request, or raise Refused. What to say, or a reply whose
     "say" comes with what the caller reads back."""
@@ -4723,6 +4872,8 @@ def act(ws: Path, req, today=None, now=None):
         return example(ws, req)
     if req["verb"] == "fix":
         return fix_finding(ws, req)
+    if req["verb"] == "finding":
+        return answer_finding(ws, req, today or dt.date.today())
     if req["verb"] == "discover":
         return discover_folder(ws, req)
     if req["verb"] == "suggestion":

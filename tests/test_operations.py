@@ -332,8 +332,6 @@ SHAPES = {
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"run"': ("run",),
-             # Continue, on Your work (#503)
-             '"continue"': ("continue",),
              # a `check` chip's Fix on the Threads card (#179)
              '"fix"': ("fix",)}
 # Which script each shape is built in, so that a script gaining a shape, or

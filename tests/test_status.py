@@ -1270,7 +1270,8 @@ class TestCheckpointChip(StatusCase):
     def touched(self, html, name):
         """What Recent on the Threads card sorts a row by: its data-r."""
         card = 'data-card="%s' % htmllib.escape('{"n":"%s"' % name, quote=True)
-        tag = html[html.index(card):]
+        threads = html[html.index('<details class="card" id="threads"'):]    # Your work draws the same card data above it
+        tag = threads[threads.index(card):]
         return re.search(r' data-r="([^"]*)"', tag[:tag.index(">")]).group(1)
 
     def test_the_chip_says_when_the_work_was_recorded(self):

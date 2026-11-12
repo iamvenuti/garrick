@@ -284,7 +284,7 @@ except ImportError:             # not on Windows, where the status app does not 
 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
-         "new-project", "new-thread", "check-name", "rename", "move", "delete", "undo",
+         "new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo",
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
@@ -313,7 +313,7 @@ RELEASE_CADENCES = (1, 7)
 ZONE_ICONS = ("briefcase", "house", "flask", "rocket", "book", "globe", "heart", "star", "leaf", "wrench", "chart", "shield")
 # What the audit log may name of a request, and how much of a new line's text.
 LOGGED = ("zone", "file", "project", "thread", "folder", "key", "keys", "date", "target", "job", "launchers", "default", "zones", "graph",
-          "name", "party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
+          "name", "party", "new_party", "kind", "to", "confirm", "commit", "test", "find-chat", "home", "label", "until",
           "do", "id", "answer", "suggested", "path", "version", "agent", "wiki")       # never "token"
 LOGGED_TEXT = 60
 LOGGED_SAY = 160
@@ -1796,6 +1796,47 @@ def scaffold(ws: Path, *args) -> str:
     return r.stdout.strip()
 
 
+def first_thread() -> str:
+    """The name of a project's first thread when none is given: ask.py's FIRST_THREAD, the box's own, read from
+    its file beside this one so that the page and the box never name it twice. Refused where ask.py is not there."""
+    try:
+        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', (HERE / "ask.py").read_text(encoding="utf-8"), re.M)
+    except OSError:
+        found = None
+    if not found:
+        raise Refused("no first thread given, and ask.py, which names the default one, is not beside this file")
+    return found.group(1)
+
+
+def new_party(ws: Path, zone: Path, name: str, what: Optional[str]) -> str:
+    """The tag of a party the user added in the New project dialog: `scaffold.py party` writes the row in
+    System/context.md, and it is committed on its own in the workspace's repository, before the project is made,
+    as docs/commands.md asks. Refused, nothing is left behind: the file is put back as it was, and the reply is
+    the reason. A context.md with changes of its own not committed is refused first, so that no one else's edit
+    is filed under this commit."""
+    context = ws / "System" / "context.md"
+    if not (ws / ".git").exists():
+        raise Refused("this workspace has no repository at its top folder, so the new party cannot be committed on its own")
+    if context.is_file() and uncommitted(ws, context):
+        raise Refused("System/context.md has changes not committed yet, so a party is not added: commit them first")
+    before = context.read_bytes() if context.is_file() else b""
+    try:
+        scaffold(ws, "party", "--name", name, "--zone", zone.name, "--what", what or "<What %s is>" % name)
+    except Refused:
+        context.write_bytes(before)
+        raise
+    tag = None
+    for t, p in (context_of(ws).get("parties") or {}).items():
+        if " ".join(str(p.get("party") or "").split()).casefold() == " ".join(name.split()).casefold() \
+                and str(p.get("zone") or "").strip().casefold() == zone.name.casefold():
+            tag = t
+    if not tag:
+        context.write_bytes(before)
+        raise Refused("the new party's row could not be found in System/context.md, so nothing was changed")
+    commit(ws, context, before, ("New party %s (%s), in %s" % (name, tag, zone.name))[:200], wall=wall_refusal(ws))
+    return tag
+
+
 def manage(ws: Path, req: dict) -> str:
     verb = req["verb"]
     zone = zone_dir(ws, req.get("zone"))
@@ -1812,17 +1853,35 @@ def manage(ws: Path, req: dict) -> str:
 def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     verb, z = req["verb"], zone.name
     flag = ["--check"] if check else []
-    if verb == "new-project":
-        name, thread = field(req, "name"), field(req, "thread")
+    if verb in ("new-project", "new-project-party"):
+        name = field(req, "name")
+        # A first thread left empty is the one the ask box gives (ask.py's FIRST_THREAD, read from there), and a
+        # party left out is none: scaffold.py's --party is optional, an index.
+        thread = field(req, "thread", required=False) or first_thread()
+        party = field(req, "party", required=False)
         made = [p for p in (zone / name,) if not p.exists()]
         spoken = [*(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
                   *(["--thread-spoken", field(req, "thread_spoken")] if req.get("thread_spoken") is not None else [])]
-        args = ["project", "--zone", z, "--name", name, "--party", field(req, "party"), "--thread", thread, *spoken]
-        if not check:
+        args = ["project", "--zone", z, "--name", name, *(["--party", party] if party else []), "--thread", thread, *spoken]
+        if verb == "new-project-party":
+            if party:
+                raise Refused("pick a party from the list, or add a new one, not both")
+            pname, what = field(req, "new_party"), field(req, "party_what", required=False)
+            if not check:
+                asks_how(ws, args)
+            said_party = scaffold(ws, "party", "--name", pname, "--zone", z, "--what", what or "<What %s is>" % pname,
+                                  "--check")
+            if "is already a party" in said_party:
+                raise Refused(first_line(said_party) + " Pick it from the list instead.")
+            if check:
+                return said_party
+            party = new_party(ws, zone, pname, what)
+            args = ["project", "--zone", z, "--name", name, "--party", party, "--thread", thread, *spoken]
+        elif not check:
             asks_how(ws, args)
         said = scaffold(ws, *args, *flag)
         if not check:
-            commit_new(zone, [name], "New project %s (%s), first thread %s" % (name, req["party"].strip(), thread),
+            commit_new(zone, [name], "New project %s%s, first thread %s" % (name, " (%s)" % party if party else "", thread),
                        made, {}, wall=wall_refusal(ws))
             return first_line(said)
         return said
@@ -4685,7 +4744,7 @@ def act(ws: Path, req, today=None, now=None):
         return files_progress(ws, req)
     if req["verb"] == "work-file":
         return work_file(ws, req, today or dt.date.today())
-    if req["verb"] in ("new-project", "new-thread", "check-name", "rename", "move", "delete", "undo"):
+    if req["verb"] in ("new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo"):
         return manage(ws, req)
     return todo(ws, req)
 
@@ -4693,7 +4752,7 @@ def act(ws: Path, req, today=None, now=None):
 # The verbs whose reply asks for the page to be built (#344): what a page, the
 # ask box or a session changes that the page shows. Every other verb leaves the
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
-PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
+PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "rename", "move", "delete", "undo")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
@@ -4743,6 +4802,10 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
     try:
         try:
             joined = None
+            if isinstance(req, dict) and req.get("verb") == "new-project-party" and via != "page":
+                # A party decides which side of a wall material lands on: only the dialog, on the user's own
+                # choice, adds one. The ask box and a session never do (#522).
+                raise Refused("a party is added only from the New project dialog on the page")
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS:
                 try:
                     run, joined = start_record(ops, req, via)

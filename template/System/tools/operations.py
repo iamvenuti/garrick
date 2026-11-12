@@ -194,6 +194,10 @@ DECLARED: Dict[str, Op] = {
     # They are here so that one table answers what a verb accepts, and so the
     # test that enumerates what the page sends has something to check against.
     "new-project": _op(("zone", "name", "party", "thread", "spoken", "thread_spoken"), ("name",), "zone", True, "safe"),
+    # The same, with a party added first on the user's own choice in the page's dialog (#522): `perform` refuses it
+    # from any caller but the page.
+    "new-project-party": _op(("zone", "name", "thread", "spoken", "thread_spoken", "new_party", "party_what"),
+                             ("name",), "zone", True, "safe"),
     "new-thread": _op(("zone", "project", "name", "spoken"), ("project", "name"), "zone", True, "safe"),
     "check-name": _op(("zone", "kind", "project", "thread", "name", "party", "to", "spoken", "thread_spoken"),
                       ("kind", "name", "to"), "none"),

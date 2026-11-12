@@ -285,7 +285,7 @@ def shapes(text, line0=1):
 
 # The verbs each shape can carry, and the fields it adds where no scanner can
 # read them. Keyed by the text of the `verb` value, exactly as the file has it.
-ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread",
+ZONED = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread",
          "rename", "move", "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start",
          "stop-using", "bring-back", "files")
 SHAPES = {
@@ -293,6 +293,7 @@ SHAPES = {
     # MANAGE_JS: the dialogs, each sent from the Make it / Rename / Delete button
     "onclick: 'new-thread'": {"new-thread": ()},
     "onclick: 'new-project'": {"new-project": ()},
+    "onclick: 'new-project-party'": {"new-project-party": ()},       # the New party… choice of the New project dialog (#522)
     "onclick: 'rename'": {"rename": ()},
     "onclick: 'move'": {"move": ()},
     "onclick: 'park'": {"park": ()},                     # del(): Park instead
@@ -338,7 +339,7 @@ PY_SHAPES = {'"run"': ("run",),
              '"fix"': ("fix",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
-SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'", "onclick: 'move'",
+SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'new-project-party'", "onclick: 'rename'", "onclick: 'move'",
                          "onclick: 'park'", "onclick: 'delete'", "onclick: 'undo'"},
            "WORK_JS": {"poll: 'operations'", "reconcile: r.verb", "window.GarrickActed: q.verb", "window.GarrickTick: q.verb",
                        "flush: one.verb"},

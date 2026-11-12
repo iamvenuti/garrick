@@ -1647,7 +1647,7 @@ class TestSettings(StatusCase):
         self.assertNotIn("<h3>View</h3>", dialog)                                     # the section went; its button stayed
         self.assertIn("q.setAttribute('aria-expanded',String(!p.hidden))", status.JS)
         for key, lede in (("launchers", "Which apps a project or thread can open in"),
-                          ("preview", "Built but not released yet, and switched on in a file.")):
+                          ("preview", "Off until you switch them on in a file.")):
             self.assertRegex(dialog, r'aria-controls="help-%s"[^>]*>\?</button></h3><p class="setlede">%s' % (key, lede))  # said, not asked for
 
     def test_explanations_keep_their_words(self):
@@ -2011,7 +2011,7 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort", "Ask", "While you wait"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertEqual(["Effort", "While you wait"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
         self.assertIn('<code>{"effort": true}</code>', html)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
@@ -3135,7 +3135,7 @@ class TestApp(unittest.TestCase):
         swift = (self.APP / "Garrick.swift").read_text()
         self.assertIn("statusItem == nil }", swift)                           # with the icon, closing the window keeps the app
         self.assertIn("RegisterEventHotKey(", swift)                          # a hotkey without Accessibility permission
-        dictation = swift[swift.index("	// MARK: dictation (preview ask)"):swift.index("	// File › Ask Garrick… is there only")]
+        dictation = swift[swift.index("	// MARK: dictation"):swift.index("	// File › Ask Garrick… is there only")]
         self.assertEqual(swift.count("AXIsProcessTrusted"), dictation.count("AXIsProcessTrusted"))   # asked for only to press a dictation key
         self.assertIn("SMAppService.mainApp", swift)                          # open at login, as a login item
         self.assertIn("final class RowView: NSView", swift)                   # a row is clicked and opens a submenu
@@ -3148,7 +3148,7 @@ class TestApp(unittest.TestCase):
 
     def test_the_ask_box_can_start_dictation(self):
         swift = (self.APP / "Garrick.swift").read_text()
-        show = swift[swift.index("	@objc func showAsk("):swift.index("	// MARK: dictation (preview ask)")]
+        show = swift[swift.index("	@objc func showAsk("):swift.index("	// MARK: dictation")]
         self.assertIn("let opening = !(p.isVisible && p.isKeyWindow)", show)   # a second press never stops a tool that toggles
         self.assertLess(show.index("p.makeFirstResponder(askField)"), show.index("if opening { startDictation() }"))   # the field first
         start = swift[swift.index("	func startDictation()"):swift.index("	func setDictation(")]
@@ -3252,7 +3252,7 @@ class TestApp(unittest.TestCase):
         self.assertIn('let askDefault: [String: Any] = ["code": "KeyG", "mods": ["cmd"], "label": "⌘G"]', swift)
         self.assertIn("if let set = defaults.dictionary(forKey: kAskHotkey) { return set[\"code\"] == nil ? nil : set }", swift)  # set, or none
         self.assertIn("return sameKey(defaults.dictionary(forKey: kHotkey), askDefault) ? nil : askDefault", swift)   # ⌘G gives way to the menu's
-        self.assertIn("let wanted = askOn() && !checking && !recording ? askSpec() : nil", swift)   # with the preview, not while recording
+        self.assertIn("let wanted = askOn() && !checking && !recording ? askSpec() : nil", swift)   # with Ask on, not while recording
         self.assertIn("if register(wanted, 2, &askKey) == noErr", swift)
         self.assertIn("if which == 2 { return showAsk() }", swift)
         self.assertIn("askMenuItem?.keyEquivalent = key", swift)                      # File › Ask Garrick… shows what is set
@@ -3293,7 +3293,7 @@ class TestApp(unittest.TestCase):
         self.assertIn('let menuReport = jobsDir.appendingPathComponent("garrick-app-menu.json")', swift)
         rows = swift[swift.index("	func fillRows("):swift.index("	func header(")]
         self.assertIn('reportMenu("menu", query: text, rows: menu.items.filter { $0.view is RowView }.count)', rows)
-        panel = swift[swift.index("	func fillPanel("):swift.index("	// MARK: ask (preview, ask)")]
+        panel = swift[swift.index("	func fillPanel("):swift.index("	// MARK: ask")]
         self.assertIn('reportMenu("panel", query: m.filter, rows: m.zones.reduce(0) { $0 + $1.rows.count })', panel)
         report = swift[swift.index("	func reportMenu("):swift.index("	// A row's actions, as its card offers them")]
         self.assertIn("guard !checking else { return }", report)                          # a check never writes over the app's

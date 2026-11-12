@@ -759,8 +759,6 @@ def todo(ws: Path) -> Dict[str, dict]:
 FLAGS = {
     "effort": ("Effort", "On Overview, the assistant's active time and list-price cost per thread over 7 days, 30 days or all "
                "time, read from Claude Code's own transcripts. The nightly job, gr-nightly, records them, so days outlive their clean-up."),
-    "ask": ("Ask", "In the Garrick app: the panel's field, and the box ⌘G opens, answer a request in plain words and act "
-            "on it, through a warm assistant session under the scheduled jobs' caps (ask.py). Off, the field opens your assistant."),
     "while-you-wait": ("While you wait", "Parked: the Garrick band's line during a long turn in Claude Code, one thing worth doing "
                        "elsewhere, with /garrick next, open, tick and later, and its section in Settings. Off, neither shows; "
                        "\"what's next\" answers either way."),
@@ -2461,7 +2459,7 @@ MENU_SETTINGS_JS = r"""
 var box=document.getElementById('menu-settings');if(!host||!box)return;box.hidden=false;
 function say(s){var t=document.getElementById('toast');if(!t)return;t.textContent=s;t.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){t.style.opacity=0},4000)}
 var show=document.getElementById('menu-show'),login=document.getElementById('menu-login'),key=document.getElementById('menu-hotkey'),style=document.getElementById('menu-style');
-var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app, with the preview ask on',
+var ask=document.getElementById('menu-askkey'),NOTE={hotkey:'Opens the menu or the panel from any app',askhotkey:'Opens the Ask box from any app',
 dictationkey:'Click, then press the shortcut your dictation tool starts on. Pause the tool first if it takes the keys'};
 var dict=document.getElementById('menu-dictation'),dkey=document.getElementById('menu-dictkey'),FIELD={hotkey:'menu-hotkey',askhotkey:'menu-askkey',dictationkey:'menu-dictkey'};
 /* what the box does once it opens, said under the choice */
@@ -2474,6 +2472,7 @@ function note(which,s){var n=document.getElementById(FIELD[which]+'-note');if(n)
 function fill(){var a=window.GarrickApp||{};show.checked=!!a.menubar;login.checked=!!a.login;login.disabled=a.login==null;
 /* an app built before the panel says no style, and its row stays hidden; one built before the Ask hotkey, that row */
 if(style){style.closest('.launcher-row').style.display='style' in a?'':'none';style.value=a.style||'icon';style.disabled=!a.menubar}
+var onb=document.getElementById('menu-ask');if(onb){onb.closest('.launcher-row').style.display='ask' in a?'':'none';onb.checked=a.ask!==false}
 if(ask){ask.closest('.launcher-row').style.display='askhotkey' in a?'':'none';ask.value=a.askhotkey||''}
 var said=a.said||{};note('hotkey',said.hotkey);note('askhotkey',said.askhotkey||(a.askdefault?NOTE.askhotkey+'. ⌘G until you set another':''));
 /* how the Ask box closes (#411): the last ticked box cannot be unticked, and says why */
@@ -2494,6 +2493,7 @@ window.GarrickAppSet=function(a){window.GarrickApp=a;fill()};fill();
 function tell(e,o){e.stopPropagation();host.postMessage({app:o})}
 show.addEventListener('change',function(e){tell(e,{menubar:show.checked})});
 if(style)style.addEventListener('change',function(e){tell(e,{style:style.value})});
+var askb=document.getElementById('menu-ask');if(askb)askb.addEventListener('change',function(e){e.stopPropagation();host.postMessage({act:{verb:'settings',ask:askb.checked}})});
 if(dict)dict.addEventListener('change',function(e){tell(e,{dictation:dict.value})});
 function closeWith(e){var ce=document.getElementById('menu-askclose-esc'),cc=document.getElementById('menu-askclose-click');
 if(!ce.checked&&!cc.checked){(e.target||ce).checked=true;return}tell(e,{askclose:ce.checked&&cc.checked?'both':ce.checked?'escape':'click'})}
@@ -4142,8 +4142,8 @@ def set_head(name: str, key: str, lede: str = "") -> str:
 def menu_settings() -> str:
     """Settings › Menu bar, shown in Garrick.app
     only: the icon or a panel at a screen edge, opening at login, the
-    shortcut that opens either, the one that opens the Ask box (preview
-    ask), and the dictation the box starts once it opens. The app keeps
+    shortcut that opens either, the one that opens the Ask box, whether it
+    answers, and the dictation the box starts once it opens. The app keeps
     them all, so they hold when the window is closed."""
     return ('<section class="setsec apponly" id="menu-settings" hidden>' + set_head("Menu bar", "menu", 'Keep your live projects '
             'one click away from any app: in the menu bar, or in a panel at the edge of the screen.') + help_text("menu", 'A menu of the live '
@@ -4161,8 +4161,10 @@ def menu_settings() -> str:
             'or the panel from any app</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-hotkey" readonly placeholder="Click, then press keys" aria-label="Hotkey">'
             '<button class="act" type="button" id="menu-hotkey-clear">Clear</button></span></div>'
+            '<div class="launcher-row" style="display:none"><label class="launcher-choice"><input type="checkbox" id="menu-ask"> <span>Answer in the Ask box'
+            '<small>Keeps a warm assistant session that spends model calls. Off, no Ask box, no key held, and the panel\'s field opens your assistant</small></span></label></div>'
             '<div class="launcher-row" style="display:none"><label class="launcher-choice" for="menu-askkey"><span>Ask hotkey<small id="menu-askkey-note">'
-            'Opens the Ask box from any app, with the preview ask on</small></span></label>'
+            'Opens the Ask box from any app</small></span></label>'
             '<span class="hotkey"><input type="text" id="menu-askkey" readonly placeholder="None" aria-label="Ask hotkey">'
             '<button class="act" type="button" id="menu-askkey-clear">Clear</button></span></div>'
             '<div class="launcher-row" style="display:none"><span class="launcher-choice"><span>Close the Ask box with'
@@ -4396,7 +4398,7 @@ def preview_section(flags: Dict[str, bool]) -> str:
     rows = "".join('<div class="flagrow" title="%s"><b>%s</b><span class="chip%s">%s</span></div>'
                    % (E(FLAGS[k][1]), E(FLAGS[k][0]), " on" if on else "", chip(k, on)) for k, on in flags.items())
     return ('<section class="setsec" id="preview-settings">%s%s%s</section>'
-            % (set_head("Preview features", "preview", "Built but not released yet, and switched on in a file."), rows,
+            % (set_head("Preview features", "preview", "Off until you switch them on in a file."), rows,
                help_text("preview", 'In Garrick&#39;s source but not yet released, so they may still change. Switch one on in '
                '<code>System/garrick-flags.json</code>, for example <code>{"effort": true}</code>, and rebuild the page. '
                'Point at a feature for what it does.')))

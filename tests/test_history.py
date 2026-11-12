@@ -12,6 +12,7 @@ import datetime
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -234,6 +235,48 @@ class Moving(Fixture):
         write(self.root / "System" / "garrick-settings.json", json.dumps({"history-months": "six", "note-max-words": -3, "resume-max-words": True}))
         self.assertEqual(history.DEFAULTS, history.limits(self.root))
 
+    def settings(self, **kw):
+        write(self.root / "System" / "garrick-settings.json", json.dumps(kw))
+
+    def test_resume_trim_is_ask_by_default_and_any_unknown_value_counts_as_ask(self):
+        self.assertEqual("ask", history.trim_mode(self.root, {}))
+        for value in ("sometimes", "AUTO", True, 1, None, ["auto"]):
+            self.settings(**{"resume-trim": value})
+            self.assertEqual("ask", history.trim_mode(self.root, {}), value)
+
+    def test_resume_trim_auto_holds_in_an_attended_session_only(self):
+        self.settings(**{"resume-trim": "auto"})
+        self.assertEqual("auto", history.trim_mode(self.root, {}))
+        self.assertEqual("ask", history.trim_mode(self.root, {"GARRICK_HEADLESS": "1"}))
+        with mock.patch.dict(os.environ, {"GARRICK_HEADLESS": "1"}):
+            self.assertEqual("ask", history.trim_mode(self.root))
+
+    def test_a_trim_aims_at_three_quarters_of_the_limit(self):
+        self.assertEqual(300, history.trim_target(400))
+        self.assertEqual(600, history.trim_target(800))
+        self.assertEqual(1, history.trim_target(1))
+
+    def test_the_resume_command_reports_the_mode_and_the_target_and_headless_trims_nothing(self):
+        self.put(self.a, thread("Pricing", "Northwind", "acme", [1], words=100))
+        self.settings(**{"resume-trim": "auto", "resume-max-words": 10})
+        rel, snap = str(self.a.relative_to(self.root)), self.a.read_bytes()
+        script = str(REPO / "template" / "System" / "tools" / "history.py")
+        for headless, mode in (("", "auto"), ("1", "ask")):
+            env = {k: v for k, v in os.environ.items() if k != "GARRICK_HEADLESS"}
+            if headless:
+                env["GARRICK_HEADLESS"] = headless
+            done = subprocess.run([sys.executable, script, "--root", str(self.root), "resume", rel],
+                                  capture_output=True, text=True, env=env)
+            report = json.loads(done.stdout)
+            self.assertEqual((mode, 7, True), (report["trim"], report["target"], report["over"]))
+        self.assertEqual(snap, self.a.read_bytes())
+
+    def test_the_resume_over_words_follow_the_mode(self):
+        self.assertIn("nothing changes without a yes", history.resume_over(500, 400))
+        auto = history.resume_over(500, 400, "auto")
+        self.assertIn("trims it to about 300 words", auto)
+        self.assertNotIn("without a yes", auto)
+
     def test_a_dry_run_lists_the_note_with_both_counts_and_writes_nothing(self):
         self.put(self.a, thread("Pricing", "Northwind", "acme", [1, 2, 3, 4, 5, 400, 500], words=100))
         snap = self.a.read_bytes()
@@ -434,6 +477,8 @@ class Skills(unittest.TestCase):
         self.assertIn("python3 System/tools/history.py apply", wrap)
         self.assertIn("resume-max-words", wrap)
         self.assertIn("never run overnight", wrap)
+        for value in ('`"ask"`', '`"auto"`', "75%", "`GARRICK_HEADLESS=1`", "word for word"):
+            self.assertIn(value, wrap)
         self.assertLess(wrap.index("history.py apply"), wrap.index("git -C \"Zones/<Zone>\" commit"))
         self.assertIn("`history/` folder", wrap)
 

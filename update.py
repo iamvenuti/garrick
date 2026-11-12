@@ -1541,6 +1541,7 @@ def next_steps(root, p, done=None):
                               lambda link=link: relink(link, mine)))
 
     steps.extend(home_steps(root))
+    steps.extend(ask_steps(root))
     steps.extend(before_quit_steps(root))
 
     for what, path in outside_copies(root):
@@ -1628,6 +1629,49 @@ def remove_home_key(root):
     except (OSError, ValueError) as exc:
         return 'Could not remove "home" from System/garrick-settings.json: %s.' % exc
     return 'Removed "home" from System/garrick-settings.json: the Garrick App opens on the full page only.'
+
+
+def ask_steps(root):
+    """Ask is on for everyone (#528), and its switch is Settings › Menu bar › Answer in the Ask box, `"ask"` in
+    System/garrick-settings.json. A flags file that says `"ask": false` was a choice to keep it off, so the update
+    writes the switch off, once: only while the settings file holds no `"ask"` of its own. Nothing else in the flags
+    file is read, and it is not rewritten."""
+    try:
+        flags = json.loads(root.joinpath("System", "garrick-flags.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    try:
+        saved = json.loads(root.joinpath(*install.lib().SETTINGS).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        saved = {}
+    except (OSError, ValueError):
+        return []
+    if not isinstance(flags, dict) or flags.get("ask") is not False:
+        return []
+    if not isinstance(saved, dict) or "ask" in saved:
+        return []
+    return [('Switch Ask off in System/garrick-settings.json, as "ask": false was in System/garrick-flags.json: Ask is on for '
+             'everyone now, and Settings under Menu bar, Answer in the Ask box, turns it on again',
+             lambda: carry_ask_off(root))]
+
+
+def carry_ask_off(root):
+    """Write `"ask": false` into System/garrick-settings.json, beside what is there, and nothing else."""
+    settings = root.joinpath(*install.lib().SETTINGS)
+    try:
+        try:
+            data = json.loads(settings.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            data = {}
+        if not isinstance(data, dict):
+            return 'System/garrick-settings.json is not a settings file, so "ask": false was not carried over.'
+        if "ask" in data:
+            return 'System/garrick-settings.json already has "ask"; it is left as it is.'
+        data["ask"] = False
+        settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    except (OSError, ValueError) as exc:
+        return 'Could not write "ask": false to System/garrick-settings.json: %s.' % exc
+    return 'Ask is off, as System/garrick-flags.json had it: "ask": false is now in System/garrick-settings.json.'
 
 
 def before_quit_steps(root):

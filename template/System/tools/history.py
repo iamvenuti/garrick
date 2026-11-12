@@ -23,8 +23,10 @@ if the note is still longer than `note-max-words` (4,000), the oldest entries,
 until it fits. The newest five entries always stay, whatever their age, and
 there is no time floor. The three settings are `history-months`,
 `note-max-words` and `resume-max-words` (400) in System/garrick-settings.json.
-The Resume here block is never touched: when it is longer than its limit the
-tool says so and a person decides what shrinks (the threads skill's Wrap).
+The Resume here block is never touched by this tool: when it is longer than its
+limit the tool says so, with the `resume-trim` setting (`ask`, the default, or
+`auto`; always `ask` under GARRICK_HEADLESS=1) and the target a trim aims at,
+75% of the limit. The assistant does the trim (the threads skill's Wrap).
 
 **A history file** holds its frontmatter (`type: history`, `parent:`, the
 note's own `project:`, `party:` and `zone:` where it has them, `created:`), its
@@ -70,6 +72,8 @@ if str(HERE) not in sys.path:
 import garrick_lib as gl  # noqa: E402
 
 DEFAULTS = {"history-months": 6, "note-max-words": 4000, "resume-max-words": 400}
+RESUME_TRIM = "resume-trim"     # "ask" (the default) or "auto" in System/garrick-settings.json (#527)
+TRIM_TARGET = 0.75              # a trim aims at this share of `resume-max-words`, so a block does not come back over it
 KEEP_NEWEST = 5                 # the entries a note always keeps
 FOLDER = "history"
 MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
@@ -108,6 +112,22 @@ def limits(root) -> Dict[str, int]:
         if isinstance(value, int) and not isinstance(value, bool) and value > 0:
             out[key] = value
     return out
+
+
+def trim_mode(root, env=None) -> str:
+    """What a Resume here block over its limit gets (#527): "ask", today's diff and a yes, or "auto", an attended
+    session trims it and reports. Only the exact string "auto" counts; anything else, or no setting, is "ask".
+    A headless run (GARRICK_HEADLESS=1, as the jobs extra sets it) has nobody to see what a trim drops, so it is
+    "ask" whatever the file says."""
+    env = os.environ if env is None else env
+    if env.get("GARRICK_HEADLESS") == "1":
+        return "ask"
+    return "auto" if gl.read_settings(root).get(RESUME_TRIM) == "auto" else "ask"
+
+
+def trim_target(limit: int) -> int:
+    """The words a trimmed Resume here block aims at: 75% of `resume-max-words`, whole words."""
+    return max(1, int(limit * TRIM_TARGET))
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +315,11 @@ def note_over(words: int, limit: int) -> str:
             "(`python3 System/tools/history.py dry-run` lists what would move)" % (words, limit))
 
 
-def resume_over(words: int, limit: int) -> str:
+def resume_over(words: int, limit: int, mode: str = "ask") -> str:
+    if mode == "auto":
+        return ("its Resume here block has %d words, over the %d of `resume-max-words`; the next attended wrap or "
+                "Nurture trims it to about %d words and reports what it changed (`resume-trim` is `auto`)"
+                % (words, limit, trim_target(limit)))
     return ("its Resume here block has %d words, over the %d of `resume-max-words`; the next wrap or Nurture "
             "proposes a shorter one, and nothing changes without a yes" % (words, limit))
 
@@ -770,7 +794,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "resume":
         text = (root / args.note).read_text(encoding="utf-8")
         words, cap = resume_words(text), limits(root)["resume-max-words"]
-        print(json.dumps({"resume_words": words, "limit": cap, "over": words > cap}))
+        print(json.dumps({"resume_words": words, "limit": cap, "over": words > cap,
+                          "trim": trim_mode(root), "target": trim_target(cap)}))
         return 0
     notes = [root / n for n in args.notes]
     if not notes:

@@ -6,7 +6,7 @@
 
 Garrick.app runs it when a button
 on the page asks; nothing else can, because a browser has no way to reach it.
-The ask preview (ask.py) runs what it proposes through perform(), the same
+Ask (ask.py) runs what it proposes through perform(), the same
 check and the same record. A session runs it too (#344), with the verb and its
 options in place of JSON, and reads the sentence it prints:
 
@@ -78,6 +78,8 @@ zone's repository, as the skills would:
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
                 System/tools/fade.py keeps; saving moves no page.
+                Settings › Menu bar › Answer in the Ask box: {"ask": false}, on
+                unless saved off; the Ask box reads it at each use.
                 {"desk-agent": "codex"}, which assistant a cmux tab starts,
                 written by the cmux extra's desk.py into System/desk.json
     release-check  Settings › About Garrick's Check for updates (#410):
@@ -1470,15 +1472,20 @@ def save_settings(ws: Path, req: dict) -> str:
     page. A way it does not list is on, as on the page. Settings › Home:
     {"home": "simple"} or "full", which the page opens on (#175).
     {"graph": {"project": "Teal"}}, Settings › Graph colours (#291).
+    {"ask": false}, Settings › Menu bar › Answer in the Ask box (on unless saved off).
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
     if not {"launchers", "zones", "graph", "notifications", "while-you-wait", "home", "memory", "desk-agent",
-            "release-notice", "release-notice-every"} & set(req):
+            "release-notice", "release-notice-every", "ask"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
         raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), req["desk-agent"]))
     new = {}
+    if "ask" in req:
+        if not isinstance(req["ask"], bool):
+            raise Refused("Ask is on or off")
+        new["ask"] = req["ask"]
     if "release-notice" in req:
         if not isinstance(req["release-notice"], bool):
             raise Refused("the check for a newer Garrick is on or off")

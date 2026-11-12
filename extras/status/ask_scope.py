@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """ask_scope.py: what an answer from the Ask box may read, for ask.py. Part
-of the preview `ask` (#261, slice C).
+of Ask (#261, slice C).
 
 Two things, both settled before the session sees a record.
 

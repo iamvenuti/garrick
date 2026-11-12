@@ -2130,7 +2130,7 @@ Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)
 /* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
    The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
 function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'';
-if(/^A wall holds some material back/.test(t))return{say:t,next:'',raw:'',act:''};
+if(/^A wall holds /.test(t))return{say:t,next:'',raw:'',act:''};
 if(e.q.verb==='continue')return{say:'Claude did not open.',next:'Try again',raw:t,act:'retry'};
 if(k==='lost')return{say:'This page did not hear back, so we cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
 if(k==='unknown')return{say:'We cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};

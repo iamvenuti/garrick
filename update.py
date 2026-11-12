@@ -1668,7 +1668,7 @@ def carry_ask_off(root):
         if "ask" in data:
             return 'System/garrick-settings.json already has "ask"; it is left as it is.'
         data["ask"] = False
-        settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        settings.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
     except (OSError, ValueError) as exc:
         return 'Could not write "ask": false to System/garrick-settings.json: %s.' % exc
     return 'Ask is off, as System/garrick-flags.json had it: "ask": false is now in System/garrick-settings.json.'

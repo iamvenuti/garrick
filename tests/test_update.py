@@ -1828,6 +1828,17 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertEqual(before, (self.root / "System" / "garrick-flags.json").read_text())
         self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "Ask" in w])     # done: once
 
+    def test_ask_false_carried_file_is_written_as_the_page_writes_it(self):
+        """The carried file has the page's formatting, so a later save from the page shows no reformatting diff."""
+        settings = self.root / "System" / "garrick-settings.json"
+        settings.write_text(json.dumps({"launchers": {"note": True}}))
+        self.ask_flags({"ask": False})
+        self.apply()
+        carried = settings.read_text()
+        lib = update.install.lib()
+        lib.save_preferences(self.root, {"launchers": {"note": True}})
+        self.assertEqual(carried, settings.read_text())
+
     def test_ask_false_with_no_settings_file_still_switches_it_off(self):
         settings = self.root / "System" / "garrick-settings.json"
         if settings.exists():

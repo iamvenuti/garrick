@@ -3377,9 +3377,10 @@ def release_repository(root: PathLike) -> str:
 # "graph" is Settings › Graph colours, the colour of each kind of note the
 # status page's Explore draws (#291); "release-notice" and
 # "release-notice-every" are Settings › About Garrick's switch and its cadence
-# (#410), which release.py reads.
+# (#410), which release.py reads; "ask" is Settings › Menu bar › Answer in the
+# Ask box (#528): on unless it is false.
 PREFERENCES = ("zones", "launchers", "default", "notifications", "while-you-wait", "home", "memory", "catch-up", "graph",
-               "release-notice", "release-notice-every")
+               "release-notice", "release-notice-every", "ask")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
 

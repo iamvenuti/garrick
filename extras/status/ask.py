@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""ask.py: the ask box. A preview feature, `ask`, off until the workspace
-switches it on in System/garrick-flags.json.
+"""ask.py: the ask box. On for everyone; Settings › Menu bar › *Answer in the
+Ask box* switches it off, as `"ask": false` in System/garrick-settings.json.
 
     python3 ask.py --workspace ~/Garrick ask "open Pricing in Claude"
     python3 ask.py --workspace ~/Garrick ask --json "park Pricing"   each line as it comes, for the app
@@ -288,7 +288,7 @@ AGENT_BRIEF = HERE / "ask-brief.md"        # the one session's (#358): it reads 
 TOOLS_SCRIPT = HERE / "ask_tools.py"
 TOOLS_SERVER = "garrick"                    # the MCP server's name, which makes a tool's name mcp__garrick__<tool>
 JOB = "ask"
-FLAG = "ask"
+SETTING = "ask"      # System/garrick-settings.json: `false` is Settings › Menu bar › Answer in the Ask box, off
 DEFAULT_TIER = "haiku"
 DEFAULT_ANSWER_TIER = "sonnet"
 LOG_TEXT = "GARRICK_ASK_LOG_TEXT"   # =1: ask.log keeps the request's and the reply's text too
@@ -471,7 +471,14 @@ def prefs():
 
 
 def flag_on(ws: Path) -> bool:
-    return page_action().flag_on(ws, FLAG)
+    """Whether the Ask box answers: yes, unless the workspace's settings say `"ask": false`
+    (Settings › Menu bar). A missing or unreadable file, and any other value, leave it on. The
+    flags file is not read: a leftover `"ask"` line there does nothing."""
+    try:
+        data = json.loads((ws / "System" / "garrick-settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return True
+    return not (isinstance(data, dict) and data.get(SETTING) is False)
 
 
 def agent_on(ws: Path) -> bool:
@@ -2360,7 +2367,7 @@ def canon(item: dict) -> str:
 
 
 def off() -> dict:
-    return {"kind": "command", "say": "Ask is a preview feature, and it is off. Switch it on in System/garrick-flags.json.",
+    return {"kind": "command", "say": "Ask is off. Switch it on in Settings, under Menu bar, Answer in the Ask box.",
             "done": [], "launch": [], "ok": False}
 
 

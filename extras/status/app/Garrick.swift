@@ -34,7 +34,7 @@
 //     left or right edge of the screen, or down from under the notch, when the
 //     pointer rests there or the hotkey is pressed (Settings › Menu bar › Shows as);
 //     its projects start folded, and it remembers the ones you unfold;
-//   - with the preview ask on, the window the Ask hotkey opens from any app
+//   - with Ask on (Settings › Menu bar › Answer in the Ask box, on unless switched off), the window the Ask hotkey opens from any app
 //     (⌘G until Settings sets another) answers a request in plain words through
 //     ask.py, beside status.py, and runs what it proposes; it is the one place
 //     that asks, and the fields of the menu and the panel only find (#310).
@@ -46,7 +46,7 @@
 // Each time it fills the menu or the panel it leaves garrick-app-menu.json in
 // the jobs folder: what it had to fill them with, in counts and zone names.
 // Nothing here changes a file in the workspace, as nothing on the page does,
-// except through page_action.py and ask.py (preview ask).
+// except through page_action.py and ask.py.
 import AppKit
 import Carbon.HIToolbox
 import IOKit.pwr_mgt
@@ -132,7 +132,7 @@ func awaitClaudeWindow(from: UInt64?, sleep: (TimeInterval) -> Void = { Thread.s
 // settings, the menu as the page last gave it, and whether the window was open.
 let defaults = UserDefaults.standard
 let kMenuBar = "menuBar", kHotkey = "hotkey", kMenu = "menu", kWindowShown = "windowShown"
-// The Ask box's hotkey (preview ask): a key as the page records it, an empty
+// The Ask box's hotkey: a key as the page records it, an empty
 // one for none, or, never set, ⌘G, unless ⌘G is the menu's hotkey.
 let kAskHotkey = "askHotkey"
 let askDefault: [String: Any] = ["code": "KeyG", "mods": ["cmd"], "label": "⌘G"]
@@ -157,15 +157,19 @@ enum Awake: Equatable { case off, on, until(Date), whileWorking }
 let agentsCheck = builder.deletingLastPathComponent().appendingPathComponent("agents_working.py")
 // desk.py, in the cmux extra beside the status folder: `focus --session ID` brings a cmux tab forward (#474).
 let deskScript = builder.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("cmux/desk.py")
-// ask.py, beside status.py (preview ask): a warm assistant session that answers a request and acts on it.
+// ask.py, beside status.py: a warm assistant session that answers a request and acts on it.
 let asker = builder.deletingLastPathComponent().appendingPathComponent("ask.py")
-let flagsFile = workspace.appendingPathComponent("System/garrick-flags.json")
-// Read at each use, so switching the preview on or off needs no restart.
+// Settings › Menu bar › Answer in the Ask box, `"ask": false` in the workspace's settings: Ask is on
+// unless the file says false (a missing or unreadable file leaves it on, as ask.py's flag_on() does).
+// The flags file is not read. Read at each use, so switching it on or off needs no restart.
+let settingsFile = workspace.appendingPathComponent("System/garrick-settings.json")
 func askOn() -> Bool {
-	guard let data = try? Data(contentsOf: flagsFile),
-	      let flags = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
-	return flags["ask"] as? Bool == true
+	guard let data = try? Data(contentsOf: settingsFile),
+	      let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return true }
+	return saved["ask"] as? Bool != false
 }
+// Set once the notice about the Ask hotkey has been shown, in the app's own defaults.
+let kAskKeyTold = "askKeyTold"
 let askHint = "Ask Garrick: open, park, wake, add a line, what's open…"
 // The Ask window's size and its text size (#309), kept in the app's own defaults,
 // never the workspace: the width, the height it has once grown for an answer, and
@@ -387,7 +391,7 @@ struct AskTurn {
 	                                    // either `request` to send as a new request or `act` to run as a button would (#345)
 }
 
-// The Ask window (preview ask): it takes the keys without bringing the app forward, as
+// The Ask window: it takes the keys without bringing the app forward, as
 // Spotlight does. Escape hides it and keeps the exchange; the hotkey brings the same one back.
 final class AskPanel: NSPanel {
 	// ⌘+ (or ⌘=), ⌘− and ⌘0: the text size one step up, one down, or back to the
@@ -689,7 +693,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var again = false                 // a rebuild asked for during one: one more after it
 	var hotKey: EventHotKeyRef?
 	var keySpec: [String: Any]?       // the hotkey Settings set, as registered
-	var askKey: EventHotKeyRef?       // the Ask box's, from any app (preview ask)
+	var askKey: EventHotKeyRef?       // the Ask box's, from any app
 	var askKeySpec: [String: Any]?    // and the key it holds
 	var askMenuItem: NSMenuItem?      // File › Ask Garrick…, which shows that key
 	var recording = false             // a hotkey field in Settings has the keys: both hot keys let go of theirs
@@ -713,7 +717,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	var askClickGlobal: Any?          // mouse-down monitors while the box is visible and a click outside closes it (#411)
 	var askClickLocal: Any?
 	var askOpenedAt = Date.distantPast
-	var askKeeper: Timer?             // the `keep` every askKeepEvery seconds (preview ask)
+	var askKeeper: Timer?             // the `keep` every askKeepEvery seconds
 	var askKept = false               // whether this app has a background session kept, for quit to stop it
 	var askField: AskInput!
 	var askInputHeight: NSLayoutConstraint!
@@ -819,7 +823,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		menuState = savedMenu()
 		present()
-		applyHotKeys()    // the menu's, and the Ask box's with the preview ask on
+		applyHotKeys()    // the menu's, and the Ask box's with Ask on
 		if resident && defaults.bool(forKey: kAwakeWorking) { setAwake(.whileWorking) }
 		if resident { startWaitingWatch() }
 		// Out of sight, nothing brings the app forward to check the page's age.
@@ -844,8 +848,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		for url in early { handleLink(url) }
 	}
 
-	// Ask's background session (#261): kept while the preview is on, started again by ask.py if it
-	// died, and stopped once the preview is switched off. Read at each tick, so the switch needs no restart.
+	// Ask's background session (#261): kept while Ask is on, started again by ask.py if it
+	// died, and stopped once Ask is switched off in Settings. Read at each tick, so the switch needs no restart.
 	func askKeep() {
 		if checking { return }
 		if askOn() {
@@ -1370,7 +1374,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		        "hotkey": defaults.dictionary(forKey: kHotkey)?["label"] as? String ?? "",
 		        "askhotkey": askSpec()?["label"] as? String ?? "",
 		        "askclose": savedAskClose().escape ? (savedAskClose().click ? "both" : "escape") : "click",
-		        "askdefault": defaults.object(forKey: kAskHotkey) == nil && askSpec() != nil, "said": keySaid,
+		        "askdefault": defaults.object(forKey: kAskHotkey) == nil && askSpec() != nil, "said": keySaid, "ask": askOn(),
 		        "finder": finderStatus, "dictation": savedDictation().rawValue, "dictationkey": defaults.dictionary(forKey: kDictationKey)?["label"] as? String ?? ""]
 	}
 
@@ -1515,6 +1519,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}
 		present()
 		recording = false     // a page loaded again has no field with the keys
+		if askOn() != askKept { askKeep() }     // a change in Settings starts or stops the session at once
 		applyHotKeys()        // the page is loaded again whenever it is rebuilt, so the flag is read often
 	}
 
@@ -2115,7 +2120,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		m.openSettings = { [weak self] in self?.showSettings() }
 	}
 
-	// MARK: ask (preview, ask)
+	// MARK: ask
 	// The request goes to ask.py, which keeps a warm assistant session, checks
 	// what it proposes and runs it through page_action.py. What comes back to
 	// open, a project or a thread, opens here, as its row's icons open it, in
@@ -2397,7 +2402,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.askRender() }
 	}
 
-	// MARK: dictation (preview ask)
+	// MARK: dictation
 	// Started once the box has opened with the cursor in its field, so the words
 	// land there, and only then: a second press of the Ask hotkey on an open box
 	// would stop a tool that toggles. macOS Dictation starts through the action
@@ -3131,7 +3136,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		askRender()                       // every turn shown again at the new size, and the window fitted to it
 	}
 
-	// File › Ask Garrick… is there only with the preview on.
+	// File › Ask Garrick… is there only with Ask on.
 	func validateMenuItem(_ item: NSMenuItem) -> Bool {
 		if item.action == #selector(showAsk(_:)) {
 			item.isHidden = !askOn()
@@ -3341,11 +3346,11 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// System-wide shortcuts through Carbon's hot keys, which need no
 	// Accessibility permission: the menu's (Settings › Hotkey), which opens the
 	// menu, or the window when the icon is off, and the Ask box's (Settings ›
-	// Ask hotkey) while the preview ask is on. Never the same key: Settings
+	// Ask hotkey) while Ask is on. Never the same key: Settings
 	// refuses that, and ⌘G, the Ask box's until you choose, gives way to a
 	// menu hotkey set to ⌘G. Both let go while a field in Settings records a
 	// key, so the field gets it. Held globally, a key no longer reaches other
-	// apps, which is why the Ask box's goes with the preview.
+	// apps, which is why the Ask box's goes with the switch in Settings.
 	func register(_ spec: [String: Any], _ n: UInt32, _ ref: inout EventHotKeyRef?) -> OSStatus {
 		guard let code = spec["code"] as? String, let vk = keyCodes[code] else { return OSStatus(paramErr) }
 		var mods: UInt32 = 0
@@ -3414,7 +3419,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			toast(spec == nil ? "No hotkey for the menu." : "\(label) opens the menu from any app."
 			      + (gaveWay ? " The Ask box has no hotkey now; set one under Ask hotkey." : ""))
 		} else {
-			toast(spec == nil ? "No hotkey for the Ask box." : "\(label) opens the Ask box from any app" + (askOn() ? "." : ", with the preview ask on."))
+			toast(spec == nil ? "No hotkey for the Ask box." : "\(label) opens the Ask box from any app" + (askOn() ? "." : ", once Ask is on in Settings."))
 		}
 	}
 
@@ -3432,9 +3437,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		}, 1, &pressed, nil, &hotKeyHandler)
 	}
 
-	// The Ask box's key, held from any app while the preview ask is on, as
+	// The Ask box's key, held from any app while Ask is on, as
 	// File › Ask Garrick… shows it with the window in front. Checked at launch
-	// and at every load of the page, so switching the preview needs no restart.
+	// and at every load of the page, so switching Ask needs no restart. The first time the app holds the key
+	// it says so once, with where to change it (#528): ⌘G stops being Find Next in the apps that use it.
 	// A key another app already holds this way is left to it.
 	func syncAskKey() {
 		let wanted = askOn() && !checking && !recording ? askSpec() : nil
@@ -3445,7 +3451,23 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		if let ask = askKey { UnregisterEventHotKey(ask); askKey = nil }
 		askKeySpec = nil
 		guard let wanted else { return }
-		if register(wanted, 2, &askKey) == noErr { askKeySpec = wanted } else { askKey = nil }
+		if register(wanted, 2, &askKey) == noErr {
+			askKeySpec = wanted
+			tellAskKey(wanted)
+		} else { askKey = nil }
+	}
+
+	// One notice, the first time this app holds the Ask key: which key it took, what that stops, and where
+	// to change it. Kept in the app's own defaults, so it is not said again; a toast, which comes as a
+	// notification too when the window is out of sight.
+	func tellAskKey(_ spec: [String: Any]) {
+		guard !defaults.bool(forKey: kAskKeyTold), !checking else { return }
+		defaults.set(true, forKey: kAskKeyTold)
+		let label = spec["label"] as? String ?? "The Ask hotkey"
+		// A moment later, so a launch has its page loaded and its window up to show it in.
+		DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+			self?.toast("\(label) now opens the Ask box from any app, so other apps lose it, Find Next included. Change the key, or switch Ask off, in Settings under Menu bar.")
+		}
 	}
 
 	// The Ask hotkey opens the Ask box. The hotkey opens the panel with the cursor in its

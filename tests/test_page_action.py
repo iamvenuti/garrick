@@ -707,6 +707,26 @@ class TestCatchUpSettings(ActionCase):
         self.assertFalse(self.path().exists())
 
 
+class TestAskSwitch(ActionCase):
+    """#528: Settings › Menu bar › Answer in the Ask box is `"ask"` in the settings file, a true or a false."""
+
+    def path(self):
+        return self.root / "System" / "garrick-settings.json"
+
+    def test_off_and_on_are_kept_beside_the_rest(self):
+        write(self.path(), json.dumps({"home": "full"}))
+        self.assertEqual("Settings saved", self.act(verb="settings", ask=False))
+        self.assertEqual({"home": "full", "ask": False}, json.loads(self.path().read_text()))
+        self.assertEqual("Settings saved", self.act(verb="settings", ask=True))
+        self.assertEqual({"home": "full", "ask": True}, json.loads(self.path().read_text()))
+
+    def test_only_a_boolean_is_kept(self):
+        for bad in ("false", 0, None, "off"):
+            with self.assertRaises(pa.Refused):
+                self.act(verb="settings", ask=bad)
+        self.assertFalse(self.path().exists())
+
+
 class TestMemorySettings(ActionCase):
     """Settings › Memory (#108): checked here against fade.py's shape, kept
     under "memory" beside the rest, and counted from unsaved values without

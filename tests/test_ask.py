@@ -306,15 +306,15 @@ class TestCarryOut(AskCase):
         self.assertIn("threads: Pricing (parked)", session.seen[2])                    # the list changed, so it is sent again
         self.assertIn("<last-results>\nAcme Review, Pricing is parked\n</last-results>", session.seen[2])
 
-    def test_the_flag_off_asks_nothing(self):
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": False}))
+    def test_the_switch_off_asks_nothing(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"ask": False}))
         session = FakeSession()
         out = ask.Asker(self.root, session).ask("open Pricing")
         self.assertFalse(out["ok"])
-        self.assertIn("preview feature, and it is off", out["say"])
+        self.assertIn("Ask is off", out["say"])
         self.assertEqual([], session.seen)
 
-    def test_actions_need_only_the_ask_flag(self):
+    def test_actions_need_nothing_to_be_switched_on(self):
         write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": True}))
         session = FakeSession(json.dumps({"say": "Parked.", "do": [
             {"verb": "park", "zone": "Work", "project": "Acme Review", "thread": "Pricing"},
@@ -323,8 +323,8 @@ class TestCarryOut(AskCase):
         self.assertEqual(["Acme Review, Pricing is parked", "Opening Acme Review"], out["done"])
         self.assertIn("\nstatus: parked\n", self.thread.read_text())
 
-    def test_the_ask_flag_switched_off_mid_turn(self):
-        write(self.root / "System" / "garrick-flags.json", json.dumps({}))
+    def test_the_switch_off_mid_turn(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"ask": False}))
         out = ask.Asker(self.root).carry_out("Parked.", [{"verb": "park", "zone": "Work", "project": "Acme Review",
                                                           "thread": "Pricing"}], self.names)
         self.assertFalse(out["ok"])
@@ -364,8 +364,8 @@ class TestCarryOut(AskCase):
         self.assertNotIn("birch", (self.jobs / "page-actions.log").read_text())
         self.assertIn("\nstatus: active\n", self.thread.read_text())
 
-    def test_the_flag_off_from_the_command_line(self):
-        os.remove(self.root / "System" / "garrick-flags.json")
+    def test_the_switch_off_from_the_command_line(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"ask": False}))
         import contextlib
         import io
         buf = io.StringIO()
@@ -991,17 +991,17 @@ class TestBackgroundSession(ServerCase):
         self.assertFalse(self.server.is_alive())                # idle for CLEAR_AFTER: gone, as before
         self.assertEqual([], list(self.jobs.glob("*.sock")))
 
-    def test_keep_with_the_flag_off_stops_the_server(self):
+    def test_keep_with_the_switch_off_stops_the_server(self):
         import contextlib
         import io
         self.up()
         self.op("keep")
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": False}))
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"ask": False}))
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             code = ask.main(["--workspace", str(self.root), "--json", "keep"])
         self.assertEqual(1, code)
-        self.assertIn("preview feature, and it is off", json.loads(buf.getvalue())["say"])
+        self.assertIn("Ask is off", json.loads(buf.getvalue())["say"])
         self.server.join(10)
         self.assertFalse(self.server.is_alive())
         self.assertEqual([], list(self.jobs.glob("*.sock")))
@@ -1252,10 +1252,10 @@ class TestRenewal(ServerCase):
         self.up()
         self.op("ask", "what's open")
         (first,) = self.procs()
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"ask": False}))
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"ask": False}))
         with self.small():                                      # full, but switched off
             out = self.op("ask", "what's open")
-        self.assertIn("preview feature, and it is off", out["say"])
+        self.assertIn("Ask is off", out["say"])
         self.assertNotIn("refreshed", out)
         __import__("time").sleep(0.5)
         self.assertEqual([first["pid"]], [p["pid"] for p in self.procs()])     # no process started
@@ -1609,15 +1609,68 @@ class TestDesk(AskCase):
 
 
 class TestFlag(unittest.TestCase):
-    def test_listed_with_the_preview_features(self):
+    """#528: Ask is on for everyone. Settings › Menu bar › Answer in the Ask box saves `"ask": false` in
+    System/garrick-settings.json to turn it off; the flags file is not read."""
+
+    def status(self):
         spec = importlib.util.spec_from_file_location("garrick_status_for_ask", REPO / "extras" / "status" / "status.py")
         status = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(status)
-        self.assertIn("ask", status.FLAGS)
+        return status
+
+    def test_no_longer_listed_with_the_preview_features(self):
+        status = self.status()
+        self.assertNotIn("ask", status.FLAGS)
         with tempfile.TemporaryDirectory() as tmp:
             write(Path(tmp) / "System" / "garrick-flags.json", json.dumps({"ask": True}))
-            self.assertTrue(status.preview_flags(Path(tmp))["ask"])
-            self.assertTrue(ask.flag_on(Path(tmp)))
+            self.assertNotIn("ask", status.preview_flags(Path(tmp)))
+            html = status.preview_section(status.preview_flags(Path(tmp)))
+            self.assertNotIn("Ask", html)
+            self.assertIn("Off until you switch them on in a file.", html)
+            self.assertNotIn("not released yet", html)
+
+    def test_on_with_no_settings_and_with_nothing_that_reads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            self.assertTrue(ask.flag_on(ws))                                           # no file
+            write(ws / "System" / "garrick-settings.json", "{not json")
+            self.assertTrue(ask.flag_on(ws))
+            write(ws / "System" / "garrick-settings.json", json.dumps({"home": "full"}))
+            self.assertTrue(ask.flag_on(ws))                                           # no line
+            write(ws / "System" / "garrick-settings.json", json.dumps({"ask": True}))
+            self.assertTrue(ask.flag_on(ws))
+
+    def test_off_only_for_a_json_false(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            write(ws / "System" / "garrick-settings.json", json.dumps({"ask": False}))
+            self.assertFalse(ask.flag_on(ws))
+            for other in ("false", 0, None, "off"):
+                write(ws / "System" / "garrick-settings.json", json.dumps({"ask": other}))
+                self.assertTrue(ask.flag_on(ws), other)
+
+    def test_the_flags_file_does_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            write(ws / "System" / "garrick-flags.json", json.dumps({"ask": False}))
+            self.assertTrue(ask.flag_on(ws))
+            write(ws / "System" / "garrick-settings.json", json.dumps({"ask": False}))
+            write(ws / "System" / "garrick-flags.json", json.dumps({"ask": True}))
+            self.assertFalse(ask.flag_on(ws))
+
+    def test_the_app_reads_the_same_switch(self):
+        swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+        body = swift[swift.index("func askOn()"):]
+        body = body[:body.index("\n}\n")]
+        self.assertIn("garrick-settings.json", swift[swift.index("let settingsFile"):][:200])
+        self.assertIn('saved["ask"] as? Bool != false', body)
+        self.assertNotIn("garrick-flags.json", body)
+
+    def test_nothing_calls_ask_a_preview(self):
+        for rel in ("extras/status/ask.py", "extras/status/ask_scope.py", "extras/status/page_action.py", "extras/status/status.py",
+                    "extras/status/app/Garrick.swift", "docs/enforced.md", "docs/extras/cmux.md", "docs/commands.md"):
+            text = (REPO / rel).read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"(?i)preview `?ask|preview ask|ask preview|ask is a preview", rel)
 
 
 if __name__ == "__main__":

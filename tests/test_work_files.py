@@ -14,14 +14,10 @@ macOS's `open` are never run: stand-ins write down how they were called.
 from __future__ import annotations
 
 import datetime as dt
-import html as htmllib
 import json
 import os
-import re
-import shutil
 import subprocess
 import sys
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -30,7 +26,7 @@ sys.dont_write_bytecode = True
 
 from fixtures import write  # noqa: E402
 from test_extract import manifest  # noqa: E402
-from test_your_work import PAGE_HARNESS, Case, H, Y, pa, status  # noqa: E402
+from test_your_work import Case, Y, pa  # noqa: E402
 
 F = pa.work_files_lib()
 NOTE = "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"
@@ -146,24 +142,6 @@ class TestKeepACopy(Stored):
         self.assertFalse((self.files / "Printer quote.pdf").exists())
         self.assertIn("Printer quote.pdf", F.history_of(self.files))
 
-    def test_media_stays_out_until_the_switch_brings_it_in(self):
-        rec = self.with_media()
-        self.files_act("copy")
-        self.assertFalse((self.files / rec.name).exists())
-        card = self.card()
-        self.assertIn('role="switch" aria-checked="false"', card)
-        self.assertIn("left out of the copy", card)
-        self.assertIn("Bring in recordings and video? That downloads 1 file, 4 KB, from Shared Drive", card)
-        out = self.files_act("media-in")
-        self.assertEqual("Recordings and video are in Garrick's copy now: 1 file, 4 KB", out["say"])
-        self.assertTrue((self.files / rec.name).is_file())
-        self.assertIn("media: in", self.hub.read_text())
-        out = self.files_act("media-out")
-        self.assertIn("The versions already kept stay", out["say"])
-        self.assertFalse((self.files / rec.name).exists())
-        self.assertIn(rec.name, F.history_of(self.files))                                  # kept in its history
-        self.assertNotIn("media:", self.hub.read_text())
-
     def test_continue_refreshes_first_and_claude_reads_the_folder_and_edits_neither(self):
         self.files_act("copy")
         out = pa.act(self.root, {"verb": "continue", "zone": "Work", "file": NOTE})
@@ -205,20 +183,6 @@ class TestKeepACopy(Stored):
         self.assertEqual(pa.wall_refusal(self.root), str(said.exception))
         self.assertFalse(self.files.exists())
         self.assertEqual(head, self.git("rev-parse", "HEAD"))
-        self.assertEqual("", self.git("status", "--porcelain"))
-
-    def test_back_to_left_in_place_keeps_or_deletes_the_copy(self):
-        self.files_act("copy")
-        out = self.files_act("keep-copy")
-        self.assertIn("Its copy is kept, and no longer refreshed", out["say"])
-        self.assertNotIn("storage:", self.hub.read_text())
-        self.assertTrue(self.files.is_dir())
-        self.assertIn(self.rule(self.files), self.deny())                                 # still out of Claude's reach
-        self.assertIn("An old copy is kept, with 1 version, and is no longer refreshed.", self.card())
-        out = self.files_act("delete-copy")
-        self.assertEqual("Garrick's copy is deleted, with its version. Your folder is as it was", out["say"])
-        self.assertFalse(self.files.exists())
-        self.assertEqual([self.rule(self.folder)], self.deny())
         self.assertEqual("", self.git("status", "--porcelain"))
 
     def test_a_version_is_opened_to_read_or_saved_as_a_separate_file_never_restored(self):
@@ -379,35 +343,6 @@ class TestMoveIntoGarrick(Stored):
         self.assertIn(self.rule(self.files), self.deny())                                   # the old copy out of reach again
         self.assertEqual("", self.git("status", "--porcelain"))
 
-    def test_moved_files_open_from_the_page_and_finder_shows_only_their_folder(self):
-        self.moved()
-        card = self.card()
-        req = {"verb": "work-file", "zone": "Work", "file": NOTE, "do": "open", "path": "Printer quote.pdf"}
-        self.assertIn(htmllib.escape(json.dumps(req)), card)
-        self.assertIn("Show them in Finder", card)
-        self.assertIn("All 5 files are in Garrick now.", card)
-        self.assertIn("Undo the move", card)
-        pa.act(self.root, req)
-        pa.act(self.root, {"verb": "work-file", "zone": "Work", "file": NOTE, "do": "finder"})
-        self.assertEqual([[str((self.files / "Printer quote.pdf").resolve())], [str(self.files)]], self.opens())
-        with self.assertRaisesRegex(pa.Refused, "not one of this work's"):
-            pa.act(self.root, dict(req, path="../Catalogue 2027.md"))
-
-    def test_a_session_on_moved_work_reads_and_may_edit_them_and_an_edit_can_be_undone(self):
-        self.moved()
-        quote = self.files / "Printer quote.pdf"
-        quote.write_bytes(b"%PDF-1.4 edited in a session\n")                                 # as Claude would
-        pa.act(self.root, {"verb": "continue", "zone": "Work", "file": NOTE})
-        prime = [c for c in self.calls() if "-p" in c["args"]][-1]["args"]
-        dirs = [prime[i + 1] for i, a in enumerate(prime) if a == "--add-dir"]
-        self.assertEqual(str(self.files), dirs[0])
-        self.assertNotIn("--settings", prime)
-        self.assertNotIn(self.rule(self.files), self.deny())
-        versions = F.history_of(self.files)["Printer quote.pdf"]
-        self.assertEqual(2, len(versions))
-        self.assertEqual(b"%PDF-1.4 a quote\n", F.history_blob(self.files, versions[1][0], "Printer quote.pdf"))
-        self.assertIn("2 versions", self.card())
-
     def test_stop_using_this_puts_the_files_back_first_and_keeps_the_copy(self):
         before, _ = self.moved()
         said = pa.act(self.root, {"verb": "stop-using", "zone": "Work", "file": NOTE})
@@ -418,150 +353,6 @@ class TestMoveIntoGarrick(Stored):
         self.assertEqual("", self.git("status", "--porcelain"))
         pa.act(self.root, {"verb": "bring-back", "zone": "Work", "project": "Catalogue 2027"})
         self.assertTrue((self.files / ".git").is_dir())
-
-
-class TestThePage(Stored):
-    def test_left_in_place_says_so_with_change_and_the_three_choices(self):
-        card = self.card()
-        self.assertIn("Where these files live: <b>left in place</b>, in Catalogue 2027. Garrick only reads them.", card)
-        wid = Y.work_id("Catalogue 2027", "Work/" + NOTE)
-        self.assertIn('data-w-open="%s-where">Change</button>' % wid, card)
-        page = self.card(where=True)
-        for title in ("Leave in place", "Keep a copy", "Move into Garrick"):
-            self.assertIn(title, page)
-        self.assertEqual(1, page.count('<span class="sh-tag">Now</span>'))
-        self.assertIn('class="sh-opt sh-cur"', page)
-        for row in ("What happens", "Space and download", "Who else is affected"):
-            self.assertEqual(2, page.count("<dt>%s</dt>" % row))                  # Keep a copy's and Move's previews
-        size = F.said_size(sum(s.st_size for s in F.listing(self.folder).values()))
-        self.assertIn("Downloads all 5 files, %s" % size, page)
-        self.assertIn("Anyone else who uses the folder will no longer see these files.", page)
-        self.assertIn("Hana Royle and Owen Tarrant are named in this work", page)
-        self.assertIn("data-busy=", page)
-        self.assertNotIn(str(self.drive), page)
-
-    def test_a_copy_shows_when_it_was_refreshed_its_versions_and_refresh_now(self):
-        self.files_act("copy")
-        card = self.card()
-        self.assertIn("Left in place, with a copy kept in Garrick.", card)
-        self.assertIn("when you chose Keep a copy", card)
-        self.assertIn("<dt>Versions</dt><dd>1, the first copy", card)
-        self.assertIn("Refresh now", card)
-        self.assertIn("Garrick refreshes its copy from your folder first", card)
-        plan = self.folder / "Catalogue 2027 page plan.xlsx"
-        plan.write_bytes(plan.read_bytes() + b"more")
-        self.before = manifest(self.drive)
-        self.files_act("refresh")
-        card = self.card()
-        found = re.search(r'data-vers="([^"]+)">2 versions<', card)
-        data = json.loads(htmllib.unescape(found.group(1)))
-        self.assertEqual("Catalogue 2027 page plan: 2 versions", data["t"])
-        self.assertEqual("Same as your folder now", data["v"][0]["n"])
-        self.assertEqual("The first copy", data["v"][1]["n"])
-        page = self.card(where=True)
-        self.assertIn("Leave in place, keep the copy", page)
-        self.assertIn("Leave in place, delete the copy", page)
-
-    def test_the_first_copy_says_what_it_copied(self):
-        self.files_act("copy")
-        card = self.card()
-        self.assertRegex(card, r"<dt>Last refreshed</dt><dd>Today, \d\d:\d\d, when you chose Keep a copy: 5 files copied\.</dd>")
-        self.assertNotIn("had changed", card)
-
-    def test_a_file_changed_in_the_folder_is_changed_not_new(self):
-        """Before any Continue, a file that moved lately counted as new; the copy's history says it was there."""
-        note = self.note()
-        note.write_text(re.sub(r"(?m)^updated: .*$", "updated: %s" % (self.today - dt.timedelta(days=5)).isoformat(),
-                               note.read_text(), count=1))
-        self.git("commit", "-q", "-am", "an older note")
-        self.files_act("copy")
-        plan = self.folder / "Catalogue 2027 page plan.xlsx"
-        plan.write_bytes(plan.read_bytes() + b"more")
-        self.before = manifest(self.drive)
-        card = self.card()
-        self.assertIn('Catalogue 2027 page plan.xlsx <span class="sh-tag">changed</span>', card)     # in the folder, not refreshed yet
-        self.files_act("refresh")
-        card = self.card()
-        self.assertIn('Catalogue 2027 page plan.xlsx <span class="sh-tag">changed</span>', card)
-        self.assertNotIn('<span class="sh-tag">new</span>', card)
-        self.assertIn("1 changed since it last moved", card)
-
-    def test_your_work_and_needs_you_are_the_same_wherever_the_files_live(self):
-        def home():
-            html = self.page()
-            return html.split('id="tab-home"', 1)[1].split("</section>", 1)[0]
-        left = home()
-        self.files_act("copy")
-        self.assertEqual(left.count("Catalogue 2027"), home().count("Catalogue 2027"))
-        self.files_act("move")
-        self.before = None
-        moved = home()
-        self.assertEqual(left.count("Catalogue 2027"), moved.count("Catalogue 2027"))
-        self.assertIn("is this your next step?", moved)
-        self.files_act("undo")
-        self.before = manifest(self.drive)
-
-
-@unittest.skipUnless(shutil.which("node"), "Node is not installed")
-class TestThePageScript(Stored):
-    """The page's own buttons for where files live, driven as a person would."""
-
-    def drive_page(self, *steps, kept=None, flags=None):
-        html = self.page()
-        js = "window.setInterval=function(){return 0};window.clearInterval=function(){};" + status.SIMPLE_JS + status.WHERE_JS
-        if flags:
-            js = "".join("window.%s=true;" % f for f in flags) + js
-        done = subprocess.run(["node", "-e", PAGE_HARNESS, json.dumps([html, js, list(steps), kept])],
-                              capture_output=True, text=True, timeout=60)
-        self.assertEqual(0, done.returncode, done.stderr)
-        return json.loads(done.stdout)
-
-    def wid(self):
-        return Y.work_id("Catalogue 2027", "Work/" + NOTE)
-
-    def test_keep_a_copy_shows_the_busy_screen_and_stop_asks_to_stop(self):
-        sel = '#%s-where button[data-busy]' % self.wid()
-        out = self.drive_page({"do": "click", "sel": sel}, {"do": "click", "sel": "button[data-files-stop]"})
-        q = {"verb": "files", "zone": "Work", "file": NOTE, "do": "copy"}
-        self.assertEqual([{"act": q}, {"act": {"verb": "files-stop", "zone": "Work", "file": NOTE}}], out["posted"])
-        busy = json.loads(out["store"]["garrick-files-busy"])
-        self.assertEqual("Making the first copy", busy["d"]["t"])
-        self.assertEqual(1, busy["stopping"])
-
-    def test_the_media_switch_asks_before_it_brings_media_in(self):
-        self.with_media()
-        self.files_act("copy")
-        out = self.drive_page({"do": "click", "sel": "button[data-media]"})
-        self.assertEqual([], out["posted"])                                     # asks first
-        out = self.drive_page({"do": "click", "sel": "button[data-media]"}, {"do": "click", "sel": "[data-media-yes]"})
-        self.assertEqual([{"act": {"verb": "files", "zone": "Work", "file": NOTE, "do": "media-in"}}], out["posted"])
-
-    def test_a_version_is_saved_through_the_apps_save_panel_or_into_downloads(self):
-        self.files_act("copy")
-        plan = self.folder / "Catalogue 2027 page plan.xlsx"
-        plan.write_bytes(plan.read_bytes() + b"more")
-        self.before = manifest(self.drive)
-        self.files_act("refresh")
-        steps = ({"do": "click", "sel": "button[data-vers]"}, {"do": "click", "sel": "button[data-vsave]", "nth": 1})
-        older = F.history_of(self.files)["Catalogue 2027 page plan.xlsx"][1][0]
-        q = {"verb": "work-file", "zone": "Work", "file": NOTE, "do": "version-save", "path": "Catalogue 2027 page plan.xlsx",
-             "version": older}
-        out = self.drive_page(*steps, flags=["GarrickSaves"])
-        self.assertEqual([{"save": {"act": q, "name": "Catalogue 2027 page plan, today.xlsx"}}], out["posted"])
-        self.assertEqual([{"act": q}], self.drive_page(*steps)["posted"])
-        opened = self.drive_page({"do": "click", "sel": "button[data-vers]"}, {"do": "click", "sel": "button[data-vopen]"})
-        self.assertEqual("version-open", opened["posted"][0]["act"]["do"])
-
-
-class TestTheApp(unittest.TestCase):
-    def test_the_app_answers_save_and_reads_progress_without_a_toast(self):
-        swift = (Path(status.__file__).parent / "app" / "Garrick.swift").read_text(encoding="utf-8")
-        self.assertIn('if let save = body["save"] as? [String: Any] { return saveVersion(save) }', swift)
-        self.assertIn("NSSavePanel()", swift)
-        self.assertIn('"files-progress"', swift[swift.index("func reading("):][:300])
-        self.assertIn("window.GarrickReadsFiles=true;window.GarrickSaves=true;", swift)
-        plugin = (Path(status.__file__).parent / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn('"files-progress"', plugin[plugin.index("reading(request) {"):][:300])
 
 
 if __name__ == "__main__":

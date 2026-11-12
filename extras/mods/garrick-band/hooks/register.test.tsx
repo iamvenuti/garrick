@@ -1289,6 +1289,11 @@ describe('the one slot', () => {
     expect(bandSlot({ ...live, doneMs: 2000, turnMs: 2000 })).toBe('resume')
     expect(bandSlot({ ...live, doneMs: 1000, turnMs: null })).toBe('resume')      // a fresh session
     expect(bandSlot({ ...live, doneMs: null, turnMs: 2000 })).toBe('wrap')        // no wrap on record: Wrap, which the lock keeps single
+    // A failed or refused wrap releases the lock with `end --abandon` and writes no record, so the record of
+    // the earlier wrap stands, older than the turn: the slot stays Wrap (the draft: a failed wrap must not look finished).
+    const earlier = doneFinished(JSON.stringify({ note: 'Zones/Work/Acme/Acme.md', finished: '1970-01-01T00:00:01.000Z' }))
+    expect(earlier).toBe(1000)
+    expect(bandSlot({ ...live, doneMs: earlier, turnMs: 2000 })).toBe('wrap')
     expect(bandSlot({ live: true, wrapping: true, doneMs: 1000, turnMs: 2000 })).toBe('wrapping')
     expect(bandSlot({ live: true, wrapping: true, doneMs: 3000, turnMs: 2000 })).toBe('wrapping')
     expect(bandSlot({ live: false, wrapping: true, doneMs: 1000, turnMs: 2000 })).toBeNull()
@@ -1478,6 +1483,7 @@ describe('the one slot', () => {
     expect(lockCall).toBeGreaterThanOrEqual(0)
     expect(w.ran[lockCall]![1]).toBe(`${ROOT}/System/tools/wrap_lock.py`)
     expect(w.submitted[0]).toContain('The band has taken the wrap lock: do not take it')
+    expect(w.submitted[0]).toContain('wrap_lock.py end --abandon')                  // a failed wrap releases the lock without a record
   })
 
   test('without the script the prompt tells the wrap to take the lock', async ($, on) => {
@@ -1487,6 +1493,7 @@ describe('the one slot', () => {
     await band.press({ key: 'wrap' })
     expect(w.ran.some(r => r[0] === 'python3')).toBe(false)
     expect(w.submitted[0]).toContain('Take the wrap lock first')
+    expect(w.submitted[0]).toContain('`end --abandon` when the wrap failed')
   })
 
   test('a prompt that is refused leaves no Wrapping behind', async ($, on) => {

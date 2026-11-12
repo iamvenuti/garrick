@@ -49,9 +49,9 @@ python3 install.py
 
 macOS may ask whether Terminal may access files in your Downloads folder. Click **Allow**: the installer runs from there, and puts the workspace itself in your home folder.
 
-Accept `~/Garrick` as the workspace folder unless you have a reason to choose another. Start with the zones you need for your first project, and name who you work for or with, or press Enter to skip. You can add more later by asking the assistant; for a zone it runs the command in [Another zone](commands.md#another-zone). Walls, the pairs of parties whose information must stay apart, are not asked here: you declare them in your first session. Two folders alone do not create one. The last question offers to let the assistant run Garrick's own tools, and git's commands that look at or save history, without asking each time; [The commands it asks to approve](#the-commands-it-asks-to-approve) says exactly what that allows. The [command reference](commands.md#install) explains the questions.
+Accept `~/Garrick` as the workspace folder unless you have a reason to choose another. Start with the zones you need for your first project, and name who you work for or with, or press Enter to skip. You can add more later by asking the assistant; for a zone it runs the command in [Another zone](commands.md#another-zone). Walls are not asked here. A zone is walled or open, and each is marked in your first session. Work that must stay apart goes in separate walled zones: two folders in one zone do not create a wall. The last question offers to let the assistant run Garrick's own tools, and git's commands that look at or save history, without asking each time; [The commands it asks to approve](#the-commands-it-asks-to-approve) says exactly what that allows. The [command reference](commands.md#install) explains the questions.
 
-The installer also puts your home page in place and builds it: the [simple home](extras/simple-home.md), your work, a box to ask something and the questions waiting on you, in `System/generated/status.html`. There is nothing to copy or build by hand. When you say "Set up Garrick" in step 4, the assistant offers to make it an app on your Mac, so it opens from the Dock.
+The installer also puts your home page in place and builds it: the [Garrick App](extras/status-page.md), opening on your work, in `System/generated/status.html`. There is nothing to copy or build by hand. When you say "Set up Garrick" in step 4, the assistant offers to make it an app on your Mac, so it opens from the Dock.
 
 You can close Terminal when installation finishes. The assistant runs the tools for everyday work, and asks you to approve commands as your app settings say. [The commands it asks to approve](#the-commands-it-asks-to-approve) explains them.
 
@@ -104,8 +104,8 @@ Unless you allowed them when you installed, a first session asks you to approve 
 | `python3 System/tools/probe.py` | Looks at what your Mac has that Garrick can use. It changes nothing |
 | `python3 System/tools/wiki_lint.py` | Lists a wiki's pages that nothing links to, and links to pages that are not there. It changes nothing |
 | `python3 System/tools/drift.py` | Compares what a project published with the copy in a shared folder. It changes nothing |
-| `python3 System/tools/next_up.py` | Ranks one thing worth doing while a long turn runs, for "what's next". It changes nothing |
-| `python3 System/tools/briefing.py` | Gathers what changed in a zone's threads over a period, for "catch me up". It changes nothing |
+| `python3 System/tools/next_up.py` | Ranks one thing worth doing while a long turn runs. It changes nothing |
+| `python3 System/tools/briefing.py` | Gathers what changed in a zone's threads over a period. It changes nothing |
 | `python3 System/tools/discover.py` | Looks through a folder you picked for the pieces of work in it, from names and dates alone. It opens no file there and changes nothing there |
 | `python3 System/tools/extract.py` | Takes the text out of a piece of work's Word, PowerPoint and Excel files, into `System/generated/extracts/`, for Claude to read. It changes nothing in the folder |
 | `python3 System/tools/nurture.py` | Sorts what the check and the wiki lint find by what a fix needs. It changes nothing unless you say yes to its mechanical fixes, which it commits |

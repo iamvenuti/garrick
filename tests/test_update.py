@@ -103,25 +103,18 @@ class Case(unittest.TestCase):
 class TestWhatGarrickShips(Case):
     def test_shipped_is_exactly_what_the_installer_wrote(self):
         files = self.stamp()["files"]
-        new = update.shipped(update.zones_of(self.root, self.stamp()), simple=True)    # a new workspace's home
-        new.update(update.extras_shipped(["status"]))       # and the status page that home is (#208)
+        new = update.shipped(update.zones_of(self.root, self.stamp()), simple=False)
+        new.update(update.extras_shipped(["status"]))       # and the status page (#208)
         self.assertEqual(sorted(files), sorted(new))
         for path, (data, _) in new.items():
             self.assertEqual(files[path], sha(data), path)
 
-    def test_a_zones_list_follows_the_home(self):
-        """On the simple home a zone's list starts without the template's example
-        line, so an update leaves one as it was written; on the full home the
-        same list is Garrick's to give its example back, as the template has it."""
+    def test_a_new_workspaces_zone_list_is_the_template_and_an_update_leaves_it(self):
+        """#503: a zone's list starts with the template's example line, and an update has nothing to do about it."""
         todo = "Zones/Work/Todo.md"
         template = (REPO / "template" / "System" / "templates" / "zone" / "Todo.md").read_text()
-        self.assertNotIn("<Thread>", (self.root / todo).read_text())
+        self.assertEqual(template.replace("{{ZONE}}", "Work"), (self.root / todo).read_text())
         self.assertNotIn(todo, [x for kind in update.KINDS for x in self.plan()["actions"][kind]])
-        settings = self.root / "System" / "garrick-settings.json"
-        settings.write_text(json.dumps(dict(json.loads(settings.read_text()), home="full")) + "\n")
-        self.commit(self.root, "full home")
-        self.assertEqual(template.replace("{{ZONE}}", "Work").encode(), update.shipped(["Work"])[todo][0])
-        self.assertEqual(["Zones/Personal/Todo.md", todo], self.plan()["actions"]["replace"])
 
     def test_a_fresh_install_is_up_to_date_and_apply_changes_nothing(self):
         p = self.plan()
@@ -1743,32 +1736,78 @@ class TestWhatExtrasNeedNext(ExtrasCase):
         self.assertIn("To do: The status page: merge the .new files under System/status first, then rebuild it with "
                       "python3 System/status/status.py.", result["then"])
 
-    def test_the_obsidian_plugin_is_refreshed_where_it_is_as_garrick_wrote_it(self):
+    def test_the_obsidian_plugin_is_removed_where_it_is_as_garrick_wrote_it(self):
+        """#508: the plugin is retired. A copy still as a released Garrick wrote it goes, with its entry in that
+        vault's community-plugins.json; one with changes stays and the report names it."""
         self.install_extra("status")
-        main = "System/status/obsidian/main.js"
-        new_main = (self.root / main).read_bytes()
-        manifest = (self.root / "System/status/obsidian/manifest.json").read_bytes()
-        self.as_if_older(main, "// the older plugin\n")
+        main, manifest = b"// the plugin Garrick shipped\n", b'{"id": "garrick-status"}\n'
+        known = {update.PLUGIN_SOURCE + "main.js": [update.digest(main)], update.PLUGIN_SOURCE + "manifest.json": [update.digest(manifest)]}
         wikis = self.root / "Wikis" / ".obsidian" / "plugins" / "garrick-status"
         wikis.mkdir(parents=True)
-        (wikis / "main.js").write_text("// the older plugin\n")
+        (wikis / "main.js").write_bytes(main)
         (wikis / "manifest.json").write_bytes(manifest)
+        (wikis / "data.json").write_text("{}")                       # what Obsidian itself keeps there goes with it
+        listing = self.root / "Wikis" / ".obsidian" / "community-plugins.json"
+        listing.write_text(json.dumps(["dataview", "garrick-status"]))
         self.commit(self.root / "Wikis", "plugin")
         top = self.root / ".obsidian" / "plugins" / "garrick-status"
         top.mkdir(parents=True)
         (top / "main.js").write_text("// my own plugin\n")
         (top / "manifest.json").write_bytes(manifest)
-        self.commit(self.root, "plugin")
-        report = self.report_of(self.plan())
-        self.assertIn("Refresh the Obsidian plugin in Wikis: main.js.", report)
-        self.assertIn("The Obsidian plugin in the workspace's top has main.js unlike any Garrick's", report)
-        result = self.apply()
-        self.assertEqual(new_main, (wikis / "main.js").read_bytes())
-        self.assertEqual("// my own plugin\n", (top / "main.js").read_text())
+        (top.parent.parent / "community-plugins.json").write_text(json.dumps(["garrick-status"]))
+        with mock.patch.object(update, "known_hashes", return_value=known):
+            report = self.report_of(self.plan())
+            self.assertIn("Remove the Obsidian plugin in Wikis, which is as Garrick wrote it", report)
+            self.assertIn("The Obsidian plugin in the workspace's top has changes of yours, so it is left as it is", report)
+            self.assertTrue(wikis.is_dir())                            # the report changes nothing
+            result = self.apply()
+        self.assertFalse(wikis.exists())
+        self.assertEqual(["dataview"], json.loads(listing.read_text()))
+        self.assertEqual("// my own plugin\n", (top / "main.js").read_text())          # a plugin with changes stays
+        self.assertEqual(["garrick-status"], json.loads((top.parent.parent / "community-plugins.json").read_text()))
         self.assertEqual("", self.git(self.root / "Wikis", "status", "--porcelain"))
-        self.assertEqual("Garrick: refresh the Obsidian plugin", self.git(self.root / "Wikis", "log", "-1", "--format=%s"))
-        self.assertIn("Refreshed the Obsidian plugin in %s." % wikis, result["then"])
-        self.assertTrue(any("switch Garrick off and on" in line for line in result["then"]))
+        self.assertEqual("Garrick: remove the Obsidian plugin", self.git(self.root / "Wikis", "log", "-1", "--format=%s"))
+        self.assertIn("Removed the Obsidian plugin in %s." % wikis, result["then"])
+        self.assertFalse(any("switch Garrick off and on" in line for line in result["then"]))
+
+    def test_an_obsidian_plugin_with_a_file_of_the_users_stays(self):
+        self.install_extra("status")
+        main = b"// the plugin Garrick shipped\n"
+        known = {update.PLUGIN_SOURCE + "main.js": [update.digest(main)], update.PLUGIN_SOURCE + "manifest.json": [update.digest(b"{}")]}
+        folder = self.root / ".obsidian" / "plugins" / "garrick-status"
+        folder.mkdir(parents=True)
+        (folder / "main.js").write_bytes(main)
+        (folder / "manifest.json").write_bytes(b"{}")
+        (folder / "notes.md").write_text("mine\n")
+        with mock.patch.object(update, "known_hashes", return_value=known):
+            report = self.report_of(self.plan())
+            self.apply()
+        self.assertIn("has changes of yours, so it is left as it is", report)
+        self.assertTrue((folder / "notes.md").is_file() and (folder / "main.js").is_file())
+
+    def test_the_home_setting_goes_and_the_update_says_so_in_one_line(self):
+        """#503: the simple home is gone. The update takes "home" out of the settings file, keeps every other key, and names
+        the projects whose Files/ folder it leaves where it is."""
+        settings = self.root / "System" / "garrick-settings.json"
+        settings.write_text(json.dumps({"home": "simple", "launchers": {"note": True}}))
+        files = self.root / "Zones" / "Work" / "Acme" / "Files"
+        files.mkdir(parents=True)
+        (files / "price sheet.xlsx").write_text("mine")
+        (self.root / "Zones" / "Work" / "Birch" / "Files").mkdir(parents=True)      # empty: nothing to name
+        report = self.report_of(self.plan())
+        self.assertIn('Remove "home" from System/garrick-settings.json: the Garrick App opens on the full page only', report)
+        self.assertIn("stay where they are, in Work/Acme;", report)
+        self.assertNotIn("Work/Birch", report)
+        self.assertEqual({"home": "simple", "launchers": {"note": True}}, json.loads(settings.read_text()))     # the report changes nothing
+        result = self.apply()
+        self.assertEqual({"launchers": {"note": True}}, json.loads(settings.read_text()))
+        self.assertIn('Removed "home" from System/garrick-settings.json: the Garrick App opens on the full page only.', result["then"])
+        self.assertEqual("mine", (files / "price sheet.xlsx").read_text())             # what the user put there is where it was
+        self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if '"home"' in w])     # done: nothing left
+
+    def test_no_home_key_means_no_step(self):
+        (self.root / "System" / "garrick-settings.json").write_text(json.dumps({"launchers": {"note": True}}))
+        self.assertFalse([w for w, _ in update.next_steps(self.root, self.plan()) if "home" in w])
 
     def test_a_desk_link_to_another_copy_is_pointed_at_the_workspaces(self):
         self.install_extra("cmux")
@@ -1842,7 +1881,8 @@ class TestBandKeptOutside(ExtrasCase):
         for name, text in (("install.py", "# installer\n"), ("update.py", "# updater\n"),
                            ("VERSION", "# Which Garrick\ncommit: %s\ndate: 2026-11-01\n" % commit),
                            ("CHANGELOG.md", "# Changelog\n\n## [Unreleased]\n\n## [%s] - 2026-11-01\n\n- A change.\n" % release),
-                           ("extras/mods/garrick-band/hooks/register.tsx", "// %s %s\n" % (band, release))):
+                           ("extras/mods/garrick-band/hooks/register.tsx",
+                            "// %s\n" % band if getattr(self, "same_band", False) else "// %s %s\n" % (band, release))):
             f = Path(folder) / name
             f.parent.mkdir(parents=True, exist_ok=True)
             f.write_text(text, encoding="utf-8")
@@ -1899,6 +1939,28 @@ class TestBandKeptOutside(ExtrasCase):
         self.assertIn("// the band 0.63.1", (self.kept / "extras/mods/garrick-band/hooks/register.tsx").read_text())
         self.assertEqual(["v0.60.0", "v0.63.1"], [u.rsplit("/", 1)[1][:-4] for u in self.fetched])
         self.assertEqual([], self.band_steps())                              # the settings' path is current now
+
+    def same_band_releases(self):
+        """Two releases whose band files are the same, as 0.63.1 and 0.64.0 were."""
+        self.same_band = True
+        self.release_tree(self.ours, *self.NEW)
+        (self.ours / "VERSION").write_text("commit: %s\n" % self.NEW[1])
+        self.release_tree(self.kept, *self.OLD)
+
+    def test_an_update_between_releases_with_the_same_band_files_refreshes_the_download_too(self):
+        """#515: the band warns from the commit in its download's VERSION, so the update refreshes the download
+        whenever that commit is not the release's, even with every band file the same."""
+        self.same_band_releases()
+        ((what, fn),) = self.band_steps()
+        self.assertIn("Refresh the Garrick band kept at %s, a download of Garrick 0.60.0" % self.kept, what)
+        self.assertIn("is now Garrick 0.63.1", fn())
+        self.assertIn("commit: %s" % self.NEW[1], (self.kept / "VERSION").read_text())     # what the band reads
+        self.assertEqual([], self.band_steps())                                         # no stale warning is left
+
+    def test_a_download_of_the_same_release_is_left_alone(self):
+        self.same_band_releases()
+        self.release_tree(self.kept, self.NEW[0], "bbbb222")
+        self.assertEqual([], self.band_steps())
 
     def test_a_copy_with_changes_of_its_own_is_left_as_it_is_with_the_command(self):
         (self.kept / "extras/mods/garrick-band/hooks/register.tsx").write_text("// mine\n")

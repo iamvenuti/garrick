@@ -8,9 +8,9 @@
 
 Garrick keeps track of where each piece of your work stands. It reads what comes in, keeps it up to date, and lets finished work step aside, so Claude picks up where you stopped.
 
-An assistant is only as useful as what it knows about your work. Yours remembers your projects, but it can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “wrap it” when someone interrupts you and “back” when you return.
+An assistant is only as useful as what it knows about your work. Yours remembers your projects, but it can't tell you which piece of work is waiting on you, what comes next, or what was only in your head when you stopped. Garrick can: every piece of work has one place that says where it stands, written when you leave it and read when you come back. Say “wrap it” when someone interrupts you and “open [thread]” when you return.
 
-The [Garrick app](docs/extras/simple-home.md)'s home lists your work, most recent first, each with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen. Ask something reaches across all of your work, and Needs you holds only the questions Garrick is waiting on you to answer.
+The [Garrick app](docs/extras/status-page.md) opens on your work, most recent first, each piece with its next action. Continue opens Claude's desktop app on that piece of work, with Claude's answer already on screen.
 
 Behind the home, Garrick holds three things in one place: what you're working on, in your files; what was said, in a record of your meetings; and what you read, in a library of what you've studied. It files what comes in, such as mail, transcripts and documents, into the right one, and a piece of work's page shows which of its files are new, changed or missing since you last continued. It keeps the record up to date and asks before it corrects anything written there. Finished work steps aside without anything in it being lost, and old meetings and reading fade out of the way in stages, still findable.
 
@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/54996021-8e82-4c7e-b5be-fe9be6f3167e
 
 ## Start small
 
-![Start small. Climb when you want to. Level 1, Organise: Claude or Codex in its desktop app and the Garrick folders, for a resume point for every piece of work, meetings and knowledge kept locally, and walls between the parties you declare. Level 2, Feed it: inbox folders, mail alias ingestion and recorder transcripts, so conversations and mail are filed for you. Level 3, Own the interface: Obsidian to browse, cmux for parallel sessions and the status page to see it all, so your work no longer lives inside one vendor's app and one page shows where it all stands. Level 4, Work from anywhere: the assistants' remote and voice features, so your workspace answers from your phone. Each level works on its own.](docs/assets/adoption-ladder.png)
+![Start small. Climb when you want to. Level 1, Organise: Claude or Codex in its desktop app and the Garrick folders, for a resume point for every piece of work, meetings and knowledge kept locally, and walls around the zones you mark walled. Level 2, Feed it: inbox folders, mail alias ingestion and recorder transcripts, so conversations and mail are filed for you. Level 3, Own the interface: Obsidian to browse, cmux for parallel sessions and the status page to see it all, so your work no longer lives inside one vendor's app and one page shows where it all stands. Level 4, Work from anywhere: the assistants' remote and voice features, so your workspace answers from your phone. Each level works on its own.](docs/assets/adoption-ladder.png)
 
 1. **Organise:** [first steps](docs/first-steps.md), then [your first useful session](docs/first-session.md).
 2. **Feed it:** [ways in](docs/extras/ways-in.md) for mail and files, and [a meeting recorder](docs/extras/meeting-recorder.md).
@@ -50,7 +50,7 @@ Already set up? [Your first useful session](docs/first-session.md) takes one con
 
 ## What Garrick keeps for you
 
-- **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving or when you're interrupted, and “open [thread]” or “back” when you return.
+- **A place to resume.** Each line of work has a note with the current decision, next action and deadline. Say “wrap it” before leaving or when you're interrupted, and “open [thread]” when you return.
 - **Two kinds of memory.** Meetings keeps conversations and correspondence with their sources. Knowledge keeps published material you read. [How Garrick keeps context](docs/context.md) shows how a conversation, a correction and an old page are each handled.
 - **Walled zones.** You mark a zone as walled, and its material stays in it. The assistant checks those rules before using a conversation for a project. In supported text files, a commit check catches links, embeds and paths that point into another walled zone, and files copied whole from one.
 - **Files you own.** Notes and history stay in the workspace. Claude Code and Codex can read the same record; their private chat history and app settings are separate.
@@ -62,7 +62,7 @@ Already set up? [Your first useful session](docs/first-session.md) takes one con
 
 People who already use Claude or Codex every day and run several lines of work at once: a few projects, partners and internal asks, put down and picked up all day. If you have one line of work, your assistant's own project memory is probably enough.
 
-It matters most when that work holds other people's confidences: advisors, account managers, people working with partners under NDA, and members of a team who handle separate internal projects. For two internal projects to have a wall, give each its own party tag and mark both as walled, even if both belong to one company.
+It matters most when that work holds other people's confidences: advisors, account managers, people working with partners under NDA, and members of a team who handle separate internal projects. For two internal projects to have a wall, put each in its own walled zone, even if both belong to one company. A party tag is an index and holds nothing back.
 
 At work, use the assistant and account your employer approves. Files stay on your disk, but content the assistant reads goes to its provider. Garrick does not control the provider's retention or training settings.
 

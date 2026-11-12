@@ -16,6 +16,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -43,6 +44,14 @@ SKILL_HOMES = ("threads", "intake", "nurture", "desk")
 
 def flat(text: str) -> str:
     return " ".join(text.split())
+
+
+def skill_text(folder: Path, name: str) -> str:
+    """A skill's text: for the threads skill (#512), its dispatcher and its references together."""
+    files = [folder / name / "SKILL.md"]
+    if name == "threads":
+        files += sorted((folder / name / "reference").glob("*.md"))
+    return "\n".join(f.read_text(encoding="utf-8") for f in files)
 
 
 # (the rule, a sentence of it exactly as written, where it lives now)
@@ -162,7 +171,8 @@ class TestRulesAreKeptAndMapped(unittest.TestCase):
         self.assertLess(len(text), 8000, "rules.md is %d characters" % len(text))
 
     def test_every_rule_is_where_the_map_says(self):
-        texts = {name: flat(path.read_text(encoding="utf-8")) for name, path in HOMES.items()}
+        texts = {name: flat(skill_text(path.parent.parent, name) if name == "threads" else path.read_text(encoding="utf-8"))
+                 for name, path in HOMES.items()}
         for rule, snippet, home in MAP:
             wanted = FOLDED.get(rule, snippet)
             self.assertIn(flat(wanted), texts[home], "%s is not in %s" % (rule, home))
@@ -188,7 +198,11 @@ class TestRulesAreKeptAndMapped(unittest.TestCase):
             self.assertIn(needle, rules, needle)
 
     def test_the_skills_that_carry_rules_are_the_ones_the_update_installs_with_them(self):
-        self.assertEqual({"System/skills/%s/SKILL.md" % name for name in SKILL_HOMES}, set(update.RULE_SKILLS))
+        self.assertEqual({"System/skills/%s/SKILL.md" % name for name in SKILL_HOMES},
+                         {p for p in update.RULE_SKILLS if p.endswith("/SKILL.md")})
+        references = {"System/skills/threads/reference/" + f.name
+                      for f in (HOMES["threads"].parent / "reference").glob("*.md")}
+        self.assertEqual(references, {p for p in update.RULE_SKILLS if "/reference/" in p})
 
 
 class TestUpdateKeepsEveryRule(unittest.TestCase):
@@ -234,13 +248,14 @@ class TestUpdateKeepsEveryRule(unittest.TestCase):
 
     def moved_rules_in_the_workspace(self):
         """Every rule the map says moved to a skill, found in the workspace's own skills."""
-        installed = {name: flat((self.root / "System" / "skills" / name / "SKILL.md").read_text(encoding="utf-8"))
+        installed = {name: flat(skill_text(self.root / "System" / "skills", name))
                      for name in ("threads", "intake", "nurture")}
         return [rule for rule, snippet, home in MAP if home in installed and flat(snippet) not in installed[home]]
 
     def test_an_older_workspace_ends_with_every_moved_rule_in_its_skills(self):
         old_rules = "# Rules\n\nThe old rules, with the procedures in them.\n"
         self.older("System/rules.md", old_rules)
+        shutil.rmtree(str(self.root / "System/skills/threads/reference"))                   # an older skill had none
         for name in ("threads", "intake", "nurture"):
             self.older("System/skills/%s/SKILL.md" % name, "---\nname: %s\n---\n\nOlder %s.\n" % (name, name))
         self.assertEqual(sorted(r for r, _, h in MAP if h in ("threads", "intake", "nurture")),

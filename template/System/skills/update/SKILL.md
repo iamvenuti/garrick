@@ -21,8 +21,8 @@ its `install.py --update` compares every file it would write with the one
 here, replaces only what is still as some Garrick wrote it, and puts its
 version of anything the user changed beside it as `<name>.new`. It does the
 same for the extras the workspace has copied in (the status page, the
-scheduled jobs, desk), then rebuilds the Mac app, refreshes the Obsidian
-plugin and points the `desk` link where they need it. This skill runs that
+scheduled jobs, desk), then rebuilds the Mac app, removes the retired Obsidian
+plugin where it is unchanged and points the `desk` link where they need it. This skill runs that
 command, says what it found, and merges the `.new` files with the user.
 
 Garrick's instruction files, `System/rules.md` and every `AGENTS.md`, are
@@ -99,7 +99,7 @@ the same line.
    - *Retired*: Garrick no longer ships it. Never deleted by the update; ask
      before deleting it yourself.
    - *Then*: what the extras need once their files are written: rebuild
-     the Mac app, refresh the Obsidian plugin, point the `desk` link. Or a
+     the Mac app, remove the retired Obsidian plugin, point the `desk` link. Or a
      step that is the user's, such as a zone guard run from an older copy.
 3. **Apply it on a yes**, naming the release the report was for, so a newer
    one out meanwhile is not taken unseen:

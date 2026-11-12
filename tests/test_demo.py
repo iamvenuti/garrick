@@ -65,12 +65,20 @@ BIRCH_SIDE = moved("260922-cobalt-northern-lane-for-birch")
 SEPTEMBER = re.compile(r"September|\bSept?\b|2026-09|\b2609[0-3]\d\b|\b202609[0-3]\d")
 
 
-def run(args, cwd=None):
-    return subprocess.run([str(a) for a in args], cwd=cwd, env=ENV, capture_output=True, text=True)
+def run(args, cwd=None, env=None):
+    return subprocess.run([str(a) for a in args], cwd=cwd, env=env or ENV, capture_output=True, text=True)
 
 
-def build(target, today=TODAY):
-    return run([sys.executable, BUILD, "--target", target, "--today", today.isoformat()])
+def build(target, today=TODAY, env=None):
+    return run([sys.executable, BUILD, "--target", target, "--today", today.isoformat()], env=env)
+
+
+# A scheduled job of the machine the demo is built on, failing: its heartbeat sits in the
+# jobs folder the build's own environment names. A finished demo must not show it.
+HOST_JOB = "zz-host-nightly"
+HOST_BEAT = {"agent": False, "exit": 1, "failing_since": "2026-11-01 03:00:00", "finished": "2026-11-10 03:00:00",
+             "finished_ts": 1794276000.0, "idle": False, "idle_days": 0, "items": 0, "job": HOST_JOB, "no_call": False,
+             "ok": False, "quiet": False, "reason": "host job failed", "seconds": 5, "started": "2026-11-10 02:59:55"}
 
 
 def check(root, *flags):
@@ -88,7 +96,10 @@ class DemoTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.base = Path(cls.tmp.name).resolve()
         cls.root = cls.base / "demo"
-        cls.result = build(cls.root)
+        cls.host = cls.base / "host-jobs"
+        cls.host.mkdir()
+        (cls.host / (HOST_JOB + ".heartbeat.json")).write_text(json.dumps(HOST_BEAT), encoding="utf-8")
+        cls.result = build(cls.root, env=dict(ENV, GARRICK_JOBS_DIR=str(cls.host), GARRICK_HOME=str(cls.base)))
 
     @classmethod
     def tearDownClass(cls):
@@ -103,6 +114,31 @@ class DemoTest(unittest.TestCase):
         report = json.loads(res.stdout)
         self.assertEqual((report["errors"], report["warnings"]), (0, 0), res.stdout)
         self.assertEqual(check(self.root, "--ear").stdout.strip(), "All clear.")
+
+    def test_page_shows_the_finished_demo(self):
+        """The page a build leaves is built after the replay (#209): the demo's live threads and
+        its actions are on it, with no manual rebuild."""
+        page = (self.root / "System" / "generated" / "status.html").read_text(encoding="utf-8")
+        for name in ("Supplier Map", "Freight Terms", "Carrier Choice", "Launch Plan", "Kitchen", "Roof Repair"):
+            self.assertIn(name, page, name)
+        todo = (self.root / "Zones" / "Work" / "Todo.md").read_text(encoding="utf-8")
+        line = next(l for l in todo.splitlines() if l.startswith("- [ ]"))
+        text = re.sub(r"^- \[ \]\s*", "", line)
+        self.assertTrue(any(word in page for word in re.findall(r"[A-Za-z]{6,}", text)), line)
+
+    def test_page_shows_no_job_of_the_machine_that_built_it(self):
+        page = (self.root / "System" / "generated" / "status.html").read_text(encoding="utf-8")
+        self.assertNotIn(HOST_JOB, page)
+        # The same page, built with that machine's jobs folder, does show the job: the test could fail.
+        out = self.base / "diagnostic.html"
+        res = run([sys.executable, self.root / "System" / "status" / "status.py", "--workspace", self.root, "--out", out],
+                  env=dict(ENV, GARRICK_JOBS_DIR=str(self.host), GARRICK_HOME=str(self.base)))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(HOST_JOB, out.read_text(encoding="utf-8"))
+
+    def test_readme_names_the_page(self):
+        readme = (REPO / "examples" / "demo" / "README.md").read_text(encoding="utf-8")
+        self.assertIn("System/generated/status.html", readme)
 
     def test_inbox_holds_one_transcript(self):
         inbox = self.root / "Wikis" / "Meetings" / "raw" / "inbox"

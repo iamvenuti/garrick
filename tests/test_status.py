@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(24, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the simple home's, where a work's files live's, the menu's, the Guide's, Preview's, the graph's
+        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -348,26 +348,19 @@ class TestGraph(StatusCase):
         self.assertIn("theta=SWAY*Math.sin(phase)", js)             # it sways, so a wide fit holds while it moves
         self.assertNotIn("Math.random", js)                         # seeded, so the same notes lie the same way
 
-    def test_the_graph_has_a_3d_view_beside_the_flat_one(self):
-        # #372: a button, 2D the default, drawn by the page's own perspective and no library.
+    def test_the_graph_has_one_flat_view_and_no_library(self):
+        # #509: no 3D button; a window left in 3D opens flat and its stored value is dropped.
         js = status.GRAPH_JS
-        self.assertIn("var d3=st.get('garrick-graph-3d')==='1'", js)           # off unless this window chose it
-        self.assertIn("function view3(on){d3=on;st.set('garrick-graph-3d',on?'1':'0');", js)
-        self.assertIn("if(d3)ysw=SWAY3*Math.sin(phase);else theta=SWAY*Math.sin(phase)", js)   # a slow turn round the vertical axis
-        self.assertIn("function toWorld(x,y,zc){", js)                         # the inverse of toScreen, at a depth
-        self.assertIn("ord.sort(function(a,b){return P[b.i][2]-P[a.i][2]||a.i-b.i})", js)   # far notes first
-        self.assertIn("function shade(f){", js)                                # far notes and links fainter
-        self.assertIn("if(d3&&!e.shiftKey){yaw=", js)                          # dragging empty space turns, shift-drag moves
-        self.assertIn("var w=toWorld(h.x,h.y,down.zc)", js)                    # a note moves in the plane facing the viewer
+        self.assertIn("localStorage.removeItem('garrick-graph-3d')", js)
         for lib in ("three.js", "THREE.", "https://", "http://", "import("):
             self.assertNotIn(lib, js)
-        self.assertIn('<button id="gspin"></button><button id="g3d" type="button"></button><button id="gfit">Fit</button>', self.page())
+        self.assertIn('<button id="gspin"></button><button id="gfit">Fit</button>', self.page())
 
     def test_names_do_not_cover_each_other(self):
         js = status.GRAPH_JS
         # Placed in order: the note in focus, its links, projects, hubs, then every other note drawn, at any zoom (#252).
         self.assertIn("want.push([n===f?0:f&&near[n.i]||M&&M[n.i]?1:n.h?2:n.c&&(!op||op.indexOf(n.k)>=0)?3:4,n])", js)   # a match found as its links are (#250)
-        self.assertIn("want.sort(function(a,b){return a[0]-b[0]||(d3?P[a[1].i][2]-P[b[1].i][2]:0)||b[1].deg-a[1].deg||a[1].i-b[1].i})", js)   # in 3D the nearer first, then the most linked
+        self.assertIn("want.sort(function(a,b){return a[0]-b[0]||b[1].deg-a[1].deg||a[1].i-b[1].i})", js)   # then the most linked
         self.assertIn("if(free(b)){got=tries[i]", js)                 # below, above, then beside the note
         self.assertIn("if(got<0&&(n===f||n.h||few&&M[n.i])){got=0", js)   # the focus, projects and a few matches are never left out
         self.assertIn("return out.reverse()", js)                     # the most wanted is drawn last, on top
@@ -381,8 +374,7 @@ class TestGraph(StatusCase):
         self.assertIn("if(V.length>BIG){var t=tree();V.forEach(function(n){shove(t,n,S)})}", js)
         self.assertIn("if(!inside&&q.s*q.s<.81*d2)", js)              # a far group pushes as one, from its centre
         self.assertIn("for(var i=0;i<(V.length>BIG?160:400);i++)tick();", js)
-        self.assertIn("function tick(){if(d3)step3();else step()}", js)     # 3D lays out with its own step and an octree (#372)
-        self.assertIn("if(V.length>BIG){var t=tree3();V.forEach(function(n){shove3(t,n,S)})}", js)
+        self.assertIn("function tick(){step()}", js)
 
     def test_a_still_graph_stops_drawing(self):
         # Measured in headless Chrome on the demo with rotation paused: no frame
@@ -390,7 +382,7 @@ class TestGraph(StatusCase):
         js = status.GRAPH_JS
         self.assertIn("if(moving)requestAnimationFrame(frame);else running=false", js)
         for wakes in ("setPointerCapture(e.pointerId);wake()", "if(down||h.n!==hover)wake()", "scale*=k;wake()",
-                      "function close(){sel=null;pop.hidden=true;wake()}", "auto=true;theta=phase=0;yaw=ysw=0;tilt=T0;wake()"):
+                      "function close(){sel=null;pop.hidden=true;wake()}", "auto=true;theta=phase=0;wake()"):
             self.assertIn(wakes, js)
         self.assertIn("new MutationObserver(recolor)", js)            # a still graph follows the theme switch
 
@@ -967,7 +959,7 @@ class TestOpensOnTheWork(StatusCase):
         html = self.page()
         tab = overview(html)
         self.assertEqual(["threads", "todo", "inboxes", "graph"], card_order(tab))
-        self.assertIn('<div class="slot full" data-slot="top"><details class="card" id="waiting-now" open>', tab)   # #474: the sessions waiting on you first
+        self.assertIn('<div class="slot full" data-slot="top"><details class="card nowait" id="waiting-now" open>', tab)   # #474: the sessions waiting on you first
         self.assertLess(tab.index('id="waiting-now"'), tab.index('<details class="card" id="threads" open>'))
         self.assertIn('<div class="slot stack left" data-slot="left"><details class="card" id="todo"', tab)
         for gone in ("recent", "due", "thought", "waiting"):
@@ -1214,9 +1206,9 @@ class TestOpensOnTheWork(StatusCase):
         self.assertEqual(["start", "threads", "todo", "inboxes", "graph"], card_order(tab))
         start = self.rows(html, "start")
         self.assertIn("help me prepare my next supplier call", start)              # the skill's own request
-        self.assertIn("Nothing there yet: from an ordinary request to a saved brief", start)
-        self.assertIn("System/skills/meetings/SKILL.md", start)
-        self.assertIn("written there, not here", start)
+        self.assertIn("Your next step is that one request", start)               # the user's step, in plain words
+        for internal in ("SKILL.md", "System/skills", "Nothing there yet"):       # no internal skill file or procedure (#503)
+            self.assertNotIn(internal, start)
         for step in ("scaffold.py party", "git commit", "Shall I add it as a party"):   # the route is not copied here
             self.assertNotIn(step, html, step)
 
@@ -1703,7 +1695,7 @@ class TestSettingsLayout(StatusCase):
     them beside it (#205): a link per section, grouped by what people come
     for, and the one being read marked."""
 
-    ORDER = ["home-settings", "launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings", "wait-settings",
+    ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings", "wait-settings",
              "notify-settings", "memory-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
@@ -1718,7 +1710,7 @@ class TestSettingsLayout(StatusCase):
         built = re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"', dialog)
         self.assertEqual(built, listed)                                             # every section, once, in its order
         self.assertEqual([k for k in self.ORDER if k in built], built)
-        for must in ("home-settings", "launcher-settings", "zone-settings", "menu-settings", "notify-settings",
+        for must in ("launcher-settings", "zone-settings", "menu-settings", "notify-settings",
                      "memory-settings", "about-settings", "preview-settings"):
             self.assertIn(must, built)
         heads = dict(re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"[^>]*><h3>([^<]+)<', dialog))
@@ -1849,16 +1841,27 @@ class TestNoCatchUpButton(StatusCase):
         for name in ("catch_lib", "catch_button", "catch_dialog", "CATCH_JS", "CATCH_CSS"):
             self.assertFalse(hasattr(status, name), name)
 
-    def test_the_app_and_obsidian_have_no_command_for_it(self):
+    def test_the_app_has_no_command_for_it(self):
         swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
-        main = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
-        for text in (swift, main):
-            self.assertNotRegex(text, r"(?i)catch.?up")
+        self.assertNotRegex(swift, r"(?i)catch.?up")
 
     def test_the_menu_keeps_process_the_inbox(self):
         menu = json.loads(htmllib.unescape(re.search(r'id="menu-data">(.*?)</script>', self.page(launchers=("claude",)), re.S).group(1)))
         self.assertNotIn("catchup", menu)
         self.assertIn("intake", menu)
+
+
+class TestAnOldPageSaysSoPlainly(StatusCase):
+    """#511: a page built long ago says it is old, with Refresh and the build time under Details."""
+
+    def test_the_banner_is_a_sentence_a_refresh_and_details(self):
+        js = status.JS
+        self.assertIn("' hours old, so what it shows may have changed. '", js)
+        self.assertIn("rb.textContent='Refresh'", js)
+        self.assertIn("document.getElementById('rebuild')", js)                  # the page's own rebuild, or its copy of the command
+        self.assertIn("sm.textContent='Details'", js)
+        self.assertNotIn("Run status.py again to refresh it", js)                # the tool's words moved under Details
+        self.assertNotIn("Built '+Math.round(h)+' hours ago", js)
 
 
 class TestLaunchers(StatusCase):
@@ -2008,7 +2011,7 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort", "Ask", "While you wait", "Ask: one session"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertEqual(["Effort", "Ask", "While you wait"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
         self.assertIn('<code>{"effort": true}</code>', html)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
@@ -3433,8 +3436,6 @@ class TestLinksOpenAsChosen(StatusCase):
         self.assertEqual(str(self.root / "Zones/Work/Acme Review/Threads/Pricing"), nodes["Pricing"]["pl"])
         self.assertEqual(str(self.root / "Zones/Work/Acme Review"), nodes["Acme Review"]["pl"])
         self.assertNotIn("pl", nodes["dana-whitlock"] if "dana-whitlock" in nodes else nodes["Dana Whitlock"])
-        plugin = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
-        self.assertIn('if (typeof body.open === "string") return this.follow(body.open);', plugin)   # Obsidian's tab opens it there
 
     def test_the_app_opens_a_link_as_chosen(self):
         swift = self.SWIFT.read_text(encoding="utf-8")

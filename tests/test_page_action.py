@@ -52,6 +52,26 @@ def plain(reply):
     return {k: v for k, v in reply.items() if k not in ("op", "state", "outcome", "built")}
 
 
+
+QUESTION = """---
+type: question
+asked: {asked}
+status: {status}
+{extra}---
+
+**Acme Review: which volume floor did you agree with Dana?**
+
+In the call Dana said 400 pallets and you said 500. The price sheet waits on this.
+
+- [400 pallets] Send Dana the price sheet at a 400-pallet floor
+- [500 pallets] Send Dana the price sheet at a 500-pallet floor
+"""
+
+
+def question(status_="open", extra=""):
+    return QUESTION.format(asked=(dt.date.today() - dt.timedelta(days=2)).isoformat(), status=status_, extra=extra)
+
+
 class ActionCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -1087,9 +1107,8 @@ class TestJournal(ActionCase):
         self.act(verb="todo-done", zone="Work", file="Todo.md", key=self.key("Send the revised"))
         ticked = tl.done_on(str(self.work), dt.date.today())[0]["key"]
         self.act(verb="park", zone="Work", file="Acme Review/Threads/Pricing/Pricing.md")
-        import test_simple_home as home
         asked = "Birch Entry/Threads/Market Sizing/Needs you/261003 - floor.md"
-        write(self.work / asked, home.question())
+        write(self.work / asked, question())
         git(self.work, "add", "-A")
         git(self.work, "commit", "-q", "-m", "asked")
         return dict(self.requests(), **{

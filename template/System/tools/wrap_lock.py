@@ -5,8 +5,9 @@
     python3 System/tools/wrap_lock.py end   Zones/Work/Acme/Threads/Pricing/Pricing.md
     python3 System/tools/wrap_lock.py status Zones/Work/Acme/Threads/Pricing/Pricing.md
 
-The wrap in the threads skill runs `start` before its steps and `end` after
-them, whatever happened in between. The lock is one small file in
+The wrap in the threads skill runs `start` before its steps and releases the
+lock after them, whatever happened in between: `end` when its commit succeeded,
+`end --abandon` when it did not. The lock is one small file in
 System/generated/, `wrap-<the note's path, with / as __>.lock`, holding the
 note's path and the time it was taken. A lock older than ten minutes counts as
 gone: a wrap that died leaves one behind, and it must not block the thread for
@@ -17,8 +18,11 @@ ten minutes; it asks no model.
 `wrap-<the note's path, with / as __>.done`, holding the note's path and that
 time. The band compares it with the start of the session's last turn, and
 Close reads the same record, so a note written by any other route is never
-taken for a wrap that ran. `end --abandon` removes the lock and writes none:
-for a wrap that never began.
+taken for a wrap that ran. `end --abandon` removes the lock and writes none,
+and leaves an earlier record as it was: for a wrap that never began, was
+refused, failed or was interrupted. Releasing the lock is not a claim that the
+wrap succeeded; only `end` without `--abandon` is, and the wrap makes it only
+after its commit.
 
 `start` prints `locked` and exits 0, or says that a wrap of this note is
 already running and exits 1. `end` removes the lock, writes the record, and
@@ -150,7 +154,8 @@ def finished(path: Path) -> Optional[float]:
 
 
 def end(root: Path, note: str, now: Optional[float] = None, abandon: bool = False) -> None:
-    """Remove the lock and record when the wrap finished. `abandon` records nothing."""
+    """Remove the lock and record when the wrap finished. `abandon` records nothing
+    and leaves an earlier record as it was."""
     lock = lock_path(root, note)
     if not abandon:
         when = datetime.datetime.fromtimestamp(time.time() if now is None else now, datetime.timezone.utc)

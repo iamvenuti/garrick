@@ -234,7 +234,8 @@ class RoutesTest(unittest.TestCase):
                       prep)
 
     def test_the_threads_skill_offers_it_where_a_party_is_created(self):
-        new = flat(section((SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8"),
+        folder = SKILLS / "threads"
+        new = flat(section("\n".join(f.read_text(encoding="utf-8") for f in [folder / "SKILL.md"] + sorted((folder / "reference").glob("*.md"))),
                            '## New: "new project X for P in Z", "new thread X in P"'))
         self.assertIn("the short route sets up the party, the project and the thread on one question instead: "
                       "the `meetings` skill's *Nothing there yet*", new)

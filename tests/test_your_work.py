@@ -14,15 +14,12 @@ called and answers as the CLI does.
 from __future__ import annotations
 
 import datetime as dt
-import html as htmllib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import textwrap
 import time
 import unittest
 from pathlib import Path
@@ -33,10 +30,18 @@ sys.dont_write_bytecode = True
 import fixtures  # noqa: E402
 from fixtures import CONTEXT, build_workspace, write  # noqa: E402
 from test_extract import docx, manifest, pptx, xlsx  # noqa: E402
-from test_simple_home import _load  # noqa: E402
-from test_status_more import DOM  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+def _load(name, path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 HERE = REPO / "extras" / "status"
 status = _load("garrick_status_your_work", HERE / "status.py")
 pa = _load("garrick_page_action_your_work", HERE / "page_action.py")
@@ -272,20 +277,6 @@ class TestSeveralPlaces(Case):
         self.act(verb="suggestion", id=pid, answer="yes", zone="Work", party="birch")
         self.assertIn("party: birch", (self.work / "Catalogue 2027" / "Catalogue 2027.md").read_text())
 
-    def test_a_place_with_no_one_yet_asks_whose_work_after_which(self):
-        _, props = self.scan()
-        pid = props["Website refresh"]["id"]
-        html = self.page()
-        self.assertIn('<option value="%s">Personal</option>' % htmllib.escape(json.dumps({"zone": "Personal"})), html)
-        self.assertIn('class="sh-card sh-place sh-owner" hidden', html)         # shown once Personal is chosen
-        with self.assertRaisesRegex(pa.Refused, "^Whose work is this\\?"):
-            self.act(verb="suggestion", id=pid, answer="yes", zone="Personal")
-        self.act(verb="suggestion", id=pid, answer="yes", zone="Personal", owner="my own")
-        personal = self.root / "Zones" / "Personal"
-        self.assertTrue((personal / "Website refresh" / "Website refresh.md").is_file())
-        self.assertIn("| Own work |", (self.root / "System" / "context.md").read_text())
-
-
 class TestStartWithThisOne(Case):
     def start(self):
         self.add()
@@ -403,76 +394,6 @@ class TestStartWithThisOne(Case):
             self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
 
 
-class TestTheWorksPage(Case):
-    """A piece of work's page after Start with this one, as the sketch has it."""
-
-    def started(self, **look):
-        self.add()
-        with mock.patch.dict(os.environ, {"MOCK_LOOK": json.dumps(dict(LOOK, **look))}):
-            self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
-        key = "Work/Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"
-        html = self.page()
-        return html.split('<article class="sh-work" id="%s"' % Y.work_id("Catalogue 2027", key), 1)[1].split("</article>", 1)[0]
-
-    def test_the_folder_is_named_with_its_parent_never_as_a_path(self):
-        page = self.started()
-        self.assertIn("Folder: Catalogue 2027, in Marketing", page)
-        self.assertNotIn(str(self.drive), page)
-        self.assertNotIn(os.path.realpath(str(self.drive)), page)
-
-    def test_who_is_involved_is_the_people_the_files_name_never_the_party(self):
-        page = self.started()
-        self.assertIn("<dt>Who&#x27;s involved</dt><dd>Hana Royle (layout), Owen Tarrant (prices)</dd>", page)
-        self.assertNotIn("Acme Corp", page)
-
-    def test_nobody_named_is_said_plainly(self):
-        page = self.started(who="")
-        self.assertIn("<dt>Who&#x27;s involved</dt><dd>No one is named in its files yet.</dd>", page)
-        self.assertNotIn("Acme Corp", page)
-
-    def test_what_happened_last_is_the_works_own_event_not_garricks(self):
-        page = self.started()
-        self.assertIn("<dt>What happened last</dt><dd>%s</dd>" % htmllib.escape(LOOK["last"], quote=False), page)
-        self.assertNotIn("First look, made from the files", page)
-        self.assertIn("; last in them: ", self.note().read_text())                  # the note keeps Garrick's entry
-
-    def test_nothing_dated_is_one_plain_sentence(self):
-        page = self.started(last="")
-        self.assertIn("<dt>What happened last</dt><dd>%s</dd>" % Y.UNDATED, page)
-
-    def test_the_question_says_the_next_step_once_and_a_short_source(self):
-        page = self.started(source="the launch timeline in the shared Lounge launch folder; it's only a name to me, "
-                                   "because its pages came through blank.")
-        q = page.split('<div class="sh-q"', 1)[1]
-        self.assertIn("<p>Confirm 64 pages to the printer by Friday From: Launch timeline</p>", q)
-        self.assertNotIn("<dt>Next</dt>", page)                                     # the question says it, once
-        self.assertEqual(1, page.count(">Confirm 64 pages to the printer by Friday"))
-        for said in ("blank", " me,", "only a name"):
-            self.assertNotIn(said, page)
-
-    def test_its_files_are_listed_most_recent_first(self):
-        page = self.started()
-        listed = re.findall(r"<li>([^<]+?)(?: <span|</li>)", page.split('<ul class="sh-files">', 1)[1].split("</ul>", 1)[0])
-        folder = self.drive / "Marketing" / "Catalogue 2027"
-        when = {rel: (folder / rel).stat().st_mtime for rel in listed}
-        self.assertEqual(sorted(listed, key=lambda r: (-int(when[r]), r.casefold())), listed)
-        self.assertEqual("Catalogue 2027 page plan.xlsx", listed[0])
-
-    def test_a_source_is_a_title(self):
-        for said, want in (("the proof review call on 14 October", "Proof review call on 14 October"),
-                           ("Launch timeline.xlsx", "Launch timeline"),
-                           ("From: Marketing/Launches/Launch plan.docx", "Launch plan"),
-                           ("I could not tell", ""),
-                           ("the price list, which I read twice", "Price list")):
-            self.assertEqual(want, Y.source_said(said), said)
-
-    def test_the_brief_keeps_answers_third_person_and_off_how_files_were_read(self):
-        brief = Y.FIRST_LOOK_BRIEF
-        for needle in ("third person", "never \"I\"", "extracted text", "blank pages", "the title of the one file",
-                       "never an organisation in place of people", Y.UNDATED):
-            self.assertIn(needle, brief)
-
-
 class TestTheNextStep(Case):
     def setUp(self):
         super().setUp()
@@ -535,25 +456,6 @@ class TestTheNextStep(Case):
 
 
 class TestStopUsingThis(Case):
-    def test_the_record_is_put_away_and_brought_back(self):
-        self.add()
-        hub_before = (self.work / "Catalogue 2027" / "Catalogue 2027.md").read_text()
-        said = self.act(verb="stop-using", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
-        self.assertEqual("Catalogue 2027 is put away. Its folder is as it was", said)
-        self.assertFalse((self.work / "Catalogue 2027").exists())
-        away = self.work / "archive" / "Catalogue 2027" / "Catalogue 2027.md"
-        self.assertIn("put-away: %s" % self.today.isoformat(), away.read_text())
-        self.assertEqual("", self.git("status", "--porcelain"))
-        self.assertEqual([{"zone": "Work", "project": "Catalogue 2027", "since": self.today.isoformat()}], Y.put_away(self.root))
-        html = self.page()
-        self.assertIn("Catalogue 2027 is put away.", html)
-        self.assertIn(htmllib.escape(json.dumps({"verb": "bring-back", "zone": "Work", "project": "Catalogue 2027"})), html)
-        self.assertEqual("Catalogue 2027 is back, where it stood", self.act(verb="bring-back", zone="Work",
-                                                                             project="Catalogue 2027"))
-        self.assertEqual(hub_before, (self.work / "Catalogue 2027" / "Catalogue 2027.md").read_text())
-        self.assertEqual("", self.git("status", "--porcelain"))
-        self.assertEqual([], Y.put_away(self.root))
-
     def test_work_with_changes_not_saved_is_refused(self):
         self.add()
         self.note().write_text(self.note().read_text() + "\nA line not committed.\n")
@@ -645,26 +547,6 @@ class TestAFirstWorkspace(unittest.TestCase):
         pa.act(self.root, {"verb": "suggestion", "id": self.props()["Lounge seating launch"]["id"], "answer": "yes"})
         self.assertIn("party: harbourline", (self.work / "Lounge seating launch" / "Lounge seating launch.md").read_text())
 
-    def test_rename_does_the_same_and_the_page_shows_the_new_name(self):
-        props = self.props()
-        pa.act(self.root, {"verb": "suggestion", "id": props["Website refresh"]["id"], "answer": "rename",
-                           "name": "New Website", "owner": "my own"})
-        self.assertTrue((self.work / "New Website" / "New Website.md").is_file())
-        self.assertIn("| Own work |", (self.root / "System" / "context.md").read_text())
-        html = status.build(self.root, folder=self.root.parent / "jobs")
-        start = html.split('id="sh-startone"', 1)[1].split("</div></div>", 1)[0]
-        self.assertIn("New Website", start)
-        disc = html.split('id="%s"' % Y.view_id(os.path.realpath(str(self.drive))), 1)[1].split("</article>", 1)[0]
-        self.assertIn("New Website</div>", disc)
-        self.assertIn("renamed from Website refresh", disc)
-        self.assertNotIn('data-name="Website refresh"', disc)                      # no longer waiting for an answer
-
-    def test_the_page_asks_in_place(self):
-        self.props()
-        html = status.build(self.root, folder=self.root.parent / "jobs")
-        self.assertIn("<b>%s</b>" % htmllib.escape(Y.OWNER), html)
-        self.assertIn('data-owner data-needed="1"', html)
-
     def test_no_place_at_all_refuses_in_plain_words(self):
         pid = self.props()["Catalogue 2027"]["id"]
         shutil.rmtree(self.work)
@@ -673,151 +555,3 @@ class TestAFirstWorkspace(unittest.TestCase):
         self.assertEqual(Y.NOWHERE, str(said.exception))
         for jargon in ("part", "zone", "party"):
             self.assertNotRegex(str(said.exception), r"\b%s\b" % jargon)
-
-
-# The simple home's script against a page status.py wrote, in Node, with the
-# small DOM the status page's other script tests use: the steps a person takes
-# (a click, a field filled in), then what the page sent the app, what it said,
-# and what it kept in the window's storage.
-PAGE_HARNESS = r"""
-const vm = require("vm");
-const [html, js, steps, kept] = JSON.parse(process.argv[1]);
-""" + DOM + r"""
-Object.defineProperty(El.prototype, "value", {
-  get() { return this._value !== undefined ? this._value : (this.getAttribute("value") || (this.localName === "textarea" ? this.textContent : "")); },
-  set(v) { this._value = String(v); } });
-El.prototype.focus = function () {};
-El.prototype.select = function () {};
-const doc = new El("#document");
-parse(html, doc);
-const body = doc.querySelector("body");
-const store = Object.assign({}, kept || {}), posted = [], said = [], listeners = [];
-const ctx = { JSON, String, Array, Object, Promise, setTimeout: () => 0, clearTimeout: () => {},
-  sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); },
-                    removeItem: (k) => { delete store[k]; } },
-  document: { body, querySelectorAll: (q) => doc.querySelectorAll(q), querySelector: (q) => doc.querySelector(q),
-              createElement: (t) => new El(t), getElementById: (id) => doc.querySelectorAll("#" + id)[0] || null,
-              addEventListener: (type, fn, capture) => { if (type === "click") listeners.push([!!capture, fn]); } } };
-Object.assign(ctx, { webkit: { messageHandlers: { garrick: { postMessage: (m) => posted.push(m) } } },
-                    StatusTab: () => {}, scrollTo: () => {}, GarrickSay: (t) => said.push(t),
-                    GarrickCopy: (t) => Promise.resolve(t) });
-ctx.window = ctx;                                  // the page's globals are the window's, as in a browser
-vm.createContext(ctx);
-vm.runInContext(js, ctx);
-function click(el) {
-  let stopped = false;
-  const ev = { target: el, preventDefault() {}, stopPropagation() { stopped = true; } };
-  for (const [cap, fn] of listeners.filter((l) => l[0]).concat(listeners.filter((l) => !l[0]))) { if (stopped) break; fn(ev); }
-  if (!stopped && typeof el.onclick === "function") el.onclick(ev);
-}
-for (const st of steps) {
-  const all = doc.querySelectorAll(st.sel), el = all[st.nth || 0];
-  if (!el) throw new Error("no element for " + st.sel);
-  if (st.do === "click") click(el); else el.value = st.value;
-}
-const editing = doc.querySelectorAll(".sh-edit input").map((i) => i.value);
-process.stdout.write(JSON.stringify({ posted, said, store, editing }));
-"""
-
-
-@unittest.skipUnless(shutil.which("node"), "Node is not installed")
-class TestThePageScript(Case):
-    """What the page's own buttons send, driven as a person would, so a
-    button wired to nothing fails here and not in the hand checks: Rename,
-    a Yes with the part of the workspace chosen and whose work it is, Change
-    it, and Add your own work."""
-    context = CONTEXT
-    personal = True
-
-    def drive_page(self, *steps, kept=None):
-        html = self.page()
-        done = subprocess.run(["node", "-e", PAGE_HARNESS, json.dumps([html, status.SIMPLE_JS, list(steps), kept])],
-                              capture_output=True, text=True, timeout=60)
-        self.assertEqual(0, done.returncode, done.stderr)
-        return json.loads(done.stdout)
-
-    def row(self, pid):
-        return '.sh-prop[data-sugg-id="%s"]' % pid
-
-    def test_rename_sends_the_name_typed_with_the_place_chosen(self):
-        _, props = self.scan()
-        pid = props["Website refresh"]["id"]
-        work = json.dumps({"zone": "Work", "party": "acme"})
-        out = self.drive_page({"do": "set", "sel": "select[data-place]", "value": work},
-                              {"do": "click", "sel": self.row(pid) + " button[data-rename]"},
-                              {"do": "set", "sel": self.row(pid) + " input", "value": "New Website"},
-                              {"do": "click", "sel": self.row(pid) + " .sh-edit button"})
-        self.assertEqual([{"act": {"verb": "suggestion", "id": pid, "answer": "rename", "name": "New Website",
-                                   "zone": "Work", "party": "acme"}}], out["posted"])
-        self.assertEqual("New Website", out["store"]["garrick-rename-" + pid])       # kept until it is saved
-        again = self.drive_page({"do": "set", "sel": "select[data-place]", "value": work}, kept=out["store"])
-        self.assertEqual([], again["posted"])                                          # a rebuild reopens it, sends nothing
-        self.assertEqual(["New Website"], again["editing"])                            # with the name typed
-        self.act(**out["posted"][0]["act"])
-        self.assertTrue((self.work / "New Website" / "New Website.md").is_file())
-
-    def test_yes_waits_for_the_place_and_whose_work_it_is(self):
-        _, props = self.scan()
-        pid = props["Catalogue 2027"]["id"]
-        yes = self.row(pid) + " button[data-sugg]"
-        out = self.drive_page({"do": "click", "sel": yes})
-        self.assertEqual([], out["posted"])
-        self.assertEqual(["First choose which part of your workspace this work is for."], out["said"])
-        personal = json.dumps({"zone": "Personal"})
-        out = self.drive_page({"do": "set", "sel": "select[data-place]", "value": personal}, {"do": "click", "sel": yes})
-        self.assertEqual([], out["posted"])
-        self.assertIn("whose work this is", out["said"][-1])
-        out = self.drive_page({"do": "set", "sel": "select[data-place]", "value": personal},
-                              {"do": "set", "sel": "input[data-owner]", "value": "my own"}, {"do": "click", "sel": yes})
-        self.assertEqual([{"act": {"verb": "suggestion", "id": pid, "answer": "yes", "zone": "Personal", "owner": "my own"}}],
-                         out["posted"])
-        out = self.drive_page({"do": "set", "sel": "select[data-place]", "value": json.dumps({"zone": "Work", "party": "birch"})},
-                              {"do": "click", "sel": self.row(pid) + " button[data-sugg]", "nth": 1})
-        self.assertEqual([{"act": {"verb": "suggestion", "id": pid, "answer": "not", "zone": "Work", "party": "birch"}}],
-                         out["posted"])
-
-    def test_change_it_sends_the_words_typed(self):
-        _, props = self.scan()
-        self.act(verb="suggestion", id=props["Catalogue 2027"]["id"], answer="yes", zone="Work", party="acme")
-        self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
-        q = next((self.note().parent / "Needs you").glob("*.md")).relative_to(self.work).as_posix()
-        out = self.drive_page({"do": "click", "sel": "button[data-own]"},
-                              {"do": "set", "sel": ".sh-ownbox textarea", "value": "Ask Owen for the prices"},
-                              {"do": "click", "sel": ".sh-ownbox button"})
-        self.assertEqual([{"act": {"verb": "answer", "zone": "Work", "file": q, "label": "Change it",
-                                   "text": "Ask Owen for the prices"}}], out["posted"])
-
-    def test_add_your_own_work_asks_the_app_for_its_picker(self):
-        out = self.drive_page({"do": "click", "sel": "button[data-pick]"})
-        self.assertEqual([{"pick": "folder"}], out["posted"])
-
-
-class TestThePage(Case):
-    def test_home_offers_add_your_own_work_and_shows_the_suggestions(self):
-        html = self.page()
-        self.assertIn('data-pick="folder"', html)
-        self.assertIn("Add your own work", html)
-        out, props = self.scan()
-        html = self.page()
-        self.assertIn('id="%s"' % out["view"], html)
-        self.assertIn("Your work in Shared Drive", html)
-        for name in props:
-            self.assertIn(htmllib.escape(name), html)
-        self.assertIn("Not a piece of work", html)
-        self.assertIn("Garrick read only names and dates", html)
-
-    def test_a_yes_waits_under_start_with_one_until_started(self):
-        self.add()
-        html = self.page()
-        self.assertIn("Start with one", html)
-        self.assertIn(htmllib.escape(json.dumps({"verb": "start", "zone": "Work",
-                                                 "file": "Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md"})), html)
-        self.act(verb="start", zone="Work", file="Catalogue 2027/Threads/Catalogue 2027/Catalogue 2027.md")
-        html = self.page()
-        self.assertIn("Catalogue 2027: is this your next step?", html)
-        self.assertIn("First look, made", html)
-        self.assertIn('data-own="Change it"', html)
-
-
-if __name__ == "__main__":
-    unittest.main()

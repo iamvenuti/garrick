@@ -352,15 +352,13 @@ class TestTheCallerIsNamed(ExecutorCase):
 
 
 class TestTheAppFollowsEveryCaller(unittest.TestCase):
-    """The Mac app and the Obsidian plugin, read as source: they run no Python here."""
+    """The Mac app, read as source: it runs no Python here."""
 
     def setUp(self):
         self.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
-        self.plugin = (REPO / "extras" / "status" / "obsidian" / "main.js").read_text(encoding="utf-8")
 
     def test_the_app_does_not_rebuild_after_a_reply_that_settled_the_page(self):
         self.assertIn('if self.rebuilds(request) && reply["built"] == nil { self.freshen(force: true) }', self.swift)
-        self.assertIn("if (this.rebuilds(request) && said.built === undefined) this.rebuild(true);", self.plugin)
 
     def test_an_ask_action_is_handed_to_the_page_as_a_click_is(self):
         self.assertIn('let ran = out["acted"] as? [[String: Any]] ?? []', self.swift)
@@ -377,7 +375,8 @@ class TestTheAppFollowsEveryCaller(unittest.TestCase):
 
 class TestTheSkillsDegrade(unittest.TestCase):
     def setUp(self):
-        self.threads = (SKILLS / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        folder = SKILLS / "threads"
+        self.threads = "\n".join(f.read_text(encoding="utf-8") for f in [folder / "SKILL.md"] + sorted((folder / "reference").glob("*.md")))
         self.todo = (SKILLS / "todo" / "SKILL.md").read_text(encoding="utf-8")
 
     def flat(self, text):

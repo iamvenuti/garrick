@@ -321,18 +321,6 @@ SHAPES = {
     # WORK_JS's queue of ticks (#107): an entry it keeps, and the batch it sends
     "window.GarrickTick: q.verb": {"todo-done": (), "todo-undo": ()},
     "flush: one.verb": {"todo-done": (), "todo-undo": ()},
-    # SIMPLE_JS (#175): Ask something, and Settings › Home
-    "askReq: 'ask-desktop'": {"ask-desktop": ()},
-    # Your own work (#182): a suggestion renamed, and a next step in the user's own words; a suggestion's
-    # Yes, Not and Rename carry the part of the workspace chosen above them, merged by Object.assign
-    "renameReq: 'suggestion'": {"suggestion": ("zone", "party", "owner")},
-    "ownReq: 'answer'": {"answer": ()},
-    "homeReq: 'settings'": {"settings": ()},
-    # WHERE_JS (#189): how far a copy or a move has got, which only reads; Stop; and a version opened or saved,
-    # `to` added by the Mac app's Save panel
-    "poll: 'files-progress'": {"files-progress": ()},
-    "vreq: 'files-stop'": {"files-stop": ()},
-    "vreq: 'work-file'": {"work-file": ("to",)},
     # MEMORY_JS (#108): what Settings › Memory's unsaved values would do, which only reads
     "ask: 'memory-preview'": {"memory-preview": ()},
     # RELEASE_JS (#410): Settings › About Garrick's Check for updates, and the update it starts when a newer release is found
@@ -344,15 +332,10 @@ SHAPES = {
 }
 # --- 2. assembled in Python with json.dumps, straight into data-act -------
 PY_SHAPES = {'"run"': ("run",),
-             # the simple home (#175): Continue, a Needs you answer and Not now, the example's two links
-             '"continue"': ("continue",), '"answer"': ("answer",), '"later"': ("later",), '"example"': ("example",),
+             # Continue, on Your work (#503)
+             '"continue"': ("continue",),
              # a `check` chip's Fix on the Threads card (#179)
-             '"fix"': ("fix",),
-             # your own work (#182): a suggestion's Yes and Not, Start, Stop using this and Bring it back
-             '"suggestion"': ("suggestion",), '"start"': ("start",), '"stop-using"': ("stop-using",),
-             '"bring-back"': ("bring-back",),
-             # where a work's files live (#189): Keep a copy, a move and the rest; a moved file opened, Finder
-             '"files"': ("files",), '"work-file"': ("work-file",)}
+             '"fix"': ("fix",)}
 # Which script each shape is built in, so that a script gaining a shape, or
 # losing the one it had, is a failure rather than a quiet gap.
 SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onclick: 'rename'", "onclick: 'move'",
@@ -362,8 +345,6 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "TODO_JS": {"send: verb", "held: verb", "onTick: verb"},
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
-           "SIMPLE_JS": {"askReq: 'ask-desktop'", "homeReq: 'settings'", "renameReq: 'suggestion'", "ownReq: 'answer'"},
-           "WHERE_JS": {"poll: 'files-progress'", "vreq: 'files-stop'", "vreq: 'work-file'"},
            "MEMORY_JS": {"ask: 'memory-preview'"},
            "RELEASE_JS": {"btn.onclick: 'release-check'", "window.GarrickActed: 'release-update'"},
            "NOTE_JS": {"read: 'note-read'", "openIn: 'note-open'"}}
@@ -435,14 +416,12 @@ class TestWhatThePageSends(unittest.TestCase):
 
     def test_what_is_built_outside_status_py_is_declared(self):
         """The hosts and the ask box build their own, where no scan of
-        status.py reaches: an open by folder from the app and the plugin, and
+        status.py reaches: an open by folder from the app, and
         what ask.py proposes. The threads skill's JSON is checked by hand
         against its SKILL.md below."""
-        host = {"verb", "folder", "prompt"}                    # Garrick.swift act(), obsidian/main.js
+        host = {"verb", "folder", "prompt"}                    # Garrick.swift act()
         self.assertEqual(set(), host - self.declared("open"))
-        for name, text in (("app/Garrick.swift", (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text()),
-                           ("obsidian/main.js", (REPO / "extras" / "status" / "obsidian" / "main.js").read_text())):
-            self.assertIn("verb", text, name)
+        self.assertIn("verb", (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(), "app/Garrick.swift")
         ask = (REPO / "extras" / "status" / "ask.py").read_text(encoding="utf-8")
         for m in re.finditer(r"\{\s*\"verb\"\s*:", ask):
             pairs = dict(_pairs(_literal(ask, m.start())))
@@ -451,7 +430,8 @@ class TestWhatThePageSends(unittest.TestCase):
                 self.assertEqual(set(), set(pairs) - self.declared(verb), (verb, sorted(pairs)))
 
     def test_the_threads_skill_sends_what_the_table_declares(self):
-        skill = (REPO / "template" / "System" / "skills" / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        folder = REPO / "template" / "System" / "skills" / "threads"
+        skill = "\n".join(f.read_text(encoding="utf-8") for f in [folder / "SKILL.md"] + sorted((folder / "reference").glob("*.md")))
         for m in re.finditer(r"\{\s*\"verb\"\s*:", skill):
             line = skill[m.start():skill.index("\n", m.start())]
             verb = re.search(r"\"verb\"\s*:\s*\"([\w-]+)\"", line).group(1)

@@ -7,7 +7,7 @@ install.py copies the release's `docs/` into the workspace as
 as it does the release notes in `System/garrick-changelog.md`. `status.py`
 asks `guide()` for its Guide tab. Every link is settled when the page is
 built, because the Mac app may read nothing outside `System/generated/` and
-both it and the Obsidian plugin send any link that is not an anchor on the
+the Mac app sends any link that is not an anchor on the
 page itself to another app:
 
 - a link from one doc page to another, with or without a heading, becomes an

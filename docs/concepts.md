@@ -28,11 +28,11 @@ One line of work inside a project, in `Threads/<Thread>/`, with a note of the sa
 
 ### Piece of work
 
-The word the [simple home](#the-simple-home) uses for a thread, and the only unit it shows. Underneath, a piece of work is a project with one thread; a project with several live threads shows one row for each, as *Project, Thread*. "Thread" is the word in the rules and in these pages, for someone who splits a piece of work.
+The word the Garrick App's *Your work* list uses for a thread, and the only unit it shows. Underneath, a piece of work is a project with one thread; a project with several live threads shows one row for each, as *Project, Thread*. "Thread" is the word in the rules and in these pages, for someone who splits a piece of work.
 
 ### Spoken form
 
-The `spoken:` line in a hub or thread note's frontmatter: how a name that does not say how it is said is heard, such as `spoken: fourth quarter planning` for Q4 Planning. A request matches it as well as the name. `scaffold.py` asks for one when a project or thread name needs it, and refuses a zone name that cannot be said aloud, since a zone has no note to carry one. See [Voice](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
+The `spoken:` line in a hub or thread note's frontmatter: how a name that does not say how it is said is heard, such as `spoken: fourth quarter planning` for Q4 Planning. A request matches it as well as the name. `scaffold.py` asks for one when a project or thread name needs it, and refuses a zone name that cannot be said aloud, since a zone has no note to carry one. See [Voice](../template/System/skills/threads/reference/lifecycle.md#the-rules-behind-this-request) in the `threads` skill.
 
 ### Hub note
 
@@ -68,23 +68,15 @@ The row for what is only in your head: a decision half made and why, a doubt, or
 
 ### Status
 
-Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/skills/threads/SKILL.md#the-rules-behind-the-commands) in the `threads` skill.
+Every hub and thread note carries `status:` in its frontmatter, with one of three values. `active` is live work. `parked` is set aside and not finished: the note keeps its block and its links, and drops out of "what's open" until "wake X". `done` is finished: its Resume here block becomes `### Outcome`, and the hub lists it under `## Finished`. A parked project parks every thread in it, and the check reports any other value. See [Threads](../template/System/skills/threads/reference/lifecycle.md#the-rules-behind-this-request) in the `threads` skill.
 
 ### Wrap and Resume
 
-One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. "Back" resumes the thread whose note was written most recently and is not finished or parked, and "back to X" opens X. The note's last write is the only record of where you were, so there is nothing else to keep right. Back and *While you wait* rest on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. The note's last write is the only record of where you were, so there is nothing else to keep right. *While you wait* rests on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### History file
 
 `history/<Note> history <YYYY>-Q<n>.md`, beside a hub or thread note. It holds the dated entries the note moved out, whole and unchanged, one file for each calendar quarter, under a heading and its frontmatter (`type: history`, no `status:`). The note keeps its newest five entries and one line that links the files. `history.py` moves them, at the wrap and when a thread is parked. See [Opening and wrapping](commands.md#opening-and-wrapping).
-
-### Catch up
-
-"Catch me up": what changed in a zone's threads over a period, from their history, their notes and the Todo list, one section per thread that moved, each statement linked to the record it rests on. `System/tools/briefing.py` gathers it and carries the judgment of what deserves attention; the `threads` skill writes it. Shown, not saved: say "save that" to keep it. See [Opening and wrapping](commands.md#opening-and-wrapping).
-
-### What's next
-
-"What's next", or "what should I do while I wait": one thing worth doing elsewhere while a long turn runs. `System/tools/next_up.py` ranks it by plain rules, never the thread in focus: the thread left most recently today, Todo lines due today or late, chases come due, what waits in an inbox, a thread parked for 30 days, a live one not wrapped for 14. The assistant reads the first pick and offers to open or tick it; it never acts on its own. [The Garrick band](#the-garrick-band) shows the same list while a turn runs, where its *While you wait* preview feature is switched on.
 
 ## Zones and walls
 
@@ -116,7 +108,7 @@ The table in `System/context.md` that maps names your dictation gets wrong to wh
 
 ### `System/context.md`
 
-Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says which party a zone carries, if any, and whether new parties there start walled or open. It is yours, filled in from your answers at install, and every session reads it.
+Who you are and who you deal with: Me, Zones, Parties, People and Aliases. The Zones table says what each zone holds and whether it is walled or open. It is yours, filled in from your answers at install, and every session reads it.
 
 ### Learned entry
 
@@ -138,7 +130,7 @@ What "that's wrong, it's Y" does: `System/tools/correct.py` lists every live cop
 
 ### Wiki questions
 
-When an ingest or a lint finds something only you can answer, such as who decides, or which of two figures holds, it writes the question as a file in the wiki's `questions/` folder, `<YYMMDD> - <slug>.md`, and adds no line to the page. A question has the form of a [*Needs you*](extras/simple-home.md#needs-you) question, plus `origin:`, the raw record that raised it, and `pages:`, the pages the answer would change. A Meetings question also carries the zone and parties of the pages it comes from, and the walls read it as they read a page. A Knowledge question carries neither, as nothing in Knowledge does. The schemas are in each wiki's `AGENTS.md`.
+When an ingest or a lint finds something only you can answer, such as who decides, or which of two figures holds, it writes the question as a file in the wiki's `questions/` folder, `<YYMMDD> - <slug>.md`, and adds no line to the page. A question has the form of a short ask with one answer per option, plus `origin:`, the raw record that raised it, and `pages:`, the pages the answer would change. A Meetings question also carries the zone and parties of the pages it comes from, and the walls read it as they read a page. A Knowledge question carries neither, as nothing in Knowledge does. The schemas are in each wiki's `AGENTS.md`.
 
 You answer in your own words, in one line, and pick one of four outcomes. The **Context tab** in the Garrick App does it (see [the status page](extras/status-page.md#the-context-tab)), and so does the command line, with `page_action.py` in `System/status/`. Either way each write is one transaction: after it, `check.py` and the wiki lint are counted again, and if any count is worse every file goes back as it was, byte for byte, and a file the write made is removed:
 
@@ -261,31 +253,23 @@ An optional hook for Claude Code and Codex. Before the assistant edits a file ou
 
 ### Extras
 
-Optional tools the repository ships in `extras/` for a workspace to take on, such as the Garrick App, scheduled jobs, desk and the zone guard. Core Garrick never depends on any of them. The installer puts in one, the Garrick App's, in a workspace that opens on the simple home; the rest you add yourself. See [Extras](extras/index.md).
+Optional tools the repository ships in `extras/` for a workspace to take on, such as the Garrick App, scheduled jobs, desk and the zone guard. Core Garrick never depends on any of them. The installer puts in one, the Garrick App's; the rest you add yourself. See [Extras](extras/index.md).
 
 ### The Garrick App
 
-The control panel over your zones, projects and threads, and not where the work happens: it opens a piece of work in the app you work in. It is one HTML page, built by `status.py` into `System/generated/status.html`, shown in the Mac app, in Obsidian or in a browser. It opens on the [simple home](#the-simple-home) or on the full page, whose tabs are Overview, Todo, Status and the [Guide](#the-guide). Its buttons can also act, such as parking a thread or ticking a Todo line, each through one declared operation and committed in the zone; in a browser they copy what to say instead. Its code keeps the old name, the status page, in `extras/status/`. See [the Garrick App](extras/status-page.md).
+The control panel over your zones, projects and threads, and not where the work happens: it opens a piece of work in the app you work in. It is one HTML page, built by `status.py` into `System/generated/status.html`, shown in the Mac app, in Obsidian or in a browser. It opens on your work, with tabs for Overview, Todo, Status and the [Guide](#the-guide). Its buttons can also act, such as parking a thread or ticking a Todo line, each through one declared operation and committed in the zone; in a browser they copy what to say instead. Its code keeps the old name, the status page, in `extras/status/`. See [the Garrick App](extras/status-page.md).
 
 ### The Mac app
 
 *Garrick.app*, which shows the Garrick App in a window of its own, in the Dock and the menu bar. It rebuilds the page when it is old, and its buttons act. `make-app.sh` builds it on your Mac, signed for that Mac only, and "Set up Garrick" offers to run it. See [A Mac app](extras/status-page.md#a-mac-app).
 
-### The simple home
+### Your work
 
-What a new workspace's Garrick App opens on: *Your work*, every live piece of work, most recent first, each with its next action; *Ask something*, one box for a question about any of your work; and *Needs you*, the questions Garrick is waiting on you to answer. Everything else is under *More*, and *Settings › Home* switches between *Simple* and *Full*. See [The simple home](extras/simple-home.md).
+The list the Garrick App's Overview opens on: every live piece of work, most recent first, each with its next action, who it waits on, and *Continue*. See [Your work](extras/status-page.md#what-it-shows).
 
 ### Continue
 
-The button on a piece of work in the simple home, and *Open in Claude* on the full page. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. *Ask something* works the same way, with your words. See [Continue](extras/simple-home.md#continue).
-
-### Needs you
-
-A question Garrick is waiting on you to answer, blocking one piece of work. Each is a file in that work's `Needs you/` folder, committed like any note, with its options as buttons on the home. An answer sets the work's next action and commits; *Not now* brings it back the next day. Warnings and check findings never go there. See [Needs you](extras/simple-home.md#needs-you).
-
-### Stop using this
-
-The button at the foot of a piece of work's page that puts Garrick's record of it away: its project moves into the zone's `archive/`, in one commit, and its folder of files is left as it was. *Bring it back* returns the record where it stood. Nothing is deleted. See [Your own work](extras/simple-home.md#your-own-work).
+The button on a piece of work in Your work, and *Open in Claude* on a thread. It commits Garrick's own record of the work, asks Claude where the work stands without a window, and opens Claude's desktop app on that session with the answer already on screen. It needs the Claude Code command-line tool, signed in with the same account; in a browser it copies the words to say. See [Continue](extras/status-page.md#continue).
 
 ### The Guide
 
@@ -293,7 +277,7 @@ The Garrick App's fourth tab: these pages, as the release your workspace runs sh
 
 ### The worked example
 
-Robin Hale's made-up work at Quillfield Furniture, in a zone of its own called `Example`, for trying Garrick before your own work is in it. `install.py --example` adds it, its pieces of work are marked *Example*, and *Remove the example*, or `System/tools/example.py archive`, puts it away without touching anything of yours. See [The example](extras/simple-home.md#the-example).
+Robin Hale's made-up work at Quillfield Furniture, in a zone of its own called `Example`, for trying Garrick before your own work is in it. `install.py --example` adds it, its pieces of work are marked *Example*, and *Remove the example*, or `System/tools/example.py archive`, puts it away without touching anything of yours.
 
 ### Desk
 

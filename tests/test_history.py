@@ -423,7 +423,8 @@ class Skills(unittest.TestCase):
     before it parks. The skill names no assistant (test_executor reads it too)."""
 
     def section(self, title):
-        text = (REPO / "template" / "System" / "skills" / "threads" / "SKILL.md").read_text(encoding="utf-8")
+        folder = REPO / "template" / "System" / "skills" / "threads"
+        text = "\n".join(f.read_text(encoding="utf-8") for f in [folder / "SKILL.md"] + sorted((folder / "reference").glob("*.md")))
         start = text.index("\n## %s" % title)
         end = text.index("\n## ", start + 5)
         return text[start:end]

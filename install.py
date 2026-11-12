@@ -7,7 +7,7 @@
     python3 install.py --allowlist ~/Garrick             allow Garrick's own commands there, and nothing else
 
 Python 3.9+, standard library only. Writes nothing outside the target folder.
-GARRICK_INSTALL_NO_PAGE=1 puts the status page in place on the simple home
+GARRICK_INSTALL_NO_PAGE=1 puts the status page in place
 without building it, for a test suite that installs many workspaces.
 """
 
@@ -132,16 +132,12 @@ REFUSED_GIT = ("push", "pull", "fetch", "clone", "remote",
 CLAUDE_SETTINGS = ".claude/settings.json"
 # A path a command line can carry without quotes, so both spellings are worth a rule.
 PLAIN_PATH = re.compile(r"^[A-Za-z0-9/._-]+$")
-# The page a workspace made now opens on (#175), "simple" or "full": written as
-# its "home" setting, and on the simple home its zones' lists start without the
-# zone template's example line.
-NEW_HOME = "simple"
 # The extras that live in the workspace, where their pages say to copy them:
 # (name, what it is called, [(folder in Garrick, folder in the workspace,
 # folders inside it that go elsewhere)]). An extra counts as installed when one
 # of its folders is in the workspace; update.py then updates its files as the
 # core's, and adds any it lacks. The installer puts one in place itself: the
-# status page, on the simple home, which is that page (#208). The zone guard and
+# status page (#208). The zone guard and
 # the Garrick band run from a Garrick you keep outside the workspace, so they
 # are not here.
 EXTRAS = (
@@ -760,15 +756,10 @@ def install(cfg, target, force=False, quiet=False):
     w.copy_tree(TEMPLATE / "Wikis", root / "Wikis")
 
     # One folder per zone, from the template that System/tools/scaffold.py uses for a zone added later.
-    # A workspace that will open on the simple home (below) starts each list without its example line.
-    simple = NEW_HOME == "simple"
     for z in cfg["zones"]:
         zdir = root / "Zones" / z["name"]
         w.mkdir(zdir)
         w.copy_tree(TEMPLATE.joinpath(*pl.ZONE_TEMPLATE), zdir, fill={"ZONE": z["name"]})
-        if simple:
-            todo = zdir / pl.ZONE_TODO
-            w.write(todo, pl.zone_todo(todo.read_text(encoding="utf-8"), True))
 
     # Skill discovery. Claude Code reads .claude/skills and Codex reads .agents/skills
     # from the session's folder up to its git repository root. Zones and Wikis are
@@ -798,17 +789,9 @@ def install(cfg, target, force=False, quiet=False):
         for rel, text in files.items():
             w.write(root / rel, text)
 
-    # The status page opens a workspace made now on the simple home (#175). One
-    # installed before it has no "home" and keeps the page it had; Settings ›
-    # Home switches either way. The file is the workspace's own, never fingerprinted.
-    recorded = "/".join(pl.SETTINGS)
-    ours = read_json_file(root / recorded, recorded)
-    ours.setdefault("home", NEW_HOME)
-    w.write(root / recorded, json.dumps(ours, indent=2) + "\n")
-    # The simple home is the status page, so a workspace that opens on it gets
-    # the page itself (#208): the extra in System/status, committed and
-    # fingerprinted with the rest, as an update finds one copied in by hand.
-    page = ours["home"] == "simple" and put_extra(w, root, "status")
+    # A workspace made now gets the Garrick App's page itself (#208): the extra in System/status, committed
+    # and fingerprinted with the rest, as an update finds one copied in by hand.
+    page = put_extra(w, root, "status")
 
     # Which Garrick this is, and a fingerprint of every file it just wrote, so an
     # update can tell a file still as installed from one the user has changed.
@@ -868,7 +851,7 @@ def install(cfg, target, force=False, quiet=False):
             f"python3 System/status/status.py --workspace {shlex.quote(str(root))}")
     elif page and not unbuilt:
         say("  Your home page is built, in System/generated/status.html: the status page, in System/status, "
-            "opens on the simple home. \"Set up Garrick\" offers to make it a Mac app.")
+            "opens on your work. \"Set up Garrick\" offers to make it a Mac app.")
     elif page:
         say(f"  Your home page, in System/status, was not built: {unbuilt}")
         say(f"  To build it: python3 System/status/status.py --workspace {shlex.quote(str(root))}")

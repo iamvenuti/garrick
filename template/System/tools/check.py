@@ -4366,10 +4366,10 @@ STRUCTURE_RE = re.compile(r"(?mi)%s|%s" % (HEADING_RE.pattern[4:], LEDGER_HEADER
 # one still add up, and a log of short dated entries copied across two walled zones is refused as before:
 #   - a line identical to a line of a template under System/templates/ (read with whitespace made plain);
 #   - a bold label at the start of a line whose text is a bold label that a template holds, matched by its
-#     literal text, with a real date where the template writes a date (`<D Month YYYY>`, `{{DATE}}`); a label that
+#     literal text, with a real date where the template writes a date (`<D Month YYYY>`, a DATE placeholder in double braces); a label that
 #     holds any other placeholder is never matched, and no label is matched by the shape of a placeholder;
 #   - the bold date that opens a dated entry, `**10 November 2026.**` or `**2026-11-10:**`, by a strict date
-#     pattern: a placeholder such as `**<D Month YYYY>.**` or `**{{DATE}}.**` is not a date, and a bold opener
+#     pattern: a placeholder such as `**<D Month YYYY>.**` or `**<date>.**` is not a date, and a bold opener
 #     that is not a date is read as the words it holds.
 # Headings stay breaks, as they were: a run never crosses one, and a template heading's words are common wording.
 _MONTHS = "January|February|March|April|May|June|July|August|September|October|November|December"
@@ -4621,7 +4621,9 @@ def _resume_runs(text: str, structure: Optional[TemplateStructure] = None) -> se
     last = 0
     for m in RESUME_ROW_RE.finditer(text, 0, stop):
         out.update(shingles(words(material(text[last:m.start()], structure))))
-        last = m.start("cell")
+        # A row that is the template's own, cell and all, carries no weight: its words are skipped, not joined to
+        # the entry below the table (the label is cut off the cell, so the line test needs the whole line).
+        last = m.end() if structure is not None and " ".join(m.group(0).split()) in structure.lines else m.start("cell")
     out.update(shingles(words(material(text[last:], structure))))
     return out
 

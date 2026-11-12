@@ -1392,8 +1392,14 @@ def context_link(qdata: Optional[dict]) -> str:
             if n or f:
                 said.append("%s: %s" % (g["h"], ", ".join(x for x in ("%d question%s" % (n, "" if n == 1 else "s") if n else "",
                                                                     "%d finding%s" % (f, "" if f == 1 else "s") if f else "") if x)))
-    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a><span class="hint">%s</span></div>'
-            % E("Nurture runs every night; what it leaves is answered in the Context tab. " + ("; ".join(said) + "." if said else "Nothing is open.")))
+    open_now = "; ".join(said) + "." if said else "Nothing is open."
+    # The card is moved between tabs (#443), so the page decides which of the two readings shows (#526): on the
+    # Context tab, where the panel is above it, the button would only link to where it already is, and the hint
+    # points up; on any other tab the link keeps working and the hint names the tab.
+    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a>'
+            '<span class="hint hint-away">%s</span><span class="hint hint-here">%s</span></div>'
+            % (E("Nurture runs every night; what it leaves is answered in the Context tab. " + open_now),
+               E("Nurture runs every night; what it leaves is answered in the panel above. " + open_now)))
 
 
 def refusals_block(ws: Path) -> str:
@@ -1441,6 +1447,7 @@ DEBT_CSS = r"""
 .dwallmiss a{color:var(--critical);font-weight:600}
 .dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
 .review{align-items:center;margin:0 0 12px}
+.review .hint-here{display:none}#tab-questions .review .act,#tab-questions .review .hint-away{display:none}#tab-questions .review .hint-here{display:inline}
 """
 
 

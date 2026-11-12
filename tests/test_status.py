@@ -4131,6 +4131,18 @@ class TestContextLink(StatusCase):
         self.assertIn("Nothing is open.", status.context_link({"menu_groups": {"Work": [{"h": "Work", "n": 0}]}}))
         self.assertEqual("", status.context_link(None))                      # no tab, no link
 
+    def test_the_page_hides_the_button_on_the_context_tab_and_points_up_there(self):
+        """#526: the builder's output is one, wherever the card sits; the CSS decides on the page."""
+        data = {"menu_groups": {"Work": [{"h": "Work", "n": 2}]}, "menu_findings": {}}
+        b = status.context_link(data)
+        self.assertIn('<span class="hint hint-away">Nurture runs every night; what it leaves is answered in the Context tab. Work: 2 questions.</span>', b)
+        self.assertIn('<span class="hint hint-here">Nurture runs every night; what it leaves is answered in the panel above. Work: 2 questions.</span>', b)
+        self.assertEqual(b, status.context_link(data))
+        css = status.DEBT_CSS
+        self.assertIn("#tab-questions .review .act,#tab-questions .review .hint-away{display:none}", css)
+        self.assertIn("#tab-questions .review .hint-here{display:inline}", css)
+        self.assertIn(".review .hint-here{display:none}", css)                 # on any other tab only the first reading shows
+
     def test_the_card_has_no_review_button_and_reads_no_record(self):
         write(self.root / "System" / "nurture-review.md",
               "---\ntype: nurture-review\nstatus: open\nstarted: 2026-03-14\nlast_completed: 2026-03-07\n---\n")

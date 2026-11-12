@@ -4,6 +4,39 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.65.1] - 2026-11-12
+
+A patch for 0.65.0. It fixes Ask, the New project dialog, the Checks card and Todo ticks. It also adds four things that were asked for by name: Ask is released, *Your work* shows each row's zone and open actions, the dialog can make a party, and a setting lets a long Resume here block be trimmed without asking. While you wait is gone.
+
+**Upgrading.**
+- `"resume-trim"` is a new setting in `System/garrick-settings.json`. It is `"ask"` by default, which changes nothing: a Resume here block over `resume-max-words` is still offered as a shorter version for your yes. Set it to `"auto"` and an attended wrap or Nurture trims the block to three quarters of the limit and reports the words before and after. The nightly run never trims, whatever the setting says.
+- Ask is on for everyone, and the `ask` flag is gone. Settings, under *Menu bar*, has *Answer in the Ask box* to switch it off. If `System/garrick-flags.json` said `"ask": false`, the update writes the switch off, so Ask stays off for you; `"ask": true` or no line leaves it on. Ask holds ⌘G, so other apps' *Find Next* stops on that key until you set another key or switch Ask off. Garrick says so once, the first time it takes the key.
+- While you wait is gone, with its preview flag, its Settings section and the band's suggestion line. A leftover `"while-you-wait"` in the flags or settings file does nothing. "What's next" still works, with its six rules fixed, and it now looks at every zone: if you had switched on *Same zone only*, that choice is gone.
+
+### Added
+
+- **Ask is released** (#528). The Ask box and its hotkey work without a flag, and *Preview features* no longer lists Ask. With the switch off, no session runs, no key is held, and the panel's field opens your assistant, with no restart.
+- **`"resume-trim"`** (#527), as described under *Upgrading*. `check.py`'s warning follows it: with `"auto"` it says the next attended wrap or Nurture trims the block.
+- **New party… in the New project dialog** (#522). It asks for the party's name and what it is, commits that row in `System/context.md` on its own, then makes the project with the new tag. A name close to a party the zone has shows *Already there* under the field. The Ask box still never adds a party.
+
+### Changed
+
+- **Your work rows** (#523). Each row shows its zone and project in grey above the thread in bold, the thread's `todo N` chip with the same list as the Threads card (a tick in either place strikes through both), and opens the work the way *Settings › Opening a thread* says, in place of a fixed *Continue*. In a browser the row still offers the phrase to copy.
+- **The New project dialog asks only for a name** (#522). Left empty, the first thread is *Getting started*, as in the Ask box, and the party can be left out.
+- **The Checks card counts what it says** (#525). Wall refusals are counted once each, not once per finding line, with nested repositories apart and repositories outside the workspace left out. When last night's run found wall findings that the card's quick list does not show, a line says how many and links to the Context panel. The debt chart caps only a night far above the rest, and the threshold label sits clear of the line.
+
+### Removed
+
+- **While you wait** (#529): the `while-you-wait` flag, *Settings › While you wait*, the band's turn timer and suggestion line, and `/garrick next`, `open`, `tick` and `later`.
+
+### Fixed
+
+- **Ask answers where its names live** (#520). A question whose names all belong to one zone other than the window's is answered in that zone, and the selector moves to it. Before, it got the wall sentence. A conversation that already holds material from another walled zone still stops at the wall.
+- **Bold and lists in Ask's answers** (#521). The window draws bold, italic and a leading bullet instead of showing asterisks and dashes. A `5 * 3` in quoted text keeps its asterisk.
+- **Ticks already saved are not refused** (#524). A tick on a line that is already ticked, or an untick on one already open, says *Already done* or *Already open* and writes nothing. The page no longer sends a saved tick a second time when two copies of the page share their storage.
+- **Answer in Context on the Context tab** (#526). The button is hidden where it would do nothing, and the hint points to the panel above. Moved to another tab, the card keeps the button.
+- **Your work's text.** A waiting-on name in bold shows without asterisks, and an owner written before a next action (`Robin's: send the sheet`) is left out, as one written after it already was.
+
 ## [0.65.0] - 2026-11-12
 
 This release takes things out. The simple home, the Obsidian plugin, the 3D graph and the `ask-agent` flag are gone, the threads skill is split by request, and the app says what failed in plain words. Nothing new was added.

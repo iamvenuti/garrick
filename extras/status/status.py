@@ -2093,13 +2093,23 @@ WORK_CSS = r"""
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={},
-BATCH=@BATCH@,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
+BATCH=@BATCH@,SENTFOR=180,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
 try{OPS=JSON.parse(sessionStorage.getItem(KEY+'-ops')||'{}')||{}}catch(e){}
 try{Q=JSON.parse(sessionStorage.getItem(KEY+'-ticks')||'[]')||[]}catch(e){}
 function keep(){try{sessionStorage.setItem(KEY,JSON.stringify(W));sessionStorage.setItem(KEY+'-seen',JSON.stringify(SEEN.slice(-60)));sessionStorage.setItem(KEY+'-ops',JSON.stringify(OPS));
 sessionStorage.setItem(KEY+'-ticks',JSON.stringify(Q))}catch(e){}}
+/* the ticks this window has sent, by zone, note and key, with their verb and time, read from the storage each time it is asked:
+   a second copy of the page, or a rebuild that read the queue before a flush was stored, may hold a tick this one has sent (#524) */
+function sentRead(){var s={},n=Date.now();try{s=JSON.parse(sessionStorage.getItem(KEY+'-sent')||'{}')||{}}catch(e){}
+Object.keys(s).forEach(function(i){if(!s[i]||n-s[i].t>SENTFOR*1000)delete s[i]});return s}
+function sentWrite(s){try{sessionStorage.setItem(KEY+'-sent',JSON.stringify(s))}catch(e){}}
+function sentId(q,k){return JSON.stringify([q.zone,q.file,k])}
+function sentHas(q,k){var s=sentRead()[sentId(q,k)];return!!s&&s.v===q.verb}
+/* the oldest of what was sent goes first once there are too many */
+function sentAdd(q,keys){var s=sentRead(),n=Date.now();keys.forEach(function(k){s[sentId(q,k)]={v:q.verb,t:n}});sentWrite(s)}
+function sentDrop(q,keys){var s=sentRead();keys.forEach(function(k){delete s[sentId(q,k)]});sentWrite(s)}
 /* the operation ids this window has already shown the end of, so the record never shows one twice */
 function mark(){[].forEach.call(arguments,function(o){if(o&&SEEN.indexOf(o)<0)SEEN.push(o)})}
 function mint(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.floor(Math.random()*16));return s}
@@ -2125,7 +2135,7 @@ if(b){b.title=d?'Reopen':'Mark done';b.setAttribute('aria-label',b.title+String(
 function words(z,k){var r=rows(z,k)[0],b=r&&r.querySelector('.tick'),s=b?String(b.getAttribute('aria-label')||'').replace(/^[^:]*:\s*/,''):'';
 return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
-function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});
+function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});sentDrop(e.q,e.q.keys||[]);
 Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)})}
 /* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
    The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
@@ -2160,8 +2170,10 @@ if(e.q.keys&&!e.shown&&now-e.t0>=TOAST*1000){e.shown=1;changed=true}});if(change
 function flush(){var now=Date.now(),sent=false;
 Q.map(function(x){return x.q.zone}).filter(function(z,i,a){return a.indexOf(z)===i}).forEach(function(z){var mine=Q.filter(function(x){return x.q.zone===z});
 if(running(z)||mine.some(function(x){return now-x.t<BATCH*1000}))return;
-var one=mine[0].q,go=mine.filter(function(x){return x.q.verb===one.verb&&x.q.file===one.file}),keys=go.map(function(x){return x.q.key}),n=keys.length;
-Q=Q.filter(function(x){return go.indexOf(x)<0});var q={verb:one.verb,zone:z,file:one.file,keys:keys,op:mint()};host.postMessage({act:q});
+var one=mine[0].q,go=mine.filter(function(x){return x.q.verb===one.verb&&x.q.file===one.file}),all=go;
+go=go.filter(function(x){return!sentHas(x.q,x.q.key)});     /* a tick this window has already sent is never sent twice */
+Q=Q.filter(function(x){return all.indexOf(x)<0});if(!go.length){sent=true;return}
+var keys=go.map(function(x){return x.q.key}),n=keys.length;sentAdd(one,keys);var q={verb:one.verb,zone:z,file:one.file,keys:keys,op:mint()};host.postMessage({act:q});
 W.push({q:q,op:q.op,say:(q.verb==='todo-done'?'Ticking ':'Reopening ')+(n===1?'it…':n+' lines…'),t0:now,lines:keys.map(function(k){return words(z,k)})});sent=true});
 if(sent)keep();return sent}
 function tick(){var sent=flush();if(sweep()||sent)render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});poll();run()}
@@ -2192,6 +2204,7 @@ W.push({q:q,op:q.op,say:said||'Working…',t0:Date.now(),lines:lines||undefined}
    A second click on a line still queued takes the first back, and nothing is sent for it */
 window.GarrickTick=function(q){if(!q||TICKS.indexOf(q.verb)<0||typeof q.zone!=='string'||typeof q.key!=='string')return false;
 var was=Q.filter(function(x){return x.q.zone===q.zone&&x.q.file===q.file&&x.q.key===q.key})[0];
+if(!was&&sentHas(q,q.key)){keep();return true}   /* already sent, for this verb: the line is as asked */
 if(was){if(was.q.verb!==q.verb)Q.splice(Q.indexOf(was),1)}else Q.push({q:{verb:q.verb,zone:q.zone,file:q.file,key:q.key},t:Date.now()});
 keep();run();return true};
 /* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside.

@@ -1218,6 +1218,43 @@ class TestJournal(ActionCase):
         self.assertEqual([keys], [r["keys"] for r in listed])                           # what a reload is told is pending
         self.assertIn('keys=["%s", "%s"]' % tuple(keys), (self.jobs / "page-actions.log").read_text())
 
+    def commits(self):
+        return int(git(self.work, "rev-list", "--count", "HEAD"))
+
+    def test_ticks_already_done_are_no_reason_to_refuse_and_write_nothing(self):
+        """#524: a key whose line is already in the state the verb asks for is done."""
+        keys = [self.key("Send the revised"), self.key("Invoice")]
+        base = {"zone": "Work", "file": "Todo.md"}
+        for key in keys:                                                        # two batches, so the request below is a new one
+            self.assertTrue(self.run_script(dict(base, verb="todo-done", keys=[key]))["ok"])
+        head, text = self.commits(), (self.work / "Todo.md").read_bytes()
+        again = self.run_script(dict(base, verb="todo-done", keys=keys, op="b19f3c80"))
+        self.assertEqual((True, "saved", "Already done: 2 lines"), (again["ok"], again["outcome"], again["say"]))
+        self.assertEqual((head, text), (self.commits(), (self.work / "Todo.md").read_bytes()))     # no write, no commit
+        for key in keys:
+            self.assertTrue(self.run_script(dict(base, verb="todo-undo", keys=[key]))["ok"])
+        head = self.commits()
+        again = self.run_script(dict(base, verb="todo-undo", keys=keys, op="d19f3c80"))
+        self.assertEqual((True, "saved", "Already open: 2 lines"), (again["ok"], again["outcome"], again["say"]))
+        self.assertEqual(head, self.commits())
+
+    def test_a_mixed_batch_saves_the_rest_and_says_how_many_were_done(self):
+        done, fresh = self.key("Send the revised"), self.key("Invoice")
+        self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [done]})
+        head = self.commits()
+        reply = self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [done, fresh], "op": "e19f3c80"})
+        self.assertEqual((True, "saved", "Saved 1, 1 already done"), (reply["ok"], reply["outcome"], reply["say"]))
+        self.assertEqual(head + 1, self.commits())
+        self.run_script({"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "keys": [done, fresh]})
+        head = self.commits()
+        reply = self.run_script({"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "keys": [done, "0" * 16], "op": "f19f3c80"})
+        self.assertFalse(reply["ok"])                                           # a key that matches no line refuses all
+        self.assertIn("changed since the page was built", reply["say"])
+        self.assertEqual(head, self.commits())
+        self.run_script({"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [fresh]})
+        mixed = self.run_script({"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "keys": [done, fresh], "op": "a29f3c80"})
+        self.assertEqual("Saved 1, 1 already open", mixed["say"])
+
     def test_a_stale_line_is_refused_in_the_record_too(self):
         key = self.key("Send the revised")
         write(self.work / "Todo.md", (self.work / "Todo.md").read_text().replace("revised terms", "final terms"))

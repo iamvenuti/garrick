@@ -79,6 +79,15 @@ class Runs(unittest.TestCase):
         self.assertEqual(self.runs("The memo notes %s today." % SHARED),
                          self.runs("**10 November 2026.** The memo notes %s today." % SHARED))
 
+    def test_an_unfilled_resume_block_does_not_join_the_entry_below_it(self):
+        # The template's own Deadline row, then the rule, then an entry that opens with a date: the row's words
+        # are skipped, so they never make eight shared words with the entry's first words.
+        block = ("### Resume here\n\n| | |\n|---|---|\n| Deadline | <date, and what breaks if it slips; or none> |\n\n---\n\n"
+                 "**10 November 2026.** Session 0 settled the %s plan.\n")
+        shared = self.runs(block % "work") & self.runs(block % "home")
+        template = check.runs((REPO / "template" / "System" / "templates" / "thread" / "{{THREAD}}.md").read_text(encoding="utf-8"))
+        self.assertEqual(set(), shared - template)
+
     def test_without_the_templates_the_words_count_as_before(self):
         plain = check.runs("**Where it stands, 10 November 2026.** One two three four five six seven eight nine ten.", None,
                            check.TemplateStructure.empty())

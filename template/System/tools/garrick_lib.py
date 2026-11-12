@@ -1536,6 +1536,41 @@ def refusal_counts(root: PathLike, now=None, days: int = 30) -> dict:
     return out
 
 
+def refusal_override_times(root: PathLike, now=None, days: int = 30) -> List[str]:
+    """When each refusal of the last `days` that a commit followed within ten minutes fell, as ISO times, oldest
+    first (#530). A read of the record beside refusal_counts(), which counts these same refusals (one `at` in one
+    repository of a zone or a wiki, a repository nested in a zone left out); it changes no count. The page says
+    "1 wall override since Tuesday" from it. Times only: the record holds no path, name or text."""
+    now = now or datetime.datetime.now().astimezone()
+    try:
+        rows = [json.loads(l) for l in Path(root).joinpath(*REFUSALS).read_text(encoding="utf-8").splitlines() if l.strip()]
+    except (OSError, ValueError):
+        return []
+    refused = set()
+    for row in rows:
+        if not isinstance(row, dict) or not row.get("zone") or (row.get("repo") or "zone") == "nested":
+            continue
+        try:
+            at = datetime.datetime.fromisoformat(row["at"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if now - at > datetime.timedelta(days=days):
+            continue
+        refused.add((row["at"], row.get("repo") or "zone", str(row["zone"])))
+    out = []
+    for when, repo, zone in sorted(refused):
+        at = datetime.datetime.fromisoformat(when)
+        folder = Path(root) / ("Wikis" if repo == "wiki" else "Zones") / zone
+        try:
+            log = git(["log", "--since=%s" % at.isoformat(), "--until=%s" % (at + datetime.timedelta(minutes=10)).isoformat(),
+                       "--format=%H"], folder)
+        except (GitError, OSError):
+            continue
+        if log.strip():
+            out.append(at.isoformat())
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Allow once: the ledger of wall findings the user let through (System/walls-allowed.json)
 # ---------------------------------------------------------------------------

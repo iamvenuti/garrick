@@ -2130,7 +2130,7 @@ Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)
 /* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
    The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
 function plain(e){var o=e.out,k=o.outcome||'',t=o.say||'';
-if(/^A wall holds some material back/.test(t))return{say:t,next:'',raw:'',act:''};
+if(/^A wall holds /.test(t))return{say:t,next:'',raw:'',act:''};
 if(e.q.verb==='continue')return{say:'Claude did not open.',next:'Try again',raw:t,act:'retry'};
 if(k==='lost')return{say:'This page did not hear back, so we cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
 if(k==='unknown')return{say:'We cannot tell whether this went through.',next:'Refresh',raw:t,act:'refresh'};
@@ -2206,9 +2206,10 @@ if(e.q.keys){j.q.keys=e.q.keys;j.lines=e.lines}W.push(j)}
 keep();render();run();return}
 /* a success is the record's outcome "saved"; with no record, the reply's ok, as before. A request the record holds already
    comes back asking whether it is meant again (`again`), and stays, however quick, with the button that confirms it */
-/* Saved means saved (#511): a reply with no outcome for an action the record keeps is not taken as saved. The record is asked
-   for, and says it; until then the action stays running, and the rows move only once the record has said so */
-if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,Object.assign({},out,{ok:false}));return}
+/* Saved means saved (#511): a reply with no outcome for an action the record keeps is not worded as saved. The record is asked
+   for, and says it; until then the action stays running. The other wrappers get the reply as they always did, so
+   a row's follow-ups (the list, the undo record) are made as for a plain ok reply */
+if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,out);return}
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
 if(e.q.keys&&ok&&!again){W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
 else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again};e.done=now;
@@ -6970,7 +6971,8 @@ WAITING_CSS = r"""
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:12.5px}
 .wrow .act{margin-left:auto}
-#waiting-now.nowait{display:none}
+/* out of sight but in the accessibility tree, so its aria-live region announces the first row (#510) */
+#waiting-now.nowait{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 """
 
 WAITING_JS = r"""

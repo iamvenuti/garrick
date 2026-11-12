@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(21, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Guide's, Preview's, the graph's
+        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1144,7 +1144,8 @@ class TestOpensOnTheWork(StatusCase):
         pricing = self.row(html, "Pricing")
         self.assertEqual([], self.chips(pricing))
         self.assertIn('data-ok="1"', pricing[:60])
-        self.assertIn("261019 6.55pm - Deck.pptx", self.rows(html, "checks"))     # it stays on the Checks card
+        self.assertNotIn("261019 6.55pm - Deck.pptx", self.rows(html, "checks"))  # the list is in the Findings view (#530)
+        self.assertIn("261019 6.55pm - Deck.pptx", html[html.index('<dialog id="findings"'):])
 
     def test_an_error_the_page_cannot_explain_marks_no_row(self):
         self.fake_check({"check": "threads", "severity": "error",
@@ -4128,6 +4129,11 @@ class TestChecksCardActs(StatusCase):
         ends = [i for i in (html.find('<details class="card" id="', start + 1), html.find("</section>", start)) if i > 0]
         return html[start:min(ends)]
 
+    def findings(self, html):
+        """The Findings view (#530): the list the card no longer holds."""
+        start = html.index('<dialog id="findings"')
+        return html[start:html.index("</dialog>", start)]
+
     def groups(self, card):
         return re.findall(r'<details class="group" data-ok="0"( open)?><summary>.*?<b>([^<]+)</b>', card, re.S)
 
@@ -4139,7 +4145,7 @@ class TestChecksCardActs(StatusCase):
             {"check": "projects", "severity": "warning", "path": "Zones/Work/Acme Review/Acme Review.md", "message": "no `party`"},
             {"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Other.md", "message": "another"},
             {"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "names birch"})
-        card = self.card(self.page())
+        card = self.findings(self.page())
         self.assertEqual([(" open", "Walls"), ("", "Mechanical"), (" open", "Judgment")],
                          self.groups(card))                              # an error opens its group, and so does the largest
         uri = (self.root / thread).as_uri()
@@ -4185,7 +4191,7 @@ class TestChecksCardActs(StatusCase):
                     seen.append(cmd)
                 return real(cmd, *a, **k)
             with mock.patch.object(subprocess, "run", spy):
-                card = self.card(self.page())
+                card = self.findings(self.page())
             return len([c for c in seen if "rev-parse" not in c]), card      # rev-parse: asked once a process
 
         few, _ = calls(1)
@@ -4199,7 +4205,7 @@ class TestChecksCardActs(StatusCase):
     def test_without_nurture_the_findings_are_listed_by_check(self):
         self.fake_check({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
         (self.root / "System" / "tools" / "nurture.py").unlink()
-        card = self.card(self.page())
+        card = self.findings(self.page())
         self.assertEqual([(" open", "links")], self.groups(card))          # the check, by its title where check.py has one
         self.assertNotIn("data-request", card)
 
@@ -4212,10 +4218,189 @@ class TestChecksCardActs(StatusCase):
                         + [{"kind": "judgment", "path": "Wikis/Meetings/c.md"}] + [{"kind": "behind", "path": "Zones/Work/d.md"}],
             "debt": {"total": 10, "kinds": {}, "scopes": {"Zones/Work": {"mechanical": 4, "attribution": 5},
                                                           "Wikis/Meetings": {"judgment": 1}}, "whole": True, "threshold": 40}}))
-        card = self.card(self.page())
+        card = self.findings(self.page())
         self.assertIn(">Nurture Work</button></p><p class=\"hint\">One pass over Work: 4 fixes on one yes, 1 question one at a time.</p>", card)
         self.assertIn("Last nurture %s: 12 fixed, 3 answered, 6 left. The figure is that run&#x27;s; the list below is this "
                       "build&#x27;s quick check." % day.strftime("%a %d %b"), card)
+
+class TestChecksSaysWhatNeedsYou(StatusCase):
+    """#530: the Checks card says which scopes need the user and for how long, with one word for the trend; the
+    figures, the chart, the refusals and the list are in the Findings view."""
+
+    def setUp(self):
+        super().setUp()
+        shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        status._NURTURE.clear()
+        self.addCleanup(status._NURTURE.clear)
+        self.folder = self.root / "System" / "generated" / "nurture"
+
+    def record(self, back, standing, total=None):
+        day = self.now.date() - dt.timedelta(days=back)
+        scopes = {}
+        for f in standing:
+            scope = status.nurture_lib(self.root)[0].debt_scope(f["path"])
+            scopes.setdefault(scope, {})
+            scopes[scope][f["kind"]] = scopes[scope].get(f["kind"], 0) + 1
+        total = len(standing) if total is None else total
+        write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "standing": standing, "debt": {
+            "total": total, "kinds": {}, "scopes": scopes, "whole": True, "threshold": 40}}))
+
+    def card(self, html):
+        start = html.index('<details class="card" id="checks"')
+        ends = [i for i in (html.find('<details class="card" id="', start + 1), html.find("</section>", start)) if i > 0]
+        return html[start:min(ends)]
+
+    def view(self, html):
+        start = html.index('<dialog id="findings"')
+        return html[start:html.index("</dialog>", start)]
+
+    def test_the_minutes_round_up_to_five(self):
+        self.assertEqual(5, status.minutes_for(0, 1))
+        self.assertEqual(15, status.minutes_for(2, 8))              # 12 minutes, rounded up
+        self.assertEqual(10, status.minutes_for(0, 10))
+        self.assertEqual(5, status.minutes_for(0, 5))
+        self.assertEqual(10, status.minutes_for(3, 0))
+
+    def test_one_line_for_each_scope_that_needs_you(self):
+        standing = ([{"kind": "wall", "path": "Zones/Work/Acme/Notes.md"}] * 2 + [{"kind": "judgment", "path": "Zones/Work/Acme/B.md"}] * 8
+                    + [{"kind": "mechanical", "path": "Zones/Birch/X/x.md"}] * 3
+                    + [{"kind": "attribution", "path": "Wikis/Meetings/a.md"}, {"kind": "correction", "path": "System/a.md"}]
+                    + [{"kind": "judgment", "path": "Zones/Alder/P/p.md"}])
+        self.record(0, standing)
+        card = self.card(self.page())
+        lines = re.findall(r'<span class="nsay">([^<]*)</span>', card)
+        self.assertEqual(["Alder: 1 judgment call, about 5 minutes",
+                          "Work: 2 wall findings and 8 judgment calls, about 15 minutes",
+                          "The Meetings wiki: 1 judgment call, about 5 minutes",
+                          "System: 1 judgment call, about 5 minutes"], lines)       # zones by name, the wikis, then System
+        self.assertNotIn("Birch", card)                                            # only mechanical findings: no line
+        self.assertIn('data-request="nurture Work" data-folder="%s"' % self.root, card)
+        self.assertIn(">Nurture</button>", card)
+        self.assertNotIn("Nothing needs you.", card)
+        self.assertIn("Last nurture: %s" % self.now.strftime("%a %d %b"), card)
+        for leaked in ("Acme", "Notes.md", ".md"):
+            self.assertNotIn(leaked, card)                                          # names of places, counts and minutes only
+
+    def test_nothing_needs_you(self):
+        self.record(0, [{"kind": "mechanical", "path": "Zones/Work/a.md"}] * 4)
+        card = self.card(self.page())
+        self.assertIn("Nothing needs you.", card)
+        self.assertNotIn('class="need"', card)
+
+    def test_without_a_record_the_card_does_not_claim_nothing_needs_you(self):
+        card = self.card(self.page())
+        self.assertNotIn("Nothing needs you.", card)
+        self.assertNotIn("Last nurture", card)
+
+    def history(self, totals, today=dt.date(2026, 11, 13)):
+        """(day, debt) for each total, the last on `today`, one a day; None is a night with no record."""
+        out = []
+        for i, t in enumerate(totals):
+            if t is not None:
+                out.append((today - dt.timedelta(days=len(totals) - 1 - i), {"total": t}))
+        return out
+
+    def test_the_trend_word(self):
+        today = dt.date(2026, 11, 13)
+        word = lambda totals: status.trend_word(self.history(totals, today), today)
+        self.assertEqual("steady", word([30, 31, 29, 30, 32, 30, 31, 30]))
+        self.assertEqual("rising", word([20, 22, 25, 27, 30, 33, 36, 40]))
+        self.assertEqual("falling", word([40, 36, 33, 30, 27, 25, 22, 20]))
+        self.assertEqual("steady", word([30, 31, 32, 33, 34, 35, 36]))             # +20% of the fitted first value is not more than 20%
+        self.assertEqual("", word([30, 30, 30, 30, 30, 30]))                        # six nights with a record: no word
+        self.assertEqual("steady", word([30, 30, 30, 30, 30, 30, 30]))              # seven is enough
+        self.assertEqual("rising", word([None, 20, None, 24, 28, None, 32, 36, 40, 44]))   # gaps are not nights
+        self.assertEqual("", word([None, None, 20, 22, 24, 26, 28, 30]))            # six records in the window
+        self.assertEqual("", word([0, 0, 0, 0, 0, 0, 0]))                           # a first value of zero: no word
+        self.assertEqual("", word([-1, 0, 0, 0, 0, 0, 0]))
+        self.assertEqual("rising", word([90] * 10 + [10] * 7 + [12, 14, 18, 24, 30, 38, 46]))   # only the last 14 nights count
+
+    def test_the_trend_word_is_beside_the_title(self):
+        for back in range(8):
+            self.record(back, [{"kind": "judgment", "path": "Zones/Work/a.md"}] * (3 + 3 * (back + 1)), total=3 + 3 * (back + 1))
+        card = self.card(self.page())
+        self.assertRegex(card, r"<h2>Checks</h2><span class=\"chip[^\"]*\" id=\"trend\"[^>]*>(Rising|Steady|Falling)</span>")
+        self.assertIn(">Falling</span>", card)
+        for back in range(8):
+            (self.folder / ("%s.json" % (self.now.date() - dt.timedelta(days=back)).isoformat())).unlink()
+        self.record(0, [{"kind": "judgment", "path": "Zones/Work/a.md"}])
+        self.assertNotIn('id="trend"', self.card(self.page()))                      # one night: no word
+
+    def test_the_card_holds_no_chart_and_no_refusal_counts_and_the_view_holds_them(self):
+        for back in (3, 2, 1, 0):
+            self.record(back, [{"kind": "judgment", "path": "Zones/Work/a.md"}] * 3)
+        write(self.root / "System" / "generated" / "walls" / "refusals.jsonl", json.dumps({
+            "at": self.now.astimezone().isoformat(), "zone": "Work", "repo": "zone", "kind": "link", "walled": True}) + "\n")
+        html = self.page()
+        card, view = self.card(html), self.view(html)
+        for gone in ("dchart", "context debt", 'class="dfig"', "dkinds", "Most in", "over 40", "under 40", 'id="refusals"',
+                     "Wall refusals", "One pass over", "fixed,", "answered,"):
+            self.assertNotIn(gone, card)
+        self.assertIn("data-findings", card)                                         # All findings
+        self.assertIn(">All findings</button>", card)
+        for held in ('id="debt"', "dchart", 'class="dfig"', "Most in", 'id="refusals"', "Wall refusals, 30 days", "Last nurture "):
+            self.assertIn(held, view)
+        self.assertNotIn('id="findings"', card)                                      # a view of its own, outside the card
+        self.assertIn('<dialog id="findings" class="findings"', html)
+
+    def test_the_list_moves_to_the_view_and_a_failed_check_stays_on_the_card(self):
+        tools = self.root / "System" / "tools"
+        (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
+            "errors": 0, "warnings": 1, "findings": [{"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"}]})
+        html = self.page()
+        self.assertIn("Zones/Work/a.md", self.view(html))
+        self.assertNotIn("Zones/Work/a.md", self.card(html))
+        (tools / "check.py").write_text("import sys\nsys.exit(3)\n")
+        self.assertIn("The check did not run.", self.card(self.page()))
+
+    def test_the_override_line_is_data_for_the_page_and_holds_no_text(self):
+        self.record(0, [{"kind": "judgment", "path": "Zones/Work/a.md"}])
+        card = self.card(self.page())
+        self.assertIn('<p class="hint dnew" id="newover" data-over="[]" hidden></p>', card)
+        with mock.patch.object(status, "override_times", lambda ws: ["2026-11-12T09:00:00+01:00"]):
+            card = self.card(self.page())
+        self.assertIn('data-over="[&quot;2026-11-12T09:00:00+01:00&quot;]"', card)
+        self.assertIn("garrick-checks-seen", status.CHECKS_JS)
+        self.assertIn("catch(e)", status.CHECKS_JS)
+
+    def run_js(self, over, seen, works=True):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        harness = r"""
+const [js, over, seen, works] = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const store = {}; if (seen) store['garrick-checks-seen'] = seen;
+global.localStorage = {getItem: k => { if (!works) throw new Error('no'); return k in store ? store[k] : null },
+  setItem: (k, v) => { if (!works) throw new Error('no'); store[k] = v }, removeItem: k => { if (!works) throw new Error('no'); delete store[k] }};
+const note = {dataset: {over}, hidden: true, textContent: '', appendChild(a) { this.child = a }};
+const listeners = {};
+global.document = {getElementById: id => id === 'newover' ? note : null, createElement: () => ({setAttribute() {}, set href(v) {}, textContent: ''}),
+  addEventListener: (n, f) => { listeners[n] = f }};
+new Function(js)();
+console.log(JSON.stringify({hidden: note.hidden, text: note.child ? note.child.textContent : '', stored: store['garrick-checks-seen'] || null}));
+"""
+        done = subprocess.run([node, "-e", harness], input=json.dumps([status.CHECKS_JS, json.dumps(over), seen, works]),
+                              capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_a_new_override_shows_once_and_the_page_remembers_the_visit(self):
+        week = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2))
+        later = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat()
+        got = self.run_js([later], week.isoformat().replace("+00:00", "Z"))
+        self.assertFalse(got["hidden"])
+        self.assertRegex(got["text"], r"^1 wall override since \w+$")
+        self.assertEqual(week.isoformat().replace("+00:00", "Z"), got["stored"])      # looking at it does not clear it
+        got = self.run_js([], week.isoformat().replace("+00:00", "Z"))                # nothing new: nothing shown, the visit kept
+        self.assertTrue(got["hidden"])
+        self.assertNotEqual(week.isoformat().replace("+00:00", "Z"), got["stored"])
+        got = self.run_js([later], None)                                              # a first visit shows nothing and remembers it
+        self.assertTrue(got["hidden"])
+        self.assertIsNotNone(got["stored"])
+        got = self.run_js([later], week.isoformat(), works=False)                     # no browser storage: nothing shown
+        self.assertTrue(got["hidden"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -93,6 +93,20 @@ class RefusalRecord(unittest.TestCase):
         self.assertEqual(1, got["overridden"])
         self.assertEqual(1, len(got["days"]))
 
+    def test_the_times_of_the_overrides_are_read_beside_the_count(self):
+        """#530: the card says "1 wall override since Tuesday" from these; times only, and the same refusals the count calls overridden."""
+        self.refuse()
+        self.assertEqual([], lib.refusal_override_times(self.root))        # refused, and no commit followed
+        commit_all(self.work, "went through anyway")
+        self.lines((datetime.datetime.now().astimezone() - datetime.timedelta(days=45)).isoformat(timespec="seconds"), 1)
+        self.lines(datetime.datetime.now().astimezone().isoformat(timespec="seconds"), 4000, repo="nested", kind="path")
+        got = lib.refusal_override_times(self.root)
+        self.assertEqual(lib.refusal_counts(self.root)["overridden"], len(got))
+        self.assertEqual(1, len(got))
+        datetime.datetime.fromisoformat(got[0])
+        for name in NAMES:
+            self.assertNotIn(name, got[0])
+
     def test_the_status_page_shows_them(self):
         sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "extras" / "status"))
         import status

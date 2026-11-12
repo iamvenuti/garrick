@@ -29,19 +29,16 @@ and the Next action row.
 
 Listing reads frontmatter only. It never opens a Resume here block.
 
-## Next: "what's next", "what should I do while I wait"
+## Next: "what's next"
 
-One thing worth doing elsewhere while a long turn runs, or at any moment
-between two pieces of work. It is the same list the Garrick band shows while a
-turn runs when its `while-you-wait` preview is on, from the same script, so the
-answer here is the band's first pick:
+One thing worth doing next, at any moment between two pieces of work, from a
+list of six fixed rules:
 
 ```sh
-python3 System/tools/next_up.py --zone <the session's zone> --exclude <the thread note in focus>
+python3 System/tools/next_up.py --exclude <the thread note in focus>
 ```
 
-Leave out `--zone` when the session is in no zone (the workspace root,
-`System/`, a wiki), and `--exclude` when no thread is in focus. It prints JSON,
+Leave out `--exclude` when no thread is in focus. It prints JSON,
 best first, and changes nothing; `--say` prints only the first pick's line.
 
 1. **Read the first pick's `say`**, word for word. It names a thread and an
@@ -56,13 +53,12 @@ best first, and changes nothing; `--say` prints only the first pick's line.
 3. **"Next" again** gives the following pick, not a new reading of the list.
 4. **Nothing in the list:** "Nothing is waiting."
 
-The order is six plain rules, each a source Settings › While you wait on the
-status page can switch off or move: the thread whose note was
+The order is six plain rules, fixed: the thread whose note was
 written most recently today, Todo lines due today or late with a
 reply or a chase first, chases that have come due, what waits in an Inbox, a
 parked thread left alone for 30 days ("park or finish?"), and a live thread
 not wrapped for 14 ("wrap?"). It never offers the thread in focus. It covers
-every zone unless *Same zone only* is switched on there.
+every zone.
 
 Spoken: the pick and the offer. "Reply on the renewal dates, in Birch, due
 today. Want me to open it?"

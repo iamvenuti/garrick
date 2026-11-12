@@ -6,7 +6,7 @@ description: >
   procedure behind the spoken commands in System/rules.md. Use when the
   user says "open X", "pick up X", "resume X",
   "where was I on X", "where am I", "what's open", "what's open in Work",
-  "what's next", "what should I do while I wait",
+  "what's next",
   "catch me up", "catch me up on X", "catch me up on X since Monday",
   "catch me up this week",
   "I'm being interrupted", "hold this", "hold X", "back", "where was I",

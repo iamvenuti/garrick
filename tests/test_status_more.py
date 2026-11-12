@@ -1077,11 +1077,11 @@ class TestSharedLauncherSettings(StatusCase):
     def test_the_app_prefers_them_and_saves_through_the_bridge(self):
         self.assertIn("if(host&&el){try{shared=JSON.parse(el.textContent)}", status.PANEL_JS)    # a browser keeps its own
         self.assertIn("return{verb:'settings',launchers:", status.PANEL_JS)
-        # A change to the launchers, the zones, the graph's colours (#291), the notifications, While you wait,
+        # A change to the launchers, the zones, the graph's colours (#291), the notifications,
         # Memory or which assistant a cmux tab starts (#279) makes a request; none makes none. The launchers lead
         # it, the zones, the graph's colours and the notifications ride on it, and the desk's choice goes as
         # desk-agent, read from its select. Each change flag is cleared once its part is in the request.
-        self.assertIn("if(!(lpChanged||zChanged||gChanged||daChanged||n||w||m||rl))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
+        self.assertIn("if(!(lpChanged||zChanged||gChanged||daChanged||n||m||rl))return null;\nvar q=lpChanged?GarrickPrefs.request():{verb:'settings'};"
                       "if(zChanged)q.zones=zreq();if(gChanged)q.graph=greq();if(n)q.notifications=N.request();\n"
                       "if(daChanged){q['desk-agent']=document.getElementById('desk-agent').value;daChanged=false}", status.JS)
         self.assertIn("lpChanged=zChanged=gChanged=false;if(n)N.saved();return q}", status.JS)

@@ -164,7 +164,7 @@ The full procedure, including how it resolves a mangled or ambiguous name, is `S
 ### Also understood
 
 - **"Back"** (or "where was I") resumes the thread whose note was written most recently and is not finished or parked.
-- **"What's next"** (or "what should I do while I wait") offers one thing worth doing elsewhere.
+- **"What's next"** offers one thing worth doing next.
 - **"Catch me up"** says what changed in a zone's threads while you were away.
 
 ## What a project published

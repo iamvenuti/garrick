@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -79,3 +81,29 @@ class NoteLimits(CheckCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ResumeTrimWords(NoteLimits):
+    """The resume warning follows `resume-trim` (#527); a headless run keeps the words as they were."""
+
+    def words(self, **settings):
+        write(self.root / "System" / "garrick-settings.json", json.dumps(settings))
+        self.pricing(long_note(entries=1, block_words=500))
+        [f] = [f for f in self.over() if "resume-max-words" in f.message]
+        return f.message
+
+    def test_ask_says_nothing_changes_without_a_yes(self):
+        self.assertIn("nothing changes without a yes", self.words(**{"resume-trim": "ask"}))
+        self.assertIn("nothing changes without a yes", self.words())
+
+    def test_auto_says_the_next_attended_wrap_or_nurture_trims_it(self):
+        said = self.words(**{"resume-trim": "auto"})
+        self.assertIn("next attended wrap or Nurture trims it to about 300 words", said)
+        self.assertNotIn("without a yes", said)
+
+    def test_headless_keeps_todays_words_whatever_the_setting_says(self):
+        with mock.patch.dict(os.environ, {"GARRICK_HEADLESS": "1"}):
+            self.assertIn("nothing changes without a yes", self.words(**{"resume-trim": "auto"}))
+
+    def test_an_unknown_value_says_ask(self):
+        self.assertIn("nothing changes without a yes", self.words(**{"resume-trim": "yes please"}))

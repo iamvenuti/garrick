@@ -332,15 +332,29 @@ focus, as under *No name given*). Then:
     reply and carry on. The files it wrote go in this wrap's commit below, with
     the thread's own files: the `history/` folder beside the note. Then run
     `python3 System/tools/history.py resume "<note>"`, which prints the
-    block's words and the limit as JSON; if it says `"over": true` (the block is
-    over `resume-max-words`, 400), offer the shrink in
-    one line after the wrap: "The Resume block is 920 words, over its 400.
-    Want a shorter one?" On a yes, show the proposed block as a diff before
-    writing it: *Where it stands* says now, *Keep in mind* loses what is
-    settled or has shipped, a durable fact moves to a working note with a link
-    left in its place, and a section that has grown into working material moves
-    to a working note with a link. Nothing changes without the yes, and a
-    shrink is never run overnight. The dated entry for it says what moved where.
+    block's words, the limit, the `resume-trim` setting and the target as
+    JSON. If it says `"over": true` (the block is over `resume-max-words`,
+    400), what happens depends on `"trim"`:
+
+    - `"ask"` (the default, and what any other value counts as): offer the
+      shrink in one line after the wrap: "The Resume block is 920 words, over
+      its 400. Want a shorter one?" On a yes, show the proposed block as a diff
+      before writing it. Nothing changes without the yes.
+    - `"auto"`: trim the block now, before this wrap's commit, so the trim is in
+      it, aiming at `"target"` words (75% of the limit, 300 at 400), without
+      asking. Skip it, and say it was held, when the note has another session's
+      uncommitted changes. Say in the reply, and in the commit message, the
+      note, the words before and after, and any working note the trim made.
+      The tool reads the setting and counts; it never trims. Under
+      `GARRICK_HEADLESS=1` it says `"ask"` whatever the file holds.
+
+    Either way the rules are the same: *Where it stands* says now, *Keep in
+    mind* loses what is settled or has shipped, a durable fact moves to a
+    working note with a link left in its place, a section that has grown into
+    working material moves to a working note with a link, the one Next action
+    stays word for word, and every boundary, confidence, trap and
+    do-not-rebuild warning stays, shortened if it must be. A shrink is
+    never run overnight. The dated entry for it says what moved where.
     Then move the lines ticked before today out of the list:
     ```sh
     python3 System/skills/todo/todo.py archive --zone <Zone>

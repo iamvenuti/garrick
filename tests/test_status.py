@@ -4016,25 +4016,68 @@ class TestContextDebt(StatusCase):
         self.assertNotIn("dmiss", b)
 
     def test_one_spike_does_not_flatten_the_rest(self):
-        """#321: a night at 164 against a usual 40 to 65 is an open dot at the
+        """#321: a night at 900 against a usual 40 to 65 is an open dot at the
         cap with its value written, and the rest use over half the height."""
-        for back, total in enumerate((52, 45, 64, 40, 164, 58, 42, 61, 50, 65)):
+        for back, total in enumerate((52, 45, 64, 40, 900, 58, 42, 61, 50, 65)):
             self.record(back, total)
         b = self.block(self.page())
         dots, labels = self.chart(b)
         self.assertEqual(1, b.count('class="dd over"'))
         self.assertEqual(1, b.count('class="dhole"'))
-        self.assertEqual("164", labels["dspike"])
-        rest = [y for (x, y), v in zip(dots, (65, 50, 61, 42, 58, 164, 40, 64, 45, 52)) if v != 164]
+        self.assertEqual("900", labels["dspike"])
+        rest = [y for (x, y), v in zip(dots, (65, 50, 61, 42, 58, 900, 40, 64, 45, 52)) if v != 900]
         self.assertGreaterEqual(max(rest) - min(rest), (64 - 2 * 5) / 2)            # over at least half the plot
         spike = dots[5][1]
         self.assertLess(spike, min(rest))                                            # at the top, above every other night
         self.assertGreaterEqual(spike, 0)
-        bottom, top, cap = status.debt_scale([52, 45, 64, 40, 164, 58, 42, 61, 50, 65], 40)
+        bottom, top, cap = status.debt_scale([52, 45, 64, 40, 900, 58, 42, 61, 50, 65], 40)
         self.assertEqual(80, cap)                                                    # twice the threshold
         self.assertLess(bottom, 40)
         self.assertGreater(top, 80)
         self.assertEqual(65, status.debt_scale([52, 45, 64, 40, 50, 65], 5)[2])      # a low threshold: the highest ordinary night
+
+    def test_a_run_of_high_nights_is_drawn_at_its_height_and_only_the_spikes_are_capped(self):
+        """#525: over 17 nights, 144 to 164 are drawn where they are and only 2,435 and 3,253 are capped."""
+        series = (20, 28, 35, 41, 47, 52, 58, 61, 64, 70, 76, 144, 152, 156, 164, 2435, 3253)
+        bottom, top, cap = status.debt_scale(list(series), 40)
+        self.assertEqual(164, cap)
+        for back, total in enumerate(reversed(series)):
+            self.record(back, total)
+        b = self.block(self.page())
+        dots, labels = self.chart(b)
+        self.assertEqual(2, len(re.findall(r'class="dd[^"]* over"', b)))       # the latest, 3,253, is "dd now over"
+        self.assertEqual(2, b.count('class="dhole"'))
+        ys = dict(zip(series, [y for _, y in dots]))                  # oldest first, as the chart draws them
+        self.assertGreater(len({ys[144], ys[152], ys[156], ys[164]}), 3)          # four heights, not one
+        self.assertEqual(ys[2435], ys[3253])                                       # the two spikes at the cap
+        self.assertLess(ys[3253], ys[164] + 0.01)
+        self.assertEqual("threshold 40", labels["dthr"])
+        self.assertIn(".dthr{right:0;", status.DEBT_CSS)                           # at the dashed line's right end
+
+    def test_the_header_counts_wall_findings_the_list_does_not_show_and_names_none(self):
+        """#525: a count and a link, from the latest record's standing walls that the quick check's list lacks."""
+        day = self.now.date()
+        write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "debt": {
+            "total": 76, "kinds": {"wall": 30}, "scopes": {"Zones/Harbour": {"wall": 30}}, "whole": True, "threshold": 40},
+            "standing": [{"kind": "wall", "path": "Zones/Harbour/Cedar/Notes.md", "message": "repeats wording from Maple"},
+                         {"kind": "wall", "path": "Zones/Harbour/Cedar/Plan.md", "message": "repeats wording from Maple"},
+                         {"kind": "wall", "path": "Zones/Harbour/Cedar/Plan2.md", "message": "repeats wording from Maple"},
+                         {"kind": "judgment", "path": "System/x.md", "message": "stale"}]}))
+        quick = {"findings": [], "errors": 0, "warnings": 0}
+        b = status.debt_block(self.root, day, quick)
+        self.assertIn('<a href="#qp">3 wall findings from last night&#x27;s run, not in this list</a>', b.replace("&#39;", "&#x27;"))
+        for leaked in ("Cedar", "Maple", "Notes", "Plan", "wording"):
+            self.assertNotIn(leaked, b)
+        # one of the three is in the list as a wall: the line counts the other two
+        shown = [("wall", ("Zones/Harbour/Cedar/Notes.md", "x"), "")]
+        with mock.patch.object(status, "sorted_finding", lambda ws, lib, f: shown):
+            b = status.debt_block(self.root, day, {"findings": [{"path": "Zones/Harbour/Cedar/Notes.md"}]})
+        self.assertIn("2 wall findings from last night", b)
+        with mock.patch.object(status, "sorted_finding", lambda ws, lib, f: [("wall", (p, "x"), "") for p in (
+                "Zones/Harbour/Cedar/Notes.md", "Zones/Harbour/Cedar/Plan.md", "Zones/Harbour/Cedar/Plan2.md")]):
+            b = status.debt_block(self.root, day, {"findings": [{"path": "a"}]})
+        self.assertNotIn("dwallmiss", b)                                       # nothing missing, no line
+        self.assertNotIn("dwallmiss", status.debt_block(self.root, day))       # no check result, no line
 
     def test_a_missing_night_is_marked(self):
         for back in (5, 4, 2, 1, 0):

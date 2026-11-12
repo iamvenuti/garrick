@@ -1117,14 +1117,16 @@ DEBT_LEAST = 3         # fewer records than this and the figure stands alone, wi
 
 def debt_scale(values: List[float], threshold: float) -> Tuple[float, float, float]:
     """(bottom, top, cap) of the chart's vertical scale (#321). The cap is
-    twice the threshold, or the highest value that is no spike (at most twice
-    the median), whichever is larger; a value above it is drawn at the cap.
+    twice the threshold, or the highest value that is no spike (at most five
+    times the median, #525), whichever is larger; a value above it is drawn at
+    the cap. Only a night far outside the rest is a spike: a run of nights at
+    two or three times the median is drawn at its height.
     The scale runs from a little under the lowest value or the threshold to a
     little over the cap, so one night far above the rest leaves the
     difference between the others to be seen."""
     ordered = sorted(values)
     median = ordered[len(ordered) // 2]
-    usual = [v for v in values if v <= 2 * median] or ordered[:1]
+    usual = [v for v in values if v <= 5 * median] or ordered[:1]
     cap = max(2 * threshold, max(usual), 1)
     low = min(min(v for v in values if v <= cap) if any(v <= cap for v in values) else cap, threshold)
     bottom = max(0.0, low - (cap - low) * 0.1)
@@ -1205,10 +1207,30 @@ def debt_kinds(debt: dict) -> str:
         '<span%s>%s %s</span>' % (' class="dwall"' if k == "wall" else "", E(k), E(str(debt_points(kinds[k])))) for k in order))
 
 
-def debt_block(ws: Path, today: dt.date) -> str:
+def walls_not_listed(ws: Path, day: dt.date, C: Optional[dict]) -> int:
+    """How many wall findings the Nurture record of `day` holds that the card's own list (the quick check, `C`)
+    does not show as walls (#525). A count and nothing else: no path, no wording, so no material of a walled zone
+    reaches the card that the list did not show. 0 without a record, a check or nurture.py."""
+    lib = nurture_lib(ws)
+    N = lib[0] if lib is not None else None
+    if N is None or not C or C.get("failed") or C.get("pending") or not getattr(N, "REPORTS", None):
+        return 0
+    try:
+        rec = json.loads(Path(ws).joinpath(*N.REPORTS, "%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        walls = [re.sub(r":\d+$", "", str(f.get("path") or "")) for f in rec.get("standing") or []
+                 if isinstance(f, dict) and f.get("kind") == "wall"]
+        shown = {path for f in C.get("findings", []) for kind, (path, _), _ in sorted_finding(ws, lib, f) if kind == "wall"}
+    except (OSError, ValueError, AttributeError):
+        return 0
+    return sum(1 for path in walls if path not in shown)
+
+
+def debt_block(ws: Path, today: dt.date, C: Optional[dict] = None) -> str:
     """The figure, what it is made of, its trend over the last DEBT_DAYS days
     and the scopes carrying most of it, for the Checks card; "" with no
-    record."""
+    record. With the card's own check result `C`, a line says how many wall
+    findings the last run holds that the list below does not show, and links
+    to Nurture's findings on the Context tab (#525)."""
     history, said = debt_history(ws, today)
     if not history:
         return ""
@@ -1225,6 +1247,12 @@ def debt_block(ws: Path, today: dt.date) -> str:
     outcome = nurture_outcome(ws, day) or {}
     does = nurture_said((outcome.get("scopes") or {}).get(heavy[0], {})) if heavy and phrase else ""
     lines = ""
+    missing = walls_not_listed(ws, day, C)
+    if missing:
+        # Counts and a link only. The Findings view lists what the quick check found, so it has no wall findings of
+        # this run to point at; the link goes to the view itself.
+        lines += ('<p class="hint dwallmiss"><a href="#qp">%s</a></p>'
+                  % E("%s from last night's run, not in this list" % counted(missing, "wall finding")))
     if does:
         lines += '<p class="hint">%s</p>' % E("One pass over %s: %s." % (said(heavy[0])[0], does))
     if outcome:
@@ -1369,17 +1397,30 @@ def context_link(qdata: Optional[dict]) -> str:
 
 
 def refusals_block(ws: Path) -> str:
-    """The last 30 days of wall refusals for the Checks card: by kind, the days they fell, and the commits that
-    landed within ten minutes of one (overridden). Counts only; the record holds no path, name or text."""
+    """The last 30 days of wall refusals for the Checks card (#525): refusals, not finding lines (one per time and
+    repository, as garrick_lib's refusal_counts() counts them), the kinds within them, the days they fell, and
+    the refusals a commit followed within ten minutes (overridden), so the figures share one unit. A repository
+    nested in a zone is said apart; a kind this release no longer produces is marked as from an older release.
+    Counts only; the record holds no path, name or text."""
     lib = workspace_lib(ws)
     count = getattr(lib, "refusal_counts", None)
     got = count(ws) if count else None
-    if not got or not got["kinds"]:
+    if not got or not (got["kinds"] or got.get("nested")):
         return ""
-    kinds = ", ".join("%s %d" % (k, n) for k, n in sorted(got["kinds"].items()))
-    days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
-    return ('<div class="hint" id="refusals">Wall refusals, 30 days: %s. Days: %s. Overridden: %d.</div>'
-            % (E(kinds), E(days), got["overridden"]))
+    older = set(got.get("older") or ())
+
+    def kinds(d):
+        return ", ".join("%s %d%s" % (k, n, " (older release)" if k in older else "") for k, n in sorted(d.items()))
+    text = ""
+    if got["kinds"]:
+        n = got.get("refusals", 0)
+        days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
+        text = "Wall refusals, 30 days: %s, of kinds %s. Days: %s. Overridden: %d of %d." % (
+            counted(n, "refusal"), kinds(got["kinds"]), days, got["overridden"], n)
+    if got.get("nested"):
+        text += "%s %s in repositories nested in a zone, of kinds %s." % (
+            " " if text else "Wall refusals, 30 days:", counted(got["nested"], "refusal"), kinds(got.get("nested_kinds") or {}))
+    return '<div class="hint" id="refusals">%s</div>' % E(text)
 
 
 DEBT_CSS = r"""
@@ -1395,8 +1436,9 @@ DEBT_CSS = r"""
 .dchart .dd.over{stroke-width:8}.dchart .dhole{stroke:var(--surface);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke;pointer-events:none}
 .dval,.dthr{position:absolute;font-size:11px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
 .dval{color:var(--ink2);font-weight:600;transform:translateY(-150%)}.dfirst{left:0}.dlast{right:0}.dspike{transform:translate(8px,-50%)}
-.dthr{left:50%;transform:translate(-50%,-130%);color:var(--muted)}
+.dthr{right:0;transform:translateY(30%);color:var(--muted)}   /* at the dashed line's right end, below it: clear of the line */
 .dmiss{position:absolute;bottom:-3px;width:9px;height:8px;margin-left:-4.5px;background:linear-gradient(var(--muted),var(--muted)) center/1.5px 100% no-repeat}
+.dwallmiss a{color:var(--critical);font-weight:600}
 .dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
 .review{align-items:center;margin:0 0 12px}
 """
@@ -4012,6 +4054,17 @@ def open_naming(zone: Path, names: set) -> int:
     return n
 
 
+def first_thread() -> str:
+    """The name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, read from its file so that
+    the dialog and the Ask box name it once. "" when ask.py is not beside this file."""
+    src = Path(__file__).with_name("ask.py")
+    try:
+        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', src.read_text(encoding="utf-8"), re.M)
+    except OSError:
+        return ""
+    return found.group(1) if found else ""
+
+
 def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
     """For the New project and New thread dialogs: each zone's projects and
     the parties a project there can be for; and whether the app acts, or the
@@ -4061,17 +4114,6 @@ def find_data(T: Dict[str, dict], link: "Links", styles: Dict[str, dict], folder
                 spoken = P.get(r["project"], {}).get("spoken")
                 if spoken and r["note"] != r["hub"]:
                     it["psp"] = spoken
-def first_thread() -> str:
-    """The name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, read from its file so that
-    the dialog and the Ask box name it once. "" when ask.py is not beside this file."""
-    src = Path(__file__).with_name("ask.py")
-    try:
-        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', src.read_text(encoding="utf-8"), re.M)
-    except OSError:
-        return ""
-    return found.group(1) if found else ""
-
-
                 if state == "done":
                     c = {"n": r["thread"], "kl": "thread", "z": zone, "p": r["project"], "t": r["party"],
                          "d": (today - r["updated"]).days if r["updated"] else None, "s": 0, "fin": 1, "h": 0, "u": link(r["note"])}
@@ -7359,7 +7401,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
-    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + refusals_block(ws) + context_link(qdata) + body)
+    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date(), C) + refusals_block(ws) + context_link(qdata) + body)
 
     # ---- open actions and inboxes
     tb = ""

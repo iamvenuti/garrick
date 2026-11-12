@@ -356,6 +356,47 @@ class TestTheWallReset(AgentCase):
         self.assertEqual("zone", out["reset"])
 
 
+class TestTheNamesWin(AgentCase):
+    """#520: the names in a request settle the zone it is answered in, before any session is sent it."""
+    LAUNCH = [{"call": "search", "args": {"words": "launch moves", "kind": "meetings"}}, {"say": "The launch moves to May. [$1]"}]
+
+    def test_names_of_another_zone_move_the_window_before_anything_is_read(self):
+        self.script([self.LAUNCH])
+        out = self.agent(zone="Work").ask("What did Theo say about the pallet launch?")
+        self.assertEqual("zone", out["reset"])
+        self.assertEqual("Personal", out["zone"])
+        self.assertNotIn(self.wall_sentence(), json.dumps(out))
+        self.assertIn("May", out["claims"][0]["text"])
+        everything = json.dumps(self.results()) + json.dumps(self.msgs())
+        self.assertNotIn(ACME, everything)                       # nothing of the window's zone was read or sent
+        self.assertIn("<zone>Personal</zone>", "".join(self.msgs()))
+        self.assertNotIn("<zone>Work</zone>", "".join(self.msgs()))
+
+    def wall_sentence(self):
+        return ask.Asker(self.root, ask.AgentSession(self.root, "sonnet")).wall()
+
+    def test_a_conversation_that_holds_the_other_zone_still_resets_at_the_wall(self):
+        self.script([[{"call": "search", "args": {"words": "pallet quote", "kind": "meetings"}}, {"say": "Forty. [$1]"}], [{"say": "x"}]])
+        a = self.agent(zone="Work")
+        a.ask("What did Dana say about the quote?")
+        out = a.ask("What did Theo say about the pallet launch?")
+        self.assertEqual("wall", out["reset"])
+
+    def test_the_same_question_with_the_window_on_its_zone_is_answered_without_a_reset(self):
+        self.script([self.LAUNCH])
+        out = self.agent(zone="Personal").ask("What did Theo say about the pallet launch?")
+        self.assertNotIn("reset", out)
+        self.assertEqual("Personal", out["zone"])
+        self.assertIn("May", out["claims"][0]["text"])
+
+    def test_a_zone_the_user_picked_for_the_question_is_not_overridden(self):
+        self.script([[{"say": "Nothing."}]])
+        a = ask.Asker(self.root, ask.AgentSession(self.root, "sonnet"))
+        self.askers.append(a)
+        out = a.ask("What did Theo say about the pallet launch?", zone="Work", picked=True)
+        self.assertNotEqual("Personal", out.get("zone"))
+
+
 class TestActions(AgentCase):
     def status(self, rel):
         return (self.root / "Zones/Work" / rel).read_text()

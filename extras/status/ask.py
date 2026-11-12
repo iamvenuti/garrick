@@ -1453,7 +1453,17 @@ class Asker:
         # A wall between what the request names and what either session
         # holds, or a window now set to another zone than the one the
         # sessions answered in (#317): both start afresh before it is sent.
-        reset = "wall" if self.crosses(named.zones) else "zone" if self.moves(window) else None
+        # The names win (#520): the one zone they settle, when it is not the window's, is the zone of this question
+        # in the one-session path, before any session is sent it. The wall check is first and unchanged: a
+        # conversation that holds another walled zone is reset at the wall, never moved.
+        moved = False
+        if (isinstance(self.session, AgentSession) and picked is None and len(named.zones) == 1
+                and not self.crosses(named.zones)):
+            (target,) = named.zones
+            here_ = window or self.zone or self.last_zone
+            if target in names and here_ is not None and target != here_:
+                window, moved = target, True
+        reset = "wall" if self.crosses(named.zones) else "zone" if (moved or self.moves(window)) else None
         if reset:
             first = self.question or earlier
             self.progress("Starting a fresh session")

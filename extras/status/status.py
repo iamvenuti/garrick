@@ -5147,17 +5147,39 @@ def allowed_data(ws: Path, link: "Links") -> list:
 OWNER_TAIL = re.compile(r"[;,]\s*(?:the\s+)?[A-Z]?[\w.-]+(?:\s+[\w.-]+){0,2}[\u2019']s\s*\.?\s*$")
 
 
-# The same owner said first: "Robin: send the sheet", "Robin's: send the sheet", "The assistant's: …". One to three
-# capitalised words, or "the" and one word, so a lower-case phrase before a colon is never taken for a name.
-OWNER_HEAD = re.compile(r"^\s*(?:[Tt]he\s+[\w.-]+|[A-Z][\w.-]*(?:\s+[A-Z][\w.-]*){0,2})(?:[\u2019']s)?:\s+(?=\S)")
+# The same owner said first: "Robin's: send the sheet", "The assistant's: …" (a possessive head, always taken), or
+# "Robin: send the sheet" where Robin is a person or party the workspace knows. Any other label before a colon
+# ("Note:", "Q3:", "Decide:") is the user's own text and stays.
+OWNER_HEAD = re.compile(r"^\s*(?P<who>(?:[Tt]he\s+[\w.-]+|[A-Z][\w.-]*(?:\s+[A-Z][\w.-]*){0,2}))(?P<poss>[\u2019']s)?:\s+(?=\S)")
 
 
-def without_owner(text: Optional[str]) -> Optional[str]:
-    """A next action without the whose-it-is the Resume block adds, at its tail or at its head."""
+def known_owners(ctx: Optional[dict], me: str = "") -> set:
+    """The names a bare "Name:" head may be: the people and parties of System/context.md (full name and first
+    name), and the user's own name, lower case."""
+    names = set()
+    for person in (ctx or {}).get("people") or []:
+        full = str(person.get("name") or "").strip()
+        if full:
+            names.update((full.casefold(), full.split()[0].casefold()))
+    for party in ((ctx or {}).get("parties") or {}).values():
+        full = str((party or {}).get("party") or "").strip()
+        if full:
+            names.add(full.casefold())
+    if (me or "").strip():
+        names.update((me.strip().casefold(), me.split()[0].casefold()))
+    return names
+
+
+def without_owner(text: Optional[str], owners: Optional[set] = None) -> Optional[str]:
+    """A next action without the whose-it-is the Resume block adds, at its tail or at its head. A possessive
+    head is always removed; a bare "Name:" only when Name is in `owners`."""
     if not text:
         return text
     said = OWNER_TAIL.sub("", text).rstrip() or text
-    return OWNER_HEAD.sub("", said, count=1).strip() or said
+    head = OWNER_HEAD.match(said)
+    if head and (head.group("poss") or head.group("who").casefold() in (owners or set())):
+        return said[head.end():].strip() or said
+    return said
 
 
 def waiting_on(text: str) -> Optional[str]:
@@ -5199,7 +5221,12 @@ def waiting_badge(waiting: str) -> str:
     """The first clause of a Waiting on row, for the badge (#342): the text
     before the first colon or semicolon. The whole row is the badge's title
     and the work's own page."""
-    return re.split(r"[:;]", waiting, maxsplit=1)[0].strip() or waiting
+    lead = re.match(r"\s*\*\*[^*]+\*\*", waiting)             # a colon inside bold is not the cut: the pair stays whole
+    start = lead.end() if lead else 0
+    clause = waiting[:start] + re.split(r"[:;]", waiting[start:], maxsplit=1)[0]
+    if clause.count("**") % 2:                                  # an unpaired marker would be drawn as it is
+        clause = clause.replace("**", "")
+    return clause.strip() or waiting
 
 
 def work_name_for(r: dict) -> str:
@@ -5247,6 +5274,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
         me = ask_scope_mod().user_name(ws)
     except Exception:
         me = ""
+    owners = known_owners(workspace_context(ws), me)
     out = []
     for zone, data in T.items():
         for r in data["rows"]:
@@ -5261,7 +5289,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                 "id": work_id(work_name_for(r), key),
                 "name": work_name_for(r), "zone": zone, "project": r["project"], "thread": r["thread"],
                 "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": key,
-                "example": zone == example, "next": without_owner(nxt), "waiting": waiting,
+                "example": zone == example, "next": without_owner(nxt, owners), "waiting": waiting,
                 "mine": waits_on_user(waiting, me), "moved": r.get("touched") or r.get("updated"),
                 "actions": r.get("actions") or [], "row": r,         # the lines and the card the Threads card shows for this thread
             })

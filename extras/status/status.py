@@ -1730,7 +1730,7 @@ TCHIP_JS = r"""
 function pop(b){return document.getElementById(b.getAttribute('aria-controls'))}
 function set(b,o){var p=pop(b);if(!p)return;p.hidden=!o;b.setAttribute('aria-expanded',o?'true':'false')}
 function keep(id){try{if(id)sessionStorage.setItem(KEY,id);else sessionStorage.removeItem(KEY)}catch(e){}}
-document.querySelectorAll('.tview').forEach(function(v){v.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button.tchip');if(!b)return;
+document.querySelectorAll('.tview,.yrows').forEach(function(v){v.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('button.tchip');if(!b)return;
 e.preventDefault();e.stopPropagation();var p=pop(b);if(!p)return;var o=p.hidden,row=b.closest('.thread');
 [].forEach.call(document.querySelectorAll('button.tchip[aria-expanded="true"]'),function(x){set(x,false)});
 set(b,o);keep(o?p.id:'');if(o&&window.ThreadRows)ThreadRows.close();if(o&&row)row.classList.remove('on')})});
@@ -2156,13 +2156,23 @@ WORK_CSS = r"""
 WORK_JS = r"""
 (function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
 var TOAST=@TOAST@,WHY=@WHY@,LOST=@LOST@,ZONED=@ZONED@,KEY='garrick-work',box=document.getElementById('work'),W=[],timer=null,POLL=@POLL@,UNKNOWN=@UNKNOWN@,SEEN=[],OPS={},
-BATCH=@BATCH@,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
+BATCH=@BATCH@,SENTFOR=180,Q=[],HOV=null,TICKS=['todo-done','todo-undo'],KEEP=@KEEP@;
 try{W=JSON.parse(sessionStorage.getItem(KEY)||'[]')||[]}catch(e){}
 try{SEEN=JSON.parse(sessionStorage.getItem(KEY+'-seen')||'[]')||[]}catch(e){}
 try{OPS=JSON.parse(sessionStorage.getItem(KEY+'-ops')||'{}')||{}}catch(e){}
 try{Q=JSON.parse(sessionStorage.getItem(KEY+'-ticks')||'[]')||[]}catch(e){}
 function keep(){try{sessionStorage.setItem(KEY,JSON.stringify(W));sessionStorage.setItem(KEY+'-seen',JSON.stringify(SEEN.slice(-60)));sessionStorage.setItem(KEY+'-ops',JSON.stringify(OPS));
 sessionStorage.setItem(KEY+'-ticks',JSON.stringify(Q))}catch(e){}}
+/* the ticks this window has sent, by zone, note and key, with their verb and time, read from the storage each time it is asked:
+   a second copy of the page, or a rebuild that read the queue before a flush was stored, may hold a tick this one has sent (#524) */
+function sentRead(){var s={},n=Date.now();try{s=JSON.parse(sessionStorage.getItem(KEY+'-sent')||'{}')||{}}catch(e){}
+Object.keys(s).forEach(function(i){if(!s[i]||n-s[i].t>SENTFOR*1000)delete s[i]});return s}
+function sentWrite(s){try{sessionStorage.setItem(KEY+'-sent',JSON.stringify(s))}catch(e){}}
+function sentId(q,k){return JSON.stringify([q.zone,q.file,k])}
+function sentHas(q,k){var s=sentRead()[sentId(q,k)];return!!s&&s.v===q.verb}
+/* the oldest of what was sent goes first once there are too many */
+function sentAdd(q,keys){var s=sentRead(),n=Date.now();keys.forEach(function(k){s[sentId(q,k)]={v:q.verb,t:n}});sentWrite(s)}
+function sentDrop(q,keys){var s=sentRead();keys.forEach(function(k){delete s[sentId(q,k)]});sentWrite(s)}
 /* the operation ids this window has already shown the end of, so the record never shows one twice */
 function mark(){[].forEach.call(arguments,function(o){if(o&&SEEN.indexOf(o)<0)SEEN.push(o)})}
 function mint(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.floor(Math.random()*16));return s}
@@ -2188,7 +2198,7 @@ if(b){b.title=d?'Reopen':'Mark done';b.setAttribute('aria-label',b.title+String(
 function words(z,k){var r=rows(z,k)[0],b=r&&r.querySelector('.tick'),s=b?String(b.getAttribute('aria-label')||'').replace(/^[^:]*:\s*/,''):'';
 return s.length>60?s.slice(0,59)+'…':s}
 /* a batch refused as a whole: its boxes back as they were, and a click on one of them meanwhile dropped, since the row is back too */
-function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});
+function back(e){var z=e.q.zone,d=e.q.verb!=='todo-done';(e.q.keys||[]).forEach(function(k){paint(z,k,d)});sentDrop(e.q,e.q.keys||[]);
 Q=Q.filter(function(x){return!(x.q.zone===z&&(e.q.keys||[]).indexOf(x.q.key)>=0)})}
 /* A failure in plain words, with one next step the page already has (#511): the tool's own text is under Details, closed.
    The rules' sentence for a wall is said as it stands, since it is already plain and says nothing more. */
@@ -2223,8 +2233,10 @@ if(e.q.keys&&!e.shown&&now-e.t0>=TOAST*1000){e.shown=1;changed=true}});if(change
 function flush(){var now=Date.now(),sent=false;
 Q.map(function(x){return x.q.zone}).filter(function(z,i,a){return a.indexOf(z)===i}).forEach(function(z){var mine=Q.filter(function(x){return x.q.zone===z});
 if(running(z)||mine.some(function(x){return now-x.t<BATCH*1000}))return;
-var one=mine[0].q,go=mine.filter(function(x){return x.q.verb===one.verb&&x.q.file===one.file}),keys=go.map(function(x){return x.q.key}),n=keys.length;
-Q=Q.filter(function(x){return go.indexOf(x)<0});var q={verb:one.verb,zone:z,file:one.file,keys:keys,op:mint()};host.postMessage({act:q});
+var one=mine[0].q,go=mine.filter(function(x){return x.q.verb===one.verb&&x.q.file===one.file}),all=go;
+go=go.filter(function(x){return!sentHas(x.q,x.q.key)});     /* a tick this window has already sent is never sent twice */
+Q=Q.filter(function(x){return all.indexOf(x)<0});if(!go.length){sent=true;return}
+var keys=go.map(function(x){return x.q.key}),n=keys.length;sentAdd(one,keys);var q={verb:one.verb,zone:z,file:one.file,keys:keys,op:mint()};host.postMessage({act:q});
 W.push({q:q,op:q.op,say:(q.verb==='todo-done'?'Ticking ':'Reopening ')+(n===1?'it…':n+' lines…'),t0:now,lines:keys.map(function(k){return words(z,k)})});sent=true});
 if(sent)keep();return sent}
 function tick(){var sent=flush();if(sweep()||sent)render();else if(box)[].forEach.call(box.querySelectorAll('.wt'),function(t){t.textContent=took(Date.now()-t.dataset.t0)});poll();run()}
@@ -2255,6 +2267,7 @@ W.push({q:q,op:q.op,say:said||'Working…',t0:Date.now(),lines:lines||undefined}
    A second click on a line still queued takes the first back, and nothing is sent for it */
 window.GarrickTick=function(q){if(!q||TICKS.indexOf(q.verb)<0||typeof q.zone!=='string'||typeof q.key!=='string')return false;
 var was=Q.filter(function(x){return x.q.zone===q.zone&&x.q.file===q.file&&x.q.key===q.key})[0];
+if(!was&&sentHas(q,q.key)){keep();return true}   /* already sent, for this verb: the line is as asked */
 if(was){if(was.q.verb!==q.verb)Q.splice(Q.indexOf(was),1)}else Q.push({q:{verb:q.verb,zone:q.zone,file:q.file,key:q.key},t:Date.now()});
 keep();run();return true};
 /* the reply, from the host: a quick one is the host's toast, as before; a slow one stays here, and the toast steps aside.
@@ -2418,8 +2431,8 @@ function send(verb,r,more,said){var q={verb:verb,zone:r.dataset.z,file:r.dataset
 if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(said)}
 /* a zone still busy with another request (WORK_JS) says so, and the row stays as it is */
 function held(verb,r){return!!(window.GarrickHeld&&GarrickHeld({verb:verb,zone:r.dataset.z}))}
-/* where a line is drawn: the Todo tab, and the list a thread's todo chip opens on the Threads card (#179), which ticks and dates the same way */
-var places=[todo].concat([].slice.call(document.querySelectorAll('.tview')));
+/* where a line is drawn: the Todo tab, and the list a thread's todo chip opens on the Threads card (#179) and on a Your work row (#523), which tick and date the same way */
+var places=[todo].concat([].slice.call(document.querySelectorAll('.tview,.yrows')));
 function twins(r){return[].filter.call(document.querySelectorAll('.trow'),function(x){return x===r||x.dataset.z===r.dataset.z&&x.dataset.f===r.dataset.f&&x.dataset.k===r.dataset.k})}
 /* a tick is queued with the ticks around it (WORK_JS's GarrickTick, #107), even while the zone is busy; without it, sent at once as before.
    Every place the line is drawn is struck through with it */
@@ -5025,13 +5038,15 @@ def age_said(days, what: str) -> str:
     return "%d day%s since %s moved: a figure, not a fault" % (days, "" if days == 1 else "s", what)
 
 
-def row_id(r: dict) -> str:
+def row_id(r: dict, scope: str = "") -> str:
     """A row's own name for the lists its chips open, the same on every build,
-    so a list left open stays open across the rebuild a tick brings."""
-    return hashlib.sha1(("%s/%s" % (r["zone"], r["rel"])).encode("utf-8")).hexdigest()[:10]
+    so a list left open stays open across the rebuild a tick brings. A card
+    that draws a thread's chip again (Your work) gives its own `scope`, so
+    the page never holds two lists under one id."""
+    return hashlib.sha1(("%s%s/%s" % (scope, r["zone"], r["rel"])).encode("utf-8")).hexdigest()[:10]
 
 
-def todo_chip(r: dict, today: dt.date) -> str:
+def todo_chip(r: dict, today: dt.date, scope: str = "") -> str:
     """`todo N`, for a thread with open actions: green when none is late, red
     when one is. Colour is not the only signal: the red chip's tooltip says
     which lines are late and since when."""
@@ -5047,10 +5062,10 @@ def todo_chip(r: dict, today: dt.date) -> str:
     else:
         tip = "%d open action%s, none late" % (n, "" if n == 1 else "s")
     return ('<button type="button" class="chip tchip todo %s" aria-expanded="false" aria-controls="tp-%s" title="%s">todo %d</button>'
-            % ("late" if late else "ok", row_id(r), E(tip + ". Click to list them"), n))
+            % ("late" if late else "ok", row_id(r, scope), E(tip + ". Click to list them"), n))
 
 
-def todo_pop(r: dict, today: dt.date, actions: bool) -> str:
+def todo_pop(r: dict, today: dt.date, actions: bool, scope: str = "") -> str:
     """The list a `todo` chip opens: the thread's open lines, late first, each
     drawn by todo_row() as the Todo tab draws it, with its box and date in the
     app and the late ones saying since when. A tick here goes the Todo tab's
@@ -5061,7 +5076,7 @@ def todo_pop(r: dict, today: dt.date, actions: bool) -> str:
     late = sum(1 for a in mine if a["late"])
     head = "%d open%s" % (len(mine), " · %d late" % late if late else ", none late")
     return ('<div class="tpop" id="tp-%s" hidden><p class="tpop-h">%s</p><div class="trows">%s</div></div>'
-            % (row_id(r), head, "".join(todo_row(dict(a, label=None, unsure=False), today, actions, said_late=True)
+            % (row_id(r, scope), head, "".join(todo_row(dict(a, label=None, unsure=False), today, actions, said_late=True)
                                         for a in mine)))
 
 
@@ -5210,11 +5225,17 @@ def allowed_data(ws: Path, link: "Links") -> list:
 OWNER_TAIL = re.compile(r"[;,]\s*(?:the\s+)?[A-Z]?[\w.-]+(?:\s+[\w.-]+){0,2}[\u2019']s\s*\.?\s*$")
 
 
+# The same owner said first: "Robin: send the sheet", "Robin's: send the sheet", "The assistant's: …". One to three
+# capitalised words, or "the" and one word, so a lower-case phrase before a colon is never taken for a name.
+OWNER_HEAD = re.compile(r"^\s*(?:[Tt]he\s+[\w.-]+|[A-Z][\w.-]*(?:\s+[A-Z][\w.-]*){0,2})(?:[\u2019']s)?:\s+(?=\S)")
+
+
 def without_owner(text: Optional[str]) -> Optional[str]:
-    """A next action without the whose-it-is tail the Resume block adds."""
+    """A next action without the whose-it-is the Resume block adds, at its tail or at its head."""
     if not text:
         return text
-    return OWNER_TAIL.sub("", text).rstrip() or text
+    said = OWNER_TAIL.sub("", text).rstrip() or text
+    return OWNER_HEAD.sub("", said, count=1).strip() or said
 
 
 def waiting_on(text: str) -> Optional[str]:
@@ -5320,6 +5341,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                 "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": key,
                 "example": zone == example, "next": without_owner(nxt), "waiting": waiting,
                 "mine": waits_on_user(waiting, me), "moved": r.get("touched") or r.get("updated"),
+                "actions": r.get("actions") or [], "row": r,         # the lines and the card the Threads card shows for this thread
             })
     out.sort(key=lambda w: (-(w["moved"] or dt.date.min).toordinal(), w["name"].casefold()))
     return out
@@ -5693,10 +5715,18 @@ function deskReq(o,v){var q={verb:v,zone:o.dk[0],project:o.dk[1]};if(o.dk[2])q.t
 function desk(o,v){return esc(JSON.stringify(deskReq(o,v)))}
 /* data-k names the app, so Garrick.app can draw the button as its icon, as its menu bar does; data-d marks the default */
 function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
-function acts(o,pre){var a=(pre||'')+(prefs().note===false?'':'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>');
+function noteLink(o){return'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>'}
+function acts(o,pre){var a=(pre||'')+(prefs().note===false?'':noteLink(o));
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 /* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
 if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
+/* One way to open, for a row of Your work (#523): the main button runs Settings' Default, and a list beside it offers the others
+   that are on and installed, each drawn by launch() as the card draws it. One way on: one plain button. */
+function opener(o){var ways=(prefs().note===false?[]:['note']).concat(o.f&&host?chosen():[]),d=GarrickPrefs.def();
+if(!ways.length)ways=['note'];if(ways.indexOf(d)<0)d=ways[0];
+function one(k){return k==='note'?noteLink(o):launch(k,o)}
+var rest=ways.filter(function(k){return k!==d});
+return one(d)+(rest.length?'<details class="ymore"><summary class="act" title="Other ways to open" aria-label="Other ways to open">▾</summary><div class="ymenu">'+rest.map(one).join('')+'</div></details>':'')}
 /* a thread by its note (pa), or a project by its name (pp), its hub then holding every thread in it */
 function park(o){var s=o.h?o.hp:o.s,v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
 k=o.h?o.pp[0]+'/'+o.pp[1]+'/'+o.pp[1]+'.md':o.pa[0]+'/'+o.pa[1];
@@ -5731,7 +5761,7 @@ var row=a.closest('.thread,.sres'),o;try{o=JSON.parse(row.dataset.card)}catch(x)
 e.preventDefault();e.stopPropagation();if(d==='cmux'&&o.dk){if(o.f&&window.GarrickExpect)GarrickExpect('live:'+o.f);host.postMessage({act:deskReq(o,'open')});return}
 var q=d==='claude'&&cont(o);if(q){if(window.GarrickHeld&&GarrickHeld(q))return;if(!(window.GarrickAct&&GarrickAct(q,going(o)))){host.postMessage({act:q});if(window.GarrickSay)GarrickSay(going(o))}return}
 host.postMessage({launch:d,folder:o.f,phrase:phrase(o)})},true);
-return{esc:esc,acts:acts,head:head}})();
+return{esc:esc,acts:acts,head:head,opener:opener}})();
 """
 
 JS = r"""
@@ -7007,31 +7037,62 @@ def waiting_row(r: dict, now: dt.datetime) -> str:
                E(r.get("since") or ""), E(waited(r.get("since") or "", now)), go))
 
 
-def work_list_card(W: List[dict], today: dt.date) -> str:
-    """Your work, the Overview's opening list: each live piece of work with its next action, who it waits on and
-    Continue (#503). The rows are the ones works() builds and the `continue` action carries out; nothing is
-    read or kept for this card. A project of one thread is one piece of work, as page_action.py's work_name() counts it."""
+def work_name_lines(w: dict) -> str:
+    """The name column, in two lines: the zone and the project in grey, then the thread in bold. A project of one
+    thread has the zone alone above and the project in bold below; the example zone's tag stays on the bold line."""
+    one = w["name"] == w["project"]
+    above = E(w["zone"]) if one else "%s / %s" % (E(w["zone"]), E(w["project"]))
+    return ('<span class="yname"><small class="yzone">%s</small><span class="yline"><b>%s</b>%s</span></span>'
+            % (above, E(w["project"] if one else w["thread"]), '<span class="ytag">Example</span>' if w["example"] else ""))
+
+
+def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=None) -> str:
+    """Your work, the Overview's opening list: each live piece of work with its next action, who it waits on, its
+    open actions and the way to open it (#503, #523). The rows are the ones works() builds; nothing is read or kept
+    for this card. A project of one thread is one piece of work, as page_action.py's work_name() counts it.
+    The `todo N` chip and its list are the thread's on the Threads card, drawn from the same lines; the way to open
+    is that card's own (PANEL_JS's Panel.opener), which follows Settings, drawn by YOURWORK_JS from the card's data
+    (`card_of(row)`, the JSON thread_card() gives the Threads card). In a browser the row copies the phrase instead."""
     rows = ""
     for w in W:
         nxt = md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'
-        waits = ('<span class="ywait" title="Waiting on %s">Waiting on %s</span>' % (E(w["waiting"]), E(waiting_badge(w["waiting"])))
-                 if w["waiting"] and not w.get("mine") else '<span class="ywait none"></span>')
+        waits = ('<span class="ywait" title="Waiting on %s">Waiting on %s</span>' % (E(w["waiting"]), md_inline(waiting_badge(w["waiting"])))
+                 if w["waiting"] and not w.get("mine") else "")
+        row = dict(w["row"], actions=w.get("actions") or [])
+        chip = todo_chip(row, today, "yw")
+        pop = todo_pop(row, today, acting, "yw")
+        why = ('<span class="ywhy">%s%s</span>' % (waits, '<span class="tchips">%s</span>' % chip if chip else "")) if waits or chip \
+            else '<span class="ywhy"></span>'
         phrase = "Where am I on %s?" % w["name"]
-        go = (act_button(json.dumps({"verb": "continue", "zone": w["zone"], "file": w["rel"]}), "Continue",
-                         "Opening %s in Claude…" % w["name"], "act primary apponly")
-              + '<span class="webonly">%s</span>' % copy("Copy “Where am I?”", phrase, "Copied “%s”. Paste it to your assistant." % phrase))
-        rows += ('<div class="yrow" data-w="%s"><span class="yname">%s%s</span><span class="ynext">%s</span>%s<span class="yact">%s</span></div>'
-                 % (E(w["id"]), E(w["name"]), '<span class="ytag">Example</span>' if w["example"] else "", nxt, waits, go))
+        data = card_of(w["row"]) if card_of else ""
+        go = ('<span class="yopen apponly" data-card="%s"></span>' % E(data) if data else "") + \
+            '<span class="webonly">%s</span>' % copy("Copy “Where am I?”", phrase, "Copied “%s”. Paste it to your assistant." % phrase)
+        rows += ('<div class="yrow" data-w="%s">%s<span class="ynext">%s</span>%s<span class="yact">%s</span>%s</div>'
+                 % (E(w["id"]), work_name_lines(w), nxt, why, go, pop))
     return card("your-work", "Your work", "%d piece%s, most recent first" % (len(W), "" if len(W) == 1 else "s"),
                 '<div class="yrows">%s</div>' % rows)
 
 
 YOURWORK_CSS = r"""
-.yrow{display:grid;grid-template-columns:minmax(120px,1.1fr) minmax(160px,2.4fr) minmax(90px,.9fr) auto;gap:6px 14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
-.yrow:last-child{border-bottom:0}.yname{font-weight:600;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere}
-.ywait{color:var(--ink2);font-size:12.5px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:11px;background:var(--wash);color:var(--accent)}
-.yact{justify-self:end}
-@media(max-width:720px){.yrow{grid-template-columns:1fr auto}.ynext,.ywait{grid-column:1/-1}}
+.yrow{display:grid;grid-template-columns:minmax(140px,.8fr) minmax(200px,2.6fr) minmax(110px,1fr) auto;gap:6px 14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
+.yrow:last-child{border-bottom:0}.yname{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere}
+.yzone{font-size:12px;font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
+.ywhy{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}.ywhy .tchips{display:inline-flex;gap:4px}.ywhy .chip{margin:0}
+.ywait{color:var(--ink2);font-size:12.5px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:11px;font-weight:400;background:var(--wash);color:var(--accent)}
+.yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
+.ymore{position:relative}.ymore>summary.act{display:inline-block;padding:0 7px}
+.ymenu{position:absolute;right:0;top:100%;z-index:6;margin-top:4px;display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--raise);box-shadow:var(--shadow);white-space:nowrap}
+.yrow .tpop{grid-column:1/-1}
+@media(max-width:720px){.yrow{grid-template-columns:1fr auto}.ynext,.ywhy{grid-column:1/-1}}
+"""
+
+# Draws each row's way to open from the card's data, as the Threads card's hover card does, and again when the
+# pointer enters the row, so a change in Settings shows without a rebuild. One list open at a time.
+YOURWORK_JS = r"""
+(function(){if(typeof Panel==='undefined'||!Panel.opener)return;
+function draw(el){var o;try{o=JSON.parse(el.dataset.card)}catch(e){return}if(!el.querySelector('details[open]'))el.innerHTML=Panel.opener(o)}
+[].forEach.call(document.querySelectorAll('.yrow'),function(r){var y=r.querySelector('.yopen[data-card]');if(!y)return;draw(y);r.addEventListener('mouseenter',function(){draw(y)})});
+document.addEventListener('click',function(e){[].forEach.call(document.querySelectorAll('.ymore[open]'),function(d){if(!d.contains(e.target)||e.target.closest('.ymenu .act'))d.open=false})})})();
 """
 
 
@@ -7584,7 +7645,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    lead = waiting_card(waiting_now or [], now) + ((work_list_card(HW, now.date()) if HW else "") + threads_card
+    lead = waiting_card(waiting_now or [], now) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
+                                                        r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
+                                                        cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
                                                     if anything else start_card() + threads_card)
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
@@ -7639,7 +7702,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # and WORK_JS after all three. NOTE_JS, Explore's Preview, in an element of its
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
-    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + JOBS_JS,
+    scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
                MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, WAIT_JS, MEMORY_JS, RELEASE_JS, MENU_JS, questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'

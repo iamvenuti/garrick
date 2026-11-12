@@ -804,9 +804,20 @@ def todo(ws: Path, req: dict) -> str:
     with zone_lock(zone):
         before = note.read_bytes()
         found = [live_key(tl, zone, rel, key, req["verb"]) for key in keys]
+        already = []
+        if req["verb"] in ("todo-done", "todo-undo"):
+            other = "todo-undo" if req["verb"] == "todo-done" else "todo-done"
+            for i, key in enumerate(keys):      # a line already in the state the verb asks for is done, not stale
+                if not found[i] and live_key(tl, zone, rel, key, other):
+                    already.append(key)
+                    found[i] = "-"
         why = stale_why(ws, req["verb"], req, all(found))
         if why:
             raise Refused(why)
+        found = [f for f in found if f != "-"]
+        if not found:                           # nothing to write, nothing to commit
+            return "%s: %d line%s" % ("Already done" if req["verb"] == "todo-done" else "Already open",
+                                      len(already), "" if len(already) == 1 else "s")
         said, messages = [], []
         try:
             for key in found:
@@ -821,6 +832,8 @@ def todo(ws: Path, req: dict) -> str:
         else:
             message = "%s: %s, %d actions" % (zone.name, "done" if req["verb"] == "todo-done" else "reopened", len(messages))
         commit(zone, note, before, message[:200], wall=wall_refusal(ws))
+    if already:
+        return "Saved %d, %d already %s" % (len(said), len(already), "done" if req["verb"] == "todo-done" else "open")
     return said[0] if len(said) == 1 else "Saved %d" % len(said)
 
 

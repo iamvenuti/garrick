@@ -10,6 +10,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -95,6 +96,7 @@ class RefusalRecord(unittest.TestCase):
 
     def test_the_times_of_the_overrides_are_read_beside_the_count(self):
         """#530: the card says "1 wall override since Tuesday" from these; times only, and the same refusals the count calls overridden."""
+        time.sleep(1.1)                                      # git dates a commit to the second: the setup's must fall before the refusal's
         self.refuse()
         self.assertEqual([], lib.refusal_override_times(self.root))        # refused, and no commit followed
         commit_all(self.work, "went through anyway")

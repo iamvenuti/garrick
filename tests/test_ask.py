@@ -1695,3 +1695,53 @@ class TestTheZoneSelector(unittest.TestCase):
         self.assertIn("!zoneNew, self.askZone() == sentZone", line)
         self.assertIn("if startNew || zoneNew {", send)
 
+
+
+class TestInlineMarkdownInClaims(unittest.TestCase):
+    """#521: the window draws a small inline subset in a claim, and the brief says what it draws."""
+    BEGIN, END = "// askInlineRuns begin", "// askInlineRuns end."
+
+    @classmethod
+    def setUpClass(cls):
+        cls.swift = (REPO / "extras" / "status" / "app" / "Garrick.swift").read_text(encoding="utf-8")
+
+    def test_the_brief_says_the_window_shows_one_line_per_claim(self):
+        brief = (REPO / "extras" / "status" / "ask-brief.md").read_text(encoding="utf-8")
+        self.assertIn("one line for each claim: no headings and no tables", brief)
+        self.assertNotIn("short table", brief)
+
+    def test_a_claim_is_drawn_through_the_inline_function_and_citations_still_link(self):
+        claimed = self.swift[self.swift.index("func claimed("):self.swift.index("claimed(turn.claims)")]
+        self.assertIn("askInline(text, said)", claimed)
+        self.assertIn('out.append(link("[\\(n + 1)]", n))', claimed)
+
+    def runs(self, *lines):
+        import shutil
+        import subprocess
+        swiftc = shutil.which("xcrun") and subprocess.run(["xcrun", "--find", "swiftc"], capture_output=True).returncode == 0
+        if not swiftc:
+            self.skipTest("no Swift compiler")
+        body = self.swift[self.swift.index(self.BEGIN):self.swift.index(self.END)]
+        body = body[body.index("\n") + 1:]
+        calls = "\n".join('for r in askInlineRuns(%s) { print("\\(r.bold ? "B" : "-")\\(r.italic ? "I" : "-")|\\(r.text)") }\nprint("==")'
+                          % json.dumps(l) for l in lines)
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "main.swift"
+            src.write_text(body + "\n" + calls + "\n", encoding="utf-8")
+            exe = Path(tmp) / "inline"
+            built = subprocess.run(["xcrun", "swiftc", str(src), "-o", str(exe)], capture_output=True, text=True)
+            self.assertEqual(0, built.returncode, built.stderr)
+            got = subprocess.run([str(exe)], capture_output=True, text=True).stdout
+        return [chunk.strip("\n").split("\n") for chunk in got.split("==\n") if chunk.strip("\n")]
+
+    def test_bold_italic_and_a_bullet_show_no_markers(self):
+        got = self.runs("- **Follow-up call:** The call was not booked.", "__Bold__ and *it* and _also_", "* item")
+        self.assertEqual(["--|• ", "B-|Follow-up call:", "--| The call was not booked."], got[0])
+        self.assertEqual(["B-|Bold", "--| and ", "-I|it", "--| and ", "-I|also"], got[1])
+        self.assertEqual(["--|• ", "--|item"], got[2])
+
+    def test_a_literal_asterisk_and_an_unpaired_marker_keep_theirs(self):
+        got = self.runs("The quote says 5 * 3 = 15", "snake_case_name and 5*3*4", "a **dangling bold")
+        self.assertEqual(["--|The quote says 5 * 3 = 15"], got[0])
+        self.assertEqual(["--|snake_case_name and 5*3*4"], got[1])
+        self.assertEqual(["--|a **dangling bold"], got[2])

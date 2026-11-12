@@ -2782,7 +2782,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		func claimed(_ claims: [[String: Any]]) {
 			for claim in claims {
 				guard let text = claim["text"] as? String, !text.isEmpty else { continue }
-				out.append(NSAttributedString(string: (first ? "" : between) + text, attributes: said))
+				out.append(NSAttributedString(string: first ? "" : between, attributes: said))
+				out.append(askInline(text, said))
 				first = false
 				for id in claim["ids"] as? [String] ?? [] {
 					guard let n = ids.firstIndex(of: id) else { continue }
@@ -2820,6 +2821,73 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 		out.append(NSAttributedString(string: "\n", attributes: said))
 		return out
 	}
+
+	// A claim as one line of text with the small inline subset of Markdown a session may write (#521):
+	// **bold** and __bold__, *italic* and _italic_, and a leading "- " or "* " as a bullet. A marker
+	// opens only before a word and closes only after one, so "5 * 3" and snake_case keep theirs, and an
+	// unpaired marker stays as typed. No headings, no tables, no links: the brief says so too.
+	func askInline(_ text: String, _ said: [NSAttributedString.Key: Any]) -> NSAttributedString {
+		let out = NSMutableAttributedString()
+		for run in askInlineRuns(text) {
+			var a = said
+			if (run.bold || run.italic), let font = said[.font] as? NSFont {
+				var f = font
+				if run.bold { f = NSFontManager.shared.convert(f, toHaveTrait: .boldFontMask) }
+				if run.italic { f = NSFontManager.shared.convert(f, toHaveTrait: .italicFontMask) }
+				a[.font] = f
+			}
+			out.append(NSAttributedString(string: run.text, attributes: a))
+		}
+		return out
+	}
+
+	// askInlineRuns begin: pure, the text and its emphasis, with nothing of AppKit in it.
+	func askInlineRuns(_ line: String) -> [(text: String, bold: Bool, italic: Bool)] {
+		var chars = Array(line)
+		var runs: [(text: String, bold: Bool, italic: Bool)] = []
+		if chars.count > 2, (chars[0] == "-" || chars[0] == "*"), chars[1] == " ", chars[2] != " " {
+			runs.append(("\u{2022} ", false, false))
+			chars.removeFirst(2)
+		}
+		func word(_ c: Character?) -> Bool { c.map { $0.isLetter || $0.isNumber } ?? false }
+		func scan(_ cs: [Character], _ bold: Bool, _ italic: Bool) -> [(text: String, bold: Bool, italic: Bool)] {
+			var out: [(text: String, bold: Bool, italic: Bool)] = []
+			var plain = ""
+			var i = 0
+			while i < cs.count {
+				let c = cs[i]
+				if c == "*" || c == "_" {
+					let n = (i + 1 < cs.count && cs[i + 1] == c) ? 2 : 1
+					let before: Character? = i > 0 ? cs[i - 1] : nil
+					let start = i + n
+					if !word(before), start < cs.count, !cs[start].isWhitespace, cs[start] != c {
+						var j = start
+						var close: Int? = nil
+						while j + n <= cs.count {
+							if cs[j] == c, (n == 2 ? (j + 1 < cs.count && cs[j + 1] == c) : (j + 1 >= cs.count || cs[j + 1] != c)),
+							   !cs[j - 1].isWhitespace, j > start, !word(j + n < cs.count ? cs[j + n] : nil) {
+								close = j
+								break
+							}
+							j += 1
+						}
+						if let end = close {
+							if !plain.isEmpty { out.append((plain, bold, italic)); plain = "" }
+							out += scan(Array(cs[start..<end]), bold || n == 2, italic || n == 1)
+							i = end + n
+							continue
+						}
+					}
+				}
+				plain.append(c)
+				i += 1
+			}
+			if !plain.isEmpty { out.append((plain, bold, italic)) }
+			return out
+		}
+		return runs + scan(chars, false, false)
+	}
+	// askInlineRuns end.
 
 	// A date as ask.py gives it, YYYY-MM-DD, said the way this Mac writes dates; a month or a year as it stands.
 	func askDay(_ iso: String) -> String {

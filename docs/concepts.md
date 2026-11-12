@@ -72,7 +72,7 @@ Every hub and thread note carries `status:` in its frontmatter, with one of thre
 
 ### Wrap and Resume
 
-One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. The note's last write is the only record of where you were, so there is nothing else to keep right. *While you wait* rests on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
+One way to save a thread's place, and one way back. A wrap (also said "I'm being interrupted", "hold this" or "hold Acme pricing") asks nothing and rewrites the Resume here block, adds the dated entry, files the actions and commits; where the assistant can run work in the background it does, so you can leave at once. The note's last write is the only record of where you were, so there is nothing else to keep right. The *back* rule of `next_up.py` rests on the note's modification time: a job or a checkout that touches a note can move it. Whether a wrap has landed is a separate record: a wrap holds a lock file in `System/generated/` while it runs, so it cannot be started twice, and writes the time it finished beside it, which the band and Close read. See [Opening and wrapping](commands.md#opening-and-wrapping).
 
 ### History file
 

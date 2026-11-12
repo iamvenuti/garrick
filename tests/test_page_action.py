@@ -650,27 +650,24 @@ class TestSettings(ActionCase):
                          json.loads(self.path().read_text())["launchers"])
 
 
-class TestWaitSettings(ActionCase):
-    """Settings › While you wait (#111), checked by next_up.py and kept beside the rest."""
+class TestNoWaitSettings(ActionCase):
+    """While you wait is gone (#529): the page no longer saves it, and what an older workspace kept stays unread."""
 
     def path(self):
         return self.root / "System" / "garrick-settings.json"
 
-    def test_saved_checked_and_beside_the_rest(self):
-        self.act(verb="settings", launchers=["note", "cmux"], default="cmux")
-        said = self.act(verb="settings", **{"while-you-wait": {"on": False, "threshold": 90, "same-zone": True,
-                                                                 "sources": ["due", "back"], "parked-days": 60}})
-        self.assertEqual("Settings saved", said)
-        saved = json.loads(self.path().read_text())
-        self.assertEqual("cmux", saved["default"])                                   # the rest stays
-        self.assertEqual({"on": False, "threshold": 90, "same-zone": True, "sources": ["due", "back"],
-                          "parked-days": 60, "wrap-days": 14}, saved["while-you-wait"])
-
-    def test_refused_with_the_reason(self):
-        for wait in ({"threshold": 2}, {"sources": ["mail"]}, {"same-zone": "yes"}, {"colour": "Teal"}, "on"):
-            with self.assertRaises(pa.Refused, msg=wait):
-                self.act(verb="settings", **{"while-you-wait": wait})
+    def test_the_save_no_longer_takes_it(self):
+        with self.assertRaises(pa.Refused):
+            self.act(verb="settings", **{"while-you-wait": {"on": False}})
         self.assertFalse(self.path().exists())
+        self.assertFalse(hasattr(pa, "next_up_lib"))
+
+    def test_a_leftover_block_stays_when_the_rest_is_saved(self):
+        write(self.path(), json.dumps({"while-you-wait": {"on": False, "threshold": 90}}))
+        self.assertEqual("Settings saved", self.act(verb="settings", launchers=["note", "cmux"], default="cmux"))
+        saved = json.loads(self.path().read_text())
+        self.assertEqual("cmux", saved["default"])
+        self.assertEqual({"on": False, "threshold": 90}, saved["while-you-wait"])      # ignored, never dropped
 
     def test_a_pick_ticks_through_todo_done(self):
         shutil.copy2(REPO / "template" / "System" / "tools" / "next_up.py", self.root / "System" / "tools" / "next_up.py")

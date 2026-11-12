@@ -72,8 +72,7 @@ zone's repository, as the skills would:
                 Notifications: {"notifications": {"tell": {...}, "after": 2,
                 "quiet": {...}}}, which notices this Mac shows, checked and
                 kept by System/tools/notifications.py.
-                Settings › While you wait: {"while-you-wait": {...}},
-                checked by System/tools/next_up.py. Settings › Home:
+                Settings › Home:
                 {"home": "simple"} or "full", the page Garrick opens on.
                 Settings › Memory: {"memory": {...}}, how pages fade out
                 of the wikis (#108), checked here against the shape
@@ -1172,32 +1171,6 @@ def notifications_lib(ws: Path):
     return _NOTIFY[key]
 
 
-_NEXT_UP = {}
-
-
-def next_up_lib(ws: Path):
-    """System/tools/next_up.py, which checks Settings › While you wait: found
-    as notifications_lib() finds its module. None when there is none."""
-    key = Path(ws)
-    if key not in _NEXT_UP:
-        found = None
-        for src in (key / "System" / "tools" / "next_up.py", Path(__file__).resolve().parent.parent / "tools" / "next_up.py",
-                    Path(__file__).resolve().parent.parent.parent / "template" / "System" / "tools" / "next_up.py"):
-            if not src.is_file():
-                continue
-            try:
-                spec = importlib.util.spec_from_file_location("garrick_next_up", str(src))
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-            except Exception:
-                continue
-            if callable(getattr(mod, "clean", None)):
-                found = mod
-                break
-        _NEXT_UP[key] = found
-    return _NEXT_UP[key]
-
-
 # Settings › Memory (#108). System/tools/fade.py, the workspace's own, owns
 # graded oblivion: its settings() keeps what is saved merged over its
 # defaults, and counts() says what a set of them would do now. What the page
@@ -1473,7 +1446,7 @@ def save_settings(ws: Path, req: dict) -> str:
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
-    if not {"launchers", "zones", "graph", "notifications", "while-you-wait", "home", "memory", "desk-agent",
+    if not {"launchers", "zones", "graph", "notifications", "home", "memory", "desk-agent",
             "release-notice", "release-notice-every"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
@@ -1516,14 +1489,6 @@ def save_settings(ws: Path, req: dict) -> str:
             raise Refused("cannot find System/tools/notifications.py, or it is older than this page; update Garrick")
         try:
             new["notifications"] = notify.clean(req["notifications"])
-        except ValueError as e:
-            raise Refused(str(e))
-    if "while-you-wait" in req:
-        wait = next_up_lib(ws)
-        if wait is None:
-            raise Refused("cannot find System/tools/next_up.py; update Garrick")
-        try:
-            new[wait.KEY] = wait.clean(req["while-you-wait"])
         except ValueError as e:
             raise Refused(str(e))
     if "memory" in req:

@@ -1,4 +1,4 @@
-"""System/tools/next_up.py: what the band offers while a long turn runs (#111).
+"""System/tools/next_up.py: what "what's next" offers, by six fixed rules (#111, #529).
 
     python3 -m unittest discover -s tests -p test_next_up.py
 """
@@ -100,7 +100,8 @@ def workspace(root: Path) -> Path:
     return root
 
 
-def settings(root: Path, **chosen) -> None:
+def leftover(root: Path, **chosen) -> None:
+    """What an older workspace's While you wait settings left behind: read by nothing now (#529)."""
     write(root / "System" / "garrick-settings.json", json.dumps({"while-you-wait": chosen}))
 
 
@@ -148,11 +149,6 @@ class NextUpTest(unittest.TestCase):
         for note in self.root.glob("Zones/*/*/Threads/*/*.md"):
             os.utime(note, (dt.datetime(2026, 10, 13, 18, 0).timestamp(),) * 2)
         self.assertNotIn("back", [p["source"] for p in self.picks()])
-
-    def test_a_setting_saved_before_the_stack_went_still_reads(self):
-        settings(self.root, sources=["stack", "inbox"])
-        self.assertEqual(nu.settings(self.root)["sources"], ["back", "inbox"])
-        self.assertEqual(nu.clean({"sources": ["due", "stack"]})["sources"], ["due", "back"])
 
     def test_due_lines_quickest_first_then_the_latest(self):
         due = [p["say"] for p in self.picks() if p["source"] == "due"]
@@ -215,46 +211,33 @@ class NextUpTest(unittest.TestCase):
         zones = {p["zone"] for p in self.picks(zone="Work")}
         self.assertIn("Personal", zones)
 
-    def test_same_zone_only_narrows_to_the_sessions_zone(self):
-        settings(self.root, **{"same-zone": True})
+    def test_a_zone_never_narrows_the_picks(self):
         found = nu.next_up(self.root, zone="Personal", today=TODAY)
-        self.assertTrue(found["same_zone"])
-        self.assertEqual({p["zone"] for p in found["picks"]}, {"Personal"})
+        self.assertFalse(found["same_zone"])
+        self.assertEqual({p["zone"] for p in found["picks"]}, {p["zone"] for p in self.picks()})
 
-    def test_same_zone_without_a_zone_is_every_zone(self):
-        settings(self.root, **{"same-zone": True})
-        self.assertIn("Personal", {p["zone"] for p in self.picks()})
+    # ---- no settings (#529) ----
 
-    # ---- settings ----
+    def test_the_rules_are_fixed(self):
+        chosen = nu.next_up(self.root, today=TODAY)["settings"]
+        self.assertEqual(chosen, {"on": True, "threshold": 45, "same-zone": False, "sources": list(nu.SOURCES),
+                                  "parked-days": 30, "wrap-days": 14})
+        for gone in ("KEY", "clean", "settings", "SOURCE_LABELS", "THRESHOLD", "DAYS"):
+            self.assertFalse(hasattr(nu, gone), gone)
 
-    def test_sources_switched_off_or_reordered(self):
-        settings(self.root, sources=["inbox", "due"])
-        self.assertEqual(sorted({p["source"] for p in self.picks()}, key=["inbox", "due"].index), ["inbox", "due"])
-        self.assertEqual(self.picks()[0]["source"], "inbox")
+    def test_leftover_settings_change_nothing(self):
+        before = nu.next_up(self.root, zone="Personal", today=TODAY)
+        leftover(self.root, **{"same-zone": True, "sources": ["inbox"], "parked-days": 80, "wrap-days": 100,
+                               "threshold": 600, "on": False})
+        self.assertEqual(before, nu.next_up(self.root, zone="Personal", today=TODAY))
 
-    def test_staleness_is_a_setting(self):
-        settings(self.root, **{"parked-days": 80, "wrap-days": 100})
-        sources = [p["source"] for p in self.picks()]
-        self.assertEqual(sources.count("parked"), 1)
-        self.assertNotIn("wrap", sources)
-
-    def test_clean_refuses_what_the_page_could_not_mean(self):
-        self.assertEqual(nu.clean({})["threshold"], 45)
-        self.assertEqual(nu.clean({"threshold": 90, "same-zone": True})["same-zone"], True)
-        for bad in ({"threshold": 3}, {"threshold": "45"}, {"on": "yes"}, {"sources": ["due", "due"]},
-                    {"sources": ["mail"]}, {"wrap-days": 0}, {"colour": 1}, []):
-            with self.assertRaises(ValueError, msg=bad):
-                nu.clean(bad)
-
-    def test_a_setting_that_does_not_read_falls_back(self):
-        settings(self.root, threshold="soon", on=False)
-        chosen = nu.settings(self.root)
-        self.assertEqual((chosen["threshold"], chosen["on"]), (45, False))
-
-    def test_the_settings_key_is_a_kept_preference(self):
-        sys.path.insert(0, str(REPO / "template" / "System" / "tools"))
-        import garrick_lib
-        self.assertIn(nu.KEY, garrick_lib.PREFERENCES)
+    def test_the_output_with_no_settings_is_what_it_was(self):
+        found = nu.next_up(self.root, zone="Work", today=TODAY)
+        self.assertEqual(list(found), ["on", "threshold", "zone", "same_zone", "exclude", "settings", "picks"])
+        self.assertEqual((found["on"], found["threshold"], found["zone"], found["same_zone"], found["exclude"]),
+                         (True, 45, "Work", False, None))
+        self.assertEqual([p["source"] for p in found["picks"]][:1], ["back"])
+        self.assertEqual(len(found["picks"]), 10)
 
     # ---- the command line ----
 
@@ -270,7 +253,7 @@ class NextUpTest(unittest.TestCase):
         said = self.run_tool("--say")
         self.assertEqual(said.stdout.strip(), data["picks"][0]["say"])
 
-    def test_the_skill_and_the_band_get_the_same_first_pick(self):
+    def test_the_exclusion_and_the_say_line_agree_on_the_first_pick(self):
         band = json.loads(self.run_tool("--zone", "Work", "--exclude", "Zones/Work/Acme/Threads/Renewal").stdout)
         skill = self.run_tool("--zone", "Work", "--exclude", "Zones/Work/Acme/Threads/Renewal/Renewal.md", "--say")
         self.assertEqual(skill.stdout.strip(), band["picks"][0]["say"])
@@ -282,8 +265,10 @@ class NextUpTest(unittest.TestCase):
         self.assertEqual(before, after)
 
     def test_nothing_waiting_says_so(self):
-        settings(self.root, sources=[])
-        self.assertEqual(self.run_tool("--say").stdout.strip(), "Nothing is waiting.")
+        with tempfile.TemporaryDirectory() as empty:
+            write(Path(empty) / "System" / "rules.md", "# Rules\n")
+            done = subprocess.run([sys.executable, str(TOOL), "--root", empty, "--say"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(done.stdout.strip(), "Nothing is waiting.")
 
     def test_outside_a_workspace_it_stops(self):
         with tempfile.TemporaryDirectory() as other:

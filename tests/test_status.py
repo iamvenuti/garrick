@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', While you wait's, the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Guide's, Preview's, the graph's
+        self.assertEqual(21, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1695,7 +1695,7 @@ class TestSettingsLayout(StatusCase):
     them beside it (#205): a link per section, grouped by what people come
     for, and the one being read marked."""
 
-    ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings", "wait-settings",
+    ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
              "notify-settings", "memory-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
@@ -1757,77 +1757,30 @@ class TestSettingsLayout(StatusCase):
         self.assertEqual(0, done.returncode, done.stderr)
 
 
-class TestWaitSettings(StatusCase):
-    """Settings › While you wait (#111): next_up.py's keys, drawn and read back,
-    while its preview flag is on (#247)."""
+class TestNoWaitSettings(StatusCase):
+    """While you wait is gone (#529): no Settings section, no flag, and what an
+    older workspace left in its files does nothing."""
 
-    def setUp(self):
-        super().setUp()
-        write(self.root / "System" / "garrick-flags.json", json.dumps({"while-you-wait": True}))
-
-    def section(self):
-        html = self.page()
-        start = html.index('<section class="setsec apponly" id="wait-settings">')
-        return html[start:html.index("</section>", start)]
-
-    def lib(self):
-        return status.wait_lib(self.root)
-
-    def test_the_defaults_as_next_up_has_them(self):
-        sec = self.section()
-        self.assertIn('<input type="checkbox" id="w-on" checked>', sec)
-        self.assertIn('<input type="checkbox" id="w-zone">', sec)
-        self.assertIn('data-wnum="threshold" min="10" max="600" value="45"', sec)
-        self.assertIn('data-wnum="parked-days" min="1" max="365" value="30"', sec)
-        self.assertIn('data-wnum="wrap-days" min="1" max="365" value="14"', sec)
-        self.assertEqual(list(self.lib().SOURCES), re.findall(r'data-wsrc="([a-z]+)"', sec))
-        self.assertEqual(6, sec.count('data-won checked'))
-
-    def test_what_was_saved_is_shown_in_its_order(self):
-        write(self.root / "System" / "garrick-settings.json", json.dumps({"while-you-wait": {
-            "on": False, "threshold": 120, "same-zone": True, "sources": ["inbox", "due"], "wrap-days": 21}}))
-        sec = self.section()
-        self.assertIn('<input type="checkbox" id="w-on">', sec)
-        self.assertIn('<input type="checkbox" id="w-zone" checked>', sec)
-        self.assertIn('value="120"', sec)
-        self.assertIn('data-wnum="wrap-days" min="1" max="365" value="21"', sec)
-        order = re.findall(r'data-wsrc="([a-z]+)"', sec)
-        self.assertEqual(["inbox", "due"], order[:2])                      # the chosen first, in their order
-        self.assertEqual(set(self.lib().SOURCES), set(order))              # the rest after, switched off
-        self.assertEqual(2, sec.count('data-won checked'))
-
-    def test_the_form_reads_back_into_next_ups_keys(self):
-        for key in self.lib().DEFAULTS:
-            self.assertIn(key, status.WAIT_JS)
-        self.assertIn("window.GarrickWait=", status.WAIT_JS)
-        self.assertIn("q['while-you-wait']=W.request()", status.JS)        # sent with the rest when Settings closes
-
-    def test_its_own_block(self):
+    def test_no_section_script_or_request(self):
         page = self.page()
-        self.assertIn(status.WAIT_CSS.strip()[:60], page)
-        self.assertIn("window.GarrickWait=", page)
-        self.assertEqual(1, page.count('id="wait-settings"'))
+        for gone in ('id="wait-settings"', "window.GarrickWait=", "while-you-wait", "wsrc"):
+            self.assertNotIn(gone, page)
+        self.assertNotIn("While you wait", page)
+        self.assertFalse(hasattr(status, "wait_settings"))
 
-    def test_left_out_while_the_preview_is_off(self):
-        for flags in ({}, {"while-you-wait": False}, {"while-you-wait": "yes"}):
-            write(self.root / "System" / "garrick-flags.json", json.dumps(flags))
-            page = self.page()
-            self.assertNotIn('id="wait-settings"', page)
-            self.assertRegex(page, r'While you wait</b><span class="chip">off</span>')
-        (self.root / "System" / "garrick-flags.json").unlink()
+    def test_a_leftover_flag_does_nothing(self):
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"while-you-wait": True}))
+        self.assertNotIn("while-you-wait", status.preview_flags(self.root))
+        page = self.page()
+        self.assertNotIn("While you wait", page)
+        self.assertNotIn('id="wait-settings"', page)
+
+    def test_a_leftover_setting_does_nothing(self):
         write(self.root / "System" / "garrick-settings.json", json.dumps({"while-you-wait": {"on": False, "threshold": 120}}))
-        self.assertNotIn('id="wait-settings"', self.page())                # what was saved is kept, not shown
-        self.assertEqual(120, self.lib().settings(self.root)["threshold"])
-
-    def test_left_out_without_next_up(self):
-        with mock.patch.object(status, "wait_lib", lambda ws: None):
-            self.assertNotIn('id="wait-settings"', self.page())
-
-    @unittest.skipUnless(shutil.which("node"), "Node is not installed")
-    def test_the_script_parses(self):
-        done = subprocess.run(["node", "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=status.WAIT_JS,
-                              capture_output=True, text=True, timeout=30)
-        self.assertEqual(0, done.returncode, done.stderr)
+        write(self.root / "System" / "garrick-flags.json", json.dumps({"while-you-wait": True}))
+        page = self.page()
+        self.assertNotIn('id="wait-settings"', page)
+        self.assertNotIn("While you wait", page)
 
 
 class TestNoCatchUpButton(StatusCase):
@@ -2011,7 +1964,7 @@ class TestPreviewFeatures(StatusCase):
 
     def test_the_previews_left(self):
         html = self.page()
-        self.assertEqual(["Effort", "Ask", "While you wait"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
+        self.assertEqual(["Effort", "Ask"], re.findall(r'<div class="flagrow" title="[^"]+"><b>([^<]+)</b><span class="chip">off</span>', html))
         self.assertIn('<code>{"effort": true}</code>', html)
         for broken in ("{not json", json.dumps(["effort"]), json.dumps({"effort": "yes"})):
             write(self.root / "System" / "garrick-flags.json", broken)
@@ -3884,7 +3837,7 @@ class TestMemorySettings(StatusCase):
         page = self.page()
         self.assertIn(status.MEMORY_CSS.strip()[:60], page)
         self.assertEqual(1, page.count('id="memory-settings"'))
-        self.assertLess(page.index("window.GarrickWait="), page.index("window.GarrickMemory="))
+        self.assertIn("window.GarrickMemory=", page)
 
     def test_the_page_and_its_script_say_the_counts_alike(self):
         c = {"on": True, "working": 3, "dormant": 2, "archived": 1, "to_dormant": 0, "to_archive": 4, "to_wake": 0}

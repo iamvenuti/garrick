@@ -1009,6 +1009,42 @@ class TestNewProjectDialog(ManageCase):
         self.assertFalse((self.work / "Cobalt Review").exists())
         self.assertEqual(head, self.root_git("rev-parse", "HEAD").stdout)
 
+    def test_a_party_of_another_zone_is_refused_naming_nothing_of_it(self):
+        self.assertEqual(0, self.scaffold("party", "--name", "Cedar Supply", "--zone", "Work", "--what", "Supplier").returncode)
+        self.assertEqual(0, self.scaffold("project", "--zone", "Work", "--name", "Cedar Rollout", "--party", "cedar",
+                                          "--thread", "Start").returncode)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "Cedar")
+        self.root_git("add", "-A")
+        self.root_git("commit", "-q", "-m", "Cedar party")
+        head = self.root_git("rev-parse", "HEAD").stdout
+        with self.assertRaises(pa.Refused) as cm:
+            self.act(verb="new-project-party", zone="Personal", name="Garden Plan", new_party="Cedar Supply")
+        said = str(cm.exception)
+        self.assertEqual("That name is already taken in another zone. Choose another name.", said)
+        for word in ("Work", "Cedar Rollout", "cedar"):
+            self.assertNotIn(word, said)
+        self.assertEqual(head, self.root_git("rev-parse", "HEAD").stdout)
+
+    def test_a_party_of_the_dialogs_own_zone_keeps_the_full_message(self):
+        with self.assertRaises(pa.Refused) as cm:
+            self.act(verb="new-project-party", zone="Work", name="Cobalt Review", new_party="Acme Corp")
+        self.assertIn("is already a party, `acme`, in Work", str(cm.exception))
+
+    def test_a_project_refused_after_the_party_step_says_the_party_stays(self):
+        orig = pa.commit_new
+        def boom(*a, **k):
+            raise pa.Refused("the project commit was refused")
+        pa.commit_new = boom
+        try:
+            with self.assertRaises(pa.Refused) as cm:
+                self.act(verb="new-project-party", zone="Work", name="Cobalt Review", new_party="Cobalt Freight")
+        finally:
+            pa.commit_new = orig
+        self.assertIn("the project commit was refused", str(cm.exception))
+        self.assertIn("The party Cobalt Freight was added and committed", str(cm.exception))
+        self.assertIn("Cobalt Freight", self.context())
+
     def test_a_refused_party_leaves_no_project_no_commit_and_no_row(self):
         head, rows = self.root_git("rev-parse", "HEAD").stdout, self.context()
         for bad in ("none", "!!!"):

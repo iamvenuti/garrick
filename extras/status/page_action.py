@@ -1892,6 +1892,12 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
             said_party = scaffold(ws, "party", "--name", pname, "--zone", z, "--what", what or "<What %s is>" % pname,
                                   "--check")
             if "is already a party" in said_party:
+                # The match may sit in another zone, and its zone and project names are that zone's: the reply
+                # names nothing of it. Only a match found in this dialog's own zone keeps the full sentence.
+                found = re.search(r"`([^`]+)`", said_party)
+                owner = (context_of(ws).get("parties") or {}).get(found.group(1)) if found else None
+                if owner is None or str(owner.get("zone") or "").strip().casefold() != z.casefold():
+                    raise Refused("That name is already taken in another zone. Choose another name.")
                 raise Refused(first_line(said_party) + " Pick it from the list instead.")
             if check:
                 return said_party
@@ -1899,11 +1905,17 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
             args = ["project", "--zone", z, "--name", name, "--party", party, "--thread", thread, *spoken]
         elif not check:
             asks_how(ws, args)
-        said = scaffold(ws, *args, *flag)
-        if not check:
-            commit_new(zone, [name], "New project %s%s, first thread %s" % (name, " (%s)" % party if party else "", thread),
-                       made, {}, wall=wall_refusal(ws))
-            return first_line(said)
+        try:
+            said = scaffold(ws, *args, *flag)
+            if not check:
+                commit_new(zone, [name], "New project %s%s, first thread %s" % (name, " (%s)" % party if party else "", thread),
+                           made, {}, wall=wall_refusal(ws))
+                return first_line(said)
+        except Refused as e:
+            if verb == "new-project-party" and not check:
+                # The party is committed already: say so, naming the user's own typed name.
+                raise Refused("%s The party %s was added and committed, so it stays." % (str(e).rstrip(), pname))
+            raise
         return said
     if verb == "new-thread":
         project, name = field(req, "project"), field(req, "name")

@@ -157,7 +157,7 @@ focus, as under *No name given*). Then:
 - **The last act of the wrap, success or failure,** is step 13: release the
    lock. A wrap that died leaves the lock behind, and it expires by itself.
    Releasing the lock and recording that the wrap finished are two things:
-   the record is written only after step 12's commit has succeeded.
+   the record is written only after step 12's commit has succeeded, or found nothing to commit.
 
 **The steps:**
 
@@ -369,12 +369,13 @@ focus, as under *No name given*). Then:
 13. **Release the lock**, whatever happened above. Which call it is depends
     on how step 12 ended. The note is the same as the lock's in the first step,
     hub included.
-    - **The commit succeeded:** `end` removes the lock and writes the time the
+    - **The commit succeeded, or there was nothing to commit because the note
+      was already current:** `end` removes the lock and writes the time the
       wrap finished (`wrap-<note>.done`).
       ```sh
       python3 System/tools/wrap_lock.py end "Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md"
       ```
-    - **Anything else:** the commit was refused or failed, the wrap stopped
+    - **Anything else:** the commit was refused or failed, the save failed, the wrap stopped
       before it, or it was interrupted. `end --abandon` removes the lock and
       writes no record, and leaves an earlier record as it was.
       ```sh

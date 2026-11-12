@@ -268,6 +268,16 @@ class FailedWrapTest(unittest.TestCase):
         self.assertEqual(3000.0, wl.finished(self.done))
         self.assertEqual("resume", band_slot(wl.finished(self.done), 2000.0))
 
+    def test_a_wrap_with_nothing_new_to_commit_counts_as_finished(self):
+        """The note was already current: step 13 calls `end`, as in 0.64.0, so the band shows Resume."""
+        self.assertTrue(wl.start(self.root, NOTE, now=1000.0))
+        wl.end(self.root, NOTE, now=3000.0)
+        self.assertEqual(3000.0, wl.finished(self.done))
+        self.assertEqual("resume", band_slot(wl.finished(self.done), 2000.0))
+        wrap = " ".join((REFERENCE / "wrap.md").read_text(encoding="utf-8").split())
+        self.assertIn("there was nothing to commit because the note was already current", wrap)
+        self.assertIn("once the commit has succeeded or there was nothing to commit", BAND.read_text(encoding="utf-8"))
+
     def test_the_command_line_abandon_writes_no_record(self):
         import io
         from contextlib import redirect_stdout
@@ -287,8 +297,8 @@ class FailedWrapTest(unittest.TestCase):
     def test_the_skill_records_the_finish_only_after_the_commit_and_abandons_on_failure(self):
         wrap = " ".join((REFERENCE / "wrap.md").read_text(encoding="utf-8").split())
         step = wrap[wrap.index("13. **Release the lock**"):wrap.index("Spoken, when the wrap runs in the background")]
-        self.assertIn("**The commit succeeded:** `end` removes the lock and writes the time the wrap finished", step)
-        self.assertIn("**Anything else:** the commit was refused or failed", step)
+        self.assertIn("**The commit succeeded, or there was nothing to commit because the note was already current:** `end` removes the lock and writes the time the wrap finished", step)
+        self.assertIn("**Anything else:** the commit was refused or failed, the save failed", step)
         self.assertIn("`end --abandon` removes the lock and writes no record, and leaves an earlier record as it was", step)
         self.assertIn("python3 System/tools/wrap_lock.py end --abandon", step)
         self.assertIn("Never use `end` to clean up after a failure", step)

@@ -105,8 +105,8 @@ export function projectWrapPrompt(n: Note, foreground = false): string {
 export function wrapPrompt(n: Note, foreground = false, lock: 'taken' | 'take' | null = null): string {
   const note = `\`${n.rel}\``
   const locking = lock === 'taken'
-    ? ` The band has taken the wrap lock: do not take it. Release it as the last step: with \`python3 System/tools/wrap_lock.py end ${n.rel}\` once the commit has succeeded, and with \`python3 System/tools/wrap_lock.py end --abandon ${n.rel}\` when the wrap failed or the commit was refused.`
-    : lock === 'take' ? ` Take the wrap lock first with \`python3 System/tools/wrap_lock.py start ${n.rel}\`, and release it as the last step: \`end\` once the commit has succeeded, \`end --abandon\` when the wrap failed or the commit was refused.` : ''
+    ? ` The band has taken the wrap lock: do not take it. Release it as the last step: with \`python3 System/tools/wrap_lock.py end ${n.rel}\` once the commit has succeeded or there was nothing to commit, and with \`python3 System/tools/wrap_lock.py end --abandon ${n.rel}\` when the wrap failed or the commit was refused.`
+    : lock === 'take' ? ` Take the wrap lock first with \`python3 System/tools/wrap_lock.py start ${n.rel}\`, and release it as the last step: \`end\` once the commit has succeeded or there was nothing to commit, \`end --abandon\` when the wrap failed or the commit was refused.` : ''
   return `Wrap ${n.title}: rewrite the Resume here block in ${note} so it describes now, and add today's dated entry below it.${foreground ? CLOSING : locking}`
 }
 

@@ -127,14 +127,28 @@ class OverviewWork(unittest.TestCase):
         self.assertNotIn(">Waiting on **", card)
 
     def test_an_owner_is_removed_from_the_head_of_a_next_action_as_from_its_tail(self):
-        for said, wanted in (("Robin: send the sheet", "send the sheet"), ("Robin's: send the sheet", "send the sheet"),
+        for said, wanted in (("Robin's: send the sheet", "send the sheet"),
                              ("Robin\u2019s: send the sheet", "send the sheet"), ("The assistant's: draft it", "draft it"),
-                             ("Send the sheet; Robin's", "Send the sheet"), ("Robin: send the sheet, Dana's", "send the sheet"),
+                             ("Send the sheet; Robin's", "Send the sheet"), ("Robin: send the sheet, Dana's", "Robin: send the sheet"),
+                             ("Note: send the sheet", "Note: send the sheet"), ("Q3: review pricing", "Q3: review pricing"),
+                             ("Draft: v2 to Tyson", "Draft: v2 to Tyson"), ("Decide: A or B", "Decide: A or B"),
+                             ("Next: 12:30 call", "Next: 12:30 call"),
                              ("Send Robin the sheet: it is late", "Send Robin the sheet: it is late"),   # not a name before the colon
                              ("send the sheet: the long one", "send the sheet: the long one"),
                              ("Robin:", "Robin:")):
             self.assertEqual(wanted, status.without_owner(said), said)
         self.assertIsNone(status.without_owner(None))
+
+    def test_a_bare_name_head_goes_only_for_a_known_person_or_party(self):
+        owners = status.known_owners({"people": [{"name": "Jo Example"}], "parties": {"acme": {"party": "Acme Corp"}}}, "Dana Lee")
+        for said, wanted in (("Jo: send it", "send it"), ("Jo Example: send it", "send it"), ("Acme Corp: reply", "reply"),
+                             ("Dana: call", "call"), ("Note: send it", "Note: send it"), ("Sam: send it", "Sam: send it")):
+            self.assertEqual(wanted, status.without_owner(said, owners), said)
+
+    def test_the_waiting_badge_keeps_a_bold_pair_whole(self):
+        for said, wanted in (("**Theo: Marsh**: volumes", "**Theo: Marsh**"), ("**Theo Marsh**: the volumes", "**Theo Marsh**"),
+                             ("Theo: volumes", "Theo"), ("**Theo: Marsh", "Theo"), ("Theo; later", "Theo")):
+            self.assertEqual(wanted, status.waiting_badge(said), said)
 
     def test_a_next_action_that_starts_with_an_owner_shows_without_it(self):
         write(self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md",

@@ -1481,30 +1481,50 @@ def record_refusals(root: PathLike, repo: PathLike, messages: Iterable[str]) -> 
         pass
 
 
+# Kinds of finding an older release recorded and the current one no longer produces (#525): still counted, said apart.
+REFUSAL_OLDER = ("name",)
+
+
 def refusal_counts(root: PathLike, now=None, days: int = 30) -> dict:
-    """The last `days` of refusals: {"kinds": {kind: n}, "days": [date, ...], "overridden": n}. A refusal is
-    overridden when its zone's repository took a commit within ten minutes after it (a `--no-verify` is not seen by
-    the hook, but the log is)."""
+    """The last `days` of refusals (#525): {"kinds": {kind: n}, "days": [date, ...], "overridden": n,
+    "refusals": n, "nested": n, "nested_kinds": {kind: n}, "older": [kind, ...]}.
+
+    One refusal is one `at` in one repository, however many finding lines it left: a single refused commit of
+    test fixtures can leave thousands. `kinds` counts, for each kind, the refusals that held one, so it is in the
+    unit `refusals` and `overridden` are. The zones' and the wikis' repositories are counted apart from a
+    repository nested inside one (`nested`, `nested_kinds`), and a repository outside the workspace (`zone` empty)
+    is left out. `older` lists the kinds counted that this release no longer produces. A refusal is overridden when
+    its zone's repository took a commit within ten minutes after it (a `--no-verify` is not seen by the hook, but
+    the log is)."""
     now = now or datetime.datetime.now().astimezone()
-    out = {"kinds": {}, "days": [], "overridden": 0}
+    out = {"kinds": {}, "days": [], "overridden": 0, "refusals": 0, "nested": 0, "nested_kinds": {}, "older": []}
     try:
         rows = [json.loads(l) for l in Path(root).joinpath(*REFUSALS).read_text(encoding="utf-8").splitlines() if l.strip()]
     except (OSError, ValueError):
         return out
-    seen = set()
+    refused = {}                                    # (at, repo kind, zone) -> the kinds it held
     for row in rows:
+        if not isinstance(row, dict) or not row.get("zone"):
+            continue                                # outside the workspace: not this workspace's wall
         try:
             at = datetime.datetime.fromisoformat(row["at"])
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, TypeError):
             continue
         if now - at > datetime.timedelta(days=days):
             continue
-        out["kinds"][row.get("kind", "link")] = out["kinds"].get(row.get("kind", "link"), 0) + 1
-        out["days"].append(at.date().isoformat())
-        folder = Path(root) / ("Wikis" if row.get("repo") == "wiki" else "Zones") / str(row.get("zone") or "")
-        if (row["at"], str(folder)) in seen:
-            continue                                # one refusal can leave several lines; it is overridden once
-        seen.add((row["at"], str(folder)))
+        refused.setdefault((row["at"], row.get("repo") or "zone", str(row["zone"])), set()).add(row.get("kind", "link"))
+    for (when, repo, zone), kinds in sorted(refused.items()):
+        if repo == "nested":
+            out["nested"] += 1
+            for k in kinds:
+                out["nested_kinds"][k] = out["nested_kinds"].get(k, 0) + 1
+            continue
+        out["refusals"] += 1
+        for k in kinds:
+            out["kinds"][k] = out["kinds"].get(k, 0) + 1
+        out["days"].append(datetime.datetime.fromisoformat(when).date().isoformat())
+        at = datetime.datetime.fromisoformat(when)
+        folder = Path(root) / ("Wikis" if repo == "wiki" else "Zones") / zone
         try:
             log = git(["log", "--since=%s" % at.isoformat(), "--until=%s" % (at + datetime.timedelta(minutes=10)).isoformat(),
                        "--format=%H"], folder)
@@ -1512,6 +1532,7 @@ def refusal_counts(root: PathLike, now=None, days: int = 30) -> dict:
             continue
         out["overridden"] += bool(log.strip())
     out["days"] = sorted(set(out["days"]))
+    out["older"] = sorted(k for k in set(out["kinds"]) | set(out["nested_kinds"]) if k in REFUSAL_OLDER)
     return out
 
 

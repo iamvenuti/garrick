@@ -1115,14 +1115,16 @@ DEBT_LEAST = 3         # fewer records than this and the figure stands alone, wi
 
 def debt_scale(values: List[float], threshold: float) -> Tuple[float, float, float]:
     """(bottom, top, cap) of the chart's vertical scale (#321). The cap is
-    twice the threshold, or the highest value that is no spike (at most twice
-    the median), whichever is larger; a value above it is drawn at the cap.
+    twice the threshold, or the highest value that is no spike (at most five
+    times the median, #525), whichever is larger; a value above it is drawn at
+    the cap. Only a night far outside the rest is a spike: a run of nights at
+    two or three times the median is drawn at its height.
     The scale runs from a little under the lowest value or the threshold to a
     little over the cap, so one night far above the rest leaves the
     difference between the others to be seen."""
     ordered = sorted(values)
     median = ordered[len(ordered) // 2]
-    usual = [v for v in values if v <= 2 * median] or ordered[:1]
+    usual = [v for v in values if v <= 5 * median] or ordered[:1]
     cap = max(2 * threshold, max(usual), 1)
     low = min(min(v for v in values if v <= cap) if any(v <= cap for v in values) else cap, threshold)
     bottom = max(0.0, low - (cap - low) * 0.1)
@@ -1203,10 +1205,30 @@ def debt_kinds(debt: dict) -> str:
         '<span%s>%s %s</span>' % (' class="dwall"' if k == "wall" else "", E(k), E(str(debt_points(kinds[k])))) for k in order))
 
 
-def debt_block(ws: Path, today: dt.date) -> str:
+def walls_not_listed(ws: Path, day: dt.date, C: Optional[dict]) -> int:
+    """How many wall findings the Nurture record of `day` holds that the card's own list (the quick check, `C`)
+    does not show as walls (#525). A count and nothing else: no path, no wording, so no material of a walled zone
+    reaches the card that the list did not show. 0 without a record, a check or nurture.py."""
+    lib = nurture_lib(ws)
+    N = lib[0] if lib is not None else None
+    if N is None or not C or C.get("failed") or C.get("pending") or not getattr(N, "REPORTS", None):
+        return 0
+    try:
+        rec = json.loads(Path(ws).joinpath(*N.REPORTS, "%s.json" % day.isoformat()).read_text(encoding="utf-8"))
+        walls = [re.sub(r":\d+$", "", str(f.get("path") or "")) for f in rec.get("standing") or []
+                 if isinstance(f, dict) and f.get("kind") == "wall"]
+        shown = {path for f in C.get("findings", []) for kind, (path, _), _ in sorted_finding(ws, lib, f) if kind == "wall"}
+    except (OSError, ValueError, AttributeError):
+        return 0
+    return sum(1 for path in walls if path not in shown)
+
+
+def debt_block(ws: Path, today: dt.date, C: Optional[dict] = None) -> str:
     """The figure, what it is made of, its trend over the last DEBT_DAYS days
     and the scopes carrying most of it, for the Checks card; "" with no
-    record."""
+    record. With the card's own check result `C`, a line says how many wall
+    findings the last run holds that the list below does not show, and links
+    to Nurture's findings on the Context tab (#525)."""
     history, said = debt_history(ws, today)
     if not history:
         return ""
@@ -1223,6 +1245,12 @@ def debt_block(ws: Path, today: dt.date) -> str:
     outcome = nurture_outcome(ws, day) or {}
     does = nurture_said((outcome.get("scopes") or {}).get(heavy[0], {})) if heavy and phrase else ""
     lines = ""
+    missing = walls_not_listed(ws, day, C)
+    if missing:
+        # Counts and a link only. The Findings view lists what the quick check found, so it has no wall findings of
+        # this run to point at; the link goes to the view itself.
+        lines += ('<p class="hint dwallmiss"><a href="#qp">%s</a></p>'
+                  % E("%s from last night's run, not in this list" % counted(missing, "wall finding")))
     if does:
         lines += '<p class="hint">%s</p>' % E("One pass over %s: %s." % (said(heavy[0])[0], does))
     if outcome:
@@ -1362,22 +1390,41 @@ def context_link(qdata: Optional[dict]) -> str:
             if n or f:
                 said.append("%s: %s" % (g["h"], ", ".join(x for x in ("%d question%s" % (n, "" if n == 1 else "s") if n else "",
                                                                     "%d finding%s" % (f, "" if f == 1 else "s") if f else "") if x)))
-    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a><span class="hint">%s</span></div>'
-            % E("Nurture runs every night; what it leaves is answered in the Context tab. " + ("; ".join(said) + "." if said else "Nothing is open.")))
+    open_now = "; ".join(said) + "." if said else "Nothing is open."
+    # The card is moved between tabs (#443), so the page decides which of the two readings shows (#526): on the
+    # Context tab, where the panel is above it, the button would only link to where it already is, and the hint
+    # points up; on any other tab the link keeps working and the hint names the tab.
+    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a>'
+            '<span class="hint hint-away">%s</span><span class="hint hint-here">%s</span></div>'
+            % (E("Nurture runs every night; what it leaves is answered in the Context tab. " + open_now),
+               E("Nurture runs every night; what it leaves is answered in the panel above. " + open_now)))
 
 
 def refusals_block(ws: Path) -> str:
-    """The last 30 days of wall refusals for the Checks card: by kind, the days they fell, and the commits that
-    landed within ten minutes of one (overridden). Counts only; the record holds no path, name or text."""
+    """The last 30 days of wall refusals for the Checks card (#525): refusals, not finding lines (one per time and
+    repository, as garrick_lib's refusal_counts() counts them), the kinds within them, the days they fell, and
+    the refusals a commit followed within ten minutes (overridden), so the figures share one unit. A repository
+    nested in a zone is said apart; a kind this release no longer produces is marked as from an older release.
+    Counts only; the record holds no path, name or text."""
     lib = workspace_lib(ws)
     count = getattr(lib, "refusal_counts", None)
     got = count(ws) if count else None
-    if not got or not got["kinds"]:
+    if not got or not (got["kinds"] or got.get("nested")):
         return ""
-    kinds = ", ".join("%s %d" % (k, n) for k, n in sorted(got["kinds"].items()))
-    days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
-    return ('<div class="hint" id="refusals">Wall refusals, 30 days: %s. Days: %s. Overridden: %d.</div>'
-            % (E(kinds), E(days), got["overridden"]))
+    older = set(got.get("older") or ())
+
+    def kinds(d):
+        return ", ".join("%s %d%s" % (k, n, " (older release)" if k in older else "") for k, n in sorted(d.items()))
+    text = ""
+    if got["kinds"]:
+        n = got.get("refusals", 0)
+        days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
+        text = "Wall refusals, 30 days: %s, of kinds %s. Days: %s. Overridden: %d of %d." % (
+            counted(n, "refusal"), kinds(got["kinds"]), days, got["overridden"], n)
+    if got.get("nested"):
+        text += "%s %s in repositories nested in a zone, of kinds %s." % (
+            " " if text else "Wall refusals, 30 days:", counted(got["nested"], "refusal"), kinds(got.get("nested_kinds") or {}))
+    return '<div class="hint" id="refusals">%s</div>' % E(text)
 
 
 DEBT_CSS = r"""
@@ -1393,10 +1440,12 @@ DEBT_CSS = r"""
 .dchart .dd.over{stroke-width:8}.dchart .dhole{stroke:var(--surface);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke;pointer-events:none}
 .dval,.dthr{position:absolute;font-size:11px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
 .dval{color:var(--ink2);font-weight:600;transform:translateY(-150%)}.dfirst{left:0}.dlast{right:0}.dspike{transform:translate(8px,-50%)}
-.dthr{left:50%;transform:translate(-50%,-130%);color:var(--muted)}
+.dthr{right:0;transform:translateY(30%);color:var(--muted)}   /* at the dashed line's right end, below it: clear of the line */
 .dmiss{position:absolute;bottom:-3px;width:9px;height:8px;margin-left:-4.5px;background:linear-gradient(var(--muted),var(--muted)) center/1.5px 100% no-repeat}
+.dwallmiss a{color:var(--critical);font-weight:600}
 .dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
 .review{align-items:center;margin:0 0 12px}
+.review .hint-here{display:none}#tab-questions .review .act,#tab-questions .review .hint-away{display:none}#tab-questions .review .hint-here{display:inline}
 """
 
 
@@ -1814,14 +1863,30 @@ d.querySelector('#mg-zone').onchange=projects;projects();watch(d);d.querySelecto
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
 if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');if(busy(d,q.zone))return;
 d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
-function newProject(){var zs=zoneNames(),z=zoneOf();if(!zs.length){say('There is no zone yet.');return}
-var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP+'<div id="mg-pt"></div>'+field('mg-thread','Its first thread'),
+function newProject(){var zs=zoneNames(),z=zoneOf(),NEW='__new__';if(!zs.length){say('There is no zone yet.');return}
+/* D.first is the name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, put in the page's data */
+var first=D.first||'',
+d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP+'<div id="mg-pt"></div>'
++'<div id="mg-np" hidden>'+field('mg-newparty','The party’s name')+'<p class="mg-msg mg-dup" id="mg-pdup" role="status" hidden></p>'+field('mg-what','What it is')+'</div>'
++'<label class="tlab" for="mg-thread">Its first thread, if you want one</label><input type="text" id="mg-thread" autocomplete="off" placeholder="'
++esc(first?'Empty gives '+first:'Empty gives a first thread of its own')+'">',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
-function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];d.querySelector('#mg-pt').innerHTML=p.length?select('mg-party','For',p,''):'<p class="mg-msg">No party belongs to this zone yet: add it to System/context.md first.</p>'}
-d.querySelector('#mg-zone').onchange=parties;parties();watch(d);d.querySelector('#mg-name').focus();
-d.querySelector('[data-go]').onclick=function(){var q={verb:'new-project',zone:val(d,'mg-zone'),name:val(d,'mg-name'),party:val(d,'mg-party'),thread:val(d,'mg-thread')};
-if(!q.name||!q.party||!q.thread)return bad(d,'A project needs a name, its party and its first thread.');if(busy(d,q.zone))return;
-d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+' for '+q.party+' in '+q.zone+', first thread '+q.thread,'Copied the phrase. Paste it to your assistant.')}}
+function names(){return((D.zones[val(d,'mg-zone')]||{}).parties||[]).map(function(x){return x[1]})}
+/* a party name close to one this zone has, by the test the project names get: it warns, and Make it still makes it */
+function pdup(){var m=d.querySelector('#mg-pdup'),n=val(d,'mg-newparty'),F=window.GarrickFind,hits=F&&n?names().filter(function(x){return F.soundsAlike(n,x)}):[];
+m.hidden=!hits.length;m.innerHTML=hits.length?'Already there: '+esc(hits.join('; '))+'.':''}
+function pick(){d.querySelector('#mg-np').hidden=val(d,'mg-party')!==NEW;pdup()}
+function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];
+d.querySelector('#mg-pt').innerHTML=select('mg-party','For',[['','None']].concat(p,[[NEW,'New party…']]),'');d.querySelector('#mg-party').onchange=pick;pick()}
+d.querySelector('#mg-zone').onchange=parties;parties();watch(d);d.querySelector('#mg-newparty').addEventListener('input',pdup);d.querySelector('#mg-name').focus();
+d.querySelector('[data-go]').onclick=function(){var pt=val(d,'mg-party'),np=pt===NEW,th=val(d,'mg-thread'),w=val(d,'mg-what'),z2=val(d,'mg-zone'),nm=val(d,'mg-name'),q;
+if(!nm)return bad(d,'A project needs a name.');
+/* two shapes, one request each: only the New party… choice sends the verb that adds a party (#522) */
+if(np){var r={verb:'new-project-party',zone:z2,name:nm};r.new_party=val(d,'mg-newparty');if(!r.new_party)return bad(d,'Give the new party a name.');
+if(th)r.thread=th;if(w)r.party_what=w;q=r}
+else{var o={verb:'new-project',zone:z2,name:nm};if(pt)o.party=pt;if(th)o.thread=th;q=o}
+if(busy(d,q.zone))return;
+d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
 function rename(mg){var old=mg[2]||mg[1],kind=mg[2]?'thread':'project';
 var d=dialog('Rename '+old,field('mg-name','New name, one you can say',old)+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. The old name stays a heard name for it.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy the phrase')+'</button>');var i=d.querySelector('#mg-name');i.focus();i.select();
@@ -1858,7 +1923,7 @@ var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
-else if(q.verb==='new-project'&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}}
+else if((q.verb==='new-project'||q.verb==='new-project-party')&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}}
 /* Undo, for a minute after a deletion or a rename from the page: the app rebuilds the page after
    every request, so the commit to revert is kept in this browser until then */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
@@ -2065,8 +2130,8 @@ ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
-ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-thread", "undo")
-ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-thread", "rename", "move",
+ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-project-party", "new-thread", "undo")
+ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread", "rename", "move",
               "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
               "bring-back", "files")
 
@@ -3996,6 +4061,17 @@ def open_naming(zone: Path, names: set) -> int:
     return n
 
 
+def first_thread() -> str:
+    """The name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, read from its file so that
+    the dialog and the Ask box name it once. "" when ask.py is not beside this file."""
+    src = Path(__file__).with_name("ask.py")
+    try:
+        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', src.read_text(encoding="utf-8"), re.M)
+    except OSError:
+        return ""
+    return found.group(1) if found else ""
+
+
 def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
     """For the New project and New thread dialogs: each zone's projects and
     the parties a project there can be for; and whether the app acts, or the
@@ -4006,7 +4082,7 @@ def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
         parties = sorted([[tag, p.get("party") or tag] for tag, p in ctx.get("parties", {}).items()
                           if (p.get("zone") or "").strip().lower() in ("", zone.lower())], key=lambda x: x[1].casefold())
         zones[zone] = {"projects": projects, "parties": parties}
-    return {"zones": zones, "acting": acting}
+    return {"zones": zones, "acting": acting, "first": first_thread()}
 
 
 def find_data(T: Dict[str, dict], link: "Links", styles: Dict[str, dict], folders: bool, today: dt.date) -> dict:
@@ -7334,7 +7410,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
-    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date()) + refusals_block(ws) + context_link(qdata) + body)
+    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found, debt_block(ws, now.date(), C) + refusals_block(ws) + context_link(qdata) + body)
 
     # ---- open actions and inboxes
     tb = ""

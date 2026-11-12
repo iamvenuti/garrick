@@ -961,6 +961,106 @@ class TestFromThePage(ManageCase):
             self.act(verb="stack")
 
 
+class TestNewProjectDialog(ManageCase):
+    """The New project dialog (#522): a first thread and a party are optional, and the party may be new, added by
+    the user's own choice in the dialog and committed on its own before the project."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["GARRICK_JOBS_DIR"] = str(self.base / "jobs")
+
+    def act(self, **req):
+        return pa.act(self.root, req)
+
+    def root_git(self, *args):
+        return subprocess.run(["git", *args], cwd=str(self.root), capture_output=True, text=True, env=self.env)
+
+    def context(self):
+        return (self.root / "System" / "context.md").read_text(encoding="utf-8")
+
+    def test_an_empty_first_thread_gets_the_name_the_ask_box_uses(self):
+        said = self.act(verb="new-project", zone="Work", name="Birch", party="birch")
+        self.assertIn("with its first thread, Getting started", said)
+        self.assertTrue((self.work / "Birch" / "Threads" / "Getting started" / "Getting started.md").is_file())
+        self.assertIn("first thread Getting started", self.git("log", "-1", "--format=%s").stdout)
+
+    def test_no_party_gives_a_hub_with_no_party_line(self):
+        self.act(verb="new-project", zone="Work", name="Birch", thread="Launch Plan")
+        hub = (self.work / "Birch" / "Birch.md").read_text(encoding="utf-8")
+        self.assertNotIn("party:", hub)
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+    def test_a_new_party_is_committed_on_its_own_before_the_project(self):
+        before = self.root_git("rev-list", "--count", "HEAD").stdout.strip()
+        self.act(verb="new-project-party", zone="Work", name="Cobalt Review", new_party="Cobalt Freight",
+                 party_what="Supplier", thread="Next Call")
+        self.assertIn("| Cobalt Freight | Supplier | Work | `cobalt` |", self.context())
+        self.assertEqual(str(int(before) + 1), self.root_git("rev-list", "--count", "HEAD").stdout.strip())
+        self.assertEqual(["System/context.md"], self.root_git("show", "--name-only", "--format=", "HEAD").stdout.split())
+        self.assertIn("New party Cobalt Freight (cobalt), in Work", self.root_git("log", "-1", "--format=%s").stdout)
+        self.assertEqual("", self.root_git("status", "--porcelain").stdout)
+        self.assertIn("New project Cobalt Review (cobalt), first thread Next Call", self.git("log", "-1", "--format=%s").stdout)
+        self.assertIn("cobalt", (self.work / "Cobalt Review" / "Cobalt Review.md").read_text(encoding="utf-8"))
+
+    def test_a_party_already_there_is_refused_and_nothing_is_made(self):
+        head = self.root_git("rev-parse", "HEAD").stdout
+        with self.assertRaisesRegex(pa.Refused, "already a party"):
+            self.act(verb="new-project-party", zone="Work", name="Cobalt Review", new_party="Acme Corp")
+        self.assertFalse((self.work / "Cobalt Review").exists())
+        self.assertEqual(head, self.root_git("rev-parse", "HEAD").stdout)
+
+    def test_a_refused_party_leaves_no_project_no_commit_and_no_row(self):
+        head, rows = self.root_git("rev-parse", "HEAD").stdout, self.context()
+        for bad in ("none", "!!!"):
+            with self.assertRaises(pa.Refused, msg=bad):
+                self.act(verb="new-project-party", zone="Work", name="Cobalt Review", new_party=bad)
+        self.assertFalse((self.work / "Cobalt Review").exists())
+        self.assertEqual(head, self.root_git("rev-parse", "HEAD").stdout)
+        self.assertEqual(rows, self.context())
+        self.assertEqual("", self.root_git("status", "--porcelain").stdout)
+
+    def test_a_context_file_with_other_changes_is_refused_before_anything_is_written(self):
+        ctx = self.root / "System" / "context.md"
+        ctx.write_text(self.context() + "\nAn edit not committed yet.\n", encoding="utf-8")
+        with self.assertRaisesRegex(pa.Refused, "changes not committed"):
+            self.act(verb="new-project-party", zone="Work", name="Cobalt Review", new_party="Cobalt Freight")
+        self.assertFalse((self.work / "Cobalt Review").exists())
+        self.assertNotIn("Cobalt Freight", self.context())
+
+    def test_a_project_name_that_is_refused_adds_no_party(self):
+        rows = self.context()
+        with self.assertRaises(pa.Refused):
+            self.act(verb="new-project-party", zone="Work", name="Acme", new_party="Cobalt Freight")      # Acme exists
+        self.assertEqual(rows, self.context())
+        self.assertEqual("", self.root_git("status", "--porcelain").stdout)
+
+    def test_a_party_and_a_new_party_together_are_refused(self):
+        with self.assertRaisesRegex(pa.Refused, "no party field|not both"):
+            self.act(verb="new-project-party", zone="Work", name="Cobalt Review", new_party="Cobalt Freight", party="acme")
+
+    def test_the_ask_box_and_a_session_never_add_a_party(self):
+        rows = self.context()
+        req = {"verb": "new-project-party", "zone": "Work", "name": "Cobalt Review", "new_party": "Cobalt Freight"}
+        for via in ("ask", "session"):
+            out, _, why = pa.perform(self.root, dict(req), None, via=via)
+            self.assertFalse(out["ok"], via)
+            self.assertIn("only from the New project dialog", why)
+        self.assertEqual(rows, self.context())
+        self.assertFalse((self.work / "Cobalt Review").exists())
+        # the box does not offer the verb at all, and a new-project it proposes carries no new-party field
+        self.assertNotIn("new-project-party", pa.command_parser().format_help())
+        ask_src = (REPO / "extras" / "status" / "ask.py").read_text(encoding="utf-8")
+        self.assertNotIn("new-project-party", ask_src)
+        self.assertNotIn("new_party", ask_src)
+
+    def test_the_dialog_offers_none_and_new_party_and_its_first_thread_is_optional(self):
+        text = (REPO / "extras" / "status" / "status.py").read_text(encoding="utf-8")
+        self.assertIn("[['','None']].concat(p,[[NEW,'New party…']])", text)
+        self.assertIn("Empty gives ", text)
+        self.assertIn("'new project '+q.name+(np?' for new party '+q.new_party", text)
+        self.assertNotIn("A project needs a name, its party and its first thread", text)
+
+
 class TestARenameFromThePageFinishes(ManageCase):
     """A rename from the page says one line and does what scaffold.py's
     report leaves to whoever ran it in a terminal (#184): the heard name it

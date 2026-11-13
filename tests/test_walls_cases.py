@@ -20,7 +20,7 @@ from unittest import mock
 
 sys.dont_write_bytecode = True
 
-from fixtures import HAVE_GIT, commit_all, git, write  # noqa: E402
+from fixtures import HAVE_GIT, commit_all, git, meeting_page, project_hub, thread_note, write  # noqa: E402
 from zone_fixture import HOME_SAYS, UNZONED_SAYS, build  # noqa: E402
 
 import check  # noqa: E402
@@ -114,6 +114,8 @@ class Cases(unittest.TestCase):
             "e37": lambda: self.staged("Northwind/Threads/Pricing/Todo.md", data=self.plan("Home/Todo.md")),
             "e38": lambda: self.held_twice("Ventures"),
             "e39": lambda: self.held_twice("Study"),
+            "e40": lambda: self.stock_wording(),
+            "e41": lambda: self.lifted_from_one_meeting(),
             "e36": lambda: self.pricing("# N\n\nSee [[bare]].\n"),
             "e33": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260310-work-call")),
             "e34": lambda: self.staged("Northwind/Threads/Pricing/Raw.txt", data=self.raw("260312-ventures-call")),
@@ -144,6 +146,25 @@ class Cases(unittest.TestCase):
             path.write_bytes(text)
             self.addCleanup(path.unlink)
         return self.staged("Northwind/Threads/Pricing/Copy.md", data=text)
+
+    def lifted_from_one_meeting(self):
+        said = "The Wharf Lane pontoon repairs wait for the council permit before any contractor is booked."
+        page = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260316-home-wharf.md"
+        write(page, meeting_page("Home", "[jo]", "Home wharf").replace("Decisions.", said))
+        self.addCleanup(page.unlink)
+        return self.pricing("# N\n\n%s\n" % said)
+
+    def stock_wording(self):
+        text = "Survey results were forwarded without comment for the harbour budget review this week.\n"
+        maple = self.root / "Zones" / "Study" / "Maple"
+        write(maple / "Maple.md", project_hub("Study", "Maple", "jo", ["Notes"]))
+        write(maple / "Threads" / "Notes" / "Notes.md", thread_note("Maple", "Notes", "jo"))
+        self.addCleanup(lambda: shutil.rmtree(maple, ignore_errors=True))
+        for zone, rel in (("Home", "Garden/Threads/Beds"), ("Study", "Maple/Threads/Notes")):
+            path = self.root / "Zones" / zone / rel / "Stock.md"
+            write(path, "# Stock\n\n" + text)
+            self.addCleanup(path.unlink)
+        return self.pricing("# N\n\n" + text)
 
     def plan(self, rel):
         return (self.root / "Zones" / rel).read_bytes()

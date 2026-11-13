@@ -138,6 +138,14 @@ class TestTheNightlyWorksInWhatIsWaiting(Case):
         self.assertTrue(all(not a.startswith("Bash(git") for a in seen["allow"]))
 
 
+class TestTheCallsAllowList(Case):
+    def test_no_allow_rule_reaches_page_action_without_a_named_cli_verb(self):
+        rules = [a for a in work_in.ALLOW if "page_action.py" in a]
+        self.assertTrue(rules)
+        for rule in rules:
+            self.assertRegex(rule, r"page_action\.py (question-work|question-done):\*\)$")
+
+
 class TestWhatTheNightCouldNotWorkInIsAskedOnTheCard(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

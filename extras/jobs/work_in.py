@@ -51,6 +51,11 @@ EXIT_NO_PANEL = 64
 KNOWLEDGE = "Wikis/Knowledge"
 # The reasons a place was left, by code: the words the card says are in finding_queue.ANSWERS_HELD.
 REASONS = ("cap", "assistant", "incomplete", "held", "commit")
+# What the call may run. page_action.py only by the two CLI verbs it needs: a CLI verb runs as `via: session`, which refuses
+# the page-only verbs, while JSON on stdin would run as `via: page`.
+ALLOW = ["Read", "Grep", "Glob", "Edit", "Write",
+         "Bash(python3 System/status/page_action.py question-work:*)",
+         "Bash(python3 System/status/page_action.py question-done:*)"]
 
 
 def panel():
@@ -159,7 +164,7 @@ def work_place(ws: Path, scope: str, place: str, n: int, tier: str) -> Optional[
         return "assistant"
     before = changes(repo, rel)
     code, text = agent.run(tier, prompt_for(scope, place), cwd=ws,
-                           allow=["Read", "Grep", "Glob", "Edit", "Write", "Bash(python3 System/status/page_action.py:*)"])
+                           allow=ALLOW)
     if code == agent.EXIT_CAP:
         return "cap"
     found = counts(text) if code == 0 else None

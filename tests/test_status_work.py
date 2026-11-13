@@ -36,9 +36,9 @@ spec.loader.exec_module(page_action)
 # one does what TODO_JS does: strikes it through and hands it to GarrickTick.
 HARNESS = textwrap.dedent(r"""
     const vm = require("vm");
-    const [js, steps, reads, drawn] = JSON.parse(process.argv[1]);
+    let [js, steps, reads, drawn] = JSON.parse(process.argv[1]);
     const store = {}, posted = [], asked = [], out = [], oks = [];
-    let toasts = 0;
+    let toasts = 0, built = null;
     let old = null, clock = 1000000, ctx, box, toast, style, interval, chained = [], rows = [];
     function row(r) {
       const cls = new Set(r.done ? ["trow", "done"] : ["trow"]);
@@ -64,10 +64,10 @@ HARNESS = textwrap.dedent(r"""
         getElementById: (id) => id === "work" ? box : id === "toast" ? toast : id === "work-hold" ? style : null,
         createElement: () => ({ textContent: "" }),
         head: { appendChild: (el) => { style = el; } },
-        body: { style: { setProperty: () => {} } },
+        body: { style: { setProperty: () => {} }, getAttribute: (k) => (k === "data-built" && built !== null ? String(built) : null) },
         querySelectorAll: (sel) => (sel === ".trow" ? rows : []),
       };
-      ctx = { JSON, String, Math, document, Date: { now: () => clock },
+      ctx = { JSON, String, Math, document, Date: { now: () => clock, parse: (s) => (s === "" ? NaN : 1000000 + Number(s) * 1000) },
               sessionStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
               setInterval: (f) => { interval = f; return 1; }, clearInterval: () => { interval = null; },
               setTimeout: () => 0, clearTimeout: () => {} };
@@ -86,7 +86,7 @@ HARNESS = textwrap.dedent(r"""
       if (what === "reply") ctx.window.GarrickActed(a, b);
       if (what === "ops") ctx.window.GarrickActed({ verb: "operations" }, a);
       if (what === "tick" && interval) interval();
-      if (what === "reload") load();
+      if (what === "reload") { built = a === undefined ? null : a; if (b) drawn = b; load(); }   // `a`: when the page was built, in seconds
       if (what === "second") { old = { interval, rows }; load(); }     // a second copy of the page, the first still running
       if (what === "tickold") old.interval();
       if (what === "dismiss") box.listeners.click({ target: { closest: () => ({ dataset: { wx: String(a) } }) } });
@@ -382,6 +382,53 @@ class TestTicksUnderNode(NodeCase):
         self.assertEqual(["todo-done", "todo-done"], [a["verb"] for a in acts(out[4])])    # the refused tick goes again
         last = acts(out[-1])
         self.assertEqual(["todo-done", "todo-done", "todo-undo", "todo-done"], [a["verb"] for a in last])
+
+    def test_a_tick_sent_after_the_page_was_built_is_drawn_ticked_on_load(self):
+        """#538: a build read the note after tick A saved and before tick B saved, so
+        its page has B open. B is newer than the page, so it is drawn as ticked."""
+        saved = {"ok": True, "say": "Saved", "op": "x", "state": "completed", "outcome": "saved"}
+        a = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [K[0]]}
+        b = dict(a, keys=[K[1]])
+        page = [dict(l, done=l["k"] == K[0]) for l in LINES]            # A as the note had it, B open
+        out = self.run_rows(("click", 0, K[0]), ("tick", 3), ("click", 4, K[1]), ("reply", 5, a, saved),
+                            ("tick", 7), ("reply", 9, b, saved),
+                            ("reload", 10, 6, page))                                   # built at 6: after A's save, before B's
+        self.assertEqual([K[0]], acts(out[1])[0]["keys"])
+        self.assertTrue(out[-1]["done"][K[1]])
+        self.assertTrue(out[-1]["done"][K[0]])
+        self.assertEqual("Reopen: Line 2 for Acme Corp", out[-1]["labels"][K[1]])
+
+    def test_a_tick_saved_after_the_build_read_the_note_is_drawn_ticked_even_if_sent_before(self):
+        """The build can read the note between a batch's send and its save: the save is what counts."""
+        saved = {"ok": True, "say": "Saved", "op": "x", "state": "completed", "outcome": "saved"}
+        a = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [K[0]]}
+        out = self.run_rows(("click", 0, K[0]), ("tick", 3), ("reply", 9, a, saved),
+                            ("reload", 10, 6, [dict(l, done=False) for l in LINES]))     # sent at 3, built at 6, saved at 9
+        self.assertTrue(out[-1]["done"][K[0]])
+
+    def test_a_page_built_after_the_save_is_drawn_as_it_has_it(self):
+        saved = {"ok": True, "say": "Saved", "op": "x", "state": "completed", "outcome": "saved"}
+        a = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [K[0]]}
+        out = self.run_rows(("click", 0, K[0]), ("tick", 3), ("reply", 5, a, saved),
+                            ("reload", 11, 10, [dict(l, done=False) for l in LINES]))    # built after the save: nothing paints for it
+        self.assertFalse(out[-1]["done"][K[0]])
+
+    def test_a_reopened_line_is_drawn_open_on_an_older_page(self):
+        saved = {"ok": True, "say": "Saved", "op": "x", "state": "completed", "outcome": "saved"}
+        req = {"verb": "todo-undo", "zone": "Work", "file": "Todo.md", "keys": [K[5]]}
+        out = self.run_rows(("click", 0, K[5]), ("tick", 3), ("reply", 5, req, saved),
+                            ("reload", 6, -10, LINES))                                    # the page still has line 6 done
+        self.assertTrue(self.run_rows(("reload", 6, -10, LINES))[-1]["done"][K[5]])      # with nothing sent, it stays done
+        self.assertFalse(out[-1]["done"][K[5]])
+
+    def test_an_entry_older_than_the_window_paints_nothing_and_so_does_a_page_with_no_build_time(self):
+        saved = {"ok": True, "say": "Saved", "op": "x", "state": "completed", "outcome": "saved"}
+        a = {"verb": "todo-done", "zone": "Work", "file": "Todo.md", "keys": [K[0]]}
+        steps = (("click", 0, K[0]), ("tick", 3), ("reply", 5, a, saved))
+        old = self.run_rows(*steps, ("reload", 300, -10, LINES))                          # SENTFOR is 180 s
+        self.assertFalse(old[-1]["done"][K[0]])
+        none = self.run_rows(*steps, ("reload", 6, None, LINES))                          # no data-built: left as the note has it
+        self.assertFalse(none[-1]["done"][K[0]])
 
     def test_a_second_click_before_it_went_sends_nothing(self):
         out = self.run_rows(("click", 0, K[0]), ("click", 1, K[0]), ("tick", 4), ("tick", 8))

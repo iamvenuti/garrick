@@ -217,7 +217,7 @@ class TestGraph(StatusCase):
         self.assertEqual("mail", kinds[data["nodes"][self.node(data, "Pallet forecast")]["k"]])
         self.assertEqual("meeting", kinds[data["nodes"][self.node(data, "Acme kick-off")]["k"]])
         colour = dict((label, c) for (_, label, c) in status.KINDS)["mail"].lower()
-        rings = re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups()
+        rings = re.findall(r"--(?:warning|critical):(#[0-9a-f]{6})", status.CSS)
         self.assertNotIn(colour, set(rings) | {status.BRAND.lower()})          # not amber, red or the brand blue
         self.assertEqual(len(status.KINDS), len({c.lower() for _, _, c in status.KINDS}))   # and no other kind's
         self.assertIn('<i style="background:%s"></i>Mail</button>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)
@@ -506,8 +506,8 @@ class TestTabs(StatusCase):
     def test_the_default_split(self):
         self.job(0)
         html = self.page()
-        self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="todo">Todo', html)
-        self.assertIn('</button><button type="button" role="tab" data-tab="status">Status', html)
+        self.assertRegex(html, r'data-tab="overview">Overview<span class="n[ a-z]*" id="tabn-overview"[^>]*(?: hidden)?>[^<]*</span></button><button type="button" role="tab" data-tab="todo">Todo')
+        self.assertRegex(html, r'</button><button type="button" role="tab" data-tab="status">Status<span class="n')
         overview, machinery = self.section(html, "overview"), self.section(html, "status")
         for card_id in ("graph", "threads", "todo", "inboxes"):
             self.assertIn('id="%s"' % card_id, overview, card_id)
@@ -1224,7 +1224,7 @@ class TestOpensOnTheWork(StatusCase):
         row = self.row(html, long_thread)
         self.assertIn(">%s</a>" % long_thread, row)                                # whole, never cut
         self.assertIn("chase the quote " * 19, row)
-        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;"
+        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:12px;overflow:hidden;"
                       "text-overflow:ellipsis;white-space:nowrap}", status.CSS)    # one line, cut by the browser
         self.assertIn(".thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}", status.CSS)
 
@@ -2682,19 +2682,22 @@ class TestNameAndMark(StatusCase):
         self.assertNotIn("<style>", icon)                   # sips draws it without a stylesheet
         self.assertIn("mod.app_icon()", (Path(status.__file__).parent / "app" / "make-app.sh").read_text())
 
-    def test_display_headings_in_baskerville(self):
-        # Garrick's typeface, from fonts already on the machine: nothing is fetched.
+    def test_display_face_for_big_numbers_and_sans_for_the_rest(self):
+        # The Baskerville stack stays, from fonts already on the machine, for the big numbers; the headings take the sans (#551).
         stack = '"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif'
         self.assertIn("--display:%s;" % stack, status.CSS)
-        for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*", r"\.hero \.fig\{[^}]*"):
-            self.assertIn("var(--display", re.search(rule, status.CSS + status.BAR_CSS).group(0))
-        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui', status.CSS)
-        self.assertNotIn("@font-face", status.CSS)
+        self.assertIn("var(--display", re.search(r"\.hero \.fig\{[^}]*", status.CSS).group(0))
+        for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*"):
+            self.assertIn("var(--sans)", re.search(rule, status.CSS + status.BAR_CSS).group(0))
+        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:15px/1.55 var(--sans)', status.CSS)
+        self.assertNotIn("@font-face", status.CSS)           # the faces are embedded by font_css(), not written in the block
         self.assertNotIn("url(", status.CSS)
 
-    def test_accent_is_the_brand_blue_and_readable(self):
+    def test_accent_is_readable_in_both_themes(self):
         light = re.search(r":root\{[^}]*--accent:(#[0-9a-f]{6})", status.CSS).group(1)
-        self.assertEqual(status.BRAND.lower(), light)
+        self.assertEqual("#2f5fc4", light)                  # the issue's accent: 4.5 to 1 on the page and the cards (#551)
+        for bg in ("#f4f2ed", "#fbfaf7", "#ffffff"):
+            self.assertGreaterEqual(contrast(light, bg), 4.5, "%s on %s" % (light, bg))
         dark = re.findall(r'color-scheme:dark;[^}]*?--page:(#[0-9a-f]{6});[^}]*?--surface:(#[0-9a-f]{6});--raise:(#[0-9a-f]{6});'
                           r'[^}]*?--accent:(#[0-9a-f]{6})', status.CSS)
         self.assertEqual(2, len(dark))                      # the automatic dark theme and the chosen one agree
@@ -3973,67 +3976,6 @@ class TestNoReviewButton(StatusCase):
             self.assertNotIn(gone, html)
         self.assertFalse(hasattr(status, "context_link"))
 
-
-class TestChecksCardActs(StatusCase):
-    """#278, #541: the Checks card's Fix them runs the mechanical findings of the quick check on notes in a zone, and
-    the page works a fix out in full only for such a note."""
-
-    def setUp(self):
-        super().setUp()
-        shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
-                        ignore=shutil.ignore_patterns("__pycache__"))
-        status._NURTURE.clear()
-        self.addCleanup(status._NURTURE.clear)
-
-    def fake_check(self, *findings):
-        errors = sum(1 for f in findings if f["severity"] == "error")
-        (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
-            "errors": errors, "warnings": len(findings) - errors, "findings": list(findings)})
-
-    def card(self, html):
-        start = html.index('<details class="card" id="checks"')
-        ends = [i for i in (html.find('<details class="card" id="', start + 1), html.find("</section>", start)) if i > 0]
-        return html[start:min(ends)]
-
-    def test_a_finding_without_fix_reads_no_history(self):
-        """A rename's date comes from git, a call a file: the page makes it
-        only for a note in a zone, which Fix can apply, so a rebuild with
-        many undated deliverables does not make one call each."""
-        env = mock.patch.dict(os.environ, {k: v for k, v in fixtures.GIT_ENV.items() if k.startswith("GIT_")})
-        env.start()
-        self.addCleanup(env.stop)
-        os.environ.pop("GIT_DIR", None)
-        work = self.root / "Zones" / "Work"
-        shelf = work / "Acme Review" / "Deliverables"
-
-        def calls(n):
-            shutil.rmtree(shelf, ignore_errors=True)
-            for i in range(n):
-                write(shelf / ("Deck %d.pptx" % i), "x")
-            write(shelf / "Memo.md", "x")
-            shutil.rmtree(work / ".git", ignore_errors=True)
-            fixtures.git(work, "init", "-q")
-            fixtures.git(work, "add", "-A")
-            fixtures.git(work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
-            self.fake_check(*[{"check": "deliverables", "severity": "warning", "path": "Zones/Work/Acme Review/Deliverables/" + p.name,
-                               "message": "name does not start with its creation date, `YYMMDD - <name>`"}
-                              for p in sorted(shelf.iterdir())])
-            seen, real = [], subprocess.run
-
-            def spy(cmd, *a, **k):
-                if cmd and cmd[0] == "git":
-                    seen.append(cmd)
-                return real(cmd, *a, **k)
-            with mock.patch.object(subprocess, "run", spy):
-                card = self.card(self.page())
-            return len([c for c in seen if "rev-parse" not in c]), card      # rev-parse: asked once a process
-
-        few, _ = calls(1)
-        many, card = calls(12)
-        self.assertEqual(few, many)                                        # the same calls, however many decks
-        self.assertIn("Garrick can fix 1 small thing on its own.", card)   # the note in a zone only: a deck is not a note
-        fix = re.search(r'data-fix="([^"]+)"', card)
-        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Acme Review/Deliverables/Memo.md"}], json.loads(htmllib.unescape(fix.group(1))))
 
 class TestChecksSaysWhatNeedsYou(StatusCase):
     """#530, #541: the Checks card says which scopes need the user and for how long, with one word for the trend and the

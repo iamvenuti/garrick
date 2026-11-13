@@ -99,7 +99,7 @@ class TestDeclared(unittest.TestCase):
             if spec.commits:
                 # a zone's repository, or the workspace's own, for the allowance walls-unallow takes away; and a
                 # finding's answer, whose note is in a zone but whose Not now and hook install are not (#535)
-                wide = verb in ("walls-unallow", "finding")
+                wide = verb in ("walls-unallow", "walls-allow", "finding")
                 self.assertIn(spec.scope, ("zone", "workspace") if wide else ("zone",), verb)
 
     def test_only_the_six_the_page_sends_under_the_lock_keep_a_record(self):

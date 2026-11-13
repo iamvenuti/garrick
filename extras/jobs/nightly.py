@@ -1,26 +1,34 @@
 #!/usr/bin/env python3
-"""A scheduled job: Garrick's one nightly run, five steps in order (#276).
+"""A scheduled job: Garrick's one nightly run, seven steps in order (#276, #550).
 
     python3 nightly.py --workspace /Users/<you>/Garrick [--scope Zones/Work]... [--digest]
                        [--also FOLDER]... [--moved OLD=NEW]...
 
-1. **nurture**: Context Nurture's mechanical kind, as nurture_sweep.py runs
+1. **hooks**: the wall check in every zone, in `Wikis/` and in each repository inside a project that lacks it, through the
+   workspace's own `check.py --install-hooks` (#550). It writes the four hooks a repository is missing and never replaces a
+   hook that is not Garrick's: that one is left as it is, and the Context card asks about it. Skipped when check.py is not
+   there. It runs before nurture, so the night's check no longer finds what it installed.
+2. **nurture**: Context Nurture's mechanical kind, as nurture_sweep.py runs
    it, with `--scope` and `--digest` passed on. It runs check.py in full,
    the night's only full check.
-2. **effort**: `System/status/effort.py --record`, with `--also` and
+3. **answers**: `work_in.py`, which works in the answers to the Context card's questions that still wait (#550). It makes one
+   assistant call for each zone, and one for the Knowledge wiki, that holds an answer, under the jobs' own caps and deny
+   profile, and none for a place with nothing waiting. What it cannot work in is kept for the Context card to ask about.
+   Skipped when the status page extra is not there.
+4. **effort**: `System/status/effort.py --record`, with `--also` and
    `--moved` passed on, so the Effort view keeps the days Claude Code's
    transcripts lose after 30. Skipped when the status page extra is not
    there.
-3. **recall**: `System/tools/recall.py nightly`: write the sessions Claude
+5. **recall**: `System/tools/recall.py nightly`: write the sessions Claude
    Code and Codex kept since the last run to the gitignored `.sessions/`
    folders (Claude Code deletes its transcripts after 30 days by default),
    then bring Recall's search indexes up to date (#341). Skipped when the
    tool is not there.
-4. **nightly.local**: the workspace's own nightly checks,
+6. **nightly.local**: the workspace's own nightly checks,
    `System/jobs/nightly.local`, run in the workspace when the file exists
    and is executable. Garrick never ships or changes it. Without it the
    step is skipped, and that is no fault.
-5. **status**: `System/status/status.py --same-flags`, so the page shows
+7. **status**: `System/status/status.py --same-flags`, so the page shows
    what the first four found, with the flags the Mac app last gave it. It runs its own quick check (check.py --quick), as
    every rebuild does, so the page shows the state after the fixes.
    Skipped when the status page extra is not there.
@@ -36,8 +44,8 @@ through GARRICK_STEPS_FILE (agent.report_steps), and the heartbeat and the
 reason say which step failed and how. A stop asked of this script (SIGTERM
 from job.py's watchdog or launchctl bootout) stops the step running first.
 
-No assistant is called, so the run counts nothing against the jobs' caps.
-nightly.local should call none either: a check that needs the assistant is a
+Only the answers step calls an assistant, and only when an answer waits; its calls count against the jobs' caps.
+nightly.local should call none: a check that needs the assistant is a
 job of its own, with `--agent`. Run it through job.py, so it has a log, a
 lock and a watchdog:
 
@@ -68,10 +76,11 @@ sys.path.insert(0, str(HERE))
 import agent  # noqa: E402
 
 NURTURE = HERE / "nurture_sweep.py"
+WORK_IN = HERE / "work_in.py"
 STATUS = HERE.parent / "status"            # System/status beside System/jobs, as extras/status is beside extras/jobs
 LOCAL = ("System", "jobs", "nightly.local")
-# Seconds each step may take; their sum stays under the plist's --timeout 3600.
-LIMITS = {"nurture": 1500, "effort": 600, "recall": 300, "nightly.local": 600, "status": 480}
+# Seconds each step may take; their sum is at most the plist's --timeout 3600.
+LIMITS = {"hooks": 30, "nurture": 1500, "answers": 390, "effort": 300, "recall": 300, "nightly.local": 600, "status": 480}
 TAIL = 10
 EXIT_TIMEOUT = 124
 EXIT_FAILED = 1
@@ -86,7 +95,7 @@ _deferred: List[int] = []
 
 
 def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[str]], str]]:
-    """(step, command, why it is skipped) for the five steps, in order. A
+    """(step, command, why it is skipped) for the seven steps, in order. A
     step with no command is skipped."""
     nurture = [sys.executable, str(NURTURE), "--workspace", str(ws)]
     for scope in args.scope:
@@ -99,7 +108,12 @@ def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[s
     for m in args.moved:
         effort += ["--moved", m]
     local = ws.joinpath(*LOCAL)
-    out = [("nurture", nurture, ""),
+    check = ws / "System" / "tools" / "check.py"
+    out = [("hooks", [sys.executable, str(Path(__file__).resolve()), "--workspace", str(ws), "--install-hooks-step"], "") if check.is_file()
+           else ("hooks", None, "no System/tools/check.py"),
+           ("nurture", nurture, ""),
+           ("answers", [sys.executable, str(WORK_IN), "--workspace", str(ws), "--limit", str(LIMITS["answers"])], "") if (STATUS / "questions_panel.py").is_file() and WORK_IN.is_file()
+           else ("answers", None, "no System/status/questions_panel.py"),
            ("effort", effort, "") if (STATUS / "effort.py").is_file() else ("effort", None, "no System/status/effort.py"),
            ("recall", [sys.executable, str(ws / "System" / "tools" / "recall.py"), "--root", str(ws), "nightly"], "")
            if (ws / "System" / "tools" / "recall.py").is_file() else ("recall", None, "no System/tools/recall.py"),
@@ -229,11 +243,27 @@ def stopped(signum, frame):
     raise SystemExit(128 + signum)
 
 
+def install_hooks_step(ws: Path) -> int:
+    """The `hooks` step: the workspace's `check.py --install-hooks`, output passed on. That tool exits 1 when it leaves a hook of
+    the user's own as it is, which is no fault of the night: the Context card asks about that one. The step is red only when the
+    tool could not run at all."""
+    r = subprocess.run([sys.executable, "-B", str(ws / "System" / "tools" / "check.py"), "--root", str(ws), "--install-hooks"],
+                       cwd=str(ws), stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    print(r.stdout, end="")
+    print(r.stderr, end="")
+    if r.returncode and not (r.stdout.strip() or r.stderr.strip()):
+        return r.returncode
+    if r.returncode and "Traceback" in r.stderr:
+        return r.returncode
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Garrick's nightly run: nurture, the effort record, your own checks, the page.")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--scope", action="append", default=[], help="for nurture: a zone, project or wiki; repeat for more")
     ap.add_argument("--digest", action="store_true", help="for nurture: send its one line as the Todo summary notice")
+    ap.add_argument("--install-hooks-step", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--also", action="append", default=[], metavar="FOLDER",
                     help="for effort: a folder the workspace used to live in (repeatable)")
     ap.add_argument("--moved", action="append", default=[], metavar="OLD=NEW",
@@ -243,6 +273,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if not (ws / "System").is_dir():
         print("nightly: %s is not a workspace: it has no System/ folder" % ws, file=sys.stderr)
         return agent.EXIT_USAGE
+    if args.install_hooks_step:
+        return install_hooks_step(ws)
     before = {sig: signal.signal(sig, stopped) for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT)}
     try:
         return run_steps(ws, args)

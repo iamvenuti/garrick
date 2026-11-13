@@ -4659,12 +4659,15 @@ class QuoteIndex:
     `project` its project. `common` holds the shingles that also appear in one
     of the shared files (SHARED_FILES, SHARED_FOLDERS), which every side reads,
     so repeating one is never evidence of a leak; `common_beyond_knowledge`
-    the ones found in a shared file outside the Knowledge wiki."""
+    the ones found in a shared file outside the Knowledge wiki. `widespread`
+    holds the shingles so many files or zones hold that they are stock wording
+    (#549); a QuoteIndex made without it counts nothing as widespread."""
     owners: Dict[int, set]
     common: set
     common_beyond_knowledge: set = field(default_factory=set)
     tags: Dict[Path, frozenset] = field(default_factory=dict)
     project: Dict[Path, Path] = field(default_factory=dict)
+    widespread: set = field(default_factory=set)   # see widespread_runs; empty when the index could not count
 
 
 # The files every side reads, whose wording is common rather than a leak: the
@@ -4783,6 +4786,44 @@ def file_runs(ws: Workspace, path: Path, body: bool, structured: bool = True) ->
     return found
 
 
+COMMON_ZONES = 3   # a run held by files of this many zones is stock wording, however few files hold it
+
+
+def widespread_runs(ws: Workspace, owners: Dict[int, set]) -> set:
+    """The shingles that are stock wording: held by files of COMMON_ZONES zones or more, such as the fixed line an
+    intake note carries in every zone (#549). A sentence lifted from one meeting into one note is held in two zones
+    at most: it stays. The number of files that hold a run never counts: copies of a lifted sentence inside one or
+    two zones, however many, would otherwise vouch for the leak they are.
+
+    This is the one place that decides it, and it fails closed. `owners` holds, for every run it lists, every file
+    that holds the run, in the whole workspace: the index builds it from every project's files and every meeting
+    page, and with `wanted` it keeps only the runs asked after but still lists all their holders. Only the files of
+    projects name a zone (a meeting page names none toward the count), so the count can fall short of the true one
+    and never exceed it. Nothing here can turn a run into stock wording on partial knowledge: an index that is
+    missing, unreadable or empty gives an empty set, and wording_findings then reports as before. A run is judged
+    shingle by shingle, and wording_findings reports it while any one of its shingles is not widespread, so a shared
+    run counts as stock only when every shingle of it is."""
+    try:
+        zones: Dict[Path, Optional[str]] = {}
+        out = set()
+        for h, held in owners.items():
+            if len(held) < COMMON_ZONES:
+                continue
+            seen = set()
+            for o in held:
+                if o in ws.meetings:
+                    continue
+                if o not in zones:
+                    zones[o] = zone_of(ws.root, o)
+                if zones[o] not in (None, UNZONED):
+                    seen.add(zones[o])
+            if len(seen) >= COMMON_ZONES:
+                out.add(h)
+        return out
+    except Exception:  # noqa: BLE001 -- fail closed: nothing counts as widespread
+        return set()
+
+
 def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
     """The QuoteIndex of the whole workspace. With `wanted`, the runs of words
     the files being committed hold, the index of those runs alone: the commit
@@ -4860,7 +4901,7 @@ def quote_index(ws: Workspace, wanted: Optional[set] = None) -> QuoteIndex:
         for path in walk_files(templates):
             if path.suffix.lower() in TEXT_SUFFIXES:
                 common |= {h for h in file_runs(ws, path, False, False) if h in owners}
-    ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects)
+    ws.quote_index = QuoteIndex(owners, common, beyond, tags, projects, widespread_runs(ws, owners))
     if ws.cache is not None:
         ws.cache.whole = True
     return ws.quote_index
@@ -5060,7 +5101,7 @@ def wording_findings(ws: Workspace, path: Path, text: str, dest: str) -> List[Fi
 
     for h in runs(transcript_text(path, text), shared_link(ws, path), template_structure(ws)):
         owners = index.owners.get(h)
-        if not owners or h in index.common:
+        if not owners or h in index.common or h in index.widespread:
             continue
         pages, files = [], []
         clear = False
@@ -5132,7 +5173,7 @@ def near_wording(root: Path, pairs: List[Tuple[str, str]]) -> List[bool]:
                 project, sent = project[0], _in_sources(project[0], path)
                 for h in runs(transcript_text(path, text), shared_link(ws, path), template_structure(ws)):
                     owners = index.owners.get(h)
-                    if not owners or h in index.common:
+                    if not owners or h in index.common or h in index.widespread:
                         continue
                     if not any((o.stem.lower() == source) if o in ws.meetings else (rel(ws, o).lower() == source)
                                for o in owners if o != path):
@@ -6771,8 +6812,8 @@ def staged_fix(message: str) -> str:
 # Allow once: a finding the user let through, for as long as its file is as it was
 # ---------------------------------------------------------------------------
 # The ledger is System/walls-allowed.json (garrick_lib.py). The hook reads it once and drops a finding whose path,
-# id and git blob id all match an entry. Nothing here writes it but allow_command(); the page's verb only takes an entry away, and
-# runs without a terminal.
+# id and git blob id all match an entry. Two callers write one: allow_command(), from a terminal, and the status page's walls-allow,
+# after it showed both texts (#550); the page's walls-unallow takes an entry away. Neither of the page's verbs runs in a terminal.
 
 def finding_rule(f: Finding) -> str:
     """The kind of a finding, as the hook's report and the ledger name it."""

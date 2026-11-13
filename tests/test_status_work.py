@@ -653,6 +653,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
         # Taking an allowance away edits the workspace's own ledger under its own lock.
         unzoned |= {"walls-unallow"}
+        # The wall question's look reads, and its allowance writes the same ledger (#548, #550): neither acts on one zone.
+        unzoned |= {"walls-look", "walls-allow"}
         # An answer to a finding on the Checks card's queue (#535) is sent by finding_queue.py's script, and names a path.
         unzoned |= {"finding"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
@@ -676,7 +678,7 @@ class TestWorkHosts(unittest.TestCase):
         swift = (HERE / "app" / "Garrick.swift").read_text(encoding="utf-8")
         self.assertIn("window.GarrickReads=true;", swift)
         self.assertIn("injectionTime: .atDocumentStart", swift)               # before the page's own scripts
-        self.assertIn('["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
+        self.assertIn('["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "")', swift)  # no toast, no rebuild
         self.assertIn("window.GarrickReadsMemory=true;", swift)
         self.assertIn("window.GarrickReadsNotes=true;", swift)                # Explore's Preview (#206)
 

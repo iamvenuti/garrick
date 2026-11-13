@@ -1,0 +1,411 @@
+"""The status page's look (#551): readable text, status in words, a font that is embedded.
+
+    python3 -m unittest discover -s tests -p test_status_look.py
+
+Colours are computed from the page's own tokens, so a change to a token that
+fails the 4.5:1 text contrast fails here, in both themes and for every zone
+colour. The built page is read as text: nothing here asks the network or a
+browser.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import importlib.util
+import re
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest import mock
+
+sys.dont_write_bytecode = True
+
+from fixtures import build_workspace  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
+HERE = REPO / "extras" / "status"
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, str(path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+status = _load("garrick_status_look", HERE / "status.py")
+
+
+def rgba(value):
+    """(r, g, b, a) from #rgb, #rrggbb or rgba(r,g,b,a)."""
+    value = value.strip()
+    if value.startswith("#"):
+        h = value[1:]
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)) + (1.0,)
+    m = re.match(r"rgba?\(([^)]*)\)", value)
+    parts = [p.strip() for p in m.group(1).split(",")]
+    return (int(parts[0]), int(parts[1]), int(parts[2]), float(parts[3]) if len(parts) > 3 else 1.0)
+
+
+def over(top, under):
+    """`top` laid over the opaque colour `under`."""
+    a = top[3]
+    return tuple(round(top[i] * a + under[i] * (1 - a)) for i in range(3)) + (1.0,)
+
+
+def luminance(c):
+    def lin(v):
+        v /= 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2])
+
+
+def contrast(a, b):
+    la, lb = luminance(a), luminance(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def tokens(css, theme):
+    """The custom properties the page sets for a theme: the root block, or the one a dark switch sets."""
+    head = ':root{color-scheme:light;' if theme == "light" else ':root[data-theme="dark"]{'
+    start = css.index(head) + len(head)
+    block = css[start:css.index("}", start)]
+    return dict(re.findall(r"(--[a-z0-9-]+):([^;]+)", block))
+
+
+# Every text colour against every ground it is drawn on.
+TEXT = ("--ink", "--ink2", "--muted", "--accent", "--good", "--warning", "--critical")
+GROUNDS = ("--page", "--surface", "--raise")
+
+
+class Contrast(unittest.TestCase):
+    def test_text_tokens_pass_in_both_themes(self):
+        for theme in ("light", "dark"):
+            t = tokens(status.CSS, theme)
+            for name in TEXT:
+                for ground in GROUNDS:
+                    ratio = contrast(rgba(t[name]), rgba(t[ground]))
+                    self.assertGreaterEqual(ratio, 4.5, "%s %s on %s: %.2f" % (theme, name, ground, ratio))
+
+    def test_status_text_passes_on_its_own_wash(self):
+        for theme in ("light", "dark"):
+            t = tokens(status.CSS, theme)
+            surface = rgba(t["--surface"])
+            for name in ("good", "warning", "critical"):
+                wash = over(rgba(t["--%s-wash" % name]), surface)
+                ratio = contrast(rgba(t["--" + name]), wash)
+                self.assertGreaterEqual(ratio, 4.5, "%s %s on its wash: %.2f" % (theme, name, ratio))
+
+    def test_ink_on_accent_button(self):
+        for theme in ("light", "dark"):
+            t = tokens(status.CSS, theme)
+            ratio = contrast(rgba(t["--accent-ink"]), rgba(t["--accent"]))
+            self.assertGreaterEqual(ratio, 4.5, "%s: %.2f" % (theme, ratio))
+
+    def test_zone_colours_pass_on_the_card(self):
+        light, dark = tokens(status.CSS, "light"), tokens(status.CSS, "dark")
+        for name, (on_light, on_dark) in status.ZONE_COLOURS.items():
+            for theme, colour, ground in (("light", on_light, light), ("dark", on_dark, dark)):
+                ratio = contrast(rgba(colour), rgba(ground["--surface"]))
+                self.assertGreaterEqual(ratio, 4.5, "%s in %s: %.2f" % (name, theme, ratio))
+
+    def test_the_tokens_are_the_issue_s(self):
+        light, dark = tokens(status.CSS, "light"), tokens(status.CSS, "dark")
+        for k, v in {"--page": "#f4f2ed", "--surface": "#fbfaf7", "--raise": "#fff", "--sunk": "#efede7", "--ink": "#16150f",
+                     "--ink2": "#45443f", "--muted": "#6b6963", "--accent": "#2f5fc4", "--good": "#1d7a3a",
+                     "--warning": "#9a5b00", "--critical": "#b42f2f"}.items():
+            self.assertEqual(v, light[k], k)
+        for k, v in {"--page": "#0f0f0e", "--surface": "#1a1a19", "--raise": "#222120", "--ink": "#f3f1ec", "--ink2": "#cfccc4",
+                     "--muted": "#a29f97", "--accent": "#7ea3ee", "--good": "#6fcf8a", "--warning": "#e8a93a",
+                     "--critical": "#f08a8a"}.items():
+            self.assertEqual(v, dark[k], k)
+        auto = status.CSS[status.CSS.index("@media (prefers-color-scheme:dark)"):]
+        self.assertIn("--accent:#7ea3ee", auto)        # the system's dark follows the same tokens as the switch's
+
+
+_BUILT = []
+
+
+def page_html():
+    """The page built once for the module, from a clean workspace; nothing of this Mac is read."""
+    if not _BUILT:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            root = base / "Workspace"
+            build_workspace(root)
+            (base / "jobs").mkdir()
+            (base / "home").mkdir()
+            with mock.patch.object(status, "launch_agents", lambda: base / "LaunchAgents"), \
+                    mock.patch.dict(status.os.environ, {"HOME": str(base / "home")}):
+                _BUILT.append(status.build(root, now=dt.datetime(2026, 11, 9, 9, 0), folder=base / "jobs"))
+    return _BUILT[0]
+
+
+class Page(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.html = page_html()
+
+    def css(self):
+        return "\n".join(re.findall(r"<style>(.*?)</style>", self.html, re.S))
+
+    def test_no_font_size_under_12px(self):
+        css = self.css()
+        sizes = [float(n) for n in re.findall(r"font-size:\s*([0-9.]+)px", css)]
+        sizes += [float(n) for n in re.findall(r"font:[^;}]*?\b([0-9.]+)px", css)]
+        self.assertTrue(sizes)
+        self.assertEqual([], [n for n in sizes if n < 12], "a font size under 12px")
+
+    def test_other_modules_css_has_none_either(self):
+        for name in ("finding_queue.py", "guide.py", "questions_panel.py", "your_work.py"):
+            text = (HERE / name).read_text(encoding="utf-8")
+            small = [n for n in re.findall(r"font-size:\s*([0-9.]+)px", text) if float(n) < 12]
+            self.assertEqual([], small, name)
+
+    def test_body_text_is_15px_on_1_55(self):
+        self.assertIn("font:15px/1.55 var(--sans)", status.CSS)
+
+    def test_the_font_is_embedded_and_nothing_is_fetched(self):
+        css = self.css()
+        self.assertEqual(3, len(re.findall(r"@font-face\{font-family:\"Plus Jakarta Sans\"", css)))
+        self.assertEqual(3, len(re.findall(r"src:url\(data:font/woff2;base64,", css)))
+        self.assertIn("system-ui", css)
+        # no stylesheet, font, script or image is asked of the network: every http(s) address is a link the reader follows
+        self.assertNotRegex(self.html, r"<link[^>]+(?:href|src)=[\"']https?:")
+        self.assertNotRegex(self.html, r"<script[^>]+src=")
+        self.assertNotRegex(css, r"url\(\s*[\"']?https?:")
+        self.assertNotRegex(css, r"@import")
+        self.assertNotIn("fonts.googleapis", self.html)
+
+    def test_the_font_files_are_vendored_with_their_licence(self):
+        fonts = HERE / "fonts"
+        for name, _ in status.FONT_FILES:
+            self.assertTrue((fonts / name).is_file(), name)
+        self.assertIn("SIL OPEN FONT LICENSE", (fonts / "OFL.txt").read_text(encoding="utf-8"))
+        self.assertLess(sum((fonts / n).stat().st_size for n, _ in status.FONT_FILES), 120 * 1024)
+
+    def test_without_the_files_the_page_keeps_the_system_font(self):
+        with tempfile.TemporaryDirectory() as empty:
+            self.assertEqual("", status.font_css(Path(empty)))
+        self.assertIn('--sans:"Plus Jakarta Sans",system-ui', status.CSS)
+
+    def test_the_display_face_stays_for_big_numbers_only(self):
+        css = self.css()
+        users = [m.strip().split("}")[-1].strip() for m in re.findall(r"([^{}]*)\{[^{}]*var\(--display\)", css)]
+        self.assertEqual([".hero .fig", ".hero .fig,.tile .val", ".sumz .sumn b"], [u for u in users if u])   # the Todo counts too
+
+    def test_every_control_has_a_visible_focus_ring_and_a_40px_target(self):
+        look = status.LOOK_CSS
+        self.assertIn(":focus-visible{outline:2px solid var(--accent)", look)
+        self.assertRegex(look, r"button\.act,a\.act[^{]*\{min-height:40px\}")
+
+    def test_motion_stops_under_reduced_motion(self):
+        look = status.LOOK_CSS
+        self.assertRegex(look, r"@media \(prefers-reduced-motion:reduce\)\{\*[^}]*transition:none!important")
+        for m in re.findall(r"transition:[^;}]*?([0-9.]+)s", look):
+            self.assertTrue(.15 <= float(m) <= .2, m)
+
+
+class Words(unittest.TestCase):
+    """Status in words (#551): every health state is a pill with an icon and a word, so colour never carries it alone."""
+
+    def test_each_state_renders_a_word_and_an_icon(self):
+        said = {"good": "Fine", "warning": "Look soon", "critical": "Act now", "none": "Waiting", "late": "Late",
+                "look": "Look soon", "act": "Act now", "wait": "Waiting"}
+        for state, word in said.items():
+            html = status.pill(state)
+            self.assertRegex(html, r">%s</span>$" % word, state)
+            self.assertIn("<svg", html, state)
+            self.assertIn('aria-hidden="true"', html, state)
+        self.assertEqual({"Fine", "Look soon", "Late", "Act now", "Waiting"}, {w for _, w, _ in status.PILLS.values()})
+
+    def test_no_emoji_in_the_icons(self):
+        for body in status._PILL_PATHS.values():
+            self.assertTrue(body.isascii())
+
+    def test_a_row_with_a_state_has_its_word_beside_it(self):
+        html = page_html()
+        rows = re.findall(r'<a class="item"[^>]*>.*?</a>', html, re.S)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertRegex(row, r'class="st [a-z]+"><svg[^>]*>.*?</svg>(Fine|Look soon|Late|Act now|Waiting)</span>')
+
+    def test_a_dot_is_never_the_only_sign_of_a_state_in_the_built_markup(self):
+        # what the script draws later has its own title; every dot the build writes has words beside it or is a pill
+        self.assertNotRegex(page_html(), r'<span class="dot (?:good|warning|critical)"')
+
+
+TODAY = dt.date(2026, 11, 9)
+
+
+def todo_row(text, when=None, late=False):
+    return {"text": text, "when": when, "late": late, "waiting": False}
+
+
+def zone(name, rows):
+    return {"zone": name, "groups": [("Inbox", rows)], "late": sum(1 for r in rows if r["late"]), "open": len(rows),
+            "undated": sum(1 for r in rows if r["when"] is None)}
+
+
+class Lead(unittest.TestCase):
+    """The Overview opens on one sentence that says how many things wait, and it agrees with the card (#551)."""
+
+    def test_the_sentence_in_three_cases(self):
+        self.assertEqual("Three things need you.", status.lead_said(3))      # several waiting
+        self.assertEqual("One thing needs you.", status.lead_said(1))        # one
+        self.assertEqual("Nothing needs you right now.", status.lead_said(0))  # none
+        self.assertEqual("Twelve things need you.".replace("Twelve", "12"), status.lead_said(12))
+
+    def test_several_waiting_names_the_first_and_leads_to_it(self):
+        items = [status.attn_need("critical", "The check did not run", "#checks"),
+                 status.late_need(zone("Work", [todo_row("a", dt.date(2026, 11, 2), True), todo_row("b", dt.date(2026, 11, 5), True)]), TODAY),
+                 status.attn_need("warning", "3 items waiting in the inboxes", "#inboxes")]
+        html = status.lead_block(items, 0)
+        self.assertIn("Three things need you.", html)
+        self.assertIn("The check did not run · 2 late actions in Work · 3 items waiting in the inboxes", html)
+        self.assertRegex(html, r'<a class="btn primary" id="lead-go" href="#checks">Open it')
+        self.assertNotIn(" hidden", html.split('<a class="btn')[1])
+
+    def test_one_waiting(self):
+        html = status.lead_block([status.late_need(zone("Home", [todo_row("a", dt.date(2026, 11, 8), True)]), TODAY)], 0)
+        self.assertIn("One thing needs you.", html)
+        self.assertIn("1 late action in Home", html)
+        self.assertIn('href="#todolist" data-tz-go="Home"', html)
+
+    def test_none_waiting_says_so_and_has_no_button(self):
+        html = status.lead_block([], 0)
+        self.assertIn("Nothing needs you right now.", html)
+        self.assertRegex(html, r'<a class="btn primary" id="lead-go" href="#" hidden></a>')
+
+    def test_a_waiting_session_counts_and_leads_to_the_card_when_nothing_else_waits(self):
+        html = status.lead_block([], 2)
+        self.assertIn("Two things need you.", html)
+        self.assertIn("2 sessions are waiting for you", html)
+        self.assertIn('href="#waiting-now"', html)
+
+    def test_more_than_three_reasons_are_cut_to_three(self):
+        items = [status.attn_need("warning", "reason %d" % i, "#jobs") for i in range(5)]
+        self.assertIn("reason 0 · reason 1 · reason 2 · and 2 more", status.lead_block(items, 0))
+
+    def test_the_card_lists_what_waits_with_a_button_and_stays_hidden_only_when_nothing_does(self):
+        needs = [status.attn_need("critical", "A job failed", "#jobs"),
+                 status.late_need(zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)]), TODAY)]
+        now = dt.datetime(2026, 11, 9, 9, 0, tzinfo=dt.timezone.utc)
+        html = status.waiting_card([], now, needs)
+        self.assertNotIn("nowait", html)
+        self.assertIn("2 items", html)
+        self.assertEqual(2, html.count('class="wrow wneed"'))
+        self.assertIn('<a class="act" href="#jobs">Open it</a>', html)
+        self.assertIn('data-tz-go="Work">Open the list</a>', html)
+        self.assertIn("oldest was due Mon 2 Nov", html)
+        self.assertIn("nowait", status.waiting_card([], now, []))
+        self.assertIn("nowait", status.waiting_card([], now))
+
+    def test_the_script_redraws_the_lead_from_the_same_figures(self):
+        js = status.WAITING_JS
+        for needle in ("function lead(sess)", "Nothing needs you right now.", "One thing needs you.", "tabn-overview", "explore-go"):
+            self.assertIn(needle, js)
+
+    def test_each_zones_late_actions_stay_that_zones_own(self):
+        lists = [zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)]), zone("Home", [todo_row("b", dt.date(2026, 11, 3), True),
+                                                                                       todo_row("c", dt.date(2026, 11, 4), True)])]
+        items = status.needs_you([], lists, TODAY)
+        self.assertEqual([("Work", "1 late action"), ("Home", "2 late actions")], [(i["zone"], i["text"]) for i in items])
+        self.assertEqual(["Work", "Home"], [i["tz"] for i in items])
+
+    def test_what_failed_comes_before_late_actions_and_warnings_after(self):
+        attn = [("warning", "w", "#jobs"), ("critical", "c", "#checks")]
+        items = status.needs_you(attn, [zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)])], TODAY)
+        self.assertEqual(["c", "1 late action", "w"], [i["text"] for i in items])
+
+    def test_the_page_lead_and_the_card_count_the_same_things(self):
+        sessions = [{"id": "s%d" % i, "agent": "claude", "folder": "/x/Pricing", "thread": "Pricing", "state": "waiting",
+                     "waiting_for": "an answer", "since": "2026-11-09T08:00:00Z", "where": "cmux"} for i in range(2)]
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            root = base / "Workspace"
+            build_workspace(root)
+            (base / "jobs").mkdir()
+            (base / "home").mkdir()
+            with mock.patch.object(status, "launch_agents", lambda: base / "LaunchAgents"), \
+                    mock.patch.dict(status.os.environ, {"HOME": str(base / "home")}):
+                none = status.build(root, now=dt.datetime(2026, 11, 9, 9, 0), folder=base / "jobs")
+                two = status.build(root, now=dt.datetime(2026, 11, 9, 9, 0), folder=base / "jobs", waiting_now=sessions)
+        for html, n_sessions in ((none, 0), (two, 2)):
+            fixed = len(re.findall(r'<div class="wrow wneed">', html))
+            said = re.search(r'<h2 id="lead-h">([^<]*)</h2>', html).group(1)
+            self.assertEqual(status.lead_said(fixed + n_sessions), said)
+            self.assertEqual(n_sessions, len(re.findall(r'<div class="wrow" data-id=', html)))
+            self.assertIn('data-n="%d"' % fixed, html)
+            badge = re.search(r'id="tabn-overview" aria-label="(\d+)', html)
+            self.assertEqual(fixed + n_sessions, int(badge.group(1)))
+        self.assertGreater(len(re.findall(r'<div class="wrow wneed">', none)) + 2, 0)
+
+
+class Summary(unittest.TestCase):
+    def test_todo_as_three_counts_for_one_zone(self):
+        z = zone("Work", [todo_row("late", dt.date(2026, 11, 2), True), todo_row("soon", dt.date(2026, 11, 12)),
+                          todo_row("later", dt.date(2026, 12, 30)), todo_row("nodate"), todo_row("nodate 2")])
+        self.assertEqual((1, 1, 2), status.todo_counts(z, TODAY))
+
+    def test_the_card_lists_each_zone_apart_and_never_adds_two(self):
+        lists = [zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)]), zone("Home", [todo_row("b"), todo_row("c")])]
+        html = status.summary_card(lists, TODAY, [("Work", Path("/x/Work/Inbox"), 3), ("Home", Path("/x/Home/Inbox"), 0)], "warning",
+                                   2, "#jobs", {}, lambda f: "file:///x", True)
+        self.assertEqual(["Work", "Home"], re.findall(r'data-tz-go="([^"]+)"', html))
+        self.assertIn("<b>1</b> late", html)
+        self.assertIn("<b>2</b> no date", html)
+        self.assertRegex(html, r'Look soon</span><span><a href="#jobs">2 things need attention')
+        self.assertEqual([("Work", "3"), ("Home", "0")], re.findall(r"<span>([A-Za-z]+)</span><b>(\d+)</b>", html))
+        self.assertIn('id="explore-go"', html)
+        self.assertNotIn('id="explore-go"', status.summary_card(lists, TODAY, [], "good", 0, "#summary", {}, str, False))
+
+    def test_health_in_words(self):
+        for worst, word in (("good", "Fine"), ("warning", "Look soon"), ("critical", "Act now")):
+            self.assertIn(word + "</span>", status.summary_card([], TODAY, [], worst, 0, "#summary", {}, str, False))
+
+
+class Badges(unittest.TestCase):
+    def test_a_count_that_means_something_is_late_takes_the_warning_colour_and_says_so(self):
+        html = status.tab_badge("x", 3, " action is late", " actions are late", True, "%d late")
+        self.assertIn('class="n warn"', html)
+        self.assertIn('aria-label="3 actions are late"', html)
+        self.assertIn(">3 late<", html)
+
+    def test_an_empty_count_is_built_hidden(self):
+        self.assertIn("hidden", status.tab_badge("x", 0, " a", " b", True))
+        self.assertNotIn("warn", status.tab_badge("x", 0, " a", " b", True))
+
+    def test_the_tabs_of_the_page_carry_counts(self):
+        html = page_html()
+        self.assertRegex(html, r'data-tab="overview">Overview<span class="n[ a-z]*" id="tabn-overview"')
+        self.assertRegex(html, r'data-tab="status">Status<span class="n[ a-z]*" id="tabn-status"')
+
+
+class Work(unittest.TestCase):
+    def w(self, **kw):
+        base = {"row": {}, "actions": [], "waiting": None, "mine": False, "next": "Send it", "moved": TODAY}
+        base.update(kw)
+        return base
+
+    def test_state_is_one_word(self):
+        self.assertEqual("late", status.work_state(self.w(row={"late": 1}), TODAY))
+        self.assertEqual("late", status.work_state(self.w(actions=[{"late": True}]), TODAY))
+        self.assertEqual("act", status.work_state(self.w(waiting="Marco: the call", mine=True), TODAY))
+        self.assertEqual("wait", status.work_state(self.w(waiting="Theo: the volumes"), TODAY))
+        self.assertEqual("look", status.work_state(self.w(next=None), TODAY))
+        self.assertEqual("look", status.work_state(self.w(moved=TODAY - dt.timedelta(days=15)), TODAY))
+        self.assertEqual("good", status.work_state(self.w(), TODAY))
+
+    def test_touched_in_words(self):
+        self.assertEqual("Touched today", status.touched_said(TODAY, TODAY))
+        self.assertEqual("Touched yesterday", status.touched_said(TODAY - dt.timedelta(days=1), TODAY))
+        self.assertEqual("Touched 6 days ago", status.touched_said(TODAY - dt.timedelta(days=6), TODAY))
+
+
+if __name__ == "__main__":
+    unittest.main()

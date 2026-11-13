@@ -12,7 +12,10 @@ import datetime as dt
 import html as htmllib
 import json
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -76,7 +79,7 @@ class TestOneLineForEachPlace(CardCase):
     def test_a_line_names_a_places_questions_and_answers_and_a_place_with_nothing_has_none(self):
         self.record()
         card = self.card(self.page())
-        self.assertEqual({"Work": "2 questions · 1 answer to work in · about 5 minutes",
+        self.assertEqual({"Work": "2 questions · about 5 minutes",
                           "Personal": "1 question · about 5 minutes",
                           "The Knowledge wiki": "1 question · about 5 minutes"}, self.lines(card))
         for q in (self.meetings / "questions" / "261001 - elsewhere.md", ):
@@ -148,7 +151,7 @@ class TestOneLineForEachPlace(CardCase):
         html = self.page()
         card = self.card(html)
         lines = self.lines(card)
-        self.assertEqual("4 questions · 1 answer to work in · about 5 minutes", lines["Work"])   # one question, one verdict, one decision, one finding
+        self.assertEqual("4 questions · about 5 minutes", lines["Work"])   # one question, one verdict, one decision, one finding
         self.assertEqual("1 question · about 5 minutes", lines["Personal"])
         self.assertIn("3 places need you.", card)                                    # places, and never a figure that adds two zones
         for added in ("5 questions", "6 questions", "in all", "7 questions"):
@@ -172,19 +175,103 @@ class TestOneLineForEachPlace(CardCase):
         self.assertEqual(["", ], re.findall(r'id="qp-tab-n">([^<]*)<', html))        # the tab's number is set for one place only, by the script
 
 
-class TestWorkThemIn(CardCase):
-    def test_it_shows_on_a_line_only_when_that_zone_has_answers_waiting(self):
+QUEUE_HARNESS = r"""
+const fs=require('fs');
+const js=fs.readFileSync(process.argv[2],'utf8');
+function el(extra){const base={dataset:{},hidden:false,textContent:'',style:{},classList:{toggle(){},add(){},remove(){},contains(){return false}},
+ getClientRects(){return[1]},querySelectorAll(){return[]},querySelector(){return el()},closest(){return null},focus(){},setAttribute(k,v){this[k]=v},getAttribute(){return ''},appendChild(){},remove(){},click(){}};
+ return Object.assign(base,extra||{})}
+const clicked=[],handlers={},store={};
+const q1=el({dataset:{gk:'k1',wiki:'Meetings',file:'questions/a.md',kind:'wiki-question',path:'Wikis/Meetings/questions/a.md'}});
+const q2=el({dataset:{gk:'k2',wiki:'Meetings',file:'questions/b.md',kind:'wiki-question',path:'Wikis/Meetings/questions/b.md'}});
+const work=el({dataset:{scope:'Zones/Work',name:'Work',work:'work in the answers in Work'}});
+const other=el({dataset:{scope:'Zones/Personal',name:'Personal',work:'work in the answers in Personal'}});
+work.querySelectorAll=(s)=>s==='[data-q]'?[q1,q2]:[];other.querySelectorAll=(s)=>s==='[data-q]'?[]:[];
+const posted=[];let scopes=[work,other];
+const dlg=el({dataset:{folder:'/w',today:'2026-11-13'},open:false,
+ querySelectorAll:(s)=>s==='.qscope'?scopes:[],querySelector:()=>el(),
+ addEventListener:(t,f)=>{(handlers[t]=handlers[t]||[]).push(f)},showModal(){this.open=true},close(){this.open=false;(handlers.close||[]).forEach(f=>f())},
+ appendChild(b){this.last=b}});
+global.window={webkit:{messageHandlers:{garrick:{postMessage:(m)=>posted.push(m)}}}};
+global.sessionStorage={getItem:(k)=>store[k]||null,setItem:(k,v)=>{store[k]=v},removeItem:(k)=>{delete store[k]}};
+global.document={getElementById:(id)=>id==='queue'?dlg:null,addEventListener:(t,f)=>{(handlers['doc'+t]=handlers['doc'+t]||[]).push(f)},
+ createElement:()=>{const b=el();b.click=function(){clicked.push(this['data-request'])};return b}};
+global.Object=Object;
+new Function(js)();
+function open(scope){const t=el({dataset:{qopen:scope}});t.closest=(s)=>s==='[data-qopen]'?t:null;(handlers.docclick||[]).forEach(f=>f({target:t,preventDefault(){}}))}
+function acted(verb,wiki,file,ok){window.GarrickActed({verb,wiki,file,answer:undefined},{ok})}
+const steps=process.argv[3];
+open('Zones/Work');
+if(steps==='none'){dlg.close()}
+if(steps==='one'){acted('question-answer','Meetings','questions/a.md',true);dlg.close();dlg.open=true;dlg.close()}
+if(steps==='reload'||steps==='reload-twice'){acted('question-answer','Meetings','questions/a.md',true);
+ scopes=[other];handlers.close=[];handlers.docclick=[];dlg.open=false;new Function(js)();      // the page reloads: Work has no section any more
+ dlg.open=true;dlg.close();if(steps==='reload-twice'){dlg.open=true;dlg.close()}}
+if(steps==='failed'){acted('question-answer','Meetings','questions/a.md',false);dlg.close()}
+if(steps==='later'){acted('question-later','Meetings','questions/a.md',true);dlg.close()}
+console.log(JSON.stringify(clicked));
+"""
+
+
+class TestAnswersAreWorkedInWithoutAButton(CardCase):
+    """#550: no Work them in and no count of answers on the card; closing the queue sends the request, once, for its own place."""
+
+    def test_the_card_has_no_button_and_no_count_for_answers(self):
         self.record()
-        card = self.card(self.page())
-        personal = card[card.index('data-scope="Zones/Personal"'):card.index('data-scope="Zones/Work"')]
-        work = card[card.index('data-scope="Zones/Work"'):]
-        self.assertIn('data-request="work in the answers in Work"', work)             # the request names its own line's place
-        self.assertIn(">Work them in</button>", work)
-        self.assertNotIn("Work them in", personal)
-        self.assertEqual(1, card.count(">Work them in</button>"))
-        for req in re.findall(r'data-request="(work in the answers[^"]*)"', card):         # never another zone's name on a line
-            self.assertNotIn("Personal", req)
-            self.assertTrue(req.startswith("work in the answers in "), req)
+        html = self.page()
+        card = self.card(html)
+        for gone in ("Work them in", "to work in", "answer to work", "data-request=\"work in the answers"):
+            self.assertNotIn(gone, card)
+        self.assertEqual(["Work", "Personal", "The Knowledge wiki"], sorted(self.lines(card), key=["Work", "Personal", "The Knowledge wiki"].index))
+
+    def test_each_place_carries_the_request_for_its_own_place_only(self):
+        self.record()
+        queue = self.queue(self.page())
+        got = dict(re.findall(r'data-scope="([^"]+)" data-name="[^"]*" data-work="([^"]+)"', queue))
+        self.assertEqual({"Zones/Work": "work in the answers in Work", "Zones/Personal": "work in the answers in Personal",
+                          "Wikis/Knowledge": "work in the answers in the Knowledge wiki"}, got)
+        self.assertEqual(3, queue.count("data-work="))
+
+    def test_closing_a_queue_that_took_an_answer_sends_one_request_and_a_second_close_none(self):
+        js = fq.QUEUE_JS
+        # a successful answer counts for its own place, a failed one and a close or a later do not
+        self.assertIn("if(q.verb==='question-answer'||q.verb==='question-decide')(taken[cur.dataset.scope]=taken[cur.dataset.scope]||{n:0,work:cur.dataset.work||''}).n++", js)
+        close = js[js.index("dlg.addEventListener('close',function(){var sent=taken;taken={};"):]
+        close = close[:close.index("});\n", 10)]
+        self.assertIn("handoff(t.work)", close)                                # the request that was the button's, kept with the count
+        self.assertIn("taken={}", close)                                       # cleared as it goes: a second close has nothing to send
+        self.assertIn("if(!t||!t.n||!t.work)return", close)                            # a place that took none sends none
+        self.assertIn("taken:taken", js)                                        # a reload while the queue is open keeps the count
+
+    def test_answers_the_night_could_not_work_in_are_a_question_of_their_own_place_only(self):
+        self.record()
+        write(self.root / "System" / "generated" / "status-answers.json",
+              json.dumps({"held": {"Zones/Work": {"why": "cap", "day": "2026-11-13"}, "Zones/Personal": {"why": "held", "day": "2026-11-13"}}}))
+        html = self.page()
+        work = self.scope(html, "Zones/Work")
+        self.assertEqual(1, work.count('data-kind="answers-held"'))
+        self.assertIn("Your answers in Work could not be worked in.", work)
+        self.assertIn("Work them in with my assistant", work)
+        self.assertNotIn('data-kind="answers-held"', self.scope(html, "Zones/Personal"))       # Personal holds no answer: a stale entry shows nothing
+        self.assertEqual("3 questions · about 5 minutes", self.lines(self.card(html))["Work"])
+
+    def test_the_queue_script_sends_the_request_as_the_card_once_did(self):
+        """Run on stand-in elements: one answer taken, then the dialog closed twice, sends one request naming its own place;
+        a failed answer, a Later and a close with nothing taken send none."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node")
+        with tempfile.TemporaryDirectory() as tmp:
+            script, queue = Path(tmp) / "h.js", Path(tmp) / "q.js"
+            script.write_text(QUEUE_HARNESS, encoding="utf-8")
+            queue.write_text(fq.QUEUE_JS, encoding="utf-8")
+            sent = {}
+            for steps in ("none", "one", "failed", "later", "reload", "reload-twice"):
+                out = subprocess.run([node, str(script), str(queue), steps], capture_output=True, text=True, timeout=60)
+                self.assertEqual(0, out.returncode, out.stderr)
+                sent[steps] = json.loads(out.stdout.strip().splitlines()[-1])
+        self.assertEqual({"none": [], "one": ["work in the answers in Work"], "failed": [], "later": [],
+                          "reload": ["work in the answers in Work"], "reload-twice": ["work in the answers in Work"]}, sent)   # a reload that removes the section loses nothing
 
 
 class TestLater(CardCase):
@@ -194,10 +281,10 @@ class TestLater(CardCase):
         self.record()
         before = self.page()
         self.assertNotIn(ACME, before)
-        self.assertEqual("1 question · 1 answer to work in · about 5 minutes", self.lines(self.card(before))["Work"])
+        self.assertEqual("1 question · about 5 minutes", self.lines(self.card(before))["Work"])
         on_the_day = self.page(now=dt.datetime(2026, 11, 10, 9, 0))
         self.assertIn(ACME, self.scope(on_the_day, "Zones/Work"))                    # the day has come: a question again
-        self.assertEqual("2 questions · 1 answer to work in · about 5 minutes", self.lines(self.card(on_the_day))["Work"])
+        self.assertEqual("2 questions · about 5 minutes", self.lines(self.card(on_the_day))["Work"])
         for page in (before, on_the_day):
             self.assertNotIn("due today", page)
 
@@ -233,7 +320,7 @@ class TestTheQueueAsksEveryKind(CardCase):
         write(self.root / "System" / "generated" / "status-later.json", json.dumps({"version": 1, "later": {key: "2026-11-12"}}))
         work = self.scope(self.page(), "Zones/Work")
         self.assertNotIn("Proposed verdict", work)
-        self.assertEqual("3 questions · 1 answer to work in · about 5 minutes", self.lines(self.card(self.page()))["Work"])
+        self.assertEqual("3 questions · about 5 minutes", self.lines(self.card(self.page()))["Work"])
 
 
 class TestTheLineBelow(CardCase):

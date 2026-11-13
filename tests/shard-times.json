@@ -50,6 +50,7 @@
   "test_split": 38.5,
   "test_status": 68.0,
   "test_status_find": 4.4,
+  "test_status_look": 8.0,
   "test_status_more": 30.3,
   "test_status_work": 3.1,
   "test_todo": 2.1,
@@ -59,11 +60,14 @@
   "test_wall_forms": 10.0,
   "test_wall_gaps": 52.9,
   "test_wall_noise": 37.9,
+  "test_wall_common": 6.0,
   "test_wall_runs": 8.0,
   "test_walls_cases": 0,
   "test_walls_deterministic": 19.2,
+  "test_walls_page": 25.0,
   "test_wiki_lint": 0.1,
   "test_work_files": 66.1,
+  "test_work_in": 5.0,
   "test_your_work": 114.7,
   "test_zone_guard": 6.0
 }

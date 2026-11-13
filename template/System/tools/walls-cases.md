@@ -127,6 +127,8 @@ A fixture workspace: `Work`, `Home` and `Study` are walled zones, `Ventures` an 
 | e37 | check | a Northwind file that is a whole copy of the zone template's Todo.md, as it is written in Home | permitted | a file Garrick ships is the same in every zone, not a copy |
 | e38 | check | a Northwind file that is a whole copy of a file held by both Home and Ventures | permitted | content an open zone also holds goes anywhere |
 | e39 | check | a Northwind file that is a whole copy of a file held by both Home and Study | refused | content held only by walled zones is still a copy |
+| e40 | check | a Northwind note that repeats a sentence that notes of three walled zones all hold | permitted | stock wording: a run held by files of three zones is common, not a quote |
+| e41 | check | a Northwind note that repeats a sentence of one Meetings page of Home, no other file holding it | refused | a run lifted from one meeting is rare, so it stays a quote |
 
 ## Meetings
 

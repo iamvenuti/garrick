@@ -626,6 +626,27 @@ def uncommitted_files(root, p):
     return out
 
 
+def install_missing_hooks(root):
+    """The wall check in every zone, in Wikis/ and in each repository inside a project, as `check.py --install-hooks` puts
+    it (#550): the workspace's own check.py runs, as the update runs its other tools, so the logic is not copied here. A hook
+    of the user's own in the place of one is left as it is, and said. Returns (path, reason) for what was not installed."""
+    tool = root / "System" / "tools" / "check.py"
+    if not tool.is_file():
+        return []
+    try:
+        r = subprocess.run([sys.executable, "-B", str(tool), "--root", str(root), "--install-hooks"],
+                           capture_output=True, text=True, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [("System/tools/check.py", "the wall check was not installed everywhere: %s" % exc)]
+    out = []
+    for line in r.stderr.splitlines():
+        if line.strip():
+            out.append(("a repository's hooks", "the wall check was not installed there: " + line.strip()))
+    if r.returncode and not out:
+        out.append(("a repository's hooks", "the wall check was not installed everywhere"))
+    return out
+
+
 def apply(root, p, only=None, today=None):
     """Make the changes `p` lists: every replace, add and merge, or only the
     paths in `only`, which may also name a file to restore. Returns what was
@@ -759,6 +780,9 @@ def apply(root, p, only=None, today=None):
                             "not Garrick's, so it is left as it is; " + lib.merge_hook_advice(exc.names)))
         except (FileExistsError, FileNotFoundError) as exc:
             skipped.append(("Wikis/.git/hooks/pre-commit", "the wikis' wall check was not installed: %s" % exc))
+
+    if picked is None:
+        skipped += install_missing_hooks(root)
 
     tidied = clear_retired_state(root) if picked is None else []
     written = [path for kind in ("replace", "add", "restore") for path in done[kind]]

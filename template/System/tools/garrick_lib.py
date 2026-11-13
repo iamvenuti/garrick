@@ -1578,8 +1578,9 @@ def refusal_override_times(root: PathLike, now=None, days: int = 30) -> List[str
 # An entry covers one finding of one file, and only while the file is as it was allowed: it matches on the path,
 # the finding's id and git's blob id of the file together. The id is the first ten hex characters of SHA-1 over
 # `path NUL rule NUL token`; the token is never stored, so the ledger names no party. A ledger that is missing,
-# unreadable or of another version holds no allowance: everything refuses as before. Only a terminal writes one
-# (allow_may_write); the status page can only take one away, and an assistant has no terminal. What a finding is, and where a blob id comes from,
+# unreadable or of another version holds no allowance: everything refuses as before. A terminal writes one
+# (allow_may_write), and so does the status page's button after it showed both texts (#550: page_action.py's walls-allow, by "page", only
+# from the app's bridge); an assistant has no terminal and no verb for it. What a finding is, and where a blob id comes from,
 # belongs to check.py (docs/enforced.md describes the format).
 
 ALLOW_LEDGER = ("System", "walls-allowed.json")
@@ -1694,8 +1695,9 @@ def allow_remove(root: PathLike, path: str, fid: str) -> int:
 
 
 def allow_may_write(by: str, stdin=None) -> bool:
-    """Whether an allowance may be written from here: only a terminal, when stdin is one. The page has no verb that
-    writes an allowance, so `by="page"` is False; a run with no terminal, as an assistant's shell is, refuses."""
+    """Whether `check.py allow` may write an allowance from here: only a terminal, when stdin is one. `by="page"` is False
+    for every caller of this function: the page's own verb (walls-allow) passes `by="page"` to check.py's allow_page itself,
+    after the user saw both texts, and refuses any caller but the app's bridge. A run with no terminal, as an assistant's shell is, refuses."""
     if by == "terminal":
         stream = sys.stdin if stdin is None else stdin
         try:
@@ -1725,7 +1727,7 @@ def allow_commit(root: PathLike, message: str) -> str:
     if done.returncode == 0 or "nothing to commit" in (done.stdout + done.stderr) \
             or "nothing added to commit" in (done.stdout + done.stderr):
         return ""
-    return (done.stderr or done.stdout).strip()
+    return (done.stderr or done.stdout).strip() or "the commit was refused (git exited %d)" % done.returncode
 
 
 def wall_cases(text: str) -> Dict[str, List[List[str]]]:

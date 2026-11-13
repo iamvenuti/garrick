@@ -1324,6 +1324,49 @@ class GarrickPrefixTest(FakeAssistants):
         self.assertEqual((1, "gr-backup"), (jobs["backup"]["heartbeat"]["exit"], jobs["gr-backup"]["heartbeat"]["job"]))
 
 
+class NightlyHooksStep(unittest.TestCase):
+    """#550: the nightly run installs a wall check a repository lacks, and a hook of the user's own is left alone."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.ws = build_workspace(self.tmp / "ws")
+        shutil_copy = __import__("shutil").copy
+        tools = self.ws / "System" / "tools"
+        tools.mkdir(parents=True, exist_ok=True)
+        for f in (REPO / "template" / "System" / "tools").glob("*.py"):
+            shutil_copy(f, tools / f.name)
+        for z in ("Work", "Personal"):
+            subprocess.run(["git", "-C", str(self.ws / "Zones" / z), "init", "-q"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.ws / "Wikis"), "init", "-q"], check=True, capture_output=True)
+
+    def hooks(self, repo):
+        return self.ws / repo / ".git" / "hooks"
+
+    def test_the_hooks_step_is_the_first_step_and_is_skipped_without_check_py(self):
+        args = nightly.argparse.Namespace(scope=[], digest=False, also=[], moved=[])
+        names = [step for step, cmd, why in nightly.steps(self.ws, args)]
+        self.assertEqual(["hooks", "nurture", "answers", "effort", "recall", "nightly.local", "status"], names)
+        (self.ws / "System" / "tools" / "check.py").unlink()
+        self.assertEqual("no System/tools/check.py", nightly.steps(self.ws, args)[0][2])
+
+    def test_a_missing_hook_is_installed(self):
+        (self.hooks("Zones/Work") / "post-merge").unlink()
+        self.assertEqual(0, nightly.install_hooks_step(self.ws))
+        for z in ("Zones/Work", "Zones/Personal", "Wikis"):
+            for name in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite"):
+                path = self.hooks(z) / name
+                self.assertTrue(path.is_file() and os.access(path, os.X_OK), "%s %s" % (z, name))
+
+    def test_a_hook_of_the_users_own_is_left_alone_and_is_no_fault_of_the_night(self):
+        mine = self.hooks("Zones/Personal") / "pre-commit"
+        mine.write_text("#!/bin/sh\necho mine\n")
+        with mock.patch("sys.stdout", new_callable=io.StringIO), mock.patch("sys.stderr", new_callable=io.StringIO):
+            self.assertEqual(0, nightly.install_hooks_step(self.ws))
+        self.assertEqual("#!/bin/sh\necho mine\n", mine.read_text())
+        self.assertTrue((self.hooks("Zones/Work") / "pre-commit").is_file())
+
+
 class NightlyTest(FakeAssistants):
     """#276: one nightly job, four steps, each run whatever the one before
     did; the exit is the worst, and the heartbeat says which step failed."""
@@ -1599,11 +1642,26 @@ class NightlyTest(FakeAssistants):
         times = {line.strip(): t for t, line in seen}
         self.assertGreater(times["second"] - times["first"], 0.5)          # printed as it came, not at the end
 
+    def test_the_answers_step_runs_after_nurture_and_before_the_rest_when_the_panel_is_there(self):
+        """#550: the one step that calls an assistant, and only through work_in.py, which agent.run's caps hold."""
+        self.fake(self.status_dir / "questions_panel.py", "panel")
+        work_in = self.fake(self.tmp / "work_in.py", "answers")
+        with mock.patch.object(nightly, "WORK_IN", work_in):
+            self.assertEqual(0, self.run_nightly())
+        self.assertEqual(["nurture", "answers", "effort", "status"], self.ran())
+        self.assertIn("answers --workspace %s" % self.ws.resolve(), self.record.read_text())
+        self.assertEqual({"nurture": 0, "answers": 0}, {k: v["exit"] for k, v in self.steps().items() if k in ("nurture", "answers")})
+        self.assertEqual("no System/status/questions_panel.py", self.steps()["answers"].get("skipped") or "no System/status/questions_panel.py")
+
+    def test_without_the_panel_the_answers_step_is_skipped_and_no_fault(self):
+        self.assertEqual(0, self.run_nightly())
+        self.assertEqual("no System/status/questions_panel.py", self.steps()["answers"]["skipped"])
+
     def test_no_status_page_extra_skips_its_two_steps(self):
         with mock.patch.object(nightly, "STATUS", self.tmp / "none"):
             self.assertEqual(0, self.run_nightly())
         self.assertEqual(["nurture"], self.ran())
-        self.assertEqual({"effort", "recall", "nightly.local", "status"},
+        self.assertEqual({"hooks", "answers", "effort", "recall", "nightly.local", "status"},
                          {k for k, s in self.steps().items() if s.get("skipped")})
 
     def test_the_heartbeat_says_which_step_failed(self):

@@ -79,6 +79,10 @@ When Garrick installed your workspace it recorded a fingerprint of every file it
 
 A file you changed that Garrick hasn't changed stays as you left it and isn't listed, unless it is one of Garrick's instruction files. `System/context.md`, your own answers, is never read or written but for the one step under [Zone flags](#zone-flags), and neither is a local file beside an instruction file, such as `System/rules.local.md`.
 
+### The wall check in your repositories
+
+After `--apply` writes the files, the update installs the wall check in every repository that lacks it: each zone, `Wikis/` and each repository inside a project, with the four hooks `check.py --install-hooks` writes. You are not asked. A hook of your own in the place of one of Garrick's is never replaced; the update names it, and the Context card asks what to do about it. A dry run, a report-only run, and an update that waits for your yes on the zone flags install nothing.
+
 ## Zone flags
 
 Garrick 0.63.0 walls each zone, not each party. A workspace that took 0.60.0 to 0.62.0 keeps a flag on each party and a party and a default on each zone; one step turns them into one flag on each zone, **Walled**, in the Zones table. A workspace still on 0.59 or older updates to 0.62.0 first, and the update says so.

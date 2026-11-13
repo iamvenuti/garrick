@@ -84,7 +84,10 @@ the same line.
    and changes nothing. Note the release its first line names. Say the result
    back in short. Spoken: "Garrick 0.16.0 has 6 newer files, 1 you changed
    that needs a merge, and it rebuilds the app. Update?" Written: the report
-   as printed. If it says up to date, say so and stop.
+   as printed. If it says up to date, say so and stop. If the report ends
+   with changes not committed, or its JSON (`--json`) lists `uncommitted`
+   as `[{path, repo}]`, those are Garrick files the apply would skip: ask
+   about them before step 3, as the next step says.
 2. **Say what each group means** only when the user asks or when it is not
    obvious:
    - *Replace*: files Garrick wrote that the user never changed. Safe.
@@ -110,9 +113,26 @@ the same line.
    `--apply --only "System/tools/check.py,System/status/status.py"`.
    Each repository gets one commit, `Garrick: update to <version>`, holding
    the `.new` files too, so `git revert` undoes it. Say what it printed, in
-   short, the steps it took after the files included. If it skipped a file
-   because of changes not committed, say which and stop: those changes are
-   the user's or another session's, and are never committed for them.
+   short, the steps it took after the files included.
+
+   **Garrick files with changes not committed.** When the report lists some
+   (the dry run's `uncommitted`), do not apply yet. Say which files, and in
+   which repository, and ask: "These Garrick files have changes that are not
+   committed, most likely another session's work. Commit them and update,
+   update the rest and skip them, or stop?" Then:
+   - *Commit them*: commit those paths only, one commit per repository, with
+     `git add -- <those paths>` and `git commit -m "Before the update to
+     <version>: N files committed" -- <those paths>`, through the repository's
+     own commit and its wall check. Never `--no-verify`, never any path the
+     report did not list, never a note of the user's. A repository with other
+     changes staged, or a refusal of the wall check, stops everything:
+     say which file and why, and apply nothing. Run the report again; it
+     must list nothing before you apply.
+   - *Skip them*: apply as above; the skipped files stay as they are, and
+     say which were skipped.
+   - *Stop*: change nothing.
+   With nothing listed, apply at once. A file the report does not list is
+   never committed for the user.
    When it replaced `System/rules.md` or an `AGENTS.md`, say what changed
    in it, one line per rule, from `git show --format= <the commit it printed>
    -- System/rules.md` in the repository that holds it: it is how the

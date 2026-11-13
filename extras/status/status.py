@@ -2430,6 +2430,13 @@ function sentHas(q,k){var s=sentRead()[sentId(q,k)];return!!s&&s.v===q.verb}
 /* the oldest of what was sent goes first once there are too many */
 function sentAdd(q,keys){var s=sentRead(),n=Date.now();keys.forEach(function(k){s[sentId(q,k)]={v:q.verb,t:n}});sentWrite(s)}
 function sentDrop(q,keys){var s=sentRead();keys.forEach(function(k){delete s[sentId(q,k)]});sentWrite(s)}
+/* when a batch saved: a build may have read the note between its send and its save, so the later of the two is what a page is compared with (#538) */
+function sentDone(v,z,f,keys,t){var s=sentRead();keys.forEach(function(k){var x=s[sentId({zone:z,file:f},k)];if(x&&x.v===v)x.d=t});sentWrite(s)}
+/* a line this window ticked or reopened keeps its state across a rebuild until a page built after it arrives: every entry sent or saved
+   later than the page's data-built is drawn as sent. A page with no readable build time is left as the note has it (#538) */
+function sentPaint(){var b=Date.parse(document.body&&document.body.getAttribute('data-built')||'');if(isNaN(b))return;var s=sentRead();
+Object.keys(s).forEach(function(i){var x=s[i],a=null;if(!x||TICKS.indexOf(x.v)<0||Math.max(x.t||0,x.d||0)<=b)return;
+try{a=JSON.parse(i)}catch(e){return}if(a&&typeof a[0]==='string'&&typeof a[2]==='string')paint(a[0],a[2],x.v==='todo-done')})}
 /* the operation ids this window has already shown the end of, so the record never shows one twice */
 function mark(){[].forEach.call(arguments,function(o){if(o&&SEEN.indexOf(o)<0)SEEN.push(o)})}
 function mint(){var s='';for(var i=0;i<16;i++)s+='0123456789abcdef'.charAt(Math.floor(Math.random()*16));return s}
@@ -2510,7 +2517,7 @@ if(!e){if(SEEN.indexOf(r.op)>=0||ZONED.indexOf(r.verb)<0)return;
 e={q:{verb:r.verb,zone:r.zone,op:r.op},op:r.op,say:r.label||'Working…',t0:Math.round(r.at*1000)};W.push(e);
 if(keys){e.q.keys=keys;e.lines=keys.map(function(k){return words(r.zone,k)});if(!end)keys.forEach(function(k){paint(r.zone,k,r.verb==='todo-done')})}}
 /* a batch that saved while the page was away: the same small notice as one heard here, and no card */
-if(end&&keys&&r.outcome==='saved'){if(!e.out){W.splice(W.indexOf(e),1);toast(r.say||'Saved')}mark(r.op);return}
+if(end&&keys&&r.outcome==='saved'){sentDone(r.verb,r.zone,e.q.file||r.file,keys,Math.round((r.done||r.at)*1000));if(!e.out){W.splice(W.indexOf(e),1);toast(r.say||'Saved')}mark(r.op);return}
 if(end){if(!e.out){e.out={ok:r.outcome==='saved',outcome:r.outcome||'',say:r.say||''};e.done=Math.round((r.done||r.at)*1000);if(e.out.ok)e.fade=now+TOAST*1000;else if(e.q.keys)back(e)}mark(r.op)}
 else if(!e.out)e.phase=r.phase||''});
 W.forEach(function(e){if(e.out||!e.op||by[e.op]||(OPS.verbs||[]).indexOf(e.q.verb)<0||now-e.t0<=UNKNOWN*1000)return;
@@ -2544,7 +2551,7 @@ keep();render();run();return}
    a row's follow-ups (the list, the undo record) are made as for a plain ok reply */
 if(out&&out.ok&&!out.outcome&&!out.again&&(OPS.verbs||[]).indexOf(q.verb)>=0){poll(true);keep();render();run();if(prev)return prev(q,out);return}
 mark(e.op,out&&out.op);var ok=out&&out.outcome?out.outcome==='saved':!!(out&&out.ok),again=out&&out.again||'';
-if(e.q.keys&&ok&&!again){W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
+if(e.q.keys&&ok&&!again){sentDone(e.q.verb,e.q.zone,e.q.file,e.q.keys,now);W.splice(W.indexOf(e),1);toast(out.say||'Saved')}
 else if(now-e.t0>TOAST*1000||again||e.q.keys||!ok){e.out={ok:ok,outcome:out&&out.outcome||'',say:out&&out.say||'That did not work.',again:again};e.done=now;
 if(ok&&!again)e.fade=now+TOAST*1000;else if(e.q.keys&&!again)back(e);var t=document.getElementById('toast');if(t)t.style.opacity=0}else W.splice(W.indexOf(e),1);keep();render();run()}
 if(prev)return prev(q,out)};
@@ -2563,7 +2570,8 @@ if(box)box.addEventListener('toggle',function(e){var d=e.target;if(d&&d.dataset&
 if(box){box.addEventListener('mouseover',function(e){var c=e.target.closest&&e.target.closest('[data-i]');HOV=c?W[+c.dataset.i]||null:null});
 box.addEventListener('mouseout',function(e){var to=e.relatedTarget,c=to&&to.closest&&to.closest('[data-i]');if(c&&HOV&&W[+c.dataset.i]===HOV)return;
 if(HOV&&HOV.fade)HOV.fade=Date.now()+TOAST*1000;HOV=null})}
-/* a rebuilt page draws each line as the note has it: a tick still queued, or on its way, is drawn as clicked */
+/* a rebuilt page draws each line as the note has it: a tick sent since the page was built, then one still queued, or on its way, is drawn as clicked */
+sentPaint();
 Q.forEach(function(x){paint(x.q.zone,x.q.key,x.q.verb==='todo-done')});
 W.forEach(function(e){if(!e.out&&e.q.keys)e.q.keys.forEach(function(k){paint(e.q.zone,k,e.q.verb==='todo-done')})});
 sweep();render();run();poll(true)})();
@@ -6298,7 +6306,13 @@ function put(t){line.textContent=t}
 function at(r){var d=r&&r.asked?new Date(r.asked):null;return d&&!isNaN(d)?' Asked at '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'.':''}
 function add(tag,text,into){var e=document.createElement(tag);e.textContent=text;(into||box).appendChild(e);return e}
 function items(head,list,said){if(!list||!list.length)return;add('p',head);var ul=add('ul','');list.forEach(function(x){add('li',said?said(x):x,ul)})}
-function show(r){box.textContent='';box.hidden=true;if(!r||r.state!=='updated'&&r.state!=='stopped'&&r.state!=='waits')return;box.hidden=false;
+function go(m){if(busy)return;busy=true;btn.disabled=true;box.hidden=true;put('Updating\u2026 this takes a minute.');host.postMessage({act:{verb:'release-update',held:m}})}
+/* a Garrick file with changes not committed: nothing was applied, and the three answers are asked here */
+function held(r){var p=add('p',r.line||'');items('These files, by repository:',r.uncommitted,function(x){return x.path+' ('+(x.repo==='.'?'the workspace':x.repo)+')'});
+var row=add('p','');[['Commit these and update','commit'],['Update the rest','rest'],['Cancel','']].forEach(function(b){var e=document.createElement('button');e.type='button';e.textContent=b[0];
+e.onclick=function(){if(b[1])go(b[1]);else{box.textContent='';box.hidden=true;put('Nothing was changed.')}};row.appendChild(e);row.appendChild(document.createTextNode(' '))})}
+function show(r){box.textContent='';box.hidden=true;if(!r||r.state!=='updated'&&r.state!=='stopped'&&r.state!=='waits'&&r.state!=='held')return;box.hidden=false;
+if(r.state==='held'){held(r);return}
 var p=add('p',r.line||'');if(r.url){p.appendChild(document.createTextNode(' '));var a=document.createElement('a');a.href=r.url;a.target='_blank';a.rel='noopener';a.textContent='Release notes';p.appendChild(a)}
 if(r.state==='updated')add('p',(r.replaced||0)+' file'+(r.replaced===1?'':'s')+' replaced, '+(r.added||0)+' added.');
 if(r.state==='waits'&&r.text){var pre=add('pre','');pre.textContent=r.text;pre.className='wallstext'}

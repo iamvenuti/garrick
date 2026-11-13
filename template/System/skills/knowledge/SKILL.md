@@ -293,7 +293,7 @@ them: the user's words are filed first, word for word, as
 `status: answered` and point at it with `answer:`. Never edit a raw answer.
 
 **Work in the answered questions** when the user says "work in the
-questions": for each file in `questions/` with `status: answered`, run
+questions", or "work in the answers in the Knowledge wiki": for each file in `questions/` with `status: answered`, run
 `question-work --wiki Knowledge --file "questions/<file>"`, change the pages it
 lists to what the answer says, cite the raw answer as
 `[[raw/answers/<file>]]`, run `question-done`, and commit the pages, the raw

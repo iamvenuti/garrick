@@ -1406,7 +1406,10 @@ def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[st
                              "about %d minutes" % minutes_for(walls, len(qs) - walls) if qs else "") if p]
         buttons = ""
         if waiting:
-            buttons += request_button("Work them in", "work through the open questions", ws, "act")
+            place = said(scope)[0]                  # the request names its own line's place, as the line holds it
+            if place == scope:
+                place = scope.split("/", 1)[-1]
+            buttons += request_button("Work them in", "work in the answers in %s" % place, ws, "act")
         if qs:
             buttons += '<button class="act primary" type="button" data-qopen="%s">Go through them</button>' % E(scope)
         out += ('<div class="need" data-scope="%s" data-n="%d"><span class="nsay"><b>%s</b>: %s</span><span class="nbtn">%s</span></div>'
@@ -7461,9 +7464,17 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     history, said_scope = debt_history(ws, now.date())
     listed = bool(C) and not C.get("failed") and not C.get("pending")
     queues = finding_queues(ws, history, C, now.date(), said_scope)
-    fq = queue_mod() if queues is not None else None
+    fq = None
+    if queues is not None or qdata:
+        try:
+            fq = queue_mod()
+        except Exception:              # no queue module: the card goes without a queue, as before
+            fq = None
     if fq and qdata:        # the wiki's own questions join the findings, each in the queue of its own zone or wiki (#542)
-        queues = fq.with_asked(queues, fq.asked_questions(qdata, fq.later_hidden(ws, now.date())))
+        # a findings read that failed leaves `queues` None: start from nothing, so the wiki's own questions still show
+        queues = fq.with_asked(queues if queues is not None else {}, fq.asked_questions(qdata, fq.later_hidden(ws, now.date())))
+    elif queues is None:
+        fq = None
     queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
     checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
                        need_lines(ws, history, said_scope, queues, qdata) + (fq.fix_block(fixes, str(ws)) if fq else "")
@@ -7701,7 +7712,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

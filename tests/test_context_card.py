@@ -85,6 +85,28 @@ class TestOneLineForEachPlace(CardCase):
         self.assertNotIn("Personal", self.lines(card))                              # a zone with nothing has no line
         self.assertEqual(["Work", "The Knowledge wiki"], list(self.lines(card)))     # zones first, then the wikis
 
+    def test_a_failing_findings_read_still_shows_the_wikis_questions(self):
+        self.record()
+        with mock.patch.object(status, "finding_queues", return_value=None):
+            html = self.page()
+        card = self.card(html)
+        self.assertIn("question", self.lines(card).get("Work", ""))                # the zone's wiki question line is still there
+        self.assertIn('data-qopen="Zones/Work"', card)
+        self.assertIn('data-scope="Zones/Work"', self.queue(html))
+
+    def test_the_zone_menu_has_its_script_whenever_the_card_has_the_menu(self):
+        for f in list((self.meetings / "questions").glob("*.md")) + [self.knowledge_q]:
+            f.unlink()
+        personal = THREAD.replace("Zones/Work/Acme", "Zones/Personal/Birch")
+        self.record([{"kind": "judgment", "check": "resume", "path": THREAD, "line": RESUME},
+                     {"kind": "judgment", "check": "resume", "path": personal, "line": RESUME.replace(THREAD, personal)}])
+        with mock.patch.object(status, "questions_data", return_value=None):       # the wikis cannot be placed: no Questions data
+            html = self.page()
+        card = self.card(html)
+        self.assertIn('id="nzone"', card)                                           # two places hold findings, and no wiki question
+        self.assertIn("window.GarrickQuestions={open:", html)                       # so the menu's script is on the page
+        self.assertIn("sel.onchange=function()", html)
+
     def test_nothing_anywhere_says_so_once_a_record_exists(self):
         for f in list((self.meetings / "questions").glob("*.md")) + [self.knowledge_q]:
             f.unlink()
@@ -139,10 +161,13 @@ class TestWorkThemIn(CardCase):
         card = self.card(self.page())
         personal = card[card.index('data-scope="Zones/Personal"'):card.index('data-scope="Zones/Work"')]
         work = card[card.index('data-scope="Zones/Work"'):]
-        self.assertIn('data-request="work through the open questions"', work)
+        self.assertIn('data-request="work in the answers in Work"', work)             # the request names its own line's place
         self.assertIn(">Work them in</button>", work)
         self.assertNotIn("Work them in", personal)
         self.assertEqual(1, card.count(">Work them in</button>"))
+        for req in re.findall(r'data-request="(work in the answers[^"]*)"', card):         # never another zone's name on a line
+            self.assertNotIn("Personal", req)
+            self.assertTrue(req.startswith("work in the answers in "), req)
 
 
 class TestLater(CardCase):

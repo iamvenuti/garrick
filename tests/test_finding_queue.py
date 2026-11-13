@@ -209,7 +209,7 @@ class TestPlainWording(unittest.TestCase):
         # no Not now; the look first, then Take it out, then the page's own allowance (#548, #550)
         self.assertEqual([("show-both", "look"), ("take-out", "handoff"), ("keep", "allow")], ids["wall"])
         self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
-                          "meeting-long": ("later",), "hooks-blocked": (), "fix-failed": ("later",), "wall": (),
+                          "meeting-long": ("later",), "hooks-blocked": (), "fix-failed": ("later",), "answers-held": ("later",), "wall": (),
                           "verdict": ("later",), "decision-review": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
@@ -581,7 +581,7 @@ class TestQueueOnThePage(QueueCase):
         self.assertNotIn("st.del(KEY)", show)                                                # an empty queue saves done, it does not delete
         click = js[js.index("data-qclose]')){"):][:60]
         self.assertIn("st.del(KEY)", click)                                                  # and Close or Back to the overview delete it
-        self.assertIn("dlg.addEventListener('close',function(){st.del(KEY)})", js)
+        self.assertIn("dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);", js)           # the close keeps nothing but the request
 
     def test_a_browser_shows_no_dead_answer_and_says_the_app_is_needed(self):
         self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)

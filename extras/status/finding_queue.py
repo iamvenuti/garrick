@@ -81,7 +81,7 @@ AUTOMATIC, QUESTION = "automatic", "question"
 KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
     "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC, "fix-failed": QUESTION,
-    "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION,
+    "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION, "answers-held": QUESTION,
     "other": QUESTION,
 }
 FREE_ONLY = ("other",)    # the check's own text under a plain label, *Something else* alone: no plain wording yet (listed in the release notes)
@@ -155,8 +155,8 @@ ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal
 # The answers the verb `finding` takes (page_action.py), by kind: closed, so an unknown kind or answer is refused.
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
 # The wiki's own kinds (#542) are put off, and nothing else, through the same verb: the question's file stays as it is.
-ASKED_KINDS = ("wiki-question", "verdict", "decision-review")
-VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",)})
+ASKED_KINDS = ("wiki-question", "verdict", "decision-review", "answers-held")
+VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",), "answers-held": ("later",)})
 
 NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
 RESUME_RE = re.compile(r"Resume here block has (\d+) words, over the \d+ of `resume-max-words`")
@@ -706,6 +706,41 @@ def with_asked(queues: Dict[str, List[dict]], asked: Dict[str, List[dict]]) -> D
     return out
 
 
+# ---- answers the night could not work in (#550) ------------------------------------------------------------------
+
+HELD_FILE = ("System", "generated", "status-answers.json")
+# Why a place's answers were left, by the code work_in.py keeps: the plain words. The file holds a code and a day, never a path or a title.
+ANSWERS_HELD = {"cap": "The assistant's limit for scheduled calls was reached.", "assistant": "The assistant could not be reached tonight.",
+                "incomplete": "The assistant did not finish.", "held": "Some of the answers were unclear, so the assistant left them.",
+                "commit": "The wall check refused the change, so nothing was kept."}
+
+
+def held_answers(ws, places: Dict[str, str], waiting: Dict[str, int], hidden: set) -> Dict[str, List[dict]]:
+    """A question for each place whose answers the nightly run could not work in and that still holds some: the reason in plain
+    words, *Work them in with my assistant* and *Not now*. From System/generated/status-answers.json, which work_in.py keeps. A
+    place with no answer waiting has no question, so a stale entry is never shown, and an entry only ever names its own place."""
+    try:
+        data = json.loads(Path(str(ws)).joinpath(*HELD_FILE).read_text(encoding="utf-8"))
+        held = data.get("held") if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return {}
+    out: Dict[str, List[dict]] = {}
+    for scope, entry in sorted((held or {}).items() if isinstance(held, dict) else []):
+        if not isinstance(entry, dict) or entry.get("why") not in ANSWERS_HELD or not waiting.get(scope) or scope not in places:
+            continue
+        key = later_key("answers-held", scope)
+        if key in hidden:
+            continue
+        phrase = "work in the answers in %s" % places[scope]
+        sentence = "Your answers in %s could not be worked in." % (scope.split("/", 1)[1] if scope.startswith("Zones/") else places[scope])
+        q = asked_base("answers-held", "Answers", scope, sentence, "%s Nothing is lost: the answers are kept as you gave them." % ANSWERS_HELD[entry["why"]], "",
+                       [dict(A("work-in", "Work them in with my assistant", "Your assistant works them in and shows you the change.", "handoff"), phrase=phrase),
+                        not_now("answers-held", scope)])
+        q.update(scope=scope, recommended="work-in", free=free_prefix("", {"path": scope}), details="Left on %s." % str(entry.get("day") or "an earlier night"))
+        out[scope] = [q]
+    return out
+
+
 # ---- the page ------------------------------------------------------------------------------------------------------
 
 def E(s) -> str:
@@ -775,15 +810,18 @@ def question_html(q: dict) -> str:
                '<div class="why">%s</div>' % E(q["why"]) if q["why"] else "", opts, web, E(q.get("details_label") or "Details"), E(q["details"])))
 
 
-def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str], today: str = "") -> str:
-    """The queue's dialog: every scope's questions, hidden until the card's line opens that scope."""
+def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str], today: str = "", places: Optional[Dict[str, str]] = None) -> str:
+    """The queue's dialog: every scope's questions, hidden until the card's line opens that scope. `places` says each scope as the
+    request "work in the answers in <place>" names it: closing a queue that took answers sends that request for its own scope (#550)."""
     if not queues:
         return ""
     body = ""
     for scope, qs in queues.items():
-        body += ('<section class="qscope" data-scope="%s" data-name="%s" hidden><div class="prog"><span>%s</span><div class="bar"><i></i></div>'
-                 '<span class="qn"></span></div>%s</section>' % (E(scope), E(names.get(scope, scope)), E(names.get(scope, scope)),
-                                                                  "".join(question_html(q) for q in qs)))
+        phrase = (places or {}).get(scope, "")
+        body += ('<section class="qscope" data-scope="%s" data-name="%s"%s hidden><div class="prog"><span>%s</span><div class="bar"><i></i></div>'
+                 '<span class="qn"></span></div>%s</section>' % (E(scope), E(names.get(scope, scope)),
+                                                                  ' data-work="%s"' % E("work in the answers in %s" % phrase) if phrase else "",
+                                                                  E(names.get(scope, scope)), "".join(question_html(q) for q in qs)))
     body += ('<section class="qdone" hidden><div class="done"><b></b><span class="qsum"></span><div class="qnext">'
              '<button class="act primary" type="button" data-qnext hidden></button> '
              '<button class="act" type="button" data-qclose>Back to the overview</button></div></div></section>')
@@ -827,13 +865,13 @@ if(!dlg)return;
 /* the tally's lines, in the order the summary says them: one row to add for a new way of answering */
 var LINES=[['done','done'],['handed','handed to your assistant'],['opened','opened'],['later','put off to next week'],['skipped','skipped']],UNSAVED=['skipped'];
 function fresh(){var t={};LINES.forEach(function(l){t[l[0]]=0});return t}
-var tally=fresh(),notes={},gone={},skip={},refused={},pend=null,cur=null;
+var tally=fresh(),notes={},gone={},skip={},refused={},pend=null,cur=null,taken={};
 function all(){return[].slice.call(dlg.querySelectorAll('.qscope'))}
 function qs(s){return[].slice.call(s.querySelectorAll('[data-q]'))}
 function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.gk]&&!skip[q.dataset.gk]})}
 /* what a reload keeps: the answers given, never a refusal, a disabled answer or a skip (Skip for now is the dialog's, not the disk's) */
 function kept(){var t={},n={};for(var k in tally)if(UNSAVED.indexOf(k)<0)t[k]=tally[k];for(var g in notes)if(!notes[g].bad)n[g]=notes[g];return{tally:t,notes:n}}
-function save(){if(cur){var k=kept();st.set(KEY,JSON.stringify({scope:cur.dataset.scope,gone:gone,tally:k.tally,notes:k.notes,pend:pend,t:Date.now()}))}}
+function save(){if(cur){var k=kept();st.set(KEY,JSON.stringify({scope:cur.dataset.scope,gone:gone,tally:k.tally,notes:k.notes,pend:pend,taken:taken,t:Date.now()}))}}
 function sum(){var p=[];LINES.forEach(function(l){if(tally[l[0]])p.push(tally[l[0]]+' '+l[1])});return p.join(', ')||'Nothing answered.'}
 function next(){var o=all().filter(function(s){return s!==cur&&pending(s).length});return o[0]||null}
 function out(q,text,bad,detail){var s=q.querySelector('.qsay');s.textContent=text||'';s.classList.toggle('bad',!!bad);
@@ -877,7 +915,7 @@ var done=dlg.querySelector('.qdone');
 if(!left.length){cur.hidden=true;done.hidden=false;done.querySelector('b').textContent=cur.dataset.name+' is done.';
 done.querySelector('.qsum').textContent=sum();var nx=next(),b=done.querySelector('[data-qnext]');b.hidden=!nx;
 if(nx){b.textContent='Go on to '+nx.dataset.name;b.dataset.qnext=nx.dataset.scope}
-if(every.some(function(q){return skip[q.dataset.gk]}))save();else st.set(KEY,JSON.stringify({scope:cur.dataset.scope,done:true,tally:tally,t:Date.now()}));return}
+if(every.some(function(q){return skip[q.dataset.gk]}))save();else st.set(KEY,JSON.stringify({scope:cur.dataset.scope,done:true,tally:tally,taken:taken,t:Date.now()}));return}
 done.hidden=true;cur.hidden=false;var k=n-left.length+1,q=left[0];q.hidden=false;
 cur.querySelector('.qn').textContent=k+' of '+n;cur.querySelector('.bar i').style.width=(k/n*100)+'%';
 var m=notes[q.dataset.gk],f=refused[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detail);if(f)refuse(q,f);lookup(q);bare(q);save();foc(q)}
@@ -893,7 +931,7 @@ cur=s;tally=fresh();gone={};notes={};skip={};refused={};pend=null;if(!dlg.open)d
    answer sent just before the reload is counted from what the new page shows */
 function restore(){var r=null;try{r=JSON.parse(st.get(KEY)||'null')}catch(e){}if(!r||!r.scope||Date.now()-r.t>9e5){st.del(KEY);return}
 var s=all().filter(function(x){return x.dataset.scope===r.scope})[0];if(!s){st.del(KEY);return}
-cur=s;gone=r.gone||{};tally=Object.assign(fresh(),r.tally||{});notes=r.notes||{};skip={};refused={};pend=null;
+cur=s;gone=r.gone||{};tally=Object.assign(fresh(),r.tally||{});notes=r.notes||{};taken=r.taken||{};skip={};refused={};pend=null;
 if(r.done){dlg.showModal();show(true);return}
 if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.gk===r.pend.key});
 if(!here){gone[r.pend.key]=1;tally[r.pend.id==='later'?'later':'done']++}
@@ -933,14 +971,17 @@ var w=e.target.value.trim();if(w){e.preventDefault();if(e.target.dataset.ans)ans
 if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,textarea,select,button'))return;var r=q.querySelector(RECS);if(r){e.preventDefault();r.click()}return}
 if(/^[1-4]$/.test(e.key)){var opts=[].filter.call(q.querySelectorAll('.opt'),function(x){return!x.hidden&&x.getClientRects().length}),o=opts[+e.key-1];if(!o)return;e.preventDefault();
 if(o.classList.contains('other')||o.classList.contains('later')){o.querySelector('input').focus()}else o.click()}});
-dlg.addEventListener('close',function(){st.del(KEY)});
+/* Closing the queue works in the answers it took (#550): one request that names the place, to the default assistant, for each place that took
+   an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none. */
+dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);
+Object.keys(sent).forEach(function(sc){if(!sent[sc])return;var el=all().filter(function(x){return x.dataset.scope===sc})[0];if(el&&el.dataset.work)handoff(el.dataset.work)})});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}
 if(q&&q.verb==='walls-allow'){allowed(q,res);return}
 var ask=q&&/^question-/.test(q.verb||'');
 if(q&&(q.verb==='finding'||ask)&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:ask?x.dataset.wiki===q.wiki&&x.dataset.file===q.file:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
-if(el){if(res&&res.ok){if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
+if(el){if(res&&res.ok){if(q.verb==='question-answer'||q.verb==='question-decide')taken[cur.dataset.scope]=(taken[cur.dataset.scope]||0)+1;if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
 else if(q.answer==='later'||q.verb==='question-later')finish(el,'later');else finish(el,'done')}
 else{var say=(res&&res.say)||'That did not work.';delete notes[el.dataset.gk];
 refused[el.dataset.gk]={say:say,id:(p&&p.id)||q.answer,cant:/^nothing (can move|is old enough)/i.test(say)};refuse(el,refused[el.dataset.gk]);save();foc(el)}}}

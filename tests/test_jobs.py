@@ -1346,7 +1346,7 @@ class NightlyHooksStep(unittest.TestCase):
     def test_the_hooks_step_is_the_first_step_and_is_skipped_without_check_py(self):
         args = nightly.argparse.Namespace(scope=[], digest=False, also=[], moved=[])
         names = [step for step, cmd, why in nightly.steps(self.ws, args)]
-        self.assertEqual(["hooks", "nurture", "effort", "recall", "nightly.local", "status"], names)
+        self.assertEqual(["hooks", "nurture", "answers", "effort", "recall", "nightly.local", "status"], names)
         (self.ws / "System" / "tools" / "check.py").unlink()
         self.assertEqual("no System/tools/check.py", nightly.steps(self.ws, args)[0][2])
 
@@ -1642,11 +1642,26 @@ class NightlyTest(FakeAssistants):
         times = {line.strip(): t for t, line in seen}
         self.assertGreater(times["second"] - times["first"], 0.5)          # printed as it came, not at the end
 
+    def test_the_answers_step_runs_after_nurture_and_before_the_rest_when_the_panel_is_there(self):
+        """#550: the one step that calls an assistant, and only through work_in.py, which agent.run's caps hold."""
+        self.fake(self.status_dir / "questions_panel.py", "panel")
+        work_in = self.fake(self.tmp / "work_in.py", "answers")
+        with mock.patch.object(nightly, "WORK_IN", work_in):
+            self.assertEqual(0, self.run_nightly())
+        self.assertEqual(["nurture", "answers", "effort", "status"], self.ran())
+        self.assertIn("answers --workspace %s" % self.ws.resolve(), self.record.read_text())
+        self.assertEqual({"nurture": 0, "answers": 0}, {k: v["exit"] for k, v in self.steps().items() if k in ("nurture", "answers")})
+        self.assertEqual("no System/status/questions_panel.py", self.steps()["answers"].get("skipped") or "no System/status/questions_panel.py")
+
+    def test_without_the_panel_the_answers_step_is_skipped_and_no_fault(self):
+        self.assertEqual(0, self.run_nightly())
+        self.assertEqual("no System/status/questions_panel.py", self.steps()["answers"]["skipped"])
+
     def test_no_status_page_extra_skips_its_two_steps(self):
         with mock.patch.object(nightly, "STATUS", self.tmp / "none"):
             self.assertEqual(0, self.run_nightly())
         self.assertEqual(["nurture"], self.ran())
-        self.assertEqual({"hooks", "effort", "recall", "nightly.local", "status"},
+        self.assertEqual({"hooks", "answers", "effort", "recall", "nightly.local", "status"},
                          {k for k, s in self.steps().items() if s.get("skipped")})
 
     def test_the_heartbeat_says_which_step_failed(self):

@@ -30,6 +30,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -128,11 +129,22 @@ def changes(repo: Path, rel: str) -> Set[str]:
 
 
 def restore(repo: Path, before: Set[str], rel: str) -> None:
-    """Put back what a call changed: tracked paths as the last commit has them, files it created deleted. A path that was
-    already changed before the call is never touched."""
+    """Put back what a call changed: tracked paths as the last commit has them, files it created moved out. A path that
+    was already changed before the call is never touched. The call is not the only writer while it runs (the user, a
+    mail fetch), so nothing is lost: each path is first copied, as it is now, into the repository's own `.git`
+    (`.git/garrick-put-back/<time>/`), which no commit carries and which stays in that repository's place."""
     paths = sorted(changes(repo, rel) - before)
     if not paths:
         return
+    keep = repo / ".git" / "garrick-put-back" / time.strftime("%Y%m%d-%H%M%S")
+    for p in paths:
+        src = repo / p
+        try:
+            if src.is_file() and not src.is_symlink():
+                (keep / p).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(str(src), str(keep / p))
+        except OSError:
+            return              # a copy that cannot be made: put nothing back, so nothing is lost
     git(repo, "reset", "-q", "--", *paths)
     tracked = set(git(repo, "ls-files", "-z", "--", *paths).stdout.split("\0"))
     back = [p for p in paths if p in tracked]

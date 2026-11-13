@@ -689,13 +689,59 @@ class TestSafety(Case):
             self.assertTrue(os.access(hooks / name, os.X_OK))
         self.assertEqual([], self.plan()["hooks"])
 
-    def test_a_zone_with_no_wall_check_gets_no_merge_hooks(self):
+    ALL_HOOKS = ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite")
+
+    def hooks_of(self, repo):
+        return {n: (Path(repo) / ".git" / "hooks" / n) for n in self.ALL_HOOKS}
+
+    def nested_repo(self):
+        """A repository inside a Work project, as a product's code is."""
+        sys.path.insert(0, str(REPO / "tests"))
+        from fixtures import project_hub, write
+        project = self.root / "Zones" / "Work" / "Cedar Review"
+        write(project / "Cedar Review.md", project_hub("Work", "Cedar Review", "acme"))
+        code = project / "Code"
+        code.mkdir()
+        subprocess.run(["git", "-C", str(code), "init", "-q"], check=True, capture_output=True)
+        return code
+
+    def test_a_zone_with_no_wall_check_gets_all_four_hooks(self):
+        """#550: a missing hook is installed by the update, not asked about."""
         hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
-        for name in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite"):
+        for name in self.ALL_HOOKS:
             (hooks / name).unlink(missing_ok=True)
         self.assertEqual([], self.plan()["hooks"])
+        result = self.apply()
+        self.assertEqual([n for n in self.ALL_HOOKS], [n for n in self.ALL_HOOKS if (hooks / n).is_file() and os.access(hooks / n, os.X_OK)])
+        self.assertEqual([], [p for p, _ in result["skipped"] if "hooks" in p])
+
+    def test_the_update_installs_a_missing_hook_in_every_repository(self):
+        code = self.nested_repo()
+        gone = self.root / "Zones" / "Personal" / ".git" / "hooks" / "post-merge"
+        gone.unlink()
         self.apply()
-        self.assertEqual([], [n for n in ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite") if (hooks / n).exists()])
+        repos = [self.root / "Zones" / "Work", self.root / "Zones" / "Personal", self.root / "Wikis", code]
+        for repo in repos:
+            for name, path in self.hooks_of(repo).items():
+                self.assertTrue(path.is_file() and os.access(path, os.X_OK), "%s %s" % (repo.name, name))
+
+    def test_a_report_only_run_installs_no_hook(self):
+        code = self.nested_repo()
+        gone = self.root / "Zones" / "Personal" / ".git" / "hooks" / "post-merge"
+        gone.unlink()
+        r = subprocess.run([sys.executable, str(INSTALL), "--update", str(self.root)], capture_output=True, text=True, env=self.env,
+                           stdin=subprocess.DEVNULL)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertFalse(gone.exists())
+        self.assertEqual([], [n for n, path in self.hooks_of(code).items() if path.exists()])
+
+    def test_a_hook_of_the_users_own_is_left_alone_by_the_install(self):
+        hook = self.root / "Zones" / "Personal" / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\necho mine\n")
+        result = self.apply()
+        self.assertEqual("#!/bin/sh\necho mine\n", hook.read_text())
+        self.assertTrue(any("hooks" in p for p, _ in result["skipped"]), result["skipped"])
+        self.assertTrue((self.root / "Zones" / "Work" / ".git" / "hooks" / "pre-commit").is_file())
 
     def test_a_merge_hook_that_is_not_garricks_is_left_alone_and_named(self):
         hooks = self.root / "Zones" / "Work" / ".git" / "hooks"

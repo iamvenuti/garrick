@@ -13,7 +13,7 @@ Each answer names the action it takes, from the fixed table in ANSWERS:
     handoff   the finding goes to the assistant at the workspace root, by the route Process the Inbox takes
               (data-request); the page writes nothing. A wall finding's request names the file and the two zones,
               never the repeated words.
-    run       a tool the workspace already has: history.py applies, check.py --install-hooks. Through the page's
+    run       a tool the workspace already has: history.py applies. Through the page's
               verb `finding` (page_action.py), so the commit and its wall check are the page's own.
     preview   what a run would do, said as counts, the full output under Details; nothing is written.
     open      the file, or both files of a wall finding, opened in the note app by the page's own note-open; nothing
@@ -39,7 +39,7 @@ Wall findings have no Not now. No wall answer is recommended (#548): when the qu
 page_action.py's read verb `walls-look` which file the finding is about; Show me both texts reads the shared words of both files into
 the dialog, and drops them when it closes. Only after that does *The words are mine, keep them* show, in the app, and send
 `walls-allow` (#550). Neither verb is for the ask box or a session; a browser has no bridge and shows neither.
-Missing commit hooks has no Not now either: hiding it would leave the walls unchecked on commit, which fails open, as for a wall.
+A missing wall check is not asked at all (#550): the update and the nightly run install it. A hook of the user's own in its place is asked as hooks-blocked, with no Not now: hiding it would leave the walls unchecked on commit, which fails open, as for a wall.
 
 This module only decides and says; it writes nothing but the Not now file, which page_action.py asks it to.
 """
@@ -67,7 +67,8 @@ PLAN_BUDGET = 60          # seconds all the plans of one build may take together
 
 # The kinds with plain wording, in the order a queue asks them (a wall first, always), then the mechanical kinds,
 # which are never asked one by one: the card groups them under Fix them.
-PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-missing")
+PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked")
+HOOKS = "hooks-missing"     # the finding; Garrick installs the hook itself, and only a hook it must not touch is asked as hooks-blocked
 MECHANICAL = "mechanical"
 FREE = "Something else: tell Garrick what to do"
 NO_FREE_FOR = ()          # every question keeps the free-text field, last
@@ -79,7 +80,7 @@ NO_FREE_FOR = ()          # every question keeps the free-text field, last
 AUTOMATIC, QUESTION = "automatic", "question"
 KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
-    "hooks-missing": QUESTION, "mechanical": AUTOMATIC,
+    "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC,
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION,
     "other": QUESTION,
 }
@@ -108,7 +109,8 @@ ANSWERS: Dict[str, List[dict]] = {
     "meeting-long": [A("shorten", "Shorten it", "Your assistant shortens the page. The recording's transcript stays as it is.", "handoff"),
                      A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
                      A("later", "Not now", "Ask again in a week.", "later")],
-    "hooks-missing": [A("install", "Install the wall check", "Adds it to every repository that lacks it.", "run")],
+    # A hook of the user's own stands where the wall check goes: Garrick never replaces it. The assistant adds one line to it (#550).
+    "hooks-blocked": [A("add-check", "Add the wall check to my hook", "Your assistant adds one line to your hook and shows you the change.", "handoff")],
 }
 # What a long note is asked when its plan moves nothing: no Move and no Show me, the handoff first (#539).
 ANSWERS_NO_MOVE: Dict[str, List[dict]] = {
@@ -131,13 +133,14 @@ NO_MOVE = {
     "unknown": ("Garrick could not ask what would move, so it does not offer a move.", "history.py did not answer in time, or is not in this workspace."),
 }
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
-        "meeting-long": "Tidy up", "hooks-missing": "Safety check"}
+        "meeting-long": "Tidy up", "hooks-blocked": "Safety check"}
 WHY = {"note-long": "Long pages are slow to read and slow for the assistant. Older entries can move to a history page, where they stay linked.",
        "resume-long": "A resume point is what you read first when you come back, so a short one is quicker to take in.",
        "todo-long": "A line names one action. What came of it belongs in the thread's notes.",
        "meeting-long": "A meeting note is a short record: who was there, the key points, the actions.",
-       "hooks-missing": "Without it, a commit can carry private material across a wall and nothing warns you."}
-NEVER_LATER = ("wall", "hooks-missing")     # no Not now: hiding either leaves the walls unchecked
+       "hooks-blocked": "Garrick installs this check on its own, but a hook of yours is in the way and Garrick never replaces one of yours. "
+                        "Without the check, a commit can carry private material across a wall and nothing warns you."}
+NEVER_LATER = ("wall", "hooks-blocked")     # no Not now: hiding either leaves the walls unchecked
 ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal", "look", "allow")
 # The answers the verb `finding` takes (page_action.py), by kind: closed, so an unknown kind or answer is refused.
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
@@ -154,6 +157,33 @@ TODO_RE = re.compile(r"(\d+) lines? (?:is|are) longer than \d+ characters")
 # `is a symbolic link into the <Z> zone; ...`, `is a copy, whole, of a file of the <Z> zone; ...`.
 WALL_OTHER_RE = re.compile(r"\b(?:of|into) the ((?:(?!\b(?:of|into) the )[^;\[\]`])+?) zone; (?:that zone|a page with no zone) is walled")
 NOTE_PATH_RE = re.compile(r"(?:Zones|Wikis)/[^\s;,`'\"()\[\]]+?\.md")
+
+
+HOOK_LINE = re.compile(r"no pre-commit wall check|has the pre-commit wall check but not|no wall check before its commits")
+HOOK_NAMES = ("pre-commit", "pre-merge-commit", "post-merge", "post-rewrite")
+HOOK_MARK = "Garrick wall check"
+
+
+def hooks_blocked(ws, path: str) -> bool:
+    """Whether Garrick cannot install the wall check in the repository at `path` on its own: a hook that is not Garrick's, or
+    a link or a folder, stands in a place of the four, or the repository has no .git folder of its own. Read only. Without a
+    workspace the answer is yes, so the finding is asked rather than left out."""
+    if ws is None:
+        return True
+    hooks = Path(str(ws)) / path / ".git" / "hooks"
+    if not (Path(str(ws)) / path / ".git").is_dir():
+        return True
+    for name in HOOK_NAMES:
+        slot = hooks / name
+        if not os.path.lexists(str(slot)):
+            continue
+        try:
+            ours = slot.is_file() and not slot.is_symlink() and HOOK_MARK in slot.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            ours = False
+        if not ours:
+            return True
+    return False
 
 
 def plain_kind(item: dict) -> str:
@@ -174,8 +204,8 @@ def plain_kind(item: dict) -> str:
         return "todo-long"
     if check == "meetings" and MEETING_RE.search(line):
         return "meeting-long"
-    if check in ("zones", "hooks") and "no pre-commit wall check" in line:
-        return "hooks-missing"
+    if check in ("zones", "hooks") and HOOK_LINE.search(line):
+        return HOOKS
     return ""
 
 
@@ -374,7 +404,7 @@ def said(plain: str, item: dict) -> Tuple[str, str]:
     if plain == "meeting-long":
         n = int(MEETING_RE.search(text).group(1))
         return ("A meeting note is longer than usual: %s words." % about(n), WHY[plain])
-    if plain == "hooks-missing":
+    if plain == "hooks-blocked":
         where = place(path)
         return ("%s does not check the walls before a commit." % ("The %s zone" % where if path.startswith("Zones/") else where[:1].upper() + where[1:]),
                 WHY[plain])
@@ -398,6 +428,10 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
     if plain == "todo-long":
         return ("Shorten the long lines of %s to one action each, and move what came of each into its thread's dated entry. "
                 "Show me the change before anything is committed." % path)
+    if plain == "hooks-blocked":
+        return ("The repository %s has a commit hook of mine, so Garrick's wall check could not be installed. Add the line "
+                "python3 <workspace>/System/tools/check.py --staged --walls-only to my hook, keep the rest of it as it is, "
+                "and show me the change before anything is committed." % path)
     if plain == "meeting-long":
         return ("Shorten the meeting page %s to who was there, the key points and the actions. Leave the transcript as it is. "
                 "Show me the change before anything is committed." % path)
@@ -409,7 +443,7 @@ def free_prefix(plain: str, item: dict) -> str:
     path = str(item["path"])
     label = {"wall": "a private-material finding", "note-long": "a note that is too long", "resume-long": "a resume point that is too long",
              "todo-long": "a to-do line that is too long", "meeting-long": "a meeting page that is too long",
-             "hooks-missing": "missing commit hooks"}.get(plain, "a check finding")
+             "hooks-blocked": "a commit hook of yours that is in the way"}.get(plain, "a check finding")
     if plain == "wall":
         return "About %s in %s (%s, from %s): " % (path, place(path), label, wall_other(item) or "another zone")
     return "About %s (%s): " % (path, label)
@@ -431,6 +465,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
     the quick check's own text, where the card has it. `plan` is the note's plan for a long note (Planner.plan), None
     when none was asked for: the kind's own answers, as before."""
     plain = plain_kind(item)
+    if plain == HOOKS:
+        plain = "hooks-blocked"      # only a finding Garrick could not fix itself is ever made a question
     path = str(item["path"])
     details = str(item.get("message") or item.get("line") or "")
     if plain == "wall" and not item.get("listed"):
@@ -521,6 +557,10 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) ->
         plain = plain_kind(item)
         if plain == MECHANICAL:
             continue
+        if plain == HOOKS:
+            if not hooks_blocked(ws, str(item["path"])):
+                continue            # automatic: the update and the nightly run install it; it is never asked
+            plain = "hooks-blocked"
         if plain not in NEVER_LATER and plain in PLAIN_KINDS and later_key(plain, str(item["path"])) in hidden:
             continue
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None

@@ -182,8 +182,7 @@ zone's repository, as the skills would:
                 takes. move-older applies System/tools/history.py to the note and
                 commits it in its zone, as the page commits anything: the
                 wall check runs, and a refusal puts the note back. preview says
-                what it would move, as counts, and writes nothing. install runs
-                check.py --install-hooks. later is Not now: the finding is hidden
+                what it would move, as counts, and writes nothing. later is Not now: the finding is hidden
                 for a week in System/generated/status-later.json, which holds a
                 key for each finding and the day it returns, never a path, and
                 which no check reads. A wall finding has no answer here: it is
@@ -5138,16 +5137,6 @@ def finding_move(ws: Path, rel: str) -> str:
     return "Moved %d older entr%s of %s to history" % (done["entries_moved"], "y" if done["entries_moved"] == 1 else "ies", note.stem)
 
 
-def finding_hooks(ws: Path, rel: str) -> dict:
-    tool = finding_tool(ws, "check.py")
-    r = finding_run(ws, [tool, "--root", ws, "--install-hooks"])
-    said = (r.stdout + r.stderr).strip()
-    if r.returncode:
-        lines = said.splitlines()
-        raise Refused(lines[-1] if lines else "the wall check was not installed")
-    return {"say": "The wall check is installed where it was missing", "detail": said}
-
-
 def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
     table, so an unknown one is refused by name and nothing runs."""
@@ -5165,8 +5154,6 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
         return finding_preview(ws, rel)
     if answer == "move-older":
         return finding_move(ws, rel)
-    if answer == "install":
-        return finding_hooks(ws, rel)
     raise Refused("not an answer Garrick offers for this finding")
 
 

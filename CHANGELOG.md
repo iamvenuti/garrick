@@ -4,6 +4,18 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.65.2] - 2026-11-13
+
+A patch for 0.65.1 with one change to the status page's Checks card. The card now says what needs you and how long it will take. Pressing a line walks you through its findings one at a time, as plain questions with buttons.
+
+**Upgrading.**
+- There is nothing to set. The Checks card's chart, debt figure, refusal counts and full list of findings move to a Findings view, which *All findings* on the card opens.
+
+### Changed
+
+- **The Checks card says what needs you** (#530). Each zone, wiki or System with a wall finding or a judgment call gets one line and a rough time, rounded up to five minutes: *Acme: 2 wall findings and 8 judgment calls, about 15 minutes*. With nothing open, the card says *Nothing needs you.* A word beside the title says whether the debt is rising, steady or falling over the last 14 nights. The card keeps only the date of the last Nurture run. It shows a wall override only while there is one you have not seen yet.
+- **Findings as plain questions** (#535). *Go through them* on a card line opens that line's findings one at a time. Each has a short sentence, a line on why it matters and numbered answers, with the recommended one first. Any question can also take your own words, under *Something else*, and the check's own text waits under *Details*. Keys 1 to 4 pick an answer, Return takes the recommended one and Esc closes. Plain wording covers notes, Resume here blocks, to-do lines and meeting pages that are too long, missing commit hooks and wall findings. Any other kind shows the check's text, with *Something else* as its only answer. An answer that needs judgment or writing goes to your assistant with the finding attached. The rest go through the page's normal save, so the wall check runs on each one. *Garrick can fix N small things on its own* fixes the mechanical ones with one button. *Not now* hides a finding from the card for a week and never changes what the checks report. Wall findings and missing commit hooks have no *Not now*, and nothing on the page lets you keep repeated material: that still takes `check.py allow`, typed in a terminal.
+
 ## [0.65.1] - 2026-11-12
 
 A patch for 0.65.0. It fixes Ask, the New project dialog, the Checks card and Todo ticks. It also adds four things that were asked for by name: Ask is released, *Your work* shows each row's zone and open actions, the dialog can make a party, and a setting lets a long Resume here block be trimmed without asking. While you wait is gone.

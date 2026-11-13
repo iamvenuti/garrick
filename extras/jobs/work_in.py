@@ -125,6 +125,25 @@ def changes(repo: Path, rel: str) -> Set[str]:
     return {entry[3:] for entry in out.split("\0") if len(entry) > 3}
 
 
+def restore(repo: Path, before: Set[str], rel: str) -> None:
+    """Put back what a call changed: tracked paths as the last commit has them, files it created deleted. A path that was
+    already changed before the call is never touched."""
+    paths = sorted(changes(repo, rel) - before)
+    if not paths:
+        return
+    git(repo, "reset", "-q", "--", *paths)
+    tracked = set(git(repo, "ls-files", "-z", "--", *paths).stdout.split("\0"))
+    back = [p for p in paths if p in tracked]
+    if back:
+        git(repo, "checkout", "-q", "--", *back)
+    for p in paths:
+        if p not in tracked:
+            try:
+                (repo / p).unlink()
+            except OSError:
+                pass
+
+
 def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int) -> Optional[str]:
     """Commit what the call wrote, by name, through the repository's hooks. None when done or nothing changed, else why."""
     paths = sorted(changes(repo, rel) - before)
@@ -133,7 +152,7 @@ def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int) -> O
     git(repo, "add", "-A", "--", *paths)
     c = git(repo, "commit", "-q", "-m", "Answers worked in for %s: %d question%s" % (place, worked, "" if worked == 1 else "s"), "--", *paths)
     if c.returncode != 0:
-        git(repo, "reset", "-q", "--", *paths)
+        restore(repo, before, rel)
         return "commit"
     return None
 
@@ -163,12 +182,13 @@ def work_place(ws: Path, scope: str, place: str, n: int, tier: str) -> Optional[
     if repo is None:
         return "assistant"
     before = changes(repo, rel)
-    code, text = agent.run(tier, prompt_for(scope, place), cwd=ws,
-                           allow=ALLOW)
+    code, text = agent.run(tier, prompt_for(scope, place), cwd=ws, allow=ALLOW)
     if code == agent.EXIT_CAP:
+        restore(repo, before, rel)
         return "cap"
     found = counts(text) if code == 0 else None
     if found is None:
+        restore(repo, before, rel)
         return "assistant" if code else "incomplete"
     worked, held = found
     why = commit(repo, before, rel, place, worked)

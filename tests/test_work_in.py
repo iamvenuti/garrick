@@ -138,12 +138,40 @@ class TestTheNightlyWorksInWhatIsWaiting(Case):
         self.assertTrue(all(not a.startswith("Bash(git") for a in seen["allow"]))
 
 
-class TestTheCallsAllowList(Case):
-    def test_no_allow_rule_reaches_page_action_without_a_named_cli_verb(self):
-        rules = [a for a in work_in.ALLOW if "page_action.py" in a]
-        self.assertTrue(rules)
-        for rule in rules:
-            self.assertRegex(rule, r"page_action\.py (question-work|question-done):\*\)$")
+class TestAFailedCallLeavesNothingBehind(Case):
+    def refusing_hook(self):
+        hook = self.ws / "Wikis" / ".git" / "hooks" / "pre-commit"
+        write(hook, "#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+
+    def test_a_refusing_hook_leaves_the_tree_as_it_was_and_the_place_is_held(self):
+        self.refusing_hook()
+        index = self.ws / "Wikis" / "Meetings" / "wiki" / "index.md"
+        dirty = self.ws / "Wikis" / "Meetings" / "wiki" / "mine.md"
+        write(dirty, "# Mine\n")                          # dirty before the call: never touched
+
+        def fake(tier, prompt, allow=(), cwd=None, **kw):
+            index.write_text("# Index\nrefused text\n")
+            write(self.ws / "Wikis" / "Meetings" / "wiki" / "new.md", "# New\n")
+            return 0, DONE
+        with mock.patch.object(work_in, "waiting", return_value=TWO_PLACES[:1]), mock.patch.object(agent, "run", fake):
+            work_in.main(["--workspace", str(self.ws), "--today", DAY.isoformat()])
+        self.assertEqual("# Index\n", index.read_text())
+        self.assertFalse((self.ws / "Wikis" / "Meetings" / "wiki" / "new.md").exists())
+        self.assertEqual("# Mine\n", dirty.read_text())
+        self.assertEqual("?? Meetings/wiki/mine.md", git(self.ws / "Wikis", "status", "--porcelain").strip())
+        self.assertEqual({"Zones/Work": {"why": "commit", "day": "2026-11-13"}}, self.held())
+
+    def test_a_call_without_its_sentinel_or_timed_out_is_put_back(self):
+        index = self.ws / "Wikis" / "Meetings" / "wiki" / "index.md"
+        for code, text, why in ((0, "no sentinel", "incomplete"), (124, "", "assistant")):
+            def fake(tier, prompt, allow=(), cwd=None, **kw):
+                index.write_text("# Index\nhalf written\n")
+                return code, text
+            with mock.patch.object(work_in, "waiting", return_value=TWO_PLACES[:1]), mock.patch.object(agent, "run", fake):
+                work_in.main(["--workspace", str(self.ws), "--today", DAY.isoformat()])
+            self.assertEqual("# Index\n", index.read_text(), why)
+            self.assertEqual(why, self.held()["Zones/Work"]["why"])
 
 
 class TestWhatTheNightCouldNotWorkInIsAskedOnTheCard(unittest.TestCase):

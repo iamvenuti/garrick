@@ -4242,6 +4242,18 @@ def set_head(name: str, key: str, lede: str = "") -> str:
     return '<h3>%s%s</h3>%s' % (E(name), help_button(name, key), '<p class="setlede">%s</p>' % lede if lede else "")
 
 
+def allowed_settings(rows: List[dict]) -> str:
+    """Settings › Allowed by you (#542): what the user let through the wall check, once, each with Remove, as the Context tab
+    listed it; "" with none. Remove is the page's `walls-unallow`; nothing here allows anything."""
+    body = questions_mod().allowed_rows(rows)
+    if not body:
+        return ""
+    return ('<section class="setsec" id="allowed-settings">%s%s<ul>%s</ul></section>'
+            % (set_head("Allowed by you", "allowed", "A finding you chose to let through, once, for the file as it was."),
+               help_text("allowed", "Editing the file ends the allowance. Remove puts the refusal back at the next commit. "
+                                    "Only <code>check.py allow</code>, typed in a terminal, adds one."), body))
+
+
 def menu_settings() -> str:
     """Settings › Menu bar, shown in Garrick.app
     only: the icon or a panel at a screen edge, opening at login, the
@@ -4523,7 +4535,7 @@ VIEW = ('<div class="setfoot"><div class="setrule"><div class="hiddencards" id="
 # brings a section into view, and the one being read is marked as the column
 # scrolls (JS). Each section is filed under a group's key in settings().
 SET_GROUPS = (("look", "How Garrick looks and opens things"), ("tell", "What it tells you"),
-              ("keep", "How it keeps older material"), ("about", "About Garrick"))
+              ("keep", "How it keeps older material"), ("walls", "Walls"), ("about", "About Garrick"))
 SET_SECTION = re.compile(r'<section class="setsec[^"]*" id="([^"]+)"[^>]*><h3>([^<]+)<')
 
 
@@ -4545,7 +4557,8 @@ def settings_nav(groups: List[Tuple[str, str, List[str]]]) -> str:
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
              styles: Optional[Dict[str, dict]] = None, graph: bool = False,
              link: Optional["Links"] = None,
-             kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None) -> str:
+             kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None,
+             allowed: Optional[List[dict]] = None) -> str:
     """The Settings dialog: which apps to open
     projects in, whether Explore follows the zone in view (with the graph),
     each zone's colour and icon, the colour of each kind of note Explore
@@ -4561,6 +4574,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
              "tell": [notify_settings(ws, CMUXLIB.is_file())],
              "keep": [memory_settings(ws, link)],
+             "walls": [allowed_settings(allowed or [])],
              "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
     groups = [(key, title, [h for h in filed[key] if h]) for key, title in SET_GROUPS]
     main = "".join('<div class="setgroup" role="group" aria-labelledby="sg-%s"><p class="setgrp" id="sg-%s">%s</p>%s</div>'
@@ -7603,7 +7617,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
-               questions_mod().tab_button() if qdata or allowed else ""))
+               questions_mod().tab_button() if qdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
     if qdata:
@@ -7632,7 +7646,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     guide_body, guide_pages = guide_tab(ws)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s</main>%s'
             % (overview, section("todo", True, todo_tab + slots("todo")) if todo_tab else "", status_tab,
-               section("questions", True, questions_mod().tab((questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "", allowed)) if qdata or allowed else "",
+               section("questions", True, questions_mod().tab((questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "")) if qdata else "",
                section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
@@ -7650,7 +7664,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS, allowed) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

@@ -417,9 +417,9 @@ def _href(link: Callable, path: Path) -> str:
     return link.attrs(path) if hasattr(link, "attrs") else 'href="%s"' % html.escape(str(link(path)), quote=True)
 
 
-def allowed_body(data: dict) -> str:
-    """Allowed by you: each allowance with its file, rule, date and Remove, or nothing where there is none."""
-    rows = data.get("allowed") or []
+def allowed_rows(rows: List[dict]) -> str:
+    """Allowed by you, for Settings (#542): each allowance with its file, rule, date and Remove, as the Context tab listed it;
+    "" where there is none."""
     if not rows:
         return ""
     state = {"same": "", "changed": "The file has changed since, so this no longer allows anything.", "gone": "The file is gone."}
@@ -430,15 +430,12 @@ def allowed_body(data: dict) -> str:
                      '<button type="button" class="act" data-unallow="1">Remove</button></li>' % (
                          _e(r["id"]), _e(r["path"]), name, _e(r["rule"]), _e(r["date"]), _e(r["by"]),
                          (" · " + state[r["state"]]) if state[r["state"]] else ""))
-    return ('<section class="cxa" id="cxa"><h3>Allowed by you</h3><p class="muted">A finding you chose to let through, once, for the file as it was. '
-            'Editing the file ends the allowance. Remove puts the refusal back.</p><ul>%s</ul></section>' % "".join(items))
+    return "".join(items)
 
 
-def tab(findings: str, allowed: Optional[List[dict]]) -> str:
-    """The Context tab's inside: what the tab showed (the questions panel and the cards under it, or nothing), and
-    under it Allowed by you. One view: there is no switch."""
-    body = findings + allowed_body({"allowed": allowed or []})
-    return '<div class="cx" id="cx">%s</div>' % body if body else ""
+def tab(findings: str) -> str:
+    """The Context tab's inside: the questions panel and the cards under it, or nothing."""
+    return '<div class="cx" id="cx">%s</div>' % findings if findings else ""
 
 
 def counts_of(data: dict) -> dict:
@@ -671,13 +668,12 @@ all()})();
 
 
 CX_CSS = r"""
-.cxa{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:10px 14px;margin:14px 0 0}.cxa h3{margin:0 0 4px;font-size:15px}
-.cxa ul{list-style:none;margin:8px 0 0;padding:0}.cxa-row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+#allowed-settings ul{list-style:none;margin:8px 0 0;padding:0}.cxa-row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
 .cxa-row .muted{grid-column:1}.cxa-row .act{grid-column:2;grid-row:1/3;align-self:center}
 """
 
 CX_JS = r"""
-(function(){var cx=document.getElementById('cx');if(!cx)return;
+(function(){var cx=document.getElementById('allowed-settings');if(!cx)return;
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function say(s){if(window.GarrickSay)GarrickSay(s)}
 /* Allowed by you: Remove puts the refusal back, through the page's walls-unallow */

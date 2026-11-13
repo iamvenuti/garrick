@@ -651,7 +651,7 @@ class TestContextTab(StatusCase):
 
 
 class TestAllowedByYou(StatusCase):
-    """Allowed by you: the ledger of System/walls-allowed.json, read, shown with Remove, and nothing more."""
+    """Allowed by you: the ledger of System/walls-allowed.json, read, shown in Settings with Remove (#542), and nothing more."""
 
     FILE = "Zones/Work/Acme Review/Memo.md"
 
@@ -680,16 +680,18 @@ class TestAllowedByYou(StatusCase):
         return row
 
     def section(self, html):
-        start = html.index('<section class="cxa" id="cxa">')
+        start = html.index('<section class="setsec" id="allowed-settings">')
         return html[start:html.index("</section>", start)]
 
     def test_each_allowance_shows_its_file_rule_date_and_remove(self):
         self.ledger(self.entry())
         html = self.page()
-        self.assertIn('id="cx"', html)                                                # in the one view of the Context tab
-        self.assertIn('id="cxa"', html)
+        self.assertGreater(html.index('id="allowed-settings"'), html.index('<dialog id="settings"'))       # in Settings, under the walls
+        self.assertIn('<p class="setgrp" id="sg-walls">Walls</p>', html)
+        tab = html[html.index('id="tab-questions"'):] if 'id="tab-questions"' in html else ""
+        self.assertNotIn("Allowed by you", tab[:tab.find("</section>")] if tab else "")                # no longer on the tab
         box = self.section(html)
-        self.assertIn("<h3>Allowed by you</h3>", box)
+        self.assertIn("<h3>Allowed by you<", box)
         self.assertIn(">Zones/Work/Acme Review/Memo.md</a>", box)                     # a link that opens the file
         self.assertIn("name · allowed 2026-11-10 by terminal", box)
         self.assertIn('data-id="3f9a1c2b7d" data-path="Zones/Work/Acme Review/Memo.md"', box)
@@ -698,7 +700,7 @@ class TestAllowedByYou(StatusCase):
 
     def test_only_the_committed_ledger_is_listed(self):
         self.ledger(self.entry(), commit=True)
-        self.assertIn('id="cxa"', self.page())
+        self.assertIn('id="allowed-settings"', self.page())
         self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Other.md", id="bbbbbbbbbb"), commit=False)   # on disk only
         box = self.section(self.page())
         self.assertIn("Memo.md", box)
@@ -710,18 +712,18 @@ class TestAllowedByYou(StatusCase):
 
     def test_a_ledger_never_committed_or_no_repository_lists_nothing(self):
         self.ledger(self.entry(), commit=False)                                       # no repository at all
-        self.assertNotIn('id="cxa"', self.page())
+        self.assertNotIn('id="allowed-settings"', self.page())
         fixtures.git_init(self.root)
         fixtures.commit_all(self.root, "start")                                       # the ledger is committed here, then deleted and committed again
         (self.root / "System" / "walls-allowed.json").unlink()
         fixtures.commit_all(self.root, "gone")
-        self.assertNotIn('id="cxa"', self.page())
+        self.assertNotIn('id="allowed-settings"', self.page())
 
     def test_the_section_offers_no_way_to_allow(self):
         self.ledger(self.entry())
         box = self.section(self.page())
         self.assertNotIn("walls-allow", box)
-        self.assertEqual(["Remove"], re.findall(r"<button[^>]*>([^<]*)</button>", box))
+        self.assertEqual(["?", "Remove"], re.findall(r"<button[^>]*>([^<]*)</button>", box))      # the explanation's "?" and Remove
         self.assertNotIn("walls-allow'", status.questions_mod().CX_JS)
         self.assertNotIn("verb:'walls-allow", status.questions_mod().CX_JS)
 
@@ -733,13 +735,13 @@ class TestAllowedByYou(StatusCase):
         self.assertIn("The file is gone.", box)
 
     def test_nothing_is_shown_without_a_readable_ledger(self):
-        self.assertNotIn('id="cxa"', self.page())                                      # none at all: the Findings view is as it was
+        self.assertNotIn('id="allowed-settings"', self.page())                                      # none at all: no section
         (self.root / "System" / "walls-allowed.json").write_text("{not json")
-        self.assertNotIn('id="cxa"', self.page())
+        self.assertNotIn('id="allowed-settings"', self.page())
         self.ledger(self.entry(), version=2)                                          # a version this page does not know
-        self.assertNotIn('id="cxa"', self.page())
+        self.assertNotIn('id="allowed-settings"', self.page())
         self.ledger(self.entry(path="../outside.md"), self.entry(path="/etc/hosts"), {"path": self.FILE})
-        self.assertNotIn('id="cxa"', self.page())                                      # an entry that does not read is no allowance
+        self.assertNotIn('id="allowed-settings"', self.page())                                      # an entry that does not read is no allowance
 
     def test_a_names_free_row_and_escaped_text(self):
         self.ledger(self.entry(rule="<b>x</b>", by="<i>me</i>"))
@@ -759,7 +761,7 @@ class TestAllowedByYou(StatusCase):
         const cx = { querySelectorAll: s => s === ".cxa-row" ? [row] : [], addEventListener: (t, f) => handlers.push(f) };
         const sent = [], said = [];
         const window = { webkit: { messageHandlers: { garrick: { postMessage: m => sent.push(m) } } }, GarrickSay: s => said.push(s) };
-        const ctx = { JSON, Object, window, GarrickSay: window.GarrickSay, document: { getElementById: id => id === "cx" ? cx : null } };
+        const ctx = { JSON, Object, window, GarrickSay: window.GarrickSay, document: { getElementById: id => id === "allowed-settings" ? cx : null } };
         vm.createContext(ctx);
         vm.runInContext(js, ctx);
         handlers.forEach(h => h({ target: { closest: s => s === "[data-unallow]" ? button : null } }));
@@ -1698,7 +1700,7 @@ class TestSettingsLayout(StatusCase):
     for, and the one being read marked."""
 
     ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
-             "notify-settings", "memory-settings", "about-settings", "preview-settings"]
+             "notify-settings", "memory-settings", "allowed-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
         html = self.page(**kw)
@@ -1718,8 +1720,9 @@ class TestSettingsLayout(StatusCase):
         heads = dict(re.findall(r'<section class="setsec[^"]*" id="([a-z-]+)"[^>]*><h3>([^<]+)<', dialog))
         self.assertEqual(heads, dict(re.findall(r'data-setgo="([a-z-]+)">([^<]+)</a>', nav)))   # named as its heading
         self.assertEqual("Manage older material", heads["memory-settings"])
-        self.assertEqual([t for _, t in status.SET_GROUPS], re.findall(r'<p class="setnavh" id="sn-[a-z]+">([^<]+)</p>', nav))
-        self.assertEqual([t for _, t in status.SET_GROUPS], re.findall(r'<p class="setgrp" id="sg-[a-z]+">([^<]+)</p>', dialog))
+        shown = [t for k, t in status.SET_GROUPS if k != "walls"]                   # Walls has a section only once something is allowed (#542)
+        self.assertEqual(shown, re.findall(r'<p class="setnavh" id="sn-[a-z]+">([^<]+)</p>', nav))
+        self.assertEqual(shown, re.findall(r'<p class="setgrp" id="sg-[a-z]+">([^<]+)</p>', dialog))
         main = dialog[dialog.index('<div class="setmain" id="settings-main">'):]
         self.assertLess(main.index('id="notify-settings"'), main.index('id="memory-settings"'))
         self.assertLess(main.index('id="preview-settings"'), main.index('<div class="setfoot">'))   # Reset view at the end

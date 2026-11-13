@@ -4734,15 +4734,20 @@ def finding_path(ws: Path, req: dict) -> tuple:
 
 
 def finding_note(ws: Path, rel: str) -> tuple:
-    """(the zone, the note) for a hub or a thread note of a zone."""
+    """(the zone, the note) for a hub or a thread note of a zone: `Zones/<Zone>/<Project>/<Project>.md` or
+    `Zones/<Zone>/<Project>/Threads/<Thread>/<Thread>.md`, the only notes a "too long" finding is about."""
     parts = rel.split("/")
     if len(parts) < 3 or parts[0] != "Zones":
         raise Refused("only a note in a zone can be answered here")
+    stem = parts[-1][:-3] if parts[-1].endswith(".md") else ""
+    if not ((len(parts) == 4 and stem == parts[2]) or (len(parts) == 6 and parts[3] == "Threads" and stem == parts[4])):
+        raise Refused("that is not a project page or a thread note")
     zone = zone_dir(ws, parts[1])
     return zone, live_note(zone, "/".join(parts[2:]))
 
 
 def finding_preview(ws: Path, rel: str) -> dict:
+    finding_note(ws, rel)                 # a hub or a thread note of a zone, as Move older entries asks of it
     tool = finding_tool(ws, "history.py")
     r = finding_run(ws, [tool, "--root", ws, "dry-run", rel, "--json"])
     try:

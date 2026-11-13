@@ -4245,6 +4245,10 @@ class TestChecksSaysWhatNeedsYou(StatusCase):
         total = len(standing) if total is None else total
         write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "standing": standing, "debt": {
             "total": total, "kinds": {}, "scopes": scopes, "whole": True, "threshold": 40}}))
+        # the quick check lists what the record holds (the queue drops a finding the check no longer lists)
+        listed = [{"check": f.get("check", ""), "severity": "warning", "path": f["path"], "message": "x"} for f in standing if f["kind"] != "wall"]
+        (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
+            "errors": 0, "warnings": len(listed), "findings": listed})
 
     def card(self, html):
         start = html.index('<details class="card" id="checks"')

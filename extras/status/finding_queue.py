@@ -23,6 +23,7 @@ Each answer names the action it takes, from the fixed table in ANSWERS:
               and no Nurture record reads it, so what the checks report is the same with and without it.
 
 A wall finding has no Not now, and no answer that keeps the material: the recommended answer is to take it out.
+Missing commit hooks has no Not now either: hiding it would leave the walls unchecked on commit, which fails open, as for a wall.
 
 This module only decides and says; it writes nothing but the Not now file, which page_action.py asks it to.
 """
@@ -69,8 +70,7 @@ ANSWERS: Dict[str, List[dict]] = {
     "meeting-long": [A("shorten", "Shorten it", "Your assistant shortens the page. The recording's transcript stays as it is.", "handoff"),
                      A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
                      A("later", "Not now", "Ask again in a week.", "later")],
-    "hooks-missing": [A("install", "Install the wall check", "Adds it to every repository that lacks it.", "run"),
-                      A("later", "Not now", "Ask again in a week.", "later")],
+    "hooks-missing": [A("install", "Install the wall check", "Adds it to every repository that lacks it.", "run")],
 }
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
         "meeting-long": "Tidy up", "hooks-missing": "Safety check"}
@@ -79,6 +79,7 @@ WHY = {"note-long": "Long pages are slow to read and slow for the assistant. Old
        "todo-long": "A line names one action. What came of it belongs in the thread's notes.",
        "meeting-long": "A meeting note is a short record: who was there, the key points, the actions.",
        "hooks-missing": "Without it, a commit can carry private material across a wall and nothing warns you."}
+NEVER_LATER = ("wall", "hooks-missing")     # no Not now: hiding either leaves the walls unchecked
 ACTIONS = ("handoff", "run", "preview", "open", "later")
 # The answers the verb `finding` takes (page_action.py), by kind: closed, so an unknown kind or answer is refused.
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
@@ -87,7 +88,10 @@ NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
 RESUME_RE = re.compile(r"Resume here block has (\d+) words, over the \d+ of `resume-max-words`")
 MEETING_RE = re.compile(r"body is (\d+) words, over the \d+ of `meeting-max-words`")
 TODO_RE = re.compile(r"(\d+) lines? (?:is|are) longer than \d+ characters")
-WALL_OTHER_RE = re.compile(r"points into the (.+?) zone, a walled zone")
+# The zone a wall finding names, from check.py's own texts: `links [[...]], a note of the <Z> zone; that zone is walled ...`,
+# `repeats wording from ..., a meeting of the <Z> zone; that zone is walled ...`, `... in project P of the <Z> zone; ...`,
+# `is a symbolic link into the <Z> zone; ...`, `is a copy, whole, of a file of the <Z> zone; ...`.
+WALL_OTHER_RE = re.compile(r"\b(?:of|into) the ((?:(?!\b(?:of|into) the )[^;\[\]`])+?) zone; (?:that zone|a page with no zone) is walled")
 NOTE_PATH_RE = re.compile(r"(?:Zones|Wikis)/[^\s;,`'\"()\[\]]+?\.md")
 
 
@@ -199,8 +203,12 @@ def note_name(path: str) -> Tuple[str, bool]:
 
 
 def wall_other(item: dict) -> str:
-    m = WALL_OTHER_RE.search(str(item.get("line") or ""))
-    return m.group(1) if m else ""
+    """The other zone of a wall finding, from the quick check's text or Nurture's line; "" when neither names it."""
+    for text in (item.get("message"), item.get("line")):
+        m = WALL_OTHER_RE.search(str(text or ""))
+        if m:
+            return m.group(1)
+    return ""
 
 
 def said(plain: str, item: dict) -> Tuple[str, str]:
@@ -285,7 +293,7 @@ def question(item: dict, scope: str) -> dict:
     if plain == "wall" and not item.get("listed"):
         return unlisted_wall(item, scope)
     q = {"id": plain or "other", "scope": scope, "path": path, "key": later_key(plain or "other", path), "details": details,
-         "recommended": ""}
+         "recommended": "", "other": wall_other(item) if plain == "wall" else ""}
     if plain not in PLAIN_KINDS:
         q.update(tag=str(item.get("title") or "Check finding"), sentence=re.sub(r"^%s: " % re.escape(path), "", details), why="", answers=[],
                  free=free_prefix("", item))
@@ -318,7 +326,7 @@ def unlisted_wall(item: dict, scope: str) -> dict:
     Nothing is opened, since there is no file to name."""
     place_ = place(str(item["path"]))
     ask = str(item.get("ask") or "nurture the context")
-    return {"id": "wall", "scope": scope, "path": "", "key": later_key("wall", str(item["path"])),
+    return {"id": "wall", "scope": scope, "path": "", "key": later_key("wall", str(item["path"])), "other": "",
             "tag": TAGS["wall"], "sentence": "A file in %s points into private material from another zone." % place_,
             "why": "Another zone stays out of %s. The last Nurture run found it; this page's quick check does not list it." % place_,
             "details": "From the last Nurture run. It is a count here, not a file, until the check that found it is run.",
@@ -328,19 +336,24 @@ def unlisted_wall(item: dict, scope: str) -> dict:
 
 def forecast_questions(items: List[dict], hidden: set) -> Dict[str, List[dict]]:
     """The queue of each scope, from the forecast's findings: the list the scope's line on the card counts, less
-    what Not now has put off (a wall finding is never put off, whatever a file says). The mechanical ones are not
+    what Not now has put off (a wall finding and missing commit hooks are never put off, whatever a file says). The mechanical ones are not
     asked: the card fixes them together."""
     out: Dict[str, List[dict]] = {}
     for item in items:
         plain = plain_kind(item)
         if plain == MECHANICAL:
             continue
-        if plain != "wall" and plain in PLAIN_KINDS and later_key(plain, str(item["path"])) in hidden:
+        if plain not in NEVER_LATER and plain in PLAIN_KINDS and later_key(plain, str(item["path"])) in hidden:
             continue
         out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"])))
     rank = {k: i for i, k in enumerate(PLAIN_KINDS)}
     for qs in out.values():
         qs.sort(key=lambda q: (rank.get(q["id"], len(rank)), q["path"]))
+        taken: Dict[str, int] = {}
+        for q in qs:                      # the page's own key for a question: two with one kind and path stay two
+            base = q["key"] + ("-" + hashlib.sha1(q["other"].encode("utf-8", "surrogatepass")).hexdigest()[:6] if q.get("other") else "")
+            taken[base] = taken.get(base, 0) + 1
+            q["gk"] = base if taken[base] == 1 else "%s.%d" % (base, taken[base])
     return out
 
 
@@ -365,13 +378,15 @@ def question_html(q: dict) -> str:
         opts += ('<button class="opt%s%s" type="button" data-fa="%s"><span class="n">%d</span><span>%s<small>%s%s</small></span></button>'
                  % (" rec" if a["id"] == rec else "", " tacts" if hosted else "", E(json.dumps(data, sort_keys=True)), i, E(a["label"]),
                     '<b class="recd">Recommended.</b> ' if a["id"] == rec else "", E(a["does"])))
+    web = ('<p class="hint qweb">The other answers need the Garrick app. Here you can send your own words to your assistant.</p>'
+           if q["answers"] and all(a["action"] != "handoff" for a in q["answers"]) else "")
     opts += ('<label class="opt other"><span class="n">%d</span><input type="text" maxlength="500" autocomplete="off" '
              'data-free="%s" placeholder="%s" aria-label="%s"></label>' % (len(q["answers"]) + 1, E(q["free"]), E(FREE), E(FREE)))
-    return ('<div class="q" data-q data-key="%s" data-kind="%s" data-path="%s" hidden><span class="tag%s">%s</span><p class="qs">%s</p>%s'
-            '<div class="opts">%s</div><p class="hint qsay" role="status"></p>'
+    return ('<div class="q" data-q data-key="%s" data-kind="%s" data-path="%s" data-gk="%s" hidden><span class="tag%s">%s</span><p class="qs">%s</p>%s'
+            '<div class="opts">%s</div>%s<p class="hint qsay" role="status"></p>'
             '<details class="qdet"><summary>Details</summary><code>%s</code><pre class="qout" hidden></pre></details></div>'
-            % (q["key"], E(q["id"]), E(q["path"]), " private" if q["id"] == "wall" else "", E(q["tag"]), E(q["sentence"]),
-               '<div class="why">%s</div>' % E(q["why"]) if q["why"] else "", opts, E(q["details"])))
+            % (q["key"], E(q["id"]), E(q["path"]), E(q.get("gk") or q["key"]), " private" if q["id"] == "wall" else "", E(q["tag"]), E(q["sentence"]),
+               '<div class="why">%s</div>' % E(q["why"]) if q["why"] else "", opts, web, E(q["details"])))
 
 
 def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str]) -> str:
@@ -423,6 +438,7 @@ dialog.queue{width:min(620px,calc(100vw - 32px))}
 .queue .qsay{margin:8px 0 0}.queue .qsay.bad{color:var(--critical)}.queue .qdet{margin-top:10px;font-size:13px;color:var(--muted)}
 .queue .qdet code,.queue .qdet pre{display:block;white-space:pre-wrap;margin:6px 0 0;font-size:12px;background:var(--raise);padding:8px;border-radius:6px}
 .queue .done{text-align:center;padding:24px 8px}.queue .done b{display:block;font-size:17px;margin-bottom:4px}.queue .qnext{margin-top:14px}
+.nohost .queue .opt.tacts{display:none}.queue .qweb{display:none;margin:8px 0 0}.nohost .queue .qweb{display:block}
 .queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
 .auto{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--wash);border-radius:10px;padding:10px 12px;margin:10px 0 0;font-size:13.5px}
 """
@@ -440,21 +456,24 @@ if(!dlg)return;
 var tally={done:0,handed:0,opened:0,later:0},notes={},gone={},pend=null,cur=null;
 function all(){return[].slice.call(dlg.querySelectorAll('.qscope'))}
 function qs(s){return[].slice.call(s.querySelectorAll('[data-q]'))}
-function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.key]})}
+function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.gk]})}
 function save(){if(cur)st.set(KEY,JSON.stringify({scope:cur.dataset.scope,gone:gone,tally:tally,notes:notes,pend:pend,t:Date.now()}))}
 function sum(){var p=[];if(tally.done)p.push(tally.done+' done');if(tally.handed)p.push(tally.handed+' handed to your assistant');
 if(tally.opened)p.push(tally.opened+' opened');if(tally.later)p.push(tally.later+' put off to next week');return p.join(', ')||'Nothing answered.'}
 function next(){var o=all().filter(function(s){return s!==cur&&pending(s).length});return o[0]||null}
 function out(q,text,bad,detail){var s=q.querySelector('.qsay');s.textContent=text||'';s.classList.toggle('bad',!!bad);
 var p=q.querySelector('.qout');if(detail){p.textContent=detail;p.hidden=false}else p.hidden=true}
-function show(){if(!cur)return;var every=qs(cur),left=pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
+function foc(q){var c=[q.querySelector('.opt.rec'),q.querySelector('button.opt'),q.querySelector('.opt.other input')];
+for(var i=0;i<c.length;i++)if(c[i]&&c[i].getClientRects().length){c[i].focus();return}}
+function show(done0){if(!cur)return;var every=qs(cur),left=done0?[]:pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
 var done=dlg.querySelector('.qdone');
 if(!left.length){cur.hidden=true;done.hidden=false;done.querySelector('b').textContent=cur.dataset.name+' is done.';
 done.querySelector('.qsum').textContent=sum();var nx=next(),b=done.querySelector('[data-qnext]');b.hidden=!nx;
-if(nx){b.textContent='Go on to '+nx.dataset.name;b.dataset.qnext=nx.dataset.scope}st.del(KEY);return}
+if(nx){b.textContent='Go on to '+nx.dataset.name;b.dataset.qnext=nx.dataset.scope}
+st.set(KEY,JSON.stringify({scope:cur.dataset.scope,done:true,tally:tally,t:Date.now()}));return}
 done.hidden=true;cur.hidden=false;var k=n-left.length+1,q=left[0];q.hidden=false;
 cur.querySelector('.qn').textContent=k+' of '+n;cur.querySelector('.bar i').style.width=(k/n*100)+'%';
-var m=notes[q.dataset.key];if(m)out(q,m.say,m.bad,m.detail);save()}
+var m=notes[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detail);save();foc(q)}
 function open(scope){var s=all().filter(function(x){return x.dataset.scope===scope})[0];if(!s)return;all().forEach(function(x){x.hidden=true});
 cur=s;tally={done:0,handed:0,opened:0,later:0};gone={};notes={};pend=null;if(!dlg.open)dlg.showModal();show()}
 /* The app rebuilds the page after an answer that changed something and reloads it: the queue comes back where it was, and an
@@ -462,11 +481,12 @@ cur=s;tally={done:0,handed:0,opened:0,later:0};gone={};notes={};pend=null;if(!dl
 function restore(){var r=null;try{r=JSON.parse(st.get(KEY)||'null')}catch(e){}if(!r||!r.scope||Date.now()-r.t>9e5){st.del(KEY);return}
 var s=all().filter(function(x){return x.dataset.scope===r.scope})[0];if(!s){st.del(KEY);return}
 cur=s;gone=r.gone||{};tally=r.tally||tally;notes=r.notes||{};pend=null;
-if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.key===r.pend.key});
+if(r.done){dlg.showModal();show(true);return}
+if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.gk===r.pend.key});
 if(!here){gone[r.pend.key]=1;tally[r.pend.id==='later'?'later':'done']++}
 else notes[r.pend.key]={say:'It is still open. The change was not made, or was refused.',bad:true}}
 dlg.showModal();show()}
-function finish(q,kind){gone[q.dataset.key]=1;tally[kind]++;pend=null;show()}
+function finish(q,kind){gone[q.dataset.gk]=1;tally[kind]++;pend=null;show()}
 function handoff(phrase){var b=document.createElement('button');b.type='button';b.setAttribute('data-request',phrase);
 b.setAttribute('data-folder',dlg.dataset.folder||'');b.hidden=true;dlg.appendChild(b);b.click();b.remove()}
 document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target:null;if(!t)return;
@@ -477,20 +497,20 @@ var b=t.closest('#queue button[data-fa]');if(!b)return;var q=b.closest('[data-q]
 if(d.a==='handoff'){handoff(d.phrase);finish(q,'handed');return}
 if(!host)return;
 if(d.a==='open'){d.reqs.forEach(function(r){host.postMessage({act:r})});finish(q,'opened');return}
-pend={key:q.dataset.key,id:d.id};save();host.postMessage({act:d.req})});
+pend={key:q.dataset.gk,id:d.id};save();host.postMessage({act:d.req})});
 /* keys: 1 to 4 answer, the last number is the free-text field, Return takes the recommended one, Esc closes (the dialog's own) */
 dlg.addEventListener('keydown',function(e){if(e.metaKey||e.ctrlKey||e.altKey)return;var q=cur&&pending(cur)[0];if(!q||q.hidden)return;
 var typing=e.target&&e.target.tagName==='INPUT';
-if(typing){if(e.key==='Enter'){var w=e.target.value.trim();if(w){e.preventDefault();handoff(e.target.dataset.free+w);finish(q,'handed')}}return}
-if(e.key==='Enter'){var r=q.querySelector('.opt.rec');if(r&&!(e.target.closest&&e.target.closest('button'))){e.preventDefault();r.click()}return}
+if(typing){if(e.key==='Enter'){if(e.isComposing||e.keyCode===229)return;var w=e.target.value.trim();if(w){e.preventDefault();handoff(e.target.dataset.free+w);finish(q,'handed')}}return}
+if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,textarea,select,button'))return;var r=q.querySelector('.opt.rec');if(r){e.preventDefault();r.click()}return}
 if(/^[1-4]$/.test(e.key)){var opts=q.querySelectorAll('.opt'),o=opts[+e.key-1];if(!o)return;e.preventDefault();
 if(o.classList.contains('other')){o.querySelector('input').focus()}else o.click()}});
 dlg.addEventListener('close',function(){st.del(KEY)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
-if(q&&q.verb==='finding'&&cur){var el=qs(cur).filter(function(x){return x.dataset.kind===q.kind&&x.dataset.path===q.path})[0],p=pend;pend=null;
-if(el){if(res&&res.ok){if(q.answer==='preview'){notes[el.dataset.key]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save()}
+if(q&&q.verb==='finding'&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
+if(el){if(res&&res.ok){if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
 else if(q.answer==='later')finish(el,'later');else finish(el,'done')}
-else{notes[el.dataset.key]={say:(res&&res.say)||'That did not work.',detail:'',bad:true};out(el,(res&&res.say)||'That did not work.',true);save()}}}
+else{notes[el.dataset.gk]={say:(res&&res.say)||'That did not work.',detail:'',bad:true};out(el,(res&&res.say)||'That did not work.',true);save();foc(el)}}}
 if(prev)return prev(q,res)};
 restore()})();
 """

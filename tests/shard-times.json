@@ -63,6 +63,7 @@
   "test_wall_runs": 8.0,
   "test_walls_cases": 0,
   "test_walls_deterministic": 19.2,
+  "test_walls_page": 25.0,
   "test_wiki_lint": 0.1,
   "test_work_files": 66.1,
   "test_your_work": 114.7,

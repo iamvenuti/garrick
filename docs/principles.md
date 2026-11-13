@@ -30,6 +30,8 @@ Different folders inside one zone do not make a wall; a walled zone does. To kee
 
 Two writers put text into a project: you and the assistant. Both mean well. The harm is one zone's material reaching a file that later leaves the machine. The way it gets there is a mistake: a link pasted from the wrong meeting, a name typed from memory, a paragraph copied across. The check catches what an honest writer writes by accident, in the forms an honest writer uses. A form that needs deliberate disguise to pass is not read, by design, just as a paraphrase is not. The rule the assistant follows is the protection; the check is the seat belt behind it.
 
+A false alarm can be let through once, and who may do that follows the same model. Two things write an allowance: you, typing `check.py allow` in a terminal, and the Context queue's button in the Mac app, which you press after the page has shown you both texts. An assistant has neither: the command refuses without a terminal, and the page refuses the ask box and a session. The page is a second writer because you saw what you were allowing. What the model does not hold against is a process that sends the page's request the way the app does: it is taken for the page, as it is for every page action. The guard is against an honest mistake, as the rest of the wall check is. [Allow once](enforced.md#allow-once) has the details.
+
 A form is sorted by one question: could an honest writer produce it? If yes, the check reads it. If it needs disguise, it is by design. [SECURITY.md](../SECURITY.md#what-is-not-a-vulnerability) and [the known gaps](enforced.md#the-wall-checks-known-gaps) point here and do not restate it.
 
 ### What the check covers

@@ -6816,8 +6816,8 @@ def staged_fix(message: str) -> str:
 # Allow once: a finding the user let through, for as long as its file is as it was
 # ---------------------------------------------------------------------------
 # The ledger is System/walls-allowed.json (garrick_lib.py). The hook reads it once and drops a finding whose path,
-# id and git blob id all match an entry. Nothing here writes it but allow_command(); the page's verb only takes an entry away, and
-# runs without a terminal.
+# id and git blob id all match an entry. Two callers write one: allow_command(), from a terminal, and the status page's walls-allow,
+# after it showed both texts (#550); the page's walls-unallow takes an entry away. Neither of the page's verbs runs in a terminal.
 
 def finding_rule(f: Finding) -> str:
     """The kind of a finding, as the hook's report and the ledger name it."""

@@ -102,8 +102,20 @@ zone's repository, as the skills would:
     walls-unallow  takes an allowance away (allow once): {"path", "id"}, the file
                 from the workspace root and the refusal's id. The ledger
                 System/walls-allowed.json loses the entry and the refusal comes
-                back at the next commit. There is no verb that adds one: an
-                allowance is written only by `check.py allow`, typed in a terminal
+                back at the next commit
+    walls-look  read only, for the Context queue's wall question (#548): {"place", "path"?, "id"?},
+                the place the queue is on (`Zones/<Zone>` or `Wikis/<Wiki>`). With a path, the
+                wall check's findings for that file now; without, for the whole place. With a
+                path and an id, the words that file shares with the file the finding names, and a few
+                words around them in each, run through the check now, so they come from the files
+                and never from the request. They go to the dialog in the reply and nowhere else: not
+                a file, not the audit log, not the journal. Only the app's bridge (`via: page`)
+    walls-allow  writes one allowance (allow once, #550): {"path", "id", "blob"}, the same ledger
+                entry `check.py allow` writes, with `by: page`, committed alone in the workspace's
+                own repository. The page sends it only after `walls-look` showed both texts, and
+                `blob` is the file as that look read it: if the file has changed, nothing is
+                written. Only the app's bridge (`via: page`): the ask box and a session are
+                refused, and the command line has no verb for it
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -309,7 +321,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "walls-unallow", "finding")
+         "walls-unallow", "walls-look", "walls-allow", "finding")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -2094,6 +2106,228 @@ def walls_unallow(ws: Path, req: dict) -> dict:
     if code:
         raise Refused(said)
     return {"say": said, "written": True}
+
+
+WALL_PLACE_RE = re.compile(r"(?:Zones|Wikis)/[^/\\\0]+")
+WALL_FID_RE = re.compile(r"[0-9a-f]{10}")
+WALL_BLOB_RE = re.compile(r"[0-9a-f]{40}")
+# The other file of a wording finding, from check.py's two forms: a file of a project, named by its path, which may
+# hold spaces and commas (`repeats wording from <path>[ and N more of its files], in project ...`), and a page of the
+# Meetings wiki, named by its stem after its noun (`repeats wording from <noun> <stem>, a <noun> ...`).
+WALL_OTHER_PATH_RE = re.compile(r"repeats wording from ((?:Zones|Wikis)/.+?)(?: and \d+ more of its files)?, in project ")
+WALL_OTHER_FROM_RE = re.compile(r"repeats wording from (?:person page |entity page |wiki page |raw record |reply |question |decision |meeting )(.+?), an? ")
+WALL_TOKEN_RE = re.compile(r"[^\W_]+|&")
+WALL_TOKENS_MAX = 200_000       # a file with more words than this is not read for its shared words
+WALL_AROUND = 8                 # words of each file shown either side of the shared run
+WALL_RUN_MAX = 800              # characters of the shared run shown
+
+
+def walls_tool(ws: Path):
+    """The workspace's own check.py for the wall question, or Refused: the one that says what the walls find now."""
+    tool = walls_allowed_tool(ws)
+    if tool is None or not all(callable(getattr(tool, n, None)) for n in ("allow_files", "finding_id", "finding_rule", "words", "transcript_text", "body_of", "read_text")):
+        raise Refused("this workspace has no check.py that can look at a wall finding, so nothing was done")
+    return tool
+
+
+def walls_place(ws: Path, req: dict) -> str:
+    place = req.get("place")
+    if not isinstance(place, str) or not WALL_PLACE_RE.fullmatch(place) or not (ws / place).is_dir() or (ws / place).is_symlink():
+        raise Refused("not a place in this workspace")
+    return place
+
+
+def walls_file(ws: Path, req: dict, place: Optional[str] = None) -> str:
+    """The file a wall request names: from the workspace root, a regular file, not a link, and in `place` when one is given."""
+    rel, full = finding_path(ws, req)
+    if not full.is_file() or (ws / rel).is_symlink() or any(part.startswith(".") for part in rel.split("/")):
+        raise Refused("not a file the wall check reads")
+    if place is not None and not rel.startswith(place + "/"):
+        raise Refused("that file is not in the place the queue is on")
+    if place is None and not WALL_PLACE_RE.match(rel):
+        raise Refused("not a file of a zone or a wiki")
+    return rel
+
+
+def walls_fid(req: dict) -> str:
+    fid = req.get("id")
+    if not isinstance(fid, str) or not WALL_FID_RE.fullmatch(fid):
+        raise Refused("name the finding by its id")
+    return fid
+
+
+def walls_findings(tool, ws: Path, rel: str) -> tuple:
+    """(the findings the wall check gives for the file now that a user may allow, the file's blob id as the check read it)."""
+    try:
+        got = tool.allow_files(ws, rel)
+    except Exception:
+        got = None
+    if got is None:
+        raise Refused("the wall check could not run on that file, so nothing is shown and nothing is taken out from here")
+    return got[0], got[1]
+
+
+def walls_other_files(ws: Path, message: str) -> list:
+    """The file(s) a wording finding names as the other side, from the check's text: a path, or the name of a page of
+    the Meetings wiki, which can be a page and its raw record. Only files of this workspace, never a link."""
+    m = WALL_OTHER_PATH_RE.search(message) or WALL_OTHER_FROM_RE.search(message)
+    if not m:
+        return []
+    name, root = m.group(1), ws.resolve()
+    found = []
+    if "/" in name:
+        found = [ws / name]
+    else:
+        wiki = ws / "Wikis" / "Meetings"
+        for here, dirs, files in os.walk(wiki):
+            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not (Path(here) / d).is_symlink())
+            found += [Path(here) / f for f in sorted(files) if Path(f).stem == name and not f.startswith(".")]
+    out = []
+    for p in found:
+        try:
+            ok = p.is_file() and not p.is_symlink() and root in p.resolve().parents
+        except OSError:
+            ok = False
+        if ok and p not in out:
+            out.append(p)
+    return out[:8]
+
+
+def walls_words(tool, text: str) -> tuple:
+    toks, spans = [], []
+    for m in WALL_TOKEN_RE.finditer(text):
+        for w in tool.words(m.group(0)):
+            toks.append(w)
+            spans.append((m.start(), m.end()))
+    return toks, spans
+
+
+def walls_shared(tool, a: str, b: str):
+    """The longest run of words the two texts share, at least the check's own length and content: (the run as
+    text in a, the words before and after it in a, the same three in b), or None."""
+    n, need = int(tool.SHINGLE), int(tool.MIN_CONTENT_WORDS)
+    ta, sa = walls_words(tool, a)
+    tb, sb = walls_words(tool, b)
+    if len(ta) < n or len(tb) < n or len(ta) > WALL_TOKENS_MAX or len(tb) > WALL_TOKENS_MAX:
+        return None
+    index: dict = {}
+    for j in range(len(tb) - n + 1):
+        index.setdefault(tuple(tb[j:j + n]), []).append(j)
+    best, i = None, 0
+    while i <= len(ta) - n:
+        hits = index.get(tuple(ta[i:i + n]))
+        longest = 0
+        if hits and sum(1 for t in ta[i:i + n] if tool.is_content(t)) >= need:
+            for j in hits:
+                k = n
+                while i + k < len(ta) and j + k < len(tb) and ta[i + k] == tb[j + k]:
+                    k += 1
+                longest = max(longest, k)
+                if best is None or k > best[2]:
+                    best = (i, j, k)
+        i += max(1, longest - n + 1) if longest else 1
+    if best is None:
+        return None
+
+    def around(text: str, spans: list, at: int, k: int) -> dict:
+        lo, hi = spans[at][0], spans[at + k - 1][1]
+        before = text[spans[max(0, at - WALL_AROUND)][0]:lo]
+        after = text[hi:spans[min(len(spans) - 1, at + k - 1 + WALL_AROUND)][1]]
+        run = " ".join(text[lo:hi].split())
+        if len(run) > WALL_RUN_MAX:
+            run = run[:WALL_RUN_MAX].rsplit(" ", 1)[0] + " …"
+        return {"before": (" ".join(before.split()) + " ") if before.strip() else "", "run": run,
+                "after": ((" " if after.strip()[0].isalnum() else "") + " ".join(after.split())) if after.strip() else ""}
+    return around(a, sa, best[0], best[2]), around(b, sb, best[1], best[2]), best[2]
+
+
+def walls_look(ws: Path, req: dict) -> dict:
+    """Show a wall finding to the user, read only (#548): which file it is about, and, with its id, the words both files share.
+    Nothing is written. The request names the place the queue is on, the file and the finding; the other file, the
+    shared run and the words around it come from running the wall check now. The texts are in the reply and nowhere else:
+    the sentence this returns, which the log keeps, holds none."""
+    place = walls_place(ws, req)
+    fq = finding_queue()
+    tool = walls_tool(ws)
+    if not req.get("path"):
+        if req.get("id"):
+            raise Refused("name the file as well")
+        try:
+            every = tool.run_checks(ws, walls_only=True)
+        except Exception:
+            raise Refused("the wall check could not run, so nothing is shown and nothing is taken out from here")
+        found = []
+        for f in every:
+            if tool.allowable(f) and f.path.startswith(place + "/") and len(found) < 200:
+                sentence, why = fq.said("wall", {"path": f.path, "message": f.message})
+                found.append({"path": f.path, "id": tool.finding_id(f), "rule": tool.finding_rule(f), "key": fq.later_key("wall", f.path),
+                              "sentence": sentence, "why": why, "details": f.message})
+        return {"say": "The wall check found %d in this place." % len(found) if found else "The wall check finds nothing to take out here now.",
+                "findings": found, "logged": "looked for wall findings in a place"}
+    rel = walls_file(ws, req, place)
+    found, blob = walls_findings(tool, ws, rel)
+    if not req.get("id"):
+        out = []
+        for f in found:
+            sentence, why = fq.said("wall", {"path": f.path, "message": f.message})
+            out.append({"path": f.path, "id": tool.finding_id(f), "rule": tool.finding_rule(f), "key": fq.later_key("wall", f.path),
+                        "sentence": sentence, "why": why, "details": f.message})
+        return {"say": "The wall check found %d in this file." % len(out) if out else "The wall check finds nothing to take out in this file now.",
+                "findings": out, "logged": "looked for wall findings in a file"}
+    fid = walls_fid(req)
+    hit = next((f for f in found if tool.finding_id(f) == fid), None)
+    if hit is None:
+        raise Refused("the wall check does not give that finding for this file now")
+    if tool.finding_rule(hit) != "wording":
+        raise Refused("this kind of match has no shared words to show")
+    if blob is None:
+        raise Refused("the file is not known to git yet, so it cannot be shown for a decision")
+    mine = tool.read_text(ws / rel)
+    others = walls_other_files(ws, hit.message)
+    if mine is None or not others:
+        raise Refused("Garrick could not tell which other file this matches, so it shows nothing")
+    mine = tool.body_of(tool.transcript_text(ws / rel, mine))
+    best = None
+    for other in others:
+        text = tool.read_text(other)
+        if text is None:
+            continue
+        got = walls_shared(tool, mine, tool.body_of(tool.transcript_text(other, text)))
+        if got and (best is None or got[2] > best[0][2]):
+            best = (got, other)
+    if best is None:
+        raise Refused("no run of shared words was found in the two files, so there is nothing to show")
+    (here, there, _), other = best
+    name = lambda p: re.sub(r"\.[A-Za-z0-9]+$", "", p.name)
+    return {"say": "Showed the words the two files share.", "logged": "read both texts of a wall finding", "id": fid, "blob": blob,
+            "a": dict(here, where="In “%s”" % name(ws / rel)), "b": dict(there, where="In “%s”" % name(other))}
+
+
+def walls_allow(ws: Path, req: dict) -> dict:
+    """The page's own `check.py allow` (#550): one finding in one file, against the file's blob, by `page`, committed alone.
+    The page sends it after walls-look showed both texts; `blob` is the file as that look read it, and the allowance is
+    refused when the file is not that now, so the user allows what they saw. Only a wording finding, the only kind whose
+    texts walls-look shows. The ledger entry is check.py's allow_page; allow_may_write keeps refusing `page` for every other caller."""
+    rel = walls_file(ws, req)
+    fid, blob = walls_fid(req), req.get("blob")
+    if not isinstance(blob, str) or not WALL_BLOB_RE.fullmatch(blob):
+        raise Refused("name the file as it was shown")
+    tool = walls_tool(ws)
+    with held("page-action-walls-allow.lock", busy="another change to the allowed refusals is still running"):
+        found, now = walls_findings(tool, ws, rel)
+        hit = next((f for f in found if tool.finding_id(f) == fid), None)
+        if hit is None:
+            raise Refused("the wall check does not give that finding for this file now")
+        if tool.finding_rule(hit) != "wording":
+            raise Refused("only a match of wording is allowed from the page")
+        if now != blob:
+            raise Refused("the file has changed since you looked at it; look again before keeping it")
+        code, said = tool.allow_page(ws, rel, fid, "page")
+    if code:
+        raise Refused(said)
+    if "was not committed" in said:
+        raise Refused(said)
+    return {"say": said, "written": True, "logged": "allowed one wording match once, from the page"}
 
 
 def asks_how(ws: Path, args: list) -> None:
@@ -4957,6 +5191,10 @@ def act(ws: Path, req, today=None, now=None):
         return memory_preview(ws, req)
     if req["verb"] == "walls-unallow":
         return walls_unallow(ws, req)
+    if req["verb"] == "walls-look":
+        return walls_look(ws, req)
+    if req["verb"] == "walls-allow":
+        return walls_allow(ws, req)
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":
@@ -5015,6 +5253,8 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake"
                "rename", "move", "delete", "undo")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
+# Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
+PAGE_ONLY = ("walls-look", "walls-allow")
 
 
 def builds_page(req) -> bool:
@@ -5065,6 +5305,10 @@ def perform(ws: Path, req, ops=None, via: str = "page"):
                 # A party decides which side of a wall material lands on: only the dialog, on the user's own
                 # choice, adds one. The ask box and a session never do (#522).
                 raise Refused("a party is added only from the New project dialog on the page")
+            if isinstance(req, dict) and req.get("verb") in PAGE_ONLY and via != "page":
+                # The page's own button, pressed by the user after the page showed both texts. The ask box and a session
+                # never reach it, and the command line has no verb for it.
+                raise Refused("this is the page's own button; it is not for the ask box or a session")
             if ops is not None and isinstance(req, dict) and req.get("verb") in ops.OPS:
                 try:
                     run, joined = start_record(ops, req, via)

@@ -753,6 +753,10 @@ var p=q.querySelector('.qout');if(detail){p.textContent=detail;p.hidden=false}el
 var RECS='.opt.rec:not([hidden]):not(:disabled)';
 function foc(q){var c=[q.querySelector(RECS),q.querySelector('.opts>[data-ansrow]:first-child input'),q.querySelector('button.opt'),q.querySelector('.opt.other input')];
 for(var i=0;i<c.length;i++)if(c[i]&&c[i].getClientRects().length){c[i].focus();return}}
+/* A browser has no host, so a hosted answer is hidden there: a question left with no answer to see (the reveal of a field is not one) can only be skipped, so Skip for now shows at once */
+function bare(q){var seen=[].slice.call(q.querySelectorAll('.opts button.opt,.opts input[data-free]')).some(function(x){
+var d={};try{d=JSON.parse(x.dataset.fa||'{}')}catch(e){}return d.a!=='reveal'&&x.getClientRects().length});
+if(!seen)q.querySelector('[data-qskip]').hidden=false}
 function show(done0){if(!cur)return;var every=qs(cur),left=done0?[]:pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
 var done=dlg.querySelector('.qdone');
 if(!left.length){cur.hidden=true;done.hidden=false;done.querySelector('b').textContent=cur.dataset.name+' is done.';
@@ -761,7 +765,7 @@ if(nx){b.textContent='Go on to '+nx.dataset.name;b.dataset.qnext=nx.dataset.scop
 if(every.some(function(q){return skip[q.dataset.gk]}))save();else st.set(KEY,JSON.stringify({scope:cur.dataset.scope,done:true,tally:tally,t:Date.now()}));return}
 done.hidden=true;cur.hidden=false;var k=n-left.length+1,q=left[0];q.hidden=false;
 cur.querySelector('.qn').textContent=k+' of '+n;cur.querySelector('.bar i').style.width=(k/n*100)+'%';
-var m=notes[q.dataset.gk],f=refused[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detail);if(f)refuse(q,f);save();foc(q)}
+var m=notes[q.dataset.gk],f=refused[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detail);if(f)refuse(q,f);bare(q);save();foc(q)}
 /* A refused answer stays open by design. It is disabled, with the refusal under the answers, and Skip for now shows. When the refusal says
    nothing can move, the handoff that stands in for the move takes its place, with its number. */
 function refuse(q,f){out(q,f.say,true);var b=q.querySelector('button.opt[data-id="'+f.id+'"]')||q.querySelector('.opt[data-id="'+f.id+'"] button[data-fa]');if(b){b.disabled=true;b.classList.remove('rec')}

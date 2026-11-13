@@ -1111,6 +1111,25 @@ class TestRefusedAnswerOnTheQueue(unittest.TestCase):
         self.assertIn("/^nothing (can move|is old enough)/i.test(say)", js)                          # the two refusals of "nothing can move"
         self.assertIn("fb.hidden=false;fb.classList.add('rec')", refuse)                             # the handoff in the move's place
 
+    def test_a_question_with_no_visible_answer_shows_skip_at_once(self):
+        """In a browser (no host) a verdict or a decision review has only hosted answers, which are hidden: Skip for now shows
+        without a refusal, or the user is stuck on it."""
+        self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)
+        js = fq.QUEUE_JS
+        bare = js[js.index("function bare("):js.index("function show(")]
+        self.assertIn("getClientRects().length", bare)                                               # an answer the browser hides is not an answer
+        self.assertIn("'reveal'", bare)                                                              # the reveal of a field is not one either
+        self.assertIn("[data-qskip]').hidden=false", bare)
+        self.assertIn("bare(q);save();foc(q)", js)                                                   # every question shown is checked
+        node = shutil.which("node")
+        if node:                                                                                     # run it on two stand-in questions
+            script = ("eval(process.argv[1]);function el(fa,v){return{dataset:{fa:fa},getClientRects:function(){return v?[1]:[]}}}"
+                      "function q(l){var s={hidden:true};return{querySelectorAll:function(){return l},querySelector:function(){return s},s:s}}"
+                      "var a=q([el('{\"a\":\"run\"}',false),el('{\"a\":\"reveal\"}',true)]);bare(a);"
+                      "var b=q([el('{\"a\":\"handoff\"}',true)]);bare(b);console.log(a.s.hidden+','+b.s.hidden)")
+            out = subprocess.run([node, "-e", script, bare], capture_output=True, text=True, timeout=30)
+            self.assertEqual("false,true", out.stdout.strip(), out.stderr)                          # skip shows only where nothing visible answers
+
     def test_skip_for_now_goes_on_and_moves_the_bar_without_putting_the_finding_off(self):
         js = fq.QUEUE_JS
         click = js[js.index("var sk=t.closest"):][:200]

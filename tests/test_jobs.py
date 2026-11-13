@@ -1731,7 +1731,9 @@ class NightlyTest(FakeAssistants):
         self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "gr-nightly"], args[:3])
         self.assertNotIn("--agent", args)
         self.assertEqual("3600", args[args.index("--timeout") + 1])
-        self.assertGreaterEqual(3600, sum(nightly.LIMITS.values()))
+        timeout = int(args[args.index("--timeout") + 1])
+        self.assertGreaterEqual(timeout - nightly.MARGIN, sum(nightly.LIMITS.values()))       # a margin, so a step's limit ends a slow night
+        self.assertGreaterEqual(nightly.MARGIN, 120)
         self.assertEqual("/Users/<you>/Garrick/System/jobs/nightly.py", args[args.index("--") + 2])
         self.assertIn("--digest", args)
         self.assertEqual({"Hour": 5, "Minute": 15}, plist["StartCalendarInterval"])

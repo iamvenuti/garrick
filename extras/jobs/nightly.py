@@ -80,8 +80,11 @@ NURTURE = HERE / "nurture_sweep.py"
 WORK_IN = HERE / "work_in.py"
 STATUS = HERE.parent / "status"            # System/status beside System/jobs, as extras/status is beside extras/jobs
 LOCAL = ("System", "jobs", "nightly.local")
-# Seconds each step may take; their sum is at most the plist's --timeout 3600.
-LIMITS = {"hooks": 30, "nurture": 1500, "answers": 390, "effort": 300, "recall": 300, "nightly.local": 600, "status": 480}
+# Seconds each step may take. Their sum stays MARGIN under the plist's --timeout 3600, so that a slow night is ended by a step's own
+# limit and never by the job's watchdog stopping the step that is left (a test holds it). Recall's is short because its extract reads
+# only the transcripts that are new (#558); effort keeps 300, since 600 would not fit under the margin.
+LIMITS = {"hooks": 30, "nurture": 1500, "answers": 390, "effort": 300, "recall": 180, "nightly.local": 600, "status": 480}
+MARGIN = 120
 # Seconds of the recall step kept for bringing the search indexes up to date: its extract stops that long before the step's limit.
 RECALL_BUILD = 60
 PARTIAL = re.compile(r"partial, (\d+) written")

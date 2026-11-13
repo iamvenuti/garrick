@@ -2302,6 +2302,21 @@ def walls_look(ws: Path, req: dict) -> dict:
             "a": dict(here, where="In “%s”" % name(ws / rel)), "b": dict(there, where="In “%s”" % name(other))}
 
 
+def ledger_back_to_head(ws: Path) -> None:
+    """Put System/walls-allowed.json back as the root repository's HEAD has it, in the index and on disk: what a
+    ledger commit that failed leaves behind is neither staged for a later commit nor kept on disk."""
+    rel = "System/walls-allowed.json"
+    run = lambda *a: subprocess.run(["git", "-C", str(ws)] + list(a), capture_output=True, timeout=30)
+    try:
+        run("reset", "-q", "--", rel)
+        if run("cat-file", "-e", "HEAD:" + rel).returncode == 0:
+            run("checkout", "-q", "HEAD", "--", rel)
+        else:
+            (ws / rel).unlink(missing_ok=True)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
 def walls_allow(ws: Path, req: dict) -> dict:
     """The page's own `check.py allow` (#550): one finding in one file, against the file's blob, by `page`, committed alone.
     The page sends it after walls-look showed both texts; `blob` is the file as that look read it, and the allowance is
@@ -2323,13 +2338,7 @@ def walls_allow(ws: Path, req: dict) -> dict:
             raise Refused("the file has changed since you looked at it; look again before keeping it")
         code, said = tool.allow_page(ws, rel, fid, "page")
         if not code and "was not committed" in said:
-            # The entry is on disk but not in HEAD: take it off again, so a refusal leaves the ledger as it was.
-            undo = getattr(tool, "allow_remove", None)
-            try:
-                if callable(undo):
-                    undo(ws, rel, fid)
-            except Exception:
-                pass
+            ledger_back_to_head(ws)      # a refusal leaves the ledger, on disk and in the index, as HEAD has it
             raise Refused(said)
     if code:
         raise Refused(said)

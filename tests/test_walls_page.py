@@ -247,6 +247,25 @@ class TestAllow(WallsPageCase):
         self.assertEqual([], self.ledger())
         self.assertEqual(before, self.head())
 
+    def test_a_refusing_hook_leaves_nothing_staged_and_keeps_a_committed_allowance(self):
+        # An older allowance for the same file and id, committed by the terminal, against another blob.
+        f = self.wording()
+        old = {"allowed": [{"path": COPY, "id": f["id"], "blob": "b" * 40, "rule": "wording", "date": "2026-01-02", "by": "terminal"}]}
+        write(self.root / LEDGER, json.dumps(old, indent=2) + "\n")
+        git(self.root, "add", "-f", LEDGER)
+        git(self.root, "commit", "-q", "-m", "an older allowance")
+        before, committed = self.head(), (self.root / LEDGER).read_text(encoding="utf-8")
+        hook = self.root / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        hook.chmod(0o755)
+        look = self.look()
+        got = self.send({"verb": "walls-allow", "path": COPY, "id": f["id"], "blob": look["blob"]})
+        self.assertFalse(got["ok"], got)
+        self.assertEqual(before, self.head())
+        self.assertEqual(committed, (self.root / LEDGER).read_text(encoding="utf-8"))
+        self.assertEqual("", git(self.root, "diff", "--cached", "--name-only").strip())
+
     def test_a_malformed_request_is_refused(self):
         f = self.wording()
         for req in ({"path": COPY, "id": f["id"]}, {"path": COPY, "id": f["id"], "blob": "xyz"}, {"path": COPY, "id": "nope", "blob": "a" * 40},

@@ -1089,7 +1089,6 @@ def nurture_fix(ws: Path, f: dict) -> Optional[str]:
 # of the whole workspace yet, or a nurture.py older than the debt, shows
 # nothing: a zero would look measured.
 DEBT_DAYS = 30
-DEBT_SCOPES = 3        # the scopes named under the chart, heaviest first
 
 
 def debt_history(ws: Path, today: dt.date) -> Tuple[List[Tuple[dt.date, dict]], Callable[[str], Tuple[str, str]]]:
@@ -1107,160 +1106,15 @@ def debt_history(ws: Path, today: dt.date) -> Tuple[List[Tuple[dt.date, dict]], 
         return [], N.scope_said
 
 
-DEBT_LEAST = 3         # fewer records than this and the figure stands alone, with no chart (#321)
-
-
-def debt_scale(values: List[float], threshold: float) -> Tuple[float, float, float]:
-    """(bottom, top, cap) of the chart's vertical scale (#321). The cap is
-    twice the threshold, or the highest value that is no spike (at most five
-    times the median, #525), whichever is larger; a value above it is drawn at
-    the cap. Only a night far outside the rest is a spike: a run of nights at
-    two or three times the median is drawn at its height.
-    The scale runs from a little under the lowest value or the threshold to a
-    little over the cap, so one night far above the rest leaves the
-    difference between the others to be seen."""
-    ordered = sorted(values)
-    median = ordered[len(ordered) // 2]
-    usual = [v for v in values if v <= 5 * median] or ordered[:1]
-    cap = max(2 * threshold, max(usual), 1)
-    low = min(min(v for v in values if v <= cap) if any(v <= cap for v in values) else cap, threshold)
-    bottom = max(0.0, low - (cap - low) * 0.1)
-    return bottom, cap + (cap - bottom) * 0.08, cap
-
-
-def debt_chart(history: List[Tuple[dt.date, dict]], today: dt.date, threshold: float) -> str:
-    """The line of the context debt (#321): from the first record, or
-    DEBT_DAYS back, whichever is later, to the latest, so the line fills the
-    width; one point a day that has a record, broken where a day has none,
-    and a tick on the axis for each such night, saying so when pointed at.
-    The scale is capped (debt_scale()): a night above the cap is an open dot
-    at the cap with its value beside it. The first and latest values and the
-    threshold, dashed, are written on the chart. In the page's own tokens, so
-    it reads in light and dark. Nothing with fewer than DEBT_LEAST records."""
-    if len(history) < DEBT_LEAST:
-        return ""
-    w, h, pad = 300.0, 64.0, 5.0
-    first, last = max(history[0][0], today - dt.timedelta(days=DEBT_DAYS - 1)), history[-1][0]
-    history = [(d, x) for d, x in history if d >= first]
-    span = max(1, (last - first).days)
-    bottom, top, cap = debt_scale([x["total"] for _, x in history], threshold)
-    at = lambda d: pad + (d - first).days / span * (w - 2 * pad)
-    y = lambda v: h - pad - (min(v, cap) - bottom) / (top - bottom) * (h - 2 * pad)
-    pct = lambda v, of: "%.2f%%" % (v / of * 100)
-    runs, run, prev = [], [], None
-    for d, x in history:
-        if prev is not None and (d - prev).days != 1:
-            runs.append(run)
-            run = []
-        run.append((at(d), y(x["total"])))
-        prev = d
-    runs.append(run)
-    lines = "".join('<polyline class="dl" points="%s"/>' % " ".join("%.1f,%.1f" % q for q in r) for r in runs if len(r) > 1)
-    areas = "".join('<polygon class="da" points="%.1f,%.1f %s %.1f,%.1f"/>' % (r[0][0], h - pad, " ".join("%.1f,%.1f" % q for q in r),
-                                                                          r[-1][0], h - pad) for r in runs if len(r) > 1)
-    # A dot is a line of no length with round ends, so it stays round however the chart is stretched;
-    # a night above the cap is an open one, a narrower dot in the card's colour over it.
-    dots, notes = "", ""
-    for i, (d, x) in enumerate(history):
-        v, cls = x["total"], " now" if i == len(history) - 1 else ""
-        tip = E("%s · %s" % (d.strftime("%a %d %b"), debt_points(v)))
-        dots += '<line class="dd%s%s" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f" data-tip="%s"/>' % (
-            cls, " over" if v > cap else "", at(d), at(d), y(v), y(v), tip)
-        if v > cap:
-            dots += '<line class="dhole" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f"/>' % (at(d), at(d), y(v), y(v))
-            notes += '<span class="dval dspike" style="left:%s;top:%s">%s</span>' % (pct(at(d), w), pct(y(v), h), E(str(debt_points(v))))
-    have = {d for d, _ in history}
-    for n in range(1, span):
-        d = first + dt.timedelta(days=n)
-        if d not in have:
-            notes += '<i class="dmiss" style="left:%s" data-tip="%s"></i>' % (
-                pct(at(d), w), E("No Nurture record for %s" % d.strftime("%a %d %b")))
-    v0, v1 = history[0][1]["total"], history[-1][1]["total"]
-    notes += ('<span class="dval dfirst" style="top:%s">%s</span><span class="dval dlast" style="top:%s">%s</span>'
-              '<span class="dthr" style="top:%s">threshold %s</span>'
-              % (pct(y(v0), h), E(str(debt_points(v0))), pct(y(v1), h), E(str(debt_points(v1))), pct(y(threshold), h),
-                 E(str(debt_points(threshold)))))
-    bar = '<line class="dt" x1="%.1f" x2="%.1f" y1="%.1f" y2="%.1f"/>' % (pad, w - pad, y(threshold), y(threshold))
-    said = "Context debt from %s to %s: %s on %s, %s on %s, against a threshold of %s" % (
-        first.strftime("%d %b"), last.strftime("%d %b"), debt_points(v0), history[0][0].strftime("%d %b"),
-        debt_points(v1), last.strftime("%d %b"), debt_points(threshold))
-    return ('<div class="dwrap"><svg class="dchart" viewBox="0 0 %d %d" preserveAspectRatio="none" role="img" aria-label="%s">'
-            '%s%s%s%s</svg>%s</div><div class="dticks"><span>%s</span><span>%s</span></div>'
-            % (w, h, E(said), areas, bar, lines, dots, notes, E(first.strftime("%d %b").lstrip("0")),
-               "today" if last == today else E(last.strftime("%d %b").lstrip("0"))))
-
-
-def debt_kinds(debt: dict) -> str:
-    """What the figure is made of, by kind as Nurture weighs them (#321):
-    "49: judgment 38, attribution 10, mechanical 1", the heaviest first, and
-    a wall finding first of all, in the critical colour."""
-    kinds = {k: v for k, v in (debt.get("kinds") or {}).items() if isinstance(v, (int, float)) and v}
-    if not kinds:
-        return ""
-    order = sorted(kinds, key=lambda k: (k != "wall", -kinds[k], k))
-    return '<p class="dkinds">%s: %s</p>' % (E(str(debt_points(debt["total"]))), ", ".join(
-        '<span%s>%s %s</span>' % (' class="dwall"' if k == "wall" else "", E(k), E(str(debt_points(kinds[k])))) for k in order))
-
-
-def walls_not_listed(ws: Path, day: dt.date, C: Optional[dict]) -> int:
-    """How many wall findings the Nurture record of `day` holds that the card's own list (the quick check, `C`)
-    does not show as walls (#525). A count and nothing else: no path, no wording, so no material of a walled zone
-    reaches the card that the list did not show. 0 without a record, a check or nurture.py."""
-    lib = nurture_lib(ws)
-    N = lib[0] if lib is not None else None
-    if N is None or not C or C.get("failed") or C.get("pending") or not getattr(N, "REPORTS", None):
-        return 0
-    try:
-        rec = json.loads(Path(ws).joinpath(*N.REPORTS, "%s.json" % day.isoformat()).read_text(encoding="utf-8"))
-        walls = [re.sub(r":\d+$", "", str(f.get("path") or "")) for f in rec.get("standing") or []
-                 if isinstance(f, dict) and f.get("kind") == "wall"]
-        shown = {path for f in C.get("findings", []) for kind, (path, _), _ in sorted_finding(ws, lib, f) if kind == "wall"}
-    except (OSError, ValueError, AttributeError):
-        return 0
-    return sum(1 for path in walls if path not in shown)
-
-
-def debt_block(ws: Path, today: dt.date, C: Optional[dict] = None) -> str:
-    """The figure, what it is made of, its trend over the last DEBT_DAYS days
-    and the scopes carrying most of it, for the Checks card; "" with no
-    record. With the card's own check result `C`, a line says how many wall
-    findings the last run holds that the list below does not show, and links
-    to Nurture's findings on the Context tab (#525)."""
-    history, said = debt_history(ws, today)
+def debt_line(history: List[Tuple[dt.date, dict]]) -> str:
+    """The one line of the context debt on the Checks card (#541): the figure of the latest Nurture record against its
+    threshold, red when over it. Nothing before the first record, which would only be guessing a figure."""
     if not history:
         return ""
-    day, debt = history[-1]
-    total, threshold = debt["total"], debt.get("threshold", 40)
-    scopes = debt.get("scopes") or {}
-    heavy = sorted(scopes, key=lambda sc: (-sum(scopes[sc].values()), sc))[:DEBT_SCOPES]
-    named = " · ".join("%s %s" % (E(said(sc)[0]), E(str(debt_points(sum(scopes[sc].values()))))) for sc in heavy)
+    total, threshold = history[-1][1]["total"], history[-1][1].get("threshold", 40)
     over = total > threshold
-    when = "" if day == today else " as of %s" % day.strftime("%a %d %b")
-    phrase = (said(heavy[0])[1] if heavy else "") or ""      # the request that nurtures the heaviest, on a button (#234)
-    button = request_button(phrase[:1].upper() + phrase[1:], phrase, ws, "act dask") if phrase else ""
-    # What the button does, and what the last run did (#278), from that day's record.
-    outcome = nurture_outcome(ws, day) or {}
-    does = nurture_said((outcome.get("scopes") or {}).get(heavy[0], {})) if heavy and phrase else ""
-    lines = ""
-    missing = walls_not_listed(ws, day, C)
-    if missing:
-        # Counts and a link only. The Findings view lists what the quick check found, so it has no wall findings of
-        # this run to point at; the link goes to the view itself.
-        lines += ('<p class="hint dwallmiss"><a href="#qp">%s</a></p>'
-                  % E("%s from last night's run, not in this list" % counted(missing, "wall finding")))
-    if does:
-        lines += '<p class="hint">%s</p>' % E("One pass over %s: %s." % (said(heavy[0])[0], does))
-    if outcome:
-        lines += '<p class="hint">%s</p>' % E(
-            "Last nurture %s: %d fixed, %d answered, %d left. The figure is that run's; the list below is this "
-            "build's quick check." % (day.strftime("%a %d %b"), outcome.get("fixed", 0), outcome.get("answered", 0),
-                                       outcome.get("left", 0)))
-    return ('<div class="debt" id="debt"><div class="dhead"><span class="dfig">%s</span><span class="dlbl">context debt%s</span>'
-            '<span class="chip%s" data-tip="%s">%s %s</span></div>%s%s<p class="hint dmost">%s%s</p>%s</div>'
-            % (E(str(total)), E(when), " late" if over else "",
-               E("Each finding Nurture left, weighed by kind; the threshold is nurture-threshold in System/garrick-checks.json"),
-               "over" if over else "under", E(str(threshold)), debt_kinds(debt), debt_chart(history, today, threshold),
-               ("Most in " + named + ". ") if named else "Nothing weighs anything. ", button, lines))
+    return '<p class="hint ndebt%s">%s</p>' % (" over" if over else "", E("Context debt %s, %s the threshold of %s" % (
+        debt_points(total), "over" if over else "under" if total < threshold else "at", debt_points(threshold))))
 
 
 def debt_points(n):
@@ -1296,85 +1150,27 @@ def nurture_said(kinds: Dict[str, int]) -> str:
     return ", ".join(words for n, words in said if n)
 
 
-# The Checks card's findings (#278), sorted by Nurture's kinds, so the list
-# and the debt above it use one vocabulary. Each row's path opens the file;
-# what follows it is said as Nurture says it, and its button is what handles
-# it: Fix for a mechanical fix on a note in a zone, which page_action.py's
-# `fix` applies as the thread row's check chip does, and otherwise the
-# request that nurtures its scope. A judgment is opened and read: its path is
-# its action. Without nurture.py the findings are one list, by check.
-CHECK_KINDS = (("wall", "Walls", "Take it out"), ("mechanical", "Mechanical", "Fix"),
-               ("attribution", "Attribution", "Answer"), ("judgment", "Judgment", ""))
-
-
-def check_groups(ws: Path, C: dict, link: "Links", fixes: Optional[List[Tuple[str, str]]] = None) -> str:
-    """The Checks card's list: one fold per kind, the largest open, and any
-    holding an error. `fixes`, when given, gets the (zone, file) of each Fix the list offers (#535): what the *Fix them*
-    button runs."""
+def mechanical_fixes(ws: Path, C: dict) -> List[Tuple[str, str]]:
+    """The (zone, file) of each mechanical finding of the quick check on a note in a zone: what the *Fix them* button
+    runs, one `fix` each (#535). Only a note in a zone gets a fix, so only there is the fix worked out in full; the rest
+    are sorted without the history a rename reads, which costs a git call a file (#278). [] without a nurture.py that
+    sorts findings."""
     lib = nurture_lib(ws)
-    rows: Dict[str, List[str]] = {}
-    errors: Dict[str, int] = {}
-    for f in C.get("findings", []):
-        for kind, line, act in sorted_finding(ws, lib, f):
-            at = re.match(r"Zones/([^/]+)/(.+\.md)$", line[0])
-            if fixes is not None and kind == "mechanical" and at:      # the finding the Fix button on its row fixes
-                fixes.append((at.group(1), at.group(2)))
-            rows.setdefault(kind, []).append(
-                '<li>%s<span class="cline"><a %s>%s</a>: %s</span>%s</li>'
-                % (ICON["critical" if f.get("severity") == "error" else "warning"], link.attrs(ws / line[0]), E(line[0]),
-                   E(line[1]), act))
-            errors[kind] = errors.get(kind, 0) + (f.get("severity") == "error")
-    if not rows:
-        return '<div class="clean">%sNo problems found.</div>' % ICON["good"]
-    titles = {k: t for k, t, _ in CHECK_KINDS}
-    order = [k for k, _, _ in CHECK_KINDS if k in rows] + sorted(k for k in rows if k not in titles)
-    largest = max(order, key=lambda k: len(rows[k]))
-    body = ""
-    for kind in order:
-        errs, n = errors[kind], len(rows[kind])
-        counts = "".join('<span class="chip">%s %d</span>' % (ICON[k].replace("<svg ", '<svg width="12" height="12" '), c)
-                         for k, c in (("critical", errs), ("warning", n - errs)) if c)
-        body += ('<details class="group" data-ok="0"%s><summary>%s<b>%s</b><span class="counts">%s</span></summary><ul>%s</ul></details>'
-                 % (" open" if errs or kind == largest else "", CHEV, E(titles.get(kind) or (C.get("titles") or {}).get(kind, kind)),
-                    counts, "".join(rows[kind])))
-    return body
-
-
-def sorted_finding(ws: Path, lib, f: dict) -> List[Tuple[str, Tuple[str, str], str]]:
-    """(kind, (path, what is said), the button) for each item nurture.py
-    makes of a check finding; without nurture.py, the check's name for the
-    kind, its own words, and no button."""
-    path, message = re.sub(r":\d+$", "", str(f.get("path") or "")), str(f.get("message") or "")
     if lib is None or not callable(getattr(lib[0], "check_items", None)) or not callable(getattr(lib[0], "sort_item", None)):
-        return [(str(f.get("check") or "?"), (path, message), "")]
+        return []
     N, ctx = lib
-    try:
-        # Only a note in a zone can get Fix, so only there is the fix worked out in full: the rest are sorted
-        # without the history a rename reads, which costs a git call a file (#278).
-        light = not re.match(r"Zones/[^/]+/.+\.md$", path)
-        items = [N.sort_item(ctx, i, light=light) for i in N.check_items(f)]
-        ask = N.scope_said(N.debt_scope(path))[1]
-    except Exception:
-        return [("judgment", (path, message), "")]
-    out = []
-    for item in items:
-        kind = item.kind if item.kind in ("wall", "mechanical", "attribution") else "judgment"
-        label = dict((k, a) for k, _, a in CHECK_KINDS)[kind]
-        # A wall is said in the check's own words, which say what to take out, since Nurture blanks them; the rest as Nurture says them.
-        said = message if kind == "wall" else item.message if kind == "judgment" else item.line()
-        said = said[len(item.path) + 2:] if said.startswith(item.path + ": ") else said
-        zone = re.match(r"Zones/([^/]+)/(.+\.md)$", item.path)
-        if kind == "mechanical" and zone:
-            act = ('<button class="act primary tacts" type="button" data-act="%s" data-say="%s" title="%s">Fix</button>'
-                   '<span class="webonly">%s</span>'
-                   % (E(json.dumps({"verb": "fix", "zone": zone.group(1), "file": zone.group(2)})),
-                      E("Fixing %s…" % Path(item.path).name), E(said[:1].upper() + said[1:]),
-                      request_button(ask[:1].upper() + ask[1:], ask, ws)))
-        elif label:
-            act = request_button("Nurture" if kind == "mechanical" else label, ask, ws)
-        else:
-            act = ""
-        out.append((kind, (item.path, said), act))
+    out: List[Tuple[str, str]] = []
+    for f in C.get("findings", []):
+        path = re.sub(r":\d+$", "", str(f.get("path") or ""))
+        try:
+            light = not re.match(r"Zones/[^/]+/.+\.md$", path)
+            items = [N.sort_item(ctx, i, light=light) for i in N.check_items(f)]
+        except Exception:
+            continue
+        for item in items:
+            at = re.match(r"Zones/([^/]+)/(.+\.md)$", item.path)
+            if item.kind == "mechanical" and at:
+                out.append((at.group(1), at.group(2)))
     return out
 
 
@@ -1399,33 +1195,6 @@ def context_link(qdata: Optional[dict]) -> str:
             '<span class="hint hint-away">%s</span><span class="hint hint-here">%s</span></div>'
             % (E("Nurture runs every night; what it leaves is answered in the Context tab. " + open_now),
                E("Nurture runs every night; what it leaves is answered in the panel above. " + open_now)))
-
-
-def refusals_block(ws: Path) -> str:
-    """The last 30 days of wall refusals for the Checks card (#525): refusals, not finding lines (one per time and
-    repository, as garrick_lib's refusal_counts() counts them), the kinds within them, the days they fell, and
-    the refusals a commit followed within ten minutes (overridden), so the figures share one unit. A repository
-    nested in a zone is said apart; a kind this release no longer produces is marked as from an older release.
-    Counts only; the record holds no path, name or text."""
-    lib = workspace_lib(ws)
-    count = getattr(lib, "refusal_counts", None)
-    got = count(ws) if count else None
-    if not got or not (got["kinds"] or got.get("nested")):
-        return ""
-    older = set(got.get("older") or ())
-
-    def kinds(d):
-        return ", ".join("%s %d%s" % (k, n, " (older release)" if k in older else "") for k, n in sorted(d.items()))
-    text = ""
-    if got["kinds"]:
-        n = got.get("refusals", 0)
-        days = ", ".join(dt.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
-        text = "Wall refusals, 30 days: %s, of kinds %s. Days: %s. Overridden: %d of %d." % (
-            counted(n, "refusal"), kinds(got["kinds"]), days, got["overridden"], n)
-    if got.get("nested"):
-        text += "%s %s in repositories nested in a zone, of kinds %s." % (
-            " " if text else "Wall refusals, 30 days:", counted(got["nested"], "refusal"), kinds(got.get("nested_kinds") or {}))
-    return '<div class="hint" id="refusals">%s</div>' % E(text)
 
 
 # What the Checks card says (#530): which scopes need the user, and for how long, from the one-pass forecast (the
@@ -1645,23 +1414,26 @@ def override_times(ws: Path) -> List[str]:
         return []
 
 
-def override_note(ws: Path) -> str:
+def override_note(ws: Path, go: str = "") -> str:
     """The line for a wall override the user has not seen (#530), hidden until CHECKS_JS finds one newer than the
-    last time this browser opened the card. The page holds the times only: no count, path, name or text."""
-    return '<p class="hint dnew" id="newover" data-over="%s" hidden></p>' % E(json.dumps(override_times(ws)))
+    last time this browser opened the card. The page holds the times only: no count, path, name or text. `go` is the
+    place whose queue holds most wall findings (#541): the line opens that queue; without one it is plain text."""
+    return '<p class="hint dnew" id="newover" data-over="%s"%s hidden></p>' % (E(json.dumps(override_times(ws))), ' data-go="%s"' % E(go) if go else "")
 
 
-FINDINGS_LINK = '<div class="gacts"><button class="act" type="button" data-findings>All findings</button></div>'
-
-
-def findings_dialog(inner: str) -> str:
-    """The view of its own the card opens (#530): what the card no longer carries."""
-    return ('<dialog id="findings" class="findings" aria-labelledby="findings-h"><div class="fhead"><h3 id="findings-h">All findings</h3>'
-            '<button class="act" type="button" data-fclose>Close</button></div>%s</dialog>' % inner)
+def wall_place(queues: Optional[Dict[str, List[dict]]]) -> str:
+    """The scope whose queue holds the most wall findings, the first by scope_order on a tie; "" with none or no
+    queue. A name the page already carries for its queues, never a count of two places."""
+    best, most = "", 0
+    for scope in sorted(queues or {}, key=scope_order):
+        n = sum(1 for q in queues[scope] if q.get("id") == "wall")
+        if n > most:
+            best, most = scope, n
+    return best
 
 
 CHECKS_JS = r"""
-(function(){var dlg=document.getElementById('findings'),card=document.getElementById('checks'),KEY='garrick-checks-seen';
+(function(){var card=document.getElementById('checks'),KEY='garrick-checks-seen';
 var st={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,x){try{localStorage.setItem(k,x)}catch(e){}}};
 function usable(){try{localStorage.setItem('garrick-probe','1');localStorage.removeItem('garrick-probe');return true}catch(e){return false}}
 var note=document.getElementById('newover');
@@ -1670,33 +1442,18 @@ function say(t0,n){var d=new Date(t0),days=(Date.now()-d.getTime())/864e5,w=days
 return n+' wall override'+(n===1?'':'s')+' since '+(new Date().toDateString()===d.toDateString()?'earlier today':w)}
 if(note&&usable()){var s=st.get(KEY),t0=s?Date.parse(s):NaN,over=[];try{over=JSON.parse(note.dataset.over||'[]')}catch(e){}
 var n=isNaN(t0)?0:over.filter(function(x){return Date.parse(x)>t0}).length;
-if(n){note.textContent='';var a=document.createElement('a');a.href='#findings';a.setAttribute('data-findings','');a.textContent=say(t0,n);note.appendChild(a);note.hidden=false}
+if(n){note.textContent='';var go=note.dataset.go;
+if(go){var a=document.createElement('a');a.href='#';a.setAttribute('data-qopen',go);a.setAttribute('data-seen','');a.textContent=say(t0,n);note.appendChild(a)}else note.textContent=say(t0,n);
+note.hidden=false}
 else st.set(KEY,new Date().toISOString())}
 if(card){var sum=card.querySelector('summary');if(sum)sum.addEventListener('click',function(){if(usable())seen()})}
-document.addEventListener('click',function(e){var t=e.target;if(!t||!t.closest)return;
-if(t.closest('[data-fclose]')){if(dlg&&dlg.open)dlg.close();return}
-if(t.closest('[data-findings]')){e.preventDefault();if(usable())seen();if(dlg&&dlg.showModal&&!dlg.open)dlg.showModal();return}
-var a=t.closest('#findings a[href^="#"]');if(a&&dlg&&dlg.open)dlg.close()});
+document.addEventListener('click',function(e){var t=e.target;if(t&&t.closest&&t.closest('[data-seen]')&&usable())seen()});
 })();
 """
 
 DEBT_CSS = r"""
-/* Context debt, on the Checks card: the figure and what it is made of, a line from the first record against the threshold,
-   dashed, with the first, latest and threshold values written and a tick for a night with no record, and the scopes carrying most */
-.debt{margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--line)}.dhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
-.dfig{font:600 28px/1 var(--display);letter-spacing:-.01em}.dlbl{color:var(--ink2);font-size:12.5px}
-.dkinds{margin:2px 0 0;font-size:12.5px;color:var(--ink2)}.dkinds .dwall{color:var(--critical);font-weight:600}
-.dwrap{position:relative;margin:18px 0 2px}.dchart{display:block;width:100%;height:64px;overflow:visible}
-.dchart .dl{fill:none;stroke:var(--accent);stroke-width:1.6;vector-effect:non-scaling-stroke;stroke-linejoin:round;stroke-linecap:round}
-.dchart .da{fill:var(--wash);stroke:none}.dchart .dt{stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3;vector-effect:non-scaling-stroke}
-.dchart .dd{stroke:var(--accent);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke}.dchart .dd.now{stroke-width:8}
-.dchart .dd.over{stroke-width:8}.dchart .dhole{stroke:var(--surface);stroke-width:4;stroke-linecap:round;vector-effect:non-scaling-stroke;pointer-events:none}
-.dval,.dthr{position:absolute;font-size:11px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
-.dval{color:var(--ink2);font-weight:600;transform:translateY(-150%)}.dfirst{left:0}.dlast{right:0}.dspike{transform:translate(8px,-50%)}
-.dthr{right:0;transform:translateY(30%);color:var(--muted)}   /* at the dashed line's right end, below it: clear of the line */
-.dmiss{position:absolute;bottom:-3px;width:9px;height:8px;margin-left:-4.5px;background:linear-gradient(var(--muted),var(--muted)) center/1.5px 100% no-repeat}
-.dwallmiss a{color:var(--critical);font-weight:600}
-.dticks{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}.dmost{margin:6px 0 0}.dmost .dask{margin-left:4px}
+/* The Checks card's lines: what needs the user, place by place, and the context debt in one line under the last nurture */
+.ndebt{margin:4px 0 0}.ndebt.over{color:var(--critical);font-weight:600}
 .need{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line)}
 .need:first-of-type{border-top:0}.nsay{font-size:13.5px}.nlast,.nonee{margin:8px 0 0}.dnew a{color:var(--critical);font-weight:600}
 dialog.findings{width:min(720px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:20px 22px;box-shadow:0 18px 60px rgba(0,0,0,.25)}
@@ -7635,13 +7392,16 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     elif C.get("failed"):
         body = '<div class="clean">%sThe check did not run. Run <code>python3 System/tools/check.py</code> to see why.</div>' % ICON["critical"]
     else:
-        body = check_groups(ws, C, link, fixes)
+        body = ""
+        fixes = mechanical_fixes(ws, C)
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
+    listed_kept = ""
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
-    # The card says what needs the user (#530); the figures, the chart, the refusals and the list are in the Findings view.
+        listed_kept = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age)
+    # The card says what needs the user (#530); the figure is one line (#541), the list is the queue's questions.
     history, said_scope = debt_history(ws, now.date())
     listed = bool(C) and not C.get("failed") and not C.get("pending")
     queues = finding_queues(ws, history, C, now.date(), said_scope)
@@ -7649,9 +7409,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     fq = queue_mod() if queues is not None else None
     checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
                        need_lines(ws, history, said_scope, queues) + (fq.fix_block(fixes, str(ws)) if fq else "") + last_nurture(history)
-                       + override_note(ws) + context_link(qdata) + FINDINGS_LINK + ("" if listed else body),
+                       + debt_line(history) + override_note(ws, wall_place(queues)) + context_link(qdata) + (listed_kept if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
-    findings_view = findings_dialog(debt_block(ws, now.date(), C) + refusals_block(ws) + body)
     queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names) if fq else ""
 
     # ---- open actions and inboxes
@@ -7891,7 +7650,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + findings_view + queue_view,
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

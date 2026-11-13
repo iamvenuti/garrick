@@ -611,16 +611,17 @@ class TestQueueOnThePage(QueueCase):
         self.assertIn("Fix them</button>", card)
         self.assertNotIn('id="queue"', html)                                                    # a mechanical finding is not asked one by one
 
-    def test_fix_them_runs_the_same_fix_as_the_verb_for_each_note(self):
-        """The button's requests are the requests the Fix on a finding's own row sends: one `fix` for each note."""
+    def test_fix_them_runs_the_verb_fix_for_each_note(self):
+        """The button's requests are the verb `fix`, one for each note, as the executor validates it (#541: the finding's own row is gone)."""
         sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
         said = "`status` is 'ongoing', should be active, parked or done"
         self.quick({"check": "threads", "severity": "warning", "path": sized, "message": said})
         self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
         html = self.page()
-        row = re.search(r'<button class="act primary tacts" type="button" data-act="([^"]+)"', html)
         fix = re.search(r'data-fix="([^"]+)"', html)
-        self.assertEqual([json.loads(htmllib.unescape(row.group(1)))], json.loads(htmllib.unescape(fix.group(1))))
+        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"}],
+                         json.loads(htmllib.unescape(fix.group(1))))
+        self.assertIsNone(pa.ops_lib(self.root).validate("fix", json.loads(htmllib.unescape(fix.group(1)))[0]))
 
     def test_no_fix_them_without_a_mechanical_fix(self):
         self.quick({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})

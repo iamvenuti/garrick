@@ -139,6 +139,7 @@ from garrick_lib import (  # noqa: E402
     strip_recipients,
     strip_tag,
     record_refusals,
+    refusal_counts,
     refusal_kind,
     ALLOW_RULES,
     allow_add,
@@ -7179,6 +7180,34 @@ def walls_cases(root: Path) -> int:
     return 1 if failed or not ran else 0
 
 
+def refusals_report(root: Path) -> str:
+    """The last 30 days of wall refusals as plain text (#541): refusals, not finding lines (one per time and
+    repository, as garrick_lib's refusal_counts() counts them), the kinds within them, the days they fell, and the
+    refusals a commit followed within ten minutes (overridden), so the figures share one unit. A repository nested in
+    a zone is said apart; a kind this release no longer produces is marked as from an older release. Counts only: the
+    record holds no path, name or text. "" when there is no record or it holds no refusal."""
+    got = refusal_counts(root)
+    if not got or not (got["kinds"] or got.get("nested")):
+        return ""
+    older = set(got.get("older") or ())
+
+    def kinds(d: Dict[str, int]) -> str:
+        return ", ".join("%s %d%s" % (k, n, " (older release)" if k in older else "") for k, n in sorted(d.items()))
+
+    def counted(n: int) -> str:
+        return "%d refusal%s" % (n, "" if n == 1 else "s")
+    text = ""
+    if got["kinds"]:
+        n = got.get("refusals", 0)
+        days = ", ".join(datetime.date.fromisoformat(d).strftime("%d %b") for d in got["days"])
+        text = "Wall refusals, 30 days: %s, of kinds %s. Days: %s. Overridden: %d of %d." % (
+            counted(n), kinds(got["kinds"]), days, got["overridden"], n)
+    if got.get("nested"):
+        text += "%s %s in repositories nested in a zone, of kinds %s." % (
+            " " if text else "Wall refusals, 30 days:", counted(got["nested"]), kinds(got.get("nested_kinds") or {}))
+    return text
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     if argv[:1] == ["allow"]:
@@ -7209,6 +7238,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                              "Parties table, with its tags in place of the fixture's")
     parser.add_argument("--version", action="store_true",
                         help="say which Garrick the workspace was installed from, for a bug report")
+    parser.add_argument("--refusals", action="store_true",
+                        help="print the last 30 days of wall refusals from System/generated/walls/refusals.jsonl, "
+                             "counted by kind, with the days and the overrides; nothing when there is none")
     parser.add_argument("--verbose", action="store_true",
                         help="with --staged: one line for every refusal, each with the id that lets it through "
                              "(`check.py allow <path> <id>`), not the short report")
@@ -7237,6 +7269,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
     if args.walls_cases:
         return walls_cases(root)
+    if args.refusals:
+        text = refusals_report(root)
+        if text:
+            print(text)
+        return 0
     if args.version:
         stamp = read_version(root)
         print(" ".join(s for s in (say_version(stamp), say_changes(root, stamp)) if s))

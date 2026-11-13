@@ -1144,8 +1144,8 @@ class TestOpensOnTheWork(StatusCase):
         pricing = self.row(html, "Pricing")
         self.assertEqual([], self.chips(pricing))
         self.assertIn('data-ok="1"', pricing[:60])
-        self.assertNotIn("261019 6.55pm - Deck.pptx", self.rows(html, "checks"))  # the list is in the Findings view (#530)
-        self.assertIn("261019 6.55pm - Deck.pptx", html[html.index('<dialog id="findings"'):])
+        self.assertNotIn("261019 6.55pm - Deck.pptx", self.rows(html, "checks"))  # no list on the card, and no Findings view (#541)
+        self.assertNotIn("261019 6.55pm - Deck.pptx", html)
 
     def test_an_error_the_page_cannot_explain_marks_no_row(self):
         self.fake_check({"check": "threads", "severity": "error",
@@ -3889,13 +3889,14 @@ class TestMemorySettings(StatusCase):
         self.assertEqual(0, done.returncode, done.stderr)
 
 class TestContextDebt(StatusCase):
-    """#69: the context debt beside the check's findings, read from the
-    records nurture.py keeps, with nothing run."""
+    """#541: the context debt is one line on the Checks card, from the records nurture.py keeps, with nothing run."""
 
     def setUp(self):
         super().setUp()
         shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
                         ignore=shutil.ignore_patterns("__pycache__"))
+        status._NURTURE.clear()
+        self.addCleanup(status._NURTURE.clear)
         self.folder = self.root / "System" / "generated" / "nurture"
 
     def record(self, back, total, scopes=None, whole=True):
@@ -3908,163 +3909,46 @@ class TestContextDebt(StatusCase):
         write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "debt": {
             "total": total, "kinds": kinds, "scopes": scopes, "whole": whole, "threshold": 40}}))
 
-    def block(self, html):
-        start = html.index('<div class="debt" id="debt">')
-        return html[start:html.index("</p></div>", start)]
+    def card(self, html):
+        start = html.index('<details class="card" id="checks"')
+        ends = [i for i in (html.find('<details class="card" id="', start + 1), html.find("</section>", start)) if i > 0]
+        return html[start:min(ends)]
 
-    def test_nothing_without_a_record(self):
-        html = self.page()
-        self.assertNotIn('id="debt"', html)
+    def test_no_line_before_the_first_record(self):
+        card = self.card(self.page())
+        self.assertNotIn("Context debt", card)
         self.record(0, 12, whole=False)                     # a scoped run's part is not the workspace's debt
-        self.assertNotIn('id="debt"', self.page())
+        self.assertNotIn("Context debt", self.card(self.page()))
 
-    def test_the_figure_its_trend_and_the_scopes_carrying_most(self):
-        for back, total in ((40, 3), (6, 18), (5, 20), (3, 30), (2, 35), (1, 40)):
-            self.record(back, total)
-        self.record(0, 42, {"Wikis/Meetings": {"attribution": 25}, "Zones/Work": {"wall": 10, "judgment": 2},
-                            "System": {"judgment": 5}})
-        b = self.block(self.page())
-        self.assertIn('<span class="dfig">42</span><span class="dlbl">context debt</span>', b)
-        self.assertIn('<span class="chip late"', b)
-        self.assertIn(">over 40</span>", b)
-        self.assertEqual(2, b.count('<polyline class="dl"'))               # broken where a day has no record
-        self.assertEqual(6, b.count('class="dd'))                          # thirty days: the one 40 days back left out
-        self.assertEqual(1, b.count('class="dd now"'))
-        self.assertIn('class="dt"', b)                                     # the threshold, dashed
-        self.assertIn('role="img" aria-label="Context debt from ', b)
-        self.assertIn(': 18 on ', b)
-        self.assertIn("Most in the Meetings wiki 25 · Work 12 · System 5.", b)
-        self.assertIn('data-request="nurture the meetings" data-folder="%s"' % self.root, b)      # a button, not "Say …" (#234)
-        self.assertIn('>Nurture the meetings</button>', b)
-        self.assertNotIn("Say &#8220;", b)
-        for colour in re.findall(r"(?<![&\w])#[0-9a-fA-F]{3,6}\b", b):                # the page's tokens only, for light and dark
-            self.fail("a fixed colour in the chart: %s" % colour)
-        self.assertIn(status.DEBT_CSS.strip()[:60], self.page())
+    def test_the_line_says_the_figure_and_the_threshold_under_the_last_nurture(self):
+        self.record(0, 34)
+        card = self.card(self.page())
+        self.assertIn('<p class="hint ndebt">Context debt 34, under the threshold of 40</p>', card)
+        self.assertLess(card.index("Last nurture"), card.index("Context debt"))
+        self.record(0, 40)
+        self.assertIn("Context debt 40, at the threshold of 40", self.card(self.page()))
 
-    def test_under_the_threshold_and_an_older_day(self):
-        self.record(2, 9, {"Zones/Work": {"judgment": 9}})
-        b = self.block(self.page())
-        self.assertIn('<span class="dfig">9</span><span class="dlbl">context debt as of ', b)
-        self.assertIn('<span class="chip"', b)
-        self.assertIn(">under 40</span>", b)
-        self.assertIn('<button class="act dask" type="button" data-request="nurture Work"', b)
-        self.assertIn(">Nurture Work</button>", b)
-        self.assertNotIn("<polyline", b)                                    # one day: a dot, no line
+    def test_over_the_threshold_the_line_is_red(self):
+        self.record(0, 42)
+        card = self.card(self.page())
+        self.assertIn('<p class="hint ndebt over">Context debt 42, over the threshold of 40</p>', card)
+        self.assertIn(".ndebt.over{color:var(--critical)", status.DEBT_CSS)
 
-    def chart(self, b):
-        """The chart's points, as (x, y) per dot in order, and its labels by class."""
-        dots = [(float(x), float(y)) for x, y in re.findall(r'<line class="dd[^"]*" x1="([\d.]+)" x2="[\d.]+" y1="([\d.]+)"', b)]
-        labels = {cls: htmllib.unescape(text) for cls, text in re.findall(r'<span class="(?:dval |)(\w+)" style="[^"]*">([^<]*)</span>', b)}
-        return dots, labels
-
-    def test_the_line_runs_from_the_first_record_and_fills_the_width(self):
-        """#321: ten records fill the chart, from the first record to the latest."""
-        for back in range(10):
-            self.record(back, 40 + back)
-        b = self.block(self.page())
-        dots, labels = self.chart(b)
-        self.assertEqual(10, len(dots))
-        self.assertEqual((5.0, 295.0), (dots[0][0], dots[-1][0]))                    # edge to edge
-        first = self.now.date() - dt.timedelta(days=9)
-        self.assertIn('<div class="dticks"><span>%s</span><span>today</span></div>' % first.strftime("%d %b").lstrip("0"), b)
-        self.assertEqual(("49", "40", "threshold 40"), (labels["dfirst"], labels["dlast"], labels["dthr"]))   # written, no hovering
-        self.assertNotIn("dmiss", b)
-
-    def test_one_spike_does_not_flatten_the_rest(self):
-        """#321: a night at 900 against a usual 40 to 65 is an open dot at the
-        cap with its value written, and the rest use over half the height."""
-        for back, total in enumerate((52, 45, 64, 40, 900, 58, 42, 61, 50, 65)):
-            self.record(back, total)
-        b = self.block(self.page())
-        dots, labels = self.chart(b)
-        self.assertEqual(1, b.count('class="dd over"'))
-        self.assertEqual(1, b.count('class="dhole"'))
-        self.assertEqual("900", labels["dspike"])
-        rest = [y for (x, y), v in zip(dots, (65, 50, 61, 42, 58, 900, 40, 64, 45, 52)) if v != 900]
-        self.assertGreaterEqual(max(rest) - min(rest), (64 - 2 * 5) / 2)            # over at least half the plot
-        spike = dots[5][1]
-        self.assertLess(spike, min(rest))                                            # at the top, above every other night
-        self.assertGreaterEqual(spike, 0)
-        bottom, top, cap = status.debt_scale([52, 45, 64, 40, 900, 58, 42, 61, 50, 65], 40)
-        self.assertEqual(80, cap)                                                    # twice the threshold
-        self.assertLess(bottom, 40)
-        self.assertGreater(top, 80)
-        self.assertEqual(65, status.debt_scale([52, 45, 64, 40, 50, 65], 5)[2])      # a low threshold: the highest ordinary night
-
-    def test_a_run_of_high_nights_is_drawn_at_its_height_and_only_the_spikes_are_capped(self):
-        """#525: over 17 nights, 144 to 164 are drawn where they are and only 2,435 and 3,253 are capped."""
-        series = (20, 28, 35, 41, 47, 52, 58, 61, 64, 70, 76, 144, 152, 156, 164, 2435, 3253)
-        bottom, top, cap = status.debt_scale(list(series), 40)
-        self.assertEqual(164, cap)
-        for back, total in enumerate(reversed(series)):
-            self.record(back, total)
-        b = self.block(self.page())
-        dots, labels = self.chart(b)
-        self.assertEqual(2, len(re.findall(r'class="dd[^"]* over"', b)))       # the latest, 3,253, is "dd now over"
-        self.assertEqual(2, b.count('class="dhole"'))
-        ys = dict(zip(series, [y for _, y in dots]))                  # oldest first, as the chart draws them
-        self.assertGreater(len({ys[144], ys[152], ys[156], ys[164]}), 3)          # four heights, not one
-        self.assertEqual(ys[2435], ys[3253])                                       # the two spikes at the cap
-        self.assertLess(ys[3253], ys[164] + 0.01)
-        self.assertEqual("threshold 40", labels["dthr"])
-        self.assertIn(".dthr{right:0;", status.DEBT_CSS)                           # at the dashed line's right end
-
-    def test_the_header_counts_wall_findings_the_list_does_not_show_and_names_none(self):
-        """#525: a count and a link, from the latest record's standing walls that the quick check's list lacks."""
-        day = self.now.date()
-        write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "debt": {
-            "total": 76, "kinds": {"wall": 30}, "scopes": {"Zones/Harbour": {"wall": 30}}, "whole": True, "threshold": 40},
-            "standing": [{"kind": "wall", "path": "Zones/Harbour/Cedar/Notes.md", "message": "repeats wording from Maple"},
-                         {"kind": "wall", "path": "Zones/Harbour/Cedar/Plan.md", "message": "repeats wording from Maple"},
-                         {"kind": "wall", "path": "Zones/Harbour/Cedar/Plan2.md", "message": "repeats wording from Maple"},
-                         {"kind": "judgment", "path": "System/x.md", "message": "stale"}]}))
-        quick = {"findings": [], "errors": 0, "warnings": 0}
-        b = status.debt_block(self.root, day, quick)
-        self.assertIn('<a href="#qp">3 wall findings from last night&#x27;s run, not in this list</a>', b.replace("&#39;", "&#x27;"))
-        for leaked in ("Cedar", "Maple", "Notes", "Plan", "wording"):
-            self.assertNotIn(leaked, b)
-        # one of the three is in the list as a wall: the line counts the other two
-        shown = [("wall", ("Zones/Harbour/Cedar/Notes.md", "x"), "")]
-        with mock.patch.object(status, "sorted_finding", lambda ws, lib, f: shown):
-            b = status.debt_block(self.root, day, {"findings": [{"path": "Zones/Harbour/Cedar/Notes.md"}]})
-        self.assertIn("2 wall findings from last night", b)
-        with mock.patch.object(status, "sorted_finding", lambda ws, lib, f: [("wall", (p, "x"), "") for p in (
-                "Zones/Harbour/Cedar/Notes.md", "Zones/Harbour/Cedar/Plan.md", "Zones/Harbour/Cedar/Plan2.md")]):
-            b = status.debt_block(self.root, day, {"findings": [{"path": "a"}]})
-        self.assertNotIn("dwallmiss", b)                                       # nothing missing, no line
-        self.assertNotIn("dwallmiss", status.debt_block(self.root, day))       # no check result, no line
-
-    def test_a_missing_night_is_marked(self):
-        for back in (5, 4, 2, 1, 0):
-            self.record(back, 30)
-        b = self.block(self.page())
-        gone = self.now.date() - dt.timedelta(days=3)
-        self.assertEqual(1, b.count('class="dmiss"'))
-        self.assertIn('data-tip="No Nurture record for %s"' % gone.strftime("%a %d %b"), b)
-        self.assertEqual(2, b.count('<polyline class="dl"'))
-
-    def test_fewer_than_three_records_draw_no_chart(self):
-        self.record(1, 30)
-        self.record(0, 32)
-        b = self.block(self.page())
-        self.assertNotIn("dchart", b)
-        self.assertIn('<span class="dfig">32</span>', b)
-
-    def test_the_figure_says_what_it_is_made_of(self):
-        """#321: by kind, the heaviest first, and a wall first of all, in the critical colour."""
-        self.record(0, 49, {"Zones/Work": {"judgment": 30, "mechanical": 1}, "Wikis/Meetings": {"attribution": 10, "judgment": 8}})
-        b = self.block(self.page())
-        self.assertIn('<p class="dkinds">49: <span>judgment 38</span>, <span>attribution 10</span>, <span>mechanical 1</span></p>', b)
-        self.record(0, 59, {"Zones/Work": {"judgment": 30, "wall": 10, "mechanical": 1}, "System": {"attribution": 18}})
-        b = self.block(self.page())
-        self.assertIn('<p class="dkinds">59: <span class="dwall">wall 10</span>, <span>judgment 30</span>, <span>attribution 18</span>, '
-                      '<span>mechanical 1</span></p>', b)
-        self.assertIn(".dkinds .dwall{color:var(--critical)", status.DEBT_CSS)
+    def test_the_page_holds_no_chart_no_kinds_no_scopes_and_builds_none(self):
+        for back, total in ((3, 30), (2, 32), (1, 35), (0, 42)):
+            self.record(back, total, {"Wikis/Meetings": {"attribution": 25}, "Zones/Work": {"wall": 10, "judgment": 2}})
+        write(self.root / "System" / "generated" / "walls" / "refusals.jsonl", json.dumps({
+            "at": self.now.astimezone().isoformat(), "zone": "Work", "repo": "zone", "kind": "link", "walled": True}) + "\n")
+        html = self.page()
+        for gone in ('id="debt"', "dchart", 'class="dfig"', "dkinds", "Most in", "Wall refusals", 'id="refusals"', "dticks"):
+            self.assertNotIn(gone, html)
+        for name in ("refusals_block", "debt_chart", "debt_scale", "debt_block", "findings_dialog", "FINDINGS_LINK"):
+            self.assertFalse(hasattr(status, name), name)       # a build makes no call to what is no longer there
 
     def test_left_out_without_a_nurture_that_keeps_it(self):
         self.record(0, 42)
         with mock.patch.object(status, "nurture_lib", lambda ws: None):
-            self.assertNotIn('id="debt"', self.page())
+            self.assertNotIn("Context debt", self.card(self.page()))
 
 
 class TestContextLink(StatusCase):
@@ -4108,9 +3992,8 @@ class TestContextLink(StatusCase):
 
 
 class TestChecksCardActs(StatusCase):
-    """#278: the Checks card sorts its findings by Nurture's kinds, opens the
-    largest group, and gives each finding its way to act; the debt says what
-    Nurture will do and what it last did, and that the list is another run."""
+    """#278, #541: the Checks card's Fix them runs the mechanical findings of the quick check on notes in a zone, and
+    the page works a fix out in full only for such a note."""
 
     def setUp(self):
         super().setUp()
@@ -4128,38 +4011,6 @@ class TestChecksCardActs(StatusCase):
         start = html.index('<details class="card" id="checks"')
         ends = [i for i in (html.find('<details class="card" id="', start + 1), html.find("</section>", start)) if i > 0]
         return html[start:min(ends)]
-
-    def findings(self, html):
-        """The Findings view (#530): the list the card no longer holds."""
-        start = html.index('<dialog id="findings"')
-        return html[start:html.index("</dialog>", start)]
-
-    def groups(self, card):
-        return re.findall(r'<details class="group" data-ok="0"( open)?><summary>.*?<b>([^<]+)</b>', card, re.S)
-
-    def test_findings_are_sorted_by_kind_and_each_has_its_action(self):
-        thread = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
-        self.fake_check(
-            {"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Notes.md:4", "message": "something odd"},
-            {"check": "threads", "severity": "warning", "path": thread, "message": "`status` is 'ongoing', should be active, parked or done"},
-            {"check": "projects", "severity": "warning", "path": "Zones/Work/Acme Review/Acme Review.md", "message": "no `party`"},
-            {"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Other.md", "message": "another"},
-            {"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "names birch"})
-        card = self.findings(self.page())
-        self.assertEqual([(" open", "Walls"), ("", "Mechanical"), (" open", "Judgment")],
-                         self.groups(card))                              # an error opens its group, and so does the largest
-        uri = (self.root / thread).as_uri()
-        place = self.root / "Zones/Work/Birch Entry/Threads/Market Sizing"     # a thread's note opens as its row (#318)
-        self.assertIn('<a href="%s" data-place="%s">%s</a>: status ongoing becomes active</span>'
-                      % (htmllib.escape(uri), htmllib.escape(str(place)), thread), card)
-        memo = (self.root / "Zones/Work/Acme Review/Memo.md").as_uri()
-        self.assertIn('<a href="%s">Zones/Work/Acme Review/Memo.md</a>' % htmllib.escape(memo), card)   # any other file as itself
-        fix = re.search(r'<button class="act primary tacts" type="button" data-act="([^"]+)"', card)
-        self.assertEqual({"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"},
-                         json.loads(htmllib.unescape(fix.group(1))))
-        self.assertIn(">Take it out</button>", card)
-        self.assertIn("Memo.md</a>: names birch</span>", card)            # a wall in the check's own words
-        self.assertIn("Notes.md</a>: something odd</span></li>", card)     # a judgment is the file to open
 
     def test_a_finding_without_fix_reads_no_history(self):
         """A rename's date comes from git, a call a file: the page makes it
@@ -4191,41 +4042,19 @@ class TestChecksCardActs(StatusCase):
                     seen.append(cmd)
                 return real(cmd, *a, **k)
             with mock.patch.object(subprocess, "run", spy):
-                card = self.findings(self.page())
+                card = self.card(self.page())
             return len([c for c in seen if "rev-parse" not in c]), card      # rev-parse: asked once a process
 
         few, _ = calls(1)
         many, card = calls(12)
         self.assertEqual(few, many)                                        # the same calls, however many decks
-        self.assertEqual(12, card.count("pptx</a>: put its creation date in front of its name</span>"))     # still mechanical
-        self.assertIn('>Nurture</button>', card)                           # no Fix for a file that is not a note
-        self.assertIn("Memo.md</a>: rename it %s - Memo.md</span>" % self.now.strftime("%y%m%d"), card)
-        self.assertIn(">Fix</button>", card)                               # a note in a zone is worked out in full
-
-    def test_without_nurture_the_findings_are_listed_by_check(self):
-        self.fake_check({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
-        (self.root / "System" / "tools" / "nurture.py").unlink()
-        card = self.findings(self.page())
-        self.assertEqual([(" open", "links")], self.groups(card))          # the check, by its title where check.py has one
-        self.assertNotIn("data-request", card)
-
-    def test_the_debt_says_what_nurture_does_and_what_it_last_did(self):
-        self.fake_check({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
-        day = self.now.date()
-        write(self.root / "System" / "generated" / "nurture" / ("%s.json" % day.isoformat()), json.dumps({
-            "date": day.isoformat(), "fixed": [{"line": "a"}] * 12, "answered": [{"line": "b"}] * 3,
-            "standing": [{"kind": "mechanical", "path": "Zones/Work/a.md"}] * 4 + [{"kind": "attribution", "path": "Zones/Work/b.md"}]
-                        + [{"kind": "judgment", "path": "Wikis/Meetings/c.md"}] + [{"kind": "behind", "path": "Zones/Work/d.md"}],
-            "debt": {"total": 10, "kinds": {}, "scopes": {"Zones/Work": {"mechanical": 4, "attribution": 5},
-                                                          "Wikis/Meetings": {"judgment": 1}}, "whole": True, "threshold": 40}}))
-        card = self.findings(self.page())
-        self.assertIn(">Nurture Work</button></p><p class=\"hint\">One pass over Work: 4 fixes on one yes, 1 question one at a time.</p>", card)
-        self.assertIn("Last nurture %s: 12 fixed, 3 answered, 6 left. The figure is that run&#x27;s; the list below is this "
-                      "build&#x27;s quick check." % day.strftime("%a %d %b"), card)
+        self.assertIn("Garrick can fix 1 small thing on its own.", card)   # the note in a zone only: a deck is not a note
+        fix = re.search(r'data-fix="([^"]+)"', card)
+        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Acme Review/Deliverables/Memo.md"}], json.loads(htmllib.unescape(fix.group(1))))
 
 class TestChecksSaysWhatNeedsYou(StatusCase):
-    """#530: the Checks card says which scopes need the user and for how long, with one word for the trend; the
-    figures, the chart, the refusals and the list are in the Findings view."""
+    """#530, #541: the Checks card says which scopes need the user and for how long, with one word for the trend and the
+    context debt in one line; there is no Findings view."""
 
     def setUp(self):
         super().setUp()
@@ -4254,10 +4083,6 @@ class TestChecksSaysWhatNeedsYou(StatusCase):
         start = html.index('<details class="card" id="checks"')
         ends = [i for i in (html.find('<details class="card" id="', start + 1), html.find("</section>", start)) if i > 0]
         return html[start:min(ends)]
-
-    def view(self, html):
-        start = html.index('<dialog id="findings"')
-        return html[start:html.index("</dialog>", start)]
 
     def test_the_minutes_round_up_to_five(self):
         self.assertEqual(5, status.minutes_for(0, 1))
@@ -4331,30 +4156,26 @@ class TestChecksSaysWhatNeedsYou(StatusCase):
         self.record(0, [{"kind": "judgment", "path": "Zones/Work/a.md"}])
         self.assertNotIn('id="trend"', self.card(self.page()))                      # one night: no word
 
-    def test_the_card_holds_no_chart_and_no_refusal_counts_and_the_view_holds_them(self):
+    def test_the_card_has_no_all_findings_button_and_the_page_no_findings_view(self):
         for back in (3, 2, 1, 0):
             self.record(back, [{"kind": "judgment", "path": "Zones/Work/a.md"}] * 3)
         write(self.root / "System" / "generated" / "walls" / "refusals.jsonl", json.dumps({
             "at": self.now.astimezone().isoformat(), "zone": "Work", "repo": "zone", "kind": "link", "walled": True}) + "\n")
         html = self.page()
-        card, view = self.card(html), self.view(html)
-        for gone in ("dchart", "context debt", 'class="dfig"', "dkinds", "Most in", "over 40", "under 40", 'id="refusals"',
-                     "Wall refusals", "One pass over", "fixed,", "answered,"):
+        card = self.card(html)
+        for gone in ("dchart", 'class="dfig"', "dkinds", "Most in", 'id="refusals"', "Wall refusals", "One pass over", "fixed,", "answered,",
+                     "data-findings", "All findings"):
             self.assertNotIn(gone, card)
-        self.assertIn("data-findings", card)                                         # All findings
-        self.assertIn(">All findings</button>", card)
-        for held in ('id="debt"', "dchart", 'class="dfig"', "Most in", 'id="refusals"', "Wall refusals, 30 days", "Last nurture "):
-            self.assertIn(held, view)
-        self.assertNotIn('id="findings"', card)                                      # a view of its own, outside the card
-        self.assertIn('<dialog id="findings" class="findings"', html)
+        for gone in ("data-findings", 'id="findings"', 'aria-labelledby="findings-h"', "All findings", "Wall refusals"):
+            self.assertNotIn(gone, html)
+        self.assertIn("Context debt ", card)
 
-    def test_the_list_moves_to_the_view_and_a_failed_check_stays_on_the_card(self):
+    def test_a_failed_check_stays_on_the_card_and_no_list_is_built(self):
         tools = self.root / "System" / "tools"
         (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
             "errors": 0, "warnings": 1, "findings": [{"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"}]})
         html = self.page()
-        self.assertIn("Zones/Work/a.md", self.view(html))
-        self.assertNotIn("Zones/Work/a.md", self.card(html))
+        self.assertNotIn("Zones/Work/a.md", self.card(html))        # the list is the queue's questions now
         (tools / "check.py").write_text("import sys\nsys.exit(3)\n")
         self.assertIn("The check did not run.", self.card(self.page()))
 
@@ -4368,26 +4189,50 @@ class TestChecksSaysWhatNeedsYou(StatusCase):
         self.assertIn("garrick-checks-seen", status.CHECKS_JS)
         self.assertIn("catch(e)", status.CHECKS_JS)
 
-    def run_js(self, over, seen, works=True):
+    def run_js(self, over, seen, works=True, go=""):
         node = shutil.which("node")
         if not node:
             self.skipTest("node is not installed")
         harness = r"""
-const [js, over, seen, works] = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const [js, over, seen, works, go] = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const store = {}; if (seen) store['garrick-checks-seen'] = seen;
 global.localStorage = {getItem: k => { if (!works) throw new Error('no'); return k in store ? store[k] : null },
   setItem: (k, v) => { if (!works) throw new Error('no'); store[k] = v }, removeItem: k => { if (!works) throw new Error('no'); delete store[k] }};
-const note = {dataset: {over}, hidden: true, textContent: '', appendChild(a) { this.child = a }};
+const note = {dataset: {over, go}, hidden: true, textContent: '', appendChild(a) { this.child = a }};
 const listeners = {};
-global.document = {getElementById: id => id === 'newover' ? note : null, createElement: () => ({setAttribute() {}, set href(v) {}, textContent: ''}),
+global.document = {getElementById: id => id === 'newover' ? note : null, createElement: () => ({attrs: {}, setAttribute(k, v) { this.attrs[k] = v }, set href(v) {}, textContent: ''}),
   addEventListener: (n, f) => { listeners[n] = f }};
 new Function(js)();
-console.log(JSON.stringify({hidden: note.hidden, text: note.child ? note.child.textContent : '', stored: store['garrick-checks-seen'] || null}));
+console.log(JSON.stringify({hidden: note.hidden, text: note.child ? note.child.textContent : note.textContent, link: note.child ? note.child.attrs : null, stored: store['garrick-checks-seen'] || null}));
 """
-        done = subprocess.run([node, "-e", harness], input=json.dumps([status.CHECKS_JS, json.dumps(over), seen, works]),
+        done = subprocess.run([node, "-e", harness], input=json.dumps([status.CHECKS_JS, json.dumps(over), seen, works, go]),
                               capture_output=True, text=True, timeout=30)
         self.assertEqual(0, done.returncode, done.stderr)
         return json.loads(done.stdout)
+
+    def test_the_override_line_opens_the_queue_of_the_place_with_most_wall_findings(self):
+        standing = ([{"kind": "wall", "path": "Zones/Work/Acme/Notes.md"}] * 2 + [{"kind": "wall", "path": "Zones/Harbour/Cedar/Plan.md"}]
+                    + [{"kind": "judgment", "path": "Zones/Alder/P/p.md"}] * 5)
+        self.record(0, standing)
+        card = self.card(self.page())
+        self.assertIn('data-go="Zones/Work"', card)                                 # two walls against one, and the judgments are not walls
+        got = self.run_js(["2026-11-12T09:00:00+01:00"], "2026-11-10T09:00:00+01:00", go="Zones/Work")
+        self.assertFalse(got["hidden"])
+        self.assertEqual("Zones/Work", got["link"]["data-qopen"])                   # the line opens that queue, and counts as a visit
+        self.assertIn("data-seen", got["link"])
+        self.assertIn("[data-seen]", status.CHECKS_JS)
+
+    def test_a_tie_goes_to_the_first_place_by_name_and_no_wall_leaves_a_plain_line(self):
+        queues = {"Zones/Work": [{"id": "wall"}], "Zones/Birch": [{"id": "wall"}, {"id": "note-long"}], "Wikis/Meetings": [{"id": "wall"}]}
+        self.assertEqual("Zones/Birch", status.wall_place(queues))
+        self.assertEqual("", status.wall_place({"Zones/Work": [{"id": "note-long"}]}))
+        self.assertEqual("", status.wall_place(None))
+        self.record(0, [{"kind": "judgment", "path": "Zones/Work/a.md"}])
+        self.assertNotIn("data-go", self.card(self.page()))
+        got = self.run_js(["2026-11-12T09:00:00+01:00"], "2026-11-10T09:00:00+01:00")
+        self.assertFalse(got["hidden"])
+        self.assertRegex(got["text"], r"^1 wall override since ")
+        self.assertIsNone(got["link"])                                              # no link without a place
 
     def test_a_new_override_shows_once_and_the_page_remembers_the_visit(self):
         week = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=2))

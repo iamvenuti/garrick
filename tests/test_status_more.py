@@ -961,7 +961,7 @@ class TestCheckReuse(StatusCase):
         page = self.build(reuse=600, now=self.now + dt.timedelta(minutes=4))
         self.assertEqual(1, self.ran())                                # not run again
         self.assertIn("As the check found it 4 min ago", page)
-        self.assertIn(">a.md</a>: x</span>", page)                     # the findings it kept, each path a link
+        self.assertNotIn(">a.md</a>: x</span>", page)                  # the list of findings is no longer on the page (#541)
 
     def test_needs_attention_and_the_checks_tile_say_the_counts_are_kept(self):
         """#298: the counts a kept result gives say how old they are wherever
@@ -999,7 +999,7 @@ class TestCheckReuse(StatusCase):
         page = self.build(reuse=float("inf"), now=self.now + dt.timedelta(days=3))
         self.assertEqual(1, self.ran())
         self.assertIn("As the check found it 3 days ago", page)
-        self.assertIn(">a.md</a>: x</span>", page)
+        self.assertNotIn(">a.md</a>: x</span>", page)
 
     def test_a_check_that_sleeps_is_never_called_by_a_build_a_tool_asks_for(self):
         """#382: the stub check sleeps; a build with --reuse-check never calls it,

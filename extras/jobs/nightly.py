@@ -79,7 +79,7 @@ NURTURE = HERE / "nurture_sweep.py"
 WORK_IN = HERE / "work_in.py"
 STATUS = HERE.parent / "status"            # System/status beside System/jobs, as extras/status is beside extras/jobs
 LOCAL = ("System", "jobs", "nightly.local")
-# Seconds each step may take; their sum stays under the plist's --timeout 3600.
+# Seconds each step may take; their sum is at most the plist's --timeout 3600.
 LIMITS = {"hooks": 30, "nurture": 1500, "answers": 390, "effort": 300, "recall": 300, "nightly.local": 600, "status": 480}
 TAIL = 10
 EXIT_TIMEOUT = 124
@@ -112,7 +112,7 @@ def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[s
     out = [("hooks", [sys.executable, str(Path(__file__).resolve()), "--workspace", str(ws), "--install-hooks-step"], "") if check.is_file()
            else ("hooks", None, "no System/tools/check.py"),
            ("nurture", nurture, ""),
-           ("answers", [sys.executable, str(WORK_IN), "--workspace", str(ws)], "") if (STATUS / "questions_panel.py").is_file() and WORK_IN.is_file()
+           ("answers", [sys.executable, str(WORK_IN), "--workspace", str(ws), "--limit", str(LIMITS["answers"])], "") if (STATUS / "questions_panel.py").is_file() and WORK_IN.is_file()
            else ("answers", None, "no System/status/questions_panel.py"),
            ("effort", effort, "") if (STATUS / "effort.py").is_file() else ("effort", None, "no System/status/effort.py"),
            ("recall", [sys.executable, str(ws / "System" / "tools" / "recall.py"), "--root", str(ws), "nightly"], "")

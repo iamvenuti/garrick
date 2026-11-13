@@ -929,9 +929,10 @@ function open(scope){var s=all().filter(function(x){return x.dataset.scope===sco
 cur=s;tally=fresh();gone={};notes={};skip={};refused={};pend=null;if(!dlg.open)dlg.showModal();show()}
 /* The app rebuilds the page after an answer that changed something and reloads it: the queue comes back where it was, and an
    answer sent just before the reload is counted from what the new page shows */
-function restore(){var r=null;try{r=JSON.parse(st.get(KEY)||'null')}catch(e){}if(!r||!r.scope||Date.now()-r.t>9e5){st.del(KEY);return}
-var s=all().filter(function(x){return x.dataset.scope===r.scope})[0];if(!s){st.del(KEY);return}
-cur=s;gone=r.gone||{};tally=Object.assign(fresh(),r.tally||{});notes=r.notes||{};taken=r.taken||{};skip={};refused={};pend=null;
+function restore(){var r=null;try{r=JSON.parse(st.get(KEY)||'null')}catch(e){}if(!r||Date.now()-r.t>9e5){st.del(KEY);return}
+taken=r.taken||{};var s=r.scope&&all().filter(function(x){return x.dataset.scope===r.scope})[0];
+if(!s){if(Object.keys(taken).length)st.set(KEY,JSON.stringify({taken:taken,t:Date.now()}));else st.del(KEY);return}
+cur=s;gone=r.gone||{};tally=Object.assign(fresh(),r.tally||{});notes=r.notes||{};skip={};refused={};pend=null;
 if(r.done){dlg.showModal();show(true);return}
 if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.gk===r.pend.key});
 if(!here){gone[r.pend.key]=1;tally[r.pend.id==='later'?'later':'done']++}
@@ -974,14 +975,14 @@ if(o.classList.contains('other')||o.classList.contains('later')){o.querySelector
 /* Closing the queue works in the answers it took (#550): one request that names the place, to the default assistant, for each place that took
    an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none. */
 dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);
-Object.keys(sent).forEach(function(sc){if(!sent[sc])return;var el=all().filter(function(x){return x.dataset.scope===sc})[0];if(el&&el.dataset.work)handoff(el.dataset.work)})});
+Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;handoff(t.work)})});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}
 if(q&&q.verb==='walls-allow'){allowed(q,res);return}
 var ask=q&&/^question-/.test(q.verb||'');
 if(q&&(q.verb==='finding'||ask)&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:ask?x.dataset.wiki===q.wiki&&x.dataset.file===q.file:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
-if(el){if(res&&res.ok){if(q.verb==='question-answer'||q.verb==='question-decide')taken[cur.dataset.scope]=(taken[cur.dataset.scope]||0)+1;if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
+if(el){if(res&&res.ok){if(q.verb==='question-answer'||q.verb==='question-decide')(taken[cur.dataset.scope]=taken[cur.dataset.scope]||{n:0,work:cur.dataset.work||''}).n++;if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
 else if(q.answer==='later'||q.verb==='question-later')finish(el,'later');else finish(el,'done')}
 else{var say=(res&&res.say)||'That did not work.';delete notes[el.dataset.gk];
 refused[el.dataset.gk]={say:say,id:(p&&p.id)||q.answer,cant:/^nothing (can move|is old enough)/i.test(say)};refuse(el,refused[el.dataset.gk]);save();foc(el)}}}

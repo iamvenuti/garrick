@@ -51,6 +51,13 @@ EXIT_NO_PANEL = 64
 KNOWLEDGE = "Wikis/Knowledge"
 # The reasons a place was left, by code: the words the card says are in finding_queue.ANSWERS_HELD.
 REASONS = ("cap", "assistant", "incomplete", "held", "commit")
+# What the call may run. page_action.py only by the two CLI verbs it needs: a CLI verb runs as `via: session`, which refuses
+# the page-only verbs, while JSON on stdin would run as `via: page`.
+ALLOW = ["Read", "Grep", "Glob", "Edit", "Write",
+         "Bash(python3 System/status/page_action.py question-work:*)",
+         "Bash(python3 System/status/page_action.py question-done:*)"]
+MIN_LEFT = 60        # seconds: start no place with less than this left of the step's limit
+MARGIN = 20          # seconds kept back from the limit for the commit and the restore
 
 
 def panel():
@@ -120,6 +127,25 @@ def changes(repo: Path, rel: str) -> Set[str]:
     return {entry[3:] for entry in out.split("\0") if len(entry) > 3}
 
 
+def restore(repo: Path, before: Set[str], rel: str) -> None:
+    """Put back what a call changed: tracked paths as the last commit has them, files it created deleted. A path that was
+    already changed before the call is never touched."""
+    paths = sorted(changes(repo, rel) - before)
+    if not paths:
+        return
+    git(repo, "reset", "-q", "--", *paths)
+    tracked = set(git(repo, "ls-files", "-z", "--", *paths).stdout.split("\0"))
+    back = [p for p in paths if p in tracked]
+    if back:
+        git(repo, "checkout", "-q", "--", *back)
+    for p in paths:
+        if p not in tracked:
+            try:
+                (repo / p).unlink()
+            except OSError:
+                pass
+
+
 def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int) -> Optional[str]:
     """Commit what the call wrote, by name, through the repository's hooks. None when done or nothing changed, else why."""
     paths = sorted(changes(repo, rel) - before)
@@ -128,7 +154,7 @@ def commit(repo: Path, before: Set[str], rel: str, place: str, worked: int) -> O
     git(repo, "add", "-A", "--", *paths)
     c = git(repo, "commit", "-q", "-m", "Answers worked in for %s: %d question%s" % (place, worked, "" if worked == 1 else "s"), "--", *paths)
     if c.returncode != 0:
-        git(repo, "reset", "-q", "--", *paths)
+        restore(repo, before, rel)
         return "commit"
     return None
 
@@ -152,18 +178,20 @@ def write_held(ws: Path, held: Dict[str, dict]) -> None:
     os.replace(tmp, str(path))
 
 
-def work_place(ws: Path, scope: str, place: str, n: int, tier: str) -> Optional[str]:
+def work_place(ws: Path, scope: str, place: str, n: int, tier: str, deadline: Optional[float] = None) -> Optional[str]:
     """Work in one place's answers. None when they were worked in, else the reason code."""
     repo, rel = wiki_repo(ws, scope)
     if repo is None:
         return "assistant"
     before = changes(repo, rel)
-    code, text = agent.run(tier, prompt_for(scope, place), cwd=ws,
-                           allow=["Read", "Grep", "Glob", "Edit", "Write", "Bash(python3 System/status/page_action.py:*)"])
+    extra = {} if deadline is None else {"timeout": max(1.0, deadline - time.time() - MARGIN)}
+    code, text = agent.run(tier, prompt_for(scope, place), cwd=ws, allow=ALLOW, **extra)
     if code == agent.EXIT_CAP:
+        restore(repo, before, rel)
         return "cap"
     found = counts(text) if code == 0 else None
     if found is None:
+        restore(repo, before, rel)
         return "assistant" if code else "incomplete"
     worked, held = found
     why = commit(repo, before, rel, place, worked)
@@ -176,6 +204,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Work in the answers still waiting, one place at a time.")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--tier", default="sonnet", choices=agent.TIERS)
+    ap.add_argument("--limit", type=float, help="seconds the whole step may take; no place is started near the end of it")
     ap.add_argument("--today", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve()
@@ -188,8 +217,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     for scope in [s for s in held if s not in {p[0] for p in places}]:
         del held[scope]                               # nothing waits there any more
     total = 0
+    deadline = time.time() + args.limit if args.limit else None
     for scope, place, n in places:
-        why = work_place(ws, scope, place, n, args.tier)
+        if deadline is not None and deadline - time.time() < MIN_LEFT:
+            why = "cap"
+        else:
+            why = work_place(ws, scope, place, n, args.tier, deadline)
         print("work_in: %s: %s" % (place, "worked in" if why is None else "left (%s)" % why))
         if why is None:
             held.pop(scope, None)

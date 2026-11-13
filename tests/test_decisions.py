@@ -386,7 +386,7 @@ class TestWhatThePanelLists(DecisionCase):
         commit_all(self.meetings, "decisions")
 
     def data(self):
-        return qp.build(self.root, {"findings": []}, status.nurture_lib(self.root), TODAY, status.Links(self.root))
+        return qp.build(self.root, {"findings": []}, TODAY, status.Links(self.root))
 
     def titles(self, bucket):
         return sorted(d["title"] for d in bucket["decisions"])
@@ -411,14 +411,18 @@ class TestWhatThePanelLists(DecisionCase):
     def test_a_decision_with_a_wall_finding_is_not_listed(self):
         C = {"findings": [{"check": "walls", "path": "Wikis/Meetings/wiki/decisions/261005 - acme.md", "line": 12, "severity": "error",
                            "message": "links a file of zone Personal"}]}
-        got = qp.build(self.root, C, status.nurture_lib(self.root), TODAY, status.Links(self.root))
+        got = qp.build(self.root, C, TODAY, status.Links(self.root))
         self.assertNotIn("Acme: which", json.dumps(got["buckets"]["Work"]["decisions"]))
         self.assertIn("Birch: which volume floor holds?", self.titles(got["buckets"]["Work"]))
 
-    def test_the_not_built_yet_texts_are_gone(self):
-        self.assertNotIn("not built yet", qp.JS)
-        self.assertIn("go('decide'", qp.JS)
-        self.assertIn("decisions to review", qp.JS)
+    def test_the_queue_asks_a_decision_to_review_and_never_confirms_one(self):
+        from test_finding_queue import fq
+        d = self.data()
+        qs = fq.asked_questions(d, set())["Zones/Work"]
+        rev = [q for q in qs if q["id"] == "decision-review"]
+        self.assertEqual(["Open the decision", "Not now"], [a["label"] for a in rev[0]["answers"]])
+        self.assertNotIn("not built yet", fq.QUEUE_JS)
+        self.assertEqual("Decision to review", rev[0]["tag"])
 
 
 if __name__ == "__main__":

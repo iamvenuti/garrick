@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import datetime
+import io
 import json
 import os
 import sys
@@ -109,16 +110,31 @@ class RefusalRecord(unittest.TestCase):
         for name in NAMES:
             self.assertNotIn(name, got[0])
 
-    def test_the_status_page_shows_them(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "extras" / "status"))
-        import status
+    def test_check_refusals_prints_the_summary(self):
+        """#541: the 30-day summary the Checks card no longer carries is read from the terminal."""
         self.refuse()
-        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
-        (self.root / "System" / "tools" / "garrick_lib.py").write_text(Path(lib.__file__).read_text(encoding="utf-8"), encoding="utf-8")
-        shown = status.refusals_block(self.root)
+        shown = check.refusals_report(self.root)
         self.assertIn("Wall refusals, 30 days", shown)
         self.assertIn("link", shown)
         self.assertNotIn("Plan", shown)
+        for name in NAMES:
+            self.assertNotIn(name, shown)
+
+    def test_check_refusals_prints_nothing_with_no_refusal_file(self):
+        self.assertFalse(self.record.exists())
+        self.assertEqual("", check.refusals_report(self.root))
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            self.assertEqual(0, check.main(["--root", str(self.root), "--refusals"]))
+        self.assertEqual("", out.getvalue())
+
+    def test_check_refusals_is_the_command_line_flag(self):
+        self.refuse()
+        out = io.StringIO()
+        with mock.patch("sys.stdout", out):
+            self.assertEqual(0, check.main(["--root", str(self.root), "--refusals"]))
+        self.assertEqual(check.refusals_report(self.root) + "\n", out.getvalue())
+        self.assertEqual(1, out.getvalue().count("\n"))             # the summary and nothing else: no check ran
 
     def lines(self, at, n, zone="Work", repo="zone", kind="link"):
         self.record.parent.mkdir(parents=True, exist_ok=True)
@@ -144,15 +160,11 @@ class RefusalRecord(unittest.TestCase):
         self.assertNotIn("copy", got["kinds"])
         self.assertNotIn("copy", got["nested_kinds"])
 
-    def test_the_card_says_refusals_with_one_unit_and_marks_an_older_kind(self):
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "extras" / "status"))
-        import status
+    def test_the_summary_says_refusals_with_one_unit_and_marks_an_older_kind(self):
         now = datetime.datetime.now().astimezone()
         self.lines((now - datetime.timedelta(hours=2)).isoformat(timespec="seconds"), 500, kind="name")
         self.lines((now - datetime.timedelta(hours=1)).isoformat(timespec="seconds"), 900, repo="nested", kind="path")
-        (self.root / "System" / "tools").mkdir(parents=True, exist_ok=True)
-        (self.root / "System" / "tools" / "garrick_lib.py").write_text(Path(lib.__file__).read_text(encoding="utf-8"), encoding="utf-8")
-        shown = status.refusals_block(self.root)
+        shown = check.refusals_report(self.root)
         self.assertIn("1 refusal, of kinds name 1 (older release)", shown)
         self.assertIn("Overridden: 0 of 1", shown)
         self.assertIn("1 refusal in repositories nested in a zone, of kinds path 1", shown)

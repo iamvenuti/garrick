@@ -772,7 +772,8 @@ page rests on. A question whose zone is not one of the workspace's is refused
 with the rules' sentence, and the user says which zone it belongs to.
 
 **Work in the answered questions**, when the user says "work in the
-questions", "work in the answers" or "work it in":
+questions", "work in the answers" or "work it in", or "work in the answers in
+<place>" (a zone, such as Work), which takes only the questions of that zone:
 
 1. List the files in `questions/` with `status: answered`. For each, run
    `question-work --wiki Meetings --file "questions/<file>"`. It names the

@@ -213,7 +213,9 @@ DECLARED: Dict[str, Op] = {
     # Settings › About Garrick (#410): Check for updates asks GitHub now and writes only the kept answer; the update
     # that follows a newer release runs release.py's own, which commits in each repository it changes.
     "release-check": _op((), (), "workspace", retry="safe"),
-    "release-update": _op((), (), "workspace", retry="safe"),
+    # `held` answers the plan's list of Garrick files with changes not committed: "commit" or "rest" (the page's buttons);
+    # the paths come from a plan made on that request, never from here.
+    "release-update": _op(("held",), (), "workspace", retry="safe"),
     # Settings › Memory's unsaved values, counted by fade.py (#108): it only reads.
     "memory-preview": _op(("memory",), (), "none", retry="safe"),
     # A note from Explore's card (#206): read for its Preview, which only

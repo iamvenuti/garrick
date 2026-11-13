@@ -672,10 +672,10 @@ class TestNoScheduledPathUpdates(unittest.TestCase):
     def test_only_the_buttons_verb_runs_release_py_update(self):
         text = PAGE_ACTION.read_text(encoding="utf-8")
         users = [m.start() for m in re.finditer(r'release_run\(ws, "update"', text)]
-        self.assertEqual(2, len(users))                                     # the plan and the apply, both in release_update
-        start, end = text.index("def release_update("), text.index("def save_settings(")
+        self.assertEqual(2, len(users))                                     # the plan and the apply, both here
+        start, end = text.index("def plan_of("), text.index("def save_settings(")      # the plan's own helper, then release_update
         self.assertTrue(all(start < at < end for at in users))
-        self.assertEqual(1, len(re.findall(r"release_update\(ws\)", text[:start] + text[end:])))   # one caller: act()
+        self.assertEqual(1, len(re.findall(r"release_update\(ws, req\.get\(\"held\"\)\)", text[:start] + text[end:])))   # one caller: act()
         self.assertIn('if not state.get("update")', text[start:end])        # the guard, before any download
 
 
@@ -719,6 +719,62 @@ class TestTheNightlyCheck(ReleaseCase):
             self.cache(asked=dt.datetime.now() - dt.timedelta(days=days))
             release.main(["--root", str(self.root), "latest", "--background"])
             self.assertEqual(asks, len(fake.requests), (on, key, days))
+
+
+NODE_HELD = r"""
+const vm = require("vm");
+const [js, held] = JSON.parse(process.argv[1]);
+const posted = [];
+function el(tag) { return { tag, children: [], textContent: "", hidden: false, listeners: {}, appendChild(c) { this.children.push(c); return c; },
+                            set onclick(f) { this._click = f; }, get onclick() { return this._click; } }; }
+const nodes = { "release-settings": Object.assign(el("section"), { addEventListener() {} }), "rel-check": el("button"), "rel-line": el("p"),
+                "rel-detail": el("div"), "rel-on": Object.assign(el("input"), { checked: true }), "rel-every": Object.assign(el("select"), { value: "1" }) };
+const document = { getElementById: (id) => nodes[id], createElement: el, createTextNode: (t) => ({ text: t }) };
+const ctx = { document, JSON, parseInt, window: {}, console };
+ctx.window = ctx;
+ctx.webkit = { messageHandlers: { garrick: { postMessage: (m) => posted.push(m.act) } } };
+vm.createContext(ctx);
+vm.runInContext(js, ctx);
+nodes["rel-check"].onclick();
+ctx.GarrickActed({ verb: "release-check" }, { ok: true, release: { state: "newer", running: "0.65.2", latest: "0.66.0" } });
+ctx.GarrickActed({ verb: "release-update" }, { ok: true, release: held });
+const walk = (n, f) => { f(n); (n.children || []).forEach((c) => walk(c, f)); };
+const buttons = [];
+walk(nodes["rel-detail"], (n) => { if (n.tag === "button") buttons.push(n); });
+const before = posted.length;
+const out = { buttons: buttons.map((b) => b.textContent), line: nodes["rel-line"].textContent, posted: posted.slice() };
+buttons[2].onclick();                                   // Cancel
+out.cancel = [posted.length - before, nodes["rel-detail"].hidden, nodes["rel-line"].textContent];
+buttons[1].onclick();
+out.rest = posted.slice(before);
+buttons[0].onclick();                                   // busy: ignored until a reply comes
+out.busy = posted.length - before;
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestTheHeldFilesOnThePage(unittest.TestCase):
+    """The section lists the files and offers three answers; Cancel sends nothing."""
+
+    def run_held(self):
+        held = {"state": "held", "line": "1 Garrick file has changes not committed. Nothing was updated yet.", "running": "0.65.2",
+                "latest": "0.66.0", "uncommitted": [{"path": "Zones/Work/AGENTS.md", "repo": "Zones/Work"}]}
+        done = subprocess.run(["node", "-e", NODE_HELD, json.dumps([status.RELEASE_JS, held])], capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_the_three_answers_are_offered_and_nothing_is_sent_until_one_is_chosen(self):
+        out = self.run_held()
+        self.assertEqual(["Commit these and update", "Update the rest", "Cancel"], out["buttons"])
+        self.assertEqual([{"verb": "release-check"}, {"verb": "release-update"}], out["posted"])    # the plan-first request only
+        self.assertEqual([0, True, "Nothing was changed."], out["cancel"])      # Cancel sends nothing
+        self.assertEqual([{"verb": "release-update", "held": "rest"}], out["rest"])
+        self.assertEqual(1, out["busy"])                                        # only Update the rest went: one answer at a time
+
+    def test_the_list_is_drawn_by_path_and_repository(self):
+        text = status.RELEASE_JS
+        self.assertIn("x.path+' ('+(x.repo==='.'?'the workspace':x.repo)+')'", text)
 
 
 class TestTheButtonsVerbs(ReleaseCase):

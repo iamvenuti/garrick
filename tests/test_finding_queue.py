@@ -169,7 +169,8 @@ class TestPlainWording(unittest.TestCase):
         for a in fq.ANSWERS["wall"]:
             self.assertNotIn("keep", a["label"].lower())
         self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
-                          "meeting-long": ("later",), "hooks-missing": ("install",), "wall": ()}, fq.VERB_ANSWERS)
+                          "meeting-long": ("later",), "hooks-missing": ("install",), "wall": (),
+                          "verdict": ("later",), "decision-review": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for answers in fq.ANSWERS.values():
             self.assertIn(answers[0]["action"], ("handoff", "run"))                          # the recommended one does something
 
@@ -227,7 +228,7 @@ class TestPlainWording(unittest.TestCase):
         self.assertIn("o.classList.contains('other')", js)                                   # the free-text field is a number too: it takes the focus
         self.assertIn("e.key==='Enter'", js)                                                 # Return takes the recommended one
         self.assertIn("tagName==='INPUT'", js)                                               # and sends the text while typing in the field
-        self.assertIn("'.opt.rec'", js)
+        self.assertIn("'.opt.rec:not([hidden]):not(:disabled)'", js)
         self.assertIn("function foc(q)", js)                                                 # S1: the focus goes to the recommended answer
         self.assertRegex(js, r"(?s)function show\(done0\)\{.*foc\(q\)\}")                       # on open and after every answer
         self.assertIn("summary,a,input,textarea,select,button", js)                            # S5: Return on Details or a link runs nothing
@@ -382,9 +383,9 @@ class TestQueueOnThePage(QueueCase):
         self.record(self.standing())
         html = self.page()
         card, queue = self.card(html), self.view(html)
-        line = re.search(r'<span class="nsay">(Work): (\d+ wall findings? and )?(\d+) judgment calls?, about \d+ minutes</span>', card)
+        line = re.search(r'<span class="nsay"><b>Work</b>: (\d+) questions? · about \d+ minutes</span>', card)
         self.assertIsNotNone(line, card)
-        said = int(re.search(r"(\d+) wall", line.group(0)).group(1)) + int(line.group(3)) if "wall" in line.group(0) else int(line.group(3))
+        said = int(line.group(1))
         scope = queue[queue.index('data-scope="Zones/Work"'):]
         scope = scope[:scope.index("</section>")]
         self.assertEqual(said, scope.count("data-q "))                                       # the same number, from one list
@@ -438,14 +439,14 @@ class TestQueueOnThePage(QueueCase):
                     {"kind": "judgment", "check": "todo", "path": TODO, "line": TODO_LINE % {"p": TODO}}]
         self.record(standing)
         before = self.page()
-        self.assertIn("Work: 3 judgment calls, about 5 minutes", self.card(before))
+        self.assertIn("<b>Work</b>: 3 questions · about 5 minutes", self.card(before))
         self.assertEqual(3, self.view(before).count("data-q "))
         record = (self.folder / ("%s.json" % self.now.date().isoformat())).read_bytes()
         check_before = self.check_json()
         self.list_record(standing)                                                             # check_json put the real check.py back
         fq.later_put(self.root, fq.later_key("note-long", HUB), self.now.date())
         after = self.page()
-        self.assertIn("Work: 2 judgment calls, about 5 minutes", self.card(after))             # the count drops by one
+        self.assertIn("<b>Work</b>: 2 questions · about 5 minutes", self.card(after))             # the count drops by one
         self.assertEqual(2, self.view(after).count("data-q "))
         self.assertNotIn('data-kind="note-long"', self.view(after))
         self.assertEqual(check_before, self.check_json())                                     # check.py --json is the same
@@ -472,7 +473,7 @@ class TestQueueOnThePage(QueueCase):
         html = self.page()
         card = self.card(html)
         self.assertNotIn("Nothing needs you.", card)
-        self.assertRegex(card, r"Work: 1 wall finding, about 5 minutes")
+        self.assertRegex(card, r"<b>Work</b>: 1 question · about 5 minutes")
         work = self.view(html)
         work = work[work.index('data-scope="Zones/Work"'):]
         self.assertIn('data-kind="wall"', work[:work.index("</section>")])
@@ -487,7 +488,7 @@ class TestQueueOnThePage(QueueCase):
         self.quick({"check": "links", "severity": "error", "path": "Zones/Work/Acme Review/Notes.md", "message": "links a note that is not there"})
         card = self.card(self.page())
         self.assertNotIn("Nothing needs you.", card)
-        self.assertIn("Work: 1 judgment call", card)
+        self.assertIn("<b>Work</b>: 1 question", card)
         self.quick({"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Notes.md", "message": "a warning only"})
         self.assertIn("Nothing needs you.", self.card(self.page()))
 
@@ -498,9 +499,9 @@ class TestQueueOnThePage(QueueCase):
         self.record([{"kind": "wall", "path": DECK, "line": WALL_LINE % {"p": DECK}}])
         card = self.card(self.page())
         self.assertNotIn("Nothing needs you.", card)
-        self.assertIn("Work: 1 wall finding", card)
+        self.assertIn("<b>Work</b>: 1 question", card)
         self.quick()
-        self.assertIn("Work: 1 wall finding", self.card(self.page()))           # and when the quick check lists nothing, the record's wall
+        self.assertIn("<b>Work</b>: 1 question", self.card(self.page()))           # and when the quick check lists nothing, the record's wall
 
     def test_two_questions_with_one_kind_and_path_keep_two_keys(self):
         a = dict(KINDS["wall"], scope="Zones/Work", message="%s: links [[A]], a note of the Personal zone; that zone is walled and this file is in the Work zone" % DECK)
@@ -522,7 +523,9 @@ class TestQueueOnThePage(QueueCase):
         self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)
         self.record([{"kind": "judgment", "check": "projects", "path": HUB, "line": NOTE_LINE % {"p": HUB}}])
         self.quick({"check": "projects", "severity": "warning", "path": HUB, "message": NOTE_LINE.split(": ", 1)[1]})
-        queue = self.view(self.page())
+        moves = {"moves": 3, "before": 6400, "after": 3900, "still_over": False, "case": "", "skipped": ""}
+        with mock.patch.object(status.queue_mod().Planner, "plan", return_value=moves):
+            queue = self.view(self.page())
         self.assertIn('class="hint qweb">The other answers need the Garrick app.', queue)
         for plain in ("resume-long", "wall"):
             self.assertNotIn("qweb", fq.question_html(fq.question(KINDS[plain], "Zones/Work")))     # an answer a browser can send: no hint
@@ -537,7 +540,7 @@ class TestQueueOnThePage(QueueCase):
         html = self.page()
         self.assertNotIn('data-kind="note-long"', self.view(html))
         self.assertIn('data-kind="wall"', self.view(html))                                   # a wall is not dropped by what the check no longer lists
-        self.assertIn("Work: 1 wall finding", self.card(html))
+        self.assertIn("<b>Work</b>: 1 question", self.card(html))
 
     def check_json(self):
         """check.py --json of the fixture workspace, run for real."""
@@ -609,16 +612,17 @@ class TestQueueOnThePage(QueueCase):
         self.assertIn("Fix them</button>", card)
         self.assertNotIn('id="queue"', html)                                                    # a mechanical finding is not asked one by one
 
-    def test_fix_them_runs_the_same_fix_as_the_verb_for_each_note(self):
-        """The button's requests are the requests the Fix on a finding's own row sends: one `fix` for each note."""
+    def test_fix_them_runs_the_verb_fix_for_each_note(self):
+        """The button's requests are the verb `fix`, one for each note, as the executor validates it (#541: the finding's own row is gone)."""
         sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
         said = "`status` is 'ongoing', should be active, parked or done"
         self.quick({"check": "threads", "severity": "warning", "path": sized, "message": said})
         self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
         html = self.page()
-        row = re.search(r'<button class="act primary tacts" type="button" data-act="([^"]+)"', html)
         fix = re.search(r'data-fix="([^"]+)"', html)
-        self.assertEqual([json.loads(htmllib.unescape(row.group(1)))], json.loads(htmllib.unescape(fix.group(1))))
+        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"}],
+                         json.loads(htmllib.unescape(fix.group(1))))
+        self.assertIsNone(pa.ops_lib(self.root).validate("fix", json.loads(htmllib.unescape(fix.group(1)))[0]))
 
     def test_no_fix_them_without_a_mechanical_fix(self):
         self.quick({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
@@ -631,6 +635,186 @@ class TestQueueOnThePage(QueueCase):
         self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
         card = self.card(self.page())
         self.assertIn('class="act webonly" type="button" data-request="nurture the context"', card)
+
+
+def wiki_q(wiki="Meetings", file="questions/261104 - Renewal owner.md", **more):
+    q = {"wiki": wiki, "file": file, "status": "open", "title": "Who owns the renewal for Acme now?", "why": "Two meetings name different people.",
+         "asked": "2026-11-04", "later": "", "due": False, "shown": True, "zone": "Work",
+         "origin": {"name": "261104 - Acme weekly.md", "href": "x"}, "pages": [{"name": "wiki/Acme.md", "href": "y"}],
+         "writes": {"answer": ["a", "b"], "later": ["b"], "close": ["b"], "decide": ["a", "c", "b"]}, "verdict": "", "reason": ""}
+    q.update(more)
+    return q
+
+
+DECISION = {"file": "wiki/decisions/261020 - Plan B.md", "title": "Plan B stays Harbour", "status": "valid", "decided": "2026-10-20",
+            "revisit": "a later meeting named another vendor.", "zone": "Work", "href": "z"}
+
+
+def asked(zone="Work", questions=(), decisions=(), knowledge=()):
+    return {"buckets": {zone: {"questions": list(questions), "decisions": list(decisions), "answered": 0, "waiting": 0, "review": {"read": []}}},
+            "knowledge": list(knowledge)}
+
+
+def options(html):
+    """(number, data-id, data-fa as a dict) of each answer of a question's html, in order; the field has no data-fa and is left out."""
+    out = []
+    marks = list(re.finditer(r'<(?:button|div) class="opt[^"]*"[^>]*data-id="([^"]*)"[^>]*><span class="n">(\d+)</span>', html))
+    for i, m in enumerate(marks):
+        chunk = html[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(html)]
+        own = re.search(r'data-fa="([^"]*)"', html[m.start():m.end()]) or re.search(r'data-fa="([^"]*)"', chunk)
+        out.append((int(m.group(2)), m.group(1), json.loads(htmllib.unescape(own.group(1)))))
+    return out
+
+
+class TestTheWikisOwnQuestionsOnTheQueue(unittest.TestCase):
+    """#542: a wiki question, a proposed verdict and a decision to review are asked in the queue, each answered through the verb the
+    Questions panel's buttons used, and an item is in the queue of its own zone only."""
+
+    def one(self, data):
+        qs = fq.with_asked({}, fq.asked_questions(data, set()))
+        return next(iter(qs.values()))
+
+    def test_a_wiki_question_has_its_field_first_then_decide_later_and_close(self):
+        q = self.one(asked(questions=[wiki_q()]))[0]
+        h = fq.question_html(q)
+        self.assertIn('<span class="tag">Meetings question</span><p class="qs">Who owns the renewal for Acme now?</p>', h)
+        self.assertIn("Two meetings name different people.", h)
+        self.assertRegex(h, r'<label class="opt other" data-ansrow><span class="n">1</span><input type="text"[^>]*placeholder="Type the answer"')
+        got = [(n, i) for n, i, _ in options(h)]
+        self.assertEqual([(2, "decide"), (3, "later"), (4, "close")], got)
+        self.assertIn("Record as a decision", h)
+        self.assertIn('type="date" data-day', h)                                       # Later with its day
+        self.assertNotIn("data-free", h)                                               # the field is the answer, there is no second one
+        self.assertIn("<summary>From</summary><code>raw: 261104 - Acme weekly.md · pages: wiki/Acme.md</code>", h)
+        self.assertEqual("", q["recommended"])
+
+    def test_a_knowledge_question_has_no_decision(self):
+        q = self.one(asked(knowledge=[wiki_q("Knowledge", "questions/261105 - Licence.md", zone=None, writes={"answer": [], "later": [], "close": []})]))[0]
+        h = fq.question_html(q)
+        self.assertEqual("Wikis/Knowledge", q["scope"])
+        self.assertIn('<span class="tag">Knowledge question</span>', h)
+        self.assertNotIn("Record as a decision", h)
+        self.assertEqual(["later", "close"], [i for _, i, _ in options(h)])
+
+    def test_a_proposed_verdict_recommends_accept_and_keeps_the_field_hidden_until_asked(self):
+        q = self.one(asked(questions=[wiki_q(verdict="done", reason="the 6 November call settled it")]))[0]
+        h = fq.question_html(q)
+        self.assertIn('<span class="tag">Proposed verdict</span>', h)
+        self.assertIn("Proposed as done: the 6 November call settled it.", h)
+        got = options(h)
+        self.assertEqual([(1, "accept"), (2, "answer-myself"), (3, "later")], [(n, i) for n, i, _ in got])
+        self.assertEqual("accept", q["recommended"])
+        self.assertIn('class="opt rec tacts" type="button" data-id="accept"', h)
+        self.assertEqual("reveal", got[1][2]["a"])
+        self.assertRegex(h, r'<label class="opt other" data-ansrow hidden><span class="n">4</span>')
+        self.assertIn("Not now", h)
+
+    def test_a_decision_to_review_is_opened_or_put_off_and_never_confirmed_here(self):
+        q = self.one(asked(decisions=[DECISION]))[0]
+        h = fq.question_html(q)
+        self.assertIn('<span class="tag">Decision to review</span>', h)
+        self.assertIn("Plan B stays Harbour", h)
+        self.assertIn("Flagged: a later meeting named another vendor. Only you change a decision.", h)
+        got = options(h)
+        self.assertEqual([(1, "open"), (2, "later")], [(n, i) for n, i, _ in got])
+        for gone in ("It still holds", "<input"):
+            self.assertNotIn(gone, h)                                                  # nothing writes a decision's status
+        self.assertEqual([{"verb": "note-open", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md"}], got[0][2]["reqs"])
+
+    def test_each_answer_is_the_verb_the_panels_button_used(self):
+        h = fq.question_html(self.one(asked(questions=[wiki_q()]))[0])
+        field = json.loads(htmllib.unescape(re.search(r'data-ans="([^"]+)"', h).group(1)))
+        base = {"wiki": "Meetings", "file": "questions/261104 - Renewal owner.md"}
+        self.assertEqual(dict(base, verb="question-answer"), field["req"])             # the words are added when it is sent
+        by = {i: d["req"] for _, i, d in options(h) if "req" in d}
+        self.assertEqual(dict(base, verb="question-decide"), by["decide"])
+        self.assertEqual(dict(base, verb="question-later"), by["later"])
+        self.assertEqual(dict(base, verb="question-close"), by["close"])
+        v = fq.question_html(self.one(asked(questions=[wiki_q(verdict="stale")]))[0])
+        by = {i: d["req"] for _, i, d in options(v) if "req" in d}
+        self.assertEqual(dict(base, verb="question-close"), by["accept"])               # as the panel's Accept: a close, nothing more
+        self.assertEqual({"verb": "finding", "kind": "verdict", "path": "Wikis/Meetings/questions/261104 - Renewal owner.md", "answer": "later"}, by["later"])
+        d = fq.question_html(self.one(asked(decisions=[DECISION]))[0])
+        self.assertEqual({"verb": "finding", "kind": "decision-review", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md", "answer": "later"},
+                         {k: v for k, v in options(d)[1][2]["req"].items()})
+
+    def test_the_scripts_send_the_panels_fields_and_parse(self):
+        js = fq.QUEUE_JS
+        for held in ("Object.assign({},d.req,{words:w})", "{until:v}", "Pick a day after today.", "/^question-/", "x.dataset.wiki===q.wiki"):
+            self.assertIn(held, js)
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True)
+            self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_the_order_is_walls_first_then_oldest_first_and_a_finding_has_no_day(self):
+        old = wiki_q(file="questions/260901 - Old.md", asked="2026-09-01", title="Old one")
+        new = wiki_q(file="questions/261105 - New.md", asked="2026-11-05", title="New one")
+        found = fq.question(item("judgment", "resume", THREAD, RESUME_LINE), "Zones/Work")
+        wall = fq.question(item("wall", "walls", "Zones/Work/Acme Review/Notes.md", WALL_LINE, listed=True), "Zones/Work")
+        out = fq.with_asked({"Zones/Work": [found, wall]}, fq.asked_questions(asked(questions=[new, old], decisions=[DECISION]), set()))
+        self.assertEqual(["wall", "wiki-question", "decision-review", "wiki-question", "resume-long"], [q["id"] for q in out["Zones/Work"]])
+        self.assertEqual(["Old one"], [q["sentence"] for q in out["Zones/Work"] if q["id"] == "wiki-question"][:1])
+        self.assertEqual(5, len({q["gk"] for q in out["Zones/Work"]}))
+
+    def test_an_item_is_in_the_queue_of_its_own_zone_only(self):
+        data = asked(questions=[wiki_q(), wiki_q(file="questions/x.md", zone="Personal", title="Not Work's")])
+        data["buckets"]["Personal"] = {"questions": [wiki_q(file="questions/y.md", zone="Personal", title="Personal one")], "decisions": [], "answered": 0, "waiting": 0}
+        out = fq.asked_questions(data, set())
+        self.assertEqual(["Who owns the renewal for Acme now?"], [q["sentence"] for q in out["Zones/Work"]])
+        self.assertEqual(["Personal one"], [q["sentence"] for q in out["Zones/Personal"]])
+        self.assertEqual(["Zones/Personal", "Zones/Work"], sorted(out))
+
+    def test_not_now_hides_a_verdict_or_a_decision_and_a_later_that_is_back_is_a_question_again(self):
+        vq = wiki_q(verdict="done")
+        key = fq.later_key("verdict", "Wikis/Meetings/questions/261104 - Renewal owner.md")
+        self.assertEqual({}, fq.asked_questions(asked(questions=[vq]), {key}))
+        dkey = fq.later_key("decision-review", "Wikis/Meetings/wiki/decisions/261020 - Plan B.md")
+        self.assertEqual({}, fq.asked_questions(asked(decisions=[DECISION]), {dkey}))
+        # a question put off to a day is not shown by the panel's data until the day, and then it is, with no count of "due today"
+        hidden = wiki_q(shown=False, status="later", later="2026-11-20")
+        self.assertEqual({}, fq.asked_questions(asked(questions=[hidden]), set()))
+        back = wiki_q(shown=True, status="later", later="2026-11-12", due=True)
+        got = fq.asked_questions(asked(questions=[back]), set())
+        self.assertEqual(1, len(got["Zones/Work"]))
+        self.assertNotIn("due", json.dumps(got["Zones/Work"][0]).lower())
+
+
+class TestNotNowForTheWikisKinds(ActionCase):
+    def setUp(self):
+        super().setUp()
+        write(self.root / "Wikis" / "Meetings" / "questions" / "261104 - Renewal owner.md", "---\nstatus: open\n---\n\n**Who owns it?**\n")
+        self.rel = "Wikis/Meetings/questions/261104 - Renewal owner.md"
+
+    def ask(self, **req):
+        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root))[0]
+
+    def test_a_verdict_and_a_decision_are_put_off_in_the_pages_own_file_and_a_question_is_not(self):
+        for kind in ("verdict", "decision-review"):
+            got = self.ask(kind=kind, answer="later", path=self.rel)
+            self.assertTrue(got["ok"], got)
+        data = json.loads((self.root / "System" / "generated" / "status-later.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted([fq.later_key("verdict", self.rel), fq.later_key("decision-review", self.rel)]), sorted(data["later"]))
+        self.assertEqual("---\nstatus: open\n---\n\n**Who owns it?**\n", (self.root / self.rel).read_text(encoding="utf-8"))   # the file is as it was
+        for req in ({"kind": "wiki-question", "answer": "later"}, {"kind": "verdict", "answer": "accept"}, {"kind": "decision-review", "answer": "open"}):
+            self.assertFalse(self.ask(path=self.rel, **req)["ok"], req)
+
+    def test_every_request_the_wikis_kinds_send_is_valid_for_the_verb_it_names(self):
+        """No verb is new: the executor validates each one as it validates the panel's, so the wall check runs the same."""
+        ops = pa.ops_lib(self.root)
+        data = asked(questions=[wiki_q(), wiki_q(file="questions/b.md", verdict="done")], decisions=[DECISION])
+        sent = []
+        for q in fq.with_asked({}, fq.asked_questions(data, set()))["Zones/Work"]:
+            h = fq.question_html(q)
+            for m in re.finditer(r'data-(?:ans|fa)="([^"]+)"', h):
+                d = json.loads(htmllib.unescape(m.group(1)))
+                for req in d.get("reqs") or [d.get("req")]:
+                    if req:
+                        sent.append(dict(req, **({"words": "Dana does"} if req["verb"] in ("question-answer", "question-decide") else {}),
+                                         **({"until": "2026-11-20"} if req["verb"] == "question-later" else {})))
+        self.assertEqual({"question-answer", "question-decide", "question-later", "question-close", "note-open", "finding"}, {r["verb"] for r in sent})
+        for req in sent:
+            self.assertIsNone(ops.validate(req["verb"], req), req)
 
 
 class TestFindingVerb(ActionCase):
@@ -766,5 +950,219 @@ class TestFindingVerb(ActionCase):
         self.assertFalse(self.ask(kind="note-long", answer="bogus", path=self.rel)["ok"])
 
 
+def old_days(n):
+    return dt.date.today() - dt.timedelta(days=n)
+
+
+def dated(n, words=30):
+    d = old_days(n)
+    return "**%d %s %d.** Entry settled the plan. %s\n\nSecond paragraph.\n\n" % (d.day, d.strftime("%B"), d.year, "word " * words)
+
+
+def note_text(above="", entries="", state=True):
+    head = "---\ntitle: Pricing\ntype: thread\nstatus: active\n---\n\n# Pricing\n\n" + above
+    if not state:
+        return head + "\n" + entries
+    return head + "\n## State of play\n\n**Resume here.** Under way.\n\n---\n\n" + entries
+
+
+class TestLongNoteFromItsPlan(QueueCase):
+    """#539: a long note is asked from history.py's plan, not from its kind alone."""
+
+    def ask(self, text, rel=THREAD, planner=None):
+        write(self.root / rel, text)
+        it = dict(KINDS["note-long"], path=rel, line=NOTE_LINE % {"p": rel}, scope="Zones/Work")
+        return fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]
+
+    def ids(self, q):
+        return [a["id"] for a in q["answers"]]
+
+    def assert_handoff_first(self, q):
+        self.assertEqual(["split", "later"], self.ids(q))
+        self.assertEqual("split", q["recommended"])
+        self.assertNotIn("preview", self.ids(q))
+        a = q["answers"][0]
+        self.assertEqual("handoff", a["action"])
+        self.assertEqual("Your assistant splits the long sections into their own notes in the thread's folder, links them, and shows you the change.",
+                         a["does"])
+        self.assertIn(THREAD, a["phrase"])
+        self.assertIn("show me the change before anything is committed", a["phrase"])
+
+    def test_words_all_above_the_state_of_play_offer_no_move(self):
+        q = self.ask(note_text(above="## Thesis\n\n" + "word " * 300 + "\n"))
+        self.assert_handoff_first(q)
+        self.assertIn("long sections above the dated entries", q["why"])
+        self.assertIn("none of the words here are in them", q["details"])
+
+    def test_a_log_of_dated_bullets_above_the_rule_is_named(self):
+        bullets = "### Log\n\n" + "".join("- **%d November 2026** Settled step %d.\n" % (i + 1, i) for i in range(8)) + "\n"
+        q = self.ask(note_text(above=bullets, entries=dated(1)))
+        self.assert_handoff_first(q)
+        self.assertIn("bullets in a log above the line that opens the history", q["why"])
+        self.assertIn("Dated bullets sit above", q["details"])
+
+    def test_five_entries_or_fewer_stay(self):
+        q = self.ask(note_text(entries="".join(dated(n) for n in (1, 2, 3, 400, 500))))
+        self.assert_handoff_first(q)
+        self.assertIn("five dated entries or fewer", q["why"])
+
+    def test_a_hub_with_no_state_of_play_offers_no_move(self):
+        q = self.ask(note_text(above="## Notes\n\n" + "word " * 50, state=False), rel=HUB)
+        self.assertEqual(["split", "later"], self.ids(q))
+        self.assertIn("project's folder", q["answers"][0]["phrase"])
+        self.assertIn("no state-of-play section", q["why"])
+        self.assertIn("no `## State of play`", q["details"] + "no `## State of play`")
+
+    def test_eight_entries_with_old_ones_move_first_with_the_plans_figures(self):
+        q = self.ask(note_text(entries="".join(dated(n, 600) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
+        self.assertEqual(["move-older", "preview", "later"], self.ids(q))
+        self.assertEqual("move-older", q["recommended"])
+        self.assertRegex(q["why"], r"^3 older entries would move, taking the page from about [\d,]+ words to about [\d,]+ words\.")
+        self.assertEqual("split", q["answers"][0]["fallback"]["id"])           # the handoff that stands in for a refused move
+
+    def test_a_move_that_will_not_be_enough_says_so(self):
+        plan = {"moves": 2, "before": 9000, "after": 7000, "still_over": True, "case": "", "skipped": ""}
+        q = fq.question(dict(KINDS["note-long"]), "Zones/Work", plan)
+        self.assertIn("The move alone will not bring it under its limit.", q["why"])
+        self.assertEqual(["move-older", "preview", "later"], self.ids(q))
+
+    def test_no_plan_asked_keeps_the_kinds_own_answers(self):
+        self.assertEqual(["move-older", "preview", "later"], self.ids(fq.question(dict(KINDS["note-long"]), "Zones/Work")))
+
+    def test_a_plan_that_fails_counts_as_nothing_moves(self):
+        write(self.root / THREAD, note_text(entries="".join(dated(n) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
+        it = dict(KINDS["note-long"], path=THREAD, line=NOTE_LINE % {"p": THREAD}, scope="Zones/Work")
+        bad = (subprocess.CompletedProcess([], 1, "", "boom"), subprocess.CompletedProcess([], 0, "not json", ""),
+               subprocess.CompletedProcess([], 0, "[]", ""), subprocess.CompletedProcess([], 0, '{"a": 1}', ""))
+        for result in bad:
+            with mock.patch.object(fq.subprocess, "run", return_value=result):
+                q = fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]
+            self.assertEqual(["split", "later"], self.ids(q), result)
+            self.assertIn("could not ask what would move", q["why"])
+        with mock.patch.object(fq.subprocess, "run", side_effect=subprocess.TimeoutExpired("history.py", 15)):
+            self.assertEqual(["split", "later"], self.ids(fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]))
+        (self.root / "System" / "tools" / "history.py").unlink()                                    # a missing tool
+        self.assertEqual(["split", "later"], self.ids(fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]))
+
+    def test_the_plan_is_a_dry_run_asked_once_a_finding_and_bounded_by_a_budget(self):
+        write(self.root / THREAD, note_text(entries="".join(dated(n) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
+        its = [dict(KINDS["note-long"], path=p, line=NOTE_LINE % {"p": p}, scope="Zones/Work") for p in (THREAD, THREAD.replace("Pricing", "Pricing2"))]
+        write(self.root / its[1]["path"], (self.root / THREAD).read_text(encoding="utf-8"))
+        real = subprocess.run
+        with mock.patch.object(fq.subprocess, "run", side_effect=real) as run:
+            fq.forecast_questions(its + [dict(its[0])], set(), self.root)
+        self.assertEqual(2, run.call_count)                                                        # one run for each note
+        for call in run.call_args_list:
+            argv = call[0][0]
+            self.assertIn("dry-run", argv)
+            self.assertNotIn("apply", argv)
+            self.assertLessEqual(call[1]["timeout"], fq.PLAN_TIMEOUT)
+        with mock.patch.object(fq.subprocess, "run") as run:                                      # a spent budget runs nothing
+            q = fq.forecast_questions(its, set(), self.root)["Zones/Work"]
+            planner = fq.Planner(self.root, budget=0)
+            self.assertEqual("unknown", planner.plan(THREAD)["case"])
+        run.assert_called()                                                                          # the two plans above ran
+        with mock.patch.object(fq.subprocess, "run") as run:
+            fq.Planner(self.root, budget=0).plan(THREAD)
+        run.assert_not_called()
+
+    def test_two_calls_sharing_one_planner_spend_one_budget(self):
+        write(self.root / THREAD, note_text(entries="".join(dated(n) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
+        it = dict(KINDS["note-long"], path=THREAD, line=NOTE_LINE % {"p": THREAD}, scope="Zones/Work")
+        planner = fq.Planner(self.root)
+        with mock.patch.object(fq.time, "monotonic", return_value=planner.end + 1):             # the one budget is spent
+            with mock.patch.object(fq.subprocess, "run") as run:
+                fq.forecast_questions([it], set(), self.root, planner)
+                fq.forecast_questions([it], set(), self.root, planner)
+        run.assert_not_called()
+        with mock.patch.object(fq.subprocess, "run", side_effect=subprocess.TimeoutExpired("history.py", 1)) as run:
+            fq.forecast_questions([it], set(), self.root)                                       # no planner given: a fresh one, as before
+        self.assertEqual(1, run.call_count)
+
+    def test_every_answer_a_no_move_question_sends_is_a_valid_request(self):
+        q = self.ask(note_text(above="## Thesis\n\n" + "word " * 30))
+        ops = __import__("test_page_action").pa.ops_lib(self.root)
+        for a in q["answers"]:
+            if a["action"] == "later":
+                self.assertIsNone(ops.validate("finding", a["req"]))
+        self.assertIn("split", fq.ANSWERS_NO_MOVE["note-long"][0]["id"])
+
+
+class TestRefusedAnswerOnTheQueue(unittest.TestCase):
+    """#540: a refused answer is disabled, Skip for now moves on, and a reload keeps neither."""
+
+    def q(self, plain="note-long", plan=None):
+        return fq.question(dict(KINDS[plain]), "Zones/Work", plan or {"moves": 3, "before": 6400, "after": 3900, "still_over": False,
+                                                                       "case": "", "skipped": ""})
+
+    def test_each_question_carries_a_hidden_skip_and_the_move_a_hidden_fallback(self):
+        markup = fq.question_html(self.q())
+        self.assertRegex(markup, r'<button class="act qskip" type="button" data-qskip hidden>Skip for now</button>')
+        self.assertRegex(markup, r'<button class="opt" type="button" data-id="split" data-for="move-older" data-fa="[^"]+" hidden>')
+        self.assertEqual(1, markup.count('class="opt rec'))                                         # the fallback is not recommended until it is shown
+        self.assertNotIn("data-for", fq.question_html(self.q("resume-long")))
+
+    def test_a_refused_answer_is_disabled_with_the_refusal_under_it_and_skip_shows(self):
+        js = fq.QUEUE_JS
+        refuse = js[js.index("function refuse("):js.index("function open(")]
+        self.assertIn("b.disabled=true", refuse)
+        self.assertIn("out(q,f.say,true)", refuse)
+        self.assertIn("[data-qskip]').hidden=false", refuse)
+        self.assertIn("/^nothing (can move|is old enough)/i.test(say)", js)                          # the two refusals of "nothing can move"
+        self.assertIn("fb.hidden=false;fb.classList.add('rec')", refuse)                             # the handoff in the move's place
+
+    def test_a_question_with_no_visible_answer_shows_skip_at_once(self):
+        """In a browser (no host) a verdict or a decision review has only hosted answers, which are hidden: Skip for now shows
+        without a refusal, or the user is stuck on it."""
+        self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)
+        js = fq.QUEUE_JS
+        bare = js[js.index("function bare("):js.index("function show(")]
+        self.assertIn("getClientRects().length", bare)                                               # an answer the browser hides is not an answer
+        self.assertIn("'reveal'", bare)                                                              # the reveal of a field is not one either
+        self.assertIn("[data-qskip]').hidden=false", bare)
+        self.assertIn("bare(q);save();foc(q)", js)                                                   # every question shown is checked
+        node = shutil.which("node")
+        if node:                                                                                     # run it on two stand-in questions
+            script = ("eval(process.argv[1]);function el(fa,v){return{dataset:{fa:fa},getClientRects:function(){return v?[1]:[]}}}"
+                      "function q(l){var s={hidden:true};return{querySelectorAll:function(){return l},querySelector:function(){return s},s:s}}"
+                      "var a=q([el('{\"a\":\"run\"}',false),el('{\"a\":\"reveal\"}',true)]);bare(a);"
+                      "var b=q([el('{\"a\":\"handoff\"}',true)]);bare(b);console.log(a.s.hidden+','+b.s.hidden)")
+            out = subprocess.run([node, "-e", script, bare], capture_output=True, text=True, timeout=30)
+            self.assertEqual("false,true", out.stdout.strip(), out.stderr)                          # skip shows only where nothing visible answers
+
+    def test_skip_for_now_goes_on_and_moves_the_bar_without_putting_the_finding_off(self):
+        js = fq.QUEUE_JS
+        click = js[js.index("var sk=t.closest"):][:200]
+        self.assertIn("skip[sq.dataset.gk]=1;tally.skipped++", click)
+        self.assertNotIn("later", click)                                                              # not Not now: nothing is written
+        self.assertIn("!gone[q.dataset.gk]&&!skip[q.dataset.gk]", js)                                 # the next question is the next pending one
+        self.assertIn("k=n-left.length+1", js)                                                        # and the bar counts what is no longer pending
+
+    def test_the_summary_counts_a_skipped_question_apart_from_not_now(self):
+        js = fq.QUEUE_JS
+        self.assertIn("['later','put off to next week'],['skipped','skipped']", js)
+        self.assertIn("LINES.forEach(function(l){if(tally[l[0]])", js)
+
+    def test_a_reload_after_a_refusal_keeps_nothing_of_it(self):
+        """The planning decision replaces the issue's "keeps the disabled answer and the skip": Skip for now keeps nothing on
+        disk, so a reload shows the question as built. What is saved leaves out the skip tally and every refusal."""
+        js = fq.QUEUE_JS
+        keep = js[js.index("function kept()"):js.index("function sum()")]
+        self.assertIn("UNSAVED.indexOf(k)<0", keep)
+        self.assertIn("!notes[g].bad", keep)
+        self.assertIn("UNSAVED=['skipped']", js)
+        self.assertNotIn("refused", keep)
+        self.assertNotIn("skip:", js[js.index("function save()"):js.index("function sum()")])
+        self.assertIn("skip={};refused={}", js[js.index("function restore()"):js.index("function finish(")])
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True)
+            self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_an_answer_the_queue_script_can_send_still_goes_through_the_verb(self):
+        self.assertEqual(("move-older", "preview", "later"), fq.VERB_ANSWERS["note-long"])
+
+
 if __name__ == "__main__":
     unittest.main()
+

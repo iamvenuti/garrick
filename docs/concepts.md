@@ -165,7 +165,7 @@ The judgment about what to keep that the months in the settings can't hold, in p
 
 ### Context debt
 
-What a Nurture run leaves, weighed by kind: a wall finding 10, an attribution question or a correction 5, a judgment finding or a mechanical fix not yet made 1. A run of the whole workspace measures it, and a scoped run updates only its own scope's part. Each day's figure is kept in `System/generated/nurture/`, and the Garrick App's Checks card shows the last 30 days. Before the first run there is no figure at all. See [Context debt](commands.md#context-debt).
+What a Nurture run leaves, weighed by kind: a wall finding 10, an attribution question or a correction 5, a judgment finding or a mechanical fix not yet made 1. A run of the whole workspace measures it, and a scoped run updates only its own scope's part. Each day's figure is kept in `System/generated/nurture/`, and the Garrick App's Context card shows the figure of the last run. Before the first run there is no figure at all. See [Context debt](commands.md#context-debt).
 
 ## What comes in
 

@@ -1596,11 +1596,12 @@ def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[di
             elif plain in fq.PLAIN_KINDS and it["kind"] != "wall":
                 it["message"] = it["line"][len(it["path"]) + 2:] if it["line"].startswith(it["path"] + ": ") else it["line"]
         hidden = fq.later_hidden(ws, today)
-        queues = fq.forecast_questions(items, hidden, ws)
+        planner = fq.Planner(ws)           # one plan budget for the whole build
+        queues = fq.forecast_questions(items, hidden, ws, planner)
         extra = quick_needs(ws, C, queues)
         for it in extra:
             it["ask"] = said(it["scope"])[1]
-        for scope, qs in fq.forecast_questions(extra, hidden, ws).items():
+        for scope, qs in fq.forecast_questions(extra, hidden, ws, planner).items():
             queues.setdefault(scope, qs)
         return queues
     except Exception:

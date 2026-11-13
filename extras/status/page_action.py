@@ -2111,7 +2111,11 @@ def walls_unallow(ws: Path, req: dict) -> dict:
 WALL_PLACE_RE = re.compile(r"(?:Zones|Wikis)/[^/\\\0]+")
 WALL_FID_RE = re.compile(r"[0-9a-f]{10}")
 WALL_BLOB_RE = re.compile(r"[0-9a-f]{40}")
-WALL_OTHER_FROM_RE = re.compile(r"repeats wording from (?:person page |entity page |wiki page |raw record |reply |question |decision |meeting )?([^\s,]+)")
+# The other file of a wording finding, from check.py's two forms: a file of a project, named by its path, which may
+# hold spaces and commas (`repeats wording from <path>[ and N more of its files], in project ...`), and a page of the
+# Meetings wiki, named by its stem after its noun (`repeats wording from <noun> <stem>, a <noun> ...`).
+WALL_OTHER_PATH_RE = re.compile(r"repeats wording from ((?:Zones|Wikis)/.+?)(?: and \d+ more of its files)?, in project ")
+WALL_OTHER_FROM_RE = re.compile(r"repeats wording from (?:person page |entity page |wiki page |raw record |reply |question |decision |meeting )(.+?), an? ")
 WALL_TOKEN_RE = re.compile(r"[^\W_]+|&")
 WALL_TOKENS_MAX = 200_000       # a file with more words than this is not read for its shared words
 WALL_AROUND = 8                 # words of each file shown either side of the shared run
@@ -2166,7 +2170,7 @@ def walls_findings(tool, ws: Path, rel: str) -> tuple:
 def walls_other_files(ws: Path, message: str) -> list:
     """The file(s) a wording finding names as the other side, from the check's text: a path, or the name of a page of
     the Meetings wiki, which can be a page and its raw record. Only files of this workspace, never a link."""
-    m = WALL_OTHER_FROM_RE.search(message)
+    m = WALL_OTHER_PATH_RE.search(message) or WALL_OTHER_FROM_RE.search(message)
     if not m:
         return []
     name, root = m.group(1), ws.resolve()

@@ -259,5 +259,38 @@ class TestAllow(WallsPageCase):
             self.assertIsNone(re.search(r"walls-allow(?!ed)", path.read_text(encoding="utf-8", errors="ignore")), str(path))
 
 
+class OtherFileNameTest(unittest.TestCase):
+    """The other file of a wording finding, read from check.py's message: a path or a stem may hold spaces and commas."""
+
+    def name(self, message):
+        m = pa.WALL_OTHER_PATH_RE.search(message) or pa.WALL_OTHER_FROM_RE.search(message)
+        return m.group(1) if m else None
+
+    def test_a_project_path_with_spaces(self):
+        self.assertEqual(self.name("repeats wording from Zones/Personal/Garden Club/Threads/Seed Swap/Seed Swap.md, in project "
+                                   "Garden Club of Personal; that zone is walled and this file is in Work"),
+                         "Zones/Personal/Garden Club/Threads/Seed Swap/Seed Swap.md")
+
+    def test_a_path_with_a_comma_and_more_files(self):
+        self.assertEqual(self.name("repeats wording from Zones/Personal/Cedar, Maple/Notes one.md and 2 more of its files, in project "
+                                   "Cedar, Maple of Personal; that zone is walled"), "Zones/Personal/Cedar, Maple/Notes one.md")
+
+    def test_a_meeting_stem_with_spaces(self):
+        self.assertEqual(self.name("repeats wording from meeting 261101 - Seed swap review, a meeting of Personal; that zone is walled"),
+                         "261101 - Seed swap review")
+        self.assertEqual(self.name("repeats wording from person page Jo Cedar, a person page that names no zone, so nothing says"),
+                         "Jo Cedar")
+
+    def test_the_files_are_found(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp)
+            write(ws / "Zones/Personal/Garden Club/Notes one.md", "x")
+            write(ws / "Wikis/Meetings/wiki/meetings/261101 - Seed swap review.md", "x")
+            got = pa.walls_other_files(ws, "repeats wording from Zones/Personal/Garden Club/Notes one.md, in project Garden Club of Personal; x")
+            self.assertEqual([p.name for p in got], ["Notes one.md"])
+            got = pa.walls_other_files(ws, "repeats wording from meeting 261101 - Seed swap review, a meeting of Personal; x")
+            self.assertEqual([p.name for p in got], ["261101 - Seed swap review.md"])
+
+
 if __name__ == "__main__":
     unittest.main()

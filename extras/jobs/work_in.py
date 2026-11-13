@@ -56,6 +56,8 @@ REASONS = ("cap", "assistant", "incomplete", "held", "commit")
 ALLOW = ["Read", "Grep", "Glob", "Edit", "Write",
          "Bash(python3 System/status/page_action.py question-work:*)",
          "Bash(python3 System/status/page_action.py question-done:*)"]
+MIN_LEFT = 60        # seconds: start no place with less than this left of the step's limit
+MARGIN = 20          # seconds kept back from the limit for the commit and the restore
 
 
 def panel():
@@ -176,13 +178,14 @@ def write_held(ws: Path, held: Dict[str, dict]) -> None:
     os.replace(tmp, str(path))
 
 
-def work_place(ws: Path, scope: str, place: str, n: int, tier: str) -> Optional[str]:
+def work_place(ws: Path, scope: str, place: str, n: int, tier: str, deadline: Optional[float] = None) -> Optional[str]:
     """Work in one place's answers. None when they were worked in, else the reason code."""
     repo, rel = wiki_repo(ws, scope)
     if repo is None:
         return "assistant"
     before = changes(repo, rel)
-    code, text = agent.run(tier, prompt_for(scope, place), cwd=ws, allow=ALLOW)
+    extra = {} if deadline is None else {"timeout": max(1.0, deadline - time.time() - MARGIN)}
+    code, text = agent.run(tier, prompt_for(scope, place), cwd=ws, allow=ALLOW, **extra)
     if code == agent.EXIT_CAP:
         restore(repo, before, rel)
         return "cap"
@@ -201,6 +204,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Work in the answers still waiting, one place at a time.")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--tier", default="sonnet", choices=agent.TIERS)
+    ap.add_argument("--limit", type=float, help="seconds the whole step may take; no place is started near the end of it")
     ap.add_argument("--today", help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     ws = Path(args.workspace).expanduser().resolve()
@@ -213,8 +217,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     for scope in [s for s in held if s not in {p[0] for p in places}]:
         del held[scope]                               # nothing waits there any more
     total = 0
+    deadline = time.time() + args.limit if args.limit else None
     for scope, place, n in places:
-        why = work_place(ws, scope, place, n, args.tier)
+        if deadline is not None and deadline - time.time() < MIN_LEFT:
+            why = "cap"
+        else:
+            why = work_place(ws, scope, place, n, args.tier, deadline)
         print("work_in: %s: %s" % (place, "worked in" if why is None else "left (%s)" % why))
         if why is None:
             held.pop(scope, None)

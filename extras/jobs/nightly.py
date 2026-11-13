@@ -112,7 +112,7 @@ def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[s
     out = [("hooks", [sys.executable, str(Path(__file__).resolve()), "--workspace", str(ws), "--install-hooks-step"], "") if check.is_file()
            else ("hooks", None, "no System/tools/check.py"),
            ("nurture", nurture, ""),
-           ("answers", [sys.executable, str(WORK_IN), "--workspace", str(ws)], "") if (STATUS / "questions_panel.py").is_file() and WORK_IN.is_file()
+           ("answers", [sys.executable, str(WORK_IN), "--workspace", str(ws), "--limit", str(LIMITS["answers"])], "") if (STATUS / "questions_panel.py").is_file() and WORK_IN.is_file()
            else ("answers", None, "no System/status/questions_panel.py"),
            ("effort", effort, "") if (STATUS / "effort.py").is_file() else ("effort", None, "no System/status/effort.py"),
            ("recall", [sys.executable, str(ws / "System" / "tools" / "recall.py"), "--root", str(ws), "nightly"], "")

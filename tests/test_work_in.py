@@ -173,6 +173,21 @@ class TestAFailedCallLeavesNothingBehind(Case):
             self.assertEqual("# Index\n", index.read_text(), why)
             self.assertEqual(why, self.held()["Zones/Work"]["why"])
 
+    def test_with_a_short_deadline_the_second_place_is_not_started_and_is_held(self):
+        calls, now = [], [1000.0]
+
+        def fake(tier, prompt, allow=(), cwd=None, **kw):
+            calls.append(kw)
+            now[0] += 90                                  # the first call uses most of the 100 seconds
+            return 0, DONE
+        with mock.patch.object(work_in, "waiting", return_value=TWO_PLACES), mock.patch.object(agent, "run", fake), \
+                mock.patch.object(work_in.time, "time", lambda: now[0]):
+            work_in.main(["--workspace", str(self.ws), "--limit", "100", "--today", DAY.isoformat()])
+        self.assertEqual(1, len(calls))
+        self.assertIn("timeout", calls[0])
+        self.assertLess(calls[0]["timeout"], 100)
+        self.assertEqual({"Wikis/Knowledge": {"why": "cap", "day": "2026-11-13"}}, self.held())
+
 
 class TestWhatTheNightCouldNotWorkInIsAskedOnTheCard(unittest.TestCase):
     def setUp(self):

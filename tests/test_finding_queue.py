@@ -285,8 +285,8 @@ class TestWallsFromCheckPy(unittest.TestCase):
             self.assertNotIn("harvest", q["answers"][0]["phrase"])
 
     def test_the_meeting_name_may_hold_of_the(self):
-        text = "links [[Call of the Wild]], a meeting of the DeeAmZee zone; that zone is walled and this file is in the Work zone"
-        self.assertEqual("DeeAmZee", fq.wall_other({"message": text}))
+        text = "links [[Call of the Wild]], a meeting of the Cedar zone; that zone is walled and this file is in the Work zone"
+        self.assertEqual("Cedar", fq.wall_other({"message": text}))
         self.assertEqual("", fq.wall_other({"message": "links [[x]], a note that names no zone, so nothing says whose it is"}))
 
 
@@ -504,7 +504,7 @@ class TestQueueOnThePage(QueueCase):
 
     def test_two_questions_with_one_kind_and_path_keep_two_keys(self):
         a = dict(KINDS["wall"], scope="Zones/Work", message="%s: links [[A]], a note of the Personal zone; that zone is walled and this file is in the Work zone" % DECK)
-        b = dict(KINDS["wall"], scope="Zones/Work", message="%s: links [[B]], a note of the DeeAmZee zone; that zone is walled and this file is in the Work zone" % DECK)
+        b = dict(KINDS["wall"], scope="Zones/Work", message="%s: links [[B]], a note of the Cedar zone; that zone is walled and this file is in the Work zone" % DECK)
         qs = fq.forecast_questions([a, b, dict(a)], set())["Zones/Work"]
         self.assertEqual(3, len({q["gk"] for q in qs}))
         self.assertEqual({fq.later_key("wall", DECK)}, {q["key"] for q in qs})   # Not now's key stays the hash of kind and path

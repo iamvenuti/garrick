@@ -629,7 +629,8 @@ def uncommitted_files(root, p):
 def install_missing_hooks(root):
     """The wall check in every zone, in Wikis/ and in each repository inside a project, as `check.py --install-hooks` puts
     it (#550): the workspace's own check.py runs, as the update runs its other tools, so the logic is not copied here. A hook
-    of the user's own in the place of one is left as it is, and said. Returns (path, reason) for what was not installed."""
+    of the user's own in the place of one is left as it is, and said, one line for each repository. A failure's lines are joined into
+    one. Returns (path, reason) for what was not installed."""
     tool = root / "System" / "tools" / "check.py"
     if not tool.is_file():
         return []
@@ -639,10 +640,17 @@ def install_missing_hooks(root):
     except (OSError, subprocess.TimeoutExpired) as exc:
         return [("System/tools/check.py", "the wall check was not installed everywhere: %s" % exc)]
     out = []
-    for line in r.stderr.splitlines():
-        if line.strip():
-            out.append(("a repository's hooks", "the wall check was not installed there: " + line.strip()))
-    if r.returncode and not out:
+    marker = ": wall check installed at .git/hooks/pre-commit"
+    for line in r.stdout.splitlines():
+        if marker not in line:
+            continue                      # installed: nothing to say
+        repo, rest = line.split(marker, 1)
+        advice = rest.split("; ", 1)[1].strip() if "; " in rest else "a hook of yours stands in the place of a merge hook"
+        out.append(("%s/.git/hooks" % repo.strip(), "a hook of yours is there, so it is left as it is; " + advice))
+    failure = " ".join(l.strip() for l in r.stderr.splitlines() if l.strip())
+    if failure:
+        out.append(("a repository's hooks", "the wall check was not installed there: " + failure))
+    elif r.returncode:
         out.append(("a repository's hooks", "the wall check was not installed everywhere"))
     return out
 
@@ -782,7 +790,9 @@ def apply(root, p, only=None, today=None):
             skipped.append(("Wikis/.git/hooks/pre-commit", "the wikis' wall check was not installed: %s" % exc))
 
     if picked is None:
-        skipped += install_missing_hooks(root)
+        said = {path.split("/.git/hooks")[0] for path, _ in skipped if "/.git/hooks" in path}    # a repository the update said already
+        skipped += [(path, why) for path, why in install_missing_hooks(root)
+                    if not (path.endswith("/.git/hooks") and (path[:-len("/.git/hooks")] in said or "Zones/" + path[:-len("/.git/hooks")] in said))]
 
     tidied = clear_retired_state(root) if picked is None else []
     written = [path for kind in ("replace", "add", "restore") for path in done[kind]]

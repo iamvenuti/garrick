@@ -743,6 +743,32 @@ class TestSafety(Case):
         self.assertTrue(any("hooks" in p for p, _ in result["skipped"]), result["skipped"])
         self.assertTrue((self.root / "Zones" / "Work" / ".git" / "hooks" / "pre-commit").is_file())
 
+    def test_a_hook_of_the_users_own_in_a_project_repository_is_said_once_for_that_repository(self):
+        code = self.nested_repo()
+        self.apply()                                                    # the update installs the four
+        (code / ".git" / "hooks" / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        result = self.apply()
+        said = [(p, w) for p, w in result["skipped"] if "Code" in p]
+        self.assertEqual(1, len(said), result["skipped"])
+        self.assertEqual("Zones/Work/Cedar Review/Code/.git/hooks", said[0][0])
+        self.assertIn("a hook of yours is there, so it is left as it is", said[0][1])
+        self.assertIn("post-merge", said[0][1])
+        self.assertEqual("#!/bin/sh\necho mine\n", (code / ".git" / "hooks" / "post-merge").read_text())
+
+    def test_a_zone_the_update_said_already_is_not_said_twice(self):
+        hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
+        (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")
+        result = self.apply()
+        self.assertEqual(1, len([p for p, _ in result["skipped"] if "Work" in p and "hooks" in p]), result["skipped"])
+
+    def test_a_failure_of_the_install_is_one_line(self):
+        fake = mock.Mock(returncode=1, stdout="", stderr="Work: first line\n  and a second\nPersonal: not a repository\n")
+        with mock.patch.object(update.subprocess, "run", return_value=fake):
+            got = update.install_missing_hooks(self.root)
+        self.assertEqual(1, len(got))
+        self.assertEqual("the wall check was not installed there: Work: first line and a second Personal: not a repository", got[0][1])
+        self.assertNotIn("\n", got[0][1])
+
     def test_a_merge_hook_that_is_not_garricks_is_left_alone_and_named(self):
         hooks = self.root / "Zones" / "Work" / ".git" / "hooks"
         (hooks / "post-merge").write_text("#!/bin/sh\necho mine\n")

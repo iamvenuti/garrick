@@ -217,7 +217,7 @@ class TestGraph(StatusCase):
         self.assertEqual("mail", kinds[data["nodes"][self.node(data, "Pallet forecast")]["k"]])
         self.assertEqual("meeting", kinds[data["nodes"][self.node(data, "Acme kick-off")]["k"]])
         colour = dict((label, c) for (_, label, c) in status.KINDS)["mail"].lower()
-        rings = re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups()
+        rings = re.findall(r"--(?:warning|critical):(#[0-9a-f]{6})", status.CSS)
         self.assertNotIn(colour, set(rings) | {status.BRAND.lower()})          # not amber, red or the brand blue
         self.assertEqual(len(status.KINDS), len({c.lower() for _, _, c in status.KINDS}))   # and no other kind's
         self.assertIn('<i style="background:%s"></i>Mail</button>' % dict((label, c) for (_, label, c) in status.KINDS)["mail"], html)

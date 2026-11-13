@@ -2177,7 +2177,7 @@ class TestKindsFromPages(StatusCase):
 
     def test_the_palette_stands_apart(self):
         shipped = {c.lower() for _, _, c in status.KINDS}
-        rings = set(re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups())
+        rings = set(re.findall(r"--(?:warning|critical):(#[0-9a-f]{6})", status.CSS))
         self.assertEqual(len(status.PAGE_COLOURS), len(set(status.PAGE_COLOURS)))
         self.assertFalse({c.lower() for c in status.PAGE_COLOURS} & (shipped | rings | {status.BRAND.lower()}))
 

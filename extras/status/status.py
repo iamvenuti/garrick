@@ -7050,19 +7050,167 @@ def waiting_row(r: dict, now: dt.datetime) -> str:
     go = ('<button class="act apponly" type="button" data-wgo="%s">Go to it</button>' % E(r["id"])) if where == "cmux" else \
         '<span class="wwhere">%s</span>' % E("%s, in %s" % ("Claude's desktop app" if where == "desktop" else app,
                                                          Path(r.get("folder") or "").name or "a folder"))
-    return ('<div class="wrow" data-id="%s"><span class="wname">%s</span><span class="wwhat">%s</span>'
+    return ('<div class="wrow" data-id="%s"><span class="wico acc">%s</span><span class="wname">%s</span><span class="wwhat">%s</span>'
             '<span class="wfor" data-since="%s">%s</span>%s</div>'
-            % (E(r["id"]), E(r.get("thread") or Path(r.get("folder") or "").name or "A session"), E(r.get("waiting_for") or "an answer"),
+            % (E(r["id"]), WAIT_ICON, E(r.get("thread") or Path(r.get("folder") or "").name or "A session"), E(r.get("waiting_for") or "an answer"),
                E(r.get("since") or ""), E(waited(r.get("since") or "", now)), go))
 
 
+# ---- Overview › the lead sentence and what is waiting (#551) ------------------------------------
+WAIT_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
+             'stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.2 1.4"/></svg>')
+NEED_ICON = {"critical": ("crit", _PILL_PATHS["alert"]), "warning": ("warn", _PILL_PATHS["clock"]), "late": ("crit", _PILL_PATHS["late"])}
+NUMBER_WORDS = ("Nothing", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten")
+
+
+def lead_said(n: int) -> str:
+    """The Overview's lead sentence for `n` things that wait on the user: "Three things need you.",
+    "Nothing needs you right now." Past ten the figure is a numeral."""
+    if n <= 0:
+        return "Nothing needs you right now."
+    if n == 1:
+        return "One thing needs you."
+    return "%s things need you." % (NUMBER_WORDS[n] if n < len(NUMBER_WORDS) else n)
+
+
+def late_need(z: dict, today: dt.date) -> dict:
+    """One zone's late actions, as one thing that waits: its count, and since when the oldest has been late. It
+    belongs to that zone only; nothing here adds one zone to another."""
+    oldest = None
+    for _, rows in z["groups"]:
+        for r in rows:
+            if r["late"] and r["when"] is not None and (oldest is None or r["when"] < oldest["when"]):
+                oldest = r
+    n = z["late"]
+    return {"kind": "late", "level": "late", "zone": z["zone"], "text": "%d late action%s" % (n, "" if n == 1 else "s"),
+            "late": late_said(oldest, today).replace("was due", "oldest was due").replace("to chase", "oldest to chase") if oldest else "",
+            "href": "#todolist", "tz": z["zone"], "label": "Open the list", "go": "Open the late actions"}
+
+
+def attn_need(level: str, text: str, href) -> dict:
+    """One line of the attention list, as one thing that waits. A published file that drifted names its own row."""
+    link = href["href"] if isinstance(href, dict) else href
+    return {"kind": "attn", "level": level, "zone": "", "text": text, "late": "", "href": link, "tz": "",
+            "blank": link.startswith("https://"), "label": "Open it", "go": "Open it"}
+
+
+def needs_you(attn: List[tuple], lists: List[dict], today: dt.date) -> List[dict]:
+    """What waits on the user, apart from the sessions that wait for an answer (the card draws those live):
+    what failed first, then each zone's late actions, then the warnings. The lead sentence counts these and the
+    sessions; the card lists them, in the same order, so the two always agree."""
+    out = [attn_need(k, t, h) for k, t, h in attn if k == "critical"]
+    out += [late_need(z, today) for z in lists if z["late"]]
+    out += [attn_need(k, t, h) for k, t, h in attn if k != "critical"]
+    return out
+
+
+def need_row(n: dict) -> str:
+    """One thing that waits, as a row of the card: an icon, one sentence, its zone, how late, one button."""
+    cls, path = NEED_ICON[n["level"]]
+    icon = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
+            'stroke-linejoin="round">%s</svg>' % path)
+    where = '<span class="wwhat">%s</span>' % E(n["zone"]) if n["zone"] else ""
+    late = '<span class="wfor">%s</span>' % E(n["late"]) if n["late"] else ""
+    go = '<a class="act" href="%s"%s%s>%s</a>' % (E(n["href"]), ' data-tz-go="%s"' % E(n["tz"]) if n["tz"] else "",
+                                                  ' target="_blank" rel="noopener"' if n.get("blank") else "", E(n["label"]))
+    return '<div class="wrow wneed"><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s</div>' % (cls, icon, E(n["text"]), where, late, go)
+
+
+def lead_block(items: List[dict], sessions: int) -> str:
+    """The Overview's lead: one sentence, a line of reasons, and one primary button to the first thing. WAITING_JS
+    redraws it when the sessions that wait change, from the same figures (data-n is what the build counted)."""
+    n = len(items) + sessions
+    reasons = [i["text"] + (" in %s" % i["zone"] if i["zone"] else "") for i in items]
+    static = list(reasons)
+    if sessions:
+        reasons.append("%d session%s waiting for you" % (sessions, " is" if sessions == 1 else "s are"))
+    why = " · ".join(reasons[:3]) + (" · and %d more" % (len(reasons) - 3) if len(reasons) > 3 else "")
+    first = items[0] if items else None
+    href, label, tz = (first["href"], first["go"], first["tz"]) if first else ("#waiting-now", "See who is waiting", "")
+    go = ('<a class="btn primary" id="lead-go" href="%s"%s%s>%s%s</a>'
+          % (E(href), ' data-tz-go="%s"' % E(tz) if tz else "", ' target="_blank" rel="noopener"' if first and first.get("blank") else "",
+             E(label), ARROW)) if n else '<a class="btn primary" id="lead-go" href="#" hidden></a>'
+    return ('<div class="lead" id="lead" role="region" aria-labelledby="lead-h" data-n="%d" data-why="%s" data-first="%d"><div><h2 id="lead-h">%s</h2>'
+            '<p id="lead-why">%s</p></div>%s</div>'
+            % (len(items), E(" · ".join(static)), 1 if first else 0, E(lead_said(n)), E(why), go))
+
+
+ARROW = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" '
+         'stroke-linejoin="round" width="16" height="16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>')
+
+
+def tab_badge(id_: str, n: int, one: str, many: str, warn: bool, shown: str = "%d") -> str:
+    """A count on a tab. A count that means something is late or waits on the user is drawn in the warning colour,
+    and every count says what it is to a screen reader. An empty one is built hidden, so a script can fill it."""
+    return ('<span class="n%s" id="%s" aria-label="%d%s"%s>%s</span>'
+            % (" warn" if warn and n else "", id_, n, one if n == 1 else many, "" if n else " hidden", (shown % n) if n else ""))
+
+
+def todo_counts(z: dict, today: dt.date) -> Tuple[int, int, int]:
+    """One zone's open actions as three counts: late, due in the next seven days, and without a date. Late and due
+    soon never overlap, and a ticked line is not open."""
+    rows = [r for name, group in z["groups"] for r in group]
+    late = sum(1 for r in rows if r["late"])
+    soon = sum(1 for r in rows if r["when"] is not None and not r["late"] and 0 <= (r["when"] - today).days <= 7)
+    return late, soon, sum(1 for r in rows if r["when"] is None)
+
+
+def summary_card(lists: List[dict], today: dt.date, IB, worst: str, attn_n: int, go: str, ZS: Dict[str, dict], link,
+                 graph: bool) -> str:
+    """The Overview's summary column: Todo as three counts, workspace health in words, the inboxes' counts and
+    Explore as a button. Each figure is one zone's own: the zones are listed, never added."""
+    todo_rows = "".join(
+        '<a class="sumz" href="#todolist" data-tz-go="%s"><b%s>%s</b><span class="sumn%s"><b>%d</b> late</span>'
+        '<span class="sumn"><b>%d</b> this week</span><span class="sumn"><b>%d</b> no date</span></a>'
+        % ((E(z["zone"]), zone_attr(z["zone"], ZS), zone_name(z["zone"], ZS)) + ((" bad" if c[0] else ""),) + c)
+        for z, c in ((z, todo_counts(z, today)) for z in lists))
+    health = ('<div class="sumh">%s<span>%s</span></div>'
+              % (pill(worst), '<a href="%s">%d thing%s need%s attention</a>' % (E(go), attn_n, "" if attn_n == 1 else "s", "s" if attn_n == 1 else "")
+                 if attn_n else "Nothing failing, waiting or broken."))
+    inboxes = "".join('<a class="sumi%s" href="%s"><span%s>%s</span><b>%d</b></a>' % (" has" if n else "", E(link(f)), zone_class(name, ZS),
+                                                                                       zone_name(name, ZS), n) for name, f, n in IB)
+    explore = '<button class="btn" type="button" id="explore-go">%sExplore the graph</button>' % GRAPH_ICON if graph else ""
+    body = ('%s<h3 class="sumt">Health</h3>%s<h3 class="sumt">Inboxes</h3><div class="sumis">%s</div>%s'
+            % ('<h3 class="sumt">Todo</h3><div class="sumzs">%s</div>' % todo_rows if todo_rows else "", health,
+               inboxes or '<p class="muted">No inboxes.</p>', '<div class="sumx">%s</div>' % explore if explore else ""))
+    return card("summary-col", "At a glance", "", body)
+
+
+GRAPH_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
+              'stroke-linejoin="round" width="16" height="16"><circle cx="4" cy="4" r="1.8"/><circle cx="12" cy="5" r="1.8"/><circle cx="7" cy="12" r="1.8"/>'
+              '<path d="M5.5 4.3l5 .6M4.6 5.7l1.7 4.6M10.8 6.5L8.3 10.4"/></svg>')
+
+
 def work_name_lines(w: dict) -> str:
-    """The name column, in two lines: the zone and the project in grey, then the thread in bold. A project of one
-    thread has the zone alone above and the project in bold below; the example zone's tag stays on the bold line."""
+    """The name column, in two lines: the thread in bold, then its zone and project in grey under it. A project of
+    one thread has the project in bold and the zone alone below; the example zone's tag stays on the bold line."""
     one = w["name"] == w["project"]
-    above = E(w["zone"]) if one else "%s / %s" % (E(w["zone"]), E(w["project"]))
-    return ('<span class="yname"><small class="yzone">%s</small><span class="yline"><b>%s</b>%s</span></span>'
-            % (above, E(w["project"] if one else w["thread"]), '<span class="ytag">Example</span>' if w["example"] else ""))
+    below = E(w["zone"]) if one else "%s / %s" % (E(w["zone"]), E(w["project"]))
+    return ('<span class="yname"><span class="yline"><b>%s</b>%s</span><small class="yzone">%s</small></span>'
+            % (E(w["project"] if one else w["thread"]), '<span class="ytag">Example</span>' if w["example"] else "", below))
+
+
+def work_state(w: dict, today: dt.date) -> str:
+    """A piece of work's state as one word (PILLS): Late when its next action or one of its lines is late, Act now
+    when it waits on the user, Waiting when it waits on somebody else, Look soon when it has no next step or has not
+    moved for two weeks, and Fine otherwise."""
+    if w["row"].get("late") or any(a["late"] for a in w["actions"]):
+        return "late"
+    if w["waiting"] and w.get("mine"):
+        return "act"
+    if w["waiting"]:
+        return "wait"
+    if not w["next"] or (w["moved"] and (today - w["moved"]).days > 14):
+        return "look"
+    return "good"
+
+
+def touched_said(moved: Optional[dt.date], today: dt.date) -> str:
+    """When a piece of work was last touched, in words: today, yesterday, 6 days ago."""
+    if moved is None:
+        return "Not touched yet"
+    days = (today - moved).days
+    return "Touched today" if days <= 0 else "Touched yesterday" if days == 1 else "Touched %d days ago" % days
 
 
 def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=None) -> str:
@@ -7086,23 +7234,33 @@ def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=
         data = card_of(w["row"]) if card_of else ""
         go = ('<span class="yopen apponly" data-card="%s"></span>' % E(data) if data else "") + \
             '<span class="webonly">%s</span>' % copy("Copy “Where am I?”", phrase, "Copied “%s”. Paste it to your assistant." % phrase)
-        rows += ('<div class="yrow" data-w="%s">%s<span class="ynext">%s</span>%s<span class="yact">%s</span>%s</div>'
-                 % (E(w["id"]), work_name_lines(w), nxt, why, go, pop))
+        n_actions = len(w["actions"])
+        meta = "%s · %d action%s" % (touched_said(w["moved"], today), n_actions, "" if n_actions == 1 else "s")
+        rows += ('<div class="yrow" data-w="%s" role="row"><span class="ycell" role="cell">%s</span>'
+                 '<span class="ycell ynext" role="cell">%s<small class="ymeta">%s</small></span>'
+                 '<span class="ycell ystate" role="cell">%s%s</span><span class="ycell yact" role="cell">%s</span>%s</div>'
+                 % (E(w["id"]), work_name_lines(w), nxt, E(meta), pill(work_state(w, today)), why, go, pop))
+    head = ('<div class="yhead" role="row"><span role="columnheader">Thread</span><span role="columnheader">Next step</span>'
+            '<span role="columnheader">State</span><span role="columnheader"><span class="sr">Action</span></span></div>')
     return card("your-work", "Your work", "%d piece%s, most recent first" % (len(W), "" if len(W) == 1 else "s"),
-                '<div class="yrows">%s</div>' % rows)
+                '<div class="yrows" role="table" aria-label="Your work">%s%s</div>' % (head, rows))
 
 
 YOURWORK_CSS = r"""
-.yrow{display:grid;grid-template-columns:minmax(140px,.8fr) minmax(200px,2.6fr) minmax(110px,1fr) auto;gap:6px 14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
-.yrow:last-child{border-bottom:0}.yname{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere}
-.yzone{font-size:12px;font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
-.ywhy{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}.ywhy .tchips{display:inline-flex;gap:4px}.ywhy .chip{margin:0}
-.ywait{color:var(--ink2);font-size:12.5px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:12px;font-weight:400;background:var(--wash);color:var(--accent)}
+.yhead,.yrow{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) auto;gap:6px 18px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line)}
+.yhead{padding:0 0 8px;font-size:13px;font-weight:600;color:var(--muted)}.yrow:last-child{border-bottom:0}.ycell{min-width:0}
+.yrow:hover{background:color-mix(in srgb,var(--sunk) 55%,transparent)}
+.yname{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere;color:var(--ink2)}
+.ymeta{display:block;margin-top:2px;font-size:13px;color:var(--muted)}
+.yzone{font-size:13px;font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
+.ystate{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.ywhy{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}.ywhy:empty{display:none}.ywhy .tchips{display:inline-flex;gap:4px}.ywhy .chip{margin:0}
+.ywait{color:var(--ink2);font-size:13px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:12px;font-weight:400;background:var(--wash);color:var(--accent)}
 .yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
 .ymore{position:relative}.ymore>summary.act{display:inline-block;padding:0 7px}
 .ymenu{position:absolute;right:0;top:100%;z-index:6;margin-top:4px;display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--raise);box-shadow:var(--shadow);white-space:nowrap}
 .yrow .tpop{grid-column:1/-1}
-@media(max-width:720px){.yrow{grid-template-columns:1fr auto}.ynext,.ywhy{grid-column:1/-1}}
+@media(max-width:720px){.yhead{display:none}.yrow{grid-template-columns:1fr auto;padding:14px 0}.ynext,.ystate{grid-column:1/-1}}
 """
 
 # Draws each row's way to open from the card's data, as the Threads card's hover card does, and again when the
@@ -7115,13 +7273,19 @@ document.addEventListener('click',function(e){[].forEach.call(document.querySele
 """
 
 
-def waiting_card(rows: List[dict], now: dt.datetime) -> str:
-    """The Waiting on you now card: one row per waiting session, oldest first."""
+def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]] = None) -> str:
+    """The Waiting on you now card: what waits on the user, each with an icon, one sentence, its zone, how late and
+    one button. First the things the page knows from its records (`needs`: what failed, each zone's late actions,
+    the warnings), then one row per waiting session, oldest first, which the app keeps current."""
     rows = sorted(rows, key=lambda r: (r.get("since") or "", r["id"]))
-    html = card("waiting-now", "Waiting on you now", "%d session%s" % (len(rows), "" if len(rows) == 1 else "s") if rows else "",
-                '<div class="wrows" id="wrows" aria-live="polite">%s</div>' % "".join(waiting_row(r, now) for r in rows))
-    # Built out of sight (the class, since a card's own Hide uses `hidden`) when no session waits (#510); GarrickWaiting shows it with the first row and hides it with the last.
-    return html if rows else html.replace('<details class="card" id="waiting-now"', '<details class="card nowait" id="waiting-now"', 1)
+    needs = needs or []
+    total = len(rows) + len(needs)
+    meta = ("%d item%s" if needs else "%d session%s") % (total, "" if total == 1 else "s") if total else ""
+    html = card("waiting-now", "Waiting on you now", meta,
+                '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows" aria-live="polite">%s</div>'
+                % ("".join(need_row(n) for n in needs), "".join(waiting_row(r, now) for r in rows)))
+    # Built out of sight (the class, since a card's own Hide uses `hidden`) when nothing waits (#510); GarrickWaiting shows it with the first row and hides it with the last.
+    return html if total else html.replace('<details class="card" id="waiting-now"', '<details class="card nowait" id="waiting-now"', 1)
 
 
 WAITING_CSS = r"""
@@ -7134,21 +7298,34 @@ WAITING_CSS = r"""
 """
 
 WAITING_JS = r"""
-(function(){var box=document.getElementById('wrows');if(!box)return;var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+(function(){var ex=document.getElementById('explore-go');if(ex)ex.addEventListener('click',function(){var g=document.getElementById('graph');if(!g)return;g.hidden=false;g.open=true;g.scrollIntoView({block:'start'})});
+var box=document.getElementById('wrows');if(!box)return;var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+var ICON='<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.2 1.4"/></svg>',
+ARROW='<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>',
+NUM=['Nothing','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten'];
 function since(s){var t=Date.parse(s);if(!t)return'';var m=Math.max(0,Math.floor((Date.now()-t)/60000));return m<1?'less than a minute':m<60?m+' min':m<2880?Math.round(m/60)+' h':Math.round(m/1440)+' days'}
 function span(c,t){var e=document.createElement('span');e.className=c;e.textContent=t;return e}
 function row(r){var d=document.createElement('div');d.className='wrow';d.dataset.id=r.id;
-var name=r.thread||(r.folder||'').split('/').pop()||'A session',app=r.agent==='codex'?'Codex':'Claude Code';
+var name=r.thread||(r.folder||'').split('/').pop()||'A session',app=r.agent==='codex'?'Codex':'Claude Code',i=span('wico acc','');i.innerHTML=ICON;d.appendChild(i);
 d.appendChild(span('wname',name));d.appendChild(span('wwhat',r.waiting_for||'an answer'));
 var f=span('wfor',since(r.since));f.dataset.since=r.since||'';d.appendChild(f);
 if(r.where==='cmux'){var b=document.createElement('button');b.type='button';b.className='act apponly';b.dataset.wgo=r.id;b.textContent='Go to it';d.appendChild(b)}
 else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app)+', in '+((r.folder||'').split('/').pop()||'a folder')));
 return d}
+/* the lead sentence says what the card lists: what the build counted, and the sessions now */
+function lead(sess){var L=document.getElementById('lead');if(!L)return;var st=+L.dataset.n||0,t=st+sess,h=document.getElementById('lead-h'),w=document.getElementById('lead-why'),g=document.getElementById('lead-go');
+h.textContent=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
+var why=L.dataset.why?L.dataset.why.split(' · '):[];if(sess)why.push(sess+(sess===1?' session is':' sessions are')+' waiting for you');
+w.textContent=why.slice(0,3).join(' · ')+(why.length>3?' · and '+(why.length-3)+' more':'');
+if(g){g.hidden=t<1;if(L.dataset.first!=='1'&&sess){g.setAttribute('href','#waiting-now');g.removeAttribute('data-tz-go');g.innerHTML='See who is waiting'+ARROW}}
+var n=document.getElementById('tabn-overview');if(n){n.textContent=t||'';n.hidden=!t;n.setAttribute('aria-label',t+(t===1?' thing needs you':' things need you'))}}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
 box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});
-var card=document.getElementById('waiting-now');if(card)card.classList.toggle('nowait',!rows.length);
-var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=rows.length?rows.length+(rows.length===1?' session':' sessions'):''}
+var nd=document.getElementById('wneeds'),fixed=nd?nd.children.length:0,total=rows.length+fixed;
+var card=document.getElementById('waiting-now');if(card)card.classList.toggle('nowait',!total);
+var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=total?total+(fixed?(total===1?' item':' items'):(total===1?' session':' sessions')):'';
+lead(rows.length)}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
@@ -7206,6 +7383,31 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .item>.st{margin-left:auto}.chip .st{padding:0 8px 0 6px;margin-right:4px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) 180px 86px minmax(200px,auto)}
 @media (max-width:820px){.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* the Overview's lead: one sentence, its reasons, one button */
+.lead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px 24px;flex-wrap:wrap;margin:0 0 24px}
+.lead h2{margin:0;font:700 30px/1.2 var(--sans);letter-spacing:-.02em;max-width:30ch;text-wrap:balance}
+.lead p{margin:6px 0 0;color:var(--ink2);font-size:16px;max-width:70ch}.lead p:empty{display:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border-radius:8px;border:1px solid var(--line2);background:var(--raise);color:var(--ink);font:600 14px/1 var(--sans);cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:var(--ink2);text-decoration:none}.btn svg{flex:none}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.btn.primary:hover{filter:brightness(1.08)}
+/* Waiting on you now: an icon, one sentence, its zone, how late, one button */
+.wrow{display:grid;grid-template-columns:36px minmax(0,1fr) auto auto auto;gap:4px 14px;align-items:center;padding:10px 0}
+.wico{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--wash);color:var(--accent)}.wico svg{width:18px;height:18px}
+.wico.crit{background:var(--critical-wash);color:var(--critical)}.wico.warn{background:var(--warning-wash);color:var(--warning)}
+.wrow .act{margin-left:0;justify-self:end}.wname{overflow-wrap:anywhere}
+@media (max-width:640px){.wrow{grid-template-columns:36px minmax(0,1fr)}.wrow>:nth-child(n+3){grid-column:2;justify-self:start}}
+/* the summary column */
+.sumt{margin:14px 0 6px;font-size:13px;font-weight:600;color:var(--muted)}.sumt:first-child{margin-top:0}
+.sumzs,.sumis{display:grid;gap:8px}
+.sumz{display:grid;grid-template-columns:1fr repeat(3,auto);gap:4px 12px;align-items:baseline;padding:10px 12px;border-radius:8px;background:var(--sunk);color:var(--ink);text-decoration:none}
+.sumz>b{grid-column:1/-1}.sumz .sumn{font-size:13px;color:var(--ink2)}.sumz .sumn b{font:600 24px/1.1 var(--display);color:var(--ink);margin-right:2px}.sumz .sumn.bad b{color:var(--critical)}
+.sumz:hover,.sumi:hover{text-decoration:none;outline:1px solid var(--line2)}
+.sumi{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;color:var(--ink);text-decoration:none}
+.sumi b{font-weight:700}.sumi.has b{color:var(--accent)}.sumh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.sumx{margin-top:16px}
+/* a tab's count */
+.tabs .n{min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--sunk);color:var(--ink2);font-size:12px;font-weight:700;display:inline-grid;place-items:center}
+.tabs .n.warn{background:var(--warning-wash);color:var(--warning)}.tabs .n:empty,.tabs .n[hidden]{display:none}
 /* a tab or a hidden card that holds trouble says so in words (LAYOUT_JS sets the dot's class and title) */
 .tabs .dot.tr,.unhide .dot.tr{width:auto;height:auto;border-radius:999px;padding:0 8px;font-size:12px;font-weight:600;line-height:20px}
 .tabs .dot.tr::after,.unhide .dot.tr::after{content:"Look soon"}.tabs .dot.tr.critical::after,.unhide .dot.tr.critical::after{content:"Act now"}
@@ -7751,13 +7953,16 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    lead = waiting_card(waiting_now or [], now) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
+    needs = needs_you(attn, lists, now.date())          # what waits on the user, from what the page knows; the lead counts it (#551)
+    lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
                                                     if anything else start_card() + threads_card)
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, todo_card, inbox_card, graph_card))
+                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT + lead_block(needs, len(waiting_now or [])), lead, todo_card,
+                          summary_card(lists, now.date(), IB, worst, len(attn), "#" + troubled[0][1] if troubled else "#summary", ZS, link, show_graph)
+                          + inbox_card, graph_card))
     # Every tab with content has a left and a right slot below its own content (#443).
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
@@ -7770,6 +7975,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
                questions_mod().tab_button() if qdata else ""))
+    # Each tab a count (#551). A count of something late or that needs you takes the warning colour and says so to a screen reader.
+    sessions_n = len(waiting_now or [])
+    tabs = tabs.replace('data-tab="overview">Overview</button>', 'data-tab="overview">Overview%s</button>'
+                        % tab_badge("tabn-overview", len(needs) + sessions_n, " thing needs you", " things need you", True), 1)
+    tabs = tabs.replace('data-tab="status">Status</button>', 'data-tab="status">Status%s</button>'
+                        % tab_badge("tabn-status", len(attn), " thing needs attention", " things need attention", bool(attn)), 1)
+    tabs = tabs.replace('<span class="dot critical" title="late"></span>', tab_badge("tabn-late", late, " action is late", " actions are late", True, "%d late"), 1)
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
     if qdata:

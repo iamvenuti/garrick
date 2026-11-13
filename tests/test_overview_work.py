@@ -84,7 +84,7 @@ class OverviewWork(unittest.TestCase):
 
     def rows(self, html):
         out = []
-        for m in re.finditer(r'<div class="yrow" data-w="[^"]*">(.*?)</div>(?=<div class="yrow"|</div>$|</div>\s*$)', self.card(html), re.S):
+        for m in re.finditer(r'<div class="yrow" data-w="[^"]*" role="row">(.*?)</div>(?=<div class="yrow"|</div>$|</div>\s*$)', self.card(html), re.S):
             out.append(htmllib.unescape(re.sub(r"<[^>]+>", " ", m.group(1))).split())
         return out
 
@@ -100,18 +100,18 @@ class OverviewWork(unittest.TestCase):
         self.assertNotIn(">Continue<", card)                            # the way to open is the Threads card's (#523)
         self.assertEqual(3, card.count('class="yopen apponly" data-card='))
 
-    def test_the_name_is_two_lines_zone_and_project_in_grey_above_the_thread(self):
-        """#523: a thread of several: `Zone / Project` small, the thread in bold. A project of one thread: the zone
-        alone above, the project in bold."""
+    def test_the_name_is_two_lines_the_thread_with_zone_and_project_in_grey_under_it(self):
+        """#523, #551: a thread of several: the thread in bold, `Zone / Project` small under it. A project of one
+        thread: the project in bold, the zone alone under it."""
         card = self.card(self.page())
-        names = re.findall(r'<span class="yname"><small class="yzone">([^<]*)</small><span class="yline"><b>([^<]*)</b>', card)
+        names = re.findall(r'<span class="yname"><span class="yline"><b>([^<]*)</b>(?:<span class="ytag">Example</span>)?</span><small class="yzone">([^<]*)</small>', card)
         self.assertEqual({("Work", "Acme Review"), ("Work / Birch Entry", "Market Sizing"), ("Work / Birch Entry", "Interviews")},
-                         set(names))
+                         {(zone, name) for name, zone in names})
         css = status.YOURWORK_CSS
-        self.assertIn(".yzone{font-size:12px;font-weight:400;color:var(--muted)}", css)
+        self.assertIn(".yzone{font-size:13px;font-weight:400;color:var(--muted)}", css)
         self.assertIn(".yline{font-weight:600;color:var(--ink)}", css)
-        self.assertIn("grid-template-columns:minmax(140px,.8fr) minmax(200px,2.6fr) minmax(110px,1fr) auto", css)
-        self.assertIn("@media(max-width:720px){.yrow{grid-template-columns:1fr auto}.ynext,.ywhy{grid-column:1/-1}}", css)
+        self.assertIn("grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) auto", css)
+        self.assertIn("@media(max-width:720px){.yhead{display:none}.yrow{grid-template-columns:1fr auto;padding:14px 0}.ynext,.ystate{grid-column:1/-1}}", css)
 
     def test_the_examples_tag_stays_on_the_bold_line(self):
         with mock.patch.object(status, "example_zone", lambda ws: "Work"):
@@ -171,7 +171,7 @@ class OverviewWork(unittest.TestCase):
         self.todo("Work", "[[Pricing]]: send the floor to Dana", "[[Pricing]]: send the renewal")
         html = self.page()
         card = self.card(html)
-        rows = dict(re.findall(r'<div class="yrow" data-w="([^"]*)">(.*?)(?=<div class="yrow"|$)', card, re.S))
+        rows = dict(re.findall(r'<div class="yrow" data-w="([^"]*)" role="row">(.*?)(?=<div class="yrow"|$)', card, re.S))
         mine = next(v for v in rows.values() if "Acme Review" in v and "yline" in v)
         chip = re.search(r'<button type="button" class="chip tchip todo ok"[^>]*aria-controls="(tp-[0-9a-f]+)"[^>]*>todo 2</button>', mine)
         self.assertTrue(chip, mine)
@@ -214,7 +214,7 @@ class OverviewWork(unittest.TestCase):
         self.todo("Personal", "[[Pricing]]: house line about the boiler", "[[Pricing]]: house line about the roof")
         html = self.page()
         card = self.card(html)
-        rows = re.findall(r'<div class="yrow" data-w="[^"]*">.*?(?=<div class="yrow"|$)', card, re.S)
+        rows = re.findall(r'<div class="yrow" data-w="[^"]*" role="row">.*?(?=<div class="yrow"|$)', card, re.S)
         by = {}
         for r in rows:
             zone = re.search(r'class="yzone">([^<]*)<', r).group(1)

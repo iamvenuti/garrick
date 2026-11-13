@@ -2177,7 +2177,7 @@ class TestKindsFromPages(StatusCase):
 
     def test_the_palette_stands_apart(self):
         shipped = {c.lower() for _, _, c in status.KINDS}
-        rings = set(re.search(r"--warning:(#[0-9a-f]{6});--critical:(#[0-9a-f]{6})", status.CSS).groups())
+        rings = set(re.findall(r"--(?:warning|critical):(#[0-9a-f]{6})", status.CSS))
         self.assertEqual(len(status.PAGE_COLOURS), len(set(status.PAGE_COLOURS)))
         self.assertFalse({c.lower() for c in status.PAGE_COLOURS} & (shipped | rings | {status.BRAND.lower()}))
 
@@ -2871,7 +2871,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         out = self.run_js(None)
         self.assertEqual(["waiting-now", "your-work", "threads"], out["slots"]["top"])          # #143: Threads leads, after the sessions waiting on you (#474)
         self.assertEqual(["todo"], out["slots"]["left"])
-        self.assertEqual(["inboxes"], out["slots"]["right"])
+        self.assertEqual(["summary-col", "inboxes"], out["slots"]["right"])             # the summary column leads the right (#551)
         self.assertEqual(["graph"], out["slots"]["bottom"])
         self.assertEqual([], out["hidden"])
         self.assertIsNone(out["saved"])                     # and nothing is written until something is moved
@@ -2880,7 +2880,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         out = self.run_js(self.BEFORE_143)
         self.assertEqual(["waiting-now", "your-work"], out["slots"]["top"])          # Recent work and Due and overdue go; the card they never named stays
         self.assertEqual(["inboxes", "todo"], out["slots"]["left"])     # A thought goes; Inboxes stays where it was dragged
-        self.assertEqual([], out["slots"]["right"])                     # Waiting on you goes, hidden or not
+        self.assertEqual(["summary-col"], out["slots"]["right"])        # Waiting on you goes, hidden or not; the summary column was never named, so it stays
         self.assertEqual(["threads", "graph"], out["slots"]["bottom"])  # Threads stays where this window put it
         self.assertEqual(["checks", "repos"], out["slots"]["status-left"])
         self.assertEqual(["wikis"], out["slots"]["status-right"])
@@ -2896,7 +2896,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         moved["h"] = ["wikis"]
         out = self.run_js(moved)
         self.assertEqual(["inboxes", "todo"], out["slots"]["left"])    # Inboxes stays where it was dragged
-        self.assertEqual([], out["slots"]["right"])
+        self.assertEqual(["summary-col"], out["slots"]["right"])          # never named by the saved layout: keeps the build's place
         self.assertEqual(["wikis"], out["slots"]["status-bottom"])
         self.assertEqual(["wikis"], out["hidden"])          # still hidden, and still where it was put
         self.assertEqual(["waiting-now", "your-work", "graph", "threads"], out["slots"]["top"])

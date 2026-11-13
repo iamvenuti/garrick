@@ -70,7 +70,7 @@ TOUCH_MAP = {
     "extras/status/status.py": ["test_status", "test_finding_queue", "test_context_card", "test_status_find", "test_status_finder",
                                 "test_status_graph_flat", "test_status_graph_ignored",
                                 "test_status_more", "test_status_work", "test_waiting_card",
-                                "test_overview_work"],
+                                "test_overview_work", "test_status_look"],
     "extras/status/agents_working.py": ["test_agents_working", "test_waiting_card"],
     "extras/status/app/": ["test_status_finder", "test_status_graph_flat", "test_status_more"],
     "tests/shard.py": ["test_shard"],

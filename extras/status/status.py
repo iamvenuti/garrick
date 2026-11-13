@@ -1722,10 +1722,10 @@ TVIEW_CSS = r"""
 .tview .num.mt,.tview .num.mc{text-align:right;font-variant-numeric:tabular-nums}
 .ebar{height:6px;border-radius:3px;background:var(--grid);position:relative}.ebar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--accent);min-width:2px}
 .efoot{margin-top:10px;cursor:help}.efoot b{font-weight:600;color:var(--ink2)}
-.chip.tchip{font:inherit;font-size:11px;line-height:1.45;background:none;cursor:pointer}.chip.tchip:hover{border-color:var(--base)}
+.chip.tchip{font:inherit;font-size:12px;line-height:1.45;background:none;cursor:pointer}.chip.tchip:hover{border-color:var(--base)}
 .chip.todo.ok{color:var(--good);border-color:color-mix(in srgb,var(--good) 45%,transparent)}.chip.tchip[aria-expanded="true"]{background:var(--wash)}
 .tpop{grid-column:1/-1;margin:2px 0 4px 16px;padding:4px 6px;background:var(--surface);border:1px solid var(--line);border-radius:10px;font-size:13px}
-.tpop[hidden]{display:none}.tpop-h{margin:4px 8px 2px;font-size:11.5px;color:var(--muted)}.tpop .trows{padding:0}.tpop .lateby{color:var(--critical)}
+.tpop[hidden]{display:none}.tpop-h{margin:4px 8px 2px;font-size:12px;color:var(--muted)}.tpop .trows{padding:0}.tpop .lateby{color:var(--critical)}
 .cfind{padding:8px}.cfind+.cfind{border-top:1px solid var(--grid)}.cfind p{margin:0 0 4px;line-height:1.45}.cfind .cfix{color:var(--ink2)}
 .cfind .hacts{margin:6px 0 2px}.webonly{display:none}.nohost .webonly{display:inline}
 """
@@ -1812,7 +1812,7 @@ def add_dialog(trees: str) -> str:
 
 
 TADD_CSS = r"""
-.act.primary{background:var(--accent);border-color:var(--accent);color:#fff}.act.primary:hover{filter:brightness(1.08);color:#fff}
+.act.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.act.primary:hover{filter:brightness(1.08);color:var(--accent-ink)}
 dialog.tadd{width:min(520px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:20px 22px;box-shadow:0 18px 60px rgba(0,0,0,.25)}
 dialog.tadd::backdrop{background:rgba(0,0,0,.28)}
 .tadd h3{margin:0 0 14px;font-size:16px}.tadd .tlab{display:flex;align-items:center;gap:8px;margin:14px 0 6px;font-size:12px;font-weight:600;color:var(--ink2)}
@@ -1820,8 +1820,8 @@ dialog.tadd::backdrop{background:rgba(0,0,0,.28)}
 .tadd #tadd-text{width:100%}.tadd #tadd-filter{margin-left:auto;width:150px;padding:4px 8px;font-size:12px}
 .ttrees{border:1px solid var(--line);border-radius:10px;background:var(--raise);max-height:260px;overflow:auto;padding:6px 8px}
 .tnode{display:inline-flex;align-items:center;gap:7px;padding:4px 2px;font-size:13px;cursor:pointer}.tnode input{accent-color:var(--accent);margin:0}
-.tproj{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;border-top:1px solid var(--grid)}.tproj small{color:var(--muted);font-size:11.5px}
-.tsep{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:10px 2px 2px;border-top:1px solid var(--grid)}
+.tproj{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;border-top:1px solid var(--grid)}.tproj small{color:var(--muted);font-size:12px}
+.tsep{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:10px 2px 2px;border-top:1px solid var(--grid)}
 .tchev,.tchev-sp{width:20px;height:20px;flex:none}.tchev{border:0;background:none;padding:0;cursor:pointer;color:var(--muted);line-height:0}
 .tchev .chev{width:13px;height:13px}.tchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
 .tsubs{flex-basis:100%;padding-left:26px;display:flex;flex-direction:column}.tsubs[hidden]{display:none}.tnode.tsub{font-size:12.5px}
@@ -2003,7 +2003,7 @@ FIND_CSS = r"""
 .tfind{position:relative;flex:1 1 200px;min-width:0;max-width:420px;margin-right:auto}
 .tfind input{width:100%;box-sizing:border-box;font:inherit;font-size:13px;color:var(--ink);background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:6px 30px 6px 10px;margin:0}
 .tfind input::placeholder{color:var(--muted)}.tfind input:focus{outline:2px solid var(--accent);outline-offset:-1px}
-.tfind kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);font:inherit;font-size:11px;line-height:16px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;pointer-events:none}
+.tfind kbd{position:absolute;right:8px;top:50%;transform:translateY(-50%);font:inherit;font-size:12px;line-height:16px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 5px;pointer-events:none}
 .tfind input:focus~kbd,.tfind input:not(:placeholder-shown)~kbd{display:none}
 @media (hover:none){.tfind kbd{display:none}}
 .tview.finding .zones,.tview.finding .tmodes,.tview.finding .efoot,.tview.finding .gsum{display:none!important}
@@ -2011,7 +2011,7 @@ FIND_CSS = r"""
 .sres{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:6px 4px;border-top:1px solid var(--grid);border-radius:6px;font-size:13px;transition:background .1s}
 .sres:hover,.sres.on{background:var(--wash)}.sres .t{min-width:0}
 .sres .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sres .t small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sres .t small{display:block;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sres .chip{margin:0}.sres[data-st="done"] .t a{color:var(--ink2)}
 dialog.gmanage .mg-dup a{color:var(--accent)}
 """
@@ -2393,7 +2393,7 @@ dtext.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefaul
 TODO_CSS = r"""
 .todotab .tbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-bottom:14px}
 .todotab .tbar .seg button{flex:none;padding:5px 12px;font-size:12.5px;display:inline-flex;gap:6px;align-items:center;line-height:1.2}
-.todotab .tbar .seg .n{font-size:11px;color:var(--muted)}
+.todotab .tbar .seg .n{font-size:12px;color:var(--muted)}
 .tsum{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--ink2);font-size:12.5px;margin:0 2px 12px}
 .tsum b{color:var(--ink);font-variant-numeric:tabular-nums}.tsum .bad,.tsum .bad b{color:var(--critical)}
 .tsum-acts{margin-left:auto;display:flex;gap:6px}.tsum .tadd-open{font-size:12px;padding:6px 12px}
@@ -2407,12 +2407,12 @@ TODO_CSS = r"""
 .trow:first-child{border-top:0}.trow:hover{background:var(--wash)}
 .trow.pending{opacity:.6;pointer-events:none}.trow.pending .tmeta span{font-style:italic}
 .trow.done .tick{background:var(--good);border-color:var(--good)}
-.trow.done .tick::after{content:"";width:9px;height:5px;border-left:2px solid #fff;border-bottom:2px solid #fff;transform:translateY(-1px) rotate(-45deg)}
+.trow.done .tick::after{content:"";width:9px;height:5px;border-left:2px solid var(--accent-ink);border-bottom:2px solid var(--accent-ink);transform:translateY(-1px) rotate(-45deg)}
 .trow.done .ttext{text-decoration:line-through;color:var(--muted)}.trow.done .thr{color:var(--muted)}
 .ttext{font-size:13.5px;line-height:1.45;overflow-wrap:anywhere}
 .ttext code{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--wash);padding:0 3px;border-radius:4px}
 .thr{display:inline-block;font-size:12px;font-weight:620;color:var(--accent);margin-right:7px;white-space:nowrap}.thr.unsure{color:var(--muted);font-weight:500}
-.tmeta{display:flex;flex-wrap:wrap;gap:3px 12px;margin-top:3px;font-size:11.5px;color:var(--muted)}
+.tmeta{display:flex;flex-wrap:wrap;gap:3px 12px;margin-top:3px;font-size:12px;color:var(--muted)}
 .tmeta .prio{color:var(--critical)}.tmeta .moved{color:var(--accent);font-weight:560}
 .tdate{border:1px solid var(--line);background:var(--raise);border-radius:7px;font:inherit;font-size:12px;padding:3px 9px;color:var(--ink2);white-space:nowrap;font-variant-numeric:tabular-nums}
 button.tdate{cursor:pointer}button.tdate:hover{border-color:var(--base);color:var(--ink)}
@@ -2425,10 +2425,10 @@ button.tdate{cursor:pointer}button.tdate:hover{border-color:var(--base);color:va
 .todotab[data-tf="late"] .trow:not(.late),.todotab[data-tf="nodate"] .trow:not(.undated){display:none}
 .todotab[data-tf="late"] .tempty,.todotab[data-tf="nodate"] .tempty,.tgroup.empty{display:none}
 .dmenu{position:fixed;z-index:11;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.16);padding:6px;width:236px}
-.dmenu .dh{font-size:11px;color:var(--muted);padding:4px 8px 2px;text-transform:uppercase;letter-spacing:.05em}
+.dmenu .dh{font-size:12px;color:var(--muted);padding:4px 8px 2px;text-transform:uppercase;letter-spacing:.05em}
 .dmenu button{display:flex;justify-content:space-between;align-items:baseline;width:100%;border:0;background:none;font:inherit;font-size:13px;color:var(--ink2);padding:6px 8px;border-radius:6px;cursor:pointer;text-align:left}
 .dmenu button:hover,.dmenu button:focus-visible{background:var(--wash);color:var(--ink);outline:none}
-.dmenu button small{color:var(--muted);font-size:11.5px;font-variant-numeric:tabular-nums}
+.dmenu button small{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
 .dmenu .pick{display:flex;gap:6px;padding:7px 4px 3px;border-top:1px solid var(--grid);margin-top:4px}
 .dmenu input{flex:1;min-width:0;font:inherit;font-size:12.5px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:var(--raise);color:var(--ink)}
 .dmenu .pick button{width:auto;flex:none;border:1px solid var(--line);background:var(--raise);font-size:12px;font-weight:560;padding:3px 10px}
@@ -2961,7 +2961,7 @@ KIND_FROM_PAGES = 3
 # kind's, amber, red or another of these, and each at least 2.9 to 1 against
 # the card in both themes. A type keeps the colour its name hashes to, or the
 # next one free, so a kind does not change colour when another one comes.
-PAGE_COLOURS = ("#00a3c4", "#a83fbf", "#2f9e44", "#a14a6b", "#6b8fcf", "#9b5d3a")
+PAGE_COLOURS = ("#0099b8", "#a83fbf", "#2f9e44", "#a14a6b", "#6b8fcf", "#9b5d3a")
 # How the legend names each kind: plural, as a filter reads (#250).
 KIND_SAID = {"project": "Projects", "thread": "Threads", "note": "Other notes", "meeting": "Meetings", "mail": "Mail",
              "person": "People", "source": "Sources", "concept": "Concepts", "entity": "Entities", "decision": "Decisions"}
@@ -4026,11 +4026,32 @@ def day_cells(runs: List[Tuple[dt.datetime, int]], now: dt.datetime, quiet: Tupl
 
 
 ICON = {
-    "good": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="var(--good)"/><path d="M4.8 8.2l2.1 2.1 4.3-4.6" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    "warning": '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l7 12.5H1z" fill="var(--warning)" stroke="var(--warning)" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3.6" stroke="#0b0b0b" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.9" r="1" fill="#0b0b0b"/></svg>',
-    "critical": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="var(--critical)"/><path d="M5.4 5.4l5.2 5.2M10.6 5.4l-5.2 5.2" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/></svg>',
+    "good": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="var(--good)"/><path d="M4.8 8.2l2.1 2.1 4.3-4.6" fill="none" stroke="var(--accent-ink)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    "warning": '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l7 12.5H1z" fill="var(--warning)" stroke="var(--warning)" stroke-width="1.5" stroke-linejoin="round"/><path d="M8 6v3.6" stroke="var(--accent-ink)" stroke-width="1.7" stroke-linecap="round"/><circle cx="8" cy="11.9" r="1" fill="var(--accent-ink)"/></svg>',
+    "critical": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="var(--critical)"/><path d="M5.4 5.4l5.2 5.2M10.6 5.4l-5.2 5.2" stroke="var(--accent-ink)" stroke-width="1.8" stroke-linecap="round"/></svg>',
     "none": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--muted)" stroke-width="1.6"/></svg>',
 }
+# Status in words (#551): a pill with a line icon and a word, never a colour alone. `Fine`, `Look soon`, `Late`,
+# `Act now` and `Waiting` are the only five; the class sets the colour, the word carries the meaning.
+_PILL_PATHS = {
+    "check": '<circle cx="8" cy="8" r="6"/><path d="M5.4 8.2l1.8 1.8 3.4-3.7"/>',
+    "clock": '<circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.2 1.4"/>',
+    "late": '<circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.8M8 11.2h.01"/>',
+    "alert": '<path d="M8 2.2l6 10.6H2z"/><path d="M8 6.6v2.8M8 11.4h.01"/>',
+    "pause": '<circle cx="8" cy="8" r="6"/><path d="M6.6 5.8v4.4M9.4 5.8v4.4"/>',
+}
+PILLS = {"good": ("good", "Fine", "check"), "look": ("warn", "Look soon", "clock"), "late": ("crit", "Late", "late"),
+         "act": ("crit", "Act now", "alert"), "wait": ("idle", "Waiting", "pause")}
+STATE_PILL = {"good": "good", "warning": "look", "critical": "act", "none": "wait"}     # ICON's states, in words
+
+
+def pill(state: str, extra: str = "") -> str:
+    """The pill for a state: one of PILLS, or one of ICON's (good, warning, critical, none). `extra` is added to its class."""
+    cls, word, icon = PILLS[STATE_PILL.get(state, state)]
+    return ('<span class="st %s%s"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" '
+            'stroke-linecap="round" stroke-linejoin="round">%s</svg>%s</span>' % (cls, " " + extra if extra else "", _PILL_PATHS[icon], word))
+
+
 CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 
 
@@ -5181,7 +5202,7 @@ def start_card() -> str:
 HOME_CSS = r"""
 .chip.late{color:var(--critical);border-color:color-mix(in srgb,var(--critical) 45%,transparent)}
 .hacts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0}
-.hsay{font-family:var(--display);font-size:17px;margin:12px 0}
+.hsay{font-family:var(--sans);font-size:17px;margin:12px 0}
 .torder{margin-right:8px}
 .hleft{margin:0 0 16px;padding:12px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--accent)}
 .hleft p{margin:0 0 8px}.hleft p.hint{margin:0}
@@ -5430,15 +5451,19 @@ def act_button(req: str, label: str, say: str, cls: str = "act", extra: str = ""
 # --------------------------------------------------------------------------- the page
 
 CSS = r"""
-:root{color-scheme:light;--display:"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif;--page:#f4f3f0;--side:#ecebe6;--surface:#fcfcfb;--raise:#fff;--ink:#0b0b0b;--ink2:#52514e;--muted:#898781;
---line:rgba(11,11,11,.10);--grid:#e1e0d9;--base:#c3c2b7;--accent:#3d73e0;--track:#cfdcf7;--wash:rgba(61,115,224,.10);
---good:#0ca30c;--warning:#fab219;--critical:#d03b3b;--none:#e6e5df;--shadow:0 1px 2px rgba(11,11,11,.04),0 4px 16px rgba(11,11,11,.04);--mark-ink:#1e2833;--mark-blue:#3d73e0}
-@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--page:#0d0d0d;--side:#131312;--surface:#1a1a19;--raise:#211f1e;
---ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#6590e6;--track:#112e6a;--wash:rgba(101,144,230,.14);--none:#2a2a28;--shadow:none;--mark-ink:#f5f0e6;--mark-blue:#8eb1f5}}
-:root[data-theme="dark"]{color-scheme:dark;--page:#0d0d0d;--side:#131312;--surface:#1a1a19;--raise:#211f1e;
---ink:#fff;--ink2:#c3c2b7;--line:rgba(255,255,255,.10);--grid:#2c2c2a;--base:#383835;--accent:#6590e6;--track:#112e6a;--wash:rgba(101,144,230,.14);--none:#2a2a28;--shadow:none;--mark-ink:#f5f0e6;--mark-blue:#8eb1f5}
+:root{color-scheme:light;--display:"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif;--sans:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+--page:#f4f2ed;--side:#ecebe6;--surface:#fbfaf7;--raise:#fff;--sunk:#efede7;--ink:#16150f;--ink2:#45443f;--muted:#6b6963;
+--line:rgba(22,21,15,.10);--line2:rgba(22,21,15,.18);--grid:#e4e1d9;--base:#b9b5aa;--accent:#2f5fc4;--accent-ink:#fff;--track:#d3ddf3;--wash:rgba(47,95,196,.09);
+--good:#1d7a3a;--good-wash:rgba(29,122,58,.10);--warning:#9a5b00;--warning-wash:rgba(196,128,10,.13);--critical:#b42f2f;--critical-wash:rgba(180,47,47,.10);--none:#e6e3dc;
+--shadow:0 1px 2px rgba(22,21,15,.05),0 4px 16px rgba(22,21,15,.04);--mark-ink:#1e2833;--mark-blue:#3d73e0}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){color-scheme:dark;--page:#0f0f0e;--side:#141413;--surface:#1a1a19;--raise:#222120;--sunk:#141413;
+--ink:#f3f1ec;--ink2:#cfccc4;--muted:#a29f97;--line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.16);--grid:#2c2c2a;--base:#44443f;--accent:#7ea3ee;--accent-ink:#0f0f0e;--track:#1f3568;--wash:rgba(126,163,238,.13);
+--good:#6fcf8a;--good-wash:rgba(111,207,138,.12);--warning:#e8a93a;--warning-wash:rgba(232,169,58,.13);--critical:#f08a8a;--critical-wash:rgba(240,138,138,.12);--none:#2a2a28;--shadow:none;--mark-ink:#f5f0e6;--mark-blue:#8eb1f5}}
+:root[data-theme="dark"]{color-scheme:dark;--page:#0f0f0e;--side:#141413;--surface:#1a1a19;--raise:#222120;--sunk:#141413;
+--ink:#f3f1ec;--ink2:#cfccc4;--muted:#a29f97;--line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.16);--grid:#2c2c2a;--base:#44443f;--accent:#7ea3ee;--accent-ink:#0f0f0e;--track:#1f3568;--wash:rgba(126,163,238,.13);
+--good:#6fcf8a;--good-wash:rgba(111,207,138,.12);--warning:#e8a93a;--warning-wash:rgba(232,169,58,.13);--critical:#f08a8a;--critical-wash:rgba(240,138,138,.12);--none:#2a2a28;--shadow:none;--mark-ink:#f5f0e6;--mark-blue:#8eb1f5}
 *{box-sizing:border-box}html{scroll-behavior:smooth}
-body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+body{margin:0;background:var(--page);color:var(--ink);font:15px/1.55 var(--sans);-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:2px}
 .app{min-height:100vh}
 .mark .mi{fill:var(--mark-ink)}.mark .mb{fill:var(--mark-blue)}
@@ -5463,7 +5488,7 @@ a.go{color:inherit;text-decoration:none;cursor:pointer;display:block}a.go:hover{
 .full{grid-column:span 12}.stack{grid-column:span 5;display:flex;flex-direction:column;gap:16px;min-width:0}.stack.left{grid-column:span 7}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);min-width:0;scroll-margin-top:80px}
 summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:none}
-.head{display:flex;align-items:center;gap:10px;padding:14px 16px}.head h2{font:600 16px/1.2 var(--display);margin:0}
+.head{display:flex;align-items:center;gap:10px;padding:14px 16px}.head h2{font:700 16px/1.25 var(--sans);margin:0}
 .head .meta{color:var(--muted);font-size:12px;margin-left:auto;text-align:right}
 .chev{width:16px;height:16px;flex:none;color:var(--muted);transition:transform .15s}details[open]>summary .chev{transform:rotate(90deg)}
 .body{padding:0 16px 16px}.muted{color:var(--muted)}.ink2{color:var(--ink2)}.num{font-variant-numeric:tabular-nums}
@@ -5475,7 +5500,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .jpanel{margin:0 0 8px 30px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--raise);font-size:12.5px}
 .jpanel p{margin:0 0 6px}.jpanel dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0}.jpanel dt{color:var(--muted)}.jpanel dd{margin:0}
 .jpanel h4{margin:8px 0 2px;font-size:12px;font-weight:600;color:var(--muted)}.jpanel ul{margin:0;padding-left:18px}
-.jpanel pre{margin:0;max-height:240px;overflow:auto;font:11px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.jpanel pre{margin:0;max-height:240px;overflow:auto;font:12px/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .row>svg,.item>svg{width:16px;height:16px}
 .name{font-weight:560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.name small{display:block;font-weight:400;color:var(--muted);font-size:12px}
 .strip{display:flex;gap:2px}.strip i{width:11px;height:18px;border-radius:3px;background:var(--none);flex:none}
@@ -5491,25 +5516,25 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .zone>summary h3{margin:0;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2)}.zone>summary .meta{margin-left:auto;font-size:12px;color:var(--muted)}
 .thread{display:grid;grid-template-columns:minmax(0,1fr) 80px 34px;align-items:center;gap:10px;padding:6px 0;border-top:1px solid var(--grid);font-size:13px}
 .thread .t{min-width:0}.thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.thread .t small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.chip{display:inline-flex;align-items:center;font-size:11px;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--ink2);margin-left:4px}
+.thread .t small{display:block;color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;font-size:12px;padding:0 6px;border-radius:999px;border:1px solid var(--line);color:var(--ink2);margin-left:4px}
 .fresh{height:6px;border-radius:3px;background:var(--grid);position:relative}.fresh i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--good)}
 .fresh.warning i{background:var(--warning)}.fresh.critical i{background:var(--critical)}.fresh.age i{background:var(--base)}
 .group>summary{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:13px}.group>summary:hover{background:var(--wash)}
 .group>summary .counts{margin-left:auto;display:flex;gap:6px}
 .group ul{list-style:none;margin:2px 0 8px;padding:0 0 0 32px}.group li{display:flex;gap:8px;padding:5px 0;color:var(--ink2);font-size:12.5px;border-top:1px solid var(--grid)}
 .group li:first-child{border-top:0}.group li svg{width:14px;height:14px;flex:none;margin-top:2px}
-.group li .cline{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}.group li .act{flex:none;align-self:flex-start;font-size:11.5px;padding:2px 8px}
+.group li .cline{flex:1 1 auto;min-width:0;overflow-wrap:anywhere}.group li .act{flex:none;align-self:flex-start;font-size:12px;padding:2px 8px}
 .clean{display:flex;align-items:center;gap:8px;color:var(--ink2);padding:8px 2px}.clean svg{width:16px;height:16px}
 .bullet{display:grid;grid-template-columns:110px minmax(0,1fr) 40px;align-items:center;gap:10px;font-size:12.5px;padding:5px 0}
 .bar{position:relative;height:10px;background:var(--track);border-radius:3px}.bar i{position:absolute;left:0;top:0;bottom:0;background:var(--accent);border-radius:3px}
 .tiles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:10px;background:var(--raise);border:1px solid var(--line);min-width:0}
 .meters{display:flex;flex-direction:column;gap:12px}.meters .m{display:grid;grid-template-columns:1fr auto;gap:4px 10px;font-size:12px}.meters .m .meter{grid-column:1/-1}
-table{border-collapse:collapse;width:100%;font-size:12.5px}th{text-align:left;color:var(--muted);font-weight:500;font-size:11.5px;padding:6px;border-bottom:1px solid var(--grid)}
+table{border-collapse:collapse;width:100%;font-size:12.5px}th{text-align:left;color:var(--muted);font-weight:500;font-size:12px;padding:6px;border-bottom:1px solid var(--grid)}
 td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-bottom:0}th.r,td.r{text-align:right;font-variant-numeric:tabular-nums}.scroll{overflow-x:auto}
 .thread{border-radius:6px;transition:background .1s}.thread:hover,.thread.on{background:var(--wash)}
-.act{font:inherit;font-size:11px;font-weight:560;line-height:1;padding:5px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink2);white-space:nowrap;cursor:pointer}
+.act{font:inherit;font-size:12px;font-weight:560;line-height:1;padding:5px 8px;border-radius:7px;border:1px solid var(--line);background:var(--raise);color:var(--ink2);white-space:nowrap;cursor:pointer}
 .act:hover{color:var(--ink);border-color:var(--base)}.act.wide{display:block;width:100%;padding:8px;font-size:12px}
 .parked>summary{display:flex;align-items:center;gap:6px;padding:8px 0 4px;font-size:12px;color:var(--muted)}.parked>summary .n{margin-left:auto}
 .parked .chev{width:13px;height:13px}.parked .thread{opacity:.8}
@@ -5520,18 +5545,18 @@ td{padding:6px;border-bottom:1px solid var(--grid)}tr:last-child td{border-botto
 .thread:not(.proj)>.t{display:flex;flex-wrap:wrap;align-items:center;column-gap:6px}.thread:not(.proj)>.t>a{flex:0 1 auto;min-width:0;max-width:none}
 .thread:not(.proj)>.t>.live{flex:none}.thread:not(.proj)>.t>.tchips{flex:none;display:inline-flex;align-items:center;gap:4px}
 .thread:not(.proj)>.t>small{flex:0 0 100%;min-width:0}.tchips .chip{margin:0}
-.thread .t .subn{font-size:11.5px}.thread.proj .t>a{display:inline}.thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:12.5px}
+.thread .t .subn{font-size:12px}.thread.proj .t>a{display:inline}.thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:12.5px}
 .gsum{margin:6px 0 0}
 .onlybar{display:flex;justify-content:flex-end;margin:-4px 0 12px}
 .phead{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.phead h4{margin:0;min-width:0}
-.phead .pflip{flex:none;font-size:11px;padding:3px 8px}.gpop .phead{padding-right:30px}
+.phead .pflip{flex:none;font-size:12px;padding:3px 8px}.gpop .phead{padding-right:30px}
 .gzsel{font:inherit;font-size:12px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 26px 5px 10px;
 appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
 background-position:calc(100% - 13px) 50%,calc(100% - 9px) 50%;background-size:4px 4px;background-repeat:no-repeat;cursor:pointer}
 .tabs{display:flex;gap:2px;margin:0 0 18px;border-bottom:1px solid var(--line)}
 .tabs button{border:0;background:none;font:inherit;font-size:13.5px;font-weight:560;color:var(--ink2);padding:8px 12px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
 .tabs button:hover{color:var(--ink)}.tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
-.tabs .n{font-size:11.5px;color:var(--muted);font-weight:500;font-variant-numeric:tabular-nums}
+.tabs .n{font-size:12px;color:var(--muted);font-weight:500;font-variant-numeric:tabular-nums}
 .nohost .tacts{display:none}.nohost .tadd-open{display:none}
 .tick{width:18px;height:18px;margin-top:1px;border-radius:5px;border:1.5px solid var(--base);background:var(--raise);cursor:pointer;padding:0;display:grid;place-items:center}
 .tick:hover{border-color:var(--accent)}
@@ -5556,7 +5581,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .grip{cursor:grab}.grip:hover,.hide:hover,.totab:hover{background:var(--wash);color:var(--ink)}.grip svg,.hide svg,.totab svg{width:14px;height:14px}
 .dragging .slot{display:flex!important;min-height:64px;border-radius:14px;outline:2px dashed var(--grid);outline-offset:4px}
 .ph{border:2px dashed var(--accent);border-radius:14px;background:var(--wash);flex:none}.card.lifted{display:none}
-.hint{font-size:11.5px;color:var(--muted);margin:0}
+.hint{font-size:12px;color:var(--muted);margin:0}
 .changes .hint{margin:6px 0 2px}.paths{margin:0;padding-left:18px;font-size:12px}.paths code{word-break:break-all}
 .zt{display:flex;align-items:baseline;gap:8px;margin:8px 0 2px}.zt .act{margin-left:auto;align-self:center}a.act:hover{text-decoration:none}
 .gwrap{position:relative;height:560px;border-radius:10px;background:var(--raise);border:1px solid var(--line);overflow:hidden}
@@ -5583,7 +5608,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .gpop .glinks{display:flex;flex-direction:column;margin-top:8px;border-top:1px solid var(--grid);padding-top:6px}
 .gpop .glinks button{display:flex;align-items:center;gap:7px;text-align:left;border:0;background:none;color:var(--ink2);font:inherit;font-size:12.5px;padding:4px;border-radius:6px;cursor:pointer}
 .gpop .glinks button:hover{background:var(--wash);color:var(--ink)}.gpop .glinks i{width:8px;height:8px;border-radius:50%;flex:none}
-.gpop .glinks span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpop .glinks small{white-space:nowrap;font-size:11px}
+.gpop .glinks span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.gpop .glinks small{white-space:nowrap;font-size:12px}
 .legend i.ring{background:none;border-radius:50%;border:2px solid}
 .glegend>button{display:inline-flex;align-items:center;gap:6px;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer}.glegend>button>i{flex:none}
 .glegend>button:hover{color:var(--ink)}.glegend>button[aria-pressed="false"]{opacity:.5}
@@ -5599,9 +5624,9 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .cols{display:flex;align-items:flex-end;gap:2px;height:96px;border-bottom:1px solid var(--base);padding-top:16px}
 .cols div{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%;position:relative}
 .cols b{display:block;width:100%;max-width:22px;background:var(--accent);border-radius:4px 4px 0 0;min-height:0}
-.cols em{position:absolute;top:-16px;font-style:normal;font-size:11px;color:var(--ink2)}
-.ticks{display:flex;gap:2px;font-size:10px;color:var(--muted);margin-top:4px}.ticks span{flex:1;text-align:center}
-.act.armed{background:var(--critical);border-color:var(--critical);color:#fff}
+.cols em{position:absolute;top:-16px;font-style:normal;font-size:12px;color:var(--ink2)}
+.ticks{display:flex;gap:2px;font-size:12px;color:var(--muted);margin-top:4px}.ticks span{flex:1;text-align:center}
+.act.armed{background:var(--critical);border-color:var(--critical);color:var(--accent-ink)}
 @media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.left{grid-column:span 12}}
 @media (max-width:820px){main{padding:16px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
@@ -5632,8 +5657,8 @@ THEME_SEG = ('<div class="seg theme" role="group" aria-label="Theme">'
 BAR_CSS = r"""
 header.bar{position:sticky;top:0;z-index:8;display:flex;align-items:stretch;gap:24px;padding:0 30px;min-height:58px;background:var(--page);border-bottom:1px solid var(--line)}
 .bar .brand{display:flex;align-items:center;gap:10px;flex:none}.bar .brand .mark{width:30px;height:30px;flex:none;display:block}
-.bar h1{font:600 17px/1.1 var(--display,Baskerville,"Baskerville Old Face",Georgia,serif);margin:0;letter-spacing:.005em;white-space:nowrap}
-.bar .bname p{margin:2px 0 0;color:var(--muted);font-size:11.5px;white-space:nowrap}
+.bar h1{font:700 18px/1.1 var(--sans);margin:0;letter-spacing:-.01em;white-space:nowrap}
+.bar .bname p{margin:2px 0 0;color:var(--muted);font-size:12px;white-space:nowrap}
 .bar .tabs{flex:1;min-width:0;margin:0;border:0;align-self:stretch}
 .bar .tabs button{padding:0 12px;margin-bottom:-1px;border-bottom:2px solid transparent}.bar .tabs button.on{border-bottom-color:var(--accent)}
 .bar .bacts{display:flex;align-items:center;gap:6px;flex:none}
@@ -5680,10 +5705,10 @@ dialog.settings .setsec{margin-top:26px}dialog.settings .setsec:first-of-type{ma
 .launcher-choice input:disabled~span{color:var(--muted)}
 .notes{margin-top:8px;border:1px solid var(--line);border-radius:10px;padding:6px 10px}.notes summary{cursor:pointer;font-size:13px;font-weight:600}
 .notes div{max-height:240px;overflow:auto;font-size:12.5px;color:var(--ink2)}.notes h5{margin:10px 0 2px;font-size:12px}.notes ul{margin:4px 0;padding-left:18px}
-.notes li{margin:3px 0}.notes p{margin:6px 0}.notes code{font-size:11.5px}
+.notes li{margin:3px 0}.notes p{margin:6px 0}.notes code{font-size:12px}
 dialog.settings{max-height:calc(100vh - 48px);overflow:hidden}dialog.settings h2:focus{outline:none}
 dialog.settings{background:var(--surface);color:var(--ink);border:1px solid var(--line);border-radius:16px;max-width:1040px;width:calc(100% - 32px);padding:0;box-shadow:var(--shadow)}
-dialog.settings::backdrop{background:rgba(0,0,0,.35)}dialog.settings h2{margin:0;font:600 20px/1.2 var(--display)}
+dialog.settings::backdrop{background:rgba(0,0,0,.35)}dialog.settings h2{margin:0;font:700 20px/1.2 var(--sans)}
 dialog.settings h3{display:flex;align-items:center;gap:6px;margin:0 0 4px;font-size:15px}
 dialog.settings .setver{margin:0;font-size:13px;color:var(--ink2)}dialog.settings .hint{margin-top:12px}dialog.settings .hint a{color:var(--accent)}
 dialog.settings .gacts{margin:8px 0 2px}
@@ -5693,20 +5718,20 @@ dialog.settings[open]{display:flex;flex-direction:column}
 .sethead{flex:none;padding:16px 56px 12px 24px;border-bottom:1px solid var(--line)}
 .setbody{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:212px minmax(0,1fr)}
 .setnav{position:relative;overflow:auto;padding:14px 12px 18px 16px;border-right:1px solid var(--line)}
-.setnavgrp+.setnavgrp{margin-top:14px}.setnavh{margin:0 0 4px 8px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.setnavgrp+.setnavgrp{margin-top:14px}.setnavh{margin:0 0 4px 8px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 .setnav ul{list-style:none;margin:0;padding:0}.setnav a{display:block;padding:5px 8px;border-radius:7px;font-size:13px;color:var(--ink2);text-decoration:none}
 .setnav a:hover{background:var(--wash);color:var(--ink)}.setnav a:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .setnav a[aria-current]{background:var(--wash);color:var(--ink);font-weight:600;box-shadow:inset 2px 0 0 var(--accent)}
 .setmain{position:relative;overflow:auto;overscroll-behavior:contain;padding:18px 32px 28px}.setmain>*{max-width:46rem}
 .setgroup+.setgroup{margin-top:30px;padding-top:16px;border-top:1px solid var(--line)}
-.setgrp{margin:0 0 12px;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.setgrp{margin:0 0 12px;font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
 dialog.settings .setlede{margin:0 0 8px;font-size:13px;line-height:1.45;color:var(--ink2)}
 @media (max-width:759px){.setbody{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
 .setnav{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;padding:6px 12px;border-right:0;border-bottom:1px solid var(--line)}
 .setnavgrp+.setnavgrp{margin-top:0}.setnavh{display:none}.setnav ul{display:flex;gap:2px}.setnav a{white-space:nowrap}
 .setnav a[aria-current]{box-shadow:inset 0 -2px 0 var(--accent)}.setmain{padding:14px 16px 22px}.sethead{padding:14px 52px 10px 16px}}
 /* a section's explanation, word for word, behind the "?" beside its heading; each row's own line always shows */
-.qhelp{flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:10.5px;font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
+.qhelp{flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:12px;font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
 .qhelp:hover,.qhelp[aria-expanded="true"]{color:var(--ink);border-color:var(--muted)}.qhelp:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 dialog.settings .sethelp{margin:2px 0 6px}
 .setfoot{margin-top:30px}dialog.settings .setsec:focus{outline:none}.setrule{padding-top:10px;border-top:1px solid var(--line)}
@@ -6571,14 +6596,14 @@ dialog.nview{padding:0;border:0;background:transparent;color:var(--ink);width:mi
 dialog.nview::backdrop{background:rgba(0,0,0,.32)}
 .nv-panel{display:flex;flex-direction:column;min-height:160px;max-height:calc(100vh - 64px);background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 18px 60px rgba(0,0,0,.3);overflow:hidden}
 .nv-head{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px 12px;padding:14px 16px 12px 24px;border-bottom:1px solid var(--grid)}
-.nv-t{flex:1 1 260px;min-width:0}.nv-t h3{margin:0;font:600 19px/1.25 var(--display);overflow-wrap:anywhere}
-.nv-path{display:block;margin-top:3px;font-size:11.5px;color:var(--muted);overflow-wrap:anywhere}
+.nv-t{flex:1 1 260px;min-width:0}.nv-t h3{margin:0;font:700 19px/1.25 var(--sans);overflow-wrap:anywhere}
+.nv-path{display:block;margin-top:3px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
 .nv-acts{display:flex;gap:6px;flex:none}.nv-acts .act{font-size:12px;padding:5px 10px}
 .nv-said{margin:0;padding:14px 24px 0;font-size:13px;color:var(--ink2)}.nv-said:empty{display:none}.nv-said.bad{color:var(--critical)}
 .nv-body{flex:1 1 auto;min-height:0;overflow:auto;padding:6px 24px 26px;line-height:1.6;font-size:14.5px;overflow-wrap:break-word}
 .nv-body:focus{outline:none}.nv-body:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .nv-body>:not(.gd-table){max-width:70ch}
-.nv-body h1{font:600 26px/1.2 var(--display);margin:18px 0 12px}.nv-body h2{font:600 20px/1.25 var(--display);margin:24px 0 8px}
+.nv-body h1{font:700 26px/1.2 var(--sans);margin:18px 0 12px}.nv-body h2{font:700 20px/1.25 var(--sans);margin:24px 0 8px}
 .nv-body h3{font-size:16px;margin:20px 0 6px}.nv-body :is(h4,h5,h6){font-size:14.5px;margin:16px 0 4px}
 .nv-body code{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--raise);border:1px solid var(--line);border-radius:4px;padding:0 4px}
 .nv-body pre{background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto}
@@ -6864,7 +6889,7 @@ var nb=n.adj.map(function(i){return N[i]}).sort(function(a,b){return(b.h-a.h)||(
 /* each linked note's dot in its kind's colour as the page holds it, so a chosen colour follows the theme (#291) */
 var links=nb.map(function(m){return'<button data-i="'+m.i+'"><i style="background:'+esc(G.colors[m.k]||'var(--muted)')+'"></i><span>'+esc(m.n)+'</span>'+(visible(m)?'':'<small class="muted">'+esc(m.z!==zsel?m.z:m.s&&!parked?'parked':'hidden')+'</small>')+'</button>'}).join('');
 pop.innerHTML='<button class="x" aria-label="Close">×</button>'+Panel.head(o)+Panel.acts(o,window.GarrickNote?GarrickNote.button(notePath(n),n.N||n.n):'')
-+(nb.length?'<div class="glinks"><div class="muted" style="font-size:11.5px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
++(nb.length?'<div class="glinks"><div class="muted" style="font-size:12px;padding:2px 4px">Linked notes · '+nb.length+'</div>'+links+'</div>':'<p class="muted">No links to or from this note.</p>');
 pop.hidden=false;wake();if(centre){var p=toScreen(n);auto=false;glide(px-(p[0]-W/2)+(W>700?-150:0),py-(p[1]-H/2))}}
 function close(){sel=null;pop.hidden=true;wake()}
 function glide(tx,ty){var sx=px,sy=py,t0=performance.now();glides++;wake();(function g(t){var k=Math.min(1,(t-t0)/350),e=1-Math.pow(1-k,3);px=sx+(tx-sx)*e;py=sy+(ty-sy)*e;if(k<1)requestAnimationFrame(g);else glides--})(t0)}
@@ -6997,19 +7022,167 @@ def waiting_row(r: dict, now: dt.datetime) -> str:
     go = ('<button class="act apponly" type="button" data-wgo="%s">Go to it</button>' % E(r["id"])) if where == "cmux" else \
         '<span class="wwhere">%s</span>' % E("%s, in %s" % ("Claude's desktop app" if where == "desktop" else app,
                                                          Path(r.get("folder") or "").name or "a folder"))
-    return ('<div class="wrow" data-id="%s"><span class="wname">%s</span><span class="wwhat">%s</span>'
+    return ('<div class="wrow" data-id="%s"><span class="wico acc">%s</span><span class="wname">%s</span><span class="wwhat">%s</span>'
             '<span class="wfor" data-since="%s">%s</span>%s</div>'
-            % (E(r["id"]), E(r.get("thread") or Path(r.get("folder") or "").name or "A session"), E(r.get("waiting_for") or "an answer"),
+            % (E(r["id"]), WAIT_ICON, E(r.get("thread") or Path(r.get("folder") or "").name or "A session"), E(r.get("waiting_for") or "an answer"),
                E(r.get("since") or ""), E(waited(r.get("since") or "", now)), go))
 
 
+# ---- Overview › the lead sentence and what is waiting (#551) ------------------------------------
+WAIT_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
+             'stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.2 1.4"/></svg>')
+NEED_ICON = {"critical": ("crit", _PILL_PATHS["alert"]), "warning": ("warn", _PILL_PATHS["clock"]), "late": ("crit", _PILL_PATHS["late"])}
+NUMBER_WORDS = ("Nothing", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten")
+
+
+def lead_said(n: int) -> str:
+    """The Overview's lead sentence for `n` things that wait on the user: "Three things need you.",
+    "Nothing needs you right now." Past ten the figure is a numeral."""
+    if n <= 0:
+        return "Nothing needs you right now."
+    if n == 1:
+        return "One thing needs you."
+    return "%s things need you." % (NUMBER_WORDS[n] if n < len(NUMBER_WORDS) else n)
+
+
+def late_need(z: dict, today: dt.date) -> dict:
+    """One zone's late actions, as one thing that waits: its count, and since when the oldest has been late. It
+    belongs to that zone only; nothing here adds one zone to another."""
+    oldest = None
+    for _, rows in z["groups"]:
+        for r in rows:
+            if r["late"] and r["when"] is not None and (oldest is None or r["when"] < oldest["when"]):
+                oldest = r
+    n = z["late"]
+    return {"kind": "late", "level": "late", "zone": z["zone"], "text": "%d late action%s" % (n, "" if n == 1 else "s"),
+            "late": late_said(oldest, today).replace("was due", "oldest was due").replace("to chase", "oldest to chase") if oldest else "",
+            "href": "#todolist", "tz": z["zone"], "label": "Open the list", "go": "Open the late actions"}
+
+
+def attn_need(level: str, text: str, href) -> dict:
+    """One line of the attention list, as one thing that waits. A published file that drifted names its own row."""
+    link = href["href"] if isinstance(href, dict) else href
+    return {"kind": "attn", "level": level, "zone": "", "text": text, "late": "", "href": link, "tz": "",
+            "blank": link.startswith("https://"), "label": "Open it", "go": "Open it"}
+
+
+def needs_you(attn: List[tuple], lists: List[dict], today: dt.date) -> List[dict]:
+    """What waits on the user, apart from the sessions that wait for an answer (the card draws those live):
+    what failed first, then each zone's late actions, then the warnings. The lead sentence counts these and the
+    sessions; the card lists them, in the same order, so the two always agree."""
+    out = [attn_need(k, t, h) for k, t, h in attn if k == "critical"]
+    out += [late_need(z, today) for z in lists if z["late"]]
+    out += [attn_need(k, t, h) for k, t, h in attn if k != "critical"]
+    return out
+
+
+def need_row(n: dict) -> str:
+    """One thing that waits, as a row of the card: an icon, one sentence, its zone, how late, one button."""
+    cls, path = NEED_ICON[n["level"]]
+    icon = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
+            'stroke-linejoin="round">%s</svg>' % path)
+    where = '<span class="wwhat">%s</span>' % E(n["zone"]) if n["zone"] else ""
+    late = '<span class="wfor">%s</span>' % E(n["late"]) if n["late"] else ""
+    go = '<a class="act" href="%s"%s%s>%s</a>' % (E(n["href"]), ' data-tz-go="%s"' % E(n["tz"]) if n["tz"] else "",
+                                                  ' target="_blank" rel="noopener"' if n.get("blank") else "", E(n["label"]))
+    return '<div class="wrow wneed"><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s</div>' % (cls, icon, E(n["text"]), where, late, go)
+
+
+def lead_block(items: List[dict], sessions: int) -> str:
+    """The Overview's lead: one sentence, a line of reasons, and one primary button to the first thing. WAITING_JS
+    redraws it when the sessions that wait change, from the same figures (data-n is what the build counted)."""
+    n = len(items) + sessions
+    reasons = [i["text"] + (" in %s" % i["zone"] if i["zone"] else "") for i in items]
+    static = list(reasons)
+    if sessions:
+        reasons.append("%d session%s waiting for you" % (sessions, " is" if sessions == 1 else "s are"))
+    why = " · ".join(reasons[:3]) + (" · and %d more" % (len(reasons) - 3) if len(reasons) > 3 else "")
+    first = items[0] if items else None
+    href, label, tz = (first["href"], first["go"], first["tz"]) if first else ("#waiting-now", "See who is waiting", "")
+    go = ('<a class="btn primary" id="lead-go" href="%s"%s%s>%s%s</a>'
+          % (E(href), ' data-tz-go="%s"' % E(tz) if tz else "", ' target="_blank" rel="noopener"' if first and first.get("blank") else "",
+             E(label), ARROW)) if n else '<a class="btn primary" id="lead-go" href="#" hidden></a>'
+    return ('<div class="lead" id="lead" role="region" aria-labelledby="lead-h" data-n="%d" data-why="%s" data-first="%d"><div><h2 id="lead-h">%s</h2>'
+            '<p id="lead-why">%s</p></div>%s</div>'
+            % (len(items), E(" · ".join(static)), 1 if first else 0, E(lead_said(n)), E(why), go))
+
+
+ARROW = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" '
+         'stroke-linejoin="round" width="16" height="16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>')
+
+
+def tab_badge(id_: str, n: int, one: str, many: str, warn: bool, shown: str = "%d") -> str:
+    """A count on a tab. A count that means something is late or waits on the user is drawn in the warning colour,
+    and every count says what it is to a screen reader. An empty one is built hidden, so a script can fill it."""
+    return ('<span class="n%s" id="%s" aria-label="%d%s"%s>%s</span>'
+            % (" warn" if warn and n else "", id_, n, one if n == 1 else many, "" if n else " hidden", (shown % n) if n else ""))
+
+
+def todo_counts(z: dict, today: dt.date) -> Tuple[int, int, int]:
+    """One zone's open actions as three counts: late, due in the next seven days, and without a date. Late and due
+    soon never overlap, and a ticked line is not open."""
+    rows = [r for name, group in z["groups"] for r in group]
+    late = sum(1 for r in rows if r["late"])
+    soon = sum(1 for r in rows if r["when"] is not None and not r["late"] and 0 <= (r["when"] - today).days <= 7)
+    return late, soon, sum(1 for r in rows if r["when"] is None)
+
+
+def summary_card(lists: List[dict], today: dt.date, IB, worst: str, attn_n: int, go: str, ZS: Dict[str, dict], link,
+                 graph: bool) -> str:
+    """The Overview's summary column: Todo as three counts, workspace health in words, the inboxes' counts and
+    Explore as a button. Each figure is one zone's own: the zones are listed, never added."""
+    todo_rows = "".join(
+        '<a class="sumz" href="#todolist" data-tz-go="%s"><b%s>%s</b><span class="sumn%s"><b>%d</b> late</span>'
+        '<span class="sumn"><b>%d</b> this week</span><span class="sumn"><b>%d</b> no date</span></a>'
+        % ((E(z["zone"]), zone_attr(z["zone"], ZS), zone_name(z["zone"], ZS)) + ((" bad" if c[0] else ""),) + c)
+        for z, c in ((z, todo_counts(z, today)) for z in lists))
+    health = ('<div class="sumh">%s<span>%s</span></div>'
+              % (pill(worst), '<a href="%s">%d thing%s need%s attention</a>' % (E(go), attn_n, "" if attn_n == 1 else "s", "s" if attn_n == 1 else "")
+                 if attn_n else "Nothing failing, waiting or broken."))
+    inboxes = "".join('<a class="sumi%s" href="%s"><span%s>%s</span><b>%d</b></a>' % (" has" if n else "", E(link(f)), zone_class(name, ZS),
+                                                                                       zone_name(name, ZS), n) for name, f, n in IB)
+    explore = '<button class="btn" type="button" id="explore-go">%sExplore the graph</button>' % GRAPH_ICON if graph else ""
+    body = ('%s<h3 class="sumt">Health</h3>%s<h3 class="sumt">Inboxes</h3><div class="sumis">%s</div>%s'
+            % ('<h3 class="sumt">Todo</h3><div class="sumzs">%s</div>' % todo_rows if todo_rows else "", health,
+               inboxes or '<p class="muted">No inboxes.</p>', '<div class="sumx">%s</div>' % explore if explore else ""))
+    return card("summary-col", "At a glance", "", body)
+
+
+GRAPH_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
+              'stroke-linejoin="round" width="16" height="16"><circle cx="4" cy="4" r="1.8"/><circle cx="12" cy="5" r="1.8"/><circle cx="7" cy="12" r="1.8"/>'
+              '<path d="M5.5 4.3l5 .6M4.6 5.7l1.7 4.6M10.8 6.5L8.3 10.4"/></svg>')
+
+
 def work_name_lines(w: dict) -> str:
-    """The name column, in two lines: the zone and the project in grey, then the thread in bold. A project of one
-    thread has the zone alone above and the project in bold below; the example zone's tag stays on the bold line."""
+    """The name column, in two lines: the thread in bold, then its zone and project in grey under it. A project of
+    one thread has the project in bold and the zone alone below; the example zone's tag stays on the bold line."""
     one = w["name"] == w["project"]
-    above = E(w["zone"]) if one else "%s / %s" % (E(w["zone"]), E(w["project"]))
-    return ('<span class="yname"><small class="yzone">%s</small><span class="yline"><b>%s</b>%s</span></span>'
-            % (above, E(w["project"] if one else w["thread"]), '<span class="ytag">Example</span>' if w["example"] else ""))
+    below = E(w["zone"]) if one else "%s / %s" % (E(w["zone"]), E(w["project"]))
+    return ('<span class="yname"><span class="yline"><b>%s</b>%s</span><small class="yzone">%s</small></span>'
+            % (E(w["project"] if one else w["thread"]), '<span class="ytag">Example</span>' if w["example"] else "", below))
+
+
+def work_state(w: dict, today: dt.date) -> str:
+    """A piece of work's state as one word (PILLS): Late when its next action or one of its lines is late, Act now
+    when it waits on the user, Waiting when it waits on somebody else, Look soon when it has no next step or has not
+    moved for two weeks, and Fine otherwise."""
+    if w["row"].get("late") or any(a["late"] for a in w["actions"]):
+        return "late"
+    if w["waiting"] and w.get("mine"):
+        return "act"
+    if w["waiting"]:
+        return "wait"
+    if not w["next"] or (w["moved"] and (today - w["moved"]).days > 14):
+        return "look"
+    return "good"
+
+
+def touched_said(moved: Optional[dt.date], today: dt.date) -> str:
+    """When a piece of work was last touched, in words: today, yesterday, 6 days ago."""
+    if moved is None:
+        return "Not touched yet"
+    days = (today - moved).days
+    return "Touched today" if days <= 0 else "Touched yesterday" if days == 1 else "Touched %d days ago" % days
 
 
 def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=None) -> str:
@@ -7033,23 +7206,33 @@ def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=
         data = card_of(w["row"]) if card_of else ""
         go = ('<span class="yopen apponly" data-card="%s"></span>' % E(data) if data else "") + \
             '<span class="webonly">%s</span>' % copy("Copy “Where am I?”", phrase, "Copied “%s”. Paste it to your assistant." % phrase)
-        rows += ('<div class="yrow" data-w="%s">%s<span class="ynext">%s</span>%s<span class="yact">%s</span>%s</div>'
-                 % (E(w["id"]), work_name_lines(w), nxt, why, go, pop))
+        n_actions = len(w["actions"])
+        meta = "%s · %d action%s" % (touched_said(w["moved"], today), n_actions, "" if n_actions == 1 else "s")
+        rows += ('<div class="yrow" data-w="%s" role="row"><span class="ycell" role="cell">%s</span>'
+                 '<span class="ycell ynext" role="cell">%s<small class="ymeta">%s</small></span>'
+                 '<span class="ycell ystate" role="cell">%s%s</span><span class="ycell yact" role="cell">%s</span>%s</div>'
+                 % (E(w["id"]), work_name_lines(w), nxt, E(meta), pill(work_state(w, today)), why, go, pop))
+    head = ('<div class="yhead" role="row"><span role="columnheader">Thread</span><span role="columnheader">Next step</span>'
+            '<span role="columnheader">State</span><span role="columnheader"><span class="sr">Action</span></span></div>')
     return card("your-work", "Your work", "%d piece%s, most recent first" % (len(W), "" if len(W) == 1 else "s"),
-                '<div class="yrows">%s</div>' % rows)
+                '<div class="yrows" role="table" aria-label="Your work">%s%s</div>' % (head, rows))
 
 
 YOURWORK_CSS = r"""
-.yrow{display:grid;grid-template-columns:minmax(140px,.8fr) minmax(200px,2.6fr) minmax(110px,1fr) auto;gap:6px 14px;align-items:baseline;padding:8px 0;border-bottom:1px solid var(--line)}
-.yrow:last-child{border-bottom:0}.yname{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere}
-.yzone{font-size:12px;font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
-.ywhy{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}.ywhy .tchips{display:inline-flex;gap:4px}.ywhy .chip{margin:0}
-.ywait{color:var(--ink2);font-size:12.5px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:11px;font-weight:400;background:var(--wash);color:var(--accent)}
+.yhead,.yrow{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) 170px;gap:6px 18px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line)}
+.yhead{padding:0 0 8px;font-size:13px;font-weight:600;color:var(--muted)}.yrow:last-child{border-bottom:0}.ycell{min-width:0}
+.yrow:hover{background:color-mix(in srgb,var(--sunk) 55%,transparent)}
+.yname{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere;color:var(--ink2)}
+.ymeta{display:block;margin-top:2px;font-size:13px;color:var(--muted)}
+.yzone{font-size:13px;font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
+.ystate{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.ywhy{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}.ywhy:empty{display:none}.ywhy .tchips{display:inline-flex;gap:4px}.ywhy .chip{margin:0}
+.ywait{color:var(--ink2);font-size:13px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:12px;font-weight:400;background:var(--wash);color:var(--accent)}
 .yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
 .ymore{position:relative}.ymore>summary.act{display:inline-block;padding:0 7px}
 .ymenu{position:absolute;right:0;top:100%;z-index:6;margin-top:4px;display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--raise);box-shadow:var(--shadow);white-space:nowrap}
 .yrow .tpop{grid-column:1/-1}
-@media(max-width:720px){.yrow{grid-template-columns:1fr auto}.ynext,.ywhy{grid-column:1/-1}}
+@media(max-width:720px){.yhead{display:none}.yrow{grid-template-columns:1fr auto;padding:14px 0}.ynext,.ystate{grid-column:1/-1}}
 """
 
 # Draws each row's way to open from the card's data, as the Threads card's hover card does, and again when the
@@ -7062,17 +7245,23 @@ document.addEventListener('click',function(e){[].forEach.call(document.querySele
 """
 
 
-def waiting_card(rows: List[dict], now: dt.datetime) -> str:
-    """The Waiting on you now card: one row per waiting session, oldest first."""
+def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]] = None) -> str:
+    """The Waiting on you now card: what waits on the user, each with an icon, one sentence, its zone, how late and
+    one button. First the things the page knows from its records (`needs`: what failed, each zone's late actions,
+    the warnings), then one row per waiting session, oldest first, which the app keeps current."""
     rows = sorted(rows, key=lambda r: (r.get("since") or "", r["id"]))
-    html = card("waiting-now", "Waiting on you now", "%d session%s" % (len(rows), "" if len(rows) == 1 else "s") if rows else "",
-                '<div class="wrows" id="wrows" aria-live="polite">%s</div>' % "".join(waiting_row(r, now) for r in rows))
-    # Built out of sight (the class, since a card's own Hide uses `hidden`) when no session waits (#510); GarrickWaiting shows it with the first row and hides it with the last.
-    return html if rows else html.replace('<details class="card" id="waiting-now"', '<details class="card nowait" id="waiting-now"', 1)
+    needs = needs or []
+    total = len(rows) + len(needs)
+    meta = ("%d item%s" if needs else "%d session%s") % (total, "" if total == 1 else "s") if total else ""
+    html = card("waiting-now", "Waiting on you now", meta,
+                '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows" aria-live="polite">%s</div>'
+                % ("".join(need_row(n) for n in needs), "".join(waiting_row(r, now) for r in rows)))
+    # Built out of sight (the class, since a card's own Hide uses `hidden`) when nothing waits (#510); GarrickWaiting shows it with the first row and hides it with the last.
+    return html if total else html.replace('<details class="card" id="waiting-now"', '<details class="card nowait" id="waiting-now"', 1)
 
 
 WAITING_CSS = r"""
-.sh-livetag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:8px;font-size:11px;font-weight:600;background:var(--wash);color:var(--accent)}
+.sh-livetag{display:inline-block;margin-right:6px;padding:0 6px;border-radius:8px;font-size:12px;font-weight:600;background:var(--wash);color:var(--accent)}
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:12.5px}
 .wrow .act{margin-left:auto}
@@ -7081,25 +7270,121 @@ WAITING_CSS = r"""
 """
 
 WAITING_JS = r"""
-(function(){var box=document.getElementById('wrows');if(!box)return;var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+(function(){var ex=document.getElementById('explore-go');if(ex)ex.addEventListener('click',function(){var g=document.getElementById('graph');if(!g)return;g.hidden=false;g.open=true;g.scrollIntoView({block:'start'})});
+var box=document.getElementById('wrows');if(!box)return;var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+var ICON='<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.2 1.4"/></svg>',
+ARROW='<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>',
+NUM=['Nothing','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten'];
 function since(s){var t=Date.parse(s);if(!t)return'';var m=Math.max(0,Math.floor((Date.now()-t)/60000));return m<1?'less than a minute':m<60?m+' min':m<2880?Math.round(m/60)+' h':Math.round(m/1440)+' days'}
 function span(c,t){var e=document.createElement('span');e.className=c;e.textContent=t;return e}
 function row(r){var d=document.createElement('div');d.className='wrow';d.dataset.id=r.id;
-var name=r.thread||(r.folder||'').split('/').pop()||'A session',app=r.agent==='codex'?'Codex':'Claude Code';
+var name=r.thread||(r.folder||'').split('/').pop()||'A session',app=r.agent==='codex'?'Codex':'Claude Code',i=span('wico acc','');i.innerHTML=ICON;d.appendChild(i);
 d.appendChild(span('wname',name));d.appendChild(span('wwhat',r.waiting_for||'an answer'));
 var f=span('wfor',since(r.since));f.dataset.since=r.since||'';d.appendChild(f);
 if(r.where==='cmux'){var b=document.createElement('button');b.type='button';b.className='act apponly';b.dataset.wgo=r.id;b.textContent='Go to it';d.appendChild(b)}
 else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app)+', in '+((r.folder||'').split('/').pop()||'a folder')));
 return d}
+/* the lead sentence says what the card lists: what the build counted, and the sessions now */
+function lead(sess){var L=document.getElementById('lead');if(!L)return;var st=+L.dataset.n||0,t=st+sess,h=document.getElementById('lead-h'),w=document.getElementById('lead-why'),g=document.getElementById('lead-go');
+h.textContent=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
+var why=L.dataset.why?L.dataset.why.split(' · '):[];if(sess)why.push(sess+(sess===1?' session is':' sessions are')+' waiting for you');
+w.textContent=why.slice(0,3).join(' · ')+(why.length>3?' · and '+(why.length-3)+' more':'');
+if(g){g.hidden=t<1;if(L.dataset.first!=='1'&&sess){g.setAttribute('href','#waiting-now');g.removeAttribute('data-tz-go');g.innerHTML='See who is waiting'+ARROW}}
+var n=document.getElementById('tabn-overview');if(n){n.textContent=t||'';n.hidden=!t;n.setAttribute('aria-label',t+(t===1?' thing needs you':' things need you'))}}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
 box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});
-var card=document.getElementById('waiting-now');if(card)card.classList.toggle('nowait',!rows.length);
-var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=rows.length?rows.length+(rows.length===1?' session':' sessions'):''}
+var nd=document.getElementById('wneeds'),fixed=nd?nd.children.length:0,total=rows.length+fixed;
+var card=document.getElementById('waiting-now');if(card)card.classList.toggle('nowait',!total);
+var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=total?total+(fixed?(total===1?' item':' items'):(total===1?' session':' sessions')):'';
+lead(rows.length)}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
 })();
+"""
+
+
+# ---- The look (#551): the font, and the rules that come last ---------------------------
+# Plus Jakarta Sans (SIL OFL 1.1), Latin subset, three weights, kept in fonts/ beside this file and
+# embedded in the page as data: URLs, so the page never asks the network for a font. A copy of this
+# folder without fonts/ draws in the system's own sans-serif.
+FONT_FILES = (("PlusJakartaSans-Regular.woff2", 400), ("PlusJakartaSans-SemiBold.woff2", 600), ("PlusJakartaSans-Bold.woff2", 700))
+_FONT_CSS: Optional[str] = None
+
+
+def font_css(folder: Optional[Path] = None) -> str:
+    """The @font-face rules, each file embedded; "" where a file is missing or does not read, so the page
+    keeps the system-ui stack of --sans instead of a half-embedded face."""
+    global _FONT_CSS
+    if folder is None and _FONT_CSS is not None:
+        return _FONT_CSS
+    import base64
+    where = folder or Path(__file__).resolve().parent / "fonts"
+    rules = []
+    try:
+        for name, weight in FONT_FILES:
+            data = base64.b64encode((where / name).read_bytes()).decode("ascii")
+            rules.append('@font-face{font-family:"Plus Jakarta Sans";font-style:normal;font-weight:%d;font-display:swap;'
+                         'src:url(data:font/woff2;base64,%s) format("woff2")}' % (weight, data))
+    except OSError:
+        rules = []
+    out = "\n".join(rules) + "\n" if rules else ""
+    if folder is None:
+        _FONT_CSS = out
+    return out
+
+
+# Last in the page's CSS, so each rule here settles what the blocks before it say at the same weight.
+LOOK_CSS = r"""
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.hero .fig,.tile .val{font-family:var(--display)}
+.hero .lbl,.tile .lbl,.tile .sub,.hint,.head .meta,.name small,.thread .t small,.tmeta,th,.legend{font-size:13px}
+button.act,a.act,.tabs button,.seg button,.cog,.gbar button,.gbar .gfind,.gzsel,.switch,.zbtn,.moveto button{min-height:40px}
+button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
+.appicons .act[data-k]{width:40px;height:40px}
+.grip,.hide,.totab,.tick,.pchev,button.chip,.jname{position:relative}
+.grip::after,.hide::after,.totab::after,.tick::after,.pchev::after,button.chip::after,.jname::after{content:"";position:absolute;inset:-9px -6px}
+.trow.done .tick::after{inset:auto}
+.act,.btn,.tabs button,.seg button,.cog,.chip,.card,.thread,.trow,.yrow{transition:background-color .18s ease,border-color .18s ease,color .18s ease}
+/* status in words: a pill with an icon and a word, colour as support only */
+.st{display:inline-flex;align-items:center;gap:6px;padding:2px 10px 2px 8px;border-radius:999px;font-size:13px;font-weight:600;line-height:1.45;white-space:nowrap;flex:none}
+.st svg,.status .st svg{width:15px;height:15px;flex:none}
+.st.good{color:var(--good);background:var(--good-wash)}.st.warn{color:var(--warning);background:var(--warning-wash)}
+.st.crit{color:var(--critical);background:var(--critical-wash)}.st.idle{color:var(--ink2);background:var(--sunk)}
+.item>.st{margin-left:auto}.chip .st{padding:0 8px 0 6px;margin-right:4px}
+.jobs .row{grid-template-columns:18px minmax(0,1fr) 180px 86px minmax(200px,auto)}
+@media (max-width:820px){.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* the Overview's lead: one sentence, its reasons, one button */
+.lead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px 24px;flex-wrap:wrap;margin:0 0 24px}
+.lead h2{margin:0;font:700 30px/1.2 var(--sans);letter-spacing:-.02em;max-width:30ch;text-wrap:balance}
+.lead p{margin:6px 0 0;color:var(--ink2);font-size:16px;max-width:70ch}.lead p:empty{display:none}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border-radius:8px;border:1px solid var(--line2);background:var(--raise);color:var(--ink);font:600 14px/1 var(--sans);cursor:pointer;text-decoration:none;white-space:nowrap}
+.btn:hover{border-color:var(--ink2);text-decoration:none}.btn svg{flex:none}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.btn.primary:hover{filter:brightness(1.08)}
+/* Waiting on you now: an icon, one sentence, its zone, how late, one button */
+.wrow{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;padding:10px 0}.wrow .wname{flex:1 1 220px}.wrow .wwhat,.wrow .wfor,.wrow .wwhere{flex:none}
+.wico{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--wash);color:var(--accent)}.wico svg{width:18px;height:18px}
+.wico.crit{background:var(--critical-wash);color:var(--critical)}.wico.warn{background:var(--warning-wash);color:var(--warning)}
+.wrow .act{margin-left:auto}.wname{overflow-wrap:anywhere}.wico{flex:none}
+/* the summary column */
+.sumt{margin:14px 0 6px;font-size:13px;font-weight:600;color:var(--muted)}.sumt:first-child{margin-top:0}
+.sumzs,.sumis{display:grid;gap:8px}
+.sumz{display:grid;grid-template-columns:1fr repeat(3,auto);gap:4px 12px;align-items:baseline;padding:10px 12px;border-radius:8px;background:var(--sunk);color:var(--ink);text-decoration:none}
+.sumz>b{grid-column:1/-1}.sumz .sumn{font-size:13px;color:var(--ink2)}.sumz .sumn b{font:600 24px/1.1 var(--display);color:var(--ink);margin-right:2px}.sumz .sumn.bad b{color:var(--critical)}
+.sumz:hover,.sumi:hover{text-decoration:none;outline:1px solid var(--line2)}
+.sumi{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;color:var(--ink);text-decoration:none}
+.sumi b{font-weight:700}.sumi.has b{color:var(--accent)}.sumh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.sumx{margin-top:16px}
+/* a tab's count */
+.tabs .n{min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--sunk);color:var(--ink2);font-size:12px;font-weight:700;display:inline-grid;place-items:center}
+.tabs .n.warn{background:var(--warning-wash);color:var(--warning)}.tabs .n:empty,.tabs .n[hidden]{display:none}
+/* a tab or a hidden card that holds trouble says so in words (LAYOUT_JS sets the dot's class and title) */
+.tabs .dot.tr,.unhide .dot.tr{width:auto;height:auto;border-radius:999px;padding:0 8px;font-size:12px;font-weight:600;line-height:20px}
+.tabs .dot.tr::after,.unhide .dot.tr::after{content:"Look soon"}.tabs .dot.tr.critical::after,.unhide .dot.tr.critical::after{content:"Act now"}
+.tabs .dot.tr.warning,.unhide .dot.tr.warning{background:var(--warning-wash);color:var(--warning)}
+.tabs .dot.tr.critical,.unhide .dot.tr.critical{background:var(--critical-wash);color:var(--critical)}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 """
 
 
@@ -7482,9 +7767,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         for sec, n in t["counts"].items():
             tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
     todo_card = card("todo", "Todo", "", tb) if TD else ""
-    ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name%s">%s<small>%s</small></div></a>' % (
-        0 if n else 1, E(link(f)), ICON["warning" if n else "good"], zone_class(name, ZS), zone_name(name, ZS),
-        "%d waiting" % n if n else "empty") for name, f, n in IB)
+    ib = "".join('<a class="item" data-ok="%d" href="%s"><div class="name%s">%s<small>%s</small></div>%s</a>' % (
+        0 if n else 1, E(link(f)), zone_class(name, ZS), zone_name(name, ZS),
+        "%d waiting" % n if n else "empty", pill("wait" if n else "good")) for name, f, n in IB)
     waits = ('<div class="gacts">%s</div>' % request_button("Process the Inbox", "process the inbox", ws)) if any(n for _, _, n in IB) else ""
     inbox_card = card("inboxes", "Inboxes", "", '<div class="tiles">%s</div>%s' % (ib, waits))
 
@@ -7506,7 +7791,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                 '<div class="ink2 num"%s>%s</div><span class="status%s" data-tip="%s">%s%s</span></div>%s'
                 % (ok, ICON[j["state"]], i, E(j["name"]), about, E(j["schedule"]), strip,
                    ' data-tip="took %ss"' % E(str(j["seconds"])) if j["seconds"] is not None else "", E(last), " running" if j["running"] else "",
-                   E("Last run: " + j["status"]) if j["running"] else "", ICON[j["state"]], E(said) + (
+                   E("Last run: " + j["status"]) if j["running"] else "", pill("late" if j["status"].startswith("late") else j["state"]), E(said) + (
                        ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
                        % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
                        if acting and j["name"] in sched and not j["running"] else ""),
@@ -7541,7 +7826,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             """A refused tool the deny list names is red; one no allow rule named is amber."""
             return "".join('<span class="chip" title="%s">%s%s</span> ' % (
                 "On the deny list" if denied_by_list(t, L["deny"]) else "Not allowed for this job",
-                ICON["critical" if denied_by_list(t, L["deny"]) else "warning"].replace("<svg ", '<svg width="12" height="12" '), E(t))
+                pill("critical" if denied_by_list(t, L["deny"]) else "warning"), E(t))
                 for t in sorted(tools)) or '<span class="muted">none</span>'
         trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td class="r">%s</td><td>%s</td>'
                       '<td class="r">%d</td><td class="r">%d</td></tr>'
@@ -7557,13 +7842,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # ---- repositories and wikis
     def waiting_long(r):
         return bool(r["dirty"] and r.get("since") and now - r["since"] > STALE_CHANGES)
-    rr = "".join('<div class="item" data-ok="%d" data-tip="%s">%s<div class="name">%s<small>%s</small></div></div>' % (
+    rr = "".join('<div class="item" data-ok="%d" data-tip="%s"><div class="name">%s<small>%s</small></div>%s</div>' % (
         0 if r.get("unread") or waiting_long(r) else 1,
         E("git status failed or took over 30 seconds, so its changes are not known" if r.get("unread") else
           "; ".join(x for x in ("last commit " + (age(r["last"], now) if r["last"] else "never"), say_kinds(r["changes"]),
                                 "the oldest change made " + age(r["since"], now) if r["dirty"] and r.get("since") else "") if x)),
-        ICON["warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none"], E(r["name"]),
-        "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
+        E(r["name"]), "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed",
+        pill("warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none")) for r in R)
     changed = sum(1 for r in R if r["dirty"])
     notices = "".join(attn_row(k, t, h) for k, t, h in attn if isinstance(h, dict) or h.startswith("https://"))
     repos_card = card("repos", "Repositories", "%d with changes" % changed if changed else "",
@@ -7641,13 +7926,16 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    lead = waiting_card(waiting_now or [], now) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
+    needs = needs_you(attn, lists, now.date())          # what waits on the user, from what the page knows; the lead counts it (#551)
+    lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
                                                     if anything else start_card() + threads_card)
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, todo_card, inbox_card, graph_card))
+                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT + lead_block(needs, len(waiting_now or [])), lead, todo_card,
+                          summary_card(lists, now.date(), IB, worst, len(attn), "#" + troubled[0][1] if troubled else "#summary", ZS, link, show_graph)
+                          + inbox_card, graph_card))
     # Every tab with content has a left and a right slot below its own content (#443).
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
@@ -7660,6 +7948,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             % ('<button type="button" role="tab" data-tab="todo">Todo<span class="n">%d</span>%s</button>'
                % (sum(z["open"] for z in lists), '<span class="dot critical" title="late"></span>' if late else "") if todo_tab else "",
                questions_mod().tab_button() if qdata else ""))
+    # Each tab a count (#551). A count of something late or that needs you takes the warning colour and says so to a screen reader.
+    sessions_n = len(waiting_now or [])
+    tabs = tabs.replace('data-tab="overview">Overview</button>', 'data-tab="overview">Overview%s</button>'
+                        % tab_badge("tabn-overview", len(needs) + sessions_n, " thing needs you", " things need you", True), 1)
+    tabs = tabs.replace('data-tab="status">Status</button>', 'data-tab="status">Status%s</button>'
+                        % tab_badge("tabn-status", len(attn), " thing needs attention", " things need attention", bool(attn)), 1)
+    tabs = tabs.replace('<span class="dot critical" title="late"></span>', tab_badge("tabn-late", late, " action is late", " actions are late", True, "%d late"), 1)
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
     md = menu_data(T, names, link, cmux, trouble, S, DK, bool(cli))
     if qdata:
@@ -7704,8 +7999,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
-                + (NOTE_CSS if show_graph else ""),
+                E(NAME), favicon(), font_css() + CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
+                + (NOTE_CSS if show_graph else "") + LOOK_CSS,
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS, allowed) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 

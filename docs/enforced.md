@@ -104,7 +104,7 @@ The check is for an honest writer's mistakes, as [the threat model](principles.m
 - A clean paraphrase passes, and so does wording moved rather than copied; only git history shows where it came from.
 - A document copied by hand into `Sources/`, and an attachment that was edited, pass. An exact copy of a mail attachment is caught by a separate byte comparison.
 - Word, PowerPoint and PDF contents are not read.
-- A run of words that files of three zones or more hold, or more than five files do, counts as stock wording and is not read as a quote: the fixed line an intake note carries in every zone passes. A sentence lifted from one meeting, or from one note into one other, is still refused. A run counts as stock only when every stretch of eight words in it does, and the count is made from the files the check reads. A missing or unreadable count makes nothing stock, so the check refuses as before. `wall-common-files` in `System/garrick-settings.json` sets the five.
+- Stock wording passes: a run of words that files of three zones or more hold, or more than five files (`wall-common-files`), is not read as a quote. A sentence lifted from one meeting is still refused, and a missing count makes nothing stock.
 
 **Paths**
 

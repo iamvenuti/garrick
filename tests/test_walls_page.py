@@ -237,6 +237,16 @@ class TestAllow(WallsPageCase):
         self.assertEqual([], self.ledger())
         self.assertEqual(before, self.head())
 
+    def test_a_ledger_commit_that_fails_is_refused_and_leaves_no_entry(self):
+        before = self.head()
+        look = self.look()
+        write(self.root / ".git" / "index.lock", "")                       # git cannot commit while another holds the index
+        self.addCleanup(lambda: (self.root / ".git" / "index.lock").unlink(missing_ok=True))
+        got = self.send({"verb": "walls-allow", "path": COPY, "id": self.wording()["id"], "blob": look["blob"]})
+        self.assertFalse(got["ok"], got)
+        self.assertEqual([], self.ledger())
+        self.assertEqual(before, self.head())
+
     def test_a_malformed_request_is_refused(self):
         f = self.wording()
         for req in ({"path": COPY, "id": f["id"]}, {"path": COPY, "id": f["id"], "blob": "xyz"}, {"path": COPY, "id": "nope", "blob": "a" * 40},

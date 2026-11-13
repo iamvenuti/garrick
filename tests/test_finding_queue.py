@@ -227,7 +227,7 @@ class TestPlainWording(unittest.TestCase):
         self.assertIn("o.classList.contains('other')", js)                                   # the free-text field is a number too: it takes the focus
         self.assertIn("e.key==='Enter'", js)                                                 # Return takes the recommended one
         self.assertIn("tagName==='INPUT'", js)                                               # and sends the text while typing in the field
-        self.assertIn("'.opt.rec'", js)
+        self.assertIn("'.opt.rec:not([hidden]):not(:disabled)'", js)
         self.assertIn("function foc(q)", js)                                                 # S1: the focus goes to the recommended answer
         self.assertRegex(js, r"(?s)function show\(done0\)\{.*foc\(q\)\}")                       # on open and after every answer
         self.assertIn("summary,a,input,textarea,select,button", js)                            # S5: Return on Details or a link runs nothing
@@ -836,6 +836,7 @@ class TestLongNoteFromItsPlan(QueueCase):
         self.assertEqual(["move-older", "preview", "later"], self.ids(q))
         self.assertEqual("move-older", q["recommended"])
         self.assertRegex(q["why"], r"^3 older entries would move, taking the page from about [\d,]+ words to about [\d,]+ words\.")
+        self.assertEqual("split", q["answers"][0]["fallback"]["id"])           # the handoff that stands in for a refused move
 
     def test_a_move_that_will_not_be_enough_says_so(self):
         plan = {"moves": 2, "before": 9000, "after": 7000, "still_over": True, "case": "", "skipped": ""}
@@ -890,6 +891,62 @@ class TestLongNoteFromItsPlan(QueueCase):
             if a["action"] == "later":
                 self.assertIsNone(ops.validate("finding", a["req"]))
         self.assertIn("split", fq.ANSWERS_NO_MOVE["note-long"][0]["id"])
+
+
+class TestRefusedAnswerOnTheQueue(unittest.TestCase):
+    """#540: a refused answer is disabled, Skip for now moves on, and a reload keeps neither."""
+
+    def q(self, plain="note-long", plan=None):
+        return fq.question(dict(KINDS[plain]), "Zones/Work", plan or {"moves": 3, "before": 6400, "after": 3900, "still_over": False,
+                                                                       "case": "", "skipped": ""})
+
+    def test_each_question_carries_a_hidden_skip_and_the_move_a_hidden_fallback(self):
+        markup = fq.question_html(self.q())
+        self.assertRegex(markup, r'<button class="act qskip" type="button" data-qskip hidden>Skip for now</button>')
+        self.assertRegex(markup, r'<button class="opt" type="button" data-id="split" data-for="move-older" data-fa="[^"]+" hidden>')
+        self.assertEqual(1, markup.count('class="opt rec'))                                         # the fallback is not recommended until it is shown
+        self.assertNotIn("data-for", fq.question_html(self.q("resume-long")))
+
+    def test_a_refused_answer_is_disabled_with_the_refusal_under_it_and_skip_shows(self):
+        js = fq.QUEUE_JS
+        refuse = js[js.index("function refuse("):js.index("function open(")]
+        self.assertIn("b.disabled=true", refuse)
+        self.assertIn("out(q,f.say,true)", refuse)
+        self.assertIn("[data-qskip]').hidden=false", refuse)
+        self.assertIn("/^nothing (can move|is old enough)/i.test(say)", js)                          # the two refusals of "nothing can move"
+        self.assertIn("fb.hidden=false;fb.classList.add('rec')", refuse)                             # the handoff in the move's place
+
+    def test_skip_for_now_goes_on_and_moves_the_bar_without_putting_the_finding_off(self):
+        js = fq.QUEUE_JS
+        click = js[js.index("var sk=t.closest"):][:200]
+        self.assertIn("skip[sq.dataset.gk]=1;tally.skipped++", click)
+        self.assertNotIn("later", click)                                                              # not Not now: nothing is written
+        self.assertIn("!gone[q.dataset.gk]&&!skip[q.dataset.gk]", js)                                 # the next question is the next pending one
+        self.assertIn("k=n-left.length+1", js)                                                        # and the bar counts what is no longer pending
+
+    def test_the_summary_counts_a_skipped_question_apart_from_not_now(self):
+        js = fq.QUEUE_JS
+        self.assertIn("['later','put off to next week'],['skipped','skipped']", js)
+        self.assertIn("LINES.forEach(function(l){if(tally[l[0]])", js)
+
+    def test_a_reload_after_a_refusal_keeps_nothing_of_it(self):
+        """The planning decision replaces the issue's "keeps the disabled answer and the skip": Skip for now keeps nothing on
+        disk, so a reload shows the question as built. What is saved leaves out the skip tally and every refusal."""
+        js = fq.QUEUE_JS
+        keep = js[js.index("function kept()"):js.index("function sum()")]
+        self.assertIn("UNSAVED.indexOf(k)<0", keep)
+        self.assertIn("!notes[g].bad", keep)
+        self.assertIn("UNSAVED=['skipped']", js)
+        self.assertNotIn("refused", keep)
+        self.assertNotIn("skip:", js[js.index("function save()"):js.index("function sum()")])
+        self.assertIn("skip={};refused={}", js[js.index("function restore()"):js.index("function finish(")])
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True)
+            self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_an_answer_the_queue_script_can_send_still_goes_through_the_verb(self):
+        self.assertEqual(("move-older", "preview", "later"), fq.VERB_ANSWERS["note-long"])
 
 
 if __name__ == "__main__":

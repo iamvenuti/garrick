@@ -25,6 +25,8 @@ Each answer names the action it takes, from the fixed table in ANSWERS:
 A long note is asked from the plan, not from the kind alone (#539): while the page builds, `history.py dry-run --json` runs once for
 each such finding (never a write subcommand), and when it would move nothing, or cannot be run, the question offers no Move and no
 Show me; its recommended answer is the handoff in ANSWERS_NO_MOVE, and its why-line says in plain words which case applies.
+A move refused when it runs (#540) disables that answer, offers Skip for now, and, when the refusal says nothing can move, the
+kind's fallback handoff (FALLBACKS) in its place. Skip for now keeps nothing: it is the dialog's, and a reload brings the question back.
 
 Wall findings have no Not now, and no answer keeps the material: the recommended answer is to take it out.
 Missing commit hooks has no Not now either: hiding it would leave the walls unchecked on commit, which fails open, as for a wall.
@@ -87,6 +89,8 @@ ANSWERS_NO_MOVE: Dict[str, List[dict]] = {
                     "Your assistant splits the long sections into their own notes in the thread's folder, links them, and shows you the change.", "handoff"),
                   A("later", "Not now", "Ask again in a week.", "later")],
 }
+# The answer a run that is refused for "nothing can move" is replaced by, by kind and by the answer refused (#540).
+FALLBACKS: Dict[str, Dict[str, str]] = {"note-long": {"move-older": "split"}}
 # Why nothing moves, by case: (the plain words under the sentence, what Details adds).
 NO_MOVE = {
     "sections": ("Most of its words sit in long sections above the dated entries, and only dated entries move to history.",
@@ -436,6 +440,12 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
         else:
             a["req"] = {"verb": "finding", "kind": plain, "path": path, "answer": a["id"]}
         answers.append(a)
+    for a in answers:
+        fb = FALLBACKS.get(plain, {}).get(a["id"])
+        if fb:
+            f = dict(next(x for x in ANSWERS_NO_MOVE[plain] if x["id"] == fb))
+            f["phrase"] = handoff_phrase(plain, fb, item)
+            a["fallback"] = f
     q.update(tag=TAGS[plain], sentence=sentence, why=why, answers=answers, free=free_prefix(plain, item), recommended=answers[0]["id"])
     return q
 
@@ -498,15 +508,21 @@ def question_html(q: dict) -> str:
         else:
             data["req"] = a["req"]
         hosted = a["action"] != "handoff"
-        opts += ('<button class="opt%s%s" type="button" data-fa="%s"><span class="n">%d</span><span>%s<small>%s%s</small></span></button>'
-                 % (" rec" if a["id"] == rec else "", " tacts" if hosted else "", E(json.dumps(data, sort_keys=True)), i, E(a["label"]),
+        opts += ('<button class="opt%s%s" type="button" data-id="%s" data-fa="%s"><span class="n">%d</span><span>%s<small>%s%s</small></span></button>'
+                 % (" rec" if a["id"] == rec else "", " tacts" if hosted else "", E(a["id"]), E(json.dumps(data, sort_keys=True)), i, E(a["label"]),
                     '<b class="recd">Recommended.</b> ' if a["id"] == rec else "", E(a["does"])))
+        fb = a.get("fallback")
+        if fb:        # shown in its place when this answer is refused for "nothing can move" (#540); a handoff, so it needs no host
+            opts += ('<button class="opt" type="button" data-id="%s" data-for="%s" data-fa="%s" hidden><span class="n">%d</span><span>%s'
+                     '<small><b class="recd">Recommended.</b> %s</small></span></button>'
+                     % (E(fb["id"]), E(a["id"]), E(json.dumps({"a": "handoff", "id": fb["id"], "phrase": fb["phrase"]}, sort_keys=True)), i, E(fb["label"]), E(fb["does"])))
     web = ('<p class="hint qweb">The other answers need the Garrick app. Here you can send your own words to your assistant.</p>'
            if q["answers"] and all(a["action"] != "handoff" for a in q["answers"]) else "")
     opts += ('<label class="opt other"><span class="n">%d</span><input type="text" maxlength="500" autocomplete="off" '
              'data-free="%s" placeholder="%s" aria-label="%s"></label>' % (len(q["answers"]) + 1, E(q["free"]), E(FREE), E(FREE)))
     return ('<div class="q" data-q data-key="%s" data-kind="%s" data-path="%s" data-gk="%s" hidden><span class="tag%s">%s</span><p class="qs">%s</p>%s'
             '<div class="opts">%s</div>%s<p class="hint qsay" role="status"></p>'
+            '<button class="act qskip" type="button" data-qskip hidden>Skip for now</button>'
             '<details class="qdet"><summary>Details</summary><code>%s</code><pre class="qout" hidden></pre></details></div>'
             % (q["key"], E(q["id"]), E(q["path"]), E(q.get("gk") or q["key"]), " private" if q["id"] == "wall" else "", E(q["tag"]), E(q["sentence"]),
                '<div class="why">%s</div>' % E(q["why"]) if q["why"] else "", opts, web, E(q["details"])))
@@ -562,7 +578,8 @@ dialog.queue{width:min(620px,calc(100vw - 32px))}
 .queue .qdet code,.queue .qdet pre{display:block;white-space:pre-wrap;margin:6px 0 0;font-size:12px;background:var(--raise);padding:8px;border-radius:6px}
 .queue .done{text-align:center;padding:24px 8px}.queue .done b{display:block;font-size:17px;margin-bottom:4px}.queue .qnext{margin-top:14px}
 .nohost .queue .opt.tacts{display:none}.queue .qweb{display:none;margin:8px 0 0}.nohost .queue .qweb{display:block}
-.queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
+.queue .opt:disabled{opacity:.55;cursor:not-allowed}.queue .opt:not(.rec) .recd{display:none}.queue .qskip{margin-top:8px}
+.queue .opt[hidden],.queue .qskip[hidden],.queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
 .auto{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--wash);border-radius:10px;padding:10px 12px;margin:10px 0 0;font-size:13.5px}
 """
 
@@ -576,34 +593,45 @@ document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e
 var list=[];try{list=JSON.parse(t.dataset.fix)}catch(err){return}
 list.forEach(function(q){host.postMessage({act:q})});say('Fixing '+list.length+' small thing'+(list.length===1?'':'s')+'…');t.disabled=true});
 if(!dlg)return;
-var tally={done:0,handed:0,opened:0,later:0},notes={},gone={},pend=null,cur=null;
+/* the tally's lines, in the order the summary says them: one row to add for a new way of answering */
+var LINES=[['done','done'],['handed','handed to your assistant'],['opened','opened'],['later','put off to next week'],['skipped','skipped']],UNSAVED=['skipped'];
+function fresh(){var t={};LINES.forEach(function(l){t[l[0]]=0});return t}
+var tally=fresh(),notes={},gone={},skip={},refused={},pend=null,cur=null;
 function all(){return[].slice.call(dlg.querySelectorAll('.qscope'))}
 function qs(s){return[].slice.call(s.querySelectorAll('[data-q]'))}
-function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.gk]})}
-function save(){if(cur)st.set(KEY,JSON.stringify({scope:cur.dataset.scope,gone:gone,tally:tally,notes:notes,pend:pend,t:Date.now()}))}
-function sum(){var p=[];if(tally.done)p.push(tally.done+' done');if(tally.handed)p.push(tally.handed+' handed to your assistant');
-if(tally.opened)p.push(tally.opened+' opened');if(tally.later)p.push(tally.later+' put off to next week');return p.join(', ')||'Nothing answered.'}
+function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.gk]&&!skip[q.dataset.gk]})}
+/* what a reload keeps: the answers given, never a refusal, a disabled answer or a skip (Skip for now is the dialog's, not the disk's) */
+function kept(){var t={},n={};for(var k in tally)if(UNSAVED.indexOf(k)<0)t[k]=tally[k];for(var g in notes)if(!notes[g].bad)n[g]=notes[g];return{tally:t,notes:n}}
+function save(){if(cur){var k=kept();st.set(KEY,JSON.stringify({scope:cur.dataset.scope,gone:gone,tally:k.tally,notes:k.notes,pend:pend,t:Date.now()}))}}
+function sum(){var p=[];LINES.forEach(function(l){if(tally[l[0]])p.push(tally[l[0]]+' '+l[1])});return p.join(', ')||'Nothing answered.'}
 function next(){var o=all().filter(function(s){return s!==cur&&pending(s).length});return o[0]||null}
 function out(q,text,bad,detail){var s=q.querySelector('.qsay');s.textContent=text||'';s.classList.toggle('bad',!!bad);
 var p=q.querySelector('.qout');if(detail){p.textContent=detail;p.hidden=false}else p.hidden=true}
-function foc(q){var c=[q.querySelector('.opt.rec'),q.querySelector('button.opt'),q.querySelector('.opt.other input')];
+var RECS='.opt.rec:not([hidden]):not(:disabled)';
+function foc(q){var c=[q.querySelector(RECS),q.querySelector('button.opt'),q.querySelector('.opt.other input')];
 for(var i=0;i<c.length;i++)if(c[i]&&c[i].getClientRects().length){c[i].focus();return}}
 function show(done0){if(!cur)return;var every=qs(cur),left=done0?[]:pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
 var done=dlg.querySelector('.qdone');
 if(!left.length){cur.hidden=true;done.hidden=false;done.querySelector('b').textContent=cur.dataset.name+' is done.';
 done.querySelector('.qsum').textContent=sum();var nx=next(),b=done.querySelector('[data-qnext]');b.hidden=!nx;
 if(nx){b.textContent='Go on to '+nx.dataset.name;b.dataset.qnext=nx.dataset.scope}
-st.set(KEY,JSON.stringify({scope:cur.dataset.scope,done:true,tally:tally,t:Date.now()}));return}
+if(every.some(function(q){return skip[q.dataset.gk]}))save();else st.set(KEY,JSON.stringify({scope:cur.dataset.scope,done:true,tally:tally,t:Date.now()}));return}
 done.hidden=true;cur.hidden=false;var k=n-left.length+1,q=left[0];q.hidden=false;
 cur.querySelector('.qn').textContent=k+' of '+n;cur.querySelector('.bar i').style.width=(k/n*100)+'%';
-var m=notes[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detail);save();foc(q)}
+var m=notes[q.dataset.gk],f=refused[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detail);if(f)refuse(q,f);save();foc(q)}
+/* A refused answer stays open by design. It is disabled, with the refusal under the answers, and Skip for now shows. When the refusal says
+   nothing can move, the handoff that stands in for the move takes its place, with its number. */
+function refuse(q,f){out(q,f.say,true);var b=q.querySelector('button.opt[data-id="'+f.id+'"]');if(b){b.disabled=true;b.classList.remove('rec')}
+if(f.cant){var fb=q.querySelector('button.opt[data-for]');if(fb){var r=q.querySelector('button.opt[data-id="'+fb.dataset.for+'"]');
+if(r){r.hidden=true;r.classList.remove('rec')}fb.hidden=false;fb.classList.add('rec')}}
+q.querySelector('[data-qskip]').hidden=false}
 function open(scope){var s=all().filter(function(x){return x.dataset.scope===scope})[0];if(!s)return;all().forEach(function(x){x.hidden=true});
-cur=s;tally={done:0,handed:0,opened:0,later:0};gone={};notes={};pend=null;if(!dlg.open)dlg.showModal();show()}
+cur=s;tally=fresh();gone={};notes={};skip={};refused={};pend=null;if(!dlg.open)dlg.showModal();show()}
 /* The app rebuilds the page after an answer that changed something and reloads it: the queue comes back where it was, and an
    answer sent just before the reload is counted from what the new page shows */
 function restore(){var r=null;try{r=JSON.parse(st.get(KEY)||'null')}catch(e){}if(!r||!r.scope||Date.now()-r.t>9e5){st.del(KEY);return}
 var s=all().filter(function(x){return x.dataset.scope===r.scope})[0];if(!s){st.del(KEY);return}
-cur=s;gone=r.gone||{};tally=r.tally||tally;notes=r.notes||{};pend=null;
+cur=s;gone=r.gone||{};tally=Object.assign(fresh(),r.tally||{});notes=r.notes||{};skip={};refused={};pend=null;
 if(r.done){dlg.showModal();show(true);return}
 if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.gk===r.pend.key});
 if(!here){gone[r.pend.key]=1;tally[r.pend.id==='later'?'later':'done']++}
@@ -615,7 +643,8 @@ b.setAttribute('data-folder',dlg.dataset.folder||'');b.hidden=true;dlg.appendChi
 document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target:null;if(!t)return;
 var o=t.closest('[data-qopen]');if(o){e.preventDefault();open(o.dataset.qopen);return}
 if(t.closest('[data-qclose]')){st.del(KEY);if(dlg.open)dlg.close();return}
-var nx=t.closest('[data-qnext]');if(nx&&nx.dataset.qnext){tally={done:0,handed:0,opened:0,later:0};cur=all().filter(function(x){return x.dataset.scope===nx.dataset.qnext})[0];gone={};notes={};pend=null;show();return}
+var nx=t.closest('[data-qnext]');if(nx&&nx.dataset.qnext){tally=fresh();cur=all().filter(function(x){return x.dataset.scope===nx.dataset.qnext})[0];gone={};notes={};skip={};refused={};pend=null;show();return}
+var sk=t.closest('#queue [data-qskip]');if(sk){var sq=sk.closest('[data-q]');skip[sq.dataset.gk]=1;tally.skipped++;pend=null;show();return}
 var b=t.closest('#queue button[data-fa]');if(!b)return;var q=b.closest('[data-q]'),d;try{d=JSON.parse(b.dataset.fa)}catch(err){return}
 if(d.a==='handoff'){handoff(d.phrase);finish(q,'handed');return}
 if(!host)return;
@@ -625,15 +654,16 @@ pend={key:q.dataset.gk,id:d.id};save();host.postMessage({act:d.req})});
 dlg.addEventListener('keydown',function(e){if(e.metaKey||e.ctrlKey||e.altKey)return;var q=cur&&pending(cur)[0];if(!q||q.hidden)return;
 var typing=e.target&&e.target.tagName==='INPUT';
 if(typing){if(e.key==='Enter'){if(e.isComposing||e.keyCode===229)return;var w=e.target.value.trim();if(w){e.preventDefault();handoff(e.target.dataset.free+w);finish(q,'handed')}}return}
-if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,textarea,select,button'))return;var r=q.querySelector('.opt.rec');if(r){e.preventDefault();r.click()}return}
-if(/^[1-4]$/.test(e.key)){var opts=q.querySelectorAll('.opt'),o=opts[+e.key-1];if(!o)return;e.preventDefault();
+if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,textarea,select,button'))return;var r=q.querySelector(RECS);if(r){e.preventDefault();r.click()}return}
+if(/^[1-4]$/.test(e.key)){var opts=[].filter.call(q.querySelectorAll('.opt'),function(x){return!x.hidden}),o=opts[+e.key-1];if(!o)return;e.preventDefault();
 if(o.classList.contains('other')){o.querySelector('input').focus()}else o.click()}});
 dlg.addEventListener('close',function(){st.del(KEY)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='finding'&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
 if(el){if(res&&res.ok){if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
 else if(q.answer==='later')finish(el,'later');else finish(el,'done')}
-else{notes[el.dataset.gk]={say:(res&&res.say)||'That did not work.',detail:'',bad:true};out(el,(res&&res.say)||'That did not work.',true);save();foc(el)}}}
+else{var say=(res&&res.say)||'That did not work.';delete notes[el.dataset.gk];
+refused[el.dataset.gk]={say:say,id:q.answer,cant:/^nothing (can move|is old enough)/i.test(say)};refuse(el,refused[el.dataset.gk]);save();foc(el)}}}
 if(prev)return prev(q,res)};
 restore()})();
 """

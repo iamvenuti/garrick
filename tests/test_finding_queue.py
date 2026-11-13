@@ -38,7 +38,7 @@ TODO_LINE = ("%(p)s: 3 lines are longer than 200 characters; a line names one ac
 MEETING_LINE = ("%(p)s: its body is 612 words, over the 450 of `meeting-max-words`; a page is one line on who was there, "
                 "`## Key points` and `## Actions`, about 350 words")
 HOOKS_LINE = "%(p)s: no pre-commit wall check; run `python3 System/tools/check.py --install-hooks`"
-WALL_LINE = "%(p)s: points into the Personal zone, a walled zone. Fix: take the link out, or move this file into that zone."
+WALL_LINE = ("%(p)s: links [[Garden Notes]], a note of the Personal zone; that zone is walled and this file is in the Work zone")
 REPEATED = "secret sauce recipe for the entire autumn plan"
 
 HUB = "Zones/Work/Acme Review/Acme Review.md"
@@ -125,7 +125,7 @@ class TestPlainWording(unittest.TestCase):
             "resume-long": ("The resume point of Pricing is getting long: about 500 words.", ["Shorten it", "Not now"]),
             "todo-long": ("3 lines in the Work to-do list are longer than an action should be.", ["Shorten the line", "Not now"]),
             "meeting-long": ("A meeting note is longer than usual: about 600 words.", ["Shorten it", "Let me open it", "Not now"]),
-            "hooks-missing": ("The Work zone does not check the walls before a commit.", ["Install the wall check", "Not now"]),
+            "hooks-missing": ("The Work zone does not check the walls before a commit.", ["Install the wall check"]),
             "wall": ("“261027 - Sales deck” in Work points into private material from Personal.", ["Take it out", "Show me both texts"]),
         }
         for plain, (sentence, labels) in want.items():
@@ -164,12 +164,12 @@ class TestPlainWording(unittest.TestCase):
         self.assertEqual([("shorten", "handoff"), ("later", "later")], ids["resume-long"])
         self.assertEqual([("shorten", "handoff"), ("later", "later")], ids["todo-long"])
         self.assertEqual([("shorten", "handoff"), ("open", "open"), ("later", "later")], ids["meeting-long"])
-        self.assertEqual([("install", "run"), ("later", "later")], ids["hooks-missing"])
+        self.assertEqual([("install", "run")], ids["hooks-missing"])                          # no Not now: hidden, the walls go unchecked
         self.assertEqual([("take-out", "handoff"), ("show-both", "open")], ids["wall"])      # no Not now, no "the words are mine"
         for a in fq.ANSWERS["wall"]:
             self.assertNotIn("keep", a["label"].lower())
         self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
-                          "meeting-long": ("later",), "hooks-missing": ("install", "later"), "wall": ()}, fq.VERB_ANSWERS)
+                          "meeting-long": ("later",), "hooks-missing": ("install",), "wall": ()}, fq.VERB_ANSWERS)
         for answers in fq.ANSWERS.values():
             self.assertIn(answers[0]["action"], ("handoff", "run"))                          # the recommended one does something
 
@@ -212,8 +212,8 @@ class TestPlainWording(unittest.TestCase):
         self.assertNotIn("Zones/Work/Acme", markup)
 
     def test_a_wall_opens_both_files_when_the_check_names_the_other(self):
-        it = dict(KINDS["wall"], message="%s: links [[Zones/Personal/Garden/Notes.md]], a note of zone Personal; that zone is walled" % DECK)
-        it["message"] = it["message"].replace("[[Zones/Personal/Garden/Notes.md]]", "Zones/Personal/Garden/Notes.md")
+        it = dict(KINDS["wall"], message="%s: writes the path `Zones/Personal/Garden/Notes.md`, a note of the Personal zone; "
+                                         "that zone is walled and this file is in the Work zone" % DECK)
         both = fq.question(it, "Zones/Work")["answers"][1]
         self.assertEqual("Show me both texts", both["label"])
         self.assertEqual([{"verb": "note-open", "path": DECK}, {"verb": "note-open", "path": "Zones/Personal/Garden/Notes.md"}], both["reqs"])
@@ -228,11 +228,66 @@ class TestPlainWording(unittest.TestCase):
         self.assertIn("e.key==='Enter'", js)                                                 # Return takes the recommended one
         self.assertIn("tagName==='INPUT'", js)                                               # and sends the text while typing in the field
         self.assertIn("'.opt.rec'", js)
+        self.assertIn("function foc(q)", js)                                                 # S1: the focus goes to the recommended answer
+        self.assertRegex(js, r"(?s)function show\(done0\)\{.*foc\(q\)\}")                       # on open and after every answer
+        self.assertIn("summary,a,input,textarea,select,button", js)                            # S5: Return on Details or a link runs nothing
+        self.assertIn("e.isComposing", js)                                                   # L2
+        self.assertIn("done:true", js)                                                       # S2: the done screen is kept across a rebuild
+        self.assertIn("if(r.done){dlg.showModal();show(true);return}", js)
+        self.assertNotRegex(js, r"dataset\.key")                                             # L1: the page's own key, not the Not now hash
         node = shutil.which("node")
         if node:
             done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True,
                                   text=True, timeout=30)
             self.assertEqual(0, done.returncode, done.stderr)
+
+
+class TestWallsFromCheckPy(unittest.TestCase):
+    """The other zone of a wall finding is read from the texts check.py really writes (F3)."""
+
+    def setUp(self):
+        import check
+        from fixtures import build_workspace, meeting_page
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name) / "Workspace"
+        build_workspace(self.root)
+        self.check = check
+        self.meeting_page = meeting_page
+
+    def walls(self):
+        return [f for f in self.check.run_checks(self.root) if f.check == "walls" and f.severity == "error"]
+
+    def other(self, f):
+        return fq.wall_other({"kind": "wall", "path": f.path, "line": "%s: %s" % (f.path, f.message), "message": f.message})
+
+    def test_a_link_to_a_meeting_of_another_zone(self):
+        far = self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260312-birch-kickoff.md"
+        far.write_text(far.read_text().replace("zone: Work", "zone: Personal"))
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Notes.md", "Their pricing: see [[260312-birch-kickoff]].\n")
+        found = self.walls()
+        self.assertTrue(found)
+        self.assertIn("a meeting of the Personal zone; that zone is walled", found[0].message)
+        self.assertEqual("Personal", self.other(found[0]))
+
+    def test_a_written_path_and_repeated_wording(self):
+        sentence = "the harvest plan for the whole autumn season stays with the garden club members"
+        write(self.root / "Zones" / "Personal" / "Garden" / "Notes.md", "# Notes\n\n%s\n" % sentence)
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Paths.md", "See `Zones/Personal/Garden/Notes.md`.\n")
+        write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Copy.md", "# Copy\n\n%s\n" % sentence)
+        found = self.walls()
+        self.assertTrue(any(f.message.startswith("writes the path") for f in found), [f.message for f in found])
+        self.assertTrue(any(f.message.startswith("repeats wording") for f in found), [f.message for f in found])
+        for f in [f for f in found if f.path.startswith("Zones/Work/")]:
+            self.assertEqual("Personal", self.other(f), f.message)
+            q = fq.question(dict(kind="wall", check="", path=f.path, line=f.message, message=f.message, listed=True, scope="Zones/Work"), "Zones/Work")
+            self.assertIn("from Personal", q["sentence"])
+            self.assertNotIn("harvest", q["answers"][0]["phrase"])
+
+    def test_the_meeting_name_may_hold_of_the(self):
+        text = "links [[Call of the Wild]], a meeting of the DeeAmZee zone; that zone is walled and this file is in the Work zone"
+        self.assertEqual("DeeAmZee", fq.wall_other({"message": text}))
+        self.assertEqual("", fq.wall_other({"message": "links [[x]], a note that names no zone, so nothing says whose it is"}))
 
 
 class TestNotNowFile(unittest.TestCase):
@@ -283,6 +338,8 @@ class QueueCase(StatusCase):
 
     def record(self, standing, back=0):
         day = self.now.date() - dt.timedelta(days=back)
+        if not getattr(self, "_quick_set", False):       # the quick check lists what the record holds, unless a test says what it lists
+            self.list_record(standing)
         N = status.nurture_lib(self.root)[0]
         scopes = {}
         for f in standing:
@@ -290,6 +347,11 @@ class QueueCase(StatusCase):
             scopes[N.debt_scope(f["path"])][f["kind"]] = scopes[N.debt_scope(f["path"])].get(f["kind"], 0) + 1
         write(self.folder / ("%s.json" % day.isoformat()), json.dumps({"date": day.isoformat(), "standing": standing, "debt": {
             "total": len(standing), "kinds": {}, "scopes": scopes, "whole": True, "threshold": 40}}))
+
+    def list_record(self, standing):
+        self.quick(*[{"check": f.get("check", ""), "severity": "warning", "path": f["path"], "message": f["line"].split(": ", 1)[-1]}
+                     for f in standing if f["kind"] != "wall"])
+        self._quick_set = False
 
     def standing(self):
         out = []
@@ -310,6 +372,7 @@ class QueueCase(StatusCase):
         return html[start:min(ends)]
 
     def quick(self, *findings):
+        self._quick_set = True
         (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
             "errors": 0, "warnings": len(findings), "findings": list(findings)})
 
@@ -379,6 +442,7 @@ class TestQueueOnThePage(QueueCase):
         self.assertEqual(3, self.view(before).count("data-q "))
         record = (self.folder / ("%s.json" % self.now.date().isoformat())).read_bytes()
         check_before = self.check_json()
+        self.list_record(standing)                                                             # check_json put the real check.py back
         fq.later_put(self.root, fq.later_key("note-long", HUB), self.now.date())
         after = self.page()
         self.assertIn("Work: 2 judgment calls, about 5 minutes", self.card(after))             # the count drops by one
@@ -391,6 +455,89 @@ class TestQueueOnThePage(QueueCase):
         self.now = later
         self.record(standing)
         self.assertEqual(3, self.view(self.page()).count("data-q "))
+
+    def test_missing_hooks_is_never_put_off_even_with_a_key_present(self):
+        it = KINDS["hooks-missing"]
+        fq.later_put(self.root, fq.later_key("hooks-missing", it["path"]), self.now.date())
+        self.record([{"kind": "judgment", "check": "zones", "path": it["path"], "line": it["line"]}])
+        queue = self.view(self.page())
+        self.assertIn('data-kind="hooks-missing"', queue)
+        out = fq.forecast_questions([dict(it, scope="Zones/Work")], {fq.later_key("hooks-missing", it["path"])})
+        self.assertEqual(1, len(out["Zones/Work"]))
+
+    def test_a_wall_the_quick_check_lists_has_a_line_when_no_record_item_covers_its_scope(self):
+        self.quick({"check": "walls", "severity": "error", "path": DECK, "message": "links [[Garden Notes]], a note of the Personal zone; "
+                    "that zone is walled and this file is in the Work zone"})
+        self.record([{"kind": "judgment", "check": "projects", "path": "Zones/Alder/Yard/Yard.md", "line": NOTE_LINE % {"p": "Zones/Alder/Yard/Yard.md"}}])
+        html = self.page()
+        card = self.card(html)
+        self.assertNotIn("Nothing needs you.", card)
+        self.assertRegex(card, r"Work: 1 wall finding, about 5 minutes")
+        work = self.view(html)
+        work = work[work.index('data-scope="Zones/Work"'):]
+        self.assertIn('data-kind="wall"', work[:work.index("</section>")])
+        self.assertIn("points into private material from Personal.", work)
+
+    def test_nothing_needs_you_shows_only_when_nothing_in_the_quick_check_needs_it_either(self):
+        self.quick({"check": "walls", "severity": "error", "path": DECK, "message": "links [[Garden Notes]], a note of the Personal zone; "
+                    "that zone is walled and this file is in the Work zone"})
+        self.record([{"kind": "judgment", "check": "projects", "path": HUB, "line": NOTE_LINE % {"p": HUB}}])
+        fq.later_put(self.root, fq.later_key("note-long", HUB), self.now.date())
+        self.assertNotIn("Nothing needs you.", self.card(self.page()))          # the wall stays: Not now put off only the long note
+        self.quick({"check": "links", "severity": "error", "path": "Zones/Work/Acme Review/Notes.md", "message": "links a note that is not there"})
+        card = self.card(self.page())
+        self.assertNotIn("Nothing needs you.", card)
+        self.assertIn("Work: 1 judgment call", card)
+        self.quick({"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Notes.md", "message": "a warning only"})
+        self.assertIn("Nothing needs you.", self.card(self.page()))
+
+    def test_a_wall_weighted_zero_still_counts_on_the_card(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"nurture-weights": {"wall": 0}}))
+        self.quick({"check": "walls", "severity": "error", "path": DECK, "message": "links [[Garden Notes]], a note of the Personal zone; "
+                    "that zone is walled and this file is in the Work zone"})
+        self.record([{"kind": "wall", "path": DECK, "line": WALL_LINE % {"p": DECK}}])
+        card = self.card(self.page())
+        self.assertNotIn("Nothing needs you.", card)
+        self.assertIn("Work: 1 wall finding", card)
+        self.quick()
+        self.assertIn("Work: 1 wall finding", self.card(self.page()))           # and when the quick check lists nothing, the record's wall
+
+    def test_two_questions_with_one_kind_and_path_keep_two_keys(self):
+        a = dict(KINDS["wall"], scope="Zones/Work", message="%s: links [[A]], a note of the Personal zone; that zone is walled and this file is in the Work zone" % DECK)
+        b = dict(KINDS["wall"], scope="Zones/Work", message="%s: links [[B]], a note of the DeeAmZee zone; that zone is walled and this file is in the Work zone" % DECK)
+        qs = fq.forecast_questions([a, b, dict(a)], set())["Zones/Work"]
+        self.assertEqual(3, len({q["gk"] for q in qs}))
+        self.assertEqual({fq.later_key("wall", DECK)}, {q["key"] for q in qs})   # Not now's key stays the hash of kind and path
+        self.assertEqual(3, len(set(re.findall(r'data-gk="([^"]+)"', "".join(fq.question_html(q) for q in qs)))))
+
+    def test_the_done_screen_is_kept_until_the_queue_is_closed(self):
+        js = fq.QUEUE_JS
+        show = js[js.index("function show("):js.index("function open(")]
+        self.assertNotIn("st.del(KEY)", show)                                                # an empty queue saves done, it does not delete
+        click = js[js.index("data-qclose]')){"):][:60]
+        self.assertIn("st.del(KEY)", click)                                                  # and Close or Back to the overview delete it
+        self.assertIn("dlg.addEventListener('close',function(){st.del(KEY)})", js)
+
+    def test_a_browser_shows_no_dead_answer_and_says_the_app_is_needed(self):
+        self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)
+        self.record([{"kind": "judgment", "check": "projects", "path": HUB, "line": NOTE_LINE % {"p": HUB}}])
+        self.quick({"check": "projects", "severity": "warning", "path": HUB, "message": NOTE_LINE.split(": ", 1)[1]})
+        queue = self.view(self.page())
+        self.assertIn('class="hint qweb">The other answers need the Garrick app.', queue)
+        for plain in ("resume-long", "wall"):
+            self.assertNotIn("qweb", fq.question_html(fq.question(KINDS[plain], "Zones/Work")))     # an answer a browser can send: no hint
+        self.assertIn("qweb", fq.question_html(fq.question(KINDS["hooks-missing"], "Zones/Work")))
+
+    def test_an_applied_answer_is_gone_from_the_next_build_but_a_wall_never_is(self):
+        self.record([{"kind": "judgment", "check": "projects", "path": HUB, "line": NOTE_LINE % {"p": HUB}},
+                     {"kind": "wall", "path": DECK, "line": WALL_LINE % {"p": DECK}}])
+        self.quick({"check": "projects", "severity": "warning", "path": HUB, "message": NOTE_LINE.split(": ", 1)[1]})
+        self.assertIn('data-kind="note-long"', self.view(self.page()))                       # the quick check still lists it
+        self.quick()                                                                         # the answer was applied: it lists nothing
+        html = self.page()
+        self.assertNotIn('data-kind="note-long"', self.view(html))
+        self.assertIn('data-kind="wall"', self.view(html))                                   # a wall is not dropped by what the check no longer lists
+        self.assertIn("Work: 1 wall finding", self.card(html))
 
     def check_json(self):
         """check.py --json of the fixture workspace, run for real."""
@@ -515,7 +662,7 @@ class TestFindingVerb(ActionCase):
 
     def test_an_unknown_kind_or_answer_is_refused_and_nothing_runs(self):
         for req in ({"kind": "nonsense", "answer": "preview"}, {"kind": "note-long", "answer": "nonsense"},
-                    {"kind": "wall", "answer": "later"}, {"kind": "wall", "answer": "take-out"},
+                    {"kind": "wall", "answer": "later"}, {"kind": "wall", "answer": "take-out"}, {"kind": "hooks-missing", "answer": "later"},
                     {"kind": "note-long", "answer": "shorten"}, {"kind": "resume-long", "answer": "shorten"},
                     {"kind": "meeting-long", "answer": "open"}, {"kind": 5, "answer": "later"}, {"kind": "note-long", "answer": ["later"]}):
             with mock.patch.object(pa, "finding_run") as run:
@@ -545,6 +692,16 @@ class TestFindingVerb(ActionCase):
         self.assertIn("Acme Review", got["detail"])                                              # the full output, for Details
         self.assertEqual(before, self.hub.read_bytes())
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+    def test_the_preview_refuses_a_path_that_is_not_a_project_page_or_a_thread_note(self):
+        write(self.work / "Acme Review" / "Deliverables" / "261027 - Sales deck.md", "# Deck\n")
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "261012 - Call.md", "# Call\n")
+        for bad in ("Zones/Work/Todo.md", "Zones/Work/Acme Review/Deliverables/261027 - Sales deck.md", "Wikis/Meetings/wiki/261012 - Call.md",
+                    "Zones/Work/Acme Review/Threads/Pricing/Other.md"):
+            with mock.patch.object(pa, "finding_run") as run:
+                got = self.ask(kind="note-long", answer="preview", path=bad)
+            self.assertFalse(got["ok"], bad)
+            run.assert_not_called()
 
     def test_move_older_entries_commits_in_the_zone_through_the_wall_check(self):
         before = git(self.work, "rev-list", "--count", "HEAD").strip()
@@ -605,7 +762,7 @@ class TestFindingVerb(ActionCase):
                 else:
                     self.assertEqual("handoff", a["action"])
                     self.assertTrue(a["phrase"])
-        self.assertEqual(8, sent)
+        self.assertEqual(7, sent)
         self.assertFalse(self.ask(kind="note-long", answer="bogus", path=self.rel)["ok"])
 
 

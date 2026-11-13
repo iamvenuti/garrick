@@ -1523,7 +1523,8 @@ def forecast_items(ws: Path, day: dt.date) -> List[dict]:
     out = []
     for f in rec.get("standing") or [] if isinstance(rec, dict) else []:
         kind = str(f.get("kind", "")) if isinstance(f, dict) else ""
-        if kind and weights.get(kind, getattr(N, "UNKNOWN_WEIGHT", 1)):
+        # a wall is on the card whatever its weight: the weight sets the debt figure, not whether a wall shows
+        if kind and (kind == "wall" or weights.get(kind, getattr(N, "UNKNOWN_WEIGHT", 1))):
             path = re.sub(r":\d+$", "", str(f.get("path", "")))
             out.append({"kind": kind, "path": path, "line": str(f.get("line") or ""), "check": str(f.get("check") or ""),
                         "scope": N.debt_scope(path)})
@@ -1543,6 +1544,31 @@ def quick_messages(ws: Path, C: Optional[dict]) -> Dict[Tuple[str, str], str]:
     return out
 
 
+def quick_needs(ws: Path, C: Optional[dict], covered: Dict[str, List[dict]]) -> List[dict]:
+    """The quick check's wall findings and errors in a scope no question covers (#535): items for the queue, built
+    from the card's own check result, so a wall or an error the check lists is never behind "Nothing needs you."
+    A wall is listed, with the check's text, as a record's wall is; any other error is a finding of its own kind."""
+    lib = nurture_lib(ws)
+    N = lib[0] if lib is not None else None
+    if N is None or not callable(getattr(N, "debt_scope", None)) or not C or C.get("failed") or C.get("pending"):
+        return []
+    words = tuple(getattr(N, "WALL_WORDS", ()))
+    out, seen = [], set()
+    for f in C.get("findings", []):
+        path, message, check = re.sub(r":\d+$", "", str(f.get("path") or "")), str(f.get("message") or ""), str(f.get("check") or "")
+        wall = check == "walls" or any(w in message for w in words)
+        if not wall and str(f.get("severity") or "") != "error":
+            continue
+        scope = N.debt_scope(path)
+        if covered.get(scope) or (path, wall, message) in seen:
+            continue
+        seen.add((path, wall, message))
+        out.append({"kind": "wall" if wall else "judgment", "check": "" if wall else check, "path": path, "scope": scope,
+                    "line": "%s: %s" % (path, message) if path else message, "message": message, "listed": True,
+                    "title": check.capitalize() if check else "Check finding"})
+    return out
+
+
 def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[dict], today: dt.date,
                    said: Callable[[str], Tuple[str, str]]) -> Optional[Dict[str, List[dict]]]:
     """{scope: its questions} for every scope that needs the user, from the forecast's findings, each enriched with
@@ -1555,6 +1581,10 @@ def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[di
         fq = queue_mod()
         items = forecast_items(ws, history[-1][0])
         quick = quick_messages(ws, C)
+        if C and not C.get("failed") and not C.get("pending"):
+            # the quick check is current: a finding it no longer lists is gone now (an answer applied since the record
+            # was written), so it is not asked again. A wall is never dropped this way.
+            items = [it for it in items if it["kind"] == "wall" or (it["path"], it["check"]) in quick]
         for it in items:
             plain = fq.plain_kind(it)
             message = quick.get((it["path"], "wall" if it["kind"] == "wall" else it["check"]))
@@ -1565,7 +1595,14 @@ def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[di
                 it["message"] = message
             elif plain in fq.PLAIN_KINDS and it["kind"] != "wall":
                 it["message"] = it["line"][len(it["path"]) + 2:] if it["line"].startswith(it["path"] + ": ") else it["line"]
-        return fq.forecast_questions(items, fq.later_hidden(ws, today))
+        hidden = fq.later_hidden(ws, today)
+        queues = fq.forecast_questions(items, hidden)
+        extra = quick_needs(ws, C, queues)
+        for it in extra:
+            it["ask"] = said(it["scope"])[1]
+        for scope, qs in fq.forecast_questions(extra, hidden).items():
+            queues.setdefault(scope, qs)
+        return queues
     except Exception:
         return None
 

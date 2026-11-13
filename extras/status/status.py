@@ -1376,8 +1376,21 @@ def answered_in(qdata: Optional[dict], scope: str) -> int:
     return 0
 
 
+def nurture_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[str], Tuple[str, str]]) -> str:
+    """Without a findings queue: a line for each place the last Nurture record says needs the user, handing Nurture's
+    request to the assistant. Names of places and counts only."""
+    if not history:
+        return ""
+    out = ""
+    for n in needing_you((nurture_outcome(ws, history[-1][0]) or {}).get("scopes") or {}):
+        name, phrase = said(n["scope"])
+        button = request_button("Nurture", phrase, ws, "act dask") if phrase else ""
+        out += '<div class="need"><span class="nsay">%s: %s</span>%s</div>' % (E(name[:1].upper() + name[1:]), E(need_said(n)), button)
+    return out
+
+
 def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[str], Tuple[str, str]],
-               queues: Optional[Dict[str, List[dict]]] = None, qdata: Optional[dict] = None) -> str:
+               queues: Optional[Dict[str, List[dict]]] = None, qdata: Optional[dict] = None, failed: bool = False) -> str:
     """The Context card's lines (#542): one for each zone or wiki that holds something, such as *Work: 6 questions · 4 answers
     to work in · about 10 minutes*, with *Go through them*, which opens that place's queue (#535), and *Work them in* where
     that place has answers waiting. A place with nothing has no line. Under the title, how many places need the user and
@@ -1388,13 +1401,7 @@ def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[st
     if queues is None:
         if not history:
             return ""
-        rows = needing_you((nurture_outcome(ws, history[-1][0]) or {}).get("scopes") or {})
-        out = ""
-        for n in rows:
-            name, phrase = said(n["scope"])
-            button = request_button("Nurture", phrase, ws, "act dask") if phrase else ""
-            out += '<div class="need"><span class="nsay">%s: %s</span>%s</div>' % (E(name[:1].upper() + name[1:]), E(need_said(n)), button)
-        return out or '<p class="hint nonee">Nothing needs you.</p>'
+        return nurture_lines(ws, history, said) or '<p class="hint nonee">Nothing needs you.</p>'
     places = sorted({sc for sc, qs in queues.items() if qs} | {sc for sc in {"Wikis/Knowledge"} | {"Zones/" + z for z in (qdata or {}).get("buckets", {})}
                                                                   if answered_in(qdata, sc)}, key=scope_order)
     out = ""
@@ -1414,8 +1421,10 @@ def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[st
             buttons += '<button class="act primary" type="button" data-qopen="%s">Go through them</button>' % E(scope)
         out += ('<div class="need" data-scope="%s" data-n="%d"><span class="nsay"><b>%s</b>: %s</span><span class="nbtn">%s</span></div>'
                 % (E(scope), len(qs), E(scope_title(scope, said)), E(" · ".join(said_)), buttons))
+    if failed:              # the findings read failed: the wiki's own questions above, Nurture's lines for the rest, never "Nothing needs you."
+        out += nurture_lines(ws, history, said)
     if not out:
-        return '<p class="hint nonee" id="nsum">Nothing needs you.</p>' if history else ""
+        return '<p class="hint nonee" id="nsum">Nothing needs you.</p>' if history and not failed else ""
     zones = ('<label class="nzone">Zone <select id="nzone" aria-label="Zone"><option value="*">All</option>%s</select></label>'
              % "".join('<option value="%s">%s</option>' % (E(sc), E(scope_title(sc, said))) for sc in places) if len(places) > 1 else "")
     return ('<div class="nhead"><p class="hint nsum" id="nsum" data-some="1">%s need%s you.</p>%s</div>%s'
@@ -7470,14 +7479,18 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             fq = queue_mod()
         except Exception:              # no queue module: the card goes without a queue, as before
             fq = None
-    if fq and qdata:        # the wiki's own questions join the findings, each in the queue of its own zone or wiki (#542)
-        # a findings read that failed leaves `queues` None: start from nothing, so the wiki's own questions still show
-        queues = fq.with_asked(queues if queues is not None else {}, fq.asked_questions(qdata, fq.later_hidden(ws, now.date())))
+    queues_failed = queues is None
+    asked = fq.asked_questions(qdata, fq.later_hidden(ws, now.date())) if fq and qdata else {}
+    if fq and qdata and (queues is not None or any(asked.values())):
+        # the wiki's own questions join the findings, each in the queue of its own zone or wiki (#542). A findings read
+        # that failed leaves `queues` None: start from nothing so the wiki's questions still show, and Nurture's lines
+        # stand for the findings (need_lines' `failed`), so a failed read never reads as "Nothing needs you."
+        queues = fq.with_asked(queues if queues is not None else {}, asked)
     elif queues is None:
         fq = None
     queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
     checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
-                       need_lines(ws, history, said_scope, queues, qdata) + (fq.fix_block(fixes, str(ws)) if fq else "")
+                       need_lines(ws, history, said_scope, queues, qdata, failed=queues_failed and queues is not None) + (fq.fix_block(fixes, str(ws)) if fq else "")
                        + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
     queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names, now.date().isoformat()) if fq else ""

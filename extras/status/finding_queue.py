@@ -22,7 +22,7 @@ Each answer names the action it takes, from the fixed table in ANSWERS:
               file that holds a key for each finding and the day it comes back, never a path or any text. No check
               and no Nurture record reads it, so what the checks report is the same with and without it.
 
-A wall finding has no Not now, and no answer that keeps the material: the recommended answer is to take it out.
+Wall findings have no Not now, and no answer keeps the material: the recommended answer is to take it out.
 Missing commit hooks has no Not now either: hiding it would leave the walls unchecked on commit, which fails open, as for a wall.
 
 This module only decides and says; it writes nothing but the Not now file, which page_action.py asks it to.

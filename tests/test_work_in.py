@@ -159,6 +159,9 @@ class TestAFailedCallLeavesNothingBehind(Case):
         self.assertEqual("# Index\n", index.read_text())
         self.assertFalse((self.ws / "Wikis" / "Meetings" / "wiki" / "new.md").exists())
         self.assertEqual("# Mine\n", dirty.read_text())
+        kept = list((self.ws / "Wikis" / ".git" / "garrick-put-back").glob("*/Meetings/wiki/*.md"))
+        self.assertEqual({"index.md": "# Index\nrefused text\n", "new.md": "# New\n"},
+                         {k.name: k.read_text() for k in kept})          # what was put back is kept, in that repository
         self.assertEqual("?? Meetings/wiki/mine.md", git(self.ws / "Wikis", "status", "--porcelain").strip())
         self.assertEqual({"Zones/Work": {"why": "commit", "day": "2026-11-13"}}, self.held())
 

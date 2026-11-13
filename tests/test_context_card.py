@@ -94,6 +94,23 @@ class TestOneLineForEachPlace(CardCase):
         self.assertIn('data-qopen="Zones/Work"', card)
         self.assertIn('data-scope="Zones/Work"', self.queue(html))
 
+    def test_a_failing_findings_read_with_no_wiki_question_never_says_nothing_needs_you(self):
+        for f in list((self.meetings / "questions").glob("*.md")) + [self.knowledge_q]:
+            f.unlink()
+        self.record([{"kind": "judgment", "check": "resume", "path": THREAD, "line": RESUME}])
+        with mock.patch.object(status, "finding_queues", return_value=None):
+            card = self.card(self.page())
+        self.assertNotIn("Nothing needs you.", card)                                  # a failed read is not a clean workspace
+        self.assertIn(">Nurture<", card)                                              # Nurture's line stands for the findings
+
+    def test_a_failing_findings_read_beside_a_wiki_question_keeps_nurtures_lines(self):
+        self.record([{"kind": "judgment", "check": "resume", "path": THREAD, "line": RESUME}])
+        with mock.patch.object(status, "finding_queues", return_value=None):
+            card = self.card(self.page())
+        self.assertNotIn("Nothing needs you.", card)
+        self.assertIn('data-qopen="Zones/Work"', card)                                 # the wiki's question line
+        self.assertIn(">Nurture<", card)                                              # and Nurture's line for the findings
+
     def test_the_zone_menu_has_its_script_whenever_the_card_has_the_menu(self):
         for f in list((self.meetings / "questions").glob("*.md")) + [self.knowledge_q]:
             f.unlink()

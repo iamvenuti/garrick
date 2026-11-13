@@ -4059,6 +4059,27 @@ ICON = {
     "critical": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="var(--critical)"/><path d="M5.4 5.4l5.2 5.2M10.6 5.4l-5.2 5.2" stroke="var(--accent-ink)" stroke-width="1.8" stroke-linecap="round"/></svg>',
     "none": '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="var(--muted)" stroke-width="1.6"/></svg>',
 }
+# Status in words (#551): a pill with a line icon and a word, never a colour alone. `Fine`, `Look soon`, `Late`,
+# `Act now` and `Waiting` are the only five; the class sets the colour, the word carries the meaning.
+_PILL_PATHS = {
+    "check": '<circle cx="8" cy="8" r="6"/><path d="M5.4 8.2l1.8 1.8 3.4-3.7"/>',
+    "clock": '<circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.2 1.4"/>',
+    "late": '<circle cx="8" cy="8" r="6"/><path d="M8 4.8v3.8M8 11.2h.01"/>',
+    "alert": '<path d="M8 2.2l6 10.6H2z"/><path d="M8 6.6v2.8M8 11.4h.01"/>',
+    "pause": '<circle cx="8" cy="8" r="6"/><path d="M6.6 5.8v4.4M9.4 5.8v4.4"/>',
+}
+PILLS = {"good": ("good", "Fine", "check"), "look": ("warn", "Look soon", "clock"), "late": ("crit", "Late", "late"),
+         "act": ("crit", "Act now", "alert"), "wait": ("idle", "Waiting", "pause")}
+STATE_PILL = {"good": "good", "warning": "look", "critical": "act", "none": "wait"}     # ICON's states, in words
+
+
+def pill(state: str, extra: str = "") -> str:
+    """The pill for a state: one of PILLS, or one of ICON's (good, warning, critical, none). `extra` is added to its class."""
+    cls, word, icon = PILLS[STATE_PILL.get(state, state)]
+    return ('<span class="st %s%s"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" '
+            'stroke-linecap="round" stroke-linejoin="round">%s</svg>%s</span>' % (cls, " " + extra if extra else "", _PILL_PATHS[icon], word))
+
+
 CHEV = '<svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5L10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'
 
 
@@ -7177,6 +7198,19 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .grip::after,.hide::after,.totab::after,.tick::after,.pchev::after,button.chip::after,.jname::after{content:"";position:absolute;inset:-9px -6px}
 .trow.done .tick::after{inset:auto}
 .act,.btn,.tabs button,.seg button,.cog,.chip,.card,.thread,.trow,.yrow{transition:background-color .18s ease,border-color .18s ease,color .18s ease}
+/* status in words: a pill with an icon and a word, colour as support only */
+.st{display:inline-flex;align-items:center;gap:6px;padding:2px 10px 2px 8px;border-radius:999px;font-size:13px;font-weight:600;line-height:1.45;white-space:nowrap;flex:none}
+.st svg,.status .st svg{width:15px;height:15px;flex:none}
+.st.good{color:var(--good);background:var(--good-wash)}.st.warn{color:var(--warning);background:var(--warning-wash)}
+.st.crit{color:var(--critical);background:var(--critical-wash)}.st.idle{color:var(--ink2);background:var(--sunk)}
+.item>.st{margin-left:auto}.chip .st{padding:0 8px 0 6px;margin-right:4px}
+.jobs .row{grid-template-columns:18px minmax(0,1fr) 180px 86px minmax(200px,auto)}
+@media (max-width:820px){.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}}
+/* a tab or a hidden card that holds trouble says so in words (LAYOUT_JS sets the dot's class and title) */
+.tabs .dot.tr,.unhide .dot.tr{width:auto;height:auto;border-radius:999px;padding:0 8px;font-size:12px;font-weight:600;line-height:20px}
+.tabs .dot.tr::after,.unhide .dot.tr::after{content:"Look soon"}.tabs .dot.tr.critical::after,.unhide .dot.tr.critical::after{content:"Act now"}
+.tabs .dot.tr.warning,.unhide .dot.tr.warning{background:var(--warning-wash);color:var(--warning)}
+.tabs .dot.tr.critical,.unhide .dot.tr.critical{background:var(--critical-wash);color:var(--critical)}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
 """
 
@@ -7558,9 +7592,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         for sec, n in t["counts"].items():
             tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
     todo_card = card("todo", "Todo", "", tb) if TD else ""
-    ib = "".join('<a class="item" data-ok="%d" href="%s">%s<div class="name%s">%s<small>%s</small></div></a>' % (
-        0 if n else 1, E(link(f)), ICON["warning" if n else "good"], zone_class(name, ZS), zone_name(name, ZS),
-        "%d waiting" % n if n else "empty") for name, f, n in IB)
+    ib = "".join('<a class="item" data-ok="%d" href="%s"><div class="name%s">%s<small>%s</small></div>%s</a>' % (
+        0 if n else 1, E(link(f)), zone_class(name, ZS), zone_name(name, ZS),
+        "%d waiting" % n if n else "empty", pill("wait" if n else "good")) for name, f, n in IB)
     waits = ('<div class="gacts">%s</div>' % request_button("Process the Inbox", "process the inbox", ws)) if any(n for _, _, n in IB) else ""
     inbox_card = card("inboxes", "Inboxes", "", '<div class="tiles">%s</div>%s' % (ib, waits))
 
@@ -7582,7 +7616,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                 '<div class="ink2 num"%s>%s</div><span class="status%s" data-tip="%s">%s%s</span></div>%s'
                 % (ok, ICON[j["state"]], i, E(j["name"]), about, E(j["schedule"]), strip,
                    ' data-tip="took %ss"' % E(str(j["seconds"])) if j["seconds"] is not None else "", E(last), " running" if j["running"] else "",
-                   E("Last run: " + j["status"]) if j["running"] else "", ICON[j["state"]], E(said) + (
+                   E("Last run: " + j["status"]) if j["running"] else "", pill("late" if j["status"].startswith("late") else j["state"]), E(said) + (
                        ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
                        % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
                        if acting and j["name"] in sched and not j["running"] else ""),
@@ -7617,7 +7651,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             """A refused tool the deny list names is red; one no allow rule named is amber."""
             return "".join('<span class="chip" title="%s">%s%s</span> ' % (
                 "On the deny list" if denied_by_list(t, L["deny"]) else "Not allowed for this job",
-                ICON["critical" if denied_by_list(t, L["deny"]) else "warning"].replace("<svg ", '<svg width="12" height="12" '), E(t))
+                pill("critical" if denied_by_list(t, L["deny"]) else "warning"), E(t))
                 for t in sorted(tools)) or '<span class="muted">none</span>'
         trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td class="r">%s</td><td>%s</td>'
                       '<td class="r">%d</td><td class="r">%d</td></tr>'
@@ -7633,13 +7667,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # ---- repositories and wikis
     def waiting_long(r):
         return bool(r["dirty"] and r.get("since") and now - r["since"] > STALE_CHANGES)
-    rr = "".join('<div class="item" data-ok="%d" data-tip="%s">%s<div class="name">%s<small>%s</small></div></div>' % (
+    rr = "".join('<div class="item" data-ok="%d" data-tip="%s"><div class="name">%s<small>%s</small></div>%s</div>' % (
         0 if r.get("unread") or waiting_long(r) else 1,
         E("git status failed or took over 30 seconds, so its changes are not known" if r.get("unread") else
           "; ".join(x for x in ("last commit " + (age(r["last"], now) if r["last"] else "never"), say_kinds(r["changes"]),
                                 "the oldest change made " + age(r["since"], now) if r["dirty"] and r.get("since") else "") if x)),
-        ICON["warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none"], E(r["name"]),
-        "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed") for r in R)
+        E(r["name"]), "could not be read" if r.get("unread") else say_files(r["dirty"]) if r["dirty"] else "all committed",
+        pill("warning" if r.get("unread") or waiting_long(r) else "good" if not r["dirty"] else "none")) for r in R)
     changed = sum(1 for r in R if r["dirty"])
     notices = "".join(attn_row(k, t, h) for k, t, h in attn if isinstance(h, dict) or h.startswith("https://"))
     repos_card = card("repos", "Repositories", "%d with changes" % changed if changed else "",

@@ -204,5 +204,34 @@ class Page(unittest.TestCase):
             self.assertTrue(.15 <= float(m) <= .2, m)
 
 
+class Words(unittest.TestCase):
+    """Status in words (#551): every health state is a pill with an icon and a word, so colour never carries it alone."""
+
+    def test_each_state_renders_a_word_and_an_icon(self):
+        said = {"good": "Fine", "warning": "Look soon", "critical": "Act now", "none": "Waiting", "late": "Late",
+                "look": "Look soon", "act": "Act now", "wait": "Waiting"}
+        for state, word in said.items():
+            html = status.pill(state)
+            self.assertRegex(html, r">%s</span>$" % word, state)
+            self.assertIn("<svg", html, state)
+            self.assertIn('aria-hidden="true"', html, state)
+        self.assertEqual({"Fine", "Look soon", "Late", "Act now", "Waiting"}, {w for _, w, _ in status.PILLS.values()})
+
+    def test_no_emoji_in_the_icons(self):
+        for body in status._PILL_PATHS.values():
+            self.assertTrue(body.isascii())
+
+    def test_a_row_with_a_state_has_its_word_beside_it(self):
+        html = Page.html
+        rows = re.findall(r'<a class="item"[^>]*>.*?</a>', html, re.S)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertRegex(row, r'class="st [a-z]+"><svg[^>]*>.*?</svg>(Fine|Look soon|Late|Act now|Waiting)</span>')
+
+    def test_a_dot_is_never_the_only_sign_of_a_state_in_the_built_markup(self):
+        # what the script draws later has its own title; every dot the build writes has words beside it or is a pill
+        self.assertNotRegex(Page.html, r'<span class="dot (?:good|warning|critical)"')
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1224,7 +1224,7 @@ class TestOpensOnTheWork(StatusCase):
         row = self.row(html, long_thread)
         self.assertIn(">%s</a>" % long_thread, row)                                # whole, never cut
         self.assertIn("chase the quote " * 19, row)
-        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:11.5px;overflow:hidden;"
+        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:12px;overflow:hidden;"
                       "text-overflow:ellipsis;white-space:nowrap}", status.CSS)    # one line, cut by the browser
         self.assertIn(".thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}", status.CSS)
 
@@ -2682,19 +2682,22 @@ class TestNameAndMark(StatusCase):
         self.assertNotIn("<style>", icon)                   # sips draws it without a stylesheet
         self.assertIn("mod.app_icon()", (Path(status.__file__).parent / "app" / "make-app.sh").read_text())
 
-    def test_display_headings_in_baskerville(self):
-        # Garrick's typeface, from fonts already on the machine: nothing is fetched.
+    def test_display_face_for_big_numbers_and_sans_for_the_rest(self):
+        # The Baskerville stack stays, from fonts already on the machine, for the big numbers; the headings take the sans (#551).
         stack = '"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif'
         self.assertIn("--display:%s;" % stack, status.CSS)
-        for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*", r"\.hero \.fig\{[^}]*"):
-            self.assertIn("var(--display", re.search(rule, status.CSS + status.BAR_CSS).group(0))
-        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:14px/1.45 system-ui', status.CSS)
-        self.assertNotIn("@font-face", status.CSS)
+        self.assertIn("var(--display", re.search(r"\.hero \.fig\{[^}]*", status.CSS).group(0))
+        for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*"):
+            self.assertIn("var(--sans)", re.search(rule, status.CSS + status.BAR_CSS).group(0))
+        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:15px/1.55 var(--sans)', status.CSS)
+        self.assertNotIn("@font-face", status.CSS)           # the faces are embedded by font_css(), not written in the block
         self.assertNotIn("url(", status.CSS)
 
-    def test_accent_is_the_brand_blue_and_readable(self):
+    def test_accent_is_readable_in_both_themes(self):
         light = re.search(r":root\{[^}]*--accent:(#[0-9a-f]{6})", status.CSS).group(1)
-        self.assertEqual(status.BRAND.lower(), light)
+        self.assertEqual("#2f5fc4", light)                  # the issue's accent: 4.5 to 1 on the page and the cards (#551)
+        for bg in ("#f4f2ed", "#fbfaf7", "#ffffff"):
+            self.assertGreaterEqual(contrast(light, bg), 4.5, "%s on %s" % (light, bg))
         dark = re.findall(r'color-scheme:dark;[^}]*?--page:(#[0-9a-f]{6});[^}]*?--surface:(#[0-9a-f]{6});--raise:(#[0-9a-f]{6});'
                           r'[^}]*?--accent:(#[0-9a-f]{6})', status.CSS)
         self.assertEqual(2, len(dark))                      # the automatic dark theme and the chosen one agree

@@ -1066,6 +1066,19 @@ class TestLongNoteFromItsPlan(QueueCase):
             fq.Planner(self.root, budget=0).plan(THREAD)
         run.assert_not_called()
 
+    def test_two_calls_sharing_one_planner_spend_one_budget(self):
+        write(self.root / THREAD, note_text(entries="".join(dated(n) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
+        it = dict(KINDS["note-long"], path=THREAD, line=NOTE_LINE % {"p": THREAD}, scope="Zones/Work")
+        planner = fq.Planner(self.root)
+        with mock.patch.object(fq.time, "monotonic", return_value=planner.end + 1):             # the one budget is spent
+            with mock.patch.object(fq.subprocess, "run") as run:
+                fq.forecast_questions([it], set(), self.root, planner)
+                fq.forecast_questions([it], set(), self.root, planner)
+        run.assert_not_called()
+        with mock.patch.object(fq.subprocess, "run", side_effect=subprocess.TimeoutExpired("history.py", 1)) as run:
+            fq.forecast_questions([it], set(), self.root)                                       # no planner given: a fresh one, as before
+        self.assertEqual(1, run.call_count)
+
     def test_every_answer_a_no_move_question_sends_is_a_valid_request(self):
         q = self.ask(note_text(above="## Thesis\n\n" + "word " * 30))
         ops = __import__("test_page_action").pa.ops_lib(self.root)

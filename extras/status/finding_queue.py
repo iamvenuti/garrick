@@ -475,12 +475,13 @@ def unlisted_wall(item: dict, scope: str) -> dict:
             "free": "About a private-material finding in %s: " % place_, "recommended": "take-out"}
 
 
-def forecast_questions(items: List[dict], hidden: set, ws=None) -> Dict[str, List[dict]]:
+def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) -> Dict[str, List[dict]]:
     """The queue of each scope, from the forecast's findings: the list the scope's line on the card counts, less
     what Not now has put off (a wall finding and missing commit hooks are never put off, whatever a file says). The mechanical ones are not
-    asked: the card fixes them together. With `ws`, a long note is asked from its plan (#539); without it, from its kind."""
+    asked: the card fixes them together. With `ws`, a long note is asked from its plan (#539); without it, from its kind. A `planner` shared by several calls spends one budget for all of them."""
     out: Dict[str, List[dict]] = {}
-    planner = Planner(ws) if ws is not None else None
+    if planner is None and ws is not None:
+        planner = Planner(ws)
     for item in items:
         plain = plain_kind(item)
         if plain == MECHANICAL:

@@ -4,6 +4,42 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.67.0] - 2026-11-13
+
+The Context card asks you only what needs your judgment. A wall false alarm is cleared from the app once you have seen both texts, and a stock sentence that three or more zones share no longer raises one. Hooks, small fixes and the answers you gave happen on their own. The status page has a new look: bigger text with more contrast, status in words, and an Overview that opens on what needs you first.
+
+**Upgrading.**
+- The wall check no longer counts a sentence as a quote when files of three or more zones hold it, such as the fixed line an intake note carries. There is nothing to set.
+- A wall false alarm can be allowed from the Mac app, with *The words are mine, keep them*, after *Show me both texts*. The terminal's `check.py allow` works as before.
+- The update installs any wall check hook that is missing, in every zone, in `Wikis/` and in each repository inside a project. The first update to 0.67.0 does this too.
+- *Fix them* and *Work them in* are gone. The nightly run makes the small fixes and works in the answers still waiting. Closing the queue after you answer works your answers in straight away.
+- The page has a new look. It carries its own font, so it loads nothing from the network.
+
+### Added
+
+- **The wall question names its file and shows both texts** (#548). In the Mac app, the question runs the wall check for its place when it opens, and says which file it is about. *Show me both texts* comes first. It shows the words the two files share, with a few words around them, inside the dialog only. Nothing is written to disk, to the page or to a log. No answer is marked as recommended, and *Take it out* is offered only once the file is named.
+- ***The words are mine, keep them*** (#550). It appears after *Show me both texts*, in the Mac app only. It lets that one finding through in that one file for as long as the file stays as you saw it, and it records the allowance as `by: page` in the same ledger `check.py allow` writes. Your assistant and the ask box cannot write an allowance. *Remove* under Settings › Walls takes it back.
+- **Hooks install themselves** (#550). The update and the nightly run add a missing wall check hook. A hook of your own in its place is left alone, and you get one question about it: *Add the wall check to my hook*.
+- **Answers are worked in without a button** (#550). Closing the queue after answering sends one request for that place. The nightly run works in whatever is still waiting, one assistant call for each place, under the scheduled jobs' limits. A fix the night could not make, or an answer it could not work in, comes back as a question that gives the reason in plain words.
+- **The Overview says what needs you first** (#551). It opens on one sentence and one button, such as *Three things need you.*, or *Nothing needs you right now.* Under it come *Waiting on you now*, *Your work* as a table that stacks on a phone, and an *At a glance* column with Todo counts per zone, health in words, inbox counts and *Explore the graph*. Each tab shows a count.
+- **Status in words** (#551). Every health dot is now a pill with an icon and a word: *Fine*, *Look soon*, *Late*, *Act now* or *Waiting*.
+
+### Changed
+
+- **The wall check passes stock wording** (#549). A run of words that files of three zones or more hold is not read as a quote. A sentence lifted from one meeting or one note is still refused, however many notes of one or two zones repeat it. When the count cannot be made, the check refuses as before.
+- **One table decides what is asked** (#550). Every kind of finding is either fixed on its own or asked as a question with real answers. A question no longer shows a command outside *Details*.
+- **The status page is easier to read** (#551). The body text is 15px and nothing is under 12px. Every text colour reaches 4.5:1 in light and dark. One embedded font is used, Plus Jakarta Sans, under the SIL Open Font License, and the Baskerville face stays for the big numbers. Every control has a visible focus ring and a target at least 40px high.
+- The nightly run has two more steps, `hooks` and `answers`. To stay within its hour, the effort step now has 300 seconds instead of 600.
+
+### Fixed
+
+- Merge hook findings no longer reach the Context card as a question whose only answer is *Something else*.
+
+### Removed
+
+- *Fix them*, *Work them in* and the count of answers to work in, from the Context card.
+- The *Install the wall check* question. The update and the nightly run install the hook.
+
 ## [0.66.0] - 2026-11-13
 
 Everything in this release removes or repairs something. The Context tab is one card that lists what needs you, and wiki questions, proposed verdicts and decisions to review are answered in the same queue as the findings. The *All findings* view is gone. Todo ticks keep their state when the page rebuilds, and *Check for updates* asks before it skips a file you have not committed.

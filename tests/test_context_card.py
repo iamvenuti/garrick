@@ -139,10 +139,13 @@ class TestWorkThemIn(CardCase):
         card = self.card(self.page())
         personal = card[card.index('data-scope="Zones/Personal"'):card.index('data-scope="Zones/Work"')]
         work = card[card.index('data-scope="Zones/Work"'):]
-        self.assertIn('data-request="work through the open questions"', work)
+        self.assertIn('data-request="work in the answers in Work"', work)             # the request names its own line's place
         self.assertIn(">Work them in</button>", work)
         self.assertNotIn("Work them in", personal)
         self.assertEqual(1, card.count(">Work them in</button>"))
+        for req in re.findall(r'data-request="(work in the answers[^"]*)"', card):         # never another zone's name on a line
+            self.assertNotIn("Personal", req)
+            self.assertTrue(req.startswith("work in the answers in "), req)
 
 
 class TestLater(CardCase):

@@ -1406,7 +1406,10 @@ def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[st
                              "about %d minutes" % minutes_for(walls, len(qs) - walls) if qs else "") if p]
         buttons = ""
         if waiting:
-            buttons += request_button("Work them in", "work through the open questions", ws, "act")
+            place = said(scope)[0]                  # the request names its own line's place, as the line holds it
+            if place == scope:
+                place = scope.split("/", 1)[-1]
+            buttons += request_button("Work them in", "work in the answers in %s" % place, ws, "act")
         if qs:
             buttons += '<button class="act primary" type="button" data-qopen="%s">Go through them</button>' % E(scope)
         out += ('<div class="need" data-scope="%s" data-n="%d"><span class="nsay"><b>%s</b>: %s</span><span class="nbtn">%s</span></div>'

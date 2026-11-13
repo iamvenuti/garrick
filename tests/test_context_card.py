@@ -187,9 +187,9 @@ const q2=el({dataset:{gk:'k2',wiki:'Meetings',file:'questions/b.md',kind:'wiki-q
 const work=el({dataset:{scope:'Zones/Work',name:'Work',work:'work in the answers in Work'}});
 const other=el({dataset:{scope:'Zones/Personal',name:'Personal',work:'work in the answers in Personal'}});
 work.querySelectorAll=(s)=>s==='[data-q]'?[q1,q2]:[];other.querySelectorAll=(s)=>s==='[data-q]'?[]:[];
-const posted=[];
+const posted=[];let scopes=[work,other];
 const dlg=el({dataset:{folder:'/w',today:'2026-11-13'},open:false,
- querySelectorAll:(s)=>s==='.qscope'?[work,other]:[],querySelector:()=>el(),
+ querySelectorAll:(s)=>s==='.qscope'?scopes:[],querySelector:()=>el(),
  addEventListener:(t,f)=>{(handlers[t]=handlers[t]||[]).push(f)},showModal(){this.open=true},close(){this.open=false;(handlers.close||[]).forEach(f=>f())},
  appendChild(b){this.last=b}});
 global.window={webkit:{messageHandlers:{garrick:{postMessage:(m)=>posted.push(m)}}}};
@@ -204,6 +204,9 @@ const steps=process.argv[3];
 open('Zones/Work');
 if(steps==='none'){dlg.close()}
 if(steps==='one'){acted('question-answer','Meetings','questions/a.md',true);dlg.close();dlg.open=true;dlg.close()}
+if(steps==='reload'||steps==='reload-twice'){acted('question-answer','Meetings','questions/a.md',true);
+ scopes=[other];handlers.close=[];handlers.docclick=[];dlg.open=false;new Function(js)();      // the page reloads: Work has no section any more
+ dlg.open=true;dlg.close();if(steps==='reload-twice'){dlg.open=true;dlg.close()}}
 if(steps==='failed'){acted('question-answer','Meetings','questions/a.md',false);dlg.close()}
 if(steps==='later'){acted('question-later','Meetings','questions/a.md',true);dlg.close()}
 console.log(JSON.stringify(clicked));
@@ -232,12 +235,12 @@ class TestAnswersAreWorkedInWithoutAButton(CardCase):
     def test_closing_a_queue_that_took_an_answer_sends_one_request_and_a_second_close_none(self):
         js = fq.QUEUE_JS
         # a successful answer counts for its own place, a failed one and a close or a later do not
-        self.assertIn("if(q.verb==='question-answer'||q.verb==='question-decide')taken[cur.dataset.scope]", js)
+        self.assertIn("if(q.verb==='question-answer'||q.verb==='question-decide')(taken[cur.dataset.scope]=taken[cur.dataset.scope]||{n:0,work:cur.dataset.work||''}).n++", js)
         close = js[js.index("dlg.addEventListener('close',function(){var sent=taken;taken={};"):]
         close = close[:close.index("});\n", 10)]
-        self.assertIn("handoff(el.dataset.work)", close)                       # the request that was the button's
+        self.assertIn("handoff(t.work)", close)                                # the request that was the button's, kept with the count
         self.assertIn("taken={}", close)                                       # cleared as it goes: a second close has nothing to send
-        self.assertIn("if(!sent[sc])return", close)                            # a place that took none sends none
+        self.assertIn("if(!t||!t.n||!t.work)return", close)                            # a place that took none sends none
         self.assertIn("taken:taken", js)                                        # a reload while the queue is open keeps the count
 
     def test_answers_the_night_could_not_work_in_are_a_question_of_their_own_place_only(self):
@@ -263,11 +266,12 @@ class TestAnswersAreWorkedInWithoutAButton(CardCase):
             script.write_text(QUEUE_HARNESS, encoding="utf-8")
             queue.write_text(fq.QUEUE_JS, encoding="utf-8")
             sent = {}
-            for steps in ("none", "one", "failed", "later"):
+            for steps in ("none", "one", "failed", "later", "reload", "reload-twice"):
                 out = subprocess.run([node, str(script), str(queue), steps], capture_output=True, text=True, timeout=60)
                 self.assertEqual(0, out.returncode, out.stderr)
                 sent[steps] = json.loads(out.stdout.strip().splitlines()[-1])
-        self.assertEqual({"none": [], "one": ["work in the answers in Work"], "failed": [], "later": []}, sent)
+        self.assertEqual({"none": [], "one": ["work in the answers in Work"], "failed": [], "later": [],
+                          "reload": ["work in the answers in Work"], "reload-twice": ["work in the answers in Work"]}, sent)   # a reload that removes the section loses nothing
 
 
 class TestLater(CardCase):

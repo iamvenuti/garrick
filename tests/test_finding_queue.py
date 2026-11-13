@@ -169,7 +169,8 @@ class TestPlainWording(unittest.TestCase):
         for a in fq.ANSWERS["wall"]:
             self.assertNotIn("keep", a["label"].lower())
         self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
-                          "meeting-long": ("later",), "hooks-missing": ("install",), "wall": ()}, fq.VERB_ANSWERS)
+                          "meeting-long": ("later",), "hooks-missing": ("install",), "wall": (),
+                          "verdict": ("later",), "decision-review": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for answers in fq.ANSWERS.values():
             self.assertIn(answers[0]["action"], ("handoff", "run"))                          # the recommended one does something
 
@@ -636,6 +637,186 @@ class TestQueueOnThePage(QueueCase):
         self.assertIn('class="act webonly" type="button" data-request="nurture the context"', card)
 
 
+def wiki_q(wiki="Meetings", file="questions/261104 - Renewal owner.md", **more):
+    q = {"wiki": wiki, "file": file, "status": "open", "title": "Who owns the renewal for Acme now?", "why": "Two meetings name different people.",
+         "asked": "2026-11-04", "later": "", "due": False, "shown": True, "zone": "Work",
+         "origin": {"name": "261104 - Acme weekly.md", "href": "x"}, "pages": [{"name": "wiki/Acme.md", "href": "y"}],
+         "writes": {"answer": ["a", "b"], "later": ["b"], "close": ["b"], "decide": ["a", "c", "b"]}, "verdict": "", "reason": ""}
+    q.update(more)
+    return q
+
+
+DECISION = {"file": "wiki/decisions/261020 - Plan B.md", "title": "Plan B stays Harbour", "status": "valid", "decided": "2026-10-20",
+            "revisit": "a later meeting named another vendor.", "zone": "Work", "href": "z"}
+
+
+def asked(zone="Work", questions=(), decisions=(), knowledge=()):
+    return {"buckets": {zone: {"questions": list(questions), "decisions": list(decisions), "answered": 0, "waiting": 0, "review": {"read": []}}},
+            "knowledge": list(knowledge)}
+
+
+def options(html):
+    """(number, data-id, data-fa as a dict) of each answer of a question's html, in order; the field has no data-fa and is left out."""
+    out = []
+    marks = list(re.finditer(r'<(?:button|div) class="opt[^"]*"[^>]*data-id="([^"]*)"[^>]*><span class="n">(\d+)</span>', html))
+    for i, m in enumerate(marks):
+        chunk = html[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(html)]
+        own = re.search(r'data-fa="([^"]*)"', html[m.start():m.end()]) or re.search(r'data-fa="([^"]*)"', chunk)
+        out.append((int(m.group(2)), m.group(1), json.loads(htmllib.unescape(own.group(1)))))
+    return out
+
+
+class TestTheWikisOwnQuestionsOnTheQueue(unittest.TestCase):
+    """#542: a wiki question, a proposed verdict and a decision to review are asked in the queue, each answered through the verb the
+    Questions panel's buttons used, and an item is in the queue of its own zone only."""
+
+    def one(self, data):
+        qs = fq.with_asked({}, fq.asked_questions(data, set()))
+        return next(iter(qs.values()))
+
+    def test_a_wiki_question_has_its_field_first_then_decide_later_and_close(self):
+        q = self.one(asked(questions=[wiki_q()]))[0]
+        h = fq.question_html(q)
+        self.assertIn('<span class="tag">Meetings question</span><p class="qs">Who owns the renewal for Acme now?</p>', h)
+        self.assertIn("Two meetings name different people.", h)
+        self.assertRegex(h, r'<label class="opt other" data-ansrow><span class="n">1</span><input type="text"[^>]*placeholder="Type the answer"')
+        got = [(n, i) for n, i, _ in options(h)]
+        self.assertEqual([(2, "decide"), (3, "later"), (4, "close")], got)
+        self.assertIn("Record as a decision", h)
+        self.assertIn('type="date" data-day', h)                                       # Later with its day
+        self.assertNotIn("data-free", h)                                               # the field is the answer, there is no second one
+        self.assertIn("<summary>From</summary><code>raw: 261104 - Acme weekly.md · pages: wiki/Acme.md</code>", h)
+        self.assertEqual("", q["recommended"])
+
+    def test_a_knowledge_question_has_no_decision(self):
+        q = self.one(asked(knowledge=[wiki_q("Knowledge", "questions/261105 - Licence.md", zone=None, writes={"answer": [], "later": [], "close": []})]))[0]
+        h = fq.question_html(q)
+        self.assertEqual("Wikis/Knowledge", q["scope"])
+        self.assertIn('<span class="tag">Knowledge question</span>', h)
+        self.assertNotIn("Record as a decision", h)
+        self.assertEqual(["later", "close"], [i for _, i, _ in options(h)])
+
+    def test_a_proposed_verdict_recommends_accept_and_keeps_the_field_hidden_until_asked(self):
+        q = self.one(asked(questions=[wiki_q(verdict="done", reason="the 6 November call settled it")]))[0]
+        h = fq.question_html(q)
+        self.assertIn('<span class="tag">Proposed verdict</span>', h)
+        self.assertIn("Proposed as done: the 6 November call settled it.", h)
+        got = options(h)
+        self.assertEqual([(1, "accept"), (2, "answer-myself"), (3, "later")], [(n, i) for n, i, _ in got])
+        self.assertEqual("accept", q["recommended"])
+        self.assertIn('class="opt rec tacts" type="button" data-id="accept"', h)
+        self.assertEqual("reveal", got[1][2]["a"])
+        self.assertRegex(h, r'<label class="opt other" data-ansrow hidden><span class="n">4</span>')
+        self.assertIn("Not now", h)
+
+    def test_a_decision_to_review_is_opened_or_put_off_and_never_confirmed_here(self):
+        q = self.one(asked(decisions=[DECISION]))[0]
+        h = fq.question_html(q)
+        self.assertIn('<span class="tag">Decision to review</span>', h)
+        self.assertIn("Plan B stays Harbour", h)
+        self.assertIn("Flagged: a later meeting named another vendor. Only you change a decision.", h)
+        got = options(h)
+        self.assertEqual([(1, "open"), (2, "later")], [(n, i) for n, i, _ in got])
+        for gone in ("It still holds", "<input"):
+            self.assertNotIn(gone, h)                                                  # nothing writes a decision's status
+        self.assertEqual([{"verb": "note-open", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md"}], got[0][2]["reqs"])
+
+    def test_each_answer_is_the_verb_the_panels_button_used(self):
+        h = fq.question_html(self.one(asked(questions=[wiki_q()]))[0])
+        field = json.loads(htmllib.unescape(re.search(r'data-ans="([^"]+)"', h).group(1)))
+        base = {"wiki": "Meetings", "file": "questions/261104 - Renewal owner.md"}
+        self.assertEqual(dict(base, verb="question-answer"), field["req"])             # the words are added when it is sent
+        by = {i: d["req"] for _, i, d in options(h) if "req" in d}
+        self.assertEqual(dict(base, verb="question-decide"), by["decide"])
+        self.assertEqual(dict(base, verb="question-later"), by["later"])
+        self.assertEqual(dict(base, verb="question-close"), by["close"])
+        v = fq.question_html(self.one(asked(questions=[wiki_q(verdict="stale")]))[0])
+        by = {i: d["req"] for _, i, d in options(v) if "req" in d}
+        self.assertEqual(dict(base, verb="question-close"), by["accept"])               # as the panel's Accept: a close, nothing more
+        self.assertEqual({"verb": "finding", "kind": "verdict", "path": "Wikis/Meetings/questions/261104 - Renewal owner.md", "answer": "later"}, by["later"])
+        d = fq.question_html(self.one(asked(decisions=[DECISION]))[0])
+        self.assertEqual({"verb": "finding", "kind": "decision-review", "path": "Wikis/Meetings/wiki/decisions/261020 - Plan B.md", "answer": "later"},
+                         {k: v for k, v in options(d)[1][2]["req"].items()})
+
+    def test_the_scripts_send_the_panels_fields_and_parse(self):
+        js = fq.QUEUE_JS
+        for held in ("Object.assign({},d.req,{words:w})", "{until:v}", "Pick a day after today.", "/^question-/", "x.dataset.wiki===q.wiki"):
+            self.assertIn(held, js)
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True)
+            self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_the_order_is_walls_first_then_oldest_first_and_a_finding_has_no_day(self):
+        old = wiki_q(file="questions/260901 - Old.md", asked="2026-09-01", title="Old one")
+        new = wiki_q(file="questions/261105 - New.md", asked="2026-11-05", title="New one")
+        found = fq.question(item("judgment", "resume", THREAD, RESUME_LINE), "Zones/Work")
+        wall = fq.question(item("wall", "walls", "Zones/Work/Acme Review/Notes.md", WALL_LINE, listed=True), "Zones/Work")
+        out = fq.with_asked({"Zones/Work": [found, wall]}, fq.asked_questions(asked(questions=[new, old], decisions=[DECISION]), set()))
+        self.assertEqual(["wall", "wiki-question", "decision-review", "wiki-question", "resume-long"], [q["id"] for q in out["Zones/Work"]])
+        self.assertEqual(["Old one"], [q["sentence"] for q in out["Zones/Work"] if q["id"] == "wiki-question"][:1])
+        self.assertEqual(5, len({q["gk"] for q in out["Zones/Work"]}))
+
+    def test_an_item_is_in_the_queue_of_its_own_zone_only(self):
+        data = asked(questions=[wiki_q(), wiki_q(file="questions/x.md", zone="Personal", title="Not Work's")])
+        data["buckets"]["Personal"] = {"questions": [wiki_q(file="questions/y.md", zone="Personal", title="Personal one")], "decisions": [], "answered": 0, "waiting": 0}
+        out = fq.asked_questions(data, set())
+        self.assertEqual(["Who owns the renewal for Acme now?"], [q["sentence"] for q in out["Zones/Work"]])
+        self.assertEqual(["Personal one"], [q["sentence"] for q in out["Zones/Personal"]])
+        self.assertEqual(["Zones/Personal", "Zones/Work"], sorted(out))
+
+    def test_not_now_hides_a_verdict_or_a_decision_and_a_later_that_is_back_is_a_question_again(self):
+        vq = wiki_q(verdict="done")
+        key = fq.later_key("verdict", "Wikis/Meetings/questions/261104 - Renewal owner.md")
+        self.assertEqual({}, fq.asked_questions(asked(questions=[vq]), {key}))
+        dkey = fq.later_key("decision-review", "Wikis/Meetings/wiki/decisions/261020 - Plan B.md")
+        self.assertEqual({}, fq.asked_questions(asked(decisions=[DECISION]), {dkey}))
+        # a question put off to a day is not shown by the panel's data until the day, and then it is, with no count of "due today"
+        hidden = wiki_q(shown=False, status="later", later="2026-11-20")
+        self.assertEqual({}, fq.asked_questions(asked(questions=[hidden]), set()))
+        back = wiki_q(shown=True, status="later", later="2026-11-12", due=True)
+        got = fq.asked_questions(asked(questions=[back]), set())
+        self.assertEqual(1, len(got["Zones/Work"]))
+        self.assertNotIn("due", json.dumps(got["Zones/Work"][0]).lower())
+
+
+class TestNotNowForTheWikisKinds(ActionCase):
+    def setUp(self):
+        super().setUp()
+        write(self.root / "Wikis" / "Meetings" / "questions" / "261104 - Renewal owner.md", "---\nstatus: open\n---\n\n**Who owns it?**\n")
+        self.rel = "Wikis/Meetings/questions/261104 - Renewal owner.md"
+
+    def ask(self, **req):
+        return pa.perform(self.root, dict({"verb": "finding"}, **req), pa.ops_lib(self.root))[0]
+
+    def test_a_verdict_and_a_decision_are_put_off_in_the_pages_own_file_and_a_question_is_not(self):
+        for kind in ("verdict", "decision-review"):
+            got = self.ask(kind=kind, answer="later", path=self.rel)
+            self.assertTrue(got["ok"], got)
+        data = json.loads((self.root / "System" / "generated" / "status-later.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted([fq.later_key("verdict", self.rel), fq.later_key("decision-review", self.rel)]), sorted(data["later"]))
+        self.assertEqual("---\nstatus: open\n---\n\n**Who owns it?**\n", (self.root / self.rel).read_text(encoding="utf-8"))   # the file is as it was
+        for req in ({"kind": "wiki-question", "answer": "later"}, {"kind": "verdict", "answer": "accept"}, {"kind": "decision-review", "answer": "open"}):
+            self.assertFalse(self.ask(path=self.rel, **req)["ok"], req)
+
+    def test_every_request_the_wikis_kinds_send_is_valid_for_the_verb_it_names(self):
+        """No verb is new: the executor validates each one as it validates the panel's, so the wall check runs the same."""
+        ops = pa.ops_lib(self.root)
+        data = asked(questions=[wiki_q(), wiki_q(file="questions/b.md", verdict="done")], decisions=[DECISION])
+        sent = []
+        for q in fq.with_asked({}, fq.asked_questions(data, set()))["Zones/Work"]:
+            h = fq.question_html(q)
+            for m in re.finditer(r'data-(?:ans|fa)="([^"]+)"', h):
+                d = json.loads(htmllib.unescape(m.group(1)))
+                for req in d.get("reqs") or [d.get("req")]:
+                    if req:
+                        sent.append(dict(req, **({"words": "Dana does"} if req["verb"] in ("question-answer", "question-decide") else {}),
+                                         **({"until": "2026-11-20"} if req["verb"] == "question-later" else {})))
+        self.assertEqual({"question-answer", "question-decide", "question-later", "question-close", "note-open", "finding"}, {r["verb"] for r in sent})
+        for req in sent:
+            self.assertIsNone(ops.validate(req["verb"], req), req)
+
+
 class TestFindingVerb(ActionCase):
     def setUp(self):
         super().setUp()
@@ -952,3 +1133,4 @@ class TestRefusedAnswerOnTheQueue(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

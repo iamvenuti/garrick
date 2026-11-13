@@ -118,6 +118,11 @@ Each question has a small label (*Private material*, *Tidy up*, *Safety check*),
 | A meeting page too long | *Shorten it* (recommended), *Let me open it*, *Not now* |
 | Commit hooks missing | *Install the wall check* (recommended) |
 | A wall finding | *Take it out* (recommended), *Show me both texts* |
+| A wiki question | the field for your answer, *Record as a decision* (a Meetings question only), *Later* with its day, *Close* |
+| A proposed verdict | *Accept* (recommended), *Answer it myself*, *Not now* |
+| A decision to review | *Open the decision*, *Not now* |
+
+The queue also holds the wiki's own questions, each in the queue of the zone it belongs to and in no other: a question of the Meetings wiki in its zone's, a question of the Knowledge wiki, which has no zone, in the Knowledge wiki's. Their label says the kind: *Meetings question*, *Knowledge question*, *Proposed verdict*, *Decision to review*. A wiki question has the field for the answer first, as the first numbered answer, and under *From* the raw record and the pages the answer would change, by name. *Later* takes a day after today, and the question is hidden until that day, when it is in the queue again; there is no count of questions due. A proposed verdict says what was proposed and why; *Accept* closes the question, as the Questions panel's *Accept* did, and *Answer it myself* shows the field. A decision to review is opened in your notes app: only you change a decision's status, so the queue has no answer that does. These answers go through the page's own actions, `question-answer`, `question-decide`, `question-later`, `question-close` and `note-open`, and *Not now* on a verdict or a decision through `finding`, so the commit and its wall check are the same as for any other answer. Order, in every queue: wall findings first, then the oldest first by the day a question was asked or a decision made; what carries no day, a finding of the last Nurture run, follows.
 
 Any other kind shows the check's own text as the sentence, under its label, with *Something else* as its only answer; a test lists the kinds that have plain wording, so a new kind gets none silently.
 

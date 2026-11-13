@@ -91,7 +91,14 @@ zone's repository, as the skills would:
                 the reply, state "waits", carries what the yes would change), and only when
                 the running version is older than it by semantic comparison;
                 a build that is not older, or that cannot be read, is refused
-                with the reason. The report comes back as counts and lists
+                with the reason. The report comes back as counts and lists.
+                When the plan lists Garrick-shipped files with changes not
+                committed (its `uncommitted`), nothing is applied and the reply,
+                state "held", names them by path and repository. {"held": "commit"}
+                then commits those paths only, one commit per repository, through
+                the repository's own hook, and applies; {"held": "rest"} applies
+                and skips them. The paths come from a plan made on that request,
+                never from the request
     walls-unallow  takes an allowance away (allow once): {"path", "id"}, the file
                 from the workspace root and the refusal's id. The ledger
                 System/walls-allowed.json loses the entry and the refusal comes
@@ -1395,10 +1402,96 @@ def release_notes_url(state: dict) -> str:
     return url if url.startswith("https://github.com/") else ""
 
 
-def release_update(ws: Path) -> dict:
+HELD_CHOICES = ("commit", "rest")
+
+
+def plan_of(ws: Path, tag: str):
+    """The update's dry run, as release.py gives it: (the plan, or None, the process)."""
+    plan = release_run(ws, "update", "--tag", tag, "--json", timeout=RELEASE_UPDATE_TIMEOUT)
+    try:
+        planned = json.loads(plan.stdout) if plan.returncode == 0 else None
+    except ValueError:
+        planned = None
+    return (planned if isinstance(planned, dict) else None), plan
+
+
+def held_files(ws: Path, planned: dict) -> list:
+    """The files the plan says an update would skip for changes not committed, as [(repository, path in it, path from the top)], each
+    checked to be a relative path inside the workspace and under its repository. A plan from a release that does
+    not list them gives none, and the update applies as it did. Anything that does not read as a path is refused:
+    nothing is committed or applied on a plan this cannot trust."""
+    listed = planned.get("uncommitted")
+    if listed is None:
+        return []
+    if not isinstance(listed, list):
+        raise Refused("the plan's list of files with changes not committed was not readable, so nothing was applied")
+    found = []
+    for x in listed:
+        path, repo = (x.get("path"), x.get("repo")) if isinstance(x, dict) else (None, None)
+        if not (isinstance(path, str) and isinstance(repo, str) and path and repo):
+            raise Refused("the plan's list of files with changes not committed was not readable, so nothing was applied")
+        for part in (path, repo):
+            pure = Path(part)
+            if pure.is_absolute() or ".." in pure.parts or "\n" in part or "\0" in part:
+                raise Refused("%s is not a path inside the workspace, so nothing was applied" % part)
+        inside = path if repo == "." else (path[len(repo) + 1:] if path.startswith(repo + "/") else "")
+        if not inside or (ws / path).is_symlink():
+            raise Refused("%s is not a file of %s, so nothing was applied" % (path, repo))
+        found.append((repo, inside, path))
+    return found
+
+
+def commit_held(ws: Path, held: list, version: str, *, wall: Optional[str]) -> list:
+    """Commit exactly `held`, one commit per repository, through each repository's own commit and its hooks, never
+    with --no-verify. A repository whose index holds something else, or that would not run the wall check, refuses
+    before any commit is made; a hook that refuses stops the rest, unstages what this staged, and leaves the file
+    as it was. Returns the commits made, as "<repository>: <N> files"."""
+    by = {}
+    for repo, rel, _ in held:
+        by.setdefault(repo, []).append(rel)
+    for repo, rels in by.items():
+        folder = ws if repo == "." else ws / repo
+        problem = commit_refusal(folder)
+        if problem:
+            raise Refused("%s, so nothing was committed" % problem)
+        code, out = git(folder, "diff", "--cached", "--name-only", "-z")
+        if code != 0:
+            raise Refused("git did not answer in %s, so nothing was committed" % repo)
+        other = [n for n in out.split("\0") if n and n not in rels]
+        if other:
+            raise Refused("%s has other changes staged (%s), so nothing was committed" % (repo, other[0]))
+    made = []
+    for repo, rels in by.items():
+        folder = ws if repo == "." else ws / repo
+        specs = [":(literal)" + r for r in rels]
+        n = len(rels)
+        message = "Before the update to %s: %d file%s committed" % (version, n, "" if n == 1 else "s")
+        code, why = git(folder, "add", "--", *specs)
+        if code == 0:
+            note_event("phase", "checking")
+            code, why = git(folder, "commit", "-q", "-m", message, "--", *specs, timeout=COMMIT_TIMEOUT)
+            if code is None:
+                why = "the wall check was still running after %s and was stopped" % how_long(COMMIT_TIMEOUT)
+        if code != 0:
+            git(folder, "reset", "-q", "--", *specs, timeout=10)
+            lines = [x for x in (why or "").strip().splitlines() if x.strip()]
+            if wall and why and code is not None and WALL_LINE.match(lines[-1] if lines else ""):
+                raise Refused(wall)                # the rules' sentence, as it stands
+            raise Refused("%s was not committed: %s. It is still not committed, and nothing was applied%s" % (
+                rels[0], lines[-1] if lines else "git refused",
+                "" if not made else "; already committed: " + ", ".join(made)))
+        made.append("%s: %d file%s" % (repo, n, "" if n == 1 else "s"))
+    return made
+
+
+def release_update(ws: Path, held: Optional[str] = None) -> dict:
     """The update itself, after a check found a newer release: read what it
     would change, then make the changes, and report in the update's own
-    terms. Refuses, with the reason, unless the running release is older."""
+    terms. Refuses, with the reason, unless the running release is older.
+    A plan that lists files with changes not committed is shown first and
+    nothing is applied; `held` is the answer: "commit" or "rest"."""
+    if held not in (None,) + HELD_CHOICES:
+        raise Refused("held is commit or rest")
     state = release_state(ws)
     if not state.get("update"):
         out = release_words(state)
@@ -1409,17 +1502,30 @@ def release_update(ws: Path) -> dict:
             out["line"] += " Nothing was updated."
         return {"say": out["line"], "release": dict(out, state="refused" if out["state"] == "newer" else out["state"])}
     tag = str(state["tag"])
-    plan = release_run(ws, "update", "--tag", tag, "--json", timeout=RELEASE_UPDATE_TIMEOUT)
-    try:
-        planned = json.loads(plan.stdout) if plan.returncode == 0 else None
-    except ValueError:
-        planned = None
-    if not isinstance(planned, dict):
+    planned, plan = plan_of(ws, tag)
+    if planned is None:
         why = (plan.stderr or plan.stdout).strip().splitlines()
         line = "The update did not start: %s" % (why[-1].rstrip(".") + "." if why else "release.py gave no report.")
         return {"say": line, "release": {"state": "failed", "line": line + " Nothing was changed.",
                                          "running": state["running"], "latest": state["latest"]}}
     split = [str(x) for x in (planned.get("actions") or {}).get("split") or []]
+    try:
+        waiting = held_files(ws, planned)
+        if waiting and held is None:      # asked, not applied: three answers on the page
+            line = "%s not committed. Nothing was updated yet." % (
+                "1 Garrick file has changes" if len(waiting) == 1 else "%d Garrick files have changes" % len(waiting))
+            return {"say": line, "release": {"state": "held", "line": line, "running": state["running"], "latest": state["latest"],
+                                             "uncommitted": [{"path": path, "repo": repo} for repo, _, path in waiting], "split": split}}
+        if waiting and held == "commit":
+            commit_held(ws, waiting, str(state["latest"]), wall=wall_refusal(ws))
+            again, _ = plan_of(ws, tag)            # a second plan: the list must now be empty
+            if again is None or held_files(ws, again):
+                raise Refused("some files still have changes not committed after the commit, so nothing was applied")
+    except Refused as exc:
+        wall = wall_refusal(ws)
+        line = str(exc) if wall and str(exc) == wall else "Nothing was updated: %s." % str(exc).rstrip(".")
+        return {"say": line, "release": {"state": "stopped", "line": line, "running": state["running"],
+                                         "latest": state["latest"], "split": split}}
     r = release_run(ws, "update", "--tag", tag, "--apply", "--json", timeout=RELEASE_UPDATE_TIMEOUT)
     try:
         result = json.loads(r.stdout)
@@ -4854,7 +4960,7 @@ def act(ws: Path, req, today=None, now=None):
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":
-        return release_update(ws)
+        return release_update(ws, req.get("held"))
     if req["verb"] == "note-read":
         return note_read(ws, req)
     if req["verb"] == "note-open":

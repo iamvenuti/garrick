@@ -1538,6 +1538,134 @@ class TestVerbsThatWentWithTheParties(ActionCase):
         self.assertIn("walls-unallow", pa.VERBS)
 
 
+class TestTheUpdateAsksBeforeSkippingAShippedFile(ActionCase):
+    """A Garrick file with changes not committed: the update button asks, commits only the files its plan names, or skips them."""
+
+    SHIPPED = "Zones/Work/AGENTS.md"
+
+    def setUp(self):
+        super().setUp()
+        write(self.work / "AGENTS.md", "# Work, as Garrick shipped it\n")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "shipped")
+        write(self.work / "AGENTS.md", "# Work, as Garrick ships it now\n")      # another session's edit, not committed
+        write(self.work / "Notes.md", "A note Garrick does not ship.\n")          # never listed, never committed
+        self.state = {"update": True, "tag": "v0.66.0", "running": "0.65.2", "latest": "0.66.0", "newer": True}
+        self.calls = []
+        self.listed = [{"path": self.SHIPPED, "repo": "Zones/Work"}]
+
+    def run_update(self, held=None, plans=None, apply_result=None):
+        """`plans`: what each dry run lists, in turn; the last one repeats."""
+        plans = list(plans if plans is not None else [self.listed])
+
+        def run(ws, *args, **kw):
+            self.calls.append(args)
+            if "--apply" in args:
+                out = apply_result or {"done": {"replace": [self.SHIPPED], "add": [], "restore": [], "merge": []}, "skipped": [],
+                                       "commits": [], "problems": [], "stamped": True, "unstamped": "", "then": []}
+            else:
+                out = {"actions": {"split": []}, "uncommitted": plans.pop(0) if len(plans) > 1 else plans[0]}
+            return mock.Mock(returncode=0, stdout=json.dumps(out), stderr="")
+        with mock.patch.object(pa, "release_state", return_value=self.state), mock.patch.object(pa, "release_run", run):
+            return pa.release_update(self.root, held)
+
+    def applied(self):
+        return any("--apply" in c for c in self.calls)
+
+    def test_no_shipped_file_with_changes_not_committed_applies_at_once(self):
+        said = self.run_update(plans=[[]])
+        self.assertEqual("updated", said["release"]["state"])
+        self.assertTrue(self.applied())
+
+    def test_a_plan_from_a_release_that_does_not_list_them_applies_as_it_did(self):
+        def run(ws, *args, **kw):
+            self.calls.append(args)
+            return mock.Mock(returncode=0, stdout=json.dumps({"actions": {"split": []}, "done": {}, "skipped": []}), stderr="")
+        with mock.patch.object(pa, "release_state", return_value=self.state), mock.patch.object(pa, "release_run", run):
+            pa.release_update(self.root)
+        self.assertTrue(self.applied())
+
+    def test_one_of_them_applies_nothing_and_names_the_file_and_the_repository(self):
+        said = self.run_update()
+        out = said["release"]
+        self.assertEqual("held", out["state"])
+        self.assertEqual(self.listed, out["uncommitted"])
+        self.assertFalse(self.applied())
+        self.assertEqual("M", git(self.work, "status", "--porcelain", "--", "AGENTS.md").strip()[:1])      # nothing was committed
+
+    def test_commit_these_commits_exactly_that_path_then_applies(self):
+        said = self.run_update("commit", plans=[self.listed, []])
+        self.assertEqual("updated", said["release"]["state"])
+        self.assertEqual([], said["release"]["skipped"])
+        self.assertEqual("Before the update to 0.66.0: 1 file committed", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertEqual(["AGENTS.md"], git(self.work, "show", "--name-only", "--format=", "HEAD").split())
+        self.assertEqual("?? Notes.md", git(self.work, "status", "--porcelain").strip())                   # the note is untouched
+        self.assertTrue(self.applied())
+
+    def test_another_sessions_staged_file_stops_it_before_any_commit(self):
+        git(self.work, "add", "Notes.md")
+        said = self.run_update("commit")
+        self.assertEqual("stopped", said["release"]["state"])
+        self.assertIn("Nothing was updated", said["release"]["line"])
+        self.assertEqual("shipped", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertFalse(self.applied())
+
+    def test_a_hook_that_refuses_stops_everything_and_leaves_the_file_uncommitted(self):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho 'Commit refused: a path crosses a wall. Take it out, then commit again.'\nexit 1\n")
+        said = self.run_update("commit")
+        out = said["release"]
+        self.assertEqual("stopped", out["state"])
+        self.assertEqual(pa.wall_refusal(self.root), out["line"])               # the rules' sentence, as it stands
+        self.assertFalse(self.applied())
+        self.assertEqual("shipped", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertEqual(" M AGENTS.md", git(self.work, "status", "--porcelain", "--", "AGENTS.md").rstrip("\n"))   # unstaged again
+        self.assertNotIn("--no-verify", " ".join(" ".join(c) for c in self.calls))
+
+    def test_any_other_refusal_names_the_file_and_the_reason(self):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho 'the lint says no'\nexit 1\n")
+        out = self.run_update("commit")["release"]
+        self.assertEqual("stopped", out["state"])
+        self.assertIn("AGENTS.md was not committed: the lint says no", out["line"])
+        self.assertIn("still not committed", out["line"])
+        self.assertFalse(self.applied())
+        self.assertEqual(" M AGENTS.md", git(self.work, "status", "--porcelain", "--", "AGENTS.md").rstrip("\n"))
+
+    def test_a_second_plan_that_still_lists_a_file_applies_nothing(self):
+        said = self.run_update("commit", plans=[self.listed, self.listed])
+        self.assertEqual("stopped", said["release"]["state"])
+        self.assertFalse(self.applied())
+
+    def test_update_the_rest_applies_and_the_report_names_the_skipped_file(self):
+        why = "it has changes not committed; commit or discard them, then run again"
+        said = self.run_update("rest", apply_result={"done": {"replace": [], "add": [], "restore": [], "merge": []},
+                                                      "skipped": [[self.SHIPPED, why]], "commits": [], "problems": [],
+                                                      "stamped": True, "unstamped": "", "then": []})
+        self.assertEqual("updated", said["release"]["state"])
+        self.assertEqual([[self.SHIPPED, why]], said["release"]["skipped"])
+        self.assertTrue(self.applied())
+        self.assertEqual("shipped", git(self.work, "log", "-1", "--format=%s").strip())
+
+    def test_a_path_the_plan_cannot_vouch_for_is_refused_and_nothing_is_committed(self):
+        for bad in ([{"path": "../Outside.md", "repo": "."}], [{"path": "Zones/Work/AGENTS.md", "repo": "Zones/Other"}],
+                    [{"path": "/etc/hosts", "repo": "."}], [{"path": "x"}], "Zones/Work/AGENTS.md"):
+            del self.calls[:]
+            said = self.run_update("commit", plans=[bad])
+            self.assertEqual("stopped", said["release"]["state"], bad)
+            self.assertFalse(self.applied())
+        self.assertEqual("shipped", git(self.work, "log", "-1", "--format=%s").strip())
+
+    def test_the_request_names_no_paths_and_only_two_answers(self):
+        with self.assertRaises(pa.Refused):
+            self.run_update("everything")
+        ops = importlib.util.spec_from_file_location("ops_for_held", REPO / "template" / "System" / "tools" / "operations.py")
+        mod = importlib.util.module_from_spec(ops)
+        ops.loader.exec_module(mod)
+        self.assertIsNone(mod.validate("release-update", {"verb": "release-update", "held": "commit"}))
+        self.assertIsNotNone(mod.validate("release-update", {"verb": "release-update", "held": "commit", "paths": ["x"]}))
+
+
 class TestTheUpdateThatWaitsForTheWallsYes(ActionCase):
     """The update button installs nothing until the zone-walls step has its yes, and never answers it (#485)."""
 

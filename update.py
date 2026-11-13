@@ -603,6 +603,29 @@ RULE_SKILLS = tuple("System/skills/%s/SKILL.md" % name for name in ("threads", "
     for name in ("open", "wrap", "lifecycle", "correct", "catch-up", "wall-check"))
 
 
+def uncommitted_files(root, p):
+    """The files `apply` would skip for changes not committed, as the dry run
+    lists them: [{"path": from the top of the workspace, "repo": the repository
+    that holds it, from the top, "." for the workspace's own}]. Only paths the
+    plan writes (a replace, an add, a merge's .new), so a note Garrick does not
+    ship is never in it. The same test `apply` makes, made before it."""
+    out = []
+    for kind in ("replace", "add", "merge"):
+        for path in p["actions"][kind]:
+            dest = path + NEW_SUFFIX if kind == "merge" else path
+            if install.lib().link_on_the_way(root, root / dest) is not None:
+                continue
+            repo = repo_of(root, dest)
+            state = status(repo, path_in_repo(root, dest))
+            if kind == "merge":
+                held = state not in ("", "??") and (root / dest).exists()
+            else:
+                held = bool(state)
+            if held:
+                out.append({"path": dest, "repo": os.path.relpath(repo, root)})
+    return out
+
+
 def apply(root, p, only=None, today=None):
     """Make the changes `p` lists: every replace, add and merge, or only the
     paths in `only`, which may also name a file to restore. Returns what was
@@ -2824,11 +2847,16 @@ def main(argv=None):
                 shown = {k: v for k, v in p.items() if k not in ("files", "recorded")}
                 if shown.get("allowlist"):      # its files hold bytes, as p["files"] does
                     shown["allowlist"] = {k: v for k, v in shown["allowlist"].items() if k != "files"}
+                shown["uncommitted"] = uncommitted_files(root, p)
                 if walls is not None:
                     shown["walls"] = walls
                 print(json.dumps(shown, indent=2))
             else:
                 print(report(p))
+                held = uncommitted_files(root, p)
+                if held:
+                    print("\nChanges not committed, so --apply skips %d file%s until they are committed: %s." % (
+                        len(held), "" if len(held) == 1 else "s", ", ".join(h["path"] for h in held)))
                 if said:
                     print("\n" + said)
             return 0

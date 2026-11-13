@@ -6306,7 +6306,13 @@ function put(t){line.textContent=t}
 function at(r){var d=r&&r.asked?new Date(r.asked):null;return d&&!isNaN(d)?' Asked at '+d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'.':''}
 function add(tag,text,into){var e=document.createElement(tag);e.textContent=text;(into||box).appendChild(e);return e}
 function items(head,list,said){if(!list||!list.length)return;add('p',head);var ul=add('ul','');list.forEach(function(x){add('li',said?said(x):x,ul)})}
-function show(r){box.textContent='';box.hidden=true;if(!r||r.state!=='updated'&&r.state!=='stopped'&&r.state!=='waits')return;box.hidden=false;
+function go(m){if(busy)return;busy=true;btn.disabled=true;box.hidden=true;put('Updating\u2026 this takes a minute.');host.postMessage({act:{verb:'release-update',held:m}})}
+/* a Garrick file with changes not committed: nothing was applied, and the three answers are asked here */
+function held(r){var p=add('p',r.line||'');items('These files, by repository:',r.uncommitted,function(x){return x.path+' ('+(x.repo==='.'?'the workspace':x.repo)+')'});
+var row=add('p','');[['Commit these and update','commit'],['Update the rest','rest'],['Cancel','']].forEach(function(b){var e=document.createElement('button');e.type='button';e.textContent=b[0];
+e.onclick=function(){if(b[1])go(b[1]);else{box.textContent='';box.hidden=true;put('Nothing was changed.')}};row.appendChild(e);row.appendChild(document.createTextNode(' '))})}
+function show(r){box.textContent='';box.hidden=true;if(!r||r.state!=='updated'&&r.state!=='stopped'&&r.state!=='waits'&&r.state!=='held')return;box.hidden=false;
+if(r.state==='held'){held(r);return}
 var p=add('p',r.line||'');if(r.url){p.appendChild(document.createTextNode(' '));var a=document.createElement('a');a.href=r.url;a.target='_blank';a.rel='noopener';a.textContent='Release notes';p.appendChild(a)}
 if(r.state==='updated')add('p',(r.replaced||0)+' file'+(r.replaced===1?'':'s')+' replaced, '+(r.added||0)+' added.');
 if(r.state==='waits'&&r.text){var pre=add('pre','');pre.textContent=r.text;pre.className='wallstext'}

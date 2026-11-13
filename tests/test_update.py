@@ -495,6 +495,24 @@ class TestSafety(Case):
         self.assertEqual(stamp_hash, self.stamp()["files"][path])
         self.assertIn(path, self.stamp()["left"])
 
+    def test_the_dry_run_lists_the_shipped_files_with_changes_not_committed_and_no_note(self):
+        """The list the update's button reads: the files `apply` would skip, by path and repository."""
+        path = "System/tools/scaffold.py"
+        self.as_if_older(path, "# older\n")
+        self.assertEqual([], update.uncommitted_files(self.root, self.plan()))           # all committed: nothing listed
+        self.git(self.root, "rm", "-q", "--cached", path)        # as another session leaves it: the file is there, not committed
+        note = self.root / "Zones" / "Work" / "Notes.md"
+        note.write_text("a note Garrick does not ship, not committed\n")
+        self.assertEqual([{"path": path, "repo": "."}], update.uncommitted_files(self.root, self.plan()))
+        result = self.apply()
+        self.assertEqual([path], [p for p, _ in result["skipped"]])                      # the same file apply skips
+
+    def test_a_shipped_file_in_a_zone_is_listed_with_its_own_repository(self):
+        path = "Zones/Work/AGENTS.md"
+        self.as_if_older(path, "# Work, older\n")
+        self.git(self.root / "Zones" / "Work", "rm", "-q", "--cached", "AGENTS.md")
+        self.assertEqual([{"path": path, "repo": "Zones/Work"}], update.uncommitted_files(self.root, self.plan()))
+
     def test_never_writes_through_a_link(self):
         path = "System/skills/threads/SKILL.md"
         self.as_if_older(path, "older\n")
@@ -895,6 +913,8 @@ class TestCommandLine(Case):
         self.assertEqual(before, (self.root / "System/tools/scaffold.py").read_text())
         data = json.loads(self.run_update("--json").stdout)
         self.assertEqual(["System/tools/scaffold.py"], data["actions"]["replace"])
+        self.assertEqual([], json.loads(self.run_update("--json").stdout)["uncommitted"])      # the key is always there
+        self.assertNotIn("Changes not committed", r.stdout)
         r = self.run_update("--apply")
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertIn("Updated 1 file.", r.stdout)

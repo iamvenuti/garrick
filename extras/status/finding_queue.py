@@ -706,7 +706,7 @@ QUEUE_CSS = r"""
 dialog.queue{width:min(620px,calc(100vw - 32px))}
 .queue .prog{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px;margin:0 0 12px}
 .queue .bar{height:4px;background:var(--line);border-radius:4px;flex:1;margin:0 12px}.queue .bar i{display:block;height:100%;width:0;background:var(--accent);border-radius:4px}
-.queue .q{padding:4px 0}.queue .tag{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.queue .q{padding:4px 0}.queue .tag{display:inline-block;font-size:12px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
 .queue .tag.private{color:var(--critical)}.queue .qs{margin:0 0 4px;font-weight:600}.queue .why{color:var(--muted);font-size:13.5px;margin:0 0 12px}
 .queue .opts{display:flex;flex-direction:column;gap:7px}
 .queue .opt{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:10px 12px;border-radius:10px;width:100%;font:inherit;font-size:13.5px;color:var(--ink);background:var(--surface);border:1px solid var(--line);cursor:pointer}

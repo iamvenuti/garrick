@@ -22,6 +22,10 @@ Each answer names the action it takes, from the fixed table in ANSWERS:
               file that holds a key for each finding and the day it comes back, never a path or any text. No check
               and no Nurture record reads it, so what the checks report is the same with and without it.
 
+A long note is asked from the plan, not from the kind alone (#539): while the page builds, `history.py dry-run --json` runs once for
+each such finding (never a write subcommand), and when it would move nothing, or cannot be run, the question offers no Move and no
+Show me; its recommended answer is the handoff in ANSWERS_NO_MOVE, and its why-line says in plain words which case applies.
+
 Wall findings have no Not now, and no answer keeps the material: the recommended answer is to take it out.
 Missing commit hooks has no Not now either: hiding it would leave the walls unchecked on commit, which fails open, as for a wall.
 
@@ -36,13 +40,18 @@ import html
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 LATER_DAYS = 7
 LATER_FILE = ("System", "generated", "status-later.json")
 HISTORY_TOOL = ("System", "tools", "history.py")
+PLAN_TIMEOUT = 15         # seconds one history.py plan may take while the page builds
+PLAN_BUDGET = 60          # seconds all the plans of one build may take together; the ones after count as "nothing moves"
 
 # The kinds with plain wording, in the order a queue asks them (a wall first, always), then the mechanical kinds,
 # which are never asked one by one: the card groups them under Fix them.
@@ -71,6 +80,24 @@ ANSWERS: Dict[str, List[dict]] = {
                      A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
                      A("later", "Not now", "Ask again in a week.", "later")],
     "hooks-missing": [A("install", "Install the wall check", "Adds it to every repository that lacks it.", "run")],
+}
+# What a long note is asked when its plan moves nothing: no Move and no Show me, the handoff first (#539).
+ANSWERS_NO_MOVE: Dict[str, List[dict]] = {
+    "note-long": [A("split", "Split the long sections into their own notes",
+                    "Your assistant splits the long sections into their own notes in the thread's folder, links them, and shows you the change.", "handoff"),
+                  A("later", "Not now", "Ask again in a week.", "later")],
+}
+# Why nothing moves, by case: (the plain words under the sentence, what Details adds).
+NO_MOVE = {
+    "sections": ("Most of its words sit in long sections above the dated entries, and only dated entries move to history.",
+                 "history.py moves only the dated entries below the rule under `## State of play`; none of the words here are in them."),
+    "log-bullets": ("Its dated entries are bullets in a log above the line that opens the history, a shape the move does not read.",
+                    "Dated bullets sit above the `---` rule under `## State of play`; history.py reads only dated paragraphs below it."),
+    "few": ("It has five dated entries or fewer, and the newest five always stay.", "history.py always keeps the newest %d entries." % 5),
+    "no-state": ("It has no state-of-play section, so there is nothing to move entries from.", "The note has no `## State of play` section, so history.py skips it."),
+    "unreadable": ("The move cannot read this page's layout, so it cannot tell which entries are old.", "history.py skipped the note: %s"),
+    "old-enough": ("No dated entry is old enough to leave the page.", "history.py plans no entry to move."),
+    "unknown": ("Garrick could not ask what would move, so it does not offer a move.", "history.py did not answer in time, or is not in this workspace."),
 }
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
         "meeting-long": "Tidy up", "hooks-missing": "Safety check"}
@@ -180,6 +207,84 @@ def later_put(ws, key: str, today: Optional[dt.date] = None) -> str:
     return until
 
 
+# ---- planning a long note (#539) ---------------------------------------------------------------------------------
+
+STATE_RE = re.compile(r"^##[ \t]+State of play[ \t]*$", re.I)
+RULE_RE = re.compile(r"^---[ \t]*$")
+DATE_HEAD = r"\*\*(?:\d{1,2} [A-Za-z]+ \d{4}|\d{4}-\d{2}-\d{2})"
+BULLET_RE = re.compile(r"^\s*[-*+]\s+" + DATE_HEAD)
+ENTRY_RE = re.compile(r"^" + DATE_HEAD)
+KEEP_NEWEST = 5           # history.py's own: the newest entries always stay
+
+
+def no_move_case(text: str, skipped: str) -> str:
+    """Why a plan moves nothing, as a key of NO_MOVE, from the note's own text: the four cases of #539."""
+    if skipped:
+        return "no-state" if "State of play" in skipped else "unreadable"
+    lines = text.split("\n")
+    state = next((i for i, l in enumerate(lines) if STATE_RE.match(l)), None)
+    rule = next((i for i in range(state + 1, len(lines)) if RULE_RE.match(lines[i])), None) if state is not None else None
+    if rule is None:
+        return "no-state"
+    if any(BULLET_RE.match(l) for l in lines[:rule]):
+        return "log-bullets"
+    entries, blank = 0, True
+    for l in lines[rule + 1:]:
+        if blank and l.strip() and ENTRY_RE.match(l):
+            entries += 1
+        blank = not l.strip()
+    return "sections" if not entries else "few" if entries <= KEEP_NEWEST else "old-enough"
+
+
+class Planner:
+    """The plans of one build: `history.py dry-run --json` for a note, never a write subcommand, from the workspace's own
+    System/tools. A missing tool, a non-zero exit, a reply that is not JSON of the shape, or a run past its time all
+    count as "nothing moves". PLAN_BUDGET bounds the whole build: once it is spent, every plan after is "nothing moves"
+    without running anything."""
+
+    def __init__(self, ws, budget: float = PLAN_BUDGET, timeout: float = PLAN_TIMEOUT):
+        self.ws, self.end, self.timeout = Path(ws), time.monotonic() + budget, timeout
+        self.cache: Dict[str, dict] = {}
+
+    def run(self, rel: str) -> Optional[dict]:
+        tool = self.ws.joinpath(*HISTORY_TOOL)
+        left = self.end - time.monotonic()
+        if left <= 0 or not tool.is_file() or not rel or rel.startswith(("/", "~")) or ".." in rel.split("/"):
+            return None
+        try:
+            r = subprocess.run([sys.executable, str(tool), "--root", str(self.ws), "dry-run", rel, "--json"], capture_output=True, text=True,
+                               timeout=min(self.timeout, left), stdin=subprocess.DEVNULL, cwd=str(self.ws), env=dict(os.environ, GARRICK_HEADLESS="1"))
+            data = json.loads(r.stdout)[0]
+        except (OSError, ValueError, IndexError, TypeError, KeyError, subprocess.SubprocessError):
+            return None
+        return data if r.returncode == 0 and isinstance(data, dict) else None
+
+    def plan(self, rel: str) -> dict:
+        """{moves, before, after, still_over, case}: case is "" when entries would move, else a key of NO_MOVE."""
+        if rel in self.cache:
+            return self.cache[rel]
+        data = self.run(rel)
+        out = {"moves": 0, "before": 0, "after": 0, "still_over": False, "case": "unknown", "skipped": ""}
+        if data is not None:
+            skipped = str(data.get("skipped") or "")
+            try:
+                out.update(moves=int(data.get("entries_moved") or 0), before=int(data.get("words_before") or 0),
+                           after=int(data.get("words_after") or 0), still_over=bool(data.get("still_over")), skipped=skipped)
+            except (TypeError, ValueError):
+                data = None
+            if data is not None and (skipped or out["moves"] <= 0):
+                out["moves"] = 0
+                try:
+                    text = self.ws.joinpath(rel).read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    text = ""
+                out["case"] = no_move_case(text, skipped)
+            elif data is not None:
+                out["case"] = ""
+        self.cache[rel] = out
+        return out
+
+
 # ---- saying a finding -------------------------------------------------------------------------------------------
 
 def place(path: str) -> str:
@@ -251,6 +356,9 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
         other = wall_other(item) or "another zone"
         return ("Take the private material from %s out of %s. The file is in %s, which is walled from it. "
                 "Show me the change before anything is committed." % (other, path, place(path)))
+    if plain == "note-long":
+        return ("Split the long sections of %s into their own notes in the %s's folder, link them from it, and show me the change "
+                "before anything is committed." % (path, "thread" if "/Threads/" in path else "project"))
     if plain == "resume-long":
         return "Shorten the Resume here block of %s so it fits its word limit. Show me the shorter one and change nothing until I say yes." % path
     if plain == "todo-long":
@@ -284,9 +392,10 @@ def other_files(item: dict) -> List[str]:
     return found[:1]
 
 
-def question(item: dict, scope: str) -> dict:
+def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
     """One finding as a question. `item` holds kind (Nurture's), path, line and check from the record, and message,
-    the quick check's own text, where the card has it."""
+    the quick check's own text, where the card has it. `plan` is the note's plan for a long note (Planner.plan), None
+    when none was asked for: the kind's own answers, as before."""
     plain = plain_kind(item)
     path = str(item["path"])
     details = str(item.get("message") or item.get("line") or "")
@@ -299,8 +408,20 @@ def question(item: dict, scope: str) -> dict:
                  free=free_prefix("", item))
         return q
     sentence, why = said(plain, item)
+    table = ANSWERS[plain]
+    if plain == "note-long" and plan is not None:
+        if plan["moves"] > 0:
+            n = plan["moves"]
+            why = "%d older entr%s would move, taking the page from %s words to %s words.%s %s" % (
+                n, "y" if n == 1 else "ies", about(plan["before"]), about(plan["after"]),
+                " The move alone will not bring it under its limit." if plan["still_over"] else "", why)
+        else:
+            table = ANSWERS_NO_MOVE[plain]
+            plain_why, technical = NO_MOVE[plan["case"]]
+            why = plain_why
+            q["details"] = "%s\n%s" % (details, technical % plan["skipped"] if "%s" in technical else technical)
     answers = []
-    for a in ANSWERS[plain]:
+    for a in table:
         a = dict(a)
         if a["action"] == "handoff":
             a["phrase"] = handoff_phrase(plain, a["id"], item)
@@ -334,18 +455,20 @@ def unlisted_wall(item: dict, scope: str) -> dict:
             "free": "About a private-material finding in %s: " % place_, "recommended": "take-out"}
 
 
-def forecast_questions(items: List[dict], hidden: set) -> Dict[str, List[dict]]:
+def forecast_questions(items: List[dict], hidden: set, ws=None) -> Dict[str, List[dict]]:
     """The queue of each scope, from the forecast's findings: the list the scope's line on the card counts, less
     what Not now has put off (a wall finding and missing commit hooks are never put off, whatever a file says). The mechanical ones are not
-    asked: the card fixes them together."""
+    asked: the card fixes them together. With `ws`, a long note is asked from its plan (#539); without it, from its kind."""
     out: Dict[str, List[dict]] = {}
+    planner = Planner(ws) if ws is not None else None
     for item in items:
         plain = plain_kind(item)
         if plain == MECHANICAL:
             continue
         if plain not in NEVER_LATER and plain in PLAIN_KINDS and later_key(plain, str(item["path"])) in hidden:
             continue
-        out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"])))
+        plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None
+        out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"]), plan))
     rank = {k: i for i, k in enumerate(PLAIN_KINDS)}
     for qs in out.values():
         qs.sort(key=lambda q: (rank.get(q["id"], len(rank)), q["path"]))

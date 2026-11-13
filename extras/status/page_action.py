@@ -2323,9 +2323,16 @@ def walls_allow(ws: Path, req: dict) -> dict:
         if now != blob:
             raise Refused("the file has changed since you looked at it; look again before keeping it")
         code, said = tool.allow_page(ws, rel, fid, "page")
+        if not code and "was not committed" in said:
+            # The entry is on disk but not in HEAD: take it off again, so a refusal leaves the ledger as it was.
+            undo = getattr(tool, "allow_remove", None)
+            try:
+                if callable(undo):
+                    undo(ws, rel, fid)
+            except Exception:
+                pass
+            raise Refused(said)
     if code:
-        raise Refused(said)
-    if "was not committed" in said:
         raise Refused(said)
     return {"say": said, "written": True, "logged": "allowed one wording match once, from the page"}
 

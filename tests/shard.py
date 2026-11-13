@@ -55,7 +55,7 @@ TOUCH_MAP = {
     # The wall check: a change to it runs every module that tests a wall, not only test_check*.
     "template/System/tools/check.py": ["test_walls_cases", "test_staged_paths", "test_pathspec_commit", "test_decide",
                                        "test_zones", "test_allow_ledger", "test_merge_hooks", "test_check_history",
-                                       "test_check_concise", "test_wall_runs", "test_refusals"],
+                                       "test_check_concise", "test_wall_runs", "test_wall_common", "test_refusals"],
     "install.py": ["test_merge_hooks"],
     # The history mover (#502) and the guard behind "compact the meetings" (#479).
     "template/System/tools/history.py": ["test_history", "test_history_workspace", "test_nurture_history",

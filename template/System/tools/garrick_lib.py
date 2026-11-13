@@ -1727,7 +1727,7 @@ def allow_commit(root: PathLike, message: str) -> str:
     if done.returncode == 0 or "nothing to commit" in (done.stdout + done.stderr) \
             or "nothing added to commit" in (done.stdout + done.stderr):
         return ""
-    return (done.stderr or done.stdout).strip()
+    return (done.stderr or done.stdout).strip() or "the commit was refused (git exited %d)" % done.returncode
 
 
 def wall_cases(text: str) -> Dict[str, List[List[str]]]:

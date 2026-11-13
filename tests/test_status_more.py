@@ -965,7 +965,7 @@ class TestCheckReuse(StatusCase):
 
     def test_needs_attention_and_the_checks_tile_say_the_counts_are_kept(self):
         """#298: the counts a kept result gives say how old they are wherever
-        they show, Needs attention and the Checks tile as the Checks card,
+        they show, Needs attention and the Context tile as the Context card,
         in its words; a build that ran the check says nothing of the kind."""
         found = {"errors": 1, "warnings": 2, "findings": [
             {"check": "walls", "severity": "error", "path": "a.md", "message": "x"},
@@ -977,9 +977,9 @@ class TestCheckReuse(StatusCase):
             return [t[2] for t in trouble(page)]
 
         def tile(page):
-            m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Checks</div><div class="val">(.*?)</div>'
+            m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Context</div><div class="val">(.*?)</div>'
                           r'<div class="sub">(.*?)</div></a>', page)
-            self.assertIsNotNone(m, "no Checks tile")
+            self.assertIsNotNone(m, "no Context tile")
             return m.groups()
 
         ran = self.build()

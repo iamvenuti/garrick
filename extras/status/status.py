@@ -1107,14 +1107,16 @@ def debt_history(ws: Path, today: dt.date) -> Tuple[List[Tuple[dt.date, dict]], 
 
 
 def debt_line(history: List[Tuple[dt.date, dict]]) -> str:
-    """The one line of the context debt on the Checks card (#541): the figure of the latest Nurture record against its
-    threshold, red when over it. Nothing before the first record, which would only be guessing a figure."""
+    """The one line of the context debt on the Context card (#541, #542): the figure of the latest Nurture record against its
+    threshold, red when over it, and when that run was. Nothing before the first record, which would only be guessing a figure."""
     if not history:
         return ""
-    total, threshold = history[-1][1]["total"], history[-1][1].get("threshold", 40)
+    day, debt = history[-1]
+    total, threshold = debt["total"], debt.get("threshold", 40)
     over = total > threshold
-    return '<p class="hint ndebt%s">%s</p>' % (" over" if over else "", E("Context debt %s, %s the threshold of %s" % (
-        debt_points(total), "over" if over else "under" if total < threshold else "at", debt_points(threshold))))
+    return '<p class="hint ndebt"><span%s>%s</span> · Last nurture %s</p>' % (
+        ' class="over"' if over else "", E("Context debt %s, %s %s" % (debt_points(total), "over" if over else "under" if total < threshold else "at",
+                                                                       debt_points(threshold))), E(day.strftime("%a %d %b")))
 
 
 def debt_points(n):
@@ -1174,30 +1176,7 @@ def mechanical_fixes(ws: Path, C: dict) -> List[Tuple[str, str]]:
     return out
 
 
-def context_link(qdata: Optional[dict]) -> str:
-    """The line under the debt that sends the user to the Context tab (#433),
-    where Nurture's findings are answered, with what each group holds open: its
-    wiki questions and its findings. A tab that is not there has no link."""
-    if not qdata:
-        return ""
-    said = []
-    for zone in sorted(qdata.get("menu_groups") or {}):
-        for g in qdata["menu_groups"][zone]:
-            n, f = int(g.get("n") or 0), int(((qdata.get("menu_findings") or {}).get(zone) or {}).get(g["h"]) or 0)
-            if n or f:
-                said.append("%s: %s" % (g["h"], ", ".join(x for x in ("%d question%s" % (n, "" if n == 1 else "s") if n else "",
-                                                                    "%d finding%s" % (f, "" if f == 1 else "s") if f else "") if x)))
-    open_now = "; ".join(said) + "." if said else "Nothing is open."
-    # The card is moved between tabs (#443), so the page decides which of the two readings shows (#526): on the
-    # Context tab, where the panel is above it, the button would only link to where it already is, and the hint
-    # points up; on any other tab the link keeps working and the hint names the tab.
-    return ('<div class="gacts review" id="review"><a class="act" href="#qp">Answer in Context</a>'
-            '<span class="hint hint-away">%s</span><span class="hint hint-here">%s</span></div>'
-            % (E("Nurture runs every night; what it leaves is answered in the Context tab. " + open_now),
-               E("Nurture runs every night; what it leaves is answered in the panel above. " + open_now)))
-
-
-# What the Checks card says (#530): which scopes need the user, and for how long, from the one-pass forecast (the
+# What the Context card says (#530, #542): which scopes need the user, and for how long, from the one-pass forecast (the
 # latest Nurture record's standing findings by scope), and one word for the trend over the last TREND_DAYS nights.
 # The minutes are a fixed cost per kind, summed and rounded up to five; never a range.
 MINUTES_WALL, MINUTES_CALL, MINUTES_STEP = 2, 1, 5
@@ -1376,32 +1355,67 @@ def finding_queues(ws: Path, history: List[Tuple[dt.date, dict]], C: Optional[di
         return None
 
 
+def scope_title(scope: str, said: Callable[[str], Tuple[str, str]]) -> str:
+    """A place as the card's line and the queue's bar name it: a zone by its name, a wiki as "The Meetings wiki"."""
+    name = said(scope)[0]
+    if name == scope:
+        name = scope.split("/", 1)[-1]
+    return name[:1].upper() + name[1:]
+
+
+def answered_in(qdata: Optional[dict], scope: str) -> int:
+    """How many answers wait to be worked in for one place: a zone's own, or the Knowledge wiki's; 0 for any other, and
+    never the sum of two."""
+    if not qdata:
+        return 0
+    if scope == "Wikis/Knowledge":
+        return int(qdata.get("knowledge_answered") or 0)
+    if scope.startswith("Zones/"):
+        return int(((qdata.get("buckets") or {}).get(scope.split("/", 1)[1]) or {}).get("answered") or 0)
+    return 0
+
+
 def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[str], Tuple[str, str]],
-               queues: Optional[Dict[str, List[dict]]] = None) -> str:
-    """The card's lines (#530): one for each scope that needs the user, with its button, or "Nothing needs you.";
-    then when the last nurture ran. The button opens the scope's queue (#535), *Go through them*; without a queue
-    (a page built without one) it hands Nurture's request to the assistant. The number on a line is the number of
-    questions in its queue: one list. Names of places, counts, minutes and a date only: no path, project or finding
-    text of any zone. Nothing without a record, which would only be guessing that nothing needs the user."""
-    if not history:
-        return ""
-    day = history[-1][0]
+               queues: Optional[Dict[str, List[dict]]] = None, qdata: Optional[dict] = None) -> str:
+    """The Context card's lines (#542): one for each zone or wiki that holds something, such as *Work: 6 questions · 4 answers
+    to work in · about 10 minutes*, with *Go through them*, which opens that place's queue (#535), and *Work them in* where
+    that place has answers waiting. A place with nothing has no line. Under the title, how many places need the user and
+    nothing more, since two places' counts and minutes are never added; with no line at all, *Nothing needs you.*, said only
+    once a Nurture record exists, which would otherwise be guessing. Each count is of one place's queue: its questions,
+    verdicts, decisions and findings together. Without a queue (a page built without one) a line hands Nurture's request to
+    the assistant. Names of places, counts, minutes only: no path, project or finding text of any zone."""
     if queues is None:
-        rows = needing_you((nurture_outcome(ws, day) or {}).get("scopes") or {})
-    else:
-        rows = needing_you({sc: {"wall": sum(1 for q in qs if q["id"] == "wall"), "judgment": sum(1 for q in qs if q["id"] != "wall")}
-                            for sc, qs in queues.items()})
+        if not history:
+            return ""
+        rows = needing_you((nurture_outcome(ws, history[-1][0]) or {}).get("scopes") or {})
+        out = ""
+        for n in rows:
+            name, phrase = said(n["scope"])
+            button = request_button("Nurture", phrase, ws, "act dask") if phrase else ""
+            out += '<div class="need"><span class="nsay">%s: %s</span>%s</div>' % (E(name[:1].upper() + name[1:]), E(need_said(n)), button)
+        return out or '<p class="hint nonee">Nothing needs you.</p>'
+    places = sorted({sc for sc, qs in queues.items() if qs} | {sc for sc in {"Wikis/Knowledge"} | {"Zones/" + z for z in (qdata or {}).get("buckets", {})}
+                                                                  if answered_in(qdata, sc)}, key=scope_order)
     out = ""
-    for n in rows:
-        name, phrase = said(n["scope"])
-        button = ('<button class="act primary" type="button" data-qopen="%s">Go through them</button>' % E(n["scope"])
-                  if queues is not None else request_button("Nurture", phrase, ws, "act dask") if phrase else "")
-        out += '<div class="need"><span class="nsay">%s: %s</span>%s</div>' % (E(name[:1].upper() + name[1:]), E(need_said(n)), button)
-    return (out or '<p class="hint nonee">Nothing needs you.</p>')
-
-
-def last_nurture(history: List[Tuple[dt.date, dict]]) -> str:
-    return '<p class="hint nlast">Last nurture: %s</p>' % E(history[-1][0].strftime("%a %d %b")) if history else ""
+    for scope in places:
+        qs = queues.get(scope) or []
+        walls = sum(1 for q in qs if q["id"] == "wall")
+        waiting = answered_in(qdata, scope)
+        said_ = [p for p in (counted(len(qs), "question") if qs else "", "%s to work in" % counted(waiting, "answer") if waiting else "",
+                             "about %d minutes" % minutes_for(walls, len(qs) - walls) if qs else "") if p]
+        buttons = ""
+        if waiting:
+            buttons += request_button("Work them in", "work through the open questions", ws, "act")
+        if qs:
+            buttons += '<button class="act primary" type="button" data-qopen="%s">Go through them</button>' % E(scope)
+        out += ('<div class="need" data-scope="%s" data-n="%d"><span class="nsay"><b>%s</b>: %s</span><span class="nbtn">%s</span></div>'
+                % (E(scope), len(qs), E(scope_title(scope, said)), E(" · ".join(said_)), buttons))
+    if not out:
+        return '<p class="hint nonee" id="nsum">Nothing needs you.</p>' if history else ""
+    zones = ('<label class="nzone">Zone <select id="nzone" aria-label="Zone"><option value="*">All</option>%s</select></label>'
+             % "".join('<option value="%s">%s</option>' % (E(sc), E(scope_title(sc, said))) for sc in places) if len(places) > 1 else "")
+    return ('<div class="nhead"><p class="hint nsum" id="nsum" data-some="1">%s need%s you.</p>%s</div>%s'
+            % (E(counted(len(places), "place")), "s" if len(places) == 1 else "", zones, out))
 
 
 def override_times(ws: Path) -> List[str]:
@@ -1451,15 +1465,32 @@ document.addEventListener('click',function(e){var t=e.target;if(t&&t.closest&&t.
 })();
 """
 
+CONTEXT_JS = r"""
+(function(){var card=document.getElementById('checks');if(!card)return;
+var sel=document.getElementById('nzone'),sum=document.getElementById('nsum'),tn=document.getElementById('qp-tab-n'),KEY='garrick-context-zone';
+var lines=[].slice.call(card.querySelectorAll('.need[data-scope]'));
+function ss(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sessionStorage.setItem(k,v)}catch(e){return null}}
+/* The Zone menu filters the lines. Each line is one place's own, so what shows is a place's count or nothing, and a number for the tab is a single place's, never a sum */
+function apply(){var z=sel?sel.value:'*',shown=lines.filter(function(l){var on=z==='*'||l.dataset.scope===z;l.hidden=!on;return on});
+if(sum&&sum.dataset.some)sum.textContent=shown.length+' place'+(shown.length===1?' needs you.':'s need you.');
+if(tn)tn.textContent=z!=='*'&&shown.length&&shown[0].dataset.n!=='0'?shown[0].dataset.n:''}
+if(sel){var k=ss(KEY);if(k&&lines.some(function(l){return l.dataset.scope===k}))sel.value=k;
+sel.onchange=function(){ss(KEY,sel.value);apply()}}
+apply();
+window.GarrickQuestions={open:function(){if(window.StatusTab)StatusTab('questions');window.scrollTo(0,0);var b=card.querySelector('.need:not([hidden]) [data-qopen]');if(b)b.focus()}}})();
+"""
+
 DEBT_CSS = r"""
-/* The Checks card's lines: what needs the user, place by place, and the context debt in one line under the last nurture */
-.ndebt{margin:4px 0 0}.ndebt.over{color:var(--critical);font-weight:600}
+/* The Context card's lines: what needs the user, place by place, and the context debt in one line under the last nurture */
+.ndebt{margin:12px 0 0}.ndebt .over{color:var(--critical);font-weight:600}
+.nhead{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:0 0 6px}.nsum{margin:0}
+.nzone{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink2)}
+.nzone select{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:4px 8px}
+.need[hidden]{display:none}.nbtn{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .need{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line)}
-.need:first-of-type{border-top:0}.nsay{font-size:13.5px}.nlast,.nonee{margin:8px 0 0}.dnew a{color:var(--critical);font-weight:600}
+.need:first-of-type{border-top:0}.nsay{font-size:13.5px}.nonee{margin:0}.dnew a{color:var(--critical);font-weight:600}
 dialog.findings{width:min(720px,calc(100vw - 32px));max-height:calc(100vh - 48px);overflow:auto;border:1px solid var(--line);border-radius:14px;background:var(--surface);color:var(--ink);padding:20px 22px;box-shadow:0 18px 60px rgba(0,0,0,.25)}
 dialog.findings::backdrop{background:rgba(0,0,0,.28)}.fhead{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 14px}.fhead h3{margin:0;font-size:16px}
-.review{align-items:center;margin:0 0 12px}
-.review .hint-here{display:none}#tab-questions .review .act,#tab-questions .review .hint-away{display:none}#tab-questions .review .hint-here{display:inline}
 """
 
 
@@ -5211,13 +5242,13 @@ def handoff_mod():
     return _HO
 
 
-# ---- the Questions panel (#224): its data and page are questions_panel.py's -------------
+# ---- the wikis' questions (#224, #542): what they may show is questions_panel.py's -------------
 _QP = None
 
 
 def questions_mod():
-    """questions_panel.py, beside this file: what the Questions panel may show,
-    placed by the walls, and its page."""
+    """questions_panel.py, beside this file: what the wikis' questions may show,
+    placed by the walls, the tab's button and the user's allowances."""
     global _QP
     if _QP is None:
         spec = importlib.util.spec_from_file_location("garrick_status_questions", str(Path(__file__).with_name("questions_panel.py")))
@@ -5227,14 +5258,10 @@ def questions_mod():
 
 
 def questions_data(ws: Path, C: Optional[dict], today: dt.date, link: "Links") -> Optional[dict]:
-    """The panel's data, or None: no panel. Any fault leaves the panel out
+    """What the Context card asks of the wikis, or None: no tab. Any fault leaves it out
     rather than a page that shows what it could not place."""
     try:
-        data = questions_mod().build(ws, C, nurture_lib(ws), today, link)
-        if data:
-            styles = zone_styles(ws)         # Settings > Zones: the colour of a group heading's zone part (#384)
-            data["zcls"] = {z["zone"]: zone_class(z["zone"], styles) for z in data.get("zones", []) if zone_class(z["zone"], styles)}
-        return data
+        return questions_mod().build(ws, C, today, link)
     except Exception:
         return None
 
@@ -7227,7 +7254,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         tiles.append(("Todo", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
                       "todolist" if lists else "todo"))
     tiles += [("Inboxes", "%d" % waiting, "", "inboxes"),
-              ("Checks", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
+              ("Context", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
                if C and not C.get("failed") else "—", check_age if C else "check.py not found", "checks")]
     if L:
         cap = L["caps"]["calls_day"]
@@ -7419,13 +7446,15 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     history, said_scope = debt_history(ws, now.date())
     listed = bool(C) and not C.get("failed") and not C.get("pending")
     queues = finding_queues(ws, history, C, now.date(), said_scope)
-    queue_names = {sc: said_scope(sc)[0][:1].upper() + said_scope(sc)[0][1:] for sc in (queues or {})}
     fq = queue_mod() if queues is not None else None
-    checks_card = card("checks", "Checks", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
-                       need_lines(ws, history, said_scope, queues) + (fq.fix_block(fixes, str(ws)) if fq else "") + last_nurture(history)
-                       + debt_line(history) + override_note(ws, wall_place(queues)) + context_link(qdata) + (listed_kept if listed else body),
+    if fq and qdata:        # the wiki's own questions join the findings, each in the queue of its own zone or wiki (#542)
+        queues = fq.with_asked(queues, fq.asked_questions(qdata, fq.later_hidden(ws, now.date())))
+    queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
+    checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
+                       need_lines(ws, history, said_scope, queues, qdata) + (fq.fix_block(fixes, str(ws)) if fq else "")
+                       + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
-    queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names) if fq else ""
+    queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names, now.date().isoformat()) if fq else ""
 
     # ---- open actions and inboxes
     tb = ""
@@ -7646,7 +7675,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     guide_body, guide_pages = guide_tab(ws)
     main = ('<main><div class="stale" id="stale"></div>%s%s%s%s%s</main>%s'
             % (overview, section("todo", True, todo_tab + slots("todo")) if todo_tab else "", status_tab,
-               section("questions", True, questions_mod().tab((questions_mod().body(qdata) + slots("context", "".join(here))) if qdata else "")) if qdata else "",
+               section("questions", True, questions_mod().tab(slots("context", "".join(here)))) if qdata else "",
                section("guide", True, guide_body), menu))
     # The menu's script in an element of its own, and the graph's: an error
     # anywhere else on the page stops only the script it is in, and the app
@@ -7657,12 +7686,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", questions_mod().JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CSS if qdata else "") + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (questions_mod().CX_CSS if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else ""),
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS, allowed) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))

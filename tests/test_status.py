@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Questions panel's data and its script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(21, html.count("</script>"))         # the Waiting on you now card's script, the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -558,9 +558,9 @@ class TestTabs(StatusCase):
         # #233: Waiting to be filed, Check and Open actions named other things than the cards they open.
         html = self.page()
         tiles = dict(re.findall(r'<a class="tile go" href="#([a-z]+)"><div class="lbl">([^<]*)</div>', html))
-        self.assertEqual({"inboxes": "Inboxes", "checks": "Checks", "todolist": "Todo"},
+        self.assertEqual({"inboxes": "Inboxes", "checks": "Context", "todolist": "Todo"},
                          {k: v for k, v in tiles.items() if k != "threads"})
-        for title in ("Inboxes", "Checks", "Todo"):
+        for title in ("Inboxes", "Context", "Todo"):
             self.assertIn("<h2>%s</h2>" % title, html)                     # the Todo card on the Overview, as the tab and the file
         self.assertIn('data-tab="todo">Todo<', html)
         for gone in ("Waiting to be filed", "Open actions", '<div class="lbl">Check</div>'):
@@ -2774,7 +2774,7 @@ class TestCaptions(StatusCase):
 
     def test_a_healthy_page_has_empty_captions(self):
         metas = self.metas(self.page())
-        for title in ("Todo", "Checks", "Repositories", "Wikis"):
+        for title in ("Todo", "Context", "Repositories", "Wikis"):
             self.assertEqual("", metas.get(title, ""), title)
         page = self.page()
         for said in ("unticked items", "check.py --quick", "a ring means", "newest entry in each log",
@@ -2788,7 +2788,7 @@ class TestCaptions(StatusCase):
                     {"check": "threads", "severity": "warning", "path": "b.md", "message": "y"},
                     {"check": "threads", "severity": "warning", "path": "c.md", "message": "z"}]
         (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {"errors": 1, "warnings": 2, "findings": findings})
-        self.assertEqual("1 error · 2 warnings", self.metas(self.page())["Checks"])
+        self.assertEqual("1 error · 2 warnings", self.metas(self.page())["Context"])
 
 
 class TestChangedFiles(StatusCase):
@@ -3923,19 +3923,19 @@ class TestContextDebt(StatusCase):
         self.record(0, 12, whole=False)                     # a scoped run's part is not the workspace's debt
         self.assertNotIn("Context debt", self.card(self.page()))
 
-    def test_the_line_says_the_figure_and_the_threshold_under_the_last_nurture(self):
+    def test_the_line_says_the_figure_and_the_threshold_and_the_last_nurture(self):
         self.record(0, 34)
         card = self.card(self.page())
-        self.assertIn('<p class="hint ndebt">Context debt 34, under the threshold of 40</p>', card)
-        self.assertLess(card.index("Last nurture"), card.index("Context debt"))
+        day = self.now.strftime("%a %d %b")
+        self.assertIn('<p class="hint ndebt"><span>Context debt 34, under 40</span> · Last nurture %s</p>' % day, card)
         self.record(0, 40)
-        self.assertIn("Context debt 40, at the threshold of 40", self.card(self.page()))
+        self.assertIn("Context debt 40, at 40", self.card(self.page()))
 
     def test_over_the_threshold_the_line_is_red(self):
         self.record(0, 42)
         card = self.card(self.page())
-        self.assertIn('<p class="hint ndebt over">Context debt 42, over the threshold of 40</p>', card)
-        self.assertIn(".ndebt.over{color:var(--critical)", status.DEBT_CSS)
+        self.assertIn('<span class="over">Context debt 42, over 40</span> · Last nurture ', card)
+        self.assertIn(".ndebt .over{color:var(--critical)", status.DEBT_CSS)
 
     def test_the_page_holds_no_chart_no_kinds_no_scopes_and_builds_none(self):
         for back, total in ((3, 30), (2, 32), (1, 35), (0, 42)):
@@ -3954,36 +3954,13 @@ class TestContextDebt(StatusCase):
             self.assertNotIn("Context debt", self.card(self.page()))
 
 
-class TestContextLink(StatusCase):
-    """#433: the Checks card has no Review context button. One link to the Context tab replaces
-    Nurture and Review context, with what each group holds open."""
+class TestNoReviewButton(StatusCase):
+    """#433, #542: the Context card has no Review context button and no link to a panel, and reads no review record."""
 
     def setUp(self):
         super().setUp()
         shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
                         ignore=shutil.ignore_patterns("__pycache__"))
-
-    def test_the_link_names_each_group_with_its_open_count(self):
-        data = {"menu_groups": {"Work": [{"h": "Work · Acme Corp", "n": 2}, {"h": "Work · Birch & Co", "n": 0}], "Home": [{"h": "Home", "n": 1}]},
-                "menu_findings": {"Work": {"Work · Acme Corp": 3, "Work · Birch & Co": 0}, "Home": {"Home": 0}}}
-        b = status.context_link(data)
-        self.assertIn('<a class="act" href="#qp">Answer in Context</a>', b)
-        self.assertIn("Home: 1 question; Work · Acme Corp: 2 questions, 3 findings.", b)
-        self.assertNotIn("Birch", b)                                         # a group with nothing open is not named
-        self.assertIn("Nothing is open.", status.context_link({"menu_groups": {"Work": [{"h": "Work", "n": 0}]}}))
-        self.assertEqual("", status.context_link(None))                      # no tab, no link
-
-    def test_the_page_hides_the_button_on_the_context_tab_and_points_up_there(self):
-        """#526: the builder's output is one, wherever the card sits; the CSS decides on the page."""
-        data = {"menu_groups": {"Work": [{"h": "Work", "n": 2}]}, "menu_findings": {}}
-        b = status.context_link(data)
-        self.assertIn('<span class="hint hint-away">Nurture runs every night; what it leaves is answered in the Context tab. Work: 2 questions.</span>', b)
-        self.assertIn('<span class="hint hint-here">Nurture runs every night; what it leaves is answered in the panel above. Work: 2 questions.</span>', b)
-        self.assertEqual(b, status.context_link(data))
-        css = status.DEBT_CSS
-        self.assertIn("#tab-questions .review .act,#tab-questions .review .hint-away{display:none}", css)
-        self.assertIn("#tab-questions .review .hint-here{display:inline}", css)
-        self.assertIn(".review .hint-here{display:none}", css)                 # on any other tab only the first reading shows
 
     def test_the_card_has_no_review_button_and_reads_no_record(self):
         write(self.root / "System" / "nurture-review.md",
@@ -3992,6 +3969,9 @@ class TestContextLink(StatusCase):
         self.assertNotIn("Review context", html)
         self.assertNotIn("review the context with me", html)
         self.assertNotIn("Last review", html)
+        for gone in ("Answer in Context", 'id="review"', "hint-away", "hint-here", "context_link"):
+            self.assertNotIn(gone, html)
+        self.assertFalse(hasattr(status, "context_link"))
 
 
 class TestChecksCardActs(StatusCase):
@@ -4101,17 +4081,18 @@ class TestChecksSaysWhatNeedsYou(StatusCase):
                     + [{"kind": "judgment", "path": "Zones/Alder/P/p.md"}])
         self.record(0, standing)
         card = self.card(self.page())
-        lines = re.findall(r'<span class="nsay">([^<]*)</span>', card)
-        self.assertEqual(["Alder: 1 judgment call, about 5 minutes",
-                          "Work: 2 wall findings and 8 judgment calls, about 15 minutes",
-                          "The Meetings wiki: 1 judgment call, about 5 minutes",
-                          "System: 1 judgment call, about 5 minutes"], lines)       # zones by name, the wikis, then System
+        lines = re.findall(r'<span class="nsay"><b>([^<]*)</b>: ([^<]*)</span>', card)
+        self.assertEqual([("Alder", "1 question · about 5 minutes"),
+                          ("Work", "10 questions · about 15 minutes"),
+                          ("The Meetings wiki", "1 question · about 5 minutes"),
+                          ("System", "1 question · about 5 minutes")], lines)       # zones by name, the wikis, then System
         self.assertNotIn("Birch", card)                                            # only mechanical findings: no line
         self.assertIn('data-qopen="Zones/Work"', card)                              # the line's button opens that scope's queue (#535)
         self.assertEqual(4, card.count(">Go through them</button>"))
         self.assertNotIn("Nothing needs you.", card)
-        self.assertIn("Last nurture: %s" % self.now.strftime("%a %d %b"), card)
-        for leaked in ("Acme", "Notes.md", ".md"):
+        self.assertIn("4 places need you.", card)                                   # places, never a sum of two places' counts or minutes
+        self.assertIn(" · Last nurture %s</p>" % self.now.strftime("%a %d %b"), card)
+        for leaked in ("Acme", "Notes.md", ".md", "in all"):
             self.assertNotIn(leaked, card)                                          # names of places, counts and minutes only
 
     def test_nothing_needs_you(self):
@@ -4152,7 +4133,7 @@ class TestChecksSaysWhatNeedsYou(StatusCase):
         for back in range(8):
             self.record(back, [{"kind": "judgment", "path": "Zones/Work/a.md"}] * (3 + 3 * (back + 1)), total=3 + 3 * (back + 1))
         card = self.card(self.page())
-        self.assertRegex(card, r"<h2>Checks</h2><span class=\"chip[^\"]*\" id=\"trend\"[^>]*>(Rising|Steady|Falling)</span>")
+        self.assertRegex(card, r"<h2>Context</h2><span class=\"chip[^\"]*\" id=\"trend\"[^>]*>(Rising|Steady|Falling)</span>")
         self.assertIn(">Falling</span>", card)
         for back in range(8):
             (self.folder / ("%s.json" % (self.now.date() - dt.timedelta(days=back)).isoformat())).unlink()

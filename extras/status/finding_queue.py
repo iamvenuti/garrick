@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""finding_queue.py: the Checks card's queue (#535), one finding at a time, as a plain question with answer buttons.
+"""finding_queue.py: the Context card's queue (#535, #542), one question at a time, as a plain question with answer buttons.
 
 status.py builds the queue at page build, for every scope, from the one-pass forecast (the latest Nurture record's
 standing findings), so the number on a scope's line on the card and the number in its queue are one list's. A kind

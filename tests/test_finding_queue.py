@@ -383,9 +383,9 @@ class TestQueueOnThePage(QueueCase):
         self.record(self.standing())
         html = self.page()
         card, queue = self.card(html), self.view(html)
-        line = re.search(r'<span class="nsay">(Work): (\d+ wall findings? and )?(\d+) judgment calls?, about \d+ minutes</span>', card)
+        line = re.search(r'<span class="nsay"><b>Work</b>: (\d+) questions? · about \d+ minutes</span>', card)
         self.assertIsNotNone(line, card)
-        said = int(re.search(r"(\d+) wall", line.group(0)).group(1)) + int(line.group(3)) if "wall" in line.group(0) else int(line.group(3))
+        said = int(line.group(1))
         scope = queue[queue.index('data-scope="Zones/Work"'):]
         scope = scope[:scope.index("</section>")]
         self.assertEqual(said, scope.count("data-q "))                                       # the same number, from one list
@@ -439,14 +439,14 @@ class TestQueueOnThePage(QueueCase):
                     {"kind": "judgment", "check": "todo", "path": TODO, "line": TODO_LINE % {"p": TODO}}]
         self.record(standing)
         before = self.page()
-        self.assertIn("Work: 3 judgment calls, about 5 minutes", self.card(before))
+        self.assertIn("<b>Work</b>: 3 questions · about 5 minutes", self.card(before))
         self.assertEqual(3, self.view(before).count("data-q "))
         record = (self.folder / ("%s.json" % self.now.date().isoformat())).read_bytes()
         check_before = self.check_json()
         self.list_record(standing)                                                             # check_json put the real check.py back
         fq.later_put(self.root, fq.later_key("note-long", HUB), self.now.date())
         after = self.page()
-        self.assertIn("Work: 2 judgment calls, about 5 minutes", self.card(after))             # the count drops by one
+        self.assertIn("<b>Work</b>: 2 questions · about 5 minutes", self.card(after))             # the count drops by one
         self.assertEqual(2, self.view(after).count("data-q "))
         self.assertNotIn('data-kind="note-long"', self.view(after))
         self.assertEqual(check_before, self.check_json())                                     # check.py --json is the same
@@ -473,7 +473,7 @@ class TestQueueOnThePage(QueueCase):
         html = self.page()
         card = self.card(html)
         self.assertNotIn("Nothing needs you.", card)
-        self.assertRegex(card, r"Work: 1 wall finding, about 5 minutes")
+        self.assertRegex(card, r"<b>Work</b>: 1 question · about 5 minutes")
         work = self.view(html)
         work = work[work.index('data-scope="Zones/Work"'):]
         self.assertIn('data-kind="wall"', work[:work.index("</section>")])
@@ -488,7 +488,7 @@ class TestQueueOnThePage(QueueCase):
         self.quick({"check": "links", "severity": "error", "path": "Zones/Work/Acme Review/Notes.md", "message": "links a note that is not there"})
         card = self.card(self.page())
         self.assertNotIn("Nothing needs you.", card)
-        self.assertIn("Work: 1 judgment call", card)
+        self.assertIn("<b>Work</b>: 1 question", card)
         self.quick({"check": "links", "severity": "warning", "path": "Zones/Work/Acme Review/Notes.md", "message": "a warning only"})
         self.assertIn("Nothing needs you.", self.card(self.page()))
 
@@ -499,9 +499,9 @@ class TestQueueOnThePage(QueueCase):
         self.record([{"kind": "wall", "path": DECK, "line": WALL_LINE % {"p": DECK}}])
         card = self.card(self.page())
         self.assertNotIn("Nothing needs you.", card)
-        self.assertIn("Work: 1 wall finding", card)
+        self.assertIn("<b>Work</b>: 1 question", card)
         self.quick()
-        self.assertIn("Work: 1 wall finding", self.card(self.page()))           # and when the quick check lists nothing, the record's wall
+        self.assertIn("<b>Work</b>: 1 question", self.card(self.page()))           # and when the quick check lists nothing, the record's wall
 
     def test_two_questions_with_one_kind_and_path_keep_two_keys(self):
         a = dict(KINDS["wall"], scope="Zones/Work", message="%s: links [[A]], a note of the Personal zone; that zone is walled and this file is in the Work zone" % DECK)
@@ -540,7 +540,7 @@ class TestQueueOnThePage(QueueCase):
         html = self.page()
         self.assertNotIn('data-kind="note-long"', self.view(html))
         self.assertIn('data-kind="wall"', self.view(html))                                   # a wall is not dropped by what the check no longer lists
-        self.assertIn("Work: 1 wall finding", self.card(html))
+        self.assertIn("<b>Work</b>: 1 question", self.card(html))
 
     def check_json(self):
         """check.py --json of the fixture workspace, run for real."""

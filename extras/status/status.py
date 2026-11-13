@@ -7450,7 +7450,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     history, said_scope = debt_history(ws, now.date())
     listed = bool(C) and not C.get("failed") and not C.get("pending")
     queues = finding_queues(ws, history, C, now.date(), said_scope)
-    fq = queue_mod() if queues is not None or qdata else None
+    fq = None
+    if queues is not None or qdata:
+        try:
+            fq = queue_mod()
+        except Exception:              # no queue module: the card goes without a queue, as before
+            fq = None
     if fq and qdata:        # the wiki's own questions join the findings, each in the queue of its own zone or wiki (#542)
         # a findings read that failed leaves `queues` None: start from nothing, so the wiki's own questions still show
         queues = fq.with_asked(queues if queues is not None else {}, fq.asked_questions(qdata, fq.later_hidden(ws, now.date())))

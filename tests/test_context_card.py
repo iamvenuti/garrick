@@ -94,6 +94,19 @@ class TestOneLineForEachPlace(CardCase):
         self.assertIn('data-qopen="Zones/Work"', card)
         self.assertIn('data-scope="Zones/Work"', self.queue(html))
 
+    def test_the_zone_menu_has_its_script_whenever_the_card_has_the_menu(self):
+        for f in list((self.meetings / "questions").glob("*.md")) + [self.knowledge_q]:
+            f.unlink()
+        personal = THREAD.replace("Zones/Work/Acme", "Zones/Personal/Birch")
+        self.record([{"kind": "judgment", "check": "resume", "path": THREAD, "line": RESUME},
+                     {"kind": "judgment", "check": "resume", "path": personal, "line": RESUME.replace(THREAD, personal)}])
+        with mock.patch.object(status, "questions_data", return_value=None):       # the wikis cannot be placed: no Questions data
+            html = self.page()
+        card = self.card(html)
+        self.assertIn('id="nzone"', card)                                           # two places hold findings, and no wiki question
+        self.assertIn("window.GarrickQuestions={open:", html)                       # so the menu's script is on the page
+        self.assertIn("sel.onchange=function()", html)
+
     def test_nothing_anywhere_says_so_once_a_record_exists(self):
         for f in list((self.meetings / "questions").glob("*.md")) + [self.knowledge_q]:
             f.unlink()

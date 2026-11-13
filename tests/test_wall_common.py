@@ -1,8 +1,8 @@
 """A run of words that the whole workspace holds is stock wording, not a quote (#549).
 
 An intake note carries the same fixed line in every zone. The wording check counts a shared run as common when files
-of three zones or more hold it, or more than `wall-common-files` files (5 unless the settings say) do; a sentence
-lifted from one meeting, or from one note into one other, is still a finding.
+of three zones or more hold it. A sentence lifted from one meeting, or from one note into one other, is still a
+finding, however many notes of one or two zones repeat it.
 
     cd tests && python3 -m unittest test_wall_common
 
@@ -11,7 +11,6 @@ Invented names only: Work, Home and Study are walled zones of the fixture.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 import tempfile
@@ -29,25 +28,6 @@ import garrick_lib as lib  # noqa: E402
 
 STOCK = "Cedar quay survey results were forwarded without comment for the harbour budget review."
 TAIL = " The owner asked for a second pass before the sailing season opens."
-
-
-class Accessor(unittest.TestCase):
-    def read(self, data):
-        with tempfile.TemporaryDirectory() as tmp:
-            if data is not None:
-                write(Path(tmp) / "System" / "garrick-settings.json", data if isinstance(data, str) else json.dumps(data))
-            return lib.wall_common_files(tmp)
-
-    def test_five_unless_the_settings_say(self):
-        self.assertEqual(5, self.read(None))
-        self.assertEqual(5, self.read({}))
-        self.assertEqual(10, self.read({"wall-common-files": 10}))
-        self.assertEqual(1, self.read({"wall-common-files": 1}))
-
-    def test_a_value_that_is_not_a_whole_number_from_one_up_gives_five(self):
-        for bad in (0, -3, "10", 2.5, None, True, [4], "not json"):
-            with self.subTest(value=bad):
-                self.assertEqual(5, self.read({"wall-common-files": bad} if bad != "not json" else bad))
 
 
 @unittest.skipUnless(HAVE_GIT, "git is not installed")
@@ -111,15 +91,22 @@ class Common(unittest.TestCase):
         note = self.put("Work", "Northwind", "Pricing", "Lifted.md", HOME_SAYS)
         self.assertEqual(self.paths([note]), self.refused())
 
-    def test_many_files_of_two_zones_pass_by_default_and_are_refused_when_the_setting_is_raised(self):
-        files = self.intake(work=3, home=3, study=0)           # six files, two zones
-        self.assertEqual(set(), self.refused())
-        write(self.root / "System" / "garrick-settings.json", json.dumps({"wall-common-files": 10}))
+    def test_many_files_of_two_zones_still_stand(self):
+        files = self.intake(work=3, home=4, study=0)           # seven files, two zones
         self.assertEqual(self.paths(files), self.refused())
 
-    def test_five_files_are_not_more_than_five(self):
-        files = self.intake(work=3, home=2, study=0)
-        self.assertEqual(self.paths(files), self.refused())
+    def test_a_meeting_copied_into_many_notes_of_one_zone_is_still_a_finding(self):
+        # The Home meeting's sentence pasted into five and then six Work notes: copies never vouch for the leak.
+        notes = [self.put("Work", "Northwind", "Pricing", "Lifted%d.md" % n, HOME_SAYS) for n in range(5)]
+        self.assertEqual(self.paths(notes), self.refused())
+        notes.append(self.put("Work", "Northwind", "Pricing", "Lifted5.md", HOME_SAYS))
+        self.assertEqual(self.paths(notes), self.refused())
+
+    def test_a_note_copied_into_many_notes_of_one_zone_and_one_of_another_is_still_a_finding(self):
+        home = [self.put("Home", "Garden", "Beds", "Own%d.md" % n, STOCK) for n in range(5)]
+        leak = self.put("Work", "Northwind", "Pricing", "Leak.md", STOCK)
+        self.assertIn(self.paths([leak]).pop(), self.refused())
+        self.assertTrue(home)
 
     def test_a_run_is_common_only_as_a_whole(self):
         # The base sentence is in three zones; Work and Home also share a longer run that no third zone holds.
@@ -137,11 +124,6 @@ class Common(unittest.TestCase):
     def test_an_index_that_counts_nothing_leaves_the_finding_standing(self):
         files = self.intake()
         with mock.patch.object(check, "widespread_runs", lambda ws, owners: set()):
-            self.assertEqual(self.paths(files), self.refused())
-
-    def test_a_setting_that_cannot_be_read_leaves_the_finding_standing(self):
-        files = self.intake()
-        with mock.patch.object(check, "wall_common_files", side_effect=OSError("unreadable")):
             self.assertEqual(self.paths(files), self.refused())
 
     def test_an_index_made_without_the_count_counts_nothing_as_widespread(self):

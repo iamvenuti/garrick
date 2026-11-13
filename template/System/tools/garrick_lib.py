@@ -3315,19 +3315,6 @@ def read_settings(root: PathLike) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-WALL_COMMON_FILES = 5   # `wall-common-files` unless the settings say
-
-
-def wall_common_files(root: PathLike) -> int:
-    """How many files may hold a run of words before the wall check counts the run as common across the workspace
-    (`wall-common-files` in System/garrick-settings.json). 5 when the key is absent, is not a whole number, or is
-    under 1; a boolean is not a number."""
-    value = read_settings(root).get("wall-common-files")
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        return WALL_COMMON_FILES
-    return value
-
-
 def simple_home(root: PathLike) -> bool:
     """Whether the workspace opens on the simple home, `"home": "simple"` in
     the settings file. One without the key keeps the full page it had."""

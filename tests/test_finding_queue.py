@@ -70,10 +70,48 @@ def text_of(markup: str) -> str:
     return htmllib.unescape(re.sub(r"<[^>]+>", " ", markup))
 
 
+class TestKindTable(unittest.TestCase):
+    """#550: every finding kind is `automatic` or `question`, in one table, and no question is asked with *Something else* alone."""
+
+    def questions(self):
+        out = {kind: fq.question(it, "Zones/Work") for kind, it in KINDS.items() if kind != fq.HOOKS}
+        out["hooks-blocked"] = fq.question(KINDS[fq.HOOKS], "Zones/Work")
+        out["other"] = fq.question(item("judgment", "orphans", "Zones/Work/Acme Review/Stray.md", "%(p)s: an orphan page"), "Zones/Work")
+        return out
+
+    def test_every_kind_is_classed(self):
+        known = set(fq.PLAIN_KINDS) | {fq.MECHANICAL, fq.HOOKS, "other"} | set(fq.ASKED_KINDS)
+        self.assertEqual(known, set(fq.KIND_CLASS))
+        self.assertTrue(set(fq.KIND_CLASS.values()) <= {fq.AUTOMATIC, fq.QUESTION})
+        for kind in fq.PLAIN_KINDS:
+            self.assertTrue(fq.ANSWERS[kind], kind)
+
+    def test_a_question_has_a_real_answer(self):
+        for kind, q in self.questions().items():
+            if kind in KINDS and fq.KIND_CLASS[kind] == fq.QUESTION and kind not in fq.FREE_ONLY:
+                self.assertTrue(q["answers"], kind)
+        self.assertTrue(set(fq.FREE_ONLY) <= {k for k, c in fq.KIND_CLASS.items() if c == fq.QUESTION})
+        wiki = fq.wiki_question({"wiki": "Meetings", "file": "questions/a.md", "title": "Who owns it?", "writes": {}})
+        verdict = fq.verdict_question({"wiki": "Meetings", "file": "questions/b.md", "title": "Is it so?", "verdict": "yes"})
+        decision = fq.decision_question({"file": "wiki/261001 - Call.md", "title": "Use Cedar", "revisit": "A newer call says otherwise"})
+        for q in (wiki, verdict, decision):
+            self.assertTrue(q["answers"], q["id"])
+        self.assertEqual([], fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), "Zones/Work")["answers"])
+
+    def test_no_question_shows_a_command_outside_details(self):
+        for kind, q in self.questions().items():
+            if kind in fq.FREE_ONLY:
+                continue
+            shown = " ".join([q["sentence"], q["why"], q["tag"]] + [a["label"] + " " + a["does"] for a in q["answers"]])
+            self.assertNotIn("`", shown, kind)
+            self.assertNotIn(".py", shown, kind)
+            self.assertNotIn("--", shown, kind)
+
+
 class TestPlainWording(unittest.TestCase):
     def test_the_kinds_that_have_plain_wording(self):
         """A new kind cannot get plain wording silently: this list is the whole of it."""
-        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-missing"), fq.PLAIN_KINDS)
+        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed"), fq.PLAIN_KINDS)
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.ANSWERS))
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.TAGS))
         self.assertEqual("mechanical", fq.MECHANICAL)
@@ -125,11 +163,11 @@ class TestPlainWording(unittest.TestCase):
             "resume-long": ("The resume point of Pricing is getting long: about 500 words.", ["Shorten it", "Not now"]),
             "todo-long": ("3 lines in the Work to-do list are longer than an action should be.", ["Shorten the line", "Not now"]),
             "meeting-long": ("A meeting note is longer than usual: about 600 words.", ["Shorten it", "Let me open it", "Not now"]),
-            "hooks-missing": ("The Work zone does not check the walls before a commit.", ["Install the wall check"]),
+            "hooks-blocked": ("The Work zone does not check the walls before a commit.", ["Add the wall check to my hook"]),
             "wall": ("“261027 - Sales deck” in Work points into private material from Personal.", ["Show me both texts", "Take it out", "The words are mine, keep them"]),
         }
         for plain, (sentence, labels) in want.items():
-            q = fq.question(KINDS[plain], "Zones/Work")
+            q = fq.question(KINDS.get(plain) or KINDS[fq.HOOKS], "Zones/Work")
             self.assertEqual(sentence, q["sentence"], plain)
             self.assertTrue(q["why"] and q["tag"], plain)
             shown = [a["label"] for a in q["answers"]]
@@ -167,11 +205,11 @@ class TestPlainWording(unittest.TestCase):
         self.assertEqual([("shorten", "handoff"), ("later", "later")], ids["resume-long"])
         self.assertEqual([("shorten", "handoff"), ("later", "later")], ids["todo-long"])
         self.assertEqual([("shorten", "handoff"), ("open", "open"), ("later", "later")], ids["meeting-long"])
-        self.assertEqual([("install", "run")], ids["hooks-missing"])                          # no Not now: hidden, the walls go unchecked
+        self.assertEqual([("add-check", "handoff")], ids["hooks-blocked"])                    # no Not now: hidden, the walls go unchecked
         # no Not now; the look first, then Take it out, then the page's own allowance (#548, #550)
         self.assertEqual([("show-both", "look"), ("take-out", "handoff"), ("keep", "allow")], ids["wall"])
         self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
-                          "meeting-long": ("later",), "hooks-missing": ("install",), "wall": (),
+                          "meeting-long": ("later",), "hooks-blocked": (), "fix-failed": ("later",), "answers-held": ("later",), "wall": (),
                           "verdict": ("later",), "decision-review": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
@@ -409,7 +447,7 @@ class TestQueueOnThePage(QueueCase):
         work = queue[queue.index('data-scope="Zones/Work"'):]
         work = work[:work.index("</section>")]
         kinds = re.findall(r'data-q data-key="[0-9a-f]{16}" data-kind="([^"]+)"', work)
-        self.assertEqual(["wall", "note-long", "resume-long", "todo-long", "hooks-missing"], kinds)
+        self.assertEqual(["wall", "note-long", "resume-long", "todo-long"], kinds)           # missing hooks are installed, never asked
         meetings = queue[queue.index('data-scope="Wikis/Meetings"'):]
         self.assertIn('data-kind="meeting-long"', meetings)
 
@@ -469,14 +507,28 @@ class TestQueueOnThePage(QueueCase):
         self.record(standing)
         self.assertEqual(3, self.view(self.page()).count("data-q "))
 
-    def test_missing_hooks_is_never_put_off_even_with_a_key_present(self):
+    def test_a_missing_hook_is_not_asked_and_a_hook_in_the_way_is_never_put_off(self):
         it = KINDS["hooks-missing"]
-        fq.later_put(self.root, fq.later_key("hooks-missing", it["path"]), self.now.date())
+        (self.root / "Zones" / "Work" / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
         self.record([{"kind": "judgment", "check": "zones", "path": it["path"], "line": it["line"]}])
-        queue = self.view(self.page())
-        self.assertIn('data-kind="hooks-missing"', queue)
-        out = fq.forecast_questions([dict(it, scope="Zones/Work")], {fq.later_key("hooks-missing", it["path"])})
-        self.assertEqual(1, len(out["Zones/Work"]))
+        self.assertNotIn('data-kind="hooks', self.page())                       # nothing stands in the way: the night installs it
+        self.assertEqual({}, fq.forecast_questions([dict(it, scope="Zones/Work")], set(), self.root))
+        mine = self.root / "Zones" / "Work" / ".git" / "hooks" / "pre-commit"
+        mine.write_text("#!/bin/sh\necho mine\n")                                          # a hook of the user's own, which Garrick never replaces
+        key = fq.later_key("hooks-blocked", it["path"])
+        fq.later_put(self.root, key, self.now.date())
+        self.record([{"kind": "judgment", "check": "zones", "path": it["path"], "line": it["line"]}])
+        self.assertIn('data-kind="hooks-blocked"', self.view(self.page()))
+        out = fq.forecast_questions([dict(it, scope="Zones/Work")], {key}, self.root)
+        self.assertEqual(["hooks-blocked"], [q["id"] for q in out["Zones/Work"]])
+        q = out["Zones/Work"][0]
+        self.assertEqual(["Add the wall check to my hook"], [a["label"] for a in q["answers"]])
+        self.assertIn("a hook of yours is in the way", q["why"])
+        self.assertEqual("handoff", q["answers"][0]["action"])
+
+    def test_merge_hooks_missing_is_the_same_automatic_kind(self):
+        line = "Zones/Work: has the pre-commit wall check but not post-merge, so a merge brings changes in with no wall check; run `x`"
+        self.assertEqual(fq.HOOKS, fq.plain_kind({"kind": "judgment", "check": "zones", "path": "Zones/Work", "line": line}))
 
     def test_a_wall_the_quick_check_lists_has_a_line_when_no_record_item_covers_its_scope(self):
         self.quick({"check": "walls", "severity": "error", "path": DECK, "message": "links [[Garden Notes]], a note of the Personal zone; "
@@ -529,7 +581,7 @@ class TestQueueOnThePage(QueueCase):
         self.assertNotIn("st.del(KEY)", show)                                                # an empty queue saves done, it does not delete
         click = js[js.index("data-qclose]')){"):][:60]
         self.assertIn("st.del(KEY)", click)                                                  # and Close or Back to the overview delete it
-        self.assertIn("dlg.addEventListener('close',function(){st.del(KEY)})", js)
+        self.assertIn("dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);", js)           # the close keeps nothing but the request
 
     def test_a_browser_shows_no_dead_answer_and_says_the_app_is_needed(self):
         self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)
@@ -541,7 +593,7 @@ class TestQueueOnThePage(QueueCase):
         self.assertIn('class="hint qweb">The other answers need the Garrick app.', queue)
         for plain in ("resume-long", "wall"):
             self.assertNotIn("qweb", fq.question_html(fq.question(KINDS[plain], "Zones/Work")))     # an answer a browser can send: no hint
-        self.assertIn("qweb", fq.question_html(fq.question(KINDS["hooks-missing"], "Zones/Work")))
+        self.assertIn("qweb", fq.question_html(fq.question(KINDS["note-long"], "Zones/Work")))
 
     def test_an_applied_answer_is_gone_from_the_next_build_but_a_wall_never_is(self):
         self.record([{"kind": "judgment", "check": "projects", "path": HUB, "line": NOTE_LINE % {"p": HUB}},
@@ -601,52 +653,36 @@ class TestQueueOnThePage(QueueCase):
         self.assertNotIn('id="queue"', html)
         self.assertIn(">Nurture</button>", self.card(html))                                   # the card keeps its Nurture button
 
-    def test_fix_them_counts_only_what_fix_can_do_and_runs_fix_for_each(self):
-        sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
-        pricing = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
-        said = "`status` is 'ongoing', should be active, parked or done"
-        self.quick(
-            {"check": "threads", "severity": "warning", "path": sized, "message": said},
-            {"check": "threads", "severity": "warning", "path": pricing, "message": said},
-            {"check": "deliverables", "severity": "warning", "path": "Zones/Work/Acme Review/Deliverables/Deck.pptx",
-             "message": "name does not start with its creation date, `YYMMDD - <name>`"})
-        self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
-        html = self.page()
-        card = self.card(html)
-        self.assertIn("Garrick can fix 2 small things on its own.", card)                       # the .pptx has no Fix: not counted
-        data = re.search(r'data-fix="([^"]+)"', card)
-        requests = json.loads(htmllib.unescape(data.group(1)))
-        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"},
-                          {"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"}], requests)
-        ops = pa.ops_lib(self.root)
-        for req in requests:
-            self.assertIsNone(ops.validate("fix", req))                                         # each one is the verb `fix`, validated as it is
-        self.assertIn("Fix them</button>", card)
-        self.assertNotIn('id="queue"', html)                                                    # a mechanical finding is not asked one by one
-
-    def test_fix_them_runs_the_verb_fix_for_each_note(self):
-        """The button's requests are the verb `fix`, one for each note, as the executor validates it (#541: the finding's own row is gone)."""
-        sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
-        said = "`status` is 'ongoing', should be active, parked or done"
-        self.quick({"check": "threads", "severity": "warning", "path": sized, "message": said})
-        self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
-        html = self.page()
-        fix = re.search(r'data-fix="([^"]+)"', html)
-        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"}],
-                         json.loads(htmllib.unescape(fix.group(1))))
-        self.assertIsNone(pa.ops_lib(self.root).validate("fix", json.loads(htmllib.unescape(fix.group(1)))[0]))
-
-    def test_no_fix_them_without_a_mechanical_fix(self):
-        self.quick({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
-        self.record([{"kind": "judgment", "check": "links", "path": "Zones/Work/a.md", "line": "Zones/Work/a.md: x"}])
-        self.assertNotIn("Garrick can fix", self.card(self.page()))
-
-    def test_fix_them_in_a_browser_hands_the_request_over(self):
+    def test_a_mechanical_finding_shows_nothing_on_the_card_and_no_button_exists(self):
+        """#550: the nightly run makes these fixes; the card has no line and no Fix them for them."""
         sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
         self.quick({"check": "threads", "severity": "warning", "path": sized, "message": "`status` is 'ongoing', should be active, parked or done"})
         self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
-        card = self.card(self.page())
-        self.assertIn('class="act webonly" type="button" data-request="nurture the context"', card)
+        html = self.page()
+        card = self.card(html)
+        for gone in ("Garrick can fix", "Fix them", "data-fix", 'class="auto"'):
+            self.assertNotIn(gone, html, gone)
+        self.assertNotIn('id="queue"', html)
+        self.assertFalse(hasattr(fq, "fix_block"))
+        self.assertFalse(hasattr(status, "mechanical_fixes"))
+        self.assertIn("Nothing needs you.", card)
+
+    def test_a_fix_the_night_held_back_is_a_question_with_its_reason_and_real_answers(self):
+        sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
+        line = "%s: status ongoing becomes active (held: a session is mid-turn there)" % sized
+        self.quick({"check": "threads", "severity": "warning", "path": sized, "message": "`status` is 'ongoing', should be active, parked or done"})
+        self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": line}])
+        queue = self.view(self.page())
+        self.assertIn('data-kind="fix-failed"', queue)
+        q = fq.question({"kind": "mechanical", "check": "threads", "path": sized, "line": line, "scope": "Zones/Work"}, "Zones/Work")
+        self.assertEqual("fix-failed", q["id"])
+        self.assertIn("A session was working there", q["why"])
+        self.assertEqual(["Fix it with my assistant", "Not now"], [a["label"] for a in q["answers"]])
+        self.assertIn("mid-turn", q["details"])
+        shown = text_of(fq.question_html(q))
+        for word in (".md", "`", "python3", "held:"):
+            self.assertNotIn(word, shown)
+        self.assertEqual({}, fq.forecast_questions([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x", "scope": "Zones/Work"}], set()))
 
 
 def wiki_q(wiki="Meetings", file="questions/261104 - Renewal owner.md", **more):
@@ -928,20 +964,11 @@ class TestFindingVerb(ActionCase):
         self.assertFalse(got["ok"], got)
         self.assertEqual(short, self.hub.read_text(encoding="utf-8"))
 
-    def test_install_runs_check_py_install_hooks_and_says_so(self):
-        done = subprocess.CompletedProcess([], 0, "Work: wall check installed at Zones/Work/.git/hooks/pre-commit\n", "")
-        with mock.patch.object(pa, "finding_run", return_value=done) as run:
-            got = self.ask(kind="hooks-missing", answer="install", path="Zones/Work")
-        self.assertTrue(got["ok"], got)
-        args = run.call_args[0][1]
-        self.assertEqual(["--root", str(self.root), "--install-hooks"], [str(a) for a in args[1:]])
-        self.assertTrue(str(args[0]).endswith("System/tools/check.py"))
-        self.assertIn("wall check installed", got["detail"])
-        failed = subprocess.CompletedProcess([], 1, "", "Work: a hook of yours is in the way\n")
-        with mock.patch.object(pa, "finding_run", return_value=failed):
-            got = self.ask(kind="hooks-missing", answer="install", path="Zones/Work")
-        self.assertFalse(got["ok"])
-        self.assertIn("a hook of yours is in the way", got["say"])
+    def test_a_hooks_answer_is_refused_the_verb_has_none(self):
+        """#550: Garrick installs a missing hook itself, so the verb takes no answer for one, and a hook in the way is a handoff."""
+        for kind in ("hooks-missing", "hooks-blocked"):
+            for answer in ("install", "later", "add-check"):
+                self.assertFalse(self.ask(kind=kind, answer=answer, path="Zones/Work")["ok"], (kind, answer))
 
     def test_every_answer_the_page_can_send_is_a_valid_request(self):
         ops = pa.ops_lib(self.root)
@@ -962,7 +989,7 @@ class TestFindingVerb(ActionCase):
                 else:
                     self.assertEqual("handoff", a["action"])
                     self.assertTrue(a["phrase"])
-        self.assertEqual(7, sent)
+        self.assertEqual(6, sent)
         self.assertFalse(self.ask(kind="note-long", answer="bogus", path=self.rel)["ok"])
 
 

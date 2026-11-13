@@ -3974,67 +3974,6 @@ class TestNoReviewButton(StatusCase):
         self.assertFalse(hasattr(status, "context_link"))
 
 
-class TestChecksCardActs(StatusCase):
-    """#278, #541: the Checks card's Fix them runs the mechanical findings of the quick check on notes in a zone, and
-    the page works a fix out in full only for such a note."""
-
-    def setUp(self):
-        super().setUp()
-        shutil.copytree(REPO / "template" / "System" / "tools", self.root / "System" / "tools",
-                        ignore=shutil.ignore_patterns("__pycache__"))
-        status._NURTURE.clear()
-        self.addCleanup(status._NURTURE.clear)
-
-    def fake_check(self, *findings):
-        errors = sum(1 for f in findings if f["severity"] == "error")
-        (self.root / "System" / "tools" / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {
-            "errors": errors, "warnings": len(findings) - errors, "findings": list(findings)})
-
-    def card(self, html):
-        start = html.index('<details class="card" id="checks"')
-        ends = [i for i in (html.find('<details class="card" id="', start + 1), html.find("</section>", start)) if i > 0]
-        return html[start:min(ends)]
-
-    def test_a_finding_without_fix_reads_no_history(self):
-        """A rename's date comes from git, a call a file: the page makes it
-        only for a note in a zone, which Fix can apply, so a rebuild with
-        many undated deliverables does not make one call each."""
-        env = mock.patch.dict(os.environ, {k: v for k, v in fixtures.GIT_ENV.items() if k.startswith("GIT_")})
-        env.start()
-        self.addCleanup(env.stop)
-        os.environ.pop("GIT_DIR", None)
-        work = self.root / "Zones" / "Work"
-        shelf = work / "Acme Review" / "Deliverables"
-
-        def calls(n):
-            shutil.rmtree(shelf, ignore_errors=True)
-            for i in range(n):
-                write(shelf / ("Deck %d.pptx" % i), "x")
-            write(shelf / "Memo.md", "x")
-            shutil.rmtree(work / ".git", ignore_errors=True)
-            fixtures.git(work, "init", "-q")
-            fixtures.git(work, "add", "-A")
-            fixtures.git(work, "-c", "core.hooksPath=" + os.devnull, "commit", "-q", "-m", "start")
-            self.fake_check(*[{"check": "deliverables", "severity": "warning", "path": "Zones/Work/Acme Review/Deliverables/" + p.name,
-                               "message": "name does not start with its creation date, `YYMMDD - <name>`"}
-                              for p in sorted(shelf.iterdir())])
-            seen, real = [], subprocess.run
-
-            def spy(cmd, *a, **k):
-                if cmd and cmd[0] == "git":
-                    seen.append(cmd)
-                return real(cmd, *a, **k)
-            with mock.patch.object(subprocess, "run", spy):
-                card = self.card(self.page())
-            return len([c for c in seen if "rev-parse" not in c]), card      # rev-parse: asked once a process
-
-        few, _ = calls(1)
-        many, card = calls(12)
-        self.assertEqual(few, many)                                        # the same calls, however many decks
-        self.assertIn("Garrick can fix 1 small thing on its own.", card)   # the note in a zone only: a deck is not a note
-        fix = re.search(r'data-fix="([^"]+)"', card)
-        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Acme Review/Deliverables/Memo.md"}], json.loads(htmllib.unescape(fix.group(1))))
-
 class TestChecksSaysWhatNeedsYou(StatusCase):
     """#530, #541: the Checks card says which scopes need the user and for how long, with one word for the trend and the
     context debt in one line; there is no Findings view."""

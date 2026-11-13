@@ -227,7 +227,7 @@ class TestPlainWording(unittest.TestCase):
         self.assertIn("o.classList.contains('other')", js)                                   # the free-text field is a number too: it takes the focus
         self.assertIn("e.key==='Enter'", js)                                                 # Return takes the recommended one
         self.assertIn("tagName==='INPUT'", js)                                               # and sends the text while typing in the field
-        self.assertIn("'.opt.rec'", js)
+        self.assertIn("'.opt.rec:not([hidden]):not(:disabled)'", js)
         self.assertIn("function foc(q)", js)                                                 # S1: the focus goes to the recommended answer
         self.assertRegex(js, r"(?s)function show\(done0\)\{.*foc\(q\)\}")                       # on open and after every answer
         self.assertIn("summary,a,input,textarea,select,button", js)                            # S5: Return on Details or a link runs nothing
@@ -522,7 +522,9 @@ class TestQueueOnThePage(QueueCase):
         self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)
         self.record([{"kind": "judgment", "check": "projects", "path": HUB, "line": NOTE_LINE % {"p": HUB}}])
         self.quick({"check": "projects", "severity": "warning", "path": HUB, "message": NOTE_LINE.split(": ", 1)[1]})
-        queue = self.view(self.page())
+        moves = {"moves": 3, "before": 6400, "after": 3900, "still_over": False, "case": "", "skipped": ""}
+        with mock.patch.object(status.queue_mod().Planner, "plan", return_value=moves):
+            queue = self.view(self.page())
         self.assertIn('class="hint qweb">The other answers need the Garrick app.', queue)
         for plain in ("resume-long", "wall"):
             self.assertNotIn("qweb", fq.question_html(fq.question(KINDS[plain], "Zones/Work")))     # an answer a browser can send: no hint
@@ -764,6 +766,187 @@ class TestFindingVerb(ActionCase):
                     self.assertTrue(a["phrase"])
         self.assertEqual(7, sent)
         self.assertFalse(self.ask(kind="note-long", answer="bogus", path=self.rel)["ok"])
+
+
+def old_days(n):
+    return dt.date.today() - dt.timedelta(days=n)
+
+
+def dated(n, words=30):
+    d = old_days(n)
+    return "**%d %s %d.** Entry settled the plan. %s\n\nSecond paragraph.\n\n" % (d.day, d.strftime("%B"), d.year, "word " * words)
+
+
+def note_text(above="", entries="", state=True):
+    head = "---\ntitle: Pricing\ntype: thread\nstatus: active\n---\n\n# Pricing\n\n" + above
+    if not state:
+        return head + "\n" + entries
+    return head + "\n## State of play\n\n**Resume here.** Under way.\n\n---\n\n" + entries
+
+
+class TestLongNoteFromItsPlan(QueueCase):
+    """#539: a long note is asked from history.py's plan, not from its kind alone."""
+
+    def ask(self, text, rel=THREAD, planner=None):
+        write(self.root / rel, text)
+        it = dict(KINDS["note-long"], path=rel, line=NOTE_LINE % {"p": rel}, scope="Zones/Work")
+        return fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]
+
+    def ids(self, q):
+        return [a["id"] for a in q["answers"]]
+
+    def assert_handoff_first(self, q):
+        self.assertEqual(["split", "later"], self.ids(q))
+        self.assertEqual("split", q["recommended"])
+        self.assertNotIn("preview", self.ids(q))
+        a = q["answers"][0]
+        self.assertEqual("handoff", a["action"])
+        self.assertEqual("Your assistant splits the long sections into their own notes in the thread's folder, links them, and shows you the change.",
+                         a["does"])
+        self.assertIn(THREAD, a["phrase"])
+        self.assertIn("show me the change before anything is committed", a["phrase"])
+
+    def test_words_all_above_the_state_of_play_offer_no_move(self):
+        q = self.ask(note_text(above="## Thesis\n\n" + "word " * 300 + "\n"))
+        self.assert_handoff_first(q)
+        self.assertIn("long sections above the dated entries", q["why"])
+        self.assertIn("none of the words here are in them", q["details"])
+
+    def test_a_log_of_dated_bullets_above_the_rule_is_named(self):
+        bullets = "### Log\n\n" + "".join("- **%d November 2026** Settled step %d.\n" % (i + 1, i) for i in range(8)) + "\n"
+        q = self.ask(note_text(above=bullets, entries=dated(1)))
+        self.assert_handoff_first(q)
+        self.assertIn("bullets in a log above the line that opens the history", q["why"])
+        self.assertIn("Dated bullets sit above", q["details"])
+
+    def test_five_entries_or_fewer_stay(self):
+        q = self.ask(note_text(entries="".join(dated(n) for n in (1, 2, 3, 400, 500))))
+        self.assert_handoff_first(q)
+        self.assertIn("five dated entries or fewer", q["why"])
+
+    def test_a_hub_with_no_state_of_play_offers_no_move(self):
+        q = self.ask(note_text(above="## Notes\n\n" + "word " * 50, state=False), rel=HUB)
+        self.assertEqual(["split", "later"], self.ids(q))
+        self.assertIn("project's folder", q["answers"][0]["phrase"])
+        self.assertIn("no state-of-play section", q["why"])
+        self.assertIn("no `## State of play`", q["details"] + "no `## State of play`")
+
+    def test_eight_entries_with_old_ones_move_first_with_the_plans_figures(self):
+        q = self.ask(note_text(entries="".join(dated(n, 600) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
+        self.assertEqual(["move-older", "preview", "later"], self.ids(q))
+        self.assertEqual("move-older", q["recommended"])
+        self.assertRegex(q["why"], r"^3 older entries would move, taking the page from about [\d,]+ words to about [\d,]+ words\.")
+        self.assertEqual("split", q["answers"][0]["fallback"]["id"])           # the handoff that stands in for a refused move
+
+    def test_a_move_that_will_not_be_enough_says_so(self):
+        plan = {"moves": 2, "before": 9000, "after": 7000, "still_over": True, "case": "", "skipped": ""}
+        q = fq.question(dict(KINDS["note-long"]), "Zones/Work", plan)
+        self.assertIn("The move alone will not bring it under its limit.", q["why"])
+        self.assertEqual(["move-older", "preview", "later"], self.ids(q))
+
+    def test_no_plan_asked_keeps_the_kinds_own_answers(self):
+        self.assertEqual(["move-older", "preview", "later"], self.ids(fq.question(dict(KINDS["note-long"]), "Zones/Work")))
+
+    def test_a_plan_that_fails_counts_as_nothing_moves(self):
+        write(self.root / THREAD, note_text(entries="".join(dated(n) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
+        it = dict(KINDS["note-long"], path=THREAD, line=NOTE_LINE % {"p": THREAD}, scope="Zones/Work")
+        bad = (subprocess.CompletedProcess([], 1, "", "boom"), subprocess.CompletedProcess([], 0, "not json", ""),
+               subprocess.CompletedProcess([], 0, "[]", ""), subprocess.CompletedProcess([], 0, '{"a": 1}', ""))
+        for result in bad:
+            with mock.patch.object(fq.subprocess, "run", return_value=result):
+                q = fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]
+            self.assertEqual(["split", "later"], self.ids(q), result)
+            self.assertIn("could not ask what would move", q["why"])
+        with mock.patch.object(fq.subprocess, "run", side_effect=subprocess.TimeoutExpired("history.py", 15)):
+            self.assertEqual(["split", "later"], self.ids(fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]))
+        (self.root / "System" / "tools" / "history.py").unlink()                                    # a missing tool
+        self.assertEqual(["split", "later"], self.ids(fq.forecast_questions([it], set(), self.root)["Zones/Work"][0]))
+
+    def test_the_plan_is_a_dry_run_asked_once_a_finding_and_bounded_by_a_budget(self):
+        write(self.root / THREAD, note_text(entries="".join(dated(n) for n in (1, 2, 3, 4, 5, 300, 310, 320))))
+        its = [dict(KINDS["note-long"], path=p, line=NOTE_LINE % {"p": p}, scope="Zones/Work") for p in (THREAD, THREAD.replace("Pricing", "Pricing2"))]
+        write(self.root / its[1]["path"], (self.root / THREAD).read_text(encoding="utf-8"))
+        real = subprocess.run
+        with mock.patch.object(fq.subprocess, "run", side_effect=real) as run:
+            fq.forecast_questions(its + [dict(its[0])], set(), self.root)
+        self.assertEqual(2, run.call_count)                                                        # one run for each note
+        for call in run.call_args_list:
+            argv = call[0][0]
+            self.assertIn("dry-run", argv)
+            self.assertNotIn("apply", argv)
+            self.assertLessEqual(call[1]["timeout"], fq.PLAN_TIMEOUT)
+        with mock.patch.object(fq.subprocess, "run") as run:                                      # a spent budget runs nothing
+            q = fq.forecast_questions(its, set(), self.root)["Zones/Work"]
+            planner = fq.Planner(self.root, budget=0)
+            self.assertEqual("unknown", planner.plan(THREAD)["case"])
+        run.assert_called()                                                                          # the two plans above ran
+        with mock.patch.object(fq.subprocess, "run") as run:
+            fq.Planner(self.root, budget=0).plan(THREAD)
+        run.assert_not_called()
+
+    def test_every_answer_a_no_move_question_sends_is_a_valid_request(self):
+        q = self.ask(note_text(above="## Thesis\n\n" + "word " * 30))
+        ops = __import__("test_page_action").pa.ops_lib(self.root)
+        for a in q["answers"]:
+            if a["action"] == "later":
+                self.assertIsNone(ops.validate("finding", a["req"]))
+        self.assertIn("split", fq.ANSWERS_NO_MOVE["note-long"][0]["id"])
+
+
+class TestRefusedAnswerOnTheQueue(unittest.TestCase):
+    """#540: a refused answer is disabled, Skip for now moves on, and a reload keeps neither."""
+
+    def q(self, plain="note-long", plan=None):
+        return fq.question(dict(KINDS[plain]), "Zones/Work", plan or {"moves": 3, "before": 6400, "after": 3900, "still_over": False,
+                                                                       "case": "", "skipped": ""})
+
+    def test_each_question_carries_a_hidden_skip_and_the_move_a_hidden_fallback(self):
+        markup = fq.question_html(self.q())
+        self.assertRegex(markup, r'<button class="act qskip" type="button" data-qskip hidden>Skip for now</button>')
+        self.assertRegex(markup, r'<button class="opt" type="button" data-id="split" data-for="move-older" data-fa="[^"]+" hidden>')
+        self.assertEqual(1, markup.count('class="opt rec'))                                         # the fallback is not recommended until it is shown
+        self.assertNotIn("data-for", fq.question_html(self.q("resume-long")))
+
+    def test_a_refused_answer_is_disabled_with_the_refusal_under_it_and_skip_shows(self):
+        js = fq.QUEUE_JS
+        refuse = js[js.index("function refuse("):js.index("function open(")]
+        self.assertIn("b.disabled=true", refuse)
+        self.assertIn("out(q,f.say,true)", refuse)
+        self.assertIn("[data-qskip]').hidden=false", refuse)
+        self.assertIn("/^nothing (can move|is old enough)/i.test(say)", js)                          # the two refusals of "nothing can move"
+        self.assertIn("fb.hidden=false;fb.classList.add('rec')", refuse)                             # the handoff in the move's place
+
+    def test_skip_for_now_goes_on_and_moves_the_bar_without_putting_the_finding_off(self):
+        js = fq.QUEUE_JS
+        click = js[js.index("var sk=t.closest"):][:200]
+        self.assertIn("skip[sq.dataset.gk]=1;tally.skipped++", click)
+        self.assertNotIn("later", click)                                                              # not Not now: nothing is written
+        self.assertIn("!gone[q.dataset.gk]&&!skip[q.dataset.gk]", js)                                 # the next question is the next pending one
+        self.assertIn("k=n-left.length+1", js)                                                        # and the bar counts what is no longer pending
+
+    def test_the_summary_counts_a_skipped_question_apart_from_not_now(self):
+        js = fq.QUEUE_JS
+        self.assertIn("['later','put off to next week'],['skipped','skipped']", js)
+        self.assertIn("LINES.forEach(function(l){if(tally[l[0]])", js)
+
+    def test_a_reload_after_a_refusal_keeps_nothing_of_it(self):
+        """The planning decision replaces the issue's "keeps the disabled answer and the skip": Skip for now keeps nothing on
+        disk, so a reload shows the question as built. What is saved leaves out the skip tally and every refusal."""
+        js = fq.QUEUE_JS
+        keep = js[js.index("function kept()"):js.index("function sum()")]
+        self.assertIn("UNSAVED.indexOf(k)<0", keep)
+        self.assertIn("!notes[g].bad", keep)
+        self.assertIn("UNSAVED=['skipped']", js)
+        self.assertNotIn("refused", keep)
+        self.assertNotIn("skip:", js[js.index("function save()"):js.index("function sum()")])
+        self.assertIn("skip={};refused={}", js[js.index("function restore()"):js.index("function finish(")])
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True)
+            self.assertEqual(0, done.returncode, done.stderr)
+
+    def test_an_answer_the_queue_script_can_send_still_goes_through_the_verb(self):
+        self.assertEqual(("move-older", "preview", "later"), fq.VERB_ANSWERS["note-long"])
 
 
 if __name__ == "__main__":

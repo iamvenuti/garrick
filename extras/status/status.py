@@ -7450,9 +7450,12 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     history, said_scope = debt_history(ws, now.date())
     listed = bool(C) and not C.get("failed") and not C.get("pending")
     queues = finding_queues(ws, history, C, now.date(), said_scope)
-    fq = queue_mod() if queues is not None else None
+    fq = queue_mod() if queues is not None or qdata else None
     if fq and qdata:        # the wiki's own questions join the findings, each in the queue of its own zone or wiki (#542)
-        queues = fq.with_asked(queues, fq.asked_questions(qdata, fq.later_hidden(ws, now.date())))
+        # a findings read that failed leaves `queues` None: start from nothing, so the wiki's own questions still show
+        queues = fq.with_asked(queues if queues is not None else {}, fq.asked_questions(qdata, fq.later_hidden(ws, now.date())))
+    elif queues is None:
+        fq = None
     queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
     checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
                        need_lines(ws, history, said_scope, queues, qdata) + (fq.fix_block(fixes, str(ws)) if fq else "")

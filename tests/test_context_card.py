@@ -85,6 +85,15 @@ class TestOneLineForEachPlace(CardCase):
         self.assertNotIn("Personal", self.lines(card))                              # a zone with nothing has no line
         self.assertEqual(["Work", "The Knowledge wiki"], list(self.lines(card)))     # zones first, then the wikis
 
+    def test_a_failing_findings_read_still_shows_the_wikis_questions(self):
+        self.record()
+        with mock.patch.object(status, "finding_queues", return_value=None):
+            html = self.page()
+        card = self.card(html)
+        self.assertIn("question", self.lines(card).get("Work", ""))                # the zone's wiki question line is still there
+        self.assertIn('data-qopen="Zones/Work"', card)
+        self.assertIn('data-scope="Zones/Work"', self.queue(html))
+
     def test_nothing_anywhere_says_so_once_a_record_exists(self):
         for f in list((self.meetings / "questions").glob("*.md")) + [self.knowledge_q]:
             f.unlink()

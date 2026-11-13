@@ -469,6 +469,8 @@ The buttons that change something all go through `page_action.py`, from the Mac 
 
 Each request names one verb, and `page_action.py` takes these and no others. A new verb is a new way for the page to change your workspace, so the test suite fails until it is listed here, where a reviewer sees it.
 
+One more is the page's own wall button, for the Context queue's wall question in the Mac app: it reads the words two files share into the dialog. It has no row here, on purpose: no document an assistant reads offers it. The app's bridge is the only caller it accepts, the ask box and a session are refused, and the command line has no verb for it.
+
 | Verb | What it does |
 |---|---|
 | `todo-done` | Ticks a Todo line, with Obsidian Tasks' `✅` date; with `keys` in place of `key`, several lines of one note in one commit |

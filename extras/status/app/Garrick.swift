@@ -1317,10 +1317,10 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 	// Settings › Memory's unsaved values would do ("memory-preview"), or a note
 	// for Explore's Preview ("note-read", #206), or Settings › About Garrick's
 	// Check for updates and the update it starts ("release-check", "release-update",
-	// #410, which show their reply in the section), only reads: the reply goes to
+	// #410, which show their reply in the section), or the wall question's look at a finding ("walls-look", #548), only reads: the reply goes to
 	// the page, with no toast and no rebuild, or asking would rebuild the page
 	// it asks from.
-	func reading(_ request: [String: Any]) -> Bool { ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update"].contains(request["verb"] as? String ?? "") }
+	func reading(_ request: [String: Any]) -> Bool { ["operations", "files-progress", "memory-preview", "note-read", "release-check", "release-update", "walls-look"].contains(request["verb"] as? String ?? "") }
 
 	// What changes nothing the page shows is not followed by a rebuild, which
 	// would reload the page under the preview: a request that only reads, and

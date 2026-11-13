@@ -126,21 +126,24 @@ class TestPlainWording(unittest.TestCase):
             "todo-long": ("3 lines in the Work to-do list are longer than an action should be.", ["Shorten the line", "Not now"]),
             "meeting-long": ("A meeting note is longer than usual: about 600 words.", ["Shorten it", "Let me open it", "Not now"]),
             "hooks-missing": ("The Work zone does not check the walls before a commit.", ["Install the wall check"]),
-            "wall": ("“261027 - Sales deck” in Work points into private material from Personal.", ["Take it out", "Show me both texts"]),
+            "wall": ("“261027 - Sales deck” in Work points into private material from Personal.", ["Show me both texts", "Take it out"]),
         }
         for plain, (sentence, labels) in want.items():
             q = fq.question(KINDS[plain], "Zones/Work")
             self.assertEqual(sentence, q["sentence"], plain)
             self.assertTrue(q["why"] and q["tag"], plain)
             shown = [a["label"] for a in q["answers"]]
-            if plain == "wall":
-                shown[1] = "Show me both texts" if shown[1] == "Show me the file" else shown[1]
             self.assertEqual(labels, shown, plain)
-            self.assertEqual(q["answers"][0]["id"], q["recommended"], plain)               # the recommended one first
             markup = fq.question_html(q)
-            self.assertEqual(1, markup.count('class="opt rec'), plain)
-            self.assertLess(markup.index("opt rec"), markup.index('class="opt"') if 'class="opt"' in markup else 10 ** 9, plain)
-            self.assertIn("Recommended.", markup)
+            if plain == "wall":
+                self.assertEqual("", q["recommended"])                                      # nothing is recommended before the user saw the match (#548)
+                self.assertEqual(0, markup.count('class="opt rec'))
+                self.assertNotIn("Recommended.", re.sub(r"<small>.*?</small>", "", markup))
+            else:
+                self.assertEqual(q["answers"][0]["id"], q["recommended"], plain)               # the recommended one first
+                self.assertEqual(1, markup.count('class="opt rec'), plain)
+                self.assertLess(markup.index("opt rec"), markup.index('class="opt"') if 'class="opt"' in markup else 10 ** 9, plain)
+                self.assertIn("Recommended.", markup)
             self.assertIn("<summary>Details</summary>", markup)
             self.assertNotIn("<details open", markup)                                       # closed by default
             opts = re.findall(r'<(?:button|label) class="opt( rec| other)?[^"]*"', markup)
@@ -165,14 +168,14 @@ class TestPlainWording(unittest.TestCase):
         self.assertEqual([("shorten", "handoff"), ("later", "later")], ids["todo-long"])
         self.assertEqual([("shorten", "handoff"), ("open", "open"), ("later", "later")], ids["meeting-long"])
         self.assertEqual([("install", "run")], ids["hooks-missing"])                          # no Not now: hidden, the walls go unchecked
-        self.assertEqual([("take-out", "handoff"), ("show-both", "open")], ids["wall"])      # no Not now, no "the words are mine"
-        for a in fq.ANSWERS["wall"]:
-            self.assertNotIn("keep", a["label"].lower())
+        # no Not now; the look first, then Take it out (#548)
+        self.assertEqual([("show-both", "look"), ("take-out", "handoff")], ids["wall"])
         self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
                           "meeting-long": ("later",), "hooks-missing": ("install",), "wall": (),
                           "verdict": ("later",), "decision-review": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
-        for answers in fq.ANSWERS.values():
-            self.assertIn(answers[0]["action"], ("handoff", "run"))                          # the recommended one does something
+        for kind, answers in fq.ANSWERS.items():
+            if kind != "wall":                                                               # a wall recommends nothing
+                self.assertIn(answers[0]["action"], ("handoff", "run"))                      # the recommended one does something
 
     def test_any_other_kind_shows_the_check_text_and_something_else_only(self):
         q = fq.question({"kind": "judgment", "check": "links", "path": "Zones/Work/a.md", "scope": "Zones/Work",
@@ -187,7 +190,7 @@ class TestPlainWording(unittest.TestCase):
 
     def test_a_walls_hand_off_names_the_file_and_the_zones_and_never_the_repeated_words(self):
         q = fq.question(KINDS["wall"], "Zones/Work")
-        phrase = q["answers"][0]["phrase"]
+        phrase = next(a for a in q["answers"] if a["id"] == "take-out")["phrase"]
         self.assertIn(DECK, phrase)
         self.assertIn("Personal", phrase)
         self.assertIn("Work", phrase)
@@ -206,21 +209,26 @@ class TestPlainWording(unittest.TestCase):
         del it["message"]
         q = fq.question(it, "Zones/Work")
         self.assertEqual("A file in Work points into private material from another zone.", q["sentence"])
-        self.assertEqual("nurture Work", q["answers"][0]["phrase"])
+        self.assertEqual("nurture Work", next(a for a in q["answers"] if a["id"] == "take-out")["phrase"])
         markup = fq.question_html(q)
         self.assertNotIn("Personal", markup)
         self.assertNotIn("Sales deck", markup)
         self.assertNotIn("Zones/Work/Acme", markup)
 
-    def test_a_wall_opens_both_files_when_the_check_names_the_other(self):
+    def test_a_wall_asks_the_page_to_look_and_never_opens_the_files(self):
+        """#548: Show me both texts is the page's read verb for this place; no answer opens a file or names the other one."""
         it = dict(KINDS["wall"], message="%s: writes the path `Zones/Personal/Garden/Notes.md`, a note of the Personal zone; "
                                          "that zone is walled and this file is in the Work zone" % DECK)
-        both = fq.question(it, "Zones/Work")["answers"][1]
-        self.assertEqual("Show me both texts", both["label"])
-        self.assertEqual([{"verb": "note-open", "path": DECK}, {"verb": "note-open", "path": "Zones/Personal/Garden/Notes.md"}], both["reqs"])
-        one = fq.question(KINDS["wall"], "Zones/Work")["answers"][1]
-        self.assertEqual("Show me the file", one["label"])                                    # no other file named: only this one opens
-        self.assertEqual([{"verb": "note-open", "path": DECK}], one["reqs"])
+        q = fq.question(it, "Zones/Work")
+        both = q["answers"][0]
+        self.assertEqual(("show-both", "Show me both texts", "look"), (both["id"], both["label"], both["action"]))
+        self.assertEqual({"verb": "walls-look", "place": "Zones/Work"}, both["req"])           # the page adds the file and the finding
+        self.assertNotIn("reqs", json.dumps(q["answers"]))
+        markup = fq.question_html(q)
+        self.assertIn('data-wallfile="%s"' % DECK, markup)                                  # a listed wall names its file at build
+        self.assertEqual(1, markup.count("data-needlook"))                                   # Take it out waits for the look
+        self.assertIn('<div class="qtexts" hidden></div>', markup)
+        self.assertEqual(["show-both", "take-out"], re.findall(r'<button class="opt[^"]*" type="button" data-id="([^"]+)"', markup))
 
     def test_the_keys_and_the_free_text_field(self):
         js = fq.QUEUE_JS
@@ -283,7 +291,7 @@ class TestWallsFromCheckPy(unittest.TestCase):
             self.assertEqual("Personal", self.other(f), f.message)
             q = fq.question(dict(kind="wall", check="", path=f.path, line=f.message, message=f.message, listed=True, scope="Zones/Work"), "Zones/Work")
             self.assertIn("from Personal", q["sentence"])
-            self.assertNotIn("harvest", q["answers"][0]["phrase"])
+            self.assertNotIn("harvest", next(a for a in q["answers"] if a["id"] == "take-out")["phrase"])
 
     def test_the_meeting_name_may_hold_of_the(self):
         text = "links [[Call of the Wild]], a meeting of the Cedar zone; that zone is walled and this file is in the Work zone"
@@ -411,7 +419,7 @@ class TestQueueOnThePage(QueueCase):
         q = q[:q.index("</details>")]
         self.assertIn("“261027 - Sales deck” in Work points into private material from Personal.", q)
         self.assertNotIn("Not now", q)
-        self.assertNotIn("keep", re.sub(r"<code>.*", "", q, flags=re.S).lower())
+        self.assertNotIn("Recommended.", re.sub(r"<small>.*?</small>", "", q))                 # nothing is recommended before the texts were shown
         outside = re.sub(r"<code>.*?</code>", "", q, flags=re.S)
         self.assertNotIn(REPEATED, outside)
         self.assertIn(REPEATED, htmllib.unescape(q))                                         # Details: the check's own text, as the list showed it
@@ -936,7 +944,9 @@ class TestFindingVerb(ActionCase):
         sent = 0
         for plain, it in KINDS.items():
             for a in fq.question(it, "Zones/Work")["answers"]:
-                if a["action"] in ("run", "preview", "later"):
+                if a["action"] == "look":
+                    self.assertIsNone(ops.validate("walls-look", dict(a["req"], path=DECK, id="0123456789")), a)
+                elif a["action"] in ("run", "preview", "later"):
                     self.assertIsNone(ops.validate("finding", a["req"]), a)
                     sent += 1
                 elif a["action"] == "open":
@@ -1110,6 +1120,23 @@ class TestRefusedAnswerOnTheQueue(unittest.TestCase):
         self.assertIn("[data-qskip]').hidden=false", refuse)
         self.assertIn("/^nothing (can move|is old enough)/i.test(say)", js)                          # the two refusals of "nothing can move"
         self.assertIn("fb.hidden=false;fb.classList.add('rec')", refuse)                             # the handoff in the move's place
+
+    def test_the_wall_question_asks_in_the_app_only(self):
+        """#548: in a browser (no bridge) nothing is asked; in the app the page looks when the question opens, and the texts
+        are text, shown in the dialog and dropped when it closes."""
+        js = fq.QUEUE_JS
+        self.assertIn("function lookup(q){if(!host||q.dataset.kind!=='wall'", js)                    # no bridge, no look
+        self.assertIn("lookup(q);bare(q)", js)                                                       # the look starts when the question is shown
+        self.assertIn("if(!host)return;\nif(d.a==='look')", js)                                      # the answer needs the bridge
+        self.assertNotIn("innerHTML", js[js.index("function textBlock("):js.index("function nothing(")])   # the texts are text, never markup
+        self.assertNotIn("sessionStorage", js[js.index("function textBlock("):js.index("function show(")])  # and never kept
+        self.assertIn("dlg.addEventListener('close',function(){clearTexts();placed={}})", js)        # dropped when the dialog closes
+        self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)
+        self.assertIn('.queue .q[data-kind="wall"]:not(.looked) .opt[data-needlook]{display:none}', fq.QUEUE_CSS)
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True)
+            self.assertEqual(0, done.returncode, done.stderr)
 
     def test_a_question_with_no_visible_answer_shows_skip_at_once(self):
         """In a browser (no host) a verdict or a decision review has only hosted answers, which are hidden: Skip for now shows

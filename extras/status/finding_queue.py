@@ -966,7 +966,7 @@ cur=s;tally=fresh();gone={};notes={};skip={};refused={};pend=null;if(!dlg.open)d
    answer sent just before the reload is counted from what the new page shows */
 function restore(){var r=null;try{r=JSON.parse(st.get(KEY)||'null')}catch(e){}if(!r||Date.now()-r.t>9e5){st.del(KEY);return}
 taken=r.taken||{};var s=r.scope&&all().filter(function(x){return x.dataset.scope===r.scope})[0];
-if(!s){if(Object.keys(taken).length)st.set(KEY,JSON.stringify({taken:taken,t:Date.now()}));else st.del(KEY);return}
+if(!s){workIn(true);return}
 cur=s;gone=r.gone||{};tally=Object.assign(fresh(),r.tally||{});notes=r.notes||{};skip={};refused={};pend=null;
 if(r.done){dlg.showModal();show(true);return}
 if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.gk===r.pend.key});
@@ -1008,9 +1008,12 @@ if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,texta
 if(/^[1-4]$/.test(e.key)){var opts=[].filter.call(q.querySelectorAll('.opt'),function(x){return!x.hidden&&x.getClientRects().length}),o=opts[+e.key-1];if(!o)return;e.preventDefault();
 if(o.classList.contains('other')||o.classList.contains('later')){o.querySelector('input').focus()}else o.click()}});
 /* Closing the queue works in the answers it took (#550): one request that names the place, to the default assistant, for each place that took
-   an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none. */
-dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);
-Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;handoff(t.work)})});
+   an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none.
+   A reload that leaves no section for a place whose answers were taken sends the request when the page loads (restore), once: the count is cleared
+   as it goes, as at a close. The kept count still goes after 15 minutes. */
+function workIn(later){var sent=taken;taken={};st.del(KEY);
+var go=function(){Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;handoff(t.work)})};if(later)setTimeout(go,0);else go()}
+dlg.addEventListener('close',function(){workIn(false)});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}

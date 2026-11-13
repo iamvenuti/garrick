@@ -605,7 +605,8 @@ class TestQueueOnThePage(QueueCase):
         self.assertNotIn("st.del(KEY)", show)                                                # an empty queue saves done, it does not delete
         click = js[js.index("data-qclose]')){"):][:60]
         self.assertIn("st.del(KEY)", click)                                                  # and Close or Back to the overview delete it
-        self.assertIn("dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);", js)           # the close keeps nothing but the request
+        self.assertIn("function workIn(later){var sent=taken;taken={};st.del(KEY);", js)                            # the close keeps nothing but the request
+        self.assertIn("dlg.addEventListener('close',function(){workIn(false)});", js)
 
     def test_a_browser_shows_no_dead_answer_and_says_the_app_is_needed(self):
         self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)

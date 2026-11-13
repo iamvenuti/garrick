@@ -72,6 +72,19 @@ MECHANICAL = "mechanical"
 FREE = "Something else: tell Garrick what to do"
 NO_FREE_FOR = ()          # every question keeps the free-text field, last
 
+# The one table of finding kinds (#550). A kind is `automatic` (Garrick does it without asking; the user hears of it only when it
+# fails) or `question` (a reasonable user could answer two ways and Garrick cannot tell which). The test for a kind: would a user
+# ever say no? If not, it is not asked. A kind in neither class fails test_finding_queue, and so does a `question` kind whose
+# only answer is *Something else*, except the kinds in FREE_ONLY, which have no plain wording yet and stay as they are today.
+AUTOMATIC, QUESTION = "automatic", "question"
+KIND_CLASS = {
+    "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
+    "hooks-missing": QUESTION, "mechanical": AUTOMATIC,
+    "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION,
+    "other": QUESTION,
+}
+FREE_ONLY = ("other",)    # the check's own text under a plain label, *Something else* alone: no plain wording yet (listed in the release notes)
+
 
 def A(id_: str, label: str, does: str, action: str) -> dict:
     return {"id": id_, "label": label, "does": does, "action": action}

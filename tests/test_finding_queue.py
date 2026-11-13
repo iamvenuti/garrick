@@ -70,6 +70,43 @@ def text_of(markup: str) -> str:
     return htmllib.unescape(re.sub(r"<[^>]+>", " ", markup))
 
 
+class TestKindTable(unittest.TestCase):
+    """#550: every finding kind is `automatic` or `question`, in one table, and no question is asked with *Something else* alone."""
+
+    def questions(self):
+        out = {kind: fq.question(it, "Zones/Work") for kind, it in KINDS.items()}
+        out["other"] = fq.question(item("judgment", "orphans", "Zones/Work/Acme Review/Stray.md", "%(p)s: an orphan page"), "Zones/Work")
+        return out
+
+    def test_every_kind_is_classed(self):
+        known = set(fq.PLAIN_KINDS) | {fq.MECHANICAL, "other"} | set(fq.ASKED_KINDS)
+        self.assertEqual(known, set(fq.KIND_CLASS))
+        self.assertTrue(set(fq.KIND_CLASS.values()) <= {fq.AUTOMATIC, fq.QUESTION})
+        for kind in fq.PLAIN_KINDS:
+            self.assertTrue(fq.ANSWERS[kind], kind)
+
+    def test_a_question_has_a_real_answer(self):
+        for kind, q in self.questions().items():
+            if kind in KINDS and fq.KIND_CLASS[kind] == fq.QUESTION and kind not in fq.FREE_ONLY:
+                self.assertTrue(q["answers"], kind)
+        self.assertTrue(set(fq.FREE_ONLY) <= {k for k, c in fq.KIND_CLASS.items() if c == fq.QUESTION})
+        wiki = fq.wiki_question({"wiki": "Meetings", "file": "questions/a.md", "title": "Who owns it?", "writes": {}})
+        verdict = fq.verdict_question({"wiki": "Meetings", "file": "questions/b.md", "title": "Is it so?", "verdict": "yes"})
+        decision = fq.decision_question({"file": "wiki/261001 - Call.md", "title": "Use Cedar", "revisit": "A newer call says otherwise"})
+        for q in (wiki, verdict, decision):
+            self.assertTrue(q["answers"], q["id"])
+        self.assertEqual([], fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), "Zones/Work")["answers"])
+
+    def test_no_question_shows_a_command_outside_details(self):
+        for kind, q in self.questions().items():
+            if kind in fq.FREE_ONLY:
+                continue
+            shown = " ".join([q["sentence"], q["why"], q["tag"]] + [a["label"] + " " + a["does"] for a in q["answers"]])
+            self.assertNotIn("`", shown, kind)
+            self.assertNotIn(".py", shown, kind)
+            self.assertNotIn("--", shown, kind)
+
+
 class TestPlainWording(unittest.TestCase):
     def test_the_kinds_that_have_plain_wording(self):
         """A new kind cannot get plain wording silently: this list is the whole of it."""

@@ -110,7 +110,7 @@ class OverviewWork(unittest.TestCase):
         css = status.YOURWORK_CSS
         self.assertIn(".yzone{font-size:13px;font-weight:400;color:var(--muted)}", css)
         self.assertIn(".yline{font-weight:600;color:var(--ink)}", css)
-        self.assertIn("grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) auto", css)
+        self.assertIn("grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) 170px", css)
         self.assertIn("@media(max-width:720px){.yhead{display:none}.yrow{grid-template-columns:1fr auto;padding:14px 0}.ynext,.ystate{grid-column:1/-1}}", css)
 
     def test_the_examples_tag_stays_on_the_bold_line(self):

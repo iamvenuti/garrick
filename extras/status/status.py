@@ -7247,7 +7247,7 @@ def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=
 
 
 YOURWORK_CSS = r"""
-.yhead,.yrow{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) auto;gap:6px 18px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line)}
+.yhead,.yrow{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) 170px;gap:6px 18px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line)}
 .yhead{padding:0 0 8px;font-size:13px;font-weight:600;color:var(--muted)}.yrow:last-child{border-bottom:0}.ycell{min-width:0}
 .yrow:hover{background:color-mix(in srgb,var(--sunk) 55%,transparent)}
 .yname{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere;color:var(--ink2)}
@@ -7392,11 +7392,10 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .btn:hover{border-color:var(--ink2);text-decoration:none}.btn svg{flex:none}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.btn.primary:hover{filter:brightness(1.08)}
 /* Waiting on you now: an icon, one sentence, its zone, how late, one button */
-.wrow{display:grid;grid-template-columns:36px minmax(0,1fr) auto auto auto;gap:4px 14px;align-items:center;padding:10px 0}
+.wrow{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:center;padding:10px 0}.wrow .wname{flex:1 1 220px}.wrow .wwhat,.wrow .wfor,.wrow .wwhere{flex:none}
 .wico{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--wash);color:var(--accent)}.wico svg{width:18px;height:18px}
 .wico.crit{background:var(--critical-wash);color:var(--critical)}.wico.warn{background:var(--warning-wash);color:var(--warning)}
-.wrow .act{margin-left:0;justify-self:end}.wname{overflow-wrap:anywhere}
-@media (max-width:640px){.wrow{grid-template-columns:36px minmax(0,1fr)}.wrow>:nth-child(n+3){grid-column:2;justify-self:start}}
+.wrow .act{margin-left:auto}.wname{overflow-wrap:anywhere}.wico{flex:none}
 /* the summary column */
 .sumt{margin:14px 0 6px;font-size:13px;font-weight:600;color:var(--muted)}.sumt:first-child{margin-top:0}
 .sumzs,.sumis{display:grid;gap:8px}

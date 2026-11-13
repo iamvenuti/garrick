@@ -251,7 +251,7 @@ DECLARED: Dict[str, Op] = {
     "walls-look": _op(("place", "path", "id"), ("place", "path", "id"), "none", retry="safe"),
     "walls-allow": _op(("path", "id", "blob"), ("path", "id", "blob"), "workspace", True),
     # An answer to a finding on the Checks card's queue (#535): older entries moved to history and committed in the
-    # note's zone, a preview of that, the wall check installed, or Not now. Closed by finding_queue.py's table.
+    # note's zone, a preview of that, or Not now. Closed by finding_queue.py's table.
     "finding": _op(("kind", "path", "answer"), ("kind", "path", "answer"), "workspace", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.

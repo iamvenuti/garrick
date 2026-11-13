@@ -79,7 +79,7 @@ NURTURE = HERE / "nurture_sweep.py"
 WORK_IN = HERE / "work_in.py"
 STATUS = HERE.parent / "status"            # System/status beside System/jobs, as extras/status is beside extras/jobs
 LOCAL = ("System", "jobs", "nightly.local")
-# Seconds each step may take; their sum stays under the plist's --timeout 3600.
+# Seconds each step may take; their sum is at most the plist's --timeout 3600.
 LIMITS = {"hooks": 30, "nurture": 1500, "answers": 390, "effort": 300, "recall": 300, "nightly.local": 600, "status": 480}
 TAIL = 10
 EXIT_TIMEOUT = 124

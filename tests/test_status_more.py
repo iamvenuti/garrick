@@ -961,11 +961,11 @@ class TestCheckReuse(StatusCase):
         page = self.build(reuse=600, now=self.now + dt.timedelta(minutes=4))
         self.assertEqual(1, self.ran())                                # not run again
         self.assertIn("As the check found it 4 min ago", page)
-        self.assertIn(">a.md</a>: x</span>", page)                     # the findings it kept, each path a link
+        self.assertNotIn(">a.md</a>: x</span>", page)                  # the list of findings is no longer on the page (#541)
 
     def test_needs_attention_and_the_checks_tile_say_the_counts_are_kept(self):
         """#298: the counts a kept result gives say how old they are wherever
-        they show, Needs attention and the Checks tile as the Checks card,
+        they show, Needs attention and the Context tile as the Context card,
         in its words; a build that ran the check says nothing of the kind."""
         found = {"errors": 1, "warnings": 2, "findings": [
             {"check": "walls", "severity": "error", "path": "a.md", "message": "x"},
@@ -977,9 +977,9 @@ class TestCheckReuse(StatusCase):
             return [t[2] for t in trouble(page)]
 
         def tile(page):
-            m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Checks</div><div class="val">(.*?)</div>'
+            m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Context</div><div class="val">(.*?)</div>'
                           r'<div class="sub">(.*?)</div></a>', page)
-            self.assertIsNotNone(m, "no Checks tile")
+            self.assertIsNotNone(m, "no Context tile")
             return m.groups()
 
         ran = self.build()
@@ -999,7 +999,7 @@ class TestCheckReuse(StatusCase):
         page = self.build(reuse=float("inf"), now=self.now + dt.timedelta(days=3))
         self.assertEqual(1, self.ran())
         self.assertIn("As the check found it 3 days ago", page)
-        self.assertIn(">a.md</a>: x</span>", page)
+        self.assertNotIn(">a.md</a>: x</span>", page)
 
     def test_a_check_that_sleeps_is_never_called_by_a_build_a_tool_asks_for(self):
         """#382: the stub check sleeps; a build with --reuse-check never calls it,

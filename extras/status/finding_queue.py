@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""finding_queue.py: the Checks card's queue (#535), one finding at a time, as a plain question with answer buttons.
+"""finding_queue.py: the Context card's queue (#535, #542), one question at a time, as a plain question with answer buttons.
 
 status.py builds the queue at page build, for every scope, from the one-pass forecast (the latest Nurture record's
 standing findings), so the number on a scope's line on the card and the number in its queue are one list's. A kind
@@ -27,6 +27,13 @@ each such finding (never a write subcommand), and when it would move nothing, or
 Show me; its recommended answer is the handoff in ANSWERS_NO_MOVE, and its why-line says in plain words which case applies.
 A move refused when it runs (#540) disables that answer, offers Skip for now, and, when the refusal says nothing can move, the
 kind's fallback handoff (FALLBACKS) in its place. Skip for now keeps nothing: it is the dialog's, and a reload brings the question back.
+
+The queue holds three more kinds, the wiki's own questions (#542), built from questions_panel.py's data for the zone or wiki they
+belong to and never for another: a wiki question (a field for the answer, Record as a decision, Later with its day, Close), a proposed
+verdict (Accept, Answer it myself, Not now) and a decision to review (Open the decision, Not now). Each answer goes through the verb
+the Questions panel's button used: `question-answer`, `question-later`, `question-close`, `question-decide`, `note-open` and, for Not
+now, `finding` with the kind and the path of the question's file. No verb is new, so the wall check runs as before. A decision's status
+is the user's alone: nothing here writes one.
 
 Wall findings have no Not now, and no answer keeps the material: the recommended answer is to take it out.
 Missing commit hooks has no Not now either: hiding it would leave the walls unchecked on commit, which fails open, as for a wall.
@@ -111,9 +118,12 @@ WHY = {"note-long": "Long pages are slow to read and slow for the assistant. Old
        "meeting-long": "A meeting note is a short record: who was there, the key points, the actions.",
        "hooks-missing": "Without it, a commit can carry private material across a wall and nothing warns you."}
 NEVER_LATER = ("wall", "hooks-missing")     # no Not now: hiding either leaves the walls unchecked
-ACTIONS = ("handoff", "run", "preview", "open", "later")
+ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal")
 # The answers the verb `finding` takes (page_action.py), by kind: closed, so an unknown kind or answer is refused.
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
+# The wiki's own kinds (#542) are put off, and nothing else, through the same verb: the question's file stays as it is.
+ASKED_KINDS = ("wiki-question", "verdict", "decision-review")
+VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",)})
 
 NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
 RESUME_RE = re.compile(r"Resume here block has (\d+) words, over the \d+ of `resume-max-words`")
@@ -479,14 +489,118 @@ def forecast_questions(items: List[dict], hidden: set, ws=None) -> Dict[str, Lis
             continue
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None
         out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"]), plan))
+    settle(out)
+    return out
+
+
+def settle(out: Dict[str, List[dict]]) -> None:
+    """The order of each scope's queue and the page's own key for each question: a wall finding first, always, then the
+    oldest first by the day the question was asked or the decision made (#542); what has no day (a finding of the last
+    Nurture run) follows, by kind and path. Two questions with one kind and path stay two."""
     rank = {k: i for i, k in enumerate(PLAIN_KINDS)}
     for qs in out.values():
-        qs.sort(key=lambda q: (rank.get(q["id"], len(rank)), q["path"]))
+        qs.sort(key=lambda q: (q["id"] != "wall", 0 if q.get("age") else 1, q.get("age") or "", rank.get(q["id"], len(rank)), q["path"]))
         taken: Dict[str, int] = {}
-        for q in qs:                      # the page's own key for a question: two with one kind and path stay two
+        for q in qs:
             base = q["key"] + ("-" + hashlib.sha1(q["other"].encode("utf-8", "surrogatepass")).hexdigest()[:6] if q.get("other") else "")
             taken[base] = taken.get(base, 0) + 1
             q["gk"] = base if taken[base] == 1 else "%s.%d" % (base, taken[base])
+
+
+# ---- the wiki's own questions (#542) ------------------------------------------------------------------------------
+
+def wiki_path(wiki: str, rel: str) -> str:
+    return "Wikis/%s/%s" % (wiki, rel)
+
+
+def asked_base(kind: str, tag: str, path: str, sentence: str, why: str, age: str, answers: List[dict]) -> dict:
+    return {"id": kind, "scope": "", "path": path, "key": later_key(kind, path), "details": "", "recommended": "", "other": "", "tag": tag,
+            "sentence": sentence, "why": why, "answers": answers, "free": "", "age": age, "field": None, "details_label": "Details"}
+
+
+def not_now(kind: str, path: str) -> dict:
+    return dict(A("later", "Not now", "Ask again in a week.", "later"), req={"verb": "finding", "kind": kind, "path": path, "answer": "later"})
+
+
+def wiki_question(q: dict) -> dict:
+    """A question of a wiki as a queue question: the field for the answer first, then Record as a decision (a Meetings
+    question only, as the panel offered it), Later with its day, Close. *From* shows the raw record and the pages the
+    answer changes, by name. `q` is questions_panel.read_question's dict."""
+    wiki, rel = q["wiki"], q["file"]
+    base = {"wiki": wiki, "file": rel}
+    one = "the %s question" % wiki
+    out = asked_base("wiki-question", "%s question" % wiki, wiki_path(wiki, rel), q["title"], q.get("why") or "", q.get("asked") or "", [])
+    answers = []
+    if "decide" in (q.get("writes") or {}):
+        answers.append(dict(A("decide", "Record as a decision", "Your words become a decision page that stands as valid.", "words"),
+                            req=dict(base, verb="question-decide")))
+    answers.append(dict(A("later", "Later", "Ask again on a day you pick.", "day"), req=dict(base, verb="question-later")))
+    answers.append(dict(A("close", "Close", "Nothing to work in.", "run"), req=dict(base, verb="question-close")))
+    out.update(answers=answers, wiki=wiki, file=rel, field={"req": dict(base, verb="question-answer"), "placeholder": "Type the answer",
+                                                              "prefix": "Answer %s “%s” with: " % (one, q["title"]), "first": True, "hidden": False})
+    origin = (q.get("origin") or {}).get("name")
+    pages = [p["name"] for p in q.get("pages") or []]
+    out["details"] = " · ".join(x for x in ("raw: %s" % origin if origin else "", "pages: %s" % ", ".join(pages) if pages else "") if x) or "No raw record or page named."
+    out["details_label"] = "From"
+    return out
+
+
+def verdict_question(q: dict) -> dict:
+    """A proposed verdict: Accept (recommended) closes the question as the panel's Accept did, Answer it myself shows the
+    field, Not now puts it off in the page's own file. The verdict and its reason are the why-line."""
+    wiki, rel = q["wiki"], q["file"]
+    path = wiki_path(wiki, rel)
+    reason = q.get("reason") or ""
+    why = "Proposed as %s%s." % (q["verdict"], ": %s" % reason.rstrip(".") if reason else "")
+    out = asked_base("verdict", "Proposed verdict", path, q["title"], why, q.get("asked") or "", [
+        dict(A("accept", "Accept", "Closes the question with this answer.", "run"), req={"verb": "question-close", "wiki": wiki, "file": rel}),
+        A("answer-myself", "Answer it myself", "Opens the field.", "reveal"), not_now("verdict", path)])
+    out.update(wiki=wiki, file=rel, recommended="accept", field={"req": {"verb": "question-answer", "wiki": wiki, "file": rel},
+                                                                 "placeholder": "Type the answer", "first": False, "hidden": True,
+                                                                 "prefix": "Answer the %s question “%s” with: " % (wiki, q["title"])})
+    return out
+
+
+def decision_question(d: dict) -> dict:
+    """A decision to review: open it, or put it off. Only the user changes a decision's status, so nothing here does."""
+    path = wiki_path("Meetings", d["file"])
+    out = asked_base("decision-review", "Decision to review", path, "“%s” may no longer hold." % d["title"],
+                     "Flagged: %s. Only you change a decision." % d["revisit"].rstrip("."), d.get("decided") or "", [
+        dict(A("open", "Open the decision", "Change its status there.", "open"), reqs=[{"verb": "note-open", "path": path}]), not_now("decision-review", path)])
+    return out
+
+
+def asked_questions(data: Optional[dict], hidden: set) -> Dict[str, List[dict]]:
+    """The wiki's own questions by scope, from questions_panel.build()'s data: each zone's questions, verdicts and decisions in
+    `Zones/<zone>`, and the Knowledge wiki's questions, which carry no zone, in `Wikis/Knowledge`. An item is in the queue of the zone
+    it belongs to and no other (the panel's buckets are placed by the walls' own view, and one that is not the item's own zone is passed
+    over here too); one put off with Not now is left out until it is back. {} without data."""
+    out: Dict[str, List[dict]] = {}
+    if not data:
+        return out
+
+    def add(scope: str, item: dict) -> None:
+        if not (item["id"] in ("verdict", "decision-review") and item["key"] in hidden):
+            item["scope"] = scope
+            out.setdefault(scope, []).append(item)
+    for zone, bucket in sorted((data.get("buckets") or {}).items()):
+        for q in bucket.get("questions") or []:
+            if q.get("zone") == zone and q.get("shown", True):
+                add("Zones/" + zone, verdict_question(q) if q.get("verdict") else wiki_question(q))
+        for d in bucket.get("decisions") or []:
+            if d.get("zone") == zone:
+                add("Zones/" + zone, decision_question(d))
+    for q in data.get("knowledge") or []:
+        add("Wikis/Knowledge", verdict_question(q) if q.get("verdict") else wiki_question(q))
+    return out
+
+
+def with_asked(queues: Dict[str, List[dict]], asked: Dict[str, List[dict]]) -> Dict[str, List[dict]]:
+    """The findings' queues and the wiki's own questions, one queue for each scope, in the order settle() gives."""
+    out = {scope: list(qs) for scope, qs in queues.items()}
+    for scope, qs in asked.items():
+        out.setdefault(scope, []).extend(qs)
+    settle(out)
     return out
 
 
@@ -498,37 +612,63 @@ def E(s) -> str:
 
 def question_html(q: dict) -> str:
     rec = q["recommended"]
-    opts = ""
-    for i, a in enumerate(q["answers"], 1):
+    field = q.get("field")
+    opts, n = "", 0
+
+    def field_row() -> str:
+        nonlocal n
+        n += 1
+        data = {"req": field["req"], "prefix": field["prefix"]}
+        return ('<label class="opt other" data-ansrow%s><span class="n">%d</span><input type="text" maxlength="2000" autocomplete="off" '
+                'data-ans="%s" placeholder="%s" aria-label="%s"></label>'
+                % (" hidden" if field["hidden"] else "", n, E(json.dumps(data, sort_keys=True)), E(field["placeholder"]), E(field["placeholder"])))
+    if field and field["first"]:
+        opts += field_row()
+    for a in q["answers"]:
+        n += 1
         data = {"a": a["action"], "id": a["id"]}
         if a["action"] == "handoff":
             data["phrase"] = a["phrase"]
         elif a["action"] == "open":
             data["reqs"] = a["reqs"]
-        else:
+        elif a["action"] != "reveal":
             data["req"] = a["req"]
         hosted = a["action"] != "handoff"
-        opts += ('<button class="opt%s%s" type="button" data-id="%s" data-fa="%s"><span class="n">%d</span><span>%s<small>%s%s</small></span></button>'
-                 % (" rec" if a["id"] == rec else "", " tacts" if hosted else "", E(a["id"]), E(json.dumps(data, sort_keys=True)), i, E(a["label"]),
-                    '<b class="recd">Recommended.</b> ' if a["id"] == rec else "", E(a["does"])))
+        text = "%s<small>%s%s</small>" % (E(a["label"]), '<b class="recd">Recommended.</b> ' if a["id"] == rec else "", E(a["does"]))
+        if a["action"] == "day":      # Later with its day: the day is picked in the answer itself, the button puts it off
+            opts += ('<div class="opt later tacts" data-id="%s"><span class="n">%d</span><span>%s<span class="lrow"><input type="date" data-day '
+                     'aria-label="Come back on"><button class="act" type="button" data-id="%s" data-fa="%s">Put off</button></span></span></div>'
+                     % (E(a["id"]), n, text, E(a["id"]), E(json.dumps(data, sort_keys=True))))
+            continue
+        opts += ('<button class="opt%s%s" type="button" data-id="%s" data-fa="%s"><span class="n">%d</span><span>%s</span></button>'
+                 % (" rec" if a["id"] == rec else "", " tacts" if hosted and a["action"] != "reveal" else "", E(a["id"]),
+                    E(json.dumps(data, sort_keys=True)), n, text))
         fb = a.get("fallback")
         if fb:        # shown in its place when this answer is refused for "nothing can move" (#540); a handoff, so it needs no host
             opts += ('<button class="opt" type="button" data-id="%s" data-for="%s" data-fa="%s" hidden><span class="n">%d</span><span>%s'
                      '<small><b class="recd">Recommended.</b> %s</small></span></button>'
-                     % (E(fb["id"]), E(a["id"]), E(json.dumps({"a": "handoff", "id": fb["id"], "phrase": fb["phrase"]}, sort_keys=True)), i, E(fb["label"]), E(fb["does"])))
-    web = ('<p class="hint qweb">The other answers need the Garrick app. Here you can send your own words to your assistant.</p>'
-           if q["answers"] and all(a["action"] != "handoff" for a in q["answers"]) else "")
-    opts += ('<label class="opt other"><span class="n">%d</span><input type="text" maxlength="500" autocomplete="off" '
-             'data-free="%s" placeholder="%s" aria-label="%s"></label>' % (len(q["answers"]) + 1, E(q["free"]), E(FREE), E(FREE)))
-    return ('<div class="q" data-q data-key="%s" data-kind="%s" data-path="%s" data-gk="%s" hidden><span class="tag%s">%s</span><p class="qs">%s</p>%s'
+                     % (E(fb["id"]), E(a["id"]), E(json.dumps({"a": "handoff", "id": fb["id"], "phrase": fb["phrase"]}, sort_keys=True)), n, E(fb["label"]), E(fb["does"])))
+    if field and not field["first"]:
+        opts += field_row()
+    typed = bool(q.get("free") or field)
+    web = ""
+    if q["answers"] and all(a["action"] != "handoff" for a in q["answers"]):
+        web = ('<p class="hint qweb">%s</p>' % ("The other answers need the Garrick app. Here you can send your own words to your assistant." if typed
+                                                else "These answers need the Garrick app."))
+    if q.get("free"):
+        n += 1
+        opts += ('<label class="opt other"><span class="n">%d</span><input type="text" maxlength="500" autocomplete="off" '
+                 'data-free="%s" placeholder="%s" aria-label="%s"></label>' % (n, E(q["free"]), E(FREE), E(FREE)))
+    where = ' data-wiki="%s" data-file="%s"' % (E(q["wiki"]), E(q["file"])) if q.get("wiki") else ""
+    return ('<div class="q" data-q data-key="%s" data-kind="%s" data-path="%s" data-gk="%s"%s hidden><span class="tag%s">%s</span><p class="qs">%s</p>%s'
             '<div class="opts">%s</div>%s<p class="hint qsay" role="status"></p>'
             '<button class="act qskip" type="button" data-qskip hidden>Skip for now</button>'
-            '<details class="qdet"><summary>Details</summary><code>%s</code><pre class="qout" hidden></pre></details></div>'
-            % (q["key"], E(q["id"]), E(q["path"]), E(q.get("gk") or q["key"]), " private" if q["id"] == "wall" else "", E(q["tag"]), E(q["sentence"]),
-               '<div class="why">%s</div>' % E(q["why"]) if q["why"] else "", opts, web, E(q["details"])))
+            '<details class="qdet"><summary>%s</summary><code>%s</code><pre class="qout" hidden></pre></details></div>'
+            % (q["key"], E(q["id"]), E(q["path"]), E(q.get("gk") or q["key"]), where, " private" if q["id"] == "wall" else "", E(q["tag"]), E(q["sentence"]),
+               '<div class="why">%s</div>' % E(q["why"]) if q["why"] else "", opts, web, E(q.get("details_label") or "Details"), E(q["details"])))
 
 
-def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str]) -> str:
+def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str], today: str = "") -> str:
     """The queue's dialog: every scope's questions, hidden until the card's line opens that scope."""
     if not queues:
         return ""
@@ -540,8 +680,8 @@ def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str]) -> s
     body += ('<section class="qdone" hidden><div class="done"><b></b><span class="qsum"></span><div class="qnext">'
              '<button class="act primary" type="button" data-qnext hidden></button> '
              '<button class="act" type="button" data-qclose>Back to the overview</button></div></div></section>')
-    return ('<dialog id="queue" class="findings queue" aria-labelledby="queue-h" data-folder="%s"><div class="fhead"><h3 id="queue-h">Findings</h3>'
-            '<button class="act" type="button" data-qclose>Close</button></div><div id="qbody">%s</div></dialog>' % (E(root), body))
+    return ('<dialog id="queue" class="findings queue" aria-labelledby="queue-h" data-folder="%s" data-today="%s"><div class="fhead"><h3 id="queue-h">Context</h3>'
+            '<button class="act" type="button" data-qclose>Close</button></div><div id="qbody">%s</div></dialog>' % (E(root), E(today), body))
 
 
 def fix_block(fixes: List[Tuple[str, str]], root: str) -> str:
@@ -579,6 +719,8 @@ dialog.queue{width:min(620px,calc(100vw - 32px))}
 .queue .done{text-align:center;padding:24px 8px}.queue .done b{display:block;font-size:17px;margin-bottom:4px}.queue .qnext{margin-top:14px}
 .nohost .queue .opt.tacts{display:none}.queue .qweb{display:none;margin:8px 0 0}.nohost .queue .qweb{display:block}
 .queue .opt:disabled{opacity:.55;cursor:not-allowed}.queue .opt:not(.rec) .recd{display:none}.queue .qskip{margin-top:8px}
+.queue .opt.later{cursor:default}.queue .lrow{display:flex;gap:8px;align-items:center;margin-top:6px}
+.queue .lrow input{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:3px 8px}
 .queue .opt[hidden],.queue .qskip[hidden],.queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
 .auto{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--wash);border-radius:10px;padding:10px 12px;margin:10px 0 0;font-size:13.5px}
 """
@@ -608,7 +750,7 @@ function next(){var o=all().filter(function(s){return s!==cur&&pending(s).length
 function out(q,text,bad,detail){var s=q.querySelector('.qsay');s.textContent=text||'';s.classList.toggle('bad',!!bad);
 var p=q.querySelector('.qout');if(detail){p.textContent=detail;p.hidden=false}else p.hidden=true}
 var RECS='.opt.rec:not([hidden]):not(:disabled)';
-function foc(q){var c=[q.querySelector(RECS),q.querySelector('button.opt'),q.querySelector('.opt.other input')];
+function foc(q){var c=[q.querySelector(RECS),q.querySelector('.opts>[data-ansrow]:first-child input'),q.querySelector('button.opt'),q.querySelector('.opt.other input')];
 for(var i=0;i<c.length;i++)if(c[i]&&c[i].getClientRects().length){c[i].focus();return}}
 function show(done0){if(!cur)return;var every=qs(cur),left=done0?[]:pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
 var done=dlg.querySelector('.qdone');
@@ -621,7 +763,7 @@ cur.querySelector('.qn').textContent=k+' of '+n;cur.querySelector('.bar i').styl
 var m=notes[q.dataset.gk],f=refused[q.dataset.gk];if(m)out(q,m.say,m.bad,m.detail);if(f)refuse(q,f);save();foc(q)}
 /* A refused answer stays open by design. It is disabled, with the refusal under the answers, and Skip for now shows. When the refusal says
    nothing can move, the handoff that stands in for the move takes its place, with its number. */
-function refuse(q,f){out(q,f.say,true);var b=q.querySelector('button.opt[data-id="'+f.id+'"]');if(b){b.disabled=true;b.classList.remove('rec')}
+function refuse(q,f){out(q,f.say,true);var b=q.querySelector('button.opt[data-id="'+f.id+'"]')||q.querySelector('.opt[data-id="'+f.id+'"] button[data-fa]');if(b){b.disabled=true;b.classList.remove('rec')}
 if(f.cant){var fb=q.querySelector('button.opt[data-for]');if(fb){var r=q.querySelector('button.opt[data-id="'+fb.dataset.for+'"]');
 if(r){r.hidden=true;r.classList.remove('rec')}fb.hidden=false;fb.classList.add('rec')}}
 q.querySelector('[data-qskip]').hidden=false}
@@ -647,23 +789,36 @@ var nx=t.closest('[data-qnext]');if(nx&&nx.dataset.qnext){tally=fresh();cur=all(
 var sk=t.closest('#queue [data-qskip]');if(sk){var sq=sk.closest('[data-q]');skip[sq.dataset.gk]=1;tally.skipped++;pend=null;show();return}
 var b=t.closest('#queue button[data-fa]');if(!b)return;var q=b.closest('[data-q]'),d;try{d=JSON.parse(b.dataset.fa)}catch(err){return}
 if(d.a==='handoff'){handoff(d.phrase);finish(q,'handed');return}
+if(d.a==='reveal'){var rw=q.querySelector('[data-ansrow]');if(rw){rw.hidden=false;var ri=rw.querySelector('input');if(ri)ri.focus()}return}
 if(!host)return;
 if(d.a==='open'){d.reqs.forEach(function(r){host.postMessage({act:r})});finish(q,'opened');return}
-pend={key:q.dataset.gk,id:d.id};save();host.postMessage({act:d.req})});
+/* an answer that takes the user's words or a day reads them from the question's own field, and the request is the verb the Questions panel used */
+var extra={};
+if(d.a==='words'){var wi=q.querySelector('input[data-ans]'),w=wi?wi.value.trim():'';if(!w){if(wi)wi.focus();out(q,'Say it in your own words first.',true);return}extra={words:w}}
+if(d.a==='day'){var di=q.querySelector('input[data-day]'),v=di?di.value:'';if(!v){if(di)di.focus();out(q,'Pick the day to come back on.',true);return}
+if(v<=(dlg.dataset.today||'')){di.focus();out(q,'Pick a day after today.',true);return}extra={until:v}}
+pend={key:q.dataset.gk,id:d.id};save();host.postMessage({act:Object.assign({},d.req,extra)})});
+/* the field of a wiki question, or of a verdict the user answers himself: Return sends the words as question-answer, or, in a browser, as a request to the assistant */
+function answerWords(q,input,w){var d;try{d=JSON.parse(input.dataset.ans)}catch(err){return}
+if(!host){handoff(d.prefix+w);finish(q,'handed');return}
+pend={key:q.dataset.gk,id:'answer'};save();host.postMessage({act:Object.assign({},d.req,{words:w})})}
 /* keys: 1 to 4 answer, the last number is the free-text field, Return takes the recommended one, Esc closes (the dialog's own) */
 dlg.addEventListener('keydown',function(e){if(e.metaKey||e.ctrlKey||e.altKey)return;var q=cur&&pending(cur)[0];if(!q||q.hidden)return;
 var typing=e.target&&e.target.tagName==='INPUT';
-if(typing){if(e.key==='Enter'){if(e.isComposing||e.keyCode===229)return;var w=e.target.value.trim();if(w){e.preventDefault();handoff(e.target.dataset.free+w);finish(q,'handed')}}return}
+if(typing){if(e.key==='Enter'){if(e.isComposing||e.keyCode===229)return;
+if(e.target.type==='date'){var db=e.target.closest('.opt').querySelector('button[data-fa]');if(db){e.preventDefault();db.click()}return}
+var w=e.target.value.trim();if(w){e.preventDefault();if(e.target.dataset.ans)answerWords(q,e.target,w);else{handoff(e.target.dataset.free+w);finish(q,'handed')}}}return}
 if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,textarea,select,button'))return;var r=q.querySelector(RECS);if(r){e.preventDefault();r.click()}return}
 if(/^[1-4]$/.test(e.key)){var opts=[].filter.call(q.querySelectorAll('.opt'),function(x){return!x.hidden}),o=opts[+e.key-1];if(!o)return;e.preventDefault();
-if(o.classList.contains('other')){o.querySelector('input').focus()}else o.click()}});
+if(o.classList.contains('other')||o.classList.contains('later')){o.querySelector('input').focus()}else o.click()}});
 dlg.addEventListener('close',function(){st.del(KEY)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
-if(q&&q.verb==='finding'&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
+var ask=q&&/^question-/.test(q.verb||'');
+if(q&&(q.verb==='finding'||ask)&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:ask?x.dataset.wiki===q.wiki&&x.dataset.file===q.file:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
 if(el){if(res&&res.ok){if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
-else if(q.answer==='later')finish(el,'later');else finish(el,'done')}
+else if(q.answer==='later'||q.verb==='question-later')finish(el,'later');else finish(el,'done')}
 else{var say=(res&&res.say)||'That did not work.';delete notes[el.dataset.gk];
-refused[el.dataset.gk]={say:say,id:q.answer,cant:/^nothing (can move|is old enough)/i.test(say)};refuse(el,refused[el.dataset.gk]);save();foc(el)}}}
+refused[el.dataset.gk]={say:say,id:(p&&p.id)||q.answer,cant:/^nothing (can move|is old enough)/i.test(say)};refuse(el,refused[el.dataset.gk]);save();foc(el)}}}
 if(prev)return prev(q,res)};
 restore()})();
 """

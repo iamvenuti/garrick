@@ -22,7 +22,7 @@ Below that is **the full page**, in tabs, fewer when a tab has nothing to show:
 - **Overview**: every live thread, one column per zone, each with at most two chips, *todo* for its open actions and *check* for an error the page can explain and fix; open actions and the inboxes beside them; and *Explore*, the graph of the notes in one zone or one wiki at a time.
 - **Todo**: each zone's `Todo.md`, to tick, date and add to. A workspace with no `Todo.md` has no Todo tab.
 - **Status**: the machinery: the scheduled jobs and the assistant's calls, and the state of each repository.
-- **Context**: *Context Nurture*, where the questions your wikis and Nurture raise are answered, one zone at a time or all of them, with what the checks find.
+- **Context**: one card of what needs you, a line for each zone or wiki that holds something. Each line opens a queue where the questions your wikis and Nurture raise are answered one at a time.
 - **Guide**: these pages, as the release the workspace runs shipped them, in `System/garrick-docs/`.
 
 The Garrick App is one HTML page, `System/generated/status.html`, built by `status.py` from the workspace's own files. It shows in **the Mac app**, *Garrick.app*, or in a browser. A workspace installed with this Garrick has it from the start: the installer puts the extra in `System/status/` and builds the page once, and "Set up Garrick" offers to build the Mac app. The code keeps its old name, `status.py` in `extras/status/`. See [The Garrick App](extras/status-page.md).

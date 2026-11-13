@@ -1,6 +1,6 @@
-"""The Questions panel's data and page (#224, point 9). Walls first: the panel
-never lists a question or a finding from a zone other than the one shown, never
-counts one and never offers a page from there; a wall finding never shows; a
+"""What the Context card asks of the wikis (#224, #542). Walls first: a zone's bucket
+never lists a question from a zone other than its own, never counts one and never
+offers a page from there; a question with a wall finding on its file is not listed; a
 page whose zone cannot be read is placed nowhere.
 
     cd tests && python3 -m unittest test_questions_panel
@@ -38,6 +38,7 @@ def _load(name, path):
 
 status = _load("garrick_status_questions_test", HERE / "status.py")
 qp = status.questions_mod()
+fq = status.queue_mod()
 
 TODAY = dt.date(2026, 11, 5)
 ACME = "Acme: which volume floor holds?"
@@ -72,9 +73,8 @@ class Panel(PanelCase):
 
     def data(self, C=None):
         link = status.Links(self.root)
-        nurture = status.nurture_lib(self.root)
         # a check this build ran (no `at`): as new as the build. C=False is no result at all.
-        return qp.build(self.root, {"findings": []} if C is None else (C or None), nurture, TODAY, link)
+        return qp.build(self.root, {"findings": []} if C is None else (C or None), TODAY, link)
 
     def check(self):
         return status.check(self.root)
@@ -156,7 +156,7 @@ class TestWhatIsListed(Panel):
         work = json.dumps(self.data()["buckets"]["Work"])
         for hidden in ("Nozone:", ELSEWHERE, "Unknownzone:", "Unreadable:", "Answered: done"):
             self.assertNotIn(hidden, work, hidden)
-        page = qp.body(self.data())
+        page = json.dumps(self.data()) + json.dumps(fq.asked_questions(self.data(), set()))
         for nowhere in ("Nozone:", "Unknownzone:", "Unreadable:"):
             self.assertNotIn(nowhere, page, nowhere)
 
@@ -176,8 +176,9 @@ class TestWhatIsListed(Panel):
                          qp.counts_of(d))
         self.assertEqual(1, d["buckets"]["Work"]["answered"])
         self.assertEqual(0, d["buckets"]["Personal"]["answered"])
-        self.assertFalse(d["select"]["*"]["sum"])
-        self.assertTrue(d["select"]["Work"]["sum"])
+        for gone in ("select", "review"):
+            self.assertNotIn(gone, d)                               # nothing here picks a view or adds two zones
+        self.assertFalse(hasattr(qp, "group_views") or hasattr(qp, "can_sum") or hasattr(qp, "selections"))
 
     def test_knowledge_questions_are_listed_apart_for_every_zone(self):
         d = self.data()
@@ -215,49 +216,27 @@ class TestWhatIsListed(Panel):
     def test_text_is_data_never_markup(self):
         evil = "<script>alert(1)</script> & </script><img src=x onerror=1>"
         write(self.meetings / "questions" / "261001 - acme.md", question(evil, pages="[[wiki/sources/260310-acme-kickoff]]"))
-        html = qp.body(self.data())
+        data = self.data()
+        self.assertIn(evil.replace("  ", " "), [x["title"] for x in data["buckets"]["Work"]["questions"]])
+        html = "".join(fq.question_html(q) for qs in fq.with_asked({}, fq.asked_questions(data, set())).values() for q in qs)
         self.assertNotIn("<script>alert", html)
         self.assertNotIn("<img", html)
-        self.assertEqual(1, len(re.findall(r'<script type="application/json" id="qp-data">', html)))
-        blob = re.search(r'id="qp-data">(.*?)</script>', html, re.S).group(1)
-        self.assertIn(evil.replace("  ", " "), [x["title"] for x in json.loads(blob)["buckets"]["Work"]["questions"]])
-        js = qp.JS
+        self.assertIn("&lt;script&gt;alert(1)", html)
         for bad in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write", "eval(", "new Function"):
-            self.assertNotIn(bad, js)
+            self.assertNotIn(bad, fq.QUEUE_JS + status.CONTEXT_JS)
 
 
-def person_page(name):
-    return "---\ntitle: %s\ntype: person\nzone: Work\ncreated: 2026-03-10\nupdated: 2026-03-10\n---\n\n# %s\n\nSomeone.\n" % (name, name)
+class TestNoFindingsHere(Panel):
+    """Nurture's findings are the queue's, built from the Nurture record (#542): the wiki's data holds none, and a question whose
+    own file carries a wall finding is placed nowhere."""
 
-
-class TestNurtureFindings(Panel):
-    def finding(self, rel, check="people", message="links a page that is not there"):
-        return {"check": check, "path": rel, "line": 6, "severity": "warning", "message": message}
-
-    def test_a_finding_sits_in_the_bucket_of_its_own_zone_and_carries_its_check_and_line_only(self):
-        write(self.meetings / "wiki" / "people" / "dangling.md", person_page("Dangling") + "\nSee [[wiki/people/not-there]].\n")
-        write(self.root / "Zones" / OTHER / "Home" / "Home.md", "---\ntype: project\nstatus: active\n---\n\n# Home\n")
-        commit_all(self.meetings, "dangling")
-        C = {"findings": [self.finding("Wikis/Meetings/wiki/people/dangling.md", "meetings", "links a page that is not there"),
-                          self.finding("Zones/%s/Home/Home.md" % OTHER, "notes", "no `parent:`")]}
-        d = self.data(C)["buckets"]
-        for r in d["Work"]["review"]["read"]:
-            self.assertEqual({"key", "path", "check", "line", "href"}, set(r))     # the line is the check's own words (#433)
-        self.assertEqual(["Wikis/Meetings/wiki/people/dangling.md"], [r["path"] for r in d["Work"]["review"]["read"]])
-        self.assertEqual(["Zones/%s/Home/Home.md" % OTHER], [r["path"] for r in d[OTHER]["review"]["read"]])
-
-    def test_a_wall_finding_is_never_in_any_bucket(self):
-        write(self.meetings / "wiki" / "people" / "wall-page.md", person_page("Wall Page") + "\nSee [[Zones/Personal/Todo]].\n")
-        commit_all(self.meetings, "wall")
-        C = {"findings": [self.finding("Wikis/Meetings/wiki/people/wall-page.md", "walls", "links a file of zone Personal")]}
-        blob = json.dumps(self.data(C))
-        self.assertNotIn("wall-page", blob)
-
-    def test_a_page_with_no_zone_the_workspace_knows_is_placed_nowhere(self):
-        write(self.meetings / "wiki" / "people" / "odd.md", person_page("Odd Person").replace("zone: Work", "zone: Nowhere"))
-        commit_all(self.meetings, "odd")
-        C = {"findings": [self.finding("Wikis/Meetings/wiki/people/odd.md", "meetings", "no `organisation:`")]}
-        self.assertNotIn("odd.md", json.dumps(self.data(C)))
+    def test_a_finding_is_in_no_bucket(self):
+        C = {"findings": [{"check": "meetings", "path": "Wikis/Meetings/wiki/people/dangling.md", "line": 6, "severity": "warning",
+                           "message": "links a page that is not there"}]}
+        d = self.data(C)
+        self.assertNotIn("dangling", json.dumps(d))
+        for bucket in d["buckets"].values():
+            self.assertNotIn("review", bucket)
 
 
 class TestTheViewAndTheZoneRule(Panel):
@@ -283,69 +262,34 @@ class TestTheViewAndTheZoneRule(Panel):
         self.assertIsNone(pa.page_zone(lib, self.root, self.root / "Wikis" / "Knowledge" / "wiki" / "index.md"))
 
 
-ZONES = [{"zone": "Personal"}, {"zone": "Work"}]
-
-
-def keys(views):
-    return [v["key"] for v in views]
-
-
-class TestGroupModel(unittest.TestCase):
-    """group_views (#384): a Zone choice, All included, as the list of views."""
-
-    def test_one_zone_is_one_group(self):
-        self.assertEqual(["Work"], keys(qp.group_views(ZONES, "Work")))
-
-    def test_all_lists_every_zones_group_in_order(self):
-        got = qp.group_views(ZONES)
-        self.assertEqual(["Personal", "Work"], keys(got))
-        self.assertEqual(["Personal", "Work"], [v["heading"] for v in got])
-
-    def test_an_unknown_zone_is_nothing(self):
-        self.assertEqual([], qp.group_views(ZONES, "Nowhere"))
-
-    def test_two_groups_are_never_summed(self):
-        self.assertFalse(qp.can_sum(qp.group_views(ZONES)))
-        self.assertTrue(qp.can_sum(qp.group_views(ZONES, "Work")))
-
-    def test_every_choice_the_menu_offers_is_precomputed(self):
-        sel = qp.selections(ZONES)
-        self.assertEqual({"*", "Work", "Personal"}, set(sel))
-        self.assertEqual(["Personal", "Work"], keys(sel["*"]["views"]))
-        self.assertFalse(sel["*"]["sum"])
-        self.assertTrue(sel["Work"]["sum"])
-
-
 class TestThePage(Panel):
-    def test_a_judgment_row_hands_its_finding_to_a_session(self):
-        self.assertIn("function handOver(r)", qp.JS)
-        self.assertIn("'Open in Claude'", qp.JS)
-        self.assertIn("'Open in Codex'", qp.JS)
-        self.assertIn("setAttribute('data-launch',o[0])", qp.JS)         # the page's own launcher click, in the app
-        self.assertIn("setAttribute('data-request',say_)", qp.JS)        # in a browser the request is copied
-        self.assertIn("p.appendChild(handOver(r))", qp.JS)
-
-    def test_there_is_no_party_picker_and_no_attribution_form(self):
-        for gone in ("qp-party", "nurture-save", "nurture-organisation", "nurture-answer", "unattributed", "Whose is it"):
-            self.assertNotIn(gone, qp.JS + qp.body({"zones": []}))
+    def page(self):
+        with mock.patch.object(status, "launch_agents", lambda: self.root / "LaunchAgents"):
+            return status.build(self.root, now=dt.datetime(2026, 11, 5, 9, 0), folder=self.jobs)
 
     @unittest.skipUnless(shutil.which("node"), "node is not installed")
     def test_the_scripts_are_valid(self):
-        for name, code in (("panel", qp.JS), ("context", qp.CX_JS)):
+        for name, code in (("context", status.CONTEXT_JS), ("allowed", qp.CX_JS), ("queue", fq.QUEUE_JS)):
             with tempfile.TemporaryDirectory() as t:
                 f = Path(t) / (name + ".js")
                 f.write_text(code, encoding="utf-8")
                 r = subprocess.run(["node", "--check", str(f)], capture_output=True, text=True)
             self.assertEqual(0, r.returncode, r.stderr)
 
-    def test_the_tab_the_panel_and_its_script_are_in_the_page(self):
-        with mock.patch.object(status, "launch_agents", lambda: self.root / "LaunchAgents"):
-            html = status.build(self.root, now=dt.datetime(2026, 11, 5, 9, 0), folder=self.jobs)
+    def test_the_tab_the_card_and_its_script_are_in_the_page(self):
+        html = self.page()
         self.assertIn('data-tab="questions">Context<', html)           # one word, like Overview and Guide (#433)
-        self.assertIn("<h2 class=\"qp-title\">Context Nurture</h2>", html)
         self.assertIn('id="tab-questions"', html)
         self.assertIn("window.GarrickQuestions", html)
-        self.assertIn('"z": {"Personal": 1, "Work": 2}', html.replace('"z":{"Personal":1,"Work":2}', '"z": {"Personal": 1, "Work": 2}'))
+        self.assertEqual(1, html.count('<details class="card" id="checks"'))     # one card, no second Checks card
+        card = html[html.index('<details class="card" id="checks"'):]
+        self.assertIn("<h2>Context</h2>", card[:900])
+
+    def test_the_page_has_no_list_switch_no_wiki_or_age_filter_no_pane_no_counter_chips(self):
+        html = self.page()
+        for gone in ('id="qp"', "qp-source", "qp-wiki", "qp-age", "qp-list", "qp-open", "qp-counts", "qp-zone", "qp-data", "Wiki questions",
+                     "Nurture findings", "Context Nurture", "due today", "data-source", "qp-verdicts", "qp-decisions", "Accept all"):
+            self.assertNotIn(gone, html, gone)
 
     def test_no_panel_where_the_walls_cannot_be_read(self):
         with mock.patch.object(qp, "build", side_effect=RuntimeError("x")):
@@ -372,7 +316,7 @@ class TestTheMenu(unittest.TestCase):
 
     def test_it_brings_the_window_forward_on_the_panel_the_page_defines(self):
         self.assertIn("window.GarrickQuestions && window.GarrickQuestions.open()", self.swift)
-        self.assertIn("window.GarrickQuestions={open:", qp.JS)
+        self.assertIn("window.GarrickQuestions={open:", status.CONTEXT_JS)
 
     def test_the_page_sends_the_count_per_zone_in_the_menu_data(self):
         self.assertIn('md["questions"] = questions_mod().counts_of(qdata)', (HERE / "status.py").read_text(encoding="utf-8"))

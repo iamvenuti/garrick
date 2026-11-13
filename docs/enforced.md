@@ -104,7 +104,7 @@ The check is for an honest writer's mistakes, as [the threat model](principles.m
 - A clean paraphrase passes, and so does wording moved rather than copied; only git history shows where it came from.
 - A document copied by hand into `Sources/`, and an attachment that was edited, pass. An exact copy of a mail attachment is caught by a separate byte comparison.
 - Word, PowerPoint and PDF contents are not read.
-- Stock wording passes: a run of words that files of three zones or more hold, or more than five files (`wall-common-files`), is not read as a quote. A sentence lifted from one meeting is still refused, and a missing count makes nothing stock.
+- Stock wording passes: a run of words that files of three zones or more hold is not read as a quote. A sentence lifted from one meeting is still refused, however many notes of one or two zones repeat it, and a missing count makes nothing stock.
 
 **Paths**
 

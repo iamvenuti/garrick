@@ -125,7 +125,6 @@ from garrick_lib import (  # noqa: E402
     local_file,
     parse_frontmatter,
     read_settings,
-    wall_common_files,
     parse_frontmatter_text,
     read_checkpoint,
     read_version,
@@ -4791,26 +4790,23 @@ COMMON_ZONES = 3   # a run held by files of this many zones is stock wording, ho
 
 
 def widespread_runs(ws: Workspace, owners: Dict[int, set]) -> set:
-    """The shingles that are stock wording: held by files of COMMON_ZONES zones or more, or by more than
-    `wall-common-files` files (5 unless the settings say) of the workspace, such as the fixed line an intake note
-    carries in every zone (#549). A sentence lifted from one meeting into one note is held by two files: it stays.
+    """The shingles that are stock wording: held by files of COMMON_ZONES zones or more, such as the fixed line an
+    intake note carries in every zone (#549). A sentence lifted from one meeting into one note is held in two zones
+    at most: it stays. The number of files that hold a run never counts: copies of a lifted sentence inside one or
+    two zones, however many, would otherwise vouch for the leak they are.
 
     This is the one place that decides it, and it fails closed. `owners` holds, for every run it lists, every file
     that holds the run, in the whole workspace: the index builds it from every project's files and every meeting
-    page, and with `wanted` it keeps only the runs asked after but still lists all their holders. A page and its
-    raw record are one owner, and only the files of projects name a zone (a meeting page names none toward the
-    zone count), so each count can fall short of the true one and never exceed it. Nothing here can turn a run
-    into stock wording on partial knowledge: an index that is missing, unreadable or empty gives an empty set, and
-    wording_findings then reports as before. A run is judged shingle by shingle, and wording_findings reports it
-    while any one of its shingles is not widespread, so a shared run counts as stock only when every shingle of it is."""
+    page, and with `wanted` it keeps only the runs asked after but still lists all their holders. Only the files of
+    projects name a zone (a meeting page names none toward the count), so the count can fall short of the true one
+    and never exceed it. Nothing here can turn a run into stock wording on partial knowledge: an index that is
+    missing, unreadable or empty gives an empty set, and wording_findings then reports as before. A run is judged
+    shingle by shingle, and wording_findings reports it while any one of its shingles is not widespread, so a shared
+    run counts as stock only when every shingle of it is."""
     try:
-        limit = wall_common_files(ws.root)
         zones: Dict[Path, Optional[str]] = {}
         out = set()
         for h, held in owners.items():
-            if len(held) > limit:
-                out.add(h)
-                continue
             if len(held) < COMMON_ZONES:
                 continue
             seen = set()

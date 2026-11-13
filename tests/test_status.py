@@ -506,8 +506,8 @@ class TestTabs(StatusCase):
     def test_the_default_split(self):
         self.job(0)
         html = self.page()
-        self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="todo">Todo', html)
-        self.assertIn('</button><button type="button" role="tab" data-tab="status">Status', html)
+        self.assertRegex(html, r'data-tab="overview">Overview<span class="n[ a-z]*" id="tabn-overview"[^>]*(?: hidden)?>[^<]*</span></button><button type="button" role="tab" data-tab="todo">Todo')
+        self.assertRegex(html, r'</button><button type="button" role="tab" data-tab="status">Status<span class="n')
         overview, machinery = self.section(html, "overview"), self.section(html, "status")
         for card_id in ("graph", "threads", "todo", "inboxes"):
             self.assertIn('id="%s"' % card_id, overview, card_id)

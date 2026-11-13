@@ -2989,7 +2989,7 @@ KIND_FROM_PAGES = 3
 # kind's, amber, red or another of these, and each at least 2.9 to 1 against
 # the card in both themes. A type keeps the colour its name hashes to, or the
 # next one free, so a kind does not change colour when another one comes.
-PAGE_COLOURS = ("#00a3c4", "#a83fbf", "#2f9e44", "#a14a6b", "#6b8fcf", "#9b5d3a")
+PAGE_COLOURS = ("#0099b8", "#a83fbf", "#2f9e44", "#a14a6b", "#6b8fcf", "#9b5d3a")
 # How the legend names each kind: plural, as a filter reads (#250).
 KIND_SAID = {"project": "Projects", "thread": "Threads", "note": "Other notes", "meeting": "Meetings", "mail": "Mail",
              "person": "People", "source": "Sources", "concept": "Concepts", "entity": "Entities", "decision": "Decisions"}

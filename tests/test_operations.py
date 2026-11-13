@@ -328,7 +328,6 @@ SHAPES = {
     "ask: 'memory-preview'": {"memory-preview": ()},
     # RELEASE_JS (#410): Settings › About Garrick's Check for updates, and the update it starts when a newer release is found
     "btn.onclick: 'release-check'": {"release-check": ()},
-    "window.GarrickActed: 'release-update'": {"release-update": ()},
     "go: 'release-update'": {"release-update": ()},                   # the held files' Commit these and update / Update the rest
     # NOTE_JS (#206): a note read for Explore's Preview, which only reads, and opened in its own app
     "read: 'note-read'": {"note-read": ()},
@@ -349,7 +348,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "MENU_SETTINGS_JS": {"tell: 'settings'"},
            "MEMORY_JS": {"ask: 'memory-preview'"},
-           "RELEASE_JS": {"btn.onclick: 'release-check'", "window.GarrickActed: 'release-update'", "go: 'release-update'"},
+           "RELEASE_JS": {"btn.onclick: 'release-check'", "go: 'release-update'"},
            "NOTE_JS": {"read: 'note-read'", "openIn: 'note-open'"}}
 
 

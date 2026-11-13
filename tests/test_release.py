@@ -725,7 +725,8 @@ NODE_HELD = r"""
 const vm = require("vm");
 const [js, held] = JSON.parse(process.argv[1]);
 const posted = [];
-function el(tag) { return { tag, children: [], textContent: "", hidden: false, listeners: {}, appendChild(c) { this.children.push(c); return c; },
+function el(tag) { return { tag, children: [], _t: "", hidden: false, listeners: {}, appendChild(c) { this.children.push(c); return c; },
+                            set textContent(v) { this._t = v; this.children = []; }, get textContent() { return this._t; },
                             set onclick(f) { this._click = f; }, get onclick() { return this._click; } }; }
 const nodes = { "release-settings": Object.assign(el("section"), { addEventListener() {} }), "rel-check": el("button"), "rel-line": el("p"),
                 "rel-detail": el("div"), "rel-on": Object.assign(el("input"), { checked: true }), "rel-every": Object.assign(el("select"), { value: "1" }) };
@@ -736,7 +737,26 @@ ctx.webkit = { messageHandlers: { garrick: { postMessage: (m) => posted.push(m.a
 vm.createContext(ctx);
 vm.runInContext(js, ctx);
 nodes["rel-check"].onclick();
-ctx.GarrickActed({ verb: "release-check" }, { ok: true, release: { state: "newer", running: "0.65.2", latest: "0.66.0" } });
+ctx.GarrickActed({ verb: "release-check" }, { ok: true, release: { state: "newer", running: "0.65.2", latest: "0.66.0", line: "Garrick 0.66.0 is out; this workspace runs 0.65.2." } });
+const asked = posted.slice();                           // #557: nothing but the check so far
+const offered = [];
+const walk0 = (n, f) => { f(n); (n.children || []).forEach((c) => walk0(c, f)); };
+walk0(nodes["rel-detail"], (n) => { if (n.tag === "button") offered.push(n); });
+if (process.argv[2] === "offer") {
+  const o = { asked, buttons: offered.map((b) => b.textContent), line: nodes["rel-line"].textContent };
+  offered[1].onclick();                                 // Not now
+  o.notnow = [posted.length, nodes["rel-detail"].hidden, nodes["rel-check"].disabled];
+  nodes["rel-check"].onclick();                         // the next check offers it again
+  ctx.GarrickActed({ verb: "release-check" }, { ok: true, release: { state: "newer", running: "0.65.2", latest: "0.66.0", line: "Garrick 0.66.0 is out; this workspace runs 0.65.2." } });
+  const again = [];
+  walk0(nodes["rel-detail"], (n) => { if (n.tag === "button") again.push(n); });
+  o.again = again.map((b) => b.textContent);
+  again[0].onclick();                                   // Update now
+  o.updated = posted.slice(2);
+  process.stdout.write(JSON.stringify(o));
+  process.exit(0);
+}
+offered[0].onclick();                                   // Update now: the plan-first request
 ctx.GarrickActed({ verb: "release-update" }, { ok: true, release: held });
 const walk = (n, f) => { f(n); (n.children || []).forEach((c) => walk(c, f)); };
 const buttons = [];
@@ -775,6 +795,34 @@ class TestTheHeldFilesOnThePage(unittest.TestCase):
     def test_the_list_is_drawn_by_path_and_repository(self):
         text = status.RELEASE_JS
         self.assertIn("x.path+' ('+(x.repo==='.'?'the workspace':x.repo)+')'", text)
+
+
+@unittest.skipUnless(shutil.which("node"), "Node is not installed")
+class TestTheUpdateAsksFirst(unittest.TestCase):
+    """#557: a newer release is offered with two buttons; only Update now posts release-update."""
+
+    def run_offer(self):
+        done = subprocess.run(["node", "-e", NODE_HELD + "\n", json.dumps([status.RELEASE_JS, {}]), "offer"], capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, done.returncode, done.stderr)
+        return json.loads(done.stdout)
+
+    def test_newer_posts_no_release_update(self):
+        out = self.run_offer()
+        self.assertEqual([{"verb": "release-check"}], out["asked"])
+        self.assertEqual(["Update now", "Not now"], out["buttons"])
+        self.assertIn("Garrick 0.66.0 is out; this workspace runs 0.65.2.", out["line"])
+
+    def test_not_now_posts_nothing_and_the_next_check_offers_it_again(self):
+        out = self.run_offer()
+        self.assertEqual([1, True, False], out["notnow"])          # still only the check; the button is free again
+        self.assertEqual(["Update now", "Not now"], out["again"])
+
+    def test_update_now_posts_release_update(self):
+        out = self.run_offer()
+        self.assertEqual([{"verb": "release-check"}, {"verb": "release-update"}], [out["asked"][0]] + out["updated"][-1:])
+
+    def test_the_source_has_no_automatic_update(self):
+        self.assertNotIn("host.postMessage({act:{verb:'release-update'}});return}", status.RELEASE_JS)
 
 
 class TestTheButtonsVerbs(ReleaseCase):

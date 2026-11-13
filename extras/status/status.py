@@ -6100,9 +6100,11 @@ window.GarrickNotify={changed:function(){return changed},request:request,problem
 
 # ---- Settings › About Garrick: Check for updates (#410) ----------------------------
 # The button asks page_action.py's `release-check`, which asks GitHub now: the click
-# is the consent for that one request. A newer release is applied at once, through
-# `release-update`, with a progress line while it runs; page_action.py refuses it
-# unless the running release is older. The report is drawn from the reply's
+# is the consent for that one request, not for the update (#557). A newer release
+# is offered: the line says which, with a link to its notes, and two buttons.
+# *Update now* posts `release-update`, with a progress line while it runs;
+# *Not now* posts nothing and keeps nothing, so the next check or a reload offers
+# it again. page_action.py refuses `release-update` unless the running release is older. The report is drawn from the reply's
 # counts and lists with textContent, in the words the update itself uses. The
 # switch and the cadence are read back by sdReq when Settings closes.
 RELEASE_JS = r"""
@@ -6130,12 +6132,18 @@ items('Instruction files you changed, left as they are (Split):',r.split);
 items('Skipped:',r.skipped,function(x){return x[0]+': '+x[1]});
 items('Left for you:',r.then);items('The check found:',r.problems)}
 function done(){busy=false;btn.disabled=false}
+/* a newer release: ask first. Nothing is posted until Update now is pressed; Not now changes and stores nothing */
+function offer(r){box.textContent='';box.hidden=false;put(r.line+at(r));
+if(r.url){var p=add('p','');var a=document.createElement('a');a.href=r.url;a.target='_blank';a.rel='noopener';a.textContent='Release notes';p.appendChild(a)}
+var row=add('p','');[['Update now',1],['Not now',0]].forEach(function(b){var e=document.createElement('button');e.type='button';e.textContent=b[0];
+e.onclick=function(){if(b[1]){if(busy)return;go()}else{box.textContent='';box.hidden=true;done()}};row.appendChild(e);row.appendChild(document.createTextNode(' '))});
+busy=false;btn.disabled=false}
 btn.onclick=function(){if(busy)return;if(!host){put('Only the Garrick app can ask GitHub.');return}busy=true;btn.disabled=true;box.hidden=true;put('Asking GitHub\u2026');
 host.postMessage({act:{verb:'release-check'}})};
 sec.addEventListener('change',function(e){if(e.target===on||e.target===every){changed=true;every.disabled=!on.checked}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
 if(q&&q.verb==='release-check'){var r=out&&out.release;if(!(out&&out.ok&&r)){put((out&&out.say)||'Could not ask GitHub. Nothing was changed.');done();return}
-if(r.state==='newer'){put('Updating from '+r.running+' to '+r.latest+'\u2026 this takes a minute.');host.postMessage({act:{verb:'release-update'}});return}
+if(r.state==='newer'){offer(r);return}
 put(r.line+at(r));done();return}
 if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update could not start. Nothing was changed.');done();return}
 put(u.line);show(u);done();return}

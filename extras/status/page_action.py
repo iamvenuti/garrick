@@ -83,7 +83,9 @@ zone's repository, as the skills would:
                 written by the cmux extra's desk.py into System/desk.json
     release-check  Settings › About Garrick's Check for updates (#410):
                 release.py latest --now, the click being the consent for that
-                one request; says what it found and whether this workspace
+                one request, not for the update: the page offers a newer release
+                with two buttons and posts release-update only on Update now (#557).
+                Says what it found and whether this workspace
                 may be updated. It changes no workspace file but the kept answer
     release-update  the update to the release the check found, after it:
                 release.py update --tag <that release> --apply (it never says yes
@@ -1393,7 +1395,8 @@ def release_words(state: dict) -> dict:
     if state.get("failed"):
         out["line"] = "Could not ask GitHub (%s). Nothing was changed." % str(state["failed"]).rstrip(".")
     elif state.get("newer"):
-        out.update(state="newer", line="Garrick %s is out; this workspace runs %s." % (state["latest"], state["running"]))
+        out.update(state="newer", line="Garrick %s is out; this workspace runs %s." % (state["latest"], state["running"]),
+                   url=release_notes_url(state))
     elif state.get("why"):
         out.update(state="current" if state.get("running") else "unknown", line="%s." % state["why"])
     else:

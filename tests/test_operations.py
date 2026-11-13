@@ -97,8 +97,9 @@ class TestDeclared(unittest.TestCase):
             self.assertEqual(len(set(spec.fields)), len(spec.fields), verb)
             self.assertFalse(set(spec.fields) & set(ops.ALWAYS), verb)    # verb and op belong to every verb
             if spec.commits:
-                # a zone's repository, or the workspace's own, for the allowance walls-unallow takes away
-                wide = verb in ("walls-unallow",)
+                # a zone's repository, or the workspace's own, for the allowance walls-unallow takes away; and a
+                # finding's answer, whose note is in a zone but whose Not now and hook install are not (#535)
+                wide = verb in ("walls-unallow", "finding")
                 self.assertIn(spec.scope, ("zone", "workspace") if wide else ("zone",), verb)
 
     def test_only_the_six_the_page_sends_under_the_lock_keep_a_record(self):

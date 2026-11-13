@@ -61,6 +61,7 @@ from __future__ import annotations
 import argparse
 import collections
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -81,6 +82,9 @@ STATUS = HERE.parent / "status"            # System/status beside System/jobs, a
 LOCAL = ("System", "jobs", "nightly.local")
 # Seconds each step may take; their sum is at most the plist's --timeout 3600.
 LIMITS = {"hooks": 30, "nurture": 1500, "answers": 390, "effort": 300, "recall": 300, "nightly.local": 600, "status": 480}
+# Seconds of the recall step kept for bringing the search indexes up to date: its extract stops that long before the step's limit.
+RECALL_BUILD = 60
+PARTIAL = re.compile(r"partial, (\d+) written")
 TAIL = 10
 EXIT_TIMEOUT = 124
 EXIT_FAILED = 1
@@ -115,7 +119,8 @@ def steps(ws: Path, args: argparse.Namespace) -> List[Tuple[str, Optional[List[s
            ("answers", [sys.executable, str(WORK_IN), "--workspace", str(ws), "--limit", str(LIMITS["answers"])], "") if (STATUS / "questions_panel.py").is_file() and WORK_IN.is_file()
            else ("answers", None, "no System/status/questions_panel.py"),
            ("effort", effort, "") if (STATUS / "effort.py").is_file() else ("effort", None, "no System/status/effort.py"),
-           ("recall", [sys.executable, str(ws / "System" / "tools" / "recall.py"), "--root", str(ws), "nightly"], "")
+           ("recall", [sys.executable, str(ws / "System" / "tools" / "recall.py"), "--root", str(ws), "nightly",
+                       "--limit", str(LIMITS["recall"] - RECALL_BUILD)], "")
            if (ws / "System" / "tools" / "recall.py").is_file() else ("recall", None, "no System/tools/recall.py"),
            ("nightly.local", [str(local)], "") if local.is_file() and os.access(str(local), os.X_OK)
            else ("nightly.local", None, NOT_EXECUTABLE % local if local.is_file() else "none"),
@@ -293,11 +298,14 @@ def run_steps(ws: Path, args: argparse.Namespace) -> int:
         else:
             print("nightly: %s" % step)
             code, tail, seconds = run_step(cmd, ws, LIMITS[step])
-            print("nightly: %s exit %d (%ds)" % (step, code, seconds))
+            partial = next((m.group(0) for line in reversed(tail) for m in [PARTIAL.search(line)] if m), "") if not code else ""
+            print("nightly: %s exit %d (%ds)%s" % (step, code, seconds, ", " + partial + ", the rest next night" if partial else ""))
             done.append({"step": step, "exit": code, "seconds": round(seconds), "tail": tail})
+            if partial:
+                done[-1]["partial"] = partial
         agent.report_steps(done)                  # after each step, so a run stopped midway still says how far it got
     failed = [d for d in done if d["exit"]]
-    print("nightly: %s" % ", ".join("%s %s" % (d["step"], "skipped" if "skipped" in d else "ok" if not d["exit"]
+    print("nightly: %s" % ", ".join("%s %s" % (d["step"], "skipped" if "skipped" in d else "partial" if d.get("partial") else "ok" if not d["exit"]
                                                 else "exit %d" % d["exit"]) for d in done))
     return EXIT_FAILED if failed else 0         # each step's own code is in the steps, and so in the heartbeat
 

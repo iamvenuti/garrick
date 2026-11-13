@@ -37,7 +37,8 @@ is the user's alone: nothing here writes one.
 
 Wall findings have no Not now. No wall answer is recommended (#548): when the question opens in the app, the page asks
 page_action.py's read verb `walls-look` which file the finding is about; Show me both texts reads the shared words of both files into
-the dialog, and drops them when it closes. The verb is not for the ask box or a session; a browser has no bridge and shows neither.
+the dialog, and drops them when it closes. Only after that does *The words are mine, keep them* show, in the app, and send
+`walls-allow` (#550). Neither verb is for the ask box or a session; a browser has no bridge and shows neither.
 Missing commit hooks has no Not now either: hiding it would leave the walls unchecked on commit, which fails open, as for a wall.
 
 This module only decides and says; it writes nothing but the Not now file, which page_action.py asks it to.
@@ -80,9 +81,10 @@ def A(id_: str, label: str, does: str, action: str) -> dict:
 ANSWERS: Dict[str, List[dict]] = {
     # No answer is recommended: the user sees the match first (#548). Show me both texts reads the two files and shows the words
     # they share, in the dialog only; Take it out waits for that check to name the file; The words are mine waits until both
-    # texts were shown.
+    # texts were shown, and is the page's own button, in the Mac app (#550).
     "wall": [A("show-both", "Show me both texts", "Shows the words the two files share. Nothing changes.", "look"),
-             A("take-out", "Take it out", "Your assistant removes it and shows you the change.", "handoff")],
+             A("take-out", "Take it out", "Your assistant removes it and shows you the change.", "handoff"),
+             A("keep", "The words are mine, keep them", "Keeps this file as it is. Garrick stops flagging these words until the file changes.", "allow")],
     "note-long": [A("move-older", "Move older entries to history", "Nothing is deleted.", "run"),
                   A("preview", "Show me what would move", "A preview. No change until you say so.", "preview"),
                   A("later", "Not now", "Ask again in a week.", "later")],
@@ -123,7 +125,7 @@ WHY = {"note-long": "Long pages are slow to read and slow for the assistant. Old
        "meeting-long": "A meeting note is a short record: who was there, the key points, the actions.",
        "hooks-missing": "Without it, a commit can carry private material across a wall and nothing warns you."}
 NEVER_LATER = ("wall", "hooks-missing")     # no Not now: hiding either leaves the walls unchecked
-ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal", "look")
+ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal", "look", "allow")
 # The answers the verb `finding` takes (page_action.py), by kind: closed, so an unknown kind or answer is refused.
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
 # The wiki's own kinds (#542) are put off, and nothing else, through the same verb: the question's file stays as it is.
@@ -446,7 +448,7 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
             a["phrase"] = handoff_phrase(plain, a["id"], item)
         elif a["action"] == "open":
             a["reqs"] = [{"verb": "note-open", "path": path}]
-        elif a["action"] == "look":
+        elif a["action"] in ("look", "allow"):
             pass
         else:
             a["req"] = {"verb": "finding", "kind": plain, "path": path, "answer": a["id"]}
@@ -483,12 +485,14 @@ def unlisted_wall(item: dict, scope: str) -> dict:
 
 
 def wall_answers(scope: str) -> List[dict]:
-    """The answers of a wall question, in order, each with what the page needs to ask it (#548)."""
+    """The three answers of a wall question, in order, each with what the page needs to ask it (#548, #550)."""
     out = []
     for a in ANSWERS["wall"]:
         a = dict(a)
         if a["action"] == "look":
             a["req"] = {"verb": "walls-look", "place": scope}       # the page adds the file and the finding it was told of
+        elif a["action"] == "allow":
+            a["req"] = {"verb": "walls-allow"}                      # and the finding and the file's blob that it was shown
         out.append(a)
     return out
 
@@ -654,8 +658,8 @@ def question_html(q: dict) -> str:
             data["req"] = a["req"]
         wall = q["id"] == "wall"
         hosted = a["action"] != "handoff"
-        # a wall's Take it out waits for the page's look to name the file (#548)
-        gate = " data-needlook" if wall and a["id"] == "take-out" else ""
+        # a wall's Take it out waits for the page's look to name the file, and The words are mine for the texts (#548, #550)
+        gate = (" data-needlook" if wall and a["id"] == "take-out" else " data-needseen hidden" if a["action"] == "allow" else "")
         text = "%s<small>%s%s</small>" % (E(a["label"]), '<b class="recd">Recommended.</b> ' if a["id"] == rec else "", E(a["does"]))
         if a["action"] == "day":      # Later with its day: the day is picked in the answer itself, the button puts it off
             opts += ('<div class="opt later tacts" data-id="%s"><span class="n">%d</span><span>%s<span class="lrow"><input type="date" data-day '
@@ -783,12 +787,12 @@ for(var i=0;i<c.length;i++)if(c[i]&&c[i].getClientRects().length){c[i].focus();r
 function bare(q){var seen=[].slice.call(q.querySelectorAll('.opts button.opt,.opts input[data-free]')).some(function(x){
 var d={};try{d=JSON.parse(x.dataset.fa||'{}')}catch(e){}return d.a!=='reveal'&&x.getClientRects().length});
 if(!seen)q.querySelector('[data-qskip]').hidden=false}
-/* A wall question, in the app (#548): when it opens the page asks which file it is about (walls-look); Show me both texts reads the
-   words the two files share into the dialog. The texts live in the dialog's own elements and
+/* A wall question, in the app (#548, #550): when it opens the page asks which file it is about (walls-look); Show me both texts reads the
+   words the two files share into the dialog; only then does The words are mine show. The texts live in the dialog's own elements and
    nowhere else: not the session store, not the tally. They go when the question changes and when the dialog closes. */
 var seen={},placed={};
 function clearTexts(){seen={};[].forEach.call(dlg.querySelectorAll('.qtexts'),function(t){t.textContent='';t.hidden=true});
-}
+[].forEach.call(dlg.querySelectorAll('[data-needseen]'),function(b){b.hidden=true})}
 function lookup(q){if(!host||q.dataset.kind!=='wall'||q.dataset.checked)return;q.dataset.checked='1';out(q,'Checking the file…');
 var req={verb:'walls-look',place:cur.dataset.scope};if(q.dataset.wallfile)req.path=q.dataset.wallfile;
 else{if(placed[cur.dataset.scope]){looked(req,placed[cur.dataset.scope]);return}if(cur.dataset.checking)return;cur.dataset.checking='1'}host.postMessage({act:req})}
@@ -808,7 +812,8 @@ if(!req.id){var f=res.findings||[];if(!f.length){nothing(el,res);return}
 named(el,f.filter(function(x){return x.rule==='wording'})[0]||f[0],res);return}
 if(!res.a||!res.b){out(el,res.say||'Nothing to show for this one.',true);return}
 var box=el.querySelector('.qtexts');box.textContent='';box.appendChild(textBlock(res.a));box.appendChild(textBlock(res.b));box.hidden=false;
-seen[el.dataset.gk]={id:req.id,blob:res.blob};out(el,'')}
+seen[el.dataset.gk]={id:req.id,blob:res.blob};[].forEach.call(el.querySelectorAll('[data-needseen]'),function(b){b.hidden=false});out(el,'')}
+function allowed(req,res){var el=wallq(req.path);pend=null;if(!el)return;if(res&&res.ok){finish(el,'done');return}out(el,(res&&res.say)||'That did not work.',true)}
 function show(done0){if(!cur)return;clearTexts();var every=qs(cur),left=done0?[]:pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
 var done=dlg.querySelector('.qdone');
 if(!left.length){cur.hidden=true;done.hidden=false;done.querySelector('b').textContent=cur.dataset.name+' is done.';
@@ -849,6 +854,7 @@ if(d.a==='handoff'){handoff(d.phrase);finish(q,'handed');return}
 if(d.a==='reveal'){var rw=q.querySelector('[data-ansrow]');if(rw){rw.hidden=false;var ri=rw.querySelector('input');if(ri)ri.focus()}return}
 if(!host)return;
 if(d.a==='look'){if(!q.dataset.lookid){out(q,'Garrick has not found the file yet.',true);return}out(q,'Reading both files…');host.postMessage({act:Object.assign({},d.req,{path:q.dataset.wallfile,id:q.dataset.lookid})});return}
+if(d.a==='allow'){var sn=seen[q.dataset.gk];if(!sn||!sn.blob)return;pend={key:q.dataset.gk,id:'keep'};host.postMessage({act:Object.assign({},d.req,{path:q.dataset.wallfile,id:sn.id,blob:sn.blob})});return}
 if(d.a==='open'){d.reqs.forEach(function(r){host.postMessage({act:r})});finish(q,'opened');return}
 /* an answer that takes the user's words or a day reads them from the question's own field, and the request is the verb the Questions panel used */
 var extra={};
@@ -873,6 +879,7 @@ dlg.addEventListener('close',function(){st.del(KEY)});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}
+if(q&&q.verb==='walls-allow'){allowed(q,res);return}
 var ask=q&&/^question-/.test(q.verb||'');
 if(q&&(q.verb==='finding'||ask)&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:ask?x.dataset.wiki===q.wiki&&x.dataset.file===q.file:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
 if(el){if(res&&res.ok){if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}

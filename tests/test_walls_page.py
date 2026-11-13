@@ -186,5 +186,78 @@ class TestLook(WallsPageCase):
             self.assertNotIn("harvest", json.dumps(got))
 
 
+class TestAllow(WallsPageCase):
+    def allow(self, via=None, **more):
+        look = self.look()
+        req = {"verb": "walls-allow", "path": COPY, "id": self.wording()["id"], "blob": look["blob"]}
+        req.update(more)
+        return self.send(req, via), look
+
+    def test_after_a_look_it_writes_one_entry_by_page_and_commits_the_ledger_alone(self):
+        before = self.head()
+        got, look = self.allow()
+        self.assertTrue(got["ok"], got)
+        entries = self.ledger()
+        self.assertEqual(1, len(entries))
+        self.assertEqual((COPY, "page", "wording", look["blob"]), (entries[0]["path"], entries[0]["by"], entries[0]["rule"], entries[0]["blob"]))
+        self.assertNotEqual(before, self.head())
+        self.assertEqual([LEDGER], git(self.root, "show", "--name-only", "--format=", "HEAD").split())
+        self.assertEqual("", git(self.root, "status", "--porcelain", "--untracked-files=no").strip())
+        self.assertNotIn("harvest", json.dumps(entries))                               # the ledger names no token
+
+    def test_the_wall_check_then_lets_that_file_through_until_it_changes(self):
+        import check
+        self.assertTrue(any(f.path == COPY for f in check.run_checks(self.root, walls_only=True)))
+        got, _ = self.allow()
+        self.assertTrue(got["ok"], got)
+        self.assertFalse(any(f.path == COPY for f in check.run_checks(self.root, walls_only=True)))
+        write(self.root / COPY, "# Copy\n\nChanged: %s, and more.\n" % SENTENCE)
+        self.assertTrue(any(f.path == COPY for f in check.run_checks(self.root, walls_only=True)))
+
+    def test_the_ask_box_and_a_session_are_refused_and_write_nothing(self):
+        before = self.head()
+        for via in ("ask", "session"):
+            got, _ = self.allow(via)
+            self.assertFalse(got["ok"], via)
+            self.assertEqual([], self.ledger(), via)
+            self.assertEqual(before, self.head(), via)
+            self.assertFalse((self.root / LEDGER).exists(), via)
+        self.assertNotIn("walls-allow", pa.CLI_FIELDS)
+        with self.assertRaises(SystemExit):
+            pa.command_parser().parse_args(["walls-allow"])
+
+    def test_a_blob_that_is_not_the_files_now_is_refused_and_writes_nothing(self):
+        before = self.head()
+        got, look = self.allow(blob="a" * 40)
+        self.assertFalse(got["ok"])
+        self.assertIn("changed since you looked", got["say"])
+        write(self.root / COPY, "# Copy\n\nChanged after the look: %s.\n" % SENTENCE)      # and a file that changed after the look
+        got = self.send({"verb": "walls-allow", "path": COPY, "id": self.wording()["id"], "blob": look["blob"]})
+        self.assertFalse(got["ok"])
+        self.assertEqual([], self.ledger())
+        self.assertEqual(before, self.head())
+
+    def test_a_malformed_request_is_refused(self):
+        f = self.wording()
+        for req in ({"path": COPY, "id": f["id"]}, {"path": COPY, "id": f["id"], "blob": "xyz"}, {"path": COPY, "id": "nope", "blob": "a" * 40},
+                    {"path": "../x.md", "id": f["id"], "blob": "a" * 40}, {"path": COPY, "id": "0123456789", "blob": "a" * 40},
+                    {"path": COPY, "id": f["id"], "blob": "a" * 40, "by": "terminal"}):
+            self.assertFalse(self.send(dict(req, verb="walls-allow"))["ok"], req)
+        self.assertEqual([], self.ledger())
+
+    def test_the_terminals_rule_is_unchanged(self):
+        import garrick_lib
+        self.assertFalse(garrick_lib.allow_may_write("page"))
+        self.assertFalse(garrick_lib.allow_may_write("assistant"))
+
+    def test_no_skill_doc_or_ask_tool_names_the_verb(self):
+        for folder in ("template/System/skills", "docs", "template/System/garrick-docs"):
+            for path in (REPO / folder).rglob("*") if (REPO / folder).is_dir() else []:
+                if path.is_file() and path.suffix in (".md", ".py", ".json", ".txt"):
+                    self.assertIsNone(re.search(r"walls-allow(?!ed)", path.read_text(encoding="utf-8", errors="ignore")), str(path))
+        for path in (REPO / "extras" / "status").glob("ask*"):
+            self.assertIsNone(re.search(r"walls-allow(?!ed)", path.read_text(encoding="utf-8", errors="ignore")), str(path))
+
+
 if __name__ == "__main__":
     unittest.main()

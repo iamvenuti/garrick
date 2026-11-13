@@ -2085,8 +2085,8 @@ class VerbsTest(unittest.TestCase):
         self.assertEqual(len(documented), len(set(documented)), documented)
         accepted = list(pa.VERBS) + list(pa.CMUX_VERBS)
         self.assertEqual(len(accepted), len(set(accepted)), accepted)
-        # The wall question's verbs are the page's own (#548): no row names them, so that no document an
+        # The wall question's two verbs are the page's own buttons (#548, #550): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
-        self.assertEqual(("walls-look",), pa.PAGE_ONLY)
+        self.assertEqual(("walls-look", "walls-allow"), pa.PAGE_ONLY)
         self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY), sorted(documented))
-        self.assertIn("page's own wall button", section)
+        self.assertIn("page's own wall buttons", section)

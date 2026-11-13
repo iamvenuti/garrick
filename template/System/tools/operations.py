@@ -245,9 +245,11 @@ DECLARED: Dict[str, Op] = {
     "question-open-sections": _op(("wiki", "confirm", "pages"), ("wiki", "confirm"), "workspace"),
     # Allow once: an allowance taken away. Writes System/walls-allowed.json and commits it in the workspace's own repository.
     "walls-unallow": _op(("path", "id"), ("path", "id"), "workspace", True),
-    # The Context queue's wall question (#548): the look only reads (the wall check run on a file or a place, the words
-    # two files share in the reply and nowhere else). Only from the app's bridge (page_action.py's PAGE_ONLY).
+    # The Context queue's wall question (#548, #550): the look only reads (the wall check run on a file or a place, the words
+    # two files share in the reply and nowhere else); the allowance is `check.py allow`'s ledger entry with `by: page`, written
+    # after that look, for the blob it showed. Both only from the app's bridge (page_action.py's PAGE_ONLY).
     "walls-look": _op(("place", "path", "id"), ("place", "path", "id"), "none", retry="safe"),
+    "walls-allow": _op(("path", "id", "blob"), ("path", "id", "blob"), "workspace", True),
     # An answer to a finding on the Checks card's queue (#535): older entries moved to history and committed in the
     # note's zone, a preview of that, the wall check installed, or Not now. Closed by finding_queue.py's table.
     "finding": _op(("kind", "path", "answer"), ("kind", "path", "answer"), "workspace", True),

@@ -109,7 +109,13 @@ zone's repository, as the skills would:
                 path and an id, the words that file shares with the file the finding names, and a few
                 words around them in each, run through the check now, so they come from the files
                 and never from the request. They go to the dialog in the reply and nowhere else: not
-                a file, not the audit log, not the journal. Only the app's bridge (`via: page`): the ask box and a session are refused, and the command line has no verb for it
+                a file, not the audit log, not the journal. Only the app's bridge (`via: page`)
+    walls-allow  writes one allowance (allow once, #550): {"path", "id", "blob"}, the same ledger
+                entry `check.py allow` writes, with `by: page`, committed alone in the workspace's
+                own repository. The page sends it only after `walls-look` showed both texts, and
+                `blob` is the file as that look read it: if the file has changed, nothing is
+                written. Only the app's bridge (`via: page`): the ask box and a session are
+                refused, and the command line has no verb for it
     memory-preview  what Settings › Memory's unsaved values would do now:
                 {"memory": {...}}; System/tools/fade.py's counts() for
                 them, per wiki, as "counts", and, from a fade.py with
@@ -315,7 +321,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "walls-unallow", "walls-look", "finding")
+         "walls-unallow", "walls-look", "walls-allow", "finding")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -2291,6 +2297,33 @@ def walls_look(ws: Path, req: dict) -> dict:
     name = lambda p: re.sub(r"\.[A-Za-z0-9]+$", "", p.name)
     return {"say": "Showed the words the two files share.", "logged": "read both texts of a wall finding", "id": fid, "blob": blob,
             "a": dict(here, where="In “%s”" % name(ws / rel)), "b": dict(there, where="In “%s”" % name(other))}
+
+
+def walls_allow(ws: Path, req: dict) -> dict:
+    """The page's own `check.py allow` (#550): one finding in one file, against the file's blob, by `page`, committed alone.
+    The page sends it after walls-look showed both texts; `blob` is the file as that look read it, and the allowance is
+    refused when the file is not that now, so the user allows what they saw. Only a wording finding, the only kind whose
+    texts walls-look shows. The ledger entry is check.py's allow_page; allow_may_write keeps refusing `page` for every other caller."""
+    rel = walls_file(ws, req)
+    fid, blob = walls_fid(req), req.get("blob")
+    if not isinstance(blob, str) or not WALL_BLOB_RE.fullmatch(blob):
+        raise Refused("name the file as it was shown")
+    tool = walls_tool(ws)
+    with held("page-action-walls-allow.lock", busy="another change to the allowed refusals is still running"):
+        found, now = walls_findings(tool, ws, rel)
+        hit = next((f for f in found if tool.finding_id(f) == fid), None)
+        if hit is None:
+            raise Refused("the wall check does not give that finding for this file now")
+        if tool.finding_rule(hit) != "wording":
+            raise Refused("only a match of wording is allowed from the page")
+        if now != blob:
+            raise Refused("the file has changed since you looked at it; look again before keeping it")
+        code, said = tool.allow_page(ws, rel, fid, "page")
+    if code:
+        raise Refused(said)
+    if "was not committed" in said:
+        raise Refused(said)
+    return {"say": said, "written": True, "logged": "allowed one wording match once, from the page"}
 
 
 def asks_how(ws: Path, args: list) -> None:
@@ -5156,6 +5189,8 @@ def act(ws: Path, req, today=None, now=None):
         return walls_unallow(ws, req)
     if req["verb"] == "walls-look":
         return walls_look(ws, req)
+    if req["verb"] == "walls-allow":
+        return walls_allow(ws, req)
     if req["verb"] == "release-check":
         return release_check(ws)
     if req["verb"] == "release-update":
@@ -5214,8 +5249,8 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake"
                "rename", "move", "delete", "undo")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
-# Verbs only the app's bridge may send (`via: page`): a wall question's look (#548).
-PAGE_ONLY = ("walls-look",)
+# Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
+PAGE_ONLY = ("walls-look", "walls-allow")
 
 
 def builds_page(req) -> bool:

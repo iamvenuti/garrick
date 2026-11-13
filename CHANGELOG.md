@@ -4,6 +4,34 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.66.0] - 2026-11-13
+
+Everything in this release removes or repairs something. The Context tab is one card that lists what needs you, and wiki questions, proposed verdicts and decisions to review are answered in the same queue as the findings. The *All findings* view is gone. Todo ticks keep their state when the page rebuilds, and *Check for updates* asks before it skips a file you have not committed.
+
+**Upgrading.**
+- There is nothing to set.
+- The *All findings* view is gone, and so are its list, chart and wall refusal counts. The 30-day refusal summary is now `check.py --refusals`, in a terminal.
+- The Context tab is one card, and *Allowed by you* is in Settings, under *Walls*.
+- The button that asks about uncommitted files comes with this release, so the first update to 0.66.0 runs as before. The button asks from the next update on.
+
+### Changed
+
+- **The Context tab is one card of what needs you** (#542). Each zone or wiki that holds something gets one line, such as *Work: 6 questions · 4 answers to work in · about 10 minutes*. A place with nothing gets no line. With no line at all, the card says *Nothing needs you.* *Go through them* opens that place's questions. *Work them in* shows only when that zone has answers waiting, and the request it sends names the zone. Each line counts one place, and the card never adds two zones together. The Zone menu still filters the lines. The counters, the *List* switch, the Wiki and Age filters, the side pane and the second Checks card are gone. There is no *due today* count any more: a *Later* whose day has come is a question again.
+- **One queue for every kind.** A wiki question has a field for your answer, *Record as a decision* (Meetings), *Later* with its day, and *Close*. A proposed verdict has *Accept* (recommended), *Answer it myself* and *Not now*. A decision to review has *Open the decision* and *Not now*. Only you change a decision, so the queue never writes one. Each answer goes through the same save as the old panel's buttons, so the wall check still runs. A tag above each question names its kind. Wall findings come first, then the oldest.
+- **The context debt is one line** (#541), *Context debt 34, under 40 · Last nurture Fri 13 Nov*. It turns red over the threshold. The wall override line opens the queue of the place with the most wall findings.
+- ***Allowed by you* is in Settings**, under *Walls*, with *Remove* as before.
+- **A long note is asked about from its history plan** (#539). The page asks `history.py` what a move would do before it offers one. When entries can move, the question gives the figures and says when moving them is not enough. When nothing can move, there is no *Move* answer. The question then says why in plain words and recommends that your assistant split the long sections into their own notes. Your assistant shows you the change before it commits. One page build spends at most a minute on these plans.
+- ***Check for updates* asks before it skips a Garrick file you have not committed.** It lists the files by path and repository and offers three buttons. *Commit these and update* commits those files only, one commit per repository, through each repository's own commit and wall check, then updates. If a check refuses, nothing is applied. *Update the rest* skips them, as before. *Cancel* changes nothing. The dry run (`release.py update --json`) lists the files as `uncommitted`, and the `update` skill asks the same question.
+
+### Fixed
+
+- **Todo ticks made a few seconds apart no longer turn back to open when the page rebuilds** (#538). A line you ticked or reopened keeps the state you gave it until a page built from the updated note arrives.
+- **A refused answer leaves you a way on** (#540). The refused answer is disabled and shows the reason under it. *Skip for now* goes on to the next question and does not put the finding off. The summary counts skips apart from *Not now*. *Skip for now* keeps nothing, so after a reload the question shows again as it was built. When the refusal says nothing can move, the handoff to your assistant takes the place of the move. In a browser, a question that has no answer the page can run there gets *Skip for now* too.
+
+### Removed
+
+- **The *All findings* view** (#541), with its list, chart and refusal counts. `check.py --refusals` prints the 30-day summary. It prints nothing when there is no refusal record.
+
 ## [0.65.2] - 2026-11-13
 
 A patch for 0.65.1 with one change to the status page's Checks card. The card now says what needs you and how long it will take. Pressing a line walks you through its findings one at a time, as plain questions with buttons.

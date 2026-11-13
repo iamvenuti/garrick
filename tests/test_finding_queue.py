@@ -111,7 +111,7 @@ class TestKindTable(unittest.TestCase):
 class TestPlainWording(unittest.TestCase):
     def test_the_kinds_that_have_plain_wording(self):
         """A new kind cannot get plain wording silently: this list is the whole of it."""
-        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked"), fq.PLAIN_KINDS)
+        self.assertEqual(("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed"), fq.PLAIN_KINDS)
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.ANSWERS))
         self.assertEqual(set(fq.PLAIN_KINDS), set(fq.TAGS))
         self.assertEqual("mechanical", fq.MECHANICAL)
@@ -209,7 +209,7 @@ class TestPlainWording(unittest.TestCase):
         # no Not now; the look first, then Take it out, then the page's own allowance (#548, #550)
         self.assertEqual([("show-both", "look"), ("take-out", "handoff"), ("keep", "allow")], ids["wall"])
         self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
-                          "meeting-long": ("later",), "hooks-blocked": (), "wall": (),
+                          "meeting-long": ("later",), "hooks-blocked": (), "fix-failed": ("later",), "wall": (),
                           "verdict": ("later",), "decision-review": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
@@ -511,7 +511,7 @@ class TestQueueOnThePage(QueueCase):
         it = KINDS["hooks-missing"]
         (self.root / "Zones" / "Work" / ".git" / "hooks").mkdir(parents=True, exist_ok=True)
         self.record([{"kind": "judgment", "check": "zones", "path": it["path"], "line": it["line"]}])
-        self.assertNotIn('data-kind="hooks', self.view(self.page()))                       # nothing stands in the way: the night installs it
+        self.assertNotIn('data-kind="hooks', self.page())                       # nothing stands in the way: the night installs it
         self.assertEqual({}, fq.forecast_questions([dict(it, scope="Zones/Work")], set(), self.root))
         mine = self.root / "Zones" / "Work" / ".git" / "hooks" / "pre-commit"
         mine.write_text("#!/bin/sh\necho mine\n")                                          # a hook of the user's own, which Garrick never replaces
@@ -653,52 +653,36 @@ class TestQueueOnThePage(QueueCase):
         self.assertNotIn('id="queue"', html)
         self.assertIn(">Nurture</button>", self.card(html))                                   # the card keeps its Nurture button
 
-    def test_fix_them_counts_only_what_fix_can_do_and_runs_fix_for_each(self):
-        sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
-        pricing = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
-        said = "`status` is 'ongoing', should be active, parked or done"
-        self.quick(
-            {"check": "threads", "severity": "warning", "path": sized, "message": said},
-            {"check": "threads", "severity": "warning", "path": pricing, "message": said},
-            {"check": "deliverables", "severity": "warning", "path": "Zones/Work/Acme Review/Deliverables/Deck.pptx",
-             "message": "name does not start with its creation date, `YYMMDD - <name>`"})
-        self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
-        html = self.page()
-        card = self.card(html)
-        self.assertIn("Garrick can fix 2 small things on its own.", card)                       # the .pptx has no Fix: not counted
-        data = re.search(r'data-fix="([^"]+)"', card)
-        requests = json.loads(htmllib.unescape(data.group(1)))
-        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"},
-                          {"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"}], requests)
-        ops = pa.ops_lib(self.root)
-        for req in requests:
-            self.assertIsNone(ops.validate("fix", req))                                         # each one is the verb `fix`, validated as it is
-        self.assertIn("Fix them</button>", card)
-        self.assertNotIn('id="queue"', html)                                                    # a mechanical finding is not asked one by one
-
-    def test_fix_them_runs_the_verb_fix_for_each_note(self):
-        """The button's requests are the verb `fix`, one for each note, as the executor validates it (#541: the finding's own row is gone)."""
-        sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
-        said = "`status` is 'ongoing', should be active, parked or done"
-        self.quick({"check": "threads", "severity": "warning", "path": sized, "message": said})
-        self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
-        html = self.page()
-        fix = re.search(r'data-fix="([^"]+)"', html)
-        self.assertEqual([{"verb": "fix", "zone": "Work", "file": "Birch Entry/Threads/Market Sizing/Market Sizing.md"}],
-                         json.loads(htmllib.unescape(fix.group(1))))
-        self.assertIsNone(pa.ops_lib(self.root).validate("fix", json.loads(htmllib.unescape(fix.group(1)))[0]))
-
-    def test_no_fix_them_without_a_mechanical_fix(self):
-        self.quick({"check": "links", "severity": "warning", "path": "Zones/Work/a.md", "message": "x"})
-        self.record([{"kind": "judgment", "check": "links", "path": "Zones/Work/a.md", "line": "Zones/Work/a.md: x"}])
-        self.assertNotIn("Garrick can fix", self.card(self.page()))
-
-    def test_fix_them_in_a_browser_hands_the_request_over(self):
+    def test_a_mechanical_finding_shows_nothing_on_the_card_and_no_button_exists(self):
+        """#550: the nightly run makes these fixes; the card has no line and no Fix them for them."""
         sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
         self.quick({"check": "threads", "severity": "warning", "path": sized, "message": "`status` is 'ongoing', should be active, parked or done"})
         self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x"}])
-        card = self.card(self.page())
-        self.assertIn('class="act webonly" type="button" data-request="nurture the context"', card)
+        html = self.page()
+        card = self.card(html)
+        for gone in ("Garrick can fix", "Fix them", "data-fix", 'class="auto"'):
+            self.assertNotIn(gone, html, gone)
+        self.assertNotIn('id="queue"', html)
+        self.assertFalse(hasattr(fq, "fix_block"))
+        self.assertFalse(hasattr(status, "mechanical_fixes"))
+        self.assertIn("Nothing needs you.", card)
+
+    def test_a_fix_the_night_held_back_is_a_question_with_its_reason_and_real_answers(self):
+        sized = "Zones/Work/Birch Entry/Threads/Market Sizing/Market Sizing.md"
+        line = "%s: status ongoing becomes active (held: a session is mid-turn there)" % sized
+        self.quick({"check": "threads", "severity": "warning", "path": sized, "message": "`status` is 'ongoing', should be active, parked or done"})
+        self.record([{"kind": "mechanical", "check": "threads", "path": sized, "line": line}])
+        queue = self.view(self.page())
+        self.assertIn('data-kind="fix-failed"', queue)
+        q = fq.question({"kind": "mechanical", "check": "threads", "path": sized, "line": line, "scope": "Zones/Work"}, "Zones/Work")
+        self.assertEqual("fix-failed", q["id"])
+        self.assertIn("A session was working there", q["why"])
+        self.assertEqual(["Fix it with my assistant", "Not now"], [a["label"] for a in q["answers"]])
+        self.assertIn("mid-turn", q["details"])
+        shown = text_of(fq.question_html(q))
+        for word in (".md", "`", "python3", "held:"):
+            self.assertNotIn(word, shown)
+        self.assertEqual({}, fq.forecast_questions([{"kind": "mechanical", "check": "threads", "path": sized, "line": "x", "scope": "Zones/Work"}], set()))
 
 
 def wiki_q(wiki="Meetings", file="questions/261104 - Renewal owner.md", **more):

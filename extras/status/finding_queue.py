@@ -65,9 +65,9 @@ HISTORY_TOOL = ("System", "tools", "history.py")
 PLAN_TIMEOUT = 15         # seconds one history.py plan may take while the page builds
 PLAN_BUDGET = 60          # seconds all the plans of one build may take together; the ones after count as "nothing moves"
 
-# The kinds with plain wording, in the order a queue asks them (a wall first, always), then the mechanical kinds,
-# which are never asked one by one: the card groups them under Fix them.
-PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked")
+# The kinds with plain wording, in the order a queue asks them (a wall first, always). The mechanical kind is not among them:
+# the nightly run makes those fixes, and the card shows nothing for one (#550). One the run could not make is asked as fix-failed.
+PLAIN_KINDS = ("wall", "note-long", "resume-long", "todo-long", "meeting-long", "hooks-blocked", "fix-failed")
 HOOKS = "hooks-missing"     # the finding; Garrick installs the hook itself, and only a hook it must not touch is asked as hooks-blocked
 MECHANICAL = "mechanical"
 FREE = "Something else: tell Garrick what to do"
@@ -80,7 +80,7 @@ NO_FREE_FOR = ()          # every question keeps the free-text field, last
 AUTOMATIC, QUESTION = "automatic", "question"
 KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
-    "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC,
+    "hooks-missing": AUTOMATIC, "hooks-blocked": QUESTION, "mechanical": AUTOMATIC, "fix-failed": QUESTION,
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION,
     "other": QUESTION,
 }
@@ -110,6 +110,9 @@ ANSWERS: Dict[str, List[dict]] = {
                      A("open", "Let me open it", "Opens the page in your notes app. Nothing changes.", "open"),
                      A("later", "Not now", "Ask again in a week.", "later")],
     # A hook of the user's own stands where the wall check goes: Garrick never replaces it. The assistant adds one line to it (#550).
+    # A small fix the nightly run could not make: the assistant makes it with the user watching, or it waits (#550).
+    "fix-failed": [A("fix-now", "Fix it with my assistant", "Your assistant makes the fix and shows you the change.", "handoff"),
+                   A("later", "Not now", "Ask again in a week.", "later")],
     "hooks-blocked": [A("add-check", "Add the wall check to my hook", "Your assistant adds one line to your hook and shows you the change.", "handoff")],
 }
 # What a long note is asked when its plan moves nothing: no Move and no Show me, the handoff first (#539).
@@ -133,8 +136,15 @@ NO_MOVE = {
     "unknown": ("Garrick could not ask what would move, so it does not offer a move.", "history.py did not answer in time, or is not in this workspace."),
 }
 TAGS = {"wall": "Private material", "note-long": "Tidy up", "resume-long": "Tidy up", "todo-long": "Tidy up",
-        "meeting-long": "Tidy up", "hooks-blocked": "Safety check"}
-WHY = {"note-long": "Long pages are slow to read and slow for the assistant. Older entries can move to a history page, where they stay linked.",
+        "meeting-long": "Tidy up", "hooks-blocked": "Safety check", "fix-failed": "Tidy up"}
+HELD = re.compile(r"\(held: (.+)\)\s*$")
+# The plain words for why the run held a fix back, by what Nurture said; the full reason stays in Details.
+HELD_WORDS = (("mid-turn", "A session was working there when the fix came up."), ("mid-merge", "Its repository was in the middle of a merge."),
+              ("not committed", "It has changes that are not committed yet."), ("could not be undone", "No single repository holds its files."),
+              ("two repositories", "Its files are in two repositories."), ("refused", "The commit was refused by the wall check."),
+              ("changed again", "The file changed again while the fix was being checked."))
+WHY = {"fix-failed": "A fix this small is made on its own at night. This one was held back.",
+       "note-long": "Long pages are slow to read and slow for the assistant. Older entries can move to a history page, where they stay linked.",
        "resume-long": "A resume point is what you read first when you come back, so a short one is quicker to take in.",
        "todo-long": "A line names one action. What came of it belongs in the thread's notes.",
        "meeting-long": "A meeting note is a short record: who was there, the key points, the actions.",
@@ -184,6 +194,12 @@ def hooks_blocked(ws, path: str) -> bool:
         if not ours:
             return True
     return False
+
+
+def held_reason(item: dict) -> str:
+    """The reason Nurture gave for holding a mechanical fix back, from its line in the record; "" when it gave none."""
+    m = HELD.search(str(item.get("line") or item.get("message") or ""))
+    return m.group(1) if m else ""
 
 
 def plain_kind(item: dict) -> str:
@@ -404,6 +420,10 @@ def said(plain: str, item: dict) -> Tuple[str, str]:
     if plain == "meeting-long":
         n = int(MEETING_RE.search(text).group(1))
         return ("A meeting note is longer than usual: %s words." % about(n), WHY[plain])
+    if plain == "fix-failed":
+        reason = held_reason(item)
+        words = next((w for k, w in HELD_WORDS if k in reason), "Garrick could not make the change safely.")
+        return ("A small fix to “%s” in %s could not be made." % (stem(path), place(path)), "%s %s" % (words, WHY[plain]))
     if plain == "hooks-blocked":
         where = place(path)
         return ("%s does not check the walls before a commit." % ("The %s zone" % where if path.startswith("Zones/") else where[:1].upper() + where[1:]),
@@ -428,6 +448,8 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
     if plain == "todo-long":
         return ("Shorten the long lines of %s to one action each, and move what came of each into its thread's dated entry. "
                 "Show me the change before anything is committed." % path)
+    if plain == "fix-failed":
+        return "Make the small fix that Nurture holds back for %s, and show me the change before anything is committed." % path
     if plain == "hooks-blocked":
         return ("The repository %s has a commit hook of mine, so Garrick's wall check could not be installed. Add the line "
                 "python3 <workspace>/System/tools/check.py --staged --walls-only to my hook, keep the rest of it as it is, "
@@ -443,7 +465,7 @@ def free_prefix(plain: str, item: dict) -> str:
     path = str(item["path"])
     label = {"wall": "a private-material finding", "note-long": "a note that is too long", "resume-long": "a resume point that is too long",
              "todo-long": "a to-do line that is too long", "meeting-long": "a meeting page that is too long",
-             "hooks-blocked": "a commit hook of yours that is in the way"}.get(plain, "a check finding")
+             "hooks-blocked": "a commit hook of yours that is in the way", "fix-failed": "a small fix that was held back"}.get(plain, "a check finding")
     if plain == "wall":
         return "About %s in %s (%s, from %s): " % (path, place(path), label, wall_other(item) or "another zone")
     return "About %s (%s): " % (path, label)
@@ -467,6 +489,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
     plain = plain_kind(item)
     if plain == HOOKS:
         plain = "hooks-blocked"      # only a finding Garrick could not fix itself is ever made a question
+    elif plain == MECHANICAL and held_reason(item):
+        plain = "fix-failed"
     path = str(item["path"])
     details = str(item.get("message") or item.get("line") or "")
     if plain == "wall" and not item.get("listed"):
@@ -549,14 +573,16 @@ def wall_answers(scope: str) -> List[dict]:
 def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) -> Dict[str, List[dict]]:
     """The queue of each scope, from the forecast's findings: the list the scope's line on the card counts, less
     what Not now has put off (a wall finding and missing commit hooks are never put off, whatever a file says). The mechanical ones are not
-    asked: the card fixes them together. With `ws`, a long note is asked from its plan (#539); without it, from its kind. A `planner` shared by several calls spends one budget for all of them."""
+    asked: the nightly run makes them, and one it held back is asked as fix-failed (#550). With `ws`, a long note is asked from its plan (#539); without it, from its kind. A `planner` shared by several calls spends one budget for all of them."""
     out: Dict[str, List[dict]] = {}
     if planner is None and ws is not None:
         planner = Planner(ws)
     for item in items:
         plain = plain_kind(item)
+        if plain == MECHANICAL and not held_reason(item):
+            continue                # the nightly run makes it, and the card shows nothing (#550)
         if plain == MECHANICAL:
-            continue
+            plain = "fix-failed"
         if plain == HOOKS:
             if not hooks_blocked(ws, str(item["path"])):
                 continue            # automatic: the update and the nightly run install it; it is never asked
@@ -765,22 +791,6 @@ def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str], toda
             '<button class="act" type="button" data-qclose>Close</button></div><div id="qbody">%s</div></dialog>' % (E(root), E(today), body))
 
 
-def fix_block(fixes: List[Tuple[str, str]], root: str) -> str:
-    """The card's line for the small things Garrick fixes on its own: how many, and one button that runs `fix` for
-    each note, in the app (the same fix as the Fix on a finding's own row). A browser has no way to run a fix, so
-    there the button hands the request to the assistant. `fixes` are the (zone, note) of each finding the list
-    offers a Fix for, so the number counts only what `fix` can do."""
-    if not fixes:
-        return ""
-    n = len(fixes)
-    requests = [{"verb": "fix", "zone": z, "file": f} for z, f in sorted(set(fixes))]       # one fix a note: it fixes every finding of the note
-    return ('<div class="auto"><span>Garrick can fix %d small thing%s on its own.</span>'
-            '<button class="act primary tacts" type="button" data-fix="%s">Fix them</button>'
-            '<button class="act webonly" type="button" data-request="nurture the context" data-folder="%s" '
-            'title="Hand “nurture the context” to your assistant">Fix them</button></div>'
-            % (n, "" if n == 1 else "s", E(json.dumps(requests, sort_keys=True)), E(root)))
-
-
 QUEUE_CSS = r"""
 /* The queue: one finding at a time, in the page's own tokens */
 dialog.queue{width:min(620px,calc(100vw - 32px))}
@@ -806,7 +816,6 @@ dialog.queue{width:min(620px,calc(100vw - 32px))}
 .queue .qtexts{margin:10px 0 0}.queue .qtext{background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 8px;font-size:13px;overflow-wrap:anywhere}
 .queue .qtext small{display:block;color:var(--muted);margin-bottom:3px}.queue .qtext mark{background:var(--wash);color:var(--ink);font-weight:600;border-radius:3px}
 .queue .opt[hidden],.queue .qskip[hidden],.queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
-.auto{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--wash);border-radius:10px;padding:10px 12px;margin:10px 0 0;font-size:13.5px}
 """
 
 QUEUE_JS = r"""
@@ -814,10 +823,6 @@ QUEUE_JS = r"""
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 var KEY='garrick-queue',st={get:function(k){try{return sessionStorage.getItem(k)}catch(e){return null}},set:function(k,x){try{sessionStorage.setItem(k,x)}catch(e){}},del:function(k){try{sessionStorage.removeItem(k)}catch(e){}}};
 function say(t){var s=document.getElementById('toast');if(s){s.textContent=t;s.classList.add('on');setTimeout(function(){s.classList.remove('on')},3500)}}
-/* The Fix them button: the same fix as each finding's own Fix, one request for each, in the app */
-document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target.closest('button[data-fix]'):null;if(!t||!host)return;
-var list=[];try{list=JSON.parse(t.dataset.fix)}catch(err){return}
-list.forEach(function(q){host.postMessage({act:q})});say('Fixing '+list.length+' small thing'+(list.length===1?'':'s')+'…');t.disabled=true});
 if(!dlg)return;
 /* the tally's lines, in the order the summary says them: one row to add for a new way of answering */
 var LINES=[['done','done'],['handed','handed to your assistant'],['opened','opened'],['later','put off to next week'],['skipped','skipped']],UNSAVED=['skipped'];

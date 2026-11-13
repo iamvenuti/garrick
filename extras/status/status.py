@@ -1152,30 +1152,6 @@ def nurture_said(kinds: Dict[str, int]) -> str:
     return ", ".join(words for n, words in said if n)
 
 
-def mechanical_fixes(ws: Path, C: dict) -> List[Tuple[str, str]]:
-    """The (zone, file) of each mechanical finding of the quick check on a note in a zone: what the *Fix them* button
-    runs, one `fix` each (#535). Only a note in a zone gets a fix, so only there is the fix worked out in full; the rest
-    are sorted without the history a rename reads, which costs a git call a file (#278). [] without a nurture.py that
-    sorts findings."""
-    lib = nurture_lib(ws)
-    if lib is None or not callable(getattr(lib[0], "check_items", None)) or not callable(getattr(lib[0], "sort_item", None)):
-        return []
-    N, ctx = lib
-    out: List[Tuple[str, str]] = []
-    for f in C.get("findings", []):
-        path = re.sub(r":\d+$", "", str(f.get("path") or ""))
-        try:
-            light = not re.match(r"Zones/[^/]+/.+\.md$", path)
-            items = [N.sort_item(ctx, i, light=light) for i in N.check_items(f)]
-        except Exception:
-            continue
-        for item in items:
-            at = re.match(r"Zones/([^/]+)/(.+\.md)$", item.path)
-            if item.kind == "mechanical" and at:
-                out.append((at.group(1), at.group(2)))
-    return out
-
-
 # What the Context card says (#530, #542): which scopes need the user, and for how long, from the one-pass forecast (the
 # latest Nurture record's standing findings by scope), and one word for the trend over the last TREND_DAYS nights.
 # The minutes are a fixed cost per kind, summed and rounded up to five; never a range.
@@ -7452,7 +7428,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
 
 
     # ---- checks
-    fixes: List[Tuple[str, str]] = []
     if C is None:
         body = '<p class="muted">No <code>System/tools/check.py</code> in this workspace.</p>'
     elif C.get("pending"):
@@ -7461,7 +7436,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         body = '<div class="clean">%sThe check did not run. Run <code>python3 System/tools/check.py</code> to see why.</div>' % ICON["critical"]
     else:
         body = ""
-        fixes = mechanical_fixes(ws, C)
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     listed_kept = ""
     found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
@@ -7490,7 +7464,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         fq = None
     queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
     checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
-                       need_lines(ws, history, said_scope, queues, qdata, failed=queues_failed and queues is not None) + (fq.fix_block(fixes, str(ws)) if fq else "")
+                       need_lines(ws, history, said_scope, queues, qdata, failed=queues_failed and queues is not None)
                        + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
     queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names, now.date().isoformat()) if fq else ""

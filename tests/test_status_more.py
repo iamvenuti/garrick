@@ -218,7 +218,7 @@ class TestJobsMore(StatusCase):
             self.beat(exit=5, **hb)
             html = self.page()
             self.assertNotIn("brief: exit 5", attention(html))
-            self.assertIn("ok, exit 5 is quiet", html)
+            self.assertIn("Exit 5 counts as fine for this job.", html)           # in the tooltip, never beside the pill
         self.beat(exit=5)
         with self.plists(brief={"GARRICK_QUIET_EXITS": "2, 5"}):
             self.assertNotIn("brief: exit 5", attention(self.page()))
@@ -227,7 +227,7 @@ class TestJobsMore(StatusCase):
     def test_a_run_that_called_no_assistant_is_said_not_raised(self):
         self.beat(no_call=True)
         html = self.page()
-        self.assertIn("ok, called no assistant", html)
+        self.assertIn("It called no assistant: there was nothing to do.", html)
         self.assertNotIn("brief", attention(html))
 
     def test_a_quiet_line_in_the_log_is_a_good_day(self):
@@ -307,6 +307,38 @@ class TestSpend(StatusCase):
         with self.plists():
             self.assertIn("A call by brief stopped at its per-call budget", attention(self.page()))
 
+    def test_a_refused_tool_is_one_line_with_its_count_and_no_pill_and_the_columns_are_in_order(self):
+        long = "mcp__plaud__get_transcript"                      # 26 characters
+        self.assertEqual(26, len(long))
+        entries = [{"job": "brief", "cost_usd": 0.1, "denied": [long] if i < 24 else []} for i in range(56)]
+        entries.append({"job": "brief", "refused": True})
+        self.ledger(*entries)
+        with self.plists():
+            html = self.page()
+        table = html[html.index('<table class="calls">'):]
+        table = table[:table.index("</table>")]
+        self.assertNotIn("Look soon", table)
+        self.assertNotIn("Act now", table)
+        self.assertNotIn('class="st ', table)                  # no status pill in the table
+        self.assertIn("plaud get_transcript \u00b7 24 of 56 calls \u00b7 not allowed for this job", table)
+        self.assertIn('title="%s"' % long, table)              # the full name is in the title
+        heads = re.findall(r"<th[^>]*>([^<]*)</th>", table)
+        self.assertEqual(["Job", "Calls", "Cost", "Turns", "Failed", "Capped", "Refused tools"], heads)
+        self.assertLess(heads.index("Failed"), heads.index("Refused tools"))
+        self.assertIn(".calls .rts{white-space:normal", html)  # the cell wraps, so the table fits its card
+
+    def test_only_a_tool_on_the_deny_list_is_red_with_its_line_icon(self):
+        self.ledger(*[{"job": "brief", "cost_usd": 0.1, "denied": ["WebFetch", "Write"]} for _ in range(10)])
+        profile = self.jobs.parent / "headless-settings.json"
+        agent = status.load_agent(self.root)
+        profile.write_text(json.dumps({"permissions": {"deny": list(getattr(agent, "CORE_DENY", ())) + ["WebFetch"]}}))
+        with self.plists(), mock.patch.object(agent, "PROFILE", profile):
+            html = self.page()
+        table = html[html.index('<table class="calls">'):]
+        red = re.search(r'<div class="rt deny" title="WebFetch"><svg.*?</svg><span>WebFetch \u00b7 10 of 10 calls \u00b7 on the deny list</span>', table)
+        self.assertTrue(red)
+        self.assertIn('<div class="rt" title="Write"><span>Write \u00b7 10 of 10 calls \u00b7 not allowed for this job</span>', table)
+
     def test_refused_tools_against_the_deny_list(self):
         self.ledger({"job": "brief", "cost_usd": 0.1, "denied": ["WebFetch", "Write"]},
                     {"job": "digest", "cost_usd": 0.1, "denied": ["mcp__mail__send"]})
@@ -319,7 +351,8 @@ class TestSpend(StatusCase):
         block = attention(html)
         self.assertIn("brief tried a tool the deny list forbids: WebFetch<", block)     # Write was only not allowed
         self.assertIn("digest tried a tool the deny list forbids: mcp__mail__send", block)
-        self.assertIn('title="Not allowed for this job"', self.calls(html))
+        self.assertIn("not allowed for this job", self.calls(html))
+        self.assertIn("on the deny list", self.calls(html))
         if core:                                     # a profile that lost a core entry is no profile
             profile.write_text(json.dumps({"permissions": {"deny": core[1:] + ["WebFetch"]}}))
             with self.plists(), mock.patch.object(agent, "PROFILE", profile):

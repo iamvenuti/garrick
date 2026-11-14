@@ -176,7 +176,7 @@ def folder_for(exchange_id: str) -> Path:
 
 
 def run(ws: Path, channel: str, text: str, zone: str, exchange: Optional[dict] = None, runner: Optional[Callable] = None,
-        cap: Optional[dict] = None, fresh: bool = False) -> dict:
+        cap: Optional[dict] = None, fresh: bool = False, context: str = "") -> dict:
     """One request in one zone. `exchange` is the caller's record: {"id", "session"}; the reply says the session to
     keep. Returns {"ok", "say", "held": [entries queued this turn], "session", "tier", "effort", "autonomy", "set",
     "limited", "deep", "usage", "cost"}. Never raises for the assistant's failure: `ok` is False with a sentence."""
@@ -191,8 +191,9 @@ def run(ws: Path, channel: str, text: str, zone: str, exchange: Optional[dict] =
     if not planned["text"]:
         return {"ok": False, "say": "There was nothing in the request.", "held": [], "session": exchange.get("session")}
     level = now["autonomy"]
-    prompt = "<channel>%s</channel>\n<zone>%s</zone>\n<autonomy>%s</autonomy>\n<request>\n%s\n</request>" % (
-        channel, zone, level, planned["text"][:MOST_REQUEST])
+    saved = "<saved-state>\n%s\n</saved-state>\n" % context[:4000].replace("</saved-state>", "") if context else ""
+    prompt = "<channel>%s</channel>\n<zone>%s</zone>\n<autonomy>%s</autonomy>\n%s<request>\n%s\n</request>" % (
+        channel, zone, level, saved, planned["text"][:MOST_REQUEST])
     planned["prompt"] = prompt
     if channels.assistant() != "claude":
         return {"ok": False, "say": "This channel runs on Claude for now; the assistant chosen cannot be used for it.", "held": [],

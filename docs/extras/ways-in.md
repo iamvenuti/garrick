@@ -26,6 +26,8 @@ A thought about a piece of work comes up away from the desk. It is not a convers
 
 **From the Ask box.** Type "note for Acme pricing: Dana hinted the floor could move to 450". The note is filed at once as `Threads/Pricing/Notes/YYMMDD - <title>.md` under the thread (`<Project>/Notes/` for a project that is one thread), the box says *Noted in Acme, Pricing.*, and the zone's repository gets one commit. A line in it that reads as something you owe ("call Dana Friday", or one opening `todo:` or `remind me to`) also goes on that zone's `Todo.md`, with the note as its source. Nothing else is taken out of it. When the place does not settle to one thread, the box asks which, and never guesses.
 
+**From a Telegram chat.** [Garrick's Telegram receiver](telegram.md) is one such fetcher: a message that starts with `note` is saved in this form, with the chat's fixed id as its owner check, and never reaches the assistant.
+
 **From any fetcher.** A chat bot, a mail rule or a shortcut on a phone that has checked the item came from you writes it into the workspace's `Inbox/` as a Markdown file with this frontmatter:
 
 ```yaml

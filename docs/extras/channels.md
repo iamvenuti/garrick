@@ -1,6 +1,6 @@
 # Channels: how far a request may go
 
-The Ask box and the Telegram channel answer you, and can do work for you. Both run through one engine, and each channel has three settings, in Settings under *Channels* (kept in `System/garrick-settings.json` as `channels.ask` and `channels.telegram`):
+The Ask box and the [Telegram channel](telegram.md) answer you, and can do work for you. Both run through one engine, and each channel has three settings, in Settings under *Channels* (kept in `System/garrick-settings.json` as `channels.ask` and `channels.telegram`):
 
 | Setting | Values | Default, both channels |
 |---|---|---|
@@ -18,7 +18,7 @@ They follow the *Autonomy* section of `System/rules.md`.
 - **Act.** It does what git can undo without asking: it edits notes, files the inbox, ticks and adds Todo lines, makes and moves threads, and commits. Before anything that leaves the machine or cannot be undone (sending, sharing, deleting, writing to a synced shared folder, rewriting history) it asks you first.
 - **Full.** Act, and it also sends without asking. Offered for Ask only. Telegram never offers Full: nobody is at the desk to stop a wrong send, and an unlocked phone should not be enough to send mail in your name. Settings refuses it for Telegram, and a file edited by hand to say so is read as Read.
 
-An updated workspace gets the defaults: Ask at Act. Telegram stays off until you set it up.
+An updated workspace gets the defaults: Ask at Act. Telegram stays off until you [set it up](telegram.md).
 
 The walls hold at every level, as in any session: a write goes only in the zone the exchange is bound to, a wiki or the workspace's `Inbox/` (the engine's guard refuses the rest), the zone's commit check runs on every commit, and when material is held back the wall sentence says so.
 

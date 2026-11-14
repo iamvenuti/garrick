@@ -1330,8 +1330,13 @@ class GarrickPrefixTest(FakeAssistants):
     def test_every_shipped_job_runs_under_its_label_and_the_prefix(self):
         plists = sorted((JOBS / "launchd").glob("*.plist"))
         self.assertEqual(["garrick.gr-backup.plist", "garrick.gr-nightly.plist", "garrick.gr-notes.plist",
-                          "garrick.gr-reading-sweep.plist", "garrick.gr-todo-sweep.plist", "garrick.gr-whats-open.plist"], [p.name for p in plists])
-        for path in plists:
+                          "garrick.gr-reading-sweep.plist", "garrick.gr-telegram.plist", "garrick.gr-todo-sweep.plist",
+                          "garrick.gr-whats-open.plist"], [p.name for p in plists])
+        # The Telegram receiver is a service, not a timed job (#570): it keeps itself alive and is not run through job.py.
+        service = plistlib.loads((JOBS / "launchd" / "garrick.gr-telegram.plist").read_bytes())
+        self.assertEqual((True, "garrick.gr-telegram"), (service["KeepAlive"], service["Label"]))
+        self.assertNotIn("/Users/<you>/Garrick/System/jobs/job.py", service["ProgramArguments"])
+        for path in [p for p in plists if p.name != "garrick.gr-telegram.plist"]:
             with self.subTest(path.name):
                 plist = plistlib.loads(path.read_bytes())
                 args = plist["ProgramArguments"]

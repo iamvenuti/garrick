@@ -2473,7 +2473,7 @@ class TestJobs(StatusCase):
 
     def test_every_shipped_plist_says_what_its_job_does(self):
         shipped = sorted(REPO.joinpath("extras").rglob("*.plist"))
-        self.assertEqual(5, len(shipped))                       # the evening status build is the nightly's last step (#276)
+        self.assertEqual(6, len(shipped))                       # the evening status build is the nightly's last step (#276)
         for plist in shipped:
             with self.subTest(plist.name):
                 p = plistlib.loads(plist.read_bytes())

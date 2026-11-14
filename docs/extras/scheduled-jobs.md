@@ -52,6 +52,7 @@ Another session may have work not yet committed in the same repository, so the j
 | `launchd/garrick.gr-whats-open.plist` | The example job on a schedule, every morning at 06:30 |
 | `todo_sweep.py`, `launchd/garrick.gr-todo-sweep.plist` | The `todo` skill's sweep each night, one assistant call per zone: actions from the zone's calls and threads into `Todo.md`, then expired, archived, tidied and committed; with `--digest`, a morning summary per zone through the notifier, which runs in the zone's folder with `GARRICK_ZONE` set |
 | `reading_sweep.py`, `launchd/garrick.gr-reading-sweep.plist` | What reached an address kept for reading (the [mail fetcher](ways-in.md)'s `"reading": true`), filed into Knowledge or skipped as too thin, one assistant call per zone; mail from a party's domain waits for you |
+| `notes_job.py`, `launchd/garrick.gr-notes.plist` | Notes to yourself, hourly: each note a fetcher saved into an inbox is filed under its thread, and a clear decision updates that thread's state. Code finds the notes and makes every write; the assistant is called, with no tools, only when a note needs reading, once per zone. See [notes processed hourly](#notes-processed-hourly) |
 | `backup.py`, `launchd/garrick.gr-backup.plist` | The backup: every repository committed and pushed twice a day, holding back what the walls refuse. No assistant |
 | `nightly.py`, `nurture_sweep.py`, `launchd/garrick.gr-nightly.plist`, `work_in.py` | The nightly job: the wall check where a repository lacks it, Context Nurture's mechanical fixes, committed by name, one commit per repository, the answers still waiting worked in (the one step that calls an assistant, under the jobs' caps), then the effort record, your `nightly.local` checks and the page |
 
@@ -165,12 +166,30 @@ Every job Garrick ships runs under a name that starts with `gr-`, and its plist'
 | `gr-nightly` | `garrick.gr-nightly` | every night at 05:15 | no |
 | `gr-todo-sweep` | `garrick.gr-todo-sweep` | every night at 05:45 | yes |
 | `gr-reading-sweep` | `garrick.gr-reading-sweep` | every morning at 06:00 | yes |
+| `gr-notes` | `garrick.gr-notes` | every hour, at ten past | yes, only when a note needs work |
 | `gr-whats-open` | `garrick.gr-whats-open` | every morning at 06:30 | yes |
 | `gr-backup` | `garrick.gr-backup` | 12:30 and 23:30 | no |
 
 `gr-` is reserved for these. Name a job of yours without it, and give its plist a label of your own, such as `com.acme.digest`; the Garrick App then lists it under *Yours*.
 
 **Coming from a Garrick before 0.49.0.** The jobs ran as `nurture`, `todo-sweep`, `reading-sweep`, `whats-open` and `backup`, and the status page extra shipped a 23:30 rebuild, `status`. `nurture` is now `gr-nightly`, which also records effort and rebuilds the page, so the evening rebuild is no longer shipped. Your copies in `~/Library/LaunchAgents` keep working under the old names until you rename them; the update never changes that folder. When it finds one, [the update](../updating.md#extras) names the plist and prints the commands for it: `launchctl bootout` for its label, `mv -n` to the new file name, then `plutil` on the moved file to set the new label, the whole `ProgramArguments` with the job's new name (for the nightly job, its script and `--timeout 3600` too, in place of any time limit it had), its log paths and its environment, with its line of description, and `launchctl bootstrap` for the new file. Each line sets a whole value, so a block run twice, or stopped half way and run again, ends where a block run once does; a plist left part way through is reported again, with what is still to do. Your other edits to the plist stay; `plutil` drops the XML comment at its top, which the copy in `System/jobs/launchd/` still has. For `garrick.status` it prints only the lines that unload it and set it aside as `garrick.status.plist.retired`, which launchd does not load, to run once `gr-nightly` is loaded; you may delete that file afterwards. Nothing in the jobs folder is moved. Only what was Garrick's moves to the new name: the commands set `GARRICK_RENAMED_FROM` to the old name in the renamed plist, and only then do `job.py status` and the Garrick App read the old name's heartbeat, logs and assistant calls from before the rename (the first run under the new name, or before it the renamed plist's last change) under the new name, so its run strip keeps its two weeks and the old name gets no row of its own. A run under the old name after that, such as a job of yours called `backup` run by cron or a hook, is not Garrick's: it keeps its own row, red when it fails. The evening rebuild's row goes once `gr-nightly` is there, as a plist or a heartbeat, no plist runs `status`, and no `status` run has finished since the nightly's first run; deleting the `.retired` file changes nothing, and its runs are never the nightly's.
+
+### Notes processed hourly
+
+`gr-notes` is opt-in, like the other jobs: copy its plist to `~/Library/LaunchAgents/` and load it. Each hour it runs the optional fetch commands you give it (`--fetch "<command>"`, repeated; one that fails is reported and the others still run), then files the [notes to yourself](ways-in.md#notes-to-yourself) waiting in the inboxes. A workspace with its own scheduler runs `python3 System/skills/intake/intake.py process-notes`, the same step.
+
+What each note warrants is decided by its meaning, never by its formatting:
+
+| The note | What happens |
+|---|---|
+| An explicit decision, correction, completed action or status update, with a clear destination | It is filed in the thread's `Notes/`, one supported change goes into the thread's own note (a row of *Resume here*, or a dated entry), each with a link to the note as its source, and the Todo lines it settles are ticked or added |
+| A tentative idea, or an unclear statement | It is filed with `review: pending`; the thread's state is left as it is. Opening the thread names it |
+| A missing or ambiguous destination | It stays in the inbox with one question, asked once and not again until the note changes |
+| A change newer work contradicts, or one that cannot be applied without guessing | It is filed for review and the disputed state is left as it is |
+
+The step runs at the *Act* level and never higher. Code decides which notes are waiting, where each goes and every write; the assistant has no tools, is sent one zone's notes with that thread's *Resume here* block, and answers a list of judgments that code checks against a fixed list of changes before it applies anything. A note's text cannot raise a level, add a tool, run a command or send anything. An empty queue, or notes already asked about whose question has not changed, makes no assistant call. Calls go through `agent.py` under the jobs' caps and into the ledger. Each zone is processed on its own and committed in its own repository, only the files the step wrote, through the wall check.
+
+A durable record, `notes-state.json` in the jobs folder, keeps one entry per note: what was written, what was applied, what was asked and whether the commit happened. A retry after a stop commits what was written and applies nothing twice. A thread whose wrap is running, or a file another session changed and has not committed, is never edited: the note waits an hour, and after two tries is filed for review with the state left alone. Notes already saved stay eligible when a fetcher fails.
 
 ### Exit codes
 

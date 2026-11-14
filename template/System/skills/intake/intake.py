@@ -18,6 +18,7 @@ wall is the zone's.
     python3 intake.py file-to-project --file FILE --project PATH [--parties a,b] [--name NAME] [--as-material]
     python3 intake.py extract-attachment --mail RAW --project PATH (--name NAME | --index N) [--save-as NAME]
     python3 intake.py file-note --file FILE [--destination "Acme, pricing"] [--title "..."]
+    python3 intake.py process-notes [--tier sonnet] [--dry-run]     file the notes waiting, and update a thread when one warrants it (#572)
     python3 intake.py notes --project PATH [--thread NAME]  the notes since the thread's last wrap, and those awaiting review
     python3 intake.py learn --domain DOMAIN --party TAG     mail from DOMAIN suggests TAG from now on
 
@@ -1104,8 +1105,10 @@ def add_todo(zone: Path, label: str, text: str, source: Tuple[str, str]) -> bool
     return True
 
 
-def note_text(text: str, via: str, created: str) -> str:
+def note_text(text: str, via: str, created: str, review: bool = False) -> str:
     head = ["---", "kind: note"]
+    if review:
+        head.append("review: pending")        # the processor could not take it for a decision (#572): the owner decides
     if via:
         head.append("via: %s" % _yaml(via))
     head += ["created: %s" % _yaml(created), "---", ""]
@@ -1119,7 +1122,7 @@ def note_date(value: str, today: str) -> str:
 
 
 def add_note(root: Path, place: dict, text: str, title: str = "", via: str = "", date: str = "",
-             today: Optional[str] = None) -> dict:
+             today: Optional[str] = None, review: bool = False) -> dict:
     """Write one note into the place `resolve_destination` settled, and the actions it holds into that zone's
     Todo.md. Returns {"note": Path, "todo": [lines added], "todo_file": Path or None, "before": the Todo.md's
     bytes before}. It writes nothing else: the thread's note, its Resume here block and every rule stay as they
@@ -1148,7 +1151,7 @@ def add_note(root: Path, place: dict, text: str, title: str = "", via: str = "",
         raise Refusal("%s has no Todo.md, so its actions cannot be listed." % place["zone"])
     landing(root, place["folder"], target)
     folder.mkdir(exist_ok=True)
-    write_new(root, place["folder"], target, note_text(text, via, created).encode("utf-8"))
+    write_new(root, place["folder"], target, note_text(text, via, created, review).encode("utf-8"))
     added: List[str] = []
     label = _label_for(zone, place["project"], place["thread"]) if lines else ""
     for line in lines:
@@ -1334,6 +1337,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     n.add_argument("--file", required=True)
     n.add_argument("--destination", default="", help="where it goes, as you would say it: \"Acme, pricing\" (default: the note's own)")
     n.add_argument("--title", default="", help="the note's title (default: its first words)")
+    q = sub.add_parser("process-notes", help="file the notes waiting in the inboxes and update a thread when one warrants it")
+    q.add_argument("--tier", default="sonnet", choices=("haiku", "sonnet", "opus"))
+    q.add_argument("--state", default="", help="the durable record (default: notes-state.json in the jobs folder)")
+    q.add_argument("--dry-run", action="store_true", help="count what is waiting; write and call nothing")
+    q.add_argument("--no-assistant", action="store_true", help="file every resolved note for review, with no assistant")
     w = sub.add_parser("notes", help="the notes since a thread's last wrap, and those waiting for review")
     w.add_argument("--project", required=True, help="Zones/<Zone>/<Project>")
     w.add_argument("--thread", default="", help="a thread of it; leave out for a one-thread project")
@@ -1376,6 +1384,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         elif args.command == "file-note":
             done, place = file_note(root, Path(args.file), args.destination, args.title, args.today)
             print("%s\t%s\t%d" % (rel(done["note"]), place["said"], len(done["todo"])))
+        elif args.command == "process-notes":
+            import process_notes
+            res = process_notes.run(root, None if (args.dry_run or args.no_assistant) else process_notes.agent_assessor(root, args.tier),
+                                    args.state or None, args.today, args.dry_run)
+            print(json.dumps(res, sort_keys=True))
+            return 1 if res["failed"] else 0
         elif args.command == "notes":
             print(json.dumps(notes_since(root, args.project, args.thread or None), indent=2))
         elif args.command == "learn":

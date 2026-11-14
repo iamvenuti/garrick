@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The notes job, every hour at ten past: the notes you sent yourself and a
+  fetcher saved into an inbox are filed under their threads, and a clear
+  decision updates the thread's state. It calls the assistant only when a note
+  needs work, and commits in the zone each note belongs to. Copy it to
+  ~/Library/LaunchAgents/ and edit the copy.
+  If your workspace is not ~/Garrick, replace each /Users/&lt;you&gt;/Garrick
+  with its full path. Then replace every other &lt;you&gt; (written that way
+  because this is XML) with your macOS user name; launchd does not expand ~.
+  Load it:
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.gr-notes.plist
+
+  Unload with `launchctl bootout gui/$(id -u)/garrick.gr-notes`.
+  PATH must include the folder your assistant's command is installed in.
+  To fetch before it files, add the fetch option, with a command, for each fetcher after
+  the workspace argument; a fetcher that fails does not stop the others. See
+  docs/extras/scheduled-jobs.md for the other variables.
+  Whatever job.py cannot write to its own log goes to gr-notes.launchd.log in
+  the jobs' log folder. launchd does not create that folder: run the job once
+  by hand first.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>garrick.gr-notes</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/job.py</string>
+    <string>gr-notes</string>
+    <string>--agent</string>
+    <string>--cwd</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+    <string>--</string>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/Garrick/System/jobs/notes_job.py</string>
+    <string>--workspace</string>
+    <string>/Users/&lt;you&gt;/Garrick</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>GARRICK_ABOUT</key>
+    <string>Files the notes you sent yourself under their threads, and updates a thread when a note is a clear decision.</string>
+    <key>PATH</key>
+    <string>/Users/&lt;you&gt;/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>GARRICK_HARNESS</key>
+    <string>claude</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-notes.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-notes.launchd.log</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Minute</key>
+    <integer>10</integer>
+  </dict>
+</dict>
+</plist>

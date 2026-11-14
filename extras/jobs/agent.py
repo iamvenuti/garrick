@@ -149,7 +149,9 @@ GARRICK_PREFIX = "gr-"
 RENAMED = {"backup": "gr-backup", "nurture": "gr-nightly", "reading-sweep": "gr-reading-sweep",
            "todo-sweep": "gr-todo-sweep", "whats-open": "gr-whats-open"}
 RETIRED = {"status": "gr-nightly"}
-GARRICK_JOBS = tuple(sorted(set(RENAMED.values())))
+# Jobs Garrick ships that never ran under another name: the notes job (#572).
+NEW_JOBS = ("gr-notes",)
+GARRICK_JOBS = tuple(sorted(set(RENAMED.values()) | set(NEW_JOBS)))
 ITEMS_LINE = re.compile(r"^ITEMS (\d+)\s*$", re.M)
 MAX_LOG_BYTES = 1024 * 1024
 LEDGER_DAYS = 60  # longer than every cap, a day at most, and the status page's fourteen days

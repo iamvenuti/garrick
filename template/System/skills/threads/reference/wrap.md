@@ -202,7 +202,8 @@ focus, as under *No name given*). Then:
    --thread <Thread>` lists them (a note to yourself, in the thread's
    `Notes/`). Read each, and offer to fold in whatever it settles, in one
    line each; a note stays as it is, and only the user's yes changes the
-   Resume here block.
+   Resume here block. When the user settles a note marked `review: pending`,
+   delete that line from the note.
 6. **Rewrite the Resume here block** so it describes now. Replace it; do not
    append to it.
    ```markdown

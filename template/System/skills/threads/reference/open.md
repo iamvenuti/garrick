@@ -36,7 +36,9 @@ These are the rules in `System/rules.md` that this request carries out, word for
    yourself): run `python3 System/skills/intake/intake.py notes --project
    Zones/<Zone>/<Project> --thread <Thread>` (leave `--thread` out for a
    one-thread project). When it lists any, add one line: "Two notes since your
-   last wrap." Name those awaiting review. Do not read them aloud.
+   last wrap." Name those awaiting review (`review: pending`), and the changes the hourly
+   notes step made since the last session: the dated entries that open "From a
+   note". Do not read the notes aloud.
 5. That thread is now the one in focus for this session: a later "wrap" with no
    name means it.
 

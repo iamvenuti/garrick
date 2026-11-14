@@ -2239,6 +2239,8 @@ class TestJobsRenamed(ExtrasCase):
         for path in sorted((REPO / "extras" / "jobs" / "launchd").glob("*.plist")):
             data = self.filled(plistlib.loads(path.read_bytes()))
             new = data["Label"][len("garrick."):]
+            if new not in back:                      # a job that never ran under another name, the notes job (#572)
+                continue
             old = back[new]
             args = data["ProgramArguments"]
             args[args.index(new)] = old

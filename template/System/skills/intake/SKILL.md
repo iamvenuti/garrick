@@ -251,6 +251,7 @@ date: 2026-11-14T08:12:00+01:00
 - **No destination, or one that does not settle:** it stops with the one question to ask, and the note stays in the inbox. Ask it, in one line, naming both candidates when a name is close to two ("Where does the note about the pallet forecast go?"). Never guess. The answer goes back as `--destination`.
 - **A destination in two zones** is refused: a note is about one place.
 - **A note waiting in a zone's inbox** is filed only in that zone.
+- **Hourly.** The `gr-notes` job (jobs extra), or `python3 System/skills/intake/intake.py process-notes` from your own scheduler, files the notes that wait and updates a thread's state when a note is a clear decision; a tentative note is filed with `review: pending`. Code does the filing and every write; see the scheduled jobs page of Garrick's docs.
 - From the Ask box, "note for Acme pricing: Dana hinted the floor could move to 450" files at once and says *Noted in Acme, Pricing.* (the `note-add` action; it commits in the zone).
 
 ## A mixed conversation

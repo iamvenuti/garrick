@@ -208,8 +208,16 @@ if(steps==='reload'||steps==='reload-twice'){acted('question-answer','Meetings',
  scopes=[other];handlers.close=[];handlers.docclick=[];dlg.open=false;new Function(js)();      // the page reloads: Work has no section any more
  dlg.open=true;dlg.close();if(steps==='reload-twice'){dlg.open=true;dlg.close()}}
 if(steps==='failed'){acted('question-answer','Meetings','questions/a.md',false);dlg.close()}
+// a reload that leaves no section for the place (or, for load-open, leaves it), with the dialog never reopened by hand
+let atLoad=null;
+if(steps.startsWith('load-')){acted('question-answer','Meetings','questions/a.md',true);
+ if(steps==='load-stale'){const k=JSON.parse(store['garrick-queue']);k.t=Date.now()-16*60*1000;store['garrick-queue']=JSON.stringify(k)}
+ scopes=steps==='load-open'?[work,other]:[other];handlers.close=[];handlers.docclick=[];dlg.open=false;new Function(js)();
+ if(steps==='load-twice'){handlers.close=[];handlers.docclick=[];dlg.open=false;new Function(js)()}
+ atLoad=clicked.length}
 if(steps==='later'){acted('question-later','Meetings','questions/a.md',true);dlg.close()}
-console.log(JSON.stringify(clicked));
+setTimeout(()=>{const loaded=clicked.slice();if(dlg.open)dlg.close();
+ console.log(JSON.stringify(atLoad===null?clicked:{atLoad,loaded,final:clicked.slice()}))},20);
 """
 
 
@@ -236,8 +244,9 @@ class TestAnswersAreWorkedInWithoutAButton(CardCase):
         js = fq.QUEUE_JS
         # a successful answer counts for its own place, a failed one and a close or a later do not
         self.assertIn("if(q.verb==='question-answer'||q.verb==='question-decide')(taken[cur.dataset.scope]=taken[cur.dataset.scope]||{n:0,work:cur.dataset.work||''}).n++", js)
-        close = js[js.index("dlg.addEventListener('close',function(){var sent=taken;taken={};"):]
-        close = close[:close.index("});\n", 10)]
+        self.assertIn("dlg.addEventListener('close',function(){workIn(false)});", js)      # a close sends the request, through the one function
+        close = js[js.index("function workIn(later){"):]
+        close = close[:close.index("\ndlg.addEventListener")]
         self.assertIn("handoff(t.work)", close)                                # the request that was the button's, kept with the count
         self.assertIn("taken={}", close)                                       # cleared as it goes: a second close has nothing to send
         self.assertIn("if(!t||!t.n||!t.work)return", close)                            # a place that took none sends none
@@ -271,7 +280,28 @@ class TestAnswersAreWorkedInWithoutAButton(CardCase):
                 self.assertEqual(0, out.returncode, out.stderr)
                 sent[steps] = json.loads(out.stdout.strip().splitlines()[-1])
         self.assertEqual({"none": [], "one": ["work in the answers in Work"], "failed": [], "later": [],
-                          "reload": ["work in the answers in Work"], "reload-twice": ["work in the answers in Work"]}, sent)   # a reload that removes the section loses nothing
+                          "reload": ["work in the answers in Work"], "reload-twice": ["work in the answers in Work"]}, sent)   # a reload that removes the section loses nothing, and sends once
+
+    def test_a_reload_that_removes_the_section_sends_the_kept_request_at_once_and_only_once(self):
+        """D: the kept "work in the answers" request goes when the page loads with it and no open queue, not at the next close of one;
+        it is marked sent as a close marks it; a section that is still there keeps it for its close; after 15 minutes it is dropped."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node")
+        with tempfile.TemporaryDirectory() as tmp:
+            script, queue = Path(tmp) / "h.js", Path(tmp) / "q.js"
+            script.write_text(QUEUE_HARNESS, encoding="utf-8")
+            queue.write_text(fq.QUEUE_JS, encoding="utf-8")
+            got = {}
+            for steps in ("load-gone", "load-twice", "load-open", "load-stale"):
+                out = subprocess.run([node, str(script), str(queue), steps], capture_output=True, text=True, timeout=60)
+                self.assertEqual(0, out.returncode, out.stderr)
+                got[steps] = json.loads(out.stdout.strip().splitlines()[-1])
+        sent = ["work in the answers in Work"]
+        self.assertEqual({"atLoad": 0, "loaded": sent, "final": sent}, got["load-gone"])        # sent after the load, before any close, once
+        self.assertEqual({"atLoad": 0, "loaded": sent, "final": sent}, got["load-twice"])  # a second load finds nothing kept
+        self.assertEqual({"atLoad": 0, "loaded": [], "final": sent}, got["load-open"])          # the queue is open again: its close sends
+        self.assertEqual({"atLoad": 0, "loaded": [], "final": []}, got["load-stale"])           # dropped after 15 minutes
 
 
 class TestLater(CardCase):

@@ -310,15 +310,61 @@ class OtherFileNameTest(unittest.TestCase):
         self.assertEqual(self.name("repeats wording from person page Jo Cedar, a person page that names no zone, so nothing says"),
                          "Jo Cedar")
 
+    def check_tool(self):
+        sys.path.insert(0, str(REPO / "template" / "System" / "tools"))
+        try:
+            import check
+        finally:
+            sys.path.pop(0)
+        return check
+
     def test_the_files_are_found(self):
         with tempfile.TemporaryDirectory() as tmp:
-            ws = Path(tmp)
+            ws = Path(tmp).resolve()
             write(ws / "Zones/Personal/Garden Club/Notes one.md", "x")
-            write(ws / "Wikis/Meetings/wiki/meetings/261101 - Seed swap review.md", "x")
+            write(ws / "Wikis/Meetings/wiki/sources/261101 - Seed swap review.md", "---\nzone: Personal\n---\nx")
             got = pa.walls_other_files(ws, "repeats wording from Zones/Personal/Garden Club/Notes one.md, in project Garden Club of Personal; x")
             self.assertEqual([p.name for p in got], ["Notes one.md"])
-            got = pa.walls_other_files(ws, "repeats wording from meeting 261101 - Seed swap review, a meeting of Personal; x")
+            got = pa.walls_other_files(ws, "repeats wording from meeting 261101 - Seed swap review, a meeting of Personal; x", self.check_tool())
             self.assertEqual([p.name for p in got], ["261101 - Seed swap review.md"])
+
+    def test_a_meeting_is_its_page_and_its_raw_record_and_no_other_file_of_the_name(self):
+        message = "repeats wording from meeting 261101 - Seed swap review, a meeting of Personal; x"
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            write(ws / "Wikis/Meetings/wiki/sources/261101 - Seed swap review.md", "---\nzone: Personal\nraw: 261101 - Seed swap review\n---\nx")
+            write(ws / "Wikis/Meetings/raw/261101 - Seed swap review.md", "the call")
+            write(ws / "Wikis/Meetings/raw/inbox/261101 - Seed swap review.md", "an unfiled copy")      # a name the page does not claim
+            got = pa.walls_other_files(ws, message, self.check_tool())
+            self.assertEqual(["wiki/sources/261101 - Seed swap review.md", "raw/261101 - Seed swap review.md"],
+                             [str(p.relative_to(ws / "Wikis" / "Meetings")) for p in got])
+
+    def test_a_name_used_twice_shows_nothing(self):
+        message = "repeats wording from meeting 261101 - Seed swap review, a meeting of Personal; x"
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            write(ws / "Wikis/Meetings/wiki/sources/261101 - Seed swap review.md", "---\nzone: Personal\n---\nx")
+            write(ws / "Wikis/Meetings/wiki/sources/more/261101 - Seed swap review.md", "---\nzone: Work\n---\ny")
+            self.assertEqual([], pa.walls_other_files(ws, message, self.check_tool()))
+
+    def test_a_name_that_is_no_page_of_the_check_shows_nothing(self):
+        message = "repeats wording from meeting 261101 - Seed swap review, a meeting of Personal; x"
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            write(ws / "Wikis/Meetings/wiki/meetings/261101 - Seed swap review.md", "---\nzone: Personal\n---\nx")     # not where the check reads pages
+            write(ws / "Wikis/Knowledge/261101 - Seed swap review.md", "x")
+            self.assertEqual([], pa.walls_other_files(ws, message, self.check_tool()))
+            self.assertEqual([], pa.walls_other_files(ws, message, None))                       # no check.py in this workspace: nothing
+
+    def test_more_than_one_raw_record_shows_nothing(self):
+        message = "repeats wording from meeting 261101 - Seed swap review, a meeting of Personal; x"
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            write(ws / "Wikis/Meetings/wiki/sources/261101 - Seed swap review.md",
+                  "---\nzone: Personal\nraw: [raw/one.md, raw/two.md]\n---\nx")
+            write(ws / "Wikis/Meetings/raw/one.md", "a")
+            write(ws / "Wikis/Meetings/raw/two.md", "b")
+            self.assertEqual([], pa.walls_other_files(ws, message, self.check_tool()))
 
 
 if __name__ == "__main__":

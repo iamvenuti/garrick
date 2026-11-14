@@ -8,6 +8,7 @@ what they were asked and answer like the real ones. Invented names only.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -1324,6 +1325,52 @@ class GarrickPrefixTest(FakeAssistants):
         self.assertEqual((1, "gr-backup"), (jobs["backup"]["heartbeat"]["exit"], jobs["gr-backup"]["heartbeat"]["job"]))
 
 
+class NightlyRecallStep(unittest.TestCase):
+    """#558: the recall step gives its extract a time budget shorter than the step's limit, and a partial run is not a failure."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.ws = build_workspace(self.tmp / "ws")
+        (self.ws / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        (self.ws / "System" / "tools" / "recall.py").write_text("")
+        self.args = nightly.argparse.Namespace(scope=[], digest=False, also=[], moved=[])
+
+    def test_the_extract_stops_before_the_step_does(self):
+        cmd = next(c for step, c, why in nightly.steps(self.ws, self.args) if step == "recall")
+        self.assertEqual(["nightly", "--limit", str(nightly.LIMITS["recall"] - nightly.RECALL_BUILD)], cmd[-3:])
+        self.assertGreater(nightly.LIMITS["recall"], nightly.RECALL_BUILD)
+
+    def run_with(self, code, tail):
+        reports = []
+        only = [("recall", ["x"], "")]
+        out = io.StringIO()
+        with mock.patch.object(nightly, "steps", return_value=only), mock.patch.object(nightly, "release_check"), \
+                mock.patch.object(nightly, "run_step", return_value=(code, tail, 5.0)), \
+                mock.patch.object(nightly.agent, "report_steps", side_effect=lambda d: reports.append(json.loads(json.dumps(d)))), \
+                contextlib.redirect_stdout(out):
+            result = nightly.run_steps(self.ws, self.args)
+        return result, out.getvalue(), reports[-1]
+
+    def test_a_partial_run_is_not_a_failure_and_the_log_says_partial(self):
+        result, log, steps = self.run_with(0, ["sessions written: 40; placed nowhere: 2; partial, 40 written, the rest next night", "built: Work"])
+        self.assertEqual(0, result)
+        self.assertIn("nightly: recall exit 0 (5s), partial, 40 written, the rest next night", log)
+        self.assertIn("nightly: recall partial", log)
+        self.assertEqual("partial, 40 written", steps[0]["partial"])
+
+    def test_a_run_that_wrote_nothing_at_its_limit_still_fails(self):
+        result, log, steps = self.run_with(124, ["sessions written: 0; placed nowhere: 0; stopped at its limit with nothing written"])
+        self.assertEqual(1, result)
+        self.assertIn("nightly: recall exit 124", log)
+        self.assertNotIn("partial", log)
+
+    def test_an_ordinary_run_says_nothing_of_partial(self):
+        result, log, steps = self.run_with(0, ["sessions written: 3; placed nowhere: 0"])
+        self.assertEqual((0, "nightly: recall exit 0 (5s)"), (result, [l for l in log.splitlines() if "exit 0" in l][0]))
+        self.assertNotIn("partial", steps[0])
+
+
 class NightlyHooksStep(unittest.TestCase):
     """#550: the nightly run installs a wall check a repository lacks, and a hook of the user's own is left alone."""
 
@@ -1684,7 +1731,9 @@ class NightlyTest(FakeAssistants):
         self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "gr-nightly"], args[:3])
         self.assertNotIn("--agent", args)
         self.assertEqual("3600", args[args.index("--timeout") + 1])
-        self.assertGreaterEqual(3600, sum(nightly.LIMITS.values()))
+        timeout = int(args[args.index("--timeout") + 1])
+        self.assertGreaterEqual(timeout - nightly.MARGIN, sum(nightly.LIMITS.values()))       # a margin, so a step's limit ends a slow night
+        self.assertGreaterEqual(nightly.MARGIN, 120)
         self.assertEqual("/Users/<you>/Garrick/System/jobs/nightly.py", args[args.index("--") + 2])
         self.assertIn("--digest", args)
         self.assertEqual({"Hour": 5, "Minute": 15}, plist["StartCalendarInterval"])

@@ -562,6 +562,122 @@ class SessionTest(Base):
         self.assertIn("written: 1", self.extract())
         self.assertEqual(1, len(list((self.root / "Zones" / "Work" / ".sessions").glob("*.md"))))
 
+    # -- the extract skips what is written before it parses (#558) ------------------------------------------------
+
+    def parses(self):
+        """A context manager counting the transcripts parse_claude is asked to read."""
+        real = recall_sessions.parse_claude
+        calls = []
+
+        def counting(path):
+            calls.append(path.name)
+            return real(path)
+        self.calls = calls
+        return mock.patch.object(recall_sessions, "parse_claude", counting)
+
+    def many(self, n):
+        for i in range(n):
+            self.session(self.work, "why did the invoicexport fail %d" % i, "m%d" % i)
+
+    def sessions_dir(self):
+        return self.root / "Zones" / "Work" / ".sessions"
+
+    def test_many_unchanged_transcripts_and_one_new_one_parse_once(self):
+        self.many(12)
+        self.assertIn("written: 12", self.extract())
+        self.session(self.work, "a new thing to ask", "fresh")
+        with self.parses():
+            self.assertIn("written: 1", self.extract())
+        self.assertEqual(["fresh.jsonl"], self.calls)
+        with self.parses():
+            self.assertIn("written: 0", self.extract())
+        self.assertEqual([], self.calls)                                   # nothing changed: nothing parsed
+
+    def test_the_index_holds_sizes_and_names_and_no_text(self):
+        src = self.session(self.work)
+        self.extract()
+        data = json.loads((self.sessions_dir() / "index.json").read_text())
+        self.assertEqual({str(src.absolute())}, set(data["sources"]))
+        entry = data["sources"][str(src.absolute())]
+        self.assertEqual({"file", "source_mtime", "source_size"}, set(entry))
+        self.assertEqual(src.stat().st_size, entry["source_size"])
+        self.assertEqual("260901 - s1.md", entry["file"])
+        self.assertNotIn("invoicexport", (self.sessions_dir() / "index.json").read_text())
+        self.assertEqual(["260901 - s1.md"], [f.name for f in self.sessions_dir().glob("*.md")])       # the index is no session
+
+    def test_a_missing_or_unreadable_index_parses_everything(self):
+        self.many(4)
+        self.extract()
+        for damage in (lambda p: p.unlink(), lambda p: p.write_text("not json"), lambda p: p.write_text('{"version": 2, "sources": {}}'),
+                       lambda p: p.write_text('{"version": 1, "sources": []}')):
+            damage(self.sessions_dir() / "index.json")
+            with self.parses():
+                self.assertIn("written: 0", self.extract())                 # the copies are current: nothing is written
+            self.assertEqual(4, len(self.calls))
+            self.assertEqual(4, len(json.loads((self.sessions_dir() / "index.json").read_text())["sources"]))   # and the index is back
+
+    def test_an_entry_whose_copy_is_gone_counts_as_missing(self):
+        self.many(3)
+        self.extract()
+        next(self.sessions_dir().glob("* - m1.md")).unlink()
+        with self.parses():
+            self.assertIn("written: 1", self.extract())
+        self.assertEqual(["m1.jsonl"], self.calls)
+
+    def test_a_grown_transcript_is_parsed_again(self):
+        src = self.session(self.work)
+        self.extract()
+        write_jsonl(src, [claude_line("user", self.work, "why did the invoicexport fail"), claude_line("user", self.work, "and more")])
+        with self.parses():
+            self.assertIn("written: 1", self.extract())
+        self.assertEqual(["s1.jsonl"], self.calls)
+
+    def clock(self, step):
+        """time.monotonic for the module, moving `step` seconds with every transcript parsed."""
+        now = [0.0]
+        real = recall_sessions.parse_claude
+
+        def parse(path):
+            now[0] += step
+            return real(path)
+        fake = mock.Mock()
+        fake.monotonic = lambda: now[0]
+        return mock.patch.object(recall_sessions, "time", fake), mock.patch.object(recall_sessions, "parse_claude", parse)
+
+    def test_sources_go_newest_first_and_a_run_at_its_limit_is_partial(self):
+        for i in range(4):
+            src = self.session(self.work, "why did the invoicexport fail %d" % i, "n%d" % i)
+            os.utime(str(src), (1_700_000_000 + i * 100, 1_700_000_000 + i * 100))
+        a, b = self.clock(10)
+        with a, b:
+            said, code = recall_sessions.extract_run(self.root, str(self.claude), str(self.codex), 15)
+        self.assertEqual(0, code)
+        self.assertIn("partial, 2 written, the rest next night", said)
+        self.assertEqual(["n2", "n3"], sorted(f.name.split(" - ")[1][:-3] for f in self.sessions_dir().glob("*.md")))      # the newest two
+        said, code = recall_sessions.extract_run(self.root, str(self.claude), str(self.codex))
+        self.assertEqual((0, "sessions written: 2; placed nowhere: 0"), (code, said))        # the rest follow, and no partial
+
+    def test_a_run_at_its_limit_that_writes_nothing_fails(self):
+        self.many(2)
+        said, code = recall_sessions.extract_run(self.root, str(self.claude), str(self.codex), 0)
+        self.assertEqual(recall_sessions.EXIT_LIMIT, code)
+        self.assertNotIn("partial", said)
+        self.assertEqual([], list(self.sessions_dir().glob("*.md")) if self.sessions_dir().is_dir() else [])
+        self.extract()
+        self.assertEqual(0, recall_sessions.extract_run(self.root, str(self.claude), str(self.codex), 0)[1])     # nothing left to parse: no failure
+
+    def test_the_command_exits_zero_when_partial_and_124_when_it_wrote_nothing(self):
+        self.many(3)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(124, recall.main(["--root", str(self.root), "extract", "--claude", str(self.claude), "--codex", str(self.codex), "--limit", "0"]))
+        a, b = self.clock(10)
+        out = io.StringIO()
+        with a, b, contextlib.redirect_stdout(out):
+            code = recall.main(["--root", str(self.root), "extract", "--claude", str(self.claude), "--codex", str(self.codex), "--limit", "15"])
+        self.assertEqual(0, code)
+        self.assertIn("partial, 2 written", out.getvalue())
+
     def test_a_secret_in_a_session_never_reaches_sessions(self):
         secret_a, secret_b = "sk-live1234567890abcdef", "hunter2hunter2"
         write_jsonl(self.claude / "p" / "s1.jsonl", [

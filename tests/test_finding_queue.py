@@ -88,20 +88,21 @@ class TestKindTable(unittest.TestCase):
 
     def test_a_question_has_a_real_answer(self):
         for kind, q in self.questions().items():
-            if kind in KINDS and fq.KIND_CLASS[kind] == fq.QUESTION and kind not in fq.FREE_ONLY:
+            if fq.KIND_CLASS.get(kind) == fq.QUESTION and kind != "wall":
                 self.assertTrue(q["answers"], kind)
-        self.assertTrue(set(fq.FREE_ONLY) <= {k for k, c in fq.KIND_CLASS.items() if c == fq.QUESTION})
+                self.assertTrue(any(a["action"] != "later" for a in q["answers"]), kind)     # more than Not now
+            if fq.KIND_CLASS.get(kind) == fq.QUESTION:
+                self.assertTrue(q["answers"], kind)
         wiki = fq.wiki_question({"wiki": "Meetings", "file": "questions/a.md", "title": "Who owns it?", "writes": {}})
         verdict = fq.verdict_question({"wiki": "Meetings", "file": "questions/b.md", "title": "Is it so?", "verdict": "yes"})
         decision = fq.decision_question({"file": "wiki/261001 - Call.md", "title": "Use Cedar", "revisit": "A newer call says otherwise"})
         for q in (wiki, verdict, decision):
             self.assertTrue(q["answers"], q["id"])
-        self.assertEqual([], fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), "Zones/Work")["answers"])
+        self.assertEqual(["fix-now", "later"], [a["id"] for a in fq.question(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), "Zones/Work")["answers"]])
+        self.assertFalse(hasattr(fq, "FREE_ONLY"))
 
     def test_no_question_shows_a_command_outside_details(self):
         for kind, q in self.questions().items():
-            if kind in fq.FREE_ONLY:
-                continue
             shown = " ".join([q["sentence"], q["why"], q["tag"]] + [a["label"] + " " + a["does"] for a in q["answers"]])
             self.assertNotIn("`", shown, kind)
             self.assertNotIn(".py", shown, kind)
@@ -210,21 +211,44 @@ class TestPlainWording(unittest.TestCase):
         self.assertEqual([("show-both", "look"), ("take-out", "handoff"), ("keep", "allow")], ids["wall"])
         self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
                           "meeting-long": ("later",), "hooks-blocked": (), "fix-failed": ("later",), "answers-held": ("later",), "wall": (),
-                          "verdict": ("later",), "decision-review": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
+                          "verdict": ("later",), "decision-review": ("later",), "other": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
                 self.assertIn(answers[0]["action"], ("handoff", "run"))                      # the recommended one does something
 
-    def test_any_other_kind_shows_the_check_text_and_something_else_only(self):
-        q = fq.question({"kind": "judgment", "check": "links", "path": "Zones/Work/a.md", "scope": "Zones/Work",
-                         "line": "Zones/Work/a.md: something odd about a link", "title": "Links"}, "Zones/Work")
+    def test_any_other_kind_says_the_file_and_its_place_and_has_real_answers(self):
+        q = fq.question({"kind": "judgment", "check": "links", "path": "Zones/Work/Acme Review/Stray.md", "scope": "Zones/Work",
+                         "line": "Zones/Work/Acme Review/Stray.md: something odd about a link", "title": "Links"}, "Zones/Work")
         self.assertEqual("other", q["id"])
-        self.assertEqual("something odd about a link", q["sentence"])
+        self.assertEqual("A check found something in “Stray” in Work.", q["sentence"])
         self.assertEqual("Links", q["tag"])
-        self.assertEqual([], q["answers"])
+        self.assertEqual("something odd about a link", q["details"].split(": ", 1)[1])      # the check's own text waits under Details
+        self.assertEqual([("fix-now", "handoff"), ("later", "later")], [(a["id"], a["action"]) for a in q["answers"]])
+        self.assertEqual("Ask my assistant to fix it", q["answers"][0]["label"])
+        self.assertEqual("Not now", q["answers"][1]["label"])
+        self.assertEqual("fix-now", q["recommended"])
+        self.assertEqual({"verb": "finding", "kind": "other", "path": q["path"], "answer": "later"}, q["answers"][1]["req"])
+        phrase = q["answers"][0]["phrase"]
+        self.assertIn("something odd about a link", phrase)                                  # the finding's own text, and nothing of another place
+        self.assertIn("Zones/Work/Acme Review/Stray.md", phrase)
         markup = fq.question_html(q)
-        self.assertNotIn("data-fa", markup)                                                  # no answer button
-        self.assertEqual(1, markup.count("opt other"))
+        self.assertEqual(2, markup.count("data-fa"))
+        shown = text_of(markup)
+        self.assertNotIn("something odd about a link", shown)                                # outside Details it is not shown
+        self.assertNotIn("Zones/Work", shown)
+
+    def test_an_other_finding_with_no_file_says_where_it_was_found(self):
+        for path, said in (("Zones/Work", "A check found something in Work."), ("Wikis/Meetings", "A check found something in the Meetings wiki."),
+                           ("", "A check found something in System.")):
+            q = fq.question({"kind": "judgment", "check": "x", "path": path, "scope": "Zones/Work", "line": "%s: odd" % path}, "Zones/Work")
+            self.assertEqual(said, q["sentence"], path)
+        q = fq.question({"kind": "judgment", "check": "x", "path": "Wikis/Meetings/wiki/Call.md", "scope": "Wikis/Meetings", "line": "odd"}, "Wikis/Meetings")
+        self.assertEqual("A check found something in “Call” in the Meetings wiki.", q["sentence"])
+
+    def test_not_now_hides_an_other_finding_and_it_is_the_same_key_the_verb_uses(self):
+        it = dict(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), scope="Zones/Work")
+        self.assertEqual(1, len(fq.forecast_questions([it], set())["Zones/Work"]))
+        self.assertEqual({}, fq.forecast_questions([it], {fq.later_key("other", "Zones/Work/A.md")}))
 
     def test_a_walls_hand_off_names_the_file_and_the_zones_and_never_the_repeated_words(self):
         q = fq.question(KINDS["wall"], "Zones/Work")
@@ -581,7 +605,8 @@ class TestQueueOnThePage(QueueCase):
         self.assertNotIn("st.del(KEY)", show)                                                # an empty queue saves done, it does not delete
         click = js[js.index("data-qclose]')){"):][:60]
         self.assertIn("st.del(KEY)", click)                                                  # and Close or Back to the overview delete it
-        self.assertIn("dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);", js)           # the close keeps nothing but the request
+        self.assertIn("function workIn(later){var sent=taken;taken={};st.del(KEY);", js)                            # the close keeps nothing but the request
+        self.assertIn("dlg.addEventListener('close',function(){workIn(false)});", js)
 
     def test_a_browser_shows_no_dead_answer_and_says_the_app_is_needed(self):
         self.assertIn(".nohost .queue .opt.tacts{display:none}", fq.QUEUE_CSS)

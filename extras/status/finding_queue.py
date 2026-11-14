@@ -4,9 +4,9 @@
 status.py builds the queue at page build, for every scope, from the one-pass forecast (the latest Nurture record's
 standing findings), so the number on a scope's line on the card and the number in its queue are one list's. A kind
 with plain wording says one short sentence and one line on why it matters, with no path, setting name or command in
-either; those stay in *Details*, closed. Every other kind shows the check's own text under a plain label, with
-*Something else* as its only answer. PLAIN_KINDS lists the kinds that have plain wording, and a test holds the list,
-so a new kind cannot get one silently.
+either; those stay in *Details*, closed. Every other kind (`other`) says one generic sentence that names the file and its place,
+with the check's own text under *Details* and two answers, *Ask my assistant to fix it* and *Not now* (#550). PLAIN_KINDS lists the
+kinds that have wording of their own, and a test holds the list, so a new kind cannot get one silently.
 
 Each answer names the action it takes, from the fixed table in ANSWERS:
 
@@ -76,7 +76,7 @@ NO_FREE_FOR = ()          # every question keeps the free-text field, last
 # The one table of finding kinds (#550). A kind is `automatic` (Garrick does it without asking; the user hears of it only when it
 # fails) or `question` (a reasonable user could answer two ways and Garrick cannot tell which). The test for a kind: would a user
 # ever say no? If not, it is not asked. A kind in neither class fails test_finding_queue, and so does a `question` kind whose
-# only answer is *Something else*, except the kinds in FREE_ONLY, which have no plain wording yet and stay as they are today.
+# only answer is *Something else*: there is no exception.
 AUTOMATIC, QUESTION = "automatic", "question"
 KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
@@ -84,7 +84,6 @@ KIND_CLASS = {
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION, "answers-held": QUESTION,
     "other": QUESTION,
 }
-FREE_ONLY = ("other",)    # the check's own text under a plain label, *Something else* alone: no plain wording yet (listed in the release notes)
 
 
 def A(id_: str, label: str, does: str, action: str) -> dict:
@@ -115,6 +114,12 @@ ANSWERS: Dict[str, List[dict]] = {
                    A("later", "Not now", "Ask again in a week.", "later")],
     "hooks-blocked": [A("add-check", "Add the wall check to my hook", "Your assistant adds one line to your hook and shows you the change.", "handoff")],
 }
+# The kind with no wording of its own: a finding of a check Garrick has no plain sentence for yet. The assistant looks at it, or it waits.
+OTHER = "other"
+ANSWERS_OTHER: List[dict] = [A("fix-now", "Ask my assistant to fix it", "Your assistant looks at it and shows you the change.", "handoff"),
+                             A("later", "Not now", "Ask again in a week.", "later")]
+OTHER_WHY = "Garrick has no plain wording for this check yet. Your assistant can look at it with you, and nothing changes until you say yes."
+OTHER_HANDOFF_MAX = 800     # characters of the finding's text a request carries
 # What a long note is asked when its plan moves nothing: no Move and no Show me, the handoff first (#539).
 ANSWERS_NO_MOVE: Dict[str, List[dict]] = {
     "note-long": [A("split", "Split the long sections into their own notes",
@@ -156,7 +161,7 @@ ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
 # The wiki's own kinds (#542) are put off, and nothing else, through the same verb: the question's file stays as it is.
 ASKED_KINDS = ("wiki-question", "verdict", "decision-review", "answers-held")
-VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",), "answers-held": ("later",)})
+VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",), "answers-held": ("later",), OTHER: ("later",)})
 
 NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
 RESUME_RE = re.compile(r"Resume here block has (\d+) words, over the \d+ of `resume-max-words`")
@@ -431,6 +436,28 @@ def said(plain: str, item: dict) -> Tuple[str, str]:
     raise KeyError(plain)
 
 
+def file_place(path: str) -> Tuple[str, str]:
+    """(the file's name, where it is in words) for a finding's path; the name is "" when the path is no file (no extension on its
+    last part). Never a path or a command."""
+    last = path.rsplit("/", 1)[-1]
+    name = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", last) if re.search(r"\.[A-Za-z0-9]{1,5}$", last) else ""
+    return name if name and not re.search(r"[`<>|$]", name) else "", place(path)
+
+
+def other_sentence(path: str) -> str:
+    name, where = file_place(path)
+    if name:
+        return "A check found something in “%s” in %s." % (name, where)
+    return "A check found something in %s." % where
+
+
+def other_phrase(item: dict) -> str:
+    """The request *Ask my assistant to fix it* hands over: this finding's own text, of its own place, and no other."""
+    text = str(item.get("message") or item.get("line") or "")[:OTHER_HANDOFF_MAX]
+    return ("A check found something in %s (%s). Its text: %s Look at it, fix it if the fix is plain, and show me the change "
+            "before anything is committed." % (item["path"], place(str(item["path"])), text if text.endswith((".", "?", "!")) else text + "."))
+
+
 def handoff_phrase(plain: str, answer: str, item: dict) -> str:
     """The request an answer that needs judgment hands to the assistant. It carries the finding's kind, its path and
     its zones, and never the check's wording: a wall finding's request names the file and the two zones and nothing
@@ -498,8 +525,16 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
     q = {"id": plain or "other", "scope": scope, "path": path, "key": later_key(plain or "other", path), "details": details,
          "recommended": "", "other": wall_other(item) if plain == "wall" else ""}
     if plain not in PLAIN_KINDS:
-        q.update(tag=str(item.get("title") or "Check finding"), sentence=re.sub(r"^%s: " % re.escape(path), "", details), why="", answers=[],
-                 free=free_prefix("", item))
+        answers = []
+        for a in ANSWERS_OTHER:
+            a = dict(a)
+            if a["action"] == "handoff":
+                a["phrase"] = other_phrase(item)
+            else:
+                a["req"] = {"verb": "finding", "kind": OTHER, "path": path, "answer": a["id"]}
+            answers.append(a)
+        q.update(tag=str(item.get("title") or "Check finding"), sentence=other_sentence(path), why=OTHER_WHY, answers=answers,
+                 free=free_prefix("", item), recommended=answers[0]["id"])
         return q
     sentence, why = said(plain, item)
     table = ANSWERS[plain]
@@ -587,7 +622,7 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) ->
             if not hooks_blocked(ws, str(item["path"])):
                 continue            # automatic: the update and the nightly run install it; it is never asked
             plain = "hooks-blocked"
-        if plain not in NEVER_LATER and plain in PLAIN_KINDS and later_key(plain, str(item["path"])) in hidden:
+        if plain not in NEVER_LATER and (plain in PLAIN_KINDS or not plain) and later_key(plain or OTHER, str(item["path"])) in hidden:
             continue
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None
         out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"]), plan))
@@ -931,7 +966,7 @@ cur=s;tally=fresh();gone={};notes={};skip={};refused={};pend=null;if(!dlg.open)d
    answer sent just before the reload is counted from what the new page shows */
 function restore(){var r=null;try{r=JSON.parse(st.get(KEY)||'null')}catch(e){}if(!r||Date.now()-r.t>9e5){st.del(KEY);return}
 taken=r.taken||{};var s=r.scope&&all().filter(function(x){return x.dataset.scope===r.scope})[0];
-if(!s){if(Object.keys(taken).length)st.set(KEY,JSON.stringify({taken:taken,t:Date.now()}));else st.del(KEY);return}
+if(!s){workIn(true);return}
 cur=s;gone=r.gone||{};tally=Object.assign(fresh(),r.tally||{});notes=r.notes||{};skip={};refused={};pend=null;
 if(r.done){dlg.showModal();show(true);return}
 if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.gk===r.pend.key});
@@ -973,9 +1008,12 @@ if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,texta
 if(/^[1-4]$/.test(e.key)){var opts=[].filter.call(q.querySelectorAll('.opt'),function(x){return!x.hidden&&x.getClientRects().length}),o=opts[+e.key-1];if(!o)return;e.preventDefault();
 if(o.classList.contains('other')||o.classList.contains('later')){o.querySelector('input').focus()}else o.click()}});
 /* Closing the queue works in the answers it took (#550): one request that names the place, to the default assistant, for each place that took
-   an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none. */
-dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);
-Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;handoff(t.work)})});
+   an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none.
+   A reload that leaves no section for a place whose answers were taken sends the request when the page loads (restore), once: the count is cleared
+   as it goes, as at a close. The kept count still goes after 15 minutes. */
+function workIn(later){var sent=taken;taken={};st.del(KEY);
+var go=function(){Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;handoff(t.work)})};if(later)setTimeout(go,0);else go()}
+dlg.addEventListener('close',function(){workIn(false)});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}

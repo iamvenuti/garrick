@@ -30,6 +30,8 @@ import os
 import re
 import unicodedata
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -561,6 +563,66 @@ def existing(folder: Path, sid: str) -> Optional[Path]:
     return hits[0] if hits else None
 
 
+# The source index (#558): `.sessions/index.json` in each destination, keyed by the source's absolute path, holding the source's
+# size and mtime as they were when its copy was written and the copy's file name. extract_all() asks it before it parses a
+# source, so a transcript that has not changed is only stat-ed. It holds no text. A missing, unreadable or odd index says
+# nothing, and every source is parsed, as before.
+INDEX_NAME = "index.json"
+Stamp = Tuple[int, int]
+
+
+def read_index(folder: Path) -> Dict[str, dict]:
+    try:
+        data = json.loads((folder / INDEX_NAME).read_text(encoding="utf-8"))
+        rows = data["sources"] if isinstance(data, dict) and data.get("version") == 1 else None
+    except (OSError, ValueError, KeyError):
+        return {}
+    return rows if isinstance(rows, dict) else {}
+
+
+def note_index(folder: Path, source: Path, st: os.stat_result, name: str) -> None:
+    """Record that `name` in `folder` is the copy of `source` as it stands now. Atomic; a failure leaves the old index, and
+    the source is then parsed next time, which is the old behaviour."""
+    rows = {k: v for k, v in read_index(folder).items() if isinstance(k, str) and isinstance(v, dict)}
+    rows[os.path.abspath(str(source))] = {"source_size": st.st_size, "source_mtime": st.st_mtime_ns, "file": name}
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=str(folder), prefix=".index-")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "sources": rows}, fh, sort_keys=True)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(folder / INDEX_NAME))
+    except OSError:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def written_sources(root: Path) -> Dict[str, Set[Stamp]]:
+    """Every source the destinations' indexes say is written as it stands: its absolute path -> the (size, mtime) stamps of
+    the copies still there. An entry whose copy is gone, or that is not of the shape, is missing."""
+    base = root.resolve()
+    tops = sorted(p for p in (base / "Zones").glob("*") if p.is_dir() and not p.is_symlink()) if (base / "Zones").is_dir() else []
+    tops.append(base / "System")
+    known: Dict[str, Set[Stamp]] = {}
+    for top in tops:
+        folder = top / recall.SESSIONS_DIR
+        if folder.is_symlink() or not folder.is_dir():
+            continue
+        for key, e in read_index(folder).items():
+            try:
+                name, size, mtime = e["file"], e["source_size"], e["source_mtime"]
+                if not (isinstance(key, str) and isinstance(name, str) and name and "/" not in name and name == os.path.basename(name)
+                        and type(size) is int and type(mtime) is int and (folder / name).is_file()):
+                    continue
+            except (KeyError, TypeError):
+                continue
+            known.setdefault(key, set()).add((size, mtime))
+    return known
+
+
 def write_session(root: Path, source: Path, s: Session) -> Optional[Path]:
     if not any(k in ("user", "assistant") for k, _, _ in s.turns):
         return None
@@ -580,6 +642,7 @@ def write_session(root: Path, source: Path, s: Session) -> Optional[Path]:
         head = old.read_text(encoding="utf-8", errors="replace")[:600]
         if "source_size: %d\n" % st.st_size in head and "source_mtime: %d\n" % st.st_mtime_ns in head \
                 and "format: 2\n" in head:
+            note_index(folder, source, st, old.name)
             return None
     text = render(s, projects, st.st_size, st.st_mtime_ns)
     if recall.session_projects(text) != [clean_name(p) for p in projects] or \
@@ -596,6 +659,7 @@ def write_session(root: Path, source: Path, s: Session) -> Optional[Path]:
     except OSError:
         pass
     os.replace(str(tmp), str(target))
+    note_index(folder, source, st, target.name)
     return target
 
 
@@ -611,14 +675,37 @@ def codex_files(folder: Path) -> List[Path]:
     return found
 
 
-def extract_all(root: Path, claude: Optional[str] = None, codex: Optional[str] = None) -> str:
-    """Write every session not yet written, or grown since. Says how many
-    were written and how many were placed nowhere, and names no zone."""
+EXIT_LIMIT = 124      # a run stopped on its limit that wrote nothing: as a step that timed out exits
+
+
+def extract_run(root: Path, claude: Optional[str] = None, codex: Optional[str] = None,
+                limit: Optional[float] = None) -> Tuple[str, int]:
+    """(what to say, the exit code). Writes every session not yet written, or grown since. A source whose copy is
+    written as it stands is only stat-ed, never parsed (#558); sources go newest first. With `limit` seconds, a run that
+    reaches it stops before parsing the next source: if it wrote at least one session that is "partial, N written", exit 0,
+    and the rest follow the next night; if it wrote none, exit 124. Says how many were written and how many were placed
+    nowhere, and names no zone."""
     home = Path.home()
     jobs = [(parse_claude, f) for f in claude_files(Path(claude) if claude else home / ".claude" / "projects")]
     jobs += [(parse_codex, f) for f in codex_files(Path(codex) if codex else home / ".codex" / "sessions")]
-    wrote = nowhere = 0
+    stamped = []
     for parse, source in jobs:
+        try:
+            st = source.stat()
+        except OSError:
+            continue
+        stamped.append((st.st_mtime_ns, str(source), parse, source, st))
+    stamped.sort(key=lambda row: (-row[0], row[1]))
+    known = written_sources(root)
+    deadline = time.monotonic() + limit if limit is not None else None
+    wrote = nowhere = 0
+    stopped = False
+    for _, _, parse, source, st in stamped:
+        if (st.st_size, st.st_mtime_ns) in known.get(os.path.abspath(str(source)), ()):
+            continue                                # written as it stands: not parsed
+        if deadline is not None and time.monotonic() >= deadline:
+            stopped = True
+            break
         try:
             s = parse(source)
             if not any(k in ("user", "assistant") for k, _, _ in s.turns) or not s.cwds:
@@ -631,4 +718,14 @@ def extract_all(root: Path, claude: Optional[str] = None, codex: Optional[str] =
                 wrote += 1
         except OSError:
             continue
-    return "sessions written: %d; placed nowhere: %d" % (wrote, nowhere)
+    text = "sessions written: %d; placed nowhere: %d" % (wrote, nowhere)
+    if not stopped:
+        return text, 0
+    if wrote:
+        return text + "; partial, %d written, the rest next night" % wrote, 0
+    return text + "; stopped at its limit with nothing written", EXIT_LIMIT
+
+
+def extract_all(root: Path, claude: Optional[str] = None, codex: Optional[str] = None, limit: Optional[float] = None) -> str:
+    """extract_run()'s words alone."""
+    return extract_run(root, claude, codex, limit)[0]

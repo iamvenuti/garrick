@@ -2166,9 +2166,29 @@ def walls_findings(tool, ws: Path, rel: str) -> tuple:
     return got[0], got[1]
 
 
-def walls_other_files(ws: Path, message: str) -> list:
+def walls_meeting_pair(ws: Path, name: str, tool) -> list:
+    """The page of the Meetings wiki that the wall check calls `name`, and its raw record, as the check's own owner list
+    names them (discover() and meeting_raws() of the workspace's check.py), and nothing else. A name that two pages
+    share, a page the check does not list, a missing check or more than one raw record is []: the page shows nothing
+    rather than words of a file the finding did not name."""
+    if tool is None or not all(callable(getattr(tool, n, None)) for n in ("discover", "meeting_raws")):
+        return []
+    try:
+        view = tool.discover(ws)
+        pages = [(p, fm) for p, fm in view.meetings.items() if p.stem == name]
+        if len(pages) != 1:
+            return []
+        page, fm = pages[0]
+        raws = sorted(set(tool.meeting_raws(view, page, fm)))
+    except Exception:
+        return []
+    return [page] + raws if len(raws) <= 1 else []
+
+
+def walls_other_files(ws: Path, message: str, tool=None) -> list:
     """The file(s) a wording finding names as the other side, from the check's text: a path, or the name of a page of
-    the Meetings wiki, which can be a page and its raw record. Only files of this workspace, never a link."""
+    the Meetings wiki, which is that page and its raw record as the wall check names them, and nothing else with the same
+    name. Only files of this workspace, never a link."""
     m = WALL_OTHER_PATH_RE.search(message) or WALL_OTHER_FROM_RE.search(message)
     if not m:
         return []
@@ -2177,10 +2197,8 @@ def walls_other_files(ws: Path, message: str) -> list:
     if "/" in name:
         found = [ws / name]
     else:
-        wiki = ws / "Wikis" / "Meetings"
-        for here, dirs, files in os.walk(wiki):
-            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not (Path(here) / d).is_symlink())
-            found += [Path(here) / f for f in sorted(files) if Path(f).stem == name and not f.startswith(".")]
+        wiki = (ws / "Wikis" / "Meetings").resolve()
+        found = [p for p in walls_meeting_pair(ws, name, tool or walls_allowed_tool(ws)) if wiki in p.resolve().parents]
     out = []
     for p in found:
         try:
@@ -2282,7 +2300,7 @@ def walls_look(ws: Path, req: dict) -> dict:
     if blob is None:
         raise Refused("the file is not known to git yet, so it cannot be shown for a decision")
     mine = tool.read_text(ws / rel)
-    others = walls_other_files(ws, hit.message)
+    others = walls_other_files(ws, hit.message, tool)
     if mine is None or not others:
         raise Refused("Garrick could not tell which other file this matches, so it shows nothing")
     mine = tool.body_of(tool.transcript_text(ws / rel, mine))

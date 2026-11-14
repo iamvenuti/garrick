@@ -2052,6 +2052,36 @@ def check_threads(ws: Workspace) -> List[Finding]:
             if link and project.name.lower() not in link.lower():
                 out.append(Finding(WARNING, "threads", r, "`project` is %s but the thread sits in %s" % (link, project.name),
                                    "Thread %s points at the wrong project" % spoken))
+    out += _note_files(ws)
+    return out
+
+
+_NOTE_NAME = re.compile(r"^\d{6} - .+\.md$")
+
+
+def _note_files(ws: Workspace) -> List[Finding]:
+    """A note to yourself (`kind: note` in its frontmatter, #569) is a dated file, `YYMMDD - <title>.md`, in a
+    Notes/ folder of its thread or project. One with no date in its name, or anywhere else, is out of place: the
+    next wrap and the thread's opening look for notes only there."""
+    out = []
+    for project, _ in ws.projects:
+        for path in walk_files(project):
+            if path.suffix != ".md":
+                continue
+            try:
+                with open(str(path), "rb") as f:
+                    head = f.read(600).decode("utf-8", errors="replace")
+            except OSError:
+                continue
+            if not head.startswith("---") or not re.search(r"^kind:\s*[\"']?note[\"']?\s*$", head.split("\n---", 1)[0], re.M):
+                continue
+            r = rel(ws, path)
+            if path.parent.name != "Notes":
+                out.append(Finding(WARNING, "threads", r, "a note to yourself (`kind: note`) sits outside a `Notes/` folder; "
+                                   "move it to its thread's `Notes/`", "A note is outside a Notes folder"))
+            if not _NOTE_NAME.match(path.name):
+                out.append(Finding(WARNING, "threads", r, "a note to yourself has no date in its name; rename it "
+                                   "`YYMMDD - <title>.md`", "A note has no date in its name"))
     return out
 
 

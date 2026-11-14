@@ -70,12 +70,13 @@ SERVER = "garrick"
 TOOLS = ("search", "read", "places", "thread_state", "owed", "propose")
 KINDS = ("all", "meetings", "library", "threads", "docs")
 ORDERS = ("relevance", "recent")
-PROPOSED = ("open", "park", "wake", "todo-add")     # what propose() takes: the verbs a click can carry out
+PROPOSED = ("open", "park", "wake", "todo-add", "note-add")     # what propose() takes: the verbs a click can carry out
 LIMIT = 10                  # records one search returns, unless it asks for more
 MOST = 50                   # the most it may ask for
 OVERSAMPLE = 5              # rows asked of the index for each one returned, since the zone and kind are cut after
 MOST_TEXT = 6000            # characters of one record read() returns
 MOST_TODO = 200             # characters of a Todo line a proposal may carry: the button shows all of it
+MOST_NOTE = 4000            # longest note a proposal may carry
 MOST_OWED = 40              # items owed() returns
 STATE_TEXT = 1500           # characters of a thread's Resume here block a search result carries
 SNIPPET = 300               # characters of a record a search result shows
@@ -811,6 +812,8 @@ class Conversation:
                 # A thread that cannot be placed is a thread that is not there: the proposal sees it removed.
                 names = {z: {p: (dict(r, threads={t: st for t, st in r["threads"].items() if t != th})
                                  if (z, p) == (zn, pj) else r) for p, r in ps.items()} for z, ps in names.items()}
+        if act.get("verb") == "note-add" and len(str(act.get("text") or "")) > MOST_NOTE:
+            return "Refused: that note is too long (%d characters at most)." % MOST_NOTE
         try:
             ask.proposal(act, names, self.ws)
         except ask.Bad as e:
@@ -890,11 +893,11 @@ def schemas() -> List[dict]:
         {"name": "owed", "description": "What the user owes or waits on: the Todo lines and the threads' next actions, as Garrick builds the list.",
          "inputSchema": obj({"period": dict(s, description="a date YYYY-MM-DD, today, tomorrow, this week or this month"),
                              "party": s, "waiting": {"type": "boolean"}})},
-        {"name": "propose", "description": "Propose an action: open, park or wake a project or thread, or add a Todo line. It is a proposal: "
+        {"name": "propose", "description": "Propose an action: open, park or wake a project or thread, add a Todo line, or file a note (note-add). It is a proposal: "
                                             "nothing happens until Garrick has checked it and, where needed, the user has clicked it.",
          "inputSchema": obj({"action": {"type": "object", "properties": {
              "verb": {"type": "string", "enum": list(PROPOSED)}, "zone": s, "project": s, "thread": s,
-             "text": s, "date": s, "app": s, "again": {"type": "boolean"}}, "required": ["verb", "zone"]}}, ["action"])},
+             "text": s, "title": s, "date": s, "app": s, "again": {"type": "boolean"}}, "required": ["verb", "zone"]}}, ["action"])},
     ]
 
 

@@ -657,6 +657,8 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {"walls-look", "walls-allow"}
         # An answer to a finding on the Checks card's queue (#535) is sent by finding_queue.py's script, and names a path.
         unzoned |= {"finding"}
+        # A note to yourself (#569) is typed in the Ask box or sent by a fetcher; no button on the page sends it.
+        unzoned |= {"note-add"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

@@ -4418,6 +4418,103 @@ def menu_settings() -> str:
             '<button class="act" type="button" id="menu-finder">Open Login Items &amp; Extensions</button></div></section>')
 
 
+
+# ---- Settings › Channels (#571, #570) --------------------------------------------------------------
+# Ask and the Telegram channel run through one engine (engine.py). Each has a tier, an effort and an autonomy; Telegram
+# never offers Full. The section also says, in plain words, whether the assistant passed the capability check, whether
+# the Telegram receiver is running and when it last heard from you, and which actions wait for your yes.
+_CHANNELS_MOD = None
+_CHANNEL_MODS = {}
+
+
+def channels_mod():
+    global _CHANNELS_MOD
+    if _CHANNELS_MOD is None:
+        spec = importlib.util.spec_from_file_location("garrick_status_channels", str(Path(__file__).with_name("channels.py")))
+        _CHANNELS_MOD = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_CHANNELS_MOD)
+    return _CHANNELS_MOD
+
+
+def channel_mod(name: str):
+    if name not in _CHANNEL_MODS:
+        spec = importlib.util.spec_from_file_location("garrick_status_" + name, str(Path(__file__).with_name(name + ".py")))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CHANNEL_MODS[name] = mod
+    return _CHANNEL_MODS[name]
+
+
+CHANNEL_NAMES = {"ask": "Ask", "telegram": "Telegram"}
+LEVEL_NAMES = {"read": "Read", "act": "Act", "full": "Full"}
+TIER_NAMES = {"haiku": "Small (haiku)", "sonnet": "Medium (sonnet)", "opus": "Large (opus)"}
+
+
+def telegram_service_row() -> str:
+    """The Telegram receiver's row: running or down, and when it last received a message."""
+    try:
+        row = channel_mod("channel_state").row()
+    except Exception:
+        return ""
+    return '<p class="chnote" id="telegram-service" data-state="%s">%s</p>' % (E(row["state"]), E(row["said"]))
+
+
+def held_list() -> str:
+    """The actions waiting for your yes, each with what it would do, where, and how long it has left."""
+    try:
+        rows = channel_mod("hold").listing()
+    except Exception:
+        return ""
+    if not rows:
+        return '<p class="chnote" id="held-actions">Nothing is waiting for your yes.</p>'
+    items = "".join('<li>%s <small>(%s, %s; %d h left)</small></li>' % (E(r["what"]), E(r["where"] or "no destination"),
+                                                                       E(CHANNEL_NAMES.get(r["channel"], r["channel"])), r["hours_left"])
+                    for r in rows)
+    return '<div id="held-actions"><p class="chnote">Waiting for your yes. Nothing runs until you say so:</p><ul>%s</ul></div>' % items
+
+
+def channels_settings(ws: Path) -> str:
+    """Settings › Channels: Ask's and Telegram's tier, effort and autonomy, in the app only, as the sections that save are."""
+    try:
+        ch = channels_mod()
+        cfg = ch.settings(ws)
+        cap = ch.kept() or {"ok": True}          # what the last check found; the page never runs one
+    except Exception:
+        return ""
+
+    def select(channel: str, key: str, values, names, label: str) -> str:
+        opts = "".join('<option value="%s"%s>%s</option>' % (v, " selected" if cfg[channel][key] == v else "", E(names.get(v, v.capitalize())))
+                       for v in values)
+        return ('<div class="launcher-row"><label class="launcher-choice" for="ch-%s-%s"><span>%s</span></label>'
+                '<select id="ch-%s-%s" class="menu-style" data-channel="%s" data-key="%s">%s</select></div>'
+                % (channel, key, E(label), channel, key, channel, key, opts))
+    body = ""
+    for channel in ch.CHANNELS:
+        body += '<p class="chnote"><b>%s</b></p>' % E(CHANNEL_NAMES[channel])
+        body += select(channel, "tier", ch.TIERS, TIER_NAMES, "Model size")
+        body += select(channel, "effort", ch.EFFORTS, {}, "Effort")
+        body += select(channel, "autonomy", ch.LEVELS_FOR[channel], LEVEL_NAMES, "How far it may go")
+    limit = ""
+    if not cap.get("ok"):
+        limit = ('<p class="chnote" id="channels-limit">Running at Read: %s. Check: %s.</p>'
+                 % (E("; ".join(cap.get("said") or [])), E(", ".join(c.replace("_", " ") for c in cap.get("failed") or []))))
+    lede = "How far the Ask box and a Telegram chat may go: read and answer, or also act, with every send held for your yes."
+    return ('<section class="setsec apponly" id="channels-settings" hidden>%s%s%s%s%s%s</section>'
+            % (set_head("Channels", "channels", lede),
+               help_text("channels", "Read answers. Act also does what git can undo, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking; Telegram never offers it. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
+                         "Saved in <code>%s</code> when you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
+                         "walled zone sent to Telegram is held on Telegram&#39;s servers." % E(prefs().FILE)),
+               body, limit, telegram_service_row(), held_list()))
+
+
+CHANNELS_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+var box=document.getElementById('channels-settings');if(!host||!box)return;box.hidden=false;
+function chSave(sel){var c=sel.dataset.channel,o={};o[c]={tier:document.getElementById('ch-'+c+'-tier').value,effort:document.getElementById('ch-'+c+'-effort').value,autonomy:document.getElementById('ch-'+c+'-autonomy').value};
+host.postMessage({act:{verb:'settings',channels:o}})}
+box.querySelectorAll('select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})})})();
+"""
+
 def copy(label: str, text: str, say: str) -> str:
     """A button that copies a phrase for your assistant, or a command for your
     terminal. The page acts on nothing itself."""
@@ -4691,7 +4788,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     filed = {"look": [launcher_choices(installed, agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
-             "tell": [notify_settings(ws, CMUXLIB.is_file())],
+             "tell": [notify_settings(ws, CMUXLIB.is_file()), channels_settings(ws)],
              "keep": [memory_settings(ws, link)],
              "walls": [walls_settings(ws), allowed_settings(allowed or [])],
              "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
@@ -8239,7 +8336,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

@@ -1367,9 +1367,14 @@ class GarrickPrefixTest(FakeAssistants):
 
     def test_every_shipped_job_runs_under_its_label_and_the_prefix(self):
         plists = sorted((JOBS / "launchd").glob("*.plist"))
-        self.assertEqual(["garrick.gr-backup.plist", "garrick.gr-nightly.plist", "garrick.gr-reading-sweep.plist",
-                          "garrick.gr-todo-sweep.plist", "garrick.gr-whats-open.plist"], [p.name for p in plists])
-        for path in plists:
+        self.assertEqual(["garrick.gr-backup.plist", "garrick.gr-nightly.plist", "garrick.gr-notes.plist",
+                          "garrick.gr-reading-sweep.plist", "garrick.gr-telegram.plist", "garrick.gr-todo-sweep.plist",
+                          "garrick.gr-whats-open.plist"], [p.name for p in plists])
+        # The Telegram receiver is a service, not a timed job (#570): it keeps itself alive and is not run through job.py.
+        service = plistlib.loads((JOBS / "launchd" / "garrick.gr-telegram.plist").read_bytes())
+        self.assertEqual((True, "garrick.gr-telegram"), (service["KeepAlive"], service["Label"]))
+        self.assertNotIn("/Users/<you>/Garrick/System/jobs/job.py", service["ProgramArguments"])
+        for path in [p for p in plists if p.name != "garrick.gr-telegram.plist"]:
             with self.subTest(path.name):
                 plist = plistlib.loads(path.read_bytes())
                 args = plist["ProgramArguments"]
@@ -1381,7 +1386,7 @@ class GarrickPrefixTest(FakeAssistants):
                 for key in ("StandardOutPath", "StandardErrorPath"):
                     self.assertTrue(plist[key].endswith("/garrick-jobs/%s.launchd.log" % name))
                 self.assertTrue(plist["EnvironmentVariables"]["GARRICK_ABOUT"].strip())
-        self.assertEqual(set(agent.GARRICK_JOBS), set(agent.RENAMED.values()))
+        self.assertEqual(set(agent.GARRICK_JOBS), set(agent.RENAMED.values()) | set(agent.NEW_JOBS))
         self.assertEqual({"gr-nightly"}, set(agent.RETIRED.values()))
 
     def test_a_job_of_yours_with_the_prefix_runs_and_is_told(self):

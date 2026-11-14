@@ -138,6 +138,9 @@ that way, and only the ones the request names. It answers with JSON
                cmux extra's desk ready (`dk`), cmux opens it as a tab that
                starts the session, as the page's buttons do
     park, wake run through page_action.perform(), as the page's buttons do:
+    note-add   a note to yourself ("note for Acme pricing: ..."): a dated file
+               in the thread's Notes/ folder, its actions on the zone's Todo
+               list, one commit (#569); the reply is *Noted in Acme, Pricing.*
     todo-add   the status field or the line, committed in the zone's
                repository, with the durable record the page's clicks keep,
                and, as any caller's action ends, the one request for the
@@ -318,7 +321,7 @@ REFILLED = "Started afresh at a wall. Your question is back in the box: check it
 REFILLED_ZONE = "Started afresh in another zone. Your question is back in the box: check it, then send it."
 APPS = ("claude", "codex", "cmux", "finder")
 AGENTS = ("claude", "codex")      # what a cmux tab can start: cmuxlib's AGENTS (#307)
-VERBS = ("open", "park", "wake", "todo-add", "new-project", "new-thread")
+VERBS = ("open", "park", "wake", "todo-add", "note-add", "new-project", "new-thread")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
 EXTRA_PATH = ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
 
@@ -457,6 +460,22 @@ def tools_lib():
 # and the retry it prompted did the action a second time (#92).
 TURN_TIMEOUT = page_action().clock("TURN_TIMEOUT")
 ASK_WAIT = page_action().clock("ASK_WAIT")
+
+
+_ENGINE = None
+
+
+def engine_lib():
+    """engine.py, beside this file: one engine for Ask and the Telegram channel (#571)."""
+    global _ENGINE
+    if _ENGINE is None:
+        sys.path.insert(0, str(HERE))
+        _ENGINE = _load("garrick_ask_engine", HERE / "engine.py")
+    return _ENGINE
+
+
+HELD_REQUEST = re.compile(r"(run|cancel) held ([0-9a-f]{8})\Z")
+ENGINE_FRESH = 2 * 3600     # seconds: an engine exchange older than this starts a new session
 
 
 _PREFS = None
@@ -861,6 +880,23 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path, named=None) -> Tupl
             raise Bad("not a date: %r" % (date,))
         target = "-" if project is None else project if thread is None else "%s/%s" % (project, thread)
         return "act", {"verb": "todo-add", "zone": zone, "text": text.strip(), "target": target, "date": date}
+    if verb == "note-add":
+        text, title = a.get("text"), a.get("title")
+        if not isinstance(text, str) or not text.strip():
+            raise Bad("a note with no text")
+        if title is not None and (not isinstance(title, str) or len(title) > 200):
+            raise Bad("not a title for a note")
+        if project is None:             # a note is about one place: asked, never guessed
+            raise Needs("Where does the note about %s go? Name the project or the thread." % (" ".join(text.split()[:6])), [])
+        if thread is None and names[zone][project]["threads"]:
+            many = list(names[zone][project]["threads"])
+            raise Needs("Which thread of %s is the note about: %s?" % (project, ", ".join(many[:-1]) + " or " + many[-1] if len(many) > 1 else many[0]), [])
+        item = {"verb": "note-add", "zone": zone, "project": project, "text": text.strip()}
+        if thread is not None:
+            item["thread"] = thread
+        if title and title.strip():
+            item["title"] = " ".join(title.split())
+        return "act", item
     if project is None:
         raise Bad("%s names a project" % verb)
     if verb in ("park", "wake"):
@@ -1389,6 +1425,7 @@ def heard_names(named, ctx: dict) -> str:
 
 class Asker:
     def __init__(self, ws: Path, session=None):
+        self.exchanges = {}         # the engine's exchange of each zone (#571)
         self.ws = ws
         self.session = session
         self.sent = None            # the hash of the list the session was last given
@@ -1428,6 +1465,9 @@ class Asker:
         self.afresh = None
         if not flag_on(self.ws):
             return off()
+        held = HELD_REQUEST.match(request.strip())
+        if held:                                    # the dialog's Run it and Cancel (#571): the owner's own click
+            return self.held_answer(held.group(1), held.group(2))
         self.asking = False                         # this request answers it, or asks something else
         if self.session is None:
             self.session = session_for(self.ws)
@@ -1484,6 +1524,8 @@ class Asker:
                 return out
         if window is not None:                      # every request, a command too, is sent in the window's zone
             self.zone = self.last_zone = window
+        if isinstance(self.session, AgentSession) and earlier is None and self.engine_wanted(request):
+            return self.act_engine(request, names, window or (next(iter(named.zones)) if len(named.zones) == 1 else None))
         if isinstance(self.session, AgentSession):  # one session for the conversation, with Garrick's read tools (#358)
             out = self.converse(request, heard, earlier, named, names, today, window)
             if reset and not out.get("reset"):
@@ -1555,6 +1597,48 @@ class Asker:
         if reset:
             out["reset"] = reset
         return out
+
+    def engine_wanted(self, request: str) -> bool:
+        """Whether this request goes to the engine (#571): it asks for work in the records (file, tick, make, move, edit,
+        send, delete...), and Ask's autonomy is Act or Full and the assistant passed the capability check. A question is
+        answered by Ask's own session with its citations, and a plain command keeps its fast path; the engine never
+        takes either. Code decides this, never a model."""
+        eng = engine_lib()
+        if not eng.channels.wants_action(request):
+            return False
+        return eng.channels.effective(self.ws, "ask")["autonomy"] != "read"
+
+    def act_engine(self, request: str, names, zone: Optional[str]) -> dict:
+        """One request through the engine, in one zone: the zone is the window's or the one the request names; with
+        neither, the box asks which. A send, share or delete comes back as a held action with Run it and Cancel."""
+        if zone is None or zone not in names:
+            return clarify("Which zone is this for: %s?" % " or ".join(names))
+        eng = engine_lib()
+        ex = self.exchanges.get(zone)
+        if ex is None or time.time() - ex.get("started", 0) > ENGINE_FRESH:
+            ex = self.exchanges[zone] = {"id": "ask-%s-%s" % (hashlib.sha1(zone.encode("utf-8")).hexdigest()[:6], secrets.token_hex(3)),
+                                         "started": time.time()}
+        self.progress("Working in %s" % zone)
+        got = eng.run(self.ws, "ask", request, zone, ex)
+        ex["session"] = got.get("session")
+        out = {"kind": "command", "say": got["say"], "done": [], "launch": [], "ok": got.get("ok", False), "acted": [],
+               "choices": [], "engine": {k: got.get(k) for k in ("tier", "effort", "autonomy", "deep")}}
+        out["usage"] = {k: (got.get("usage") or {}).get(k) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
+        if got.get("held"):
+            e = got["held"][0]
+            hold = eng.hold
+            out["say"] = (got["say"] + " " if got["say"] else "") + hold.say(e)
+            out["held"] = [{"id": h["id"], "what": h["what"], "where": h["where"]} for h in got["held"]]
+            out["choices"] = [{"label": "Run it", "request": "run held %s" % e["id"]}, {"label": "Cancel", "request": "cancel held %s" % e["id"]}]
+            out["kind"] = "clarify"
+        return out
+
+    def held_answer(self, what: str, hid: str) -> dict:
+        """The owner's yes or no to a held action: Run it runs it once, Cancel drops it."""
+        eng = engine_lib()
+        if what == "cancel":
+            return reply(eng.hold.cancel(hid))
+        return reply(eng.hold.run(hid, self.ws, lambda w, rec: eng.execute_held(w, rec)))
 
     def moves(self, zone: Optional[str]) -> bool:
         """Whether answering in `zone` leaves the zone the sessions were last
@@ -1865,7 +1949,7 @@ class Asker:
             name = spoken(names, a["zone"], a.get("project"), a.get("thread")) if a.get("project") else a["zone"]
             verb = item["verb"]
             label = ("Add to the %s Todo list: %s" % (a["zone"], item.get("text")) if verb == "todo-add"
-                     else "%s %s" % (verb.capitalize(), name))
+                     else "Note in %s" % name if verb == "note-add" else "%s %s" % (verb.capitalize(), name))
             out.append({"label": label, "act": {k: v for k, v in item.items() if k not in ("confirm", "op")}})
         return out
 

@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(21, html.count("</script>"))         # the Waiting on you now card's script, the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1733,7 +1733,7 @@ class TestSettingsLayout(StatusCase):
     for, and the one being read marked."""
 
     ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
-             "notify-settings", "memory-settings", "allowed-settings", "about-settings", "preview-settings"]
+             "notify-settings", "channels-settings", "memory-settings", "allowed-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
         html = self.page(**kw)
@@ -2473,7 +2473,7 @@ class TestJobs(StatusCase):
 
     def test_every_shipped_plist_says_what_its_job_does(self):
         shipped = sorted(REPO.joinpath("extras").rglob("*.plist"))
-        self.assertEqual(5, len(shipped))                       # the evening status build is the nightly's last step (#276)
+        self.assertEqual(7, len(shipped))                       # the evening status build is the nightly's last step (#276)
         for plist in shipped:
             with self.subTest(plist.name):
                 p = plistlib.loads(plist.read_bytes())

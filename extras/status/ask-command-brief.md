@@ -75,6 +75,13 @@ The actions, each an object:
 - {"verb": "todo-add", "zone": Z, "text": "...", "project": P (optional),
   "thread": T (optional), "date": "YYYY-MM-DD" (optional)}
   add a line to that zone's Todo list
+- {"verb": "note-add", "zone": Z, "project": P, "thread": T (when the project
+  has threads), "text": "...", "title": "..." (optional)}
+  file a note the user dictates to themselves, "note for Acme pricing:
+  Dana hinted the floor could move", under that thread. "text" is their words,
+  unedited, without the "note for ..." lead-in. When the request names no
+  place, or one that could be two, ask in "say" with "do" empty and "asks"
+  true; never guess a place for a note
 - {"verb": "new-thread", "zone": Z, "project": P, "name": N}
   make a thread in a project the list has
 - {"verb": "new-project", "zone": Z, "name": N, "party": "<tag>", "thread": T}

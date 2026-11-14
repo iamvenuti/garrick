@@ -14,10 +14,40 @@ Core never talks to a mail provider and holds no credentials. Everything on this
 | A recording | Its transcript (`.txt`, `.md` or `.vtt`) in `Wikis/Meetings/raw/inbox/` | Always a conversation, in Meetings |
 | Mail | `Zones/<Zone>/Inbox/`, as a `.eml` file, or saved as `.txt` or `.md` | A conversation in Meetings; something to read in Knowledge; or, for an attachment a project needs, that project's `Sources/`, with the mail itself kept in Meetings. A mail you say is itself material for a project goes whole into its `Sources/` |
 | Any other file | `Zones/<Zone>/Inbox/`: a PDF, a document, a spreadsheet, an article | Something to read in Knowledge, or material for a project in its `Sources/` |
+| A note to yourself | The workspace's `Inbox/`, written by a fetcher that checked the sender (see [notes to yourself](#notes-to-yourself)), or typed in the Ask box | A dated file in the thread's `Notes/` folder |
 
 The zone is the inbox you put it in, or, with one address for every zone (below), the zone its parties point to, which you confirm. Parties come from the mail domains in the Parties table of `System/context.md`, confirmed by you when they are unclear. Before anything goes into a project, the assistant is instructed to check the declared walls and refuse material from the other side. The [rules and commit checks have limits](../principles.md#what-the-check-covers); review filed material before using it. When it can't tell what something is, whose it is or which project it's for, it asks in one short line. Nothing in an inbox is ever committed.
 
 A mail is not saved into a project on its own: `intake.py file-to-project` refuses one, because a mail is a conversation first. Some mail never reaches the Meetings wiki, though, when the wiki's own rules keep it out, under an *Exclusions* section in `Wikis/Meetings/AGENTS.local.md`: personal mail, say, or mail in a language the wiki is not kept in. For such a mail the assistant asks, in the same one line, whether it is material for a project instead. If you say it is, `file-to-project --as-material` saves the mail itself into that project's `Sources/`, after the same zone, party and wall checks as any other file. A `.eml` saved that way gets one header at the top, `X-Garrick-Parties`, naming its parties, so the check can still test the walls without a Meetings page. The code never reads the exclusions and never decides that a mail is material: only your answer does.
+
+## Notes to yourself
+
+A thought about a piece of work comes up away from the desk. It is not a conversation (nobody else took part), not something to read (nobody published it) and not project material (nobody sent it), so intake has a fourth kind for it: a *note*.
+
+**From the Ask box.** Type "note for Acme pricing: Dana hinted the floor could move to 450". The note is filed at once as `Threads/Pricing/Notes/YYMMDD - <title>.md` under the thread (`<Project>/Notes/` for a project that is one thread), the box says *Noted in Acme, Pricing.*, and the zone's repository gets one commit. A line in it that reads as something you owe ("call Dana Friday", or one opening `todo:` or `remind me to`) also goes on that zone's `Todo.md`, with the note as its source. Nothing else is taken out of it. When the place does not settle to one thread, the box asks which, and never guesses.
+
+**From a Telegram chat.** [Garrick's Telegram receiver](telegram.md) is one such fetcher: a message that starts with `note` is saved in this form, with the chat's fixed id as its owner check, and never reaches the assistant.
+
+**From any fetcher.** A chat bot, a mail rule or a shortcut on a phone that has checked the item came from you writes it into the workspace's `Inbox/` as a Markdown file with this frontmatter:
+
+```yaml
+---
+kind: note
+via: telegram            # or mail, shortcut: for the record only
+from-owner: true         # the fetcher checked the sender
+destination: "Acme, pricing"   # optional, as you would say it
+date: 2026-11-14T08:12:00+01:00
+---
+<the note, unedited>
+```
+
+`intake.py list` shows it as `note`, and "process the inbox" files each note whose destination settles with no question, then asks once for the rest ("Where does the note about the pallet forecast go?"). A name close to two threads names both. The destination is settled as the spoken commands settle any name, against project and thread names, their spoken forms and the Aliases table, so a mangled name is handled the same everywhere.
+
+**The trust check is the fetcher's.** Garrick treats an item as a note only when it carries both `kind: note` and `from-owner: true`; without them it is an ordinary file, sorted as before. A fetcher sets `from-owner` only after checking the sender: a chat's fixed chat ID, or, for mail, SPF and DKIM passing together with your own address.
+
+**What a note can and cannot do.** It chooses only where its own text lands. It cannot run a command, write a rule, add a party or an alias, or send anything: its text is untrusted, like any other inbox item. A destination in two zones is refused, since a note is about one place. A note never edits a thread note or its *Resume here* block: it is input to the thread, not its state. When you open the thread, the reply names the notes since your last wrap in one line, and the wrap reads them and offers to fold in what they settle.
+
+`System/tools/check.py` warns about a note with no date in its name, or one outside a `Notes/` folder.
 
 Recordings have their own page: [a meeting recorder](meeting-recorder.md). The rest of this page is about mail.
 

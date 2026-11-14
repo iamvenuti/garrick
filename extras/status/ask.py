@@ -138,6 +138,9 @@ that way, and only the ones the request names. It answers with JSON
                cmux extra's desk ready (`dk`), cmux opens it as a tab that
                starts the session, as the page's buttons do
     park, wake run through page_action.perform(), as the page's buttons do:
+    note-add   a note to yourself ("note for Acme pricing: ..."): a dated file
+               in the thread's Notes/ folder, its actions on the zone's Todo
+               list, one commit (#569); the reply is *Noted in Acme, Pricing.*
     todo-add   the status field or the line, committed in the zone's
                repository, with the durable record the page's clicks keep,
                and, as any caller's action ends, the one request for the
@@ -318,7 +321,7 @@ REFILLED = "Started afresh at a wall. Your question is back in the box: check it
 REFILLED_ZONE = "Started afresh in another zone. Your question is back in the box: check it, then send it."
 APPS = ("claude", "codex", "cmux", "finder")
 AGENTS = ("claude", "codex")      # what a cmux tab can start: cmuxlib's AGENTS (#307)
-VERBS = ("open", "park", "wake", "todo-add", "new-project", "new-thread")
+VERBS = ("open", "park", "wake", "todo-add", "note-add", "new-project", "new-thread")
 # The app starts with a bare PATH; an assistant's command line usually lives in one of these.
 EXTRA_PATH = ("~/.local/bin", "/opt/homebrew/bin", "/usr/local/bin")
 
@@ -861,6 +864,23 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path, named=None) -> Tupl
             raise Bad("not a date: %r" % (date,))
         target = "-" if project is None else project if thread is None else "%s/%s" % (project, thread)
         return "act", {"verb": "todo-add", "zone": zone, "text": text.strip(), "target": target, "date": date}
+    if verb == "note-add":
+        text, title = a.get("text"), a.get("title")
+        if not isinstance(text, str) or not text.strip():
+            raise Bad("a note with no text")
+        if title is not None and (not isinstance(title, str) or len(title) > 200):
+            raise Bad("not a title for a note")
+        if project is None:             # a note is about one place: asked, never guessed
+            raise Needs("Where does the note about %s go? Name the project or the thread." % (" ".join(text.split()[:6])), [])
+        if thread is None and names[zone][project]["threads"]:
+            many = list(names[zone][project]["threads"])
+            raise Needs("Which thread of %s is the note about: %s?" % (project, ", ".join(many[:-1]) + " or " + many[-1] if len(many) > 1 else many[0]), [])
+        item = {"verb": "note-add", "zone": zone, "project": project, "text": text.strip()}
+        if thread is not None:
+            item["thread"] = thread
+        if title and title.strip():
+            item["title"] = " ".join(title.split())
+        return "act", item
     if project is None:
         raise Bad("%s names a project" % verb)
     if verb in ("park", "wake"):
@@ -1865,7 +1885,7 @@ class Asker:
             name = spoken(names, a["zone"], a.get("project"), a.get("thread")) if a.get("project") else a["zone"]
             verb = item["verb"]
             label = ("Add to the %s Todo list: %s" % (a["zone"], item.get("text")) if verb == "todo-add"
-                     else "%s %s" % (verb.capitalize(), name))
+                     else "Note in %s" % name if verb == "note-add" else "%s %s" % (verb.capitalize(), name))
             out.append({"label": label, "act": {k: v for k, v in item.items() if k not in ("confirm", "op")}})
         return out
 

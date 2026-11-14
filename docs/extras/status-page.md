@@ -387,7 +387,7 @@ The menu is filled from the page, so it holds what the last build found. Opening
 
 ### Ask
 
-The Ask box answers you. It is the one place that asks: the fields of the menu and the panel only find. Type "open Pricing in Claude", "park the launch video", "add call Dana to Acme for Friday" or "what's open", and press Return. The answer shows under the field, one sentence and what was done, and the box stays open for a follow-up such as "no, the other one". When the request opened something, the box hides and that app comes forward.
+The Ask box answers you. It is the one place that asks: the fields of the menu and the panel only find. Type "open Pricing in Claude", "park the launch video", "add call Dana to Acme for Friday", "note for Acme pricing: Dana hinted the floor could move to 450" or "what's open", and press Return. A note is filed at once, under the thread it names, and the reply is one line: *Noted in Acme, Pricing.* When the place does not settle to one thread, the box asks which, and the answer files it. See [notes to yourself](ways-in.md#notes-to-yourself). The answer shows under the field, one sentence and what was done, and the box stays open for a follow-up such as "no, the other one". When the request opened something, the box hides and that app comes forward.
 
 With Claude, Ask is one session that reads your records with tools Garrick serves and checks: [One session that reads with tools](#one-session-that-reads-with-tools) describes it, and it is on whenever `ask` is. With Codex, Ask runs the fixed pipeline of a command session and an answer session, which [Answers from your records](#answers-from-your-records) and the sections after it describe (its *Codex* bullet says what Codex answers).
 
@@ -506,6 +506,7 @@ Two more are the page's own wall buttons, for the Context queue's wall question 
 | `todo-undo` | Reopens a line ticked from the page, or several with `keys` |
 | `todo-date` | Sets or clears a line's date: `📅`, or `⏳` on a `#waiting` line |
 | `todo-add` | Writes a new line in a zone's `Todo.md`, and refuses one already there |
+| `note-add` | Files a note to yourself: a dated file in the thread's `Notes/` folder (a one-thread project's own), the actions it holds on that zone's `Todo.md`, one commit. The place is settled to one folder or the note is refused and asked about; the thread's note is never touched |
 | `park` | Sets a thread's `status:` to `parked`, with a dated entry, through `scaffold.py park`, and commits it in the zone; named by its project alone, the hub's, which parks every thread in it. A thread already set aside is refused |
 | `wake` | Sets it back to `active`, with a dated entry, through `scaffold.py wake` |
 | `new-project` | Makes a project with its first thread (*Getting started* when none is given) and no party when none is given, through `scaffold.py`, and commits it in the zone |

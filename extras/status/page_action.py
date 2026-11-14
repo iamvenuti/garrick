@@ -322,7 +322,7 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "walls-unallow", "walls-look", "walls-allow", "finding")
+         "walls-unallow", "walls-look", "walls-allow", "finding", "note-add")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -559,7 +559,7 @@ def audit(req, ok: bool, say: str, via: str = "page") -> None:
             parts.append("%s=%s" % (k, json.dumps(req[k], ensure_ascii=False)[:120]))
     for k in ("text", "prompt"):
         text = req.get(k)
-        if isinstance(text, str):
+        if isinstance(text, str) and req.get("verb") != "note-add":     # a note is the owner's own words: never logged
             parts.append("%s=%s" % (k, json.dumps(text[:LOGGED_TEXT] + ("…" if len(text) > LOGGED_TEXT else ""), ensure_ascii=False)))
     said = say.replace("\n", " ")
     said = said[:LOGGED_SAY] + ("…" if len(said) > LOGGED_SAY else "")
@@ -943,6 +943,57 @@ def todo_add(ws: Path, req: dict) -> str:
         said = tl.parse(line)["text"]
         commit(zone, note, before, ("%s: added to %s, %s" % (zone.name, section, said))[:200], wall=wall_refusal(ws))
     return "Added to %s: %s" % (section, said_text(said))
+
+
+_INTAKE = {}
+
+
+def intake_lib(ws: Path):
+    """The intake skill's script, the one place a note is written (#569): the workspace's own copy."""
+    path = ws / "System" / "skills" / "intake" / "intake.py"
+    if path not in _INTAKE:
+        if not path.is_file():
+            raise Refused("the intake skill is not installed here, so a note cannot be filed")
+        spec = importlib.util.spec_from_file_location("garrick_page_intake", str(path))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _INTAKE[path] = mod
+    return _INTAKE[path]
+
+
+def note_add(ws: Path, req: dict) -> str:
+    """A note to yourself, filed under the thread or project it is about (#569): a dated file in its Notes/ folder,
+    the actions it holds in that zone's Todo.md, and one commit in the zone's repository. The place is the request's
+    `zone`, `project` and `thread` (the ask box has checked them against the live list), or its `destination`, the
+    words the owner would say, settled as the spoken commands settle them. A destination that does not settle to
+    one folder is refused with the question to ask, and nothing is written. The thread's note is never touched."""
+    it = intake_lib(ws)
+    text, title = req.get("text"), req.get("title") or ""
+    if not isinstance(text, str) or not text.strip() or len(text) > it.BODY_LIMIT or not isinstance(title, str) or len(title) > 200:
+        raise Refused("not a note to file")
+    try:
+        if req.get("destination"):
+            if not isinstance(req["destination"], str) or len(req["destination"]) > 300 or req.get("zone") or req.get("project"):
+                raise Refused("name the place once: a destination, or a zone and a project")
+            place = it.resolve_destination(ws, req["destination"], text)
+        else:
+            if not isinstance(req.get("zone"), str) or not isinstance(req.get("project"), str) \
+                    or not (req.get("thread") is None or isinstance(req.get("thread"), str)):
+                raise Refused("a note needs a destination, or a zone and a project")
+            place = it.place_for(ws, req["zone"], req["project"], req.get("thread"))
+    except it.Refusal as e:
+        raise Refused(str(e))
+    zone = zone_dir(ws, place["zone"])
+    with zone_lock(zone):
+        try:
+            done = it.add_note(ws, place, text, title, via="ask")
+        except (it.Refusal, FileExistsError, OSError) as e:
+            raise Refused(str(e) if isinstance(e, it.Refusal) else "the note could not be written")
+        made = [(done["note"], None)]
+        if done["todo_file"] is not None:
+            made.append((done["todo_file"], done["before"]))
+        commit_all(zone, made, ("%s: note in %s" % (zone.name, place["said"]))[:200], wall=wall_refusal(ws))
+    return "Noted in %s." % place["said"]
 
 
 def park(ws: Path, req: dict, today: dt.date) -> str:
@@ -5234,6 +5285,8 @@ def act(ws: Path, req, today=None, now=None):
         return park(ws, req, today or dt.date.today())
     if req["verb"] == "todo-add":
         return todo_add(ws, req)
+    if req["verb"] == "note-add":
+        return note_add(ws, req)
     if req["verb"] == "answer":
         return answer_question(ws, req, today or dt.date.today())
     if req["verb"] == "later":
@@ -5276,7 +5329,7 @@ def act(ws: Path, req, today=None, now=None):
 # The verbs whose reply asks for the page to be built (#344): what a page, the
 # ask box or a session changes that the page shows. Every other verb leaves the
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
-PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread",
+PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "rename", "move", "delete", "undo")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")

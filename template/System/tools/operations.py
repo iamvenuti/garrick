@@ -190,6 +190,12 @@ DECLARED: Dict[str, Op] = {
     # The line it adds has no key yet: a line already in the note is refused
     # by the handler, which is that verb's own check.
     "todo-add": _op(("zone", "text", "target", "date", "confirm"), ("text", "target", "date"), "zone", True, "safe"),
+    # A note to yourself (#569): the text goes into a dated file under the thread or project it is about, its actions
+    # into that zone's Todo.md, one commit. The place is a `destination`, as the owner would say it, or the `zone`,
+    # `project` and `thread` the ask box has checked; the handler refuses one that does not settle to one folder.
+    # A second run writes a second note, so a retry is not safe.
+    "note-add": _op(("zone", "project", "thread", "destination", "text", "title"),
+                    ("project", "thread", "destination", "text"), "zone", True),
     # Declared, and nothing else: each of these keeps the validation it has.
     # They are here so that one table answers what a verb accepts, and so the
     # test that enumerates what the page sends has something to check against.

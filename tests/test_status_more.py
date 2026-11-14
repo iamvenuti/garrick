@@ -218,7 +218,7 @@ class TestJobsMore(StatusCase):
             self.beat(exit=5, **hb)
             html = self.page()
             self.assertNotIn("brief: exit 5", attention(html))
-            self.assertIn("ok, exit 5 is quiet", html)
+            self.assertIn("Exit 5 counts as fine for this job.", html)           # in the tooltip, never beside the pill
         self.beat(exit=5)
         with self.plists(brief={"GARRICK_QUIET_EXITS": "2, 5"}):
             self.assertNotIn("brief: exit 5", attention(self.page()))
@@ -227,7 +227,7 @@ class TestJobsMore(StatusCase):
     def test_a_run_that_called_no_assistant_is_said_not_raised(self):
         self.beat(no_call=True)
         html = self.page()
-        self.assertIn("ok, called no assistant", html)
+        self.assertIn("It called no assistant: there was nothing to do.", html)
         self.assertNotIn("brief", attention(html))
 
     def test_a_quiet_line_in_the_log_is_a_good_day(self):

@@ -3498,6 +3498,26 @@ def idle_limit(env: dict) -> float:
     return value if value >= 0 else 7.0
 
 
+def job_say(state: str, status: str, code: int) -> Tuple[str, str]:
+    """What a job's status cell says beside its pill, and its tooltip (#565). The pill already says
+    Fine, so a fine job says nothing: a quiet exit and a run that called no assistant go to the
+    tooltip. A failure says its reason once; a reason that only restates the code is `exit N`."""
+    if state == "good":
+        if status == "ok":
+            return "", ""
+        if status.startswith("ok, exit "):
+            return "", "Exit %d counts as fine for this job." % code
+        if status == "ok, called no assistant":
+            return "", "It called no assistant: there was nothing to do."
+    prefix = "exit %d: " % code
+    if state == "critical" and status.startswith(prefix):
+        reason = status[len(prefix):]
+        if reason in ("it exited with code %d" % code, "failed"):
+            return "exit %d" % code, ""
+        return reason, "Exit %d" % code
+    return status, ""
+
+
 def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None) -> List[dict]:
     """One row per heartbeat in the jobs folder. A run whose exit job.py
     calls fine (the heartbeat's `ok` or `quiet`), or whose code the plist
@@ -3572,7 +3592,9 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             steps = live
             if failed_steps(live):
                 state, status = "critical", "%s failed in the run under way" % failed_steps(live)
+        say, tip = job_say(state, status, code)
         out.append({"name": name, "when": when, "seconds": hb.get("seconds"), "state": state, "status": status,
+                    "say": say, "tip": tip,
                     "title": job_title(name, hb, env), "code": code, "since": failing_since(hb, when),
                     "reason": hb["reason"] if isinstance(hb.get("title"), str) and isinstance(hb.get("reason"), str) else "",
                     "schedule": words, "runs": history(folder, name, now, olds), "log": job_log(folder, name, olds),
@@ -3588,6 +3610,7 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = ("critical", "%s failed in the run under way" % failed_steps(live)) if failed_steps(live) \
                 else ("none", "not run yet")
             out.append({"name": name, "when": None, "seconds": None, "state": state, "status": status,
+                        "say": status, "tip": "",
                         "title": job_title(name, {}, plist.get("env", {})), "code": None, "since": None, "reason": "",
                         "schedule": plist["schedule"], "runs": history(folder, name, now, olds),
                         "log": job_log(folder, name, olds),
@@ -5551,7 +5574,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .chev{width:16px;height:16px;flex:none;color:var(--muted);transition:transform .15s}details[open]>summary .chev{transform:rotate(90deg)}
 .body{padding:0 16px 16px}.muted{color:var(--muted)}.ink2{color:var(--ink2)}.num{font-variant-numeric:tabular-nums}
 .row{display:grid;align-items:center;gap:12px;padding:8px 2px;border-top:1px solid var(--grid)}.rows>.row:first-child{border-top:0}
-.jobs .row{grid-template-columns:18px minmax(0,1fr) 180px 86px 140px}.jobs .row .status{overflow:hidden;text-overflow:ellipsis}
+.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px 300px}.jobs .row .status{min-width:0;overflow:hidden}.jobs .status .say{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .jgroup h3{margin:12px 0 2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted)}.jgroup:first-child h3{margin-top:0}.jgroup>h3+.row{border-top:0}
 .jname{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}.jname:hover{color:var(--accent)}
 .jobs .name small{overflow:hidden;text-overflow:ellipsis}.jobs .name small.about{color:var(--ink2)}
@@ -5947,7 +5970,7 @@ var m=document.createElement('span');m.textContent='This page is '+Math.round(h)
 var rb=document.createElement('button');rb.type='button';rb.className='act';rb.textContent='Refresh';rb.onclick=function(){var c=document.getElementById('rebuild');if(c)c.click()};s.appendChild(rb);
 var d=document.createElement('details');d.className='stdet';var sm=document.createElement('summary');sm.textContent='Details';d.appendChild(sm);
 var dp=document.createElement('p');dp.textContent='Built '+document.body.dataset.built+'. Refresh rebuilds it in the Mac app; in a browser it copies the command to run status.py again.';d.appendChild(dp);s.appendChild(d)}
-var tip=document.getElementById('tip');function show(e){var t=e.target.closest&&e.target.closest('[data-tip]');if(!t){tip.style.opacity=0;return}tip.textContent=t.dataset.tip;tip.style.opacity=1;
+var tip=document.getElementById('tip');function show(e){var t=e.target.closest&&e.target.closest('[data-tip]');if(!t||!t.dataset.tip){tip.style.opacity=0;return}tip.textContent=t.dataset.tip;tip.style.opacity=1;
 var r=t.getBoundingClientRect(),x=e.type==='focusin'?r.left+r.width/2:e.clientX,y=e.type==='focusin'?r.top:e.clientY,w=tip.offsetWidth;tip.style.left=Math.min(innerWidth-w-8,Math.max(8,x-w/2))+'px';tip.style.top=(y-tip.offsetHeight-12)+'px'}
 document.addEventListener('mousemove',show);document.addEventListener('focusin',show);document.addEventListener('scroll',function(){tip.style.opacity=0},true);
 var toast=document.getElementById('toast');function say(s){toast.textContent=s;toast.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){toast.style.opacity=0},2600)}
@@ -7526,7 +7549,7 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .st.good{color:var(--good);background:var(--good-wash)}.st.warn{color:var(--warning);background:var(--warning-wash)}
 .st.crit{color:var(--critical);background:var(--critical-wash)}.st.idle{color:var(--ink2);background:var(--sunk)}
 .item>.st{margin-left:auto}.chip .st{padding:0 8px 0 6px;margin-right:4px}
-.jobs .row{grid-template-columns:18px minmax(0,1fr) 180px 86px minmax(200px,auto)}
+.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px 300px}
 @media (max-width:820px){.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 /* the Overview's lead: one sentence, its reasons, one button */
@@ -7976,7 +7999,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         for i, j in enumerate(J):
             strip = "".join('<i class="%s" tabindex="0" data-tip="%s"></i>' % (s, E(t)) for s, t in day_cells(j["runs"], now, j["quiet"]))
             last = age(j["when"], now) if j["when"] else "never"
-            said = "running now" if j["running"] else j["status"]      # its lock is held: a run is under way
+            say, why = j["say"], j["tip"]
+            said = "running now" if j["running"] else say      # its lock is held: a run is under way
+            tip = "Last run: " + j["status"] if j["running"] else (
+                "%s (%s)" % (say, why) if why and len(say) > 28 else say if len(say) > 28 else why)   # clipped text stays readable
             ok = j["state"] in ("good", "none")
             about = '<small class="about" data-tip="%s">%s</small>' % (E(j["about"]), E(j["about"])) if j["about"] else ""
             # a job not run yet is neither fine nor wrong: a hollow mark, and out of "Only what needs attention"
@@ -7984,10 +8010,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             groups[j["garrick"]].append((ok,
                 '<div class="row" data-ok="%d">%s<div class="name"><button type="button" class="jname" aria-expanded="false" '
                 'aria-controls="jp-%d">%s</button>%s<small>%s</small></div><div class="strip">%s</div>'
-                '<div class="ink2 num"%s>%s</div><span class="status%s" data-tip="%s">%s%s</span></div>%s'
+                '<div class="ink2 num"%s>%s</div><span class="status%s"%s>%s%s</span></div>%s'
                 % (ok, ICON[j["state"]], i, E(j["name"]), about, E(j["schedule"]), strip,
                    ' data-tip="took %ss"' % E(str(j["seconds"])) if j["seconds"] is not None else "", E(last), " running" if j["running"] else "",
-                   E("Last run: " + j["status"]) if j["running"] else "", pill("late" if j["status"].startswith("late") else j["state"]), E(said) + (
+                   ' data-tip="%s"' % E(tip) if tip else "", pill("late" if j["status"].startswith("late") else j["state"]), ('<span class="say">%s</span>' % E(said) if said else "") + (
                        ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
                        % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
                        if acting and j["name"] in sched and not j["running"] else ""),

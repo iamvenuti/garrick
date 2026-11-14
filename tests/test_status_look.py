@@ -645,5 +645,63 @@ class Work(unittest.TestCase):
         self.assertEqual("Touched 6 days ago", status.touched_said(TODAY - dt.timedelta(days=6), TODAY))
 
 
+class JobRows(unittest.TestCase):
+    """A job's row keeps its name, and its status cell says each thing once (#565)."""
+
+    LONG = "exited 1 after 1498s; recall (exit 124) failed; " + "x" * 30
+
+    def rows(self, html):
+        block = html[html.index('<div class="rows jobs">'):]
+        return re.findall(r'<div class="row" data-ok="\d">.*?</span></div>', block, re.S)
+
+    def cells(self, html):
+        return [re.search(r'<span class="status[^"]*"[^>]*>(.*?)</span></div>', r, re.S) for r in self.rows(html)]
+
+    def test_an_eighty_character_reason_leaves_the_name_column_a_floor_and_the_status_column_a_fixed_width(self):
+        reason = "r" * 80
+        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": reason}})
+        css = html[html.index(".jobs .row{grid-template-columns:"):]
+        wide = re.findall(r"\.jobs \.row\{grid-template-columns:(18px [^}]*86px[^}]*)\}", html)
+        self.assertTrue(wide)
+        for cols in wide:
+            self.assertIn("minmax(160px,1fr)", cols)            # the name never shrinks to nothing
+            self.assertNotIn("auto", cols)                      # the last column has no open end: every row has the same tracks
+        row = next(r for r in self.rows(html) if "gr-nightly" in r)
+        self.assertIn(">gr-nightly</button>", row)
+        self.assertIn('<span class="say">%s</span>' % reason, row)   # the whole reason is in the page, clipped by the style
+        self.assertIn(".jobs .status .say{min-width:0;overflow:hidden;text-overflow:ellipsis", css)
+
+    def test_a_fine_job_shows_the_pill_alone_and_no_row_says_ok_beside_fine(self):
+        html = build_with_beats({"gr-ok": {"exit": 0, "ok": True},
+                                 "gr-quiet": {"exit": 6, "ok": True, "quiet": True},
+                                 "gr-idle": {"exit": 0, "ok": True, "no_call": True}})
+        for r in self.rows(html):
+            self.assertIn("Fine", r)
+            self.assertNotRegex(r, r">\s*ok[,<\s]")
+            self.assertNotIn("is quiet", re.sub(r'data-tip="[^"]*"', "", r))
+            self.assertNotIn("called no assistant", re.sub(r'data-tip="[^"]*"', "", r))
+        quiet = next(r for r in self.rows(html) if "gr-quiet" in r)
+        self.assertIn('data-tip="Exit 6 counts as fine for this job."', quiet)
+
+    def test_a_failure_says_its_reason_once_and_the_code_goes_to_the_tooltip(self):
+        html = build_with_beats({"gr-a": {"exit": 1}, "gr-b": {"exit": 124, "reason": "Recall timed out"},
+                                 "gr-c": {"exit": 1, "reason": "it exited with code 1"}})
+        cells = dict(zip(("gr-a", "gr-b", "gr-c"), [c.group(1) for c in self.cells(html)]))
+        for name, cell in cells.items():
+            text = re.sub(r"<[^>]+>", " ", cell)
+            self.assertLessEqual(len(re.findall(r"\b(?:exit )?1\b" if name != "gr-b" else r"\b124\b", text)), 1, text)
+            self.assertNotRegex(text, r"exit \d+:")
+        self.assertIn('<span class="say">exit 1</span>', cells["gr-a"])
+        self.assertIn('<span class="say">exit 1</span>', cells["gr-c"])
+        self.assertIn('<span class="say">Recall timed out</span>', cells["gr-b"])
+        row = next(r for r in self.rows(html) if "gr-b" in r)
+        self.assertIn('data-tip="Exit 124"', row)
+
+    def test_no_empty_tooltip_is_written_and_the_script_skips_one(self):
+        html = build_with_beats({"gr-ok": {"exit": 0, "ok": True}, "gr-bad": {"exit": 1}})
+        self.assertNotIn('data-tip=""', html)
+        self.assertIn("if(!t||!t.dataset.tip){tip.style.opacity=0;return}", html)
+
+
 if __name__ == "__main__":
     unittest.main()

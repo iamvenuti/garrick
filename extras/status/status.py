@@ -2409,7 +2409,7 @@ TODO_CSS = r"""
 .trow.done .tick::after{content:"";width:9px;height:5px;border-left:2px solid var(--accent-ink);border-bottom:2px solid var(--accent-ink);transform:translateY(-1px) rotate(-45deg)}
 .trow.done .ttext{text-decoration:line-through;color:var(--muted)}.trow.done .thr{color:var(--muted)}
 .ttext{font-size:var(--fs-body);line-height:1.45;overflow-wrap:anywhere}
-.ttext code{font:var(--fs-meta) ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--wash);padding:0 3px;border-radius:4px}
+.ttext code{font:var(--fs-meta) var(--sans);background:var(--wash);padding:0 3px;border-radius:4px}
 .thr{display:inline-block;font-size:var(--fs-meta);font-weight:620;color:var(--accent);margin-right:7px;white-space:nowrap}.thr.unsure{color:var(--muted);font-weight:500}
 .tmeta{display:flex;flex-wrap:wrap;gap:3px 12px;margin-top:3px;font-size:var(--fs-meta);color:var(--muted)}
 .tmeta .prio{color:var(--critical)}.tmeta .moved{color:var(--accent);font-weight:560}
@@ -5503,7 +5503,7 @@ def act_button(req: str, label: str, say: str, cls: str = "act", extra: str = ""
 # --------------------------------------------------------------------------- the page
 
 CSS = r"""
-:root{color-scheme:light;--fs-meta:13px;--fs-sub:14px;--fs-body:15px;--fs-h3:17px;--fs-h2:20px;--fs-h1:38px;--display:"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif;--sans:"Plus Jakarta Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+:root{color-scheme:light;--fs-meta:13px;--fs-sub:14px;--fs-body:15px;--fs-h3:17px;--fs-h2:20px;--fs-h1:38px;--sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
 --page:#f4f2ed;--side:#ecebe6;--surface:#fbfaf7;--raise:#fff;--sunk:#efede7;--ink:#16150f;--ink2:#45443f;--muted:#6b6963;
 --line:rgba(22,21,15,.10);--line2:rgba(22,21,15,.18);--grid:#e4e1d9;--base:#b9b5aa;--accent:#2f5fc4;--accent-ink:#fff;--track:#d3ddf3;--wash:rgba(47,95,196,.09);
 --good:#1d7a3a;--good-wash:rgba(29,122,58,.10);--warning:#9a5b00;--warning-wash:rgba(196,128,10,.13);--critical:#b42f2f;--critical-wash:rgba(180,47,47,.10);--none:#e6e3dc;
@@ -5530,7 +5530,7 @@ main{padding:22px 30px 80px;min-width:0}
 a.go{color:inherit;text-decoration:none;cursor:pointer;display:block}a.go:hover{border-color:var(--base)}
 .hero,.tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);min-width:0}
 .hero{display:flex;flex-direction:column;justify-content:space-between}
-.hero .fig{font:600 var(--fs-h1)/1 var(--display);letter-spacing:-.01em;display:flex;align-items:center;gap:12px}.hero .fig svg{width:28px;height:28px}
+.hero .fig{font:600 var(--fs-h1)/1 var(--sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;display:flex;align-items:center;gap:12px}.hero .fig svg{width:28px;height:28px}
 .hero .lbl,.tile .lbl{color:var(--ink2);font-size:var(--fs-meta)}.hero .lbl{font-size:var(--fs-sub);margin-top:6px}
 .tile .val{font-size:var(--fs-h2);font-weight:620;letter-spacing:-.02em;margin:4px 0 8px;display:flex;align-items:baseline;gap:8px}
 .tile .val small{font-size:var(--fs-meta);font-weight:500;color:var(--muted)}.tile .sub{font-size:var(--fs-meta);color:var(--muted);margin-top:6px}
@@ -5552,7 +5552,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .jpanel{margin:0 0 8px 30px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--raise);font-size:var(--fs-meta)}
 .jpanel p{margin:0 0 6px}.jpanel dl{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;margin:0}.jpanel dt{color:var(--muted)}.jpanel dd{margin:0}
 .jpanel h4{margin:8px 0 2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted)}.jpanel ul{margin:0;padding-left:18px}
-.jpanel pre{margin:0;max-height:240px;overflow:auto;font:var(--fs-meta)/1.4 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.jpanel pre{margin:0;max-height:240px;overflow:auto;font:var(--fs-meta)/1.4 var(--sans);white-space:pre-wrap;overflow-wrap:anywhere}
 .row>svg,.item>svg{width:16px;height:16px}
 .name{font-weight:560;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.name small{display:block;font-weight:400;color:var(--muted);font-size:var(--fs-meta)}
 .strip{display:flex;gap:2px}.strip i{width:11px;height:18px;border-radius:3px;background:var(--none);flex:none}
@@ -6673,7 +6673,7 @@ dialog.nview::backdrop{background:rgba(0,0,0,.32)}
 .nv-body>:not(.gd-table){max-width:70ch}
 .nv-body h1{font:700 var(--fs-h2)/1.2 var(--sans);margin:18px 0 12px}.nv-body h2{font:700 var(--fs-h2)/1.25 var(--sans);margin:24px 0 8px}
 .nv-body h3{font-size:var(--fs-h3);margin:20px 0 6px}.nv-body :is(h4,h5,h6){font-size:var(--fs-body);margin:16px 0 4px}
-.nv-body code{font:var(--fs-meta)/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--raise);border:1px solid var(--line);border-radius:4px;padding:0 4px}
+.nv-body code{font:var(--fs-meta)/1.4 var(--sans);background:var(--raise);border:1px solid var(--line);border-radius:4px;padding:0 4px}
 .nv-body pre{background:var(--raise);border:1px solid var(--line);border-radius:10px;padding:12px 14px;overflow:auto}
 .nv-body pre code{border:0;padding:0;background:none;white-space:pre}
 .nv-body blockquote{margin:12px 0;padding:2px 16px;border-left:3px solid var(--accent);color:var(--ink2);background:var(--wash);border-radius:0 8px 8px 0}
@@ -7480,36 +7480,10 @@ window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data
 """
 
 
-# ---- The look (#551): the font, and the rules that come last ---------------------------
-# Plus Jakarta Sans (SIL OFL 1.1), Latin subset, three weights, kept in fonts/ beside this file and
-# embedded in the page as data: URLs, so the page never asks the network for a font. A copy of this
-# folder without fonts/ draws in the system's own sans-serif.
-FONT_FILES = (("PlusJakartaSans-Regular.woff2", 400), ("PlusJakartaSans-SemiBold.woff2", 600), ("PlusJakartaSans-Bold.woff2", 700))
-_FONT_CSS: Optional[str] = None
-
-
-def font_css(folder: Optional[Path] = None) -> str:
-    """The @font-face rules, each file embedded; "" where a file is missing or does not read, so the page
-    keeps the system-ui stack of --sans instead of a half-embedded face."""
-    global _FONT_CSS
-    if folder is None and _FONT_CSS is not None:
-        return _FONT_CSS
-    import base64
-    where = folder or Path(__file__).resolve().parent / "fonts"
-    rules = []
-    try:
-        for name, weight in FONT_FILES:
-            data = base64.b64encode((where / name).read_bytes()).decode("ascii")
-            rules.append('@font-face{font-family:"Plus Jakarta Sans";font-style:normal;font-weight:%d;font-display:swap;'
-                         'src:url(data:font/woff2;base64,%s) format("woff2")}' % (weight, data))
-    except OSError:
-        rules = []
-    out = "\n".join(rules) + "\n" if rules else ""
-    if folder is None:
-        _FONT_CSS = out
-    return out
-
-
+# ---- The look (#551): one type family, and the rules that come last --------------------
+# One family for everything: the system's own sans-serif, as --sans says. No font file travels with the page and the
+# page asks the network for none. Big numbers use it at weight 600 with tabular figures. Monospace is for the code
+# blocks of the Guide only (guide.py).
 # The type scale (#560): the tokens on :root. Every font-size on the page is one of them. A px size a block of CSS
 # still holds (questions_panel.py's, which is not this file's to change) is mapped to the nearest token here.
 FS_TOKENS = {13: "meta", 14: "sub", 15: "body", 17: "h3", 20: "h2", 38: "h1"}
@@ -7528,7 +7502,7 @@ def fs_scale(css: str) -> str:
 # Last in the page's CSS, so each rule here settles what the blocks before it say at the same weight.
 LOOK_CSS = r"""
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.hero .fig,.tile .val{font-family:var(--display)}
+.hero .fig,.tile .val{font-family:var(--sans);font-weight:600;font-variant-numeric:tabular-nums}
 .hero .lbl,.tile .lbl,.tile .sub,.hint,.head .meta,.name small,.thread .t small,.tmeta,th,.legend{font-size:var(--fs-meta)}
 button.act,a.act,.tabs button,.seg button,.cog,.gbar button,.gbar .gfind,.gzsel,.switch,.zbtn,.moveto button{min-height:40px}
 button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
@@ -8207,7 +8181,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
-                E(NAME), favicon(), font_css() + CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
+                E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else "") + LOOK_CSS,
                 now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS, allowed) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))

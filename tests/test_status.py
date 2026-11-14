@@ -2682,15 +2682,14 @@ class TestNameAndMark(StatusCase):
         self.assertNotIn("<style>", icon)                   # sips draws it without a stylesheet
         self.assertIn("mod.app_icon()", (Path(status.__file__).parent / "app" / "make-app.sh").read_text())
 
-    def test_display_face_for_big_numbers_and_sans_for_the_rest(self):
-        # The Baskerville stack stays, from fonts already on the machine, for the big numbers; the headings take the sans (#551).
-        stack = '"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif'
-        self.assertIn("--display:%s;" % stack, status.CSS)
-        self.assertIn("var(--display", re.search(r"\.hero \.fig\{[^}]*", status.CSS).group(0))
+    def test_one_sans_for_the_numbers_and_the_headings_alike(self):
+        # The page has one family: the system's sans, from --sans. No serif display face and no font file (#560).
+        self.assertNotIn("--display", status.CSS)
+        self.assertIn("var(--sans)", re.search(r"\.hero \.fig\{[^}]*", status.CSS).group(0))
         for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*"):
             self.assertIn("var(--sans)", re.search(rule, status.CSS + status.BAR_CSS).group(0))
         self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:var(--fs-body)/1.55 var(--sans)', status.CSS)
-        self.assertNotIn("@font-face", status.CSS)           # the faces are embedded by font_css(), not written in the block
+        self.assertNotIn("@font-face", status.CSS)
         self.assertNotIn("url(", status.CSS)
 
     def test_accent_is_readable_in_both_themes(self):

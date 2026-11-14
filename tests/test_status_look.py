@@ -197,7 +197,7 @@ class Page(unittest.TestCase):
         self.assertNotIn("px", status.fs_scale(status.questions_mod().CX_CSS).split("font-size:")[1].split(";")[0])
 
     def test_the_big_number_is_the_h1_token(self):
-        self.assertIn("font:600 var(--fs-h1)/1 var(--display)", status.CSS)
+        self.assertIn("font:600 var(--fs-h1)/1 var(--sans)", status.CSS)
 
     def test_other_modules_css_has_none_under_13_either(self):
         for name in ("finding_queue.py", "guide.py", "questions_panel.py", "your_work.py"):
@@ -230,10 +230,11 @@ class Page(unittest.TestCase):
         self.assertRegex(html, r'<span class="tsum-acts"><button type="button" class="act primary tadd-open"[^>]*>＋ Add</button></span>')
         self.assertNotIn("Open Todo.md", page_html())
 
-    def test_the_font_is_embedded_and_nothing_is_fetched(self):
+    def test_no_font_travels_with_the_page_and_nothing_is_fetched(self):
         css = self.css()
-        self.assertEqual(3, len(re.findall(r"@font-face\{font-family:\"Plus Jakarta Sans\"", css)))
-        self.assertEqual(3, len(re.findall(r"src:url\(data:font/woff2;base64,", css)))
+        self.assertNotIn("@font-face", css)
+        self.assertNotIn("data:font", self.html)
+        self.assertNotIn("woff", self.html)
         self.assertIn("system-ui", css)
         # no stylesheet, font, script or image is asked of the network: every http(s) address is a link the reader follows
         self.assertNotRegex(self.html, r"<link[^>]+(?:href|src)=[\"']https?:")
@@ -242,22 +243,32 @@ class Page(unittest.TestCase):
         self.assertNotRegex(css, r"@import")
         self.assertNotIn("fonts.googleapis", self.html)
 
-    def test_the_font_files_are_vendored_with_their_licence(self):
-        fonts = HERE / "fonts"
-        for name, _ in status.FONT_FILES:
-            self.assertTrue((fonts / name).is_file(), name)
-        self.assertIn("SIL OPEN FONT LICENSE", (fonts / "OFL.txt").read_text(encoding="utf-8"))
-        self.assertLess(sum((fonts / n).stat().st_size for n, _ in status.FONT_FILES), 120 * 1024)
+    def test_the_font_files_and_their_builder_are_gone(self):
+        self.assertFalse((HERE / "fonts").exists())
+        self.assertFalse(hasattr(status, "font_css"))
+        self.assertFalse(hasattr(status, "FONT_FILES"))
+        self.assertNotIn("Jakarta", self.html)
 
-    def test_without_the_files_the_page_keeps_the_system_font(self):
-        with tempfile.TemporaryDirectory() as empty:
-            self.assertEqual("", status.font_css(Path(empty)))
-        self.assertIn('--sans:"Plus Jakarta Sans",system-ui', status.CSS)
-
-    def test_the_display_face_stays_for_big_numbers_only(self):
+    def test_one_family_in_the_built_page_besides_the_guides_code(self):
         css = self.css()
-        users = [m.strip().split("}")[-1].strip() for m in re.findall(r"([^{}]*)\{[^{}]*var\(--display\)", css)]
-        self.assertEqual([".hero .fig", ".hero .fig,.tile .val"], [u for u in users if u])
+        self.assertEqual('system-ui,-apple-system,"Segoe UI",Roboto,sans-serif', tokens(css, "light")["--sans"])
+        families = re.findall(r"(?<![-\w])font-family:\s*([^;}\"']+)", css)
+        families += re.findall(r"(?<![-\w])font:[^;}\"']*?var\(--fs-[a-z0-9]+\)(?:/[0-9.]+)?\s+([^;}\"']+)", css)
+        self.assertTrue(families)
+        for family in families:
+            if "monospace" in family:
+                continue                                                                        # the Guide's code, checked below
+            self.assertEqual("var(--sans)", family.strip())
+        guide = status.guide_mod().GUIDE_CSS
+        self.assertEqual(1, guide.count("ui-monospace"))
+        self.assertEqual(1, css.count("ui-monospace"))                                          # and nowhere else on the page
+        self.assertEqual(1, len(re.findall(r"\.gd-page code\{[^}]*monospace", css)))
+        self.assertNotRegex(re.sub(r"sans-serif", "", css), r"(?i)\bserif\b|Georgia|Baskerville")   # no serif
+
+    def test_big_numbers_are_the_sans_at_600_with_tabular_figures(self):
+        css = self.css()
+        self.assertNotIn("--display", css)
+        self.assertIn(".hero .fig,.tile .val{font-family:var(--sans);font-weight:600;font-variant-numeric:tabular-nums}", css)
 
     def test_every_control_has_a_visible_focus_ring_and_a_40px_target(self):
         look = status.LOOK_CSS

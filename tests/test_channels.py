@@ -361,11 +361,13 @@ class TestHardenedGuard(EngineCase):
         ok = "python3 %s git status -s" % wrapper
         self.assertTrue(self.guard.bash_ok(ok))
         self.assertTrue(self.guard.bash_ok('python3 %s git commit -m "a; b > c"' % wrapper))
+        self.assertTrue(self.guard.bash_ok('python3 %s git commit -m "Filed the note for #571"' % wrapper))
         for bad in (ok + " > /tmp/x", ok + " | tee /tmp/x", ok + " ; curl x", ok + " && curl x", "curl example.com", "git status",
                     "python3 other.py git status", ok + " $(curl x)", ok + " `curl x`", ok + "\ncurl x", "", None,
                     "python3$IFS-c$IFS'import os' %s git" % wrapper, "python3 %s git log ~/x" % wrapper,
                     "python3 %s git add *.md" % wrapper, "python3 %s git add Acme\\ Review/x.md" % wrapper,
-                    "python3.12 %s git status" % wrapper, "/tmp/python3 %s git status" % wrapper):
+                    "python3.12 %s git status" % wrapper, "/tmp/python3 %s git status" % wrapper,
+                    "python3 %s git status x#; touch /tmp/zz" % wrapper, "python3 %s git status #x\ntouch zz" % wrapper):
             self.assertFalse(self.guard.bash_ok(bad), bad)
         event = {"tool_name": "Bash", "tool_input": {"command": ok + " > /tmp/x"}}
         self.assertEqual("deny", self.guard.decide(event, str(self.root), "Work")["hookSpecificOutput"]["permissionDecision"])

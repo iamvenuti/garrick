@@ -2564,6 +2564,19 @@ class TestJobs(StatusCase):
         self.assertEqual(("critical", "nightly.local (exit 2) failed in the run under way"), (row["state"], row["status"]))
         self.assertIn("gr-nightly: nightly.local (exit 2) failed in the run under way", self.attention(html))
 
+    def test_a_calls_cost_cell_is_never_0_when_the_cost_is_not_known(self):
+        """#566: no cost recorded reads `unknown`; an estimate carries a tilde; a known cost is as it was."""
+        self.ledger({"job": "gr-nightly", "exit": 124, "cost_usd": None}, {"job": "digest", "exit": 124, "cost_usd": 1.5, "estimated": True},
+                    {"job": "brief", "exit": 0, "cost_usd": 0.5}, {"job": "mixed", "exit": 0, "cost_usd": 0.5}, {"job": "mixed", "exit": 124})
+        with self.plists():
+            L = status.ledger(status.load_agent(self.root), self.jobs, self.now)
+        self.assertEqual({"gr-nightly": "unknown", "digest": "~$1.50", "brief": "$0.50", "mixed": "$0.50 + 1 unknown"},
+                         {k: status.call_cost(v) for k, v in L["by"].items()})
+        with self.plists():
+            html = self.page()
+        self.assertIn('<td class="r">unknown</td>', html)
+        self.assertIn('<td class="r">~$1.50</td>', html)
+
     def test_a_renamed_jobs_calls_count_under_its_new_name(self):
         self.ledger({"job": "todo-sweep", "cost_usd": 0.5, "exit": 0}, {"job": "gr-todo-sweep", "cost_usd": 0.25, "exit": 0})
         sweep = {"ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "gr-todo-sweep", "--agent", "--", "true"],

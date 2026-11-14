@@ -82,8 +82,9 @@ STATUS = HERE.parent / "status"            # System/status beside System/jobs, a
 LOCAL = ("System", "jobs", "nightly.local")
 # Seconds each step may take. Their sum stays MARGIN under the plist's --timeout 3600, so that a slow night is ended by a step's own
 # limit and never by the job's watchdog stopping the step that is left (a test holds it). Recall's is short because its extract reads
-# only the transcripts that are new (#558); effort keeps 300, since 600 would not fit under the margin.
-LIMITS = {"hooks": 30, "nurture": 1500, "answers": 390, "effort": 300, "recall": 180, "nightly.local": 600, "status": 480}
+# only the transcripts that are new (#558); effort keeps 300, since 600 would not fit under the margin. Answers has 480: one assistant call is given the step's limit less 20
+# seconds, and the one call of the first night of 0.68.0 was stopped at 360 (#566); nurture gave up the 90 seconds, and its partial runs go on next night.
+LIMITS = {"hooks": 30, "nurture": 1410, "answers": 480, "effort": 300, "recall": 180, "nightly.local": 600, "status": 480}
 MARGIN = 120
 # Seconds of the recall step kept for bringing the search indexes up to date: its extract stops that long before the step's limit.
 RECALL_BUILD = 60

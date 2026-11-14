@@ -423,9 +423,23 @@ def ledger_entry(now: float, job: str, tier: str, outcome: dict, seconds: float,
         "subtype": outcome.get("subtype"),
         "model": outcome.get("model"),
     }
+    if outcome.get("estimated"):
+        entry["estimated"] = True
     if refused:
         entry["refused"] = refused
     return entry
+
+
+# What a Claude call that was stopped at its time limit is taken to have spent, in dollars a second at list prices, by tier: about
+# what a busy call of that tier costs. It is an estimate and the ledger marks it `estimated`; it stands in for the cost the call never
+# got to report, so that no stopped call counts as free. The call's own budget caps it.
+ESTIMATE_PER_SECOND = {"haiku": 0.004, "sonnet": 0.012, "opus": 0.06}
+
+
+def estimated_cost(tier: str, seconds: float, budget: float = DEFAULT_MAX_CALL_USD) -> float:
+    """An estimate for a call stopped before it reported its cost: its seconds at the tier's rate, never above its budget."""
+    cost = max(0.0, seconds) * ESTIMATE_PER_SECOND.get(tier, ESTIMATE_PER_SECOND["opus"])
+    return round(min(cost, budget) if budget and budget > 0 else cost, 4)
 
 
 # --------------------------------------------------------------------------- one call
@@ -637,6 +651,10 @@ def run(tier: str, prompt: str, allow: Iterable[str] = (), cwd: Optional[Path] =
             code = EXIT_CAP
         if code == EXIT_TIMEOUT and timeout:
             print("agent: the call was stopped after %gs (--timeout)" % timeout, file=sys.stderr)
+            if outcome.get("cost_usd") is None:
+                # Stopped before the final result, so the call never said what it spent: an estimate, marked, never null.
+                outcome["cost_usd"] = estimated_cost(tier, time.time() - start, _number("GARRICK_MAX_CALL_USD", DEFAULT_MAX_CALL_USD))
+                outcome["estimated"] = True
     else:
         # Codex prints the whole run, prompt included. A job greps its answer for
         # sentinel lines the prompt also contains, so it gets the final message

@@ -4,6 +4,36 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.69.0] - 2026-11-14
+
+Ask now does the work you ask for, and it asks you before it sends, shares or deletes anything. Telegram becomes a private channel to your threads. Notes you write to yourself are filed under the thread they name, and a new hourly step can file them for you. On the status page, a job row keeps its name, the *Assistant calls* table fits its card, and a stopped call no longer shows as free.
+
+**Upgrading.**
+- Ask now acts on what you ask, at the Act level. It edits notes, files the inbox, ticks Todo lines and commits, the way a session in your assistant would. Before it sends, shares or deletes anything, it shows you what and where, with *Run it* and *Cancel*. To go back to answers only, set Ask to Read in Settings › Channels.
+- The Telegram channel is off until you run its setup. Bot chats on Telegram are not end-to-end encrypted, so once the channel is on, an answer from a walled zone is held on Telegram's servers. Setup says so and asks you to accept it.
+- If your workspace already reads a Telegram bot or fetches notes to yourself with a script of its own, retire that script before you turn Garrick's on. Garrick's receiver will not start while another program reads the same bot, and it tells you which one it found.
+- The hourly note step, `gr-notes`, is off until you load its plist, like the other jobs.
+
+### Added
+
+- **Ask and Telegram run on one engine** (#571). Each channel has its own model size, effort and level in Settings › Channels, kept in `garrick-settings.json` as `channels.ask` and `channels.telegram`. The defaults are `sonnet`, medium effort and Act. At Read it only answers. At Act it does what git can undo. Full also sends without asking, and only Ask offers it. Start a message with `deep:` and that one request runs on `opus` at high effort, while your settings stay as they are.
+- **Held actions** (#571). At Act the session has no open shell and no tool that sends, shares or deletes. It has one tool, `hold`, which queues the action with what it would do and where it would go. The action runs only after your yes, and a queued action expires after 24 hours. Settings lists the queued actions until then. A note or a mail that says "forward this" can at most queue an action that you see and can refuse.
+- **Walls at Act** (#571). The engine gives each session its own guard, bound to the zone of the exchange. The guard refuses a write anywhere else, except a wiki or the workspace's `Inbox/`. If the guard cannot load, the channel drops to Read, and Settings names the check that failed.
+- **The Telegram channel** (#570). This is one private chat for all your threads. Every reply opens with its thread's name. A reply to one of the bot's messages continues that exchange. A message that names no thread continues the open one, and if no exchange is open the bot asks "Which thread?". Code sorts every message, and no model call decides where one goes. A session lasts at most two hours from its start, and a new one starts from the saved state, never from the chat history. A queued send runs when you reply `yes` to the bot's message about it, and a `yes` anywhere else runs nothing. Garrick's code delivers each answer, and only to your paired chat. The receiver is a service that restarts after a crash, and the status page shows whether it is running and when it last received a message. While idle it makes no model call. The channel handles text only: voice, photos and stickers are ignored.
+- **Notes to yourself** (#569). Type "note for Acme pricing: …" in the Ask box, or start a Telegram message with `note`, and it is filed in that thread's `Notes/` folder as a dated file. The actions it holds go on the zone's `Todo.md`, with the note as their source. A destination that does not settle is asked about, never guessed. A fetcher can drop a note in an inbox with `kind: note` and `from-owner: true`, and intake files it as a note. A note never edits a thread note. `check.py` warns about a note with no date in its name, or one outside a `Notes/` folder.
+- **Notes filed hourly** (#572). The new `gr-notes` job, or `intake.py process-notes` from your own scheduler, files the notes waiting in the inboxes. A clear decision updates the thread's *Resume here* block and links the note. A tentative idea is kept for your review. Code finds the notes and makes every write. The assistant only reads them and has no tools. An empty queue makes no call, and a retry never files a note twice.
+
+### Changed
+
+- **A job row keeps its name** (#565). The name column has a floor and the status column a ceiling, so a long reason wraps or clips, with the full text in the tooltip. The columns line up from row to row. A job that ran fine shows its pill alone. A failure says its reason once, and the exit code goes to the tooltip.
+- **The *Assistant calls* table fits its card** (#568). Each refused tool is one line: its short name, in how many of the job's calls it was refused, and why. Only a tool on the deny list shows red, with an icon so the colour is not alone. *Failed* and *Capped* now come before *Refused tools*.
+- **The todo sweep needs no shell** (#567). It finds the Meetings pages and the *Next action* rows itself and hands them to the assistant. A scheduled job that finishes but had a tool refused now shows a warning with the reason, not *Fine*.
+- The nightly *answers* step gets 8 minutes and *nurture* 23 and a half. The steps still add up to less than the job's hour.
+
+### Fixed
+
+- **A call stopped at its time limit is no longer free** (#566). The step fails with `answers exit 124`. The call is recorded with an estimated cost, marked as an estimate, and the daily cost cap counts it. The *Assistant calls* card shows `unknown`, or the estimate with a tilde, never `$0.00`.
+
 ## [0.68.0] - 2026-11-14
 
 *Check for updates* asks before it updates. The nightly recall step reads only what is new, so it stops timing out. The Overview says what needs you in plain words. The status page uses one font and a larger type scale. The Guide no longer shows wall commands: Settings › Walls shows each zone's state.

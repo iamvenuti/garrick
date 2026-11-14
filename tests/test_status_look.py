@@ -153,6 +153,9 @@ class Page(unittest.TestCase):
     def css(self):
         return "\n".join(re.findall(r"<style>(.*?)</style>", self.html, re.S))
 
+    def test_form_controls_take_the_pages_font_family(self):
+        self.assertIn("button,input,select,textarea{font-family:inherit}", self.css())
+
     SCALE = {"meta": 13, "sub": 14, "body": 15, "h3": 17, "h2": 20, "h1": 38}
 
     def sizes(self, css):
@@ -258,7 +261,7 @@ class Page(unittest.TestCase):
         for family in families:
             if "monospace" in family:
                 continue                                                                        # the Guide's code, checked below
-            self.assertEqual("var(--sans)", family.strip())
+            self.assertIn(family.strip(), ("var(--sans)", "inherit"))                   # inherit: the base rule for form controls
         guide = status.guide_mod().GUIDE_CSS
         self.assertEqual(1, guide.count("ui-monospace"))
         self.assertEqual(1, css.count("ui-monospace"))                                          # and nowhere else on the page

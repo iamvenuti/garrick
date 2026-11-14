@@ -5520,6 +5520,7 @@ CSS = r"""
 --ink:#f3f1ec;--ink2:#cfccc4;--muted:#a29f97;--line:rgba(255,255,255,.09);--line2:rgba(255,255,255,.16);--grid:#2c2c2a;--base:#44443f;--accent:#7ea3ee;--accent-ink:#0f0f0e;--track:#1f3568;--wash:rgba(126,163,238,.13);
 --good:#6fcf8a;--good-wash:rgba(111,207,138,.12);--warning:#e8a93a;--warning-wash:rgba(232,169,58,.13);--critical:#f08a8a;--critical-wash:rgba(240,138,138,.12);--none:#2a2a28;--shadow:none;--mark-ink:#f5f0e6;--mark-blue:#8eb1f5}
 *{box-sizing:border-box}html{scroll-behavior:smooth}
+button,input,select,textarea{font-family:inherit}
 body{margin:0;background:var(--page);color:var(--ink);font:var(--fs-body)/1.55 var(--sans);-webkit-font-smoothing:antialiased}
 a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:2px}
 .app{min-height:100vh}

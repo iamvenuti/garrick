@@ -524,8 +524,6 @@ GUIDE_CSS = r"""
 .gd-page ul,.gd-page ol{padding-left:22px}.gd-page li{margin:3px 0}
 .gd-table{overflow-x:auto;margin:12px 0}.gd-table table{border-collapse:collapse;font-size:var(--fs-meta);line-height:1.45}
 .gd-table th,.gd-table td{border:1px solid var(--grid);padding:6px 10px;vertical-align:top;text-align:left}.gd-table th{background:var(--raise)}
-.gd-zones{max-width:820px;margin:0 0 24px;padding:4px 20px 12px;background:var(--surface);border:1px solid var(--line);border-radius:14px}
-.gd-zones h2{font:700 var(--fs-h2)/1.25 var(--sans);margin:14px 0 8px}.gd-zones ul{padding-left:20px}.gd-zones li{margin:4px 0}
 .gd-empty{max-width:620px}.gd-empty h2{font:700 var(--fs-h2)/1.25 var(--sans)}
 @media (max-width:820px){.gd{grid-template-columns:1fr;gap:16px}.gd-side{position:static;max-height:none}.gd-page{padding:4px 18px 22px}}
 """

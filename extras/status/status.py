@@ -1560,26 +1560,7 @@ def guide_tab(ws: Path) -> Tuple[str, str]:
         text = None
     ref = gd.release_ref(text, edge=workspace_stamp(ws).get("from") in ("clone", "adopted"))
     body, held = gd.guide(ws.joinpath(*gd.DOCS), ref)
-    return zone_flags(ws) + body, held
-
-
-ZONE_RULE = ("Each zone is either <b>walled</b> or <b>open</b>. What is in a walled zone stays in that zone; what is in an open "
-             "zone may go anywhere. Knowledge and System reach every zone, and a conversation that touches two walled zones "
-             "is split before it is filed.")
-
-
-def zone_flags(ws: Path) -> str:
-    """The Guide's Walls block: the rule in three sentences, and one line per zone, walled or open, with the command
-    that changes it. Read-only: the page flips nothing; the flag is changed with scaffold.py. Nothing without zones."""
-    ctx = workspace_context(ws)
-    flags = ctx.get("zone_walled") or {}
-    if not flags:
-        return ""
-    rows = "".join('<li><b>%s</b>: %s <code>python3 System/tools/scaffold.py zone --name %s --%s</code></li>'
-                   % (E(z), "walled" if w else "open", E(z), "open" if w else "walled") for z, w in sorted(flags.items()))
-    note = ('<p class="muted">These flags are read from your Parties and Zones tables until the update to zone walls is '
-            'accepted.</p>' if ctx.get("pending") else "")
-    return ('<section class="gd-zones" id="guide-zones"><h2>Walls</h2><p>%s</p><ul>%s</ul>%s</section>' % (ZONE_RULE, rows, note))
+    return body, held
 
 
 _EF = None
@@ -4329,6 +4310,30 @@ def allowed_settings(rows: List[dict]) -> str:
                                     "Only <code>check.py allow</code>, typed in a terminal, adds one."), body))
 
 
+def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:
+    """Settings › Walls (#561): one row for each zone, its name and Walled or Open as a pill, with a quiet Change… that hands
+    "Make <zone> open" (or walled) to the assistant, the way Process the Inbox does (`data-request`). The page writes
+    nothing and runs nothing: the assistant asks for the yes and runs scaffold.py. No command and no code on the row. Nothing without
+    zones. The note about flags read from the Parties and Zones tables moves here with the rows."""
+    ctx = workspace_context(ws)
+    flags = ctx.get("zone_walled") or {}
+    if not flags:
+        return ""
+    where = str(folder or ws)
+    rows = ""
+    for z, walled in sorted(flags.items()):
+        ask = "Make %s %s" % (z, "open" if walled else "walled")
+        rows += ('<li class="wallrow" data-zone="%s"><b>%s</b><span class="st %s">%s</span>'
+                 '<button class="wchange" type="button" data-request="%s" data-folder="%s" title="%s" aria-label="%s">Change\u2026</button></li>'
+                 % (E(z), E(z), "good" if walled else "idle", "Walled" if walled else "Open", E(ask), E(where),
+                    E("Hand \u201c%s\u201d to your assistant, which asks you before it changes anything" % ask), E("Change %s: ask my assistant to %s" % (z, ask[0].lower() + ask[1:]))))
+    note = ('<p class="muted">These flags are read from your Parties and Zones tables until the update to zone walls is '
+            'accepted.</p>' if ctx.get("pending") else "")
+    return ('<section class="setsec" id="walls-settings">%s%s<ul class="wallrows">%s</ul>%s</section>'
+            % (set_head("Which zones are walled", "walls", "A walled zone keeps its material in that zone. An open zone's may go anywhere."),
+               help_text("walls", "<i>Change\u2026</i> asks your assistant to make the change. It asks you first, then makes it."), rows, note))
+
+
 def menu_settings() -> str:
     """Settings › Menu bar, shown in Garrick.app
     only: the icon or a panel at a screen edge, opening at login, the
@@ -4649,7 +4654,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
              "tell": [notify_settings(ws, CMUXLIB.is_file())],
              "keep": [memory_settings(ws, link)],
-             "walls": [allowed_settings(allowed or [])],
+             "walls": [walls_settings(ws), allowed_settings(allowed or [])],
              "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
     groups = [(key, title, [h for h in filed[key] if h]) for key, title in SET_GROUPS]
     main = "".join('<div class="setgroup" role="group" aria-labelledby="sg-%s"><p class="setgrp" id="sg-%s">%s</p>%s</div>'
@@ -5777,6 +5782,9 @@ dialog.settings[open]{display:flex;flex-direction:column}
 .setmain{position:relative;overflow:auto;overscroll-behavior:contain;padding:18px 32px 28px}.setmain>*{max-width:46rem}
 .setgroup+.setgroup{margin-top:30px;padding-top:16px;border-top:1px solid var(--line)}
 .setgrp{margin:0 0 12px;font-size:var(--fs-meta);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}
+.wallrows{list-style:none;margin:8px 0 0;padding:0}.wallrow{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--line)}
+.wallrow b{min-width:7em}.wallrow .wchange{margin-left:auto;border:0;background:none;color:var(--accent);font:inherit;font-size:var(--fs-meta);text-decoration:underline;cursor:pointer;padding:6px 4px;min-height:40px}
+.wallrow .wchange:hover{color:var(--ink)}
 dialog.settings .setlede{margin:0 0 8px;font-size:var(--fs-meta);line-height:1.45;color:var(--ink2)}
 @media (max-width:759px){.setbody{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
 .setnav{display:flex;gap:4px;overflow-x:auto;overflow-y:hidden;padding:6px 12px;border-right:0;border-bottom:1px solid var(--line)}

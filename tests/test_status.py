@@ -628,26 +628,59 @@ class TestContextTab(StatusCase):
         self.fake_check({"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "links a file of zone Personal"})
         self.assertNotIn("cxgo", self.page())
 
-    def test_the_guide_reads_the_zone_flags_and_changes_none(self):
-        html = self.page()
-        guide = html[html.index('id="guide-zones"'):]
-        guide = guide[:guide.index("</section>")]
-        self.assertIn("Each zone is either <b>walled</b> or <b>open</b>.", guide)
-        self.assertIn("is split before it is filed.", guide)
-        self.assertEqual(["Personal", "Work"], re.findall(r"<li><b>(\w+)</b>: ", guide))
-        self.assertIn("python3 System/tools/scaffold.py zone --name Work --open", guide)     # a walled zone says how to open it
-        self.assertNotIn("<button", guide)                                                   # the page flips nothing
+    def walls(self, html=None):
+        html = html or self.page()
+        start = html.index('<section class="setsec" id="walls-settings">')
+        return html[start:html.index("</section>", start)]
 
-    def test_a_zone_that_is_open_says_so_and_how_to_wall_it(self):
+    def test_the_guide_holds_no_walls_block_and_no_command(self):
+        html = self.page()
+        guide = html[html.index('id="tab-guide"'):html.index("</section>", html.index('id="tab-guide"'))]
+        for gone in ("scaffold.py", "--open", "--walled", "guide-zones", "gd-zones"):
+            self.assertNotIn(gone, guide, gone)
+        self.assertFalse(hasattr(status, "zone_flags"))
+        self.assertNotIn("guide-zones", html)
+
+    def test_settings_lists_every_zone_with_its_state_and_holds_no_code(self):
+        walls = self.walls()
+        self.assertEqual(["Personal", "Work"], re.findall(r'<li class="wallrow" data-zone="(\w+)">', walls))
+        self.assertEqual(["Walled", "Walled"], re.findall(r'<span class="st \w+">(\w+)</span>', walls))
+        self.assertNotIn("<code", walls)
+        self.assertNotIn("scaffold.py", walls)
+
+    def test_change_hands_a_request_to_the_assistant_and_runs_nothing_itself(self):
+        def tree():
+            return {str(p): p.read_bytes() for p in self.root.rglob("*") if p.is_file() and ".git" not in p.parts}
+        before = tree()
+        html = self.page()
+        walls = self.walls(html)
+        buttons = re.findall(r'<button class="wchange" type="button" data-request="([^"]*)" data-folder="([^"]*)"', walls)
+        self.assertEqual([("Make Personal open", str(self.root)), ("Make Work open", str(self.root))], buttons)
+        self.assertNotIn("data-act", walls)                              # no verb of the page's: nothing here writes or runs
+        self.assertIn("button[data-request]", html)                      # the existing hand-off, which Process the Inbox uses, takes it
+        self.assertEqual(before, tree())                                 # and no file in the workspace changed
+
+    def test_a_zone_that_is_open_says_so_and_offers_to_wall_it(self):
         text = (self.root / "System" / "context.md").read_text(encoding="utf-8")
         write(self.root / "System" / "context.md", text.replace("| Zone | Holds | Party | New parties |\n|---|---|---|---|\n| Work | Client work | | walled |\n| Personal | Everything else | | walled |",
                                                               "| Zone | Holds | Walled |\n|---|---|---|\n| Work | Client work | no |\n| Personal | Everything else | yes |")
               .replace("| Party | What it is | Zone | Tag | Walled | Domains |\n|---|---|---|---|---|---|", "| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|")
               .replace("| yes | acmecorp.example |", "| acmecorp.example |").replace("| yes | birchco.example", "| birchco.example"))
-        guide = status.zone_flags(self.root)
-        self.assertIn("<b>Work</b>: open <code>python3 System/tools/scaffold.py zone --name Work --walled</code>", guide)
-        self.assertIn("<b>Personal</b>: walled", guide)
-        self.assertNotIn("until the update to zone walls is accepted", guide)
+        walls = self.walls()
+        self.assertRegex(walls, r'data-zone="Work"><b>Work</b><span class="st idle">Open</span>')
+        self.assertIn('data-request="Make Work walled"', walls)
+        self.assertRegex(walls, r'data-zone="Personal"><b>Personal</b><span class="st good">Walled</span>')
+        self.assertNotIn("until the update to zone walls is accepted", walls)
+
+    def test_the_walls_rows_come_above_allowed_by_you(self):
+        html = status.settings(self.root, (), ("Work", "Personal"), allowed=[{"path": "Zones/Work/a.md", "id": "x", "rule": "r", "date": "2026-11-01", "by": "me", "href": "", "state": "same"}])
+        self.assertIn('id="walls-settings"', html)
+        self.assertLess(html.index('id="walls-settings"'), html.index('id="allowed-settings"'))
+        self.assertIn('<a href="#walls-settings" data-setgo="walls-settings">', html)
+
+    def test_the_pending_update_note_is_in_settings(self):
+        with mock.patch.object(status, "workspace_context", lambda ws: {"zone_walled": {"Work": True}, "pending": True}):
+            self.assertIn("These flags are read from your Parties and Zones tables until the update to zone walls is accepted.", status.walls_settings(self.root))
 
 
 class TestAllowedByYou(StatusCase):

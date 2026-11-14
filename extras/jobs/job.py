@@ -814,9 +814,7 @@ def job_title(name: str, argument: Optional[str] = None) -> str:
 REASON_MAX = 80
 _ERROR_LINE = re.compile(r"(?i)\b(\w*error|\w*exception|errno|failed|failure|fatal|traceback|exception|denied|refused|timed out|"
                          r"could not|couldn't|cannot|can't|unable to|no such|not found|not signed in)\b")
-_PATH = re.compile(r"(?:~|/)[^\s:'\"]*/[^\s:'\"]*")
-_SECRETISH = re.compile(r"(?i)(?:[A-Za-z0-9_+/=-]{32,}|\b(?:bearer|basic|token|password|passwd|secret|api[_-]?key|authorization)\b\s*[:=]?\s*\S{6,}"
-                        r"|://[^\s/@:]+:[^\s/@]+@|-----BEGIN)")
+_NOT_A_REASON = re.compile(r"[/\\~]|[A-Za-z0-9_+=.-]{20,}|sk-|ghp_|gho_|github_pat_|xox|AKIA|AIza|-----BEGIN")
 
 
 def words_span(seconds: float) -> str:
@@ -830,9 +828,10 @@ def words_span(seconds: float) -> str:
 
 
 def log_error_line(log_path: Path, since: float) -> Optional[str]:
-    """The last line of this run's log that reads as an error, as a short sentence: any path in it cut to its last
-    part, at most REASON_MAX characters. A line that looks like it holds a secret is never used, so the caller
-    says nothing of it (fail closed). job.py's own lines and the run's frame are not the job's error."""
+    """The last line of this run's log that reads as an error, as a short sentence, at most REASON_MAX characters.
+    Fail closed: a candidate is an error-shaped line that holds no path separator, no `~` and nothing shaped like a
+    secret (NOT_A_REASON, tested on the whole original line before any cutting); a line that fails is skipped, never
+    rewritten. job.py's own lines and the run's frame are not the job's error."""
     try:
         text = log_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -843,9 +842,8 @@ def log_error_line(log_path: Path, since: float) -> Optional[str]:
         line = line.strip()
         if not line or line.startswith(("=====", "job:")) or not _ERROR_LINE.search(line):
             continue
-        line = _PATH.sub(lambda m: m.group(0).rstrip("/").rsplit("/", 1)[-1], line)
-        if _SECRETISH.search(line):
-            return None
+        if _NOT_A_REASON.search(line):
+            continue
         line = re.sub(r"^(?:[A-Za-z]*(?:Error|Exception)|error|fatal|ERROR|FATAL)\s*[:\]]\s*", "", line).strip()
         line = re.sub(r"\s+", " ", line)
         if not line:
@@ -856,10 +854,11 @@ def log_error_line(log_path: Path, since: float) -> Optional[str]:
 
 
 def plain_reason(code: int, cause: Optional[str], timeout: float, steps: Optional[List[dict]],
-                 log_path: Path, since: float) -> Optional[str]:
+                 log_path: Path, since: float, agent_job: bool = False) -> Optional[str]:
     """Why a run failed, in a few plain words for the status page (#559), at most REASON_MAX characters. None when it
     did not fail. A watchdog stop says the limit; a step that failed names the step ("Recall timed out"); then
-    the last error line of the log; at the last, "it exited with code N"."""
+    the last error line of the log, never for an `--agent` job, whose log holds the assistant's own prose; at the
+    last, "it exited with code N"."""
     if code == 0:
         return None
     if cause == "timeout":
@@ -879,7 +878,8 @@ def plain_reason(code: int, cause: Optional[str], timeout: float, steps: Optiona
             name = re.sub(r"[-_]+", " ", str(step["step"])).strip()
             name = (name[:1].upper() + name[1:])[:40]
             return "%s %s" % (name, "timed out" if step["exit"] == 124 else "failed")
-    return log_error_line(log_path, since) or "it exited with code %d" % code
+    found = None if agent_job else log_error_line(log_path, since)
+    return found or "it exited with code %d" % code
 
 
 def idle_days(items: Optional[int], lastwork: Path, now: float) -> Optional[int]:
@@ -1217,7 +1217,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             reason = None if code == 0 else describe(code, seconds, args.timeout, cause)
             steps = read_steps(steps_file)
             failed = failed_steps(steps)
-            plain = plain_reason(code, cause, args.timeout, steps, log_path, start)
+            plain = plain_reason(code, cause, args.timeout, steps, log_path, start, bool(args.agent))
             if reason and failed:
                 reason += "; %s failed" % failed
             if is_quiet:

@@ -912,19 +912,33 @@ class JobExtrasTest(FakeAssistants):
         self.assertEqual(1, r.returncode)
         self.assertEqual("The Cedar list is empty", self.beat_of("sweep")["reason"])
 
-    def test_the_reason_is_cut_to_80_characters_and_holds_no_path(self):
-        line = "Error: could not read " + str(self.tmp / "Zones" / "Work" / "Acme" / "notes.md") + " " + "because " * 20
+    def test_the_reason_is_cut_to_80_characters(self):
+        line = "Error: could not read the Acme list because " + "because " * 20
         self.job("sweep", "--", sys.executable, "-c", "import sys; print(%r); sys.exit(1)" % line)
         reason = self.beat_of("sweep")["reason"]
         self.assertLessEqual(len(reason), 80)
-        self.assertNotIn(str(self.tmp), reason)
-        self.assertNotIn("/Zones/", reason)
-        self.assertTrue(reason.startswith("Could not read notes.md"), reason)
+        self.assertTrue(reason.startswith("Could not read the Acme list"), reason)
 
-    def test_a_line_that_looks_like_a_secret_is_never_the_reason(self):
-        self.job("sweep", "--", sys.executable, "-c",
-                 "import sys; print('Error: request failed with token ghp_" + "a1B2c3D4" * 5 + "'); sys.exit(3)")
-        self.assertEqual("it exited with code 3", self.beat_of("sweep")["reason"])
+    def test_a_line_that_could_hold_a_path_or_a_secret_is_never_the_reason(self):
+        """Fail closed: a path (with a space too), a ~, a 20-character key, an sk- key: the exit code is the reason."""
+        for n, line in enumerate((
+                "Error: could not read /Users/jo/Acme Files/notes.md",
+                "Error: could not read ~/Acme/notes",
+                "Error: could not read C:\\Acme\\notes.md",
+                "Error: request failed with key abcdefghij0123456789",
+                "Error: request failed with sk-ab12",
+                "Error: request failed with xoxb",
+        )):
+            name = "sweep%d" % n
+            self.job(name, "--", sys.executable, "-c", "import sys; print(%r); sys.exit(4)" % line)
+            self.assertEqual("it exited with code 4", self.beat_of(name)["reason"], line)
+
+    def test_an_agent_job_never_takes_its_reason_from_its_log(self):
+        log = self.tmp / "agent.log"
+        log.write_text("starting\nError: the Cedar list is empty\n", encoding="utf-8")
+        self.assertEqual("The Cedar list is empty", job.plain_reason(1, None, 60, None, log, 0))
+        self.assertEqual("it exited with code 1", job.plain_reason(1, None, 60, None, log, 0, True))
+        self.assertEqual("it stopped after 2 minutes", job.plain_reason(1, "timeout", 120, None, log, 0, True))
 
     def test_a_watchdog_stop_says_the_limit_in_words(self):
         self.job("slow", "--timeout", "1", "--", sys.executable, "-c", "import time; time.sleep(30)")

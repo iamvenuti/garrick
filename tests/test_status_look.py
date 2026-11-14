@@ -196,7 +196,7 @@ class Page(unittest.TestCase):
     def test_the_display_face_stays_for_big_numbers_only(self):
         css = self.css()
         users = [m.strip().split("}")[-1].strip() for m in re.findall(r"([^{}]*)\{[^{}]*var\(--display\)", css)]
-        self.assertEqual([".hero .fig", ".hero .fig,.tile .val", ".sumz .sumn b"], [u for u in users if u])   # the Todo counts too
+        self.assertEqual([".hero .fig", ".hero .fig,.tile .val"], [u for u in users if u])
 
     def test_every_control_has_a_visible_focus_ring_and_a_40px_target(self):
         look = status.LOOK_CSS
@@ -260,20 +260,31 @@ class Lead(unittest.TestCase):
         self.assertEqual("Nothing needs you right now.", status.lead_said(0))  # none
         self.assertEqual("Twelve things need you.".replace("Twelve", "12"), status.lead_said(12))
 
-    def test_several_waiting_names_the_first_and_leads_to_it(self):
-        items = [status.attn_need("critical", "The check did not run", "#checks"),
+    def test_several_waiting_gives_counts_by_kind_and_leads_to_the_first(self):
+        items = [status.attn_need("critical", "The check did not run", "#checks", label="See the check"),
                  status.late_need(zone("Work", [todo_row("a", dt.date(2026, 11, 2), True), todo_row("b", dt.date(2026, 11, 5), True)]), TODAY),
-                 status.attn_need("warning", "3 items waiting in the inboxes", "#inboxes")]
+                 status.attn_need("warning", "3 items waiting in the inboxes", "#inboxes", kind="inbox", count=3, label="Open the inbox")]
         html = status.lead_block(items, 0)
         self.assertIn("Three things need you.", html)
-        self.assertIn("The check did not run · 2 late actions in Work · 3 items waiting in the inboxes", html)
-        self.assertRegex(html, r'<a class="btn primary" id="lead-go" href="#checks">Open it')
+        self.assertIn("1 problem · 2 late actions · 3 in the inboxes", html)
+        self.assertNotIn("The check did not run ·", html)                    # counts only: the card lists the rows
+        self.assertRegex(html, r'<a class="btn primary" id="lead-go" href="#checks">See the check')
         self.assertNotIn(" hidden", html.split('<a class="btn')[1])
+
+    def test_the_lead_line_is_one_line_in_a_fixed_order(self):
+        items = [status.attn_need("warning", "w", "#checks", kind="warnings", count=20),
+                 status.attn_need("warning", "f", "#repos", kind="files", count=12),
+                 status.attn_need("warning", "i", "#inboxes", kind="inbox", count=2),
+                 status.late_need(zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)] * 5), TODAY),
+                 status.attn_need("critical", "j1", "#jobs", kind="job"), status.attn_need("critical", "j2", "#jobs", kind="job")]
+        html = status.lead_block(items, 0)
+        self.assertIn("2 jobs failed · 5 late actions · 2 in the inboxes · 12 files not committed · 20 warnings", html)
 
     def test_one_waiting(self):
         html = status.lead_block([status.late_need(zone("Home", [todo_row("a", dt.date(2026, 11, 8), True)]), TODAY)], 0)
         self.assertIn("One thing needs you.", html)
-        self.assertIn("1 late action in Home", html)
+        self.assertIn("1 late action", html)
+        self.assertNotIn("in Home", html)
         self.assertIn('href="#todolist" data-tz-go="Home"', html)
 
     def test_none_waiting_says_so_and_has_no_button(self):
@@ -287,9 +298,11 @@ class Lead(unittest.TestCase):
         self.assertIn("2 sessions are waiting for you", html)
         self.assertIn('href="#waiting-now"', html)
 
-    def test_more_than_three_reasons_are_cut_to_three(self):
-        items = [status.attn_need("warning", "reason %d" % i, "#jobs") for i in range(5)]
-        self.assertIn("reason 0 · reason 1 · reason 2 · and 2 more", status.lead_block(items, 0))
+    def test_no_count_is_cut_with_and_more(self):
+        items = [status.attn_need("warning", "reason %d" % i, "#jobs", kind=k, count=2) for i, k in enumerate(("warnings", "files", "inbox", "other"))]
+        html = status.lead_block(items, 0)
+        self.assertNotIn("more", html)
+        self.assertIn("2 in the inboxes · 2 files not committed · 2 warnings · 2 other things to look at", html)
 
     def test_the_card_lists_what_waits_with_a_button_and_stays_hidden_only_when_nothing_does(self):
         needs = [status.attn_need("critical", "A job failed", "#jobs"),
@@ -299,7 +312,7 @@ class Lead(unittest.TestCase):
         self.assertNotIn("nowait", html)
         self.assertIn("2 items", html)
         self.assertEqual(2, html.count('class="wrow wneed"'))
-        self.assertIn('<a class="act" href="#jobs">Open it</a>', html)
+        self.assertIn('<a class="act" href="#jobs">See the details</a>', html)
         self.assertIn('data-tz-go="Work">Open the list</a>', html)
         self.assertIn("oldest was due Mon 2 Nov", html)
         self.assertIn("nowait", status.waiting_card([], now, []))
@@ -346,27 +359,115 @@ class Lead(unittest.TestCase):
         self.assertGreater(len(re.findall(r'<div class="wrow wneed">', none)) + 2, 0)
 
 
-class Summary(unittest.TestCase):
-    def test_todo_as_three_counts_for_one_zone(self):
-        z = zone("Work", [todo_row("late", dt.date(2026, 11, 2), True), todo_row("soon", dt.date(2026, 11, 12)),
-                          todo_row("later", dt.date(2026, 12, 30)), todo_row("nodate"), todo_row("nodate 2")])
-        self.assertEqual((1, 1, 2), status.todo_counts(z, TODAY))
+class Overview(unittest.TestCase):
+    """The Overview is the lead line and Waiting on you now (#559): no At a glance card, and Explore the graph in the header."""
 
-    def test_the_card_lists_each_zone_apart_and_never_adds_two(self):
-        lists = [zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)]), zone("Home", [todo_row("b"), todo_row("c")])]
-        html = status.summary_card(lists, TODAY, [("Work", Path("/x/Work/Inbox"), 3), ("Home", Path("/x/Home/Inbox"), 0)], "warning",
-                                   2, "#jobs", {}, lambda f: "file:///x", True)
-        self.assertEqual(["Work", "Home"], re.findall(r'data-tz-go="([^"]+)"', html))
-        self.assertIn("<b>1</b> late", html)
-        self.assertIn("<b>2</b> no date", html)
-        self.assertRegex(html, r'Look soon</span><span><a href="#jobs">2 things need attention')
-        self.assertEqual([("Work", "3"), ("Home", "0")], re.findall(r"<span>([A-Za-z]+)</span><b>(\d+)</b>", html))
-        self.assertIn('id="explore-go"', html)
-        self.assertNotIn('id="explore-go"', status.summary_card(lists, TODAY, [], "good", 0, "#summary", {}, str, False))
+    def test_the_overview_holds_no_at_a_glance_card(self):
+        html = page_html()
+        self.assertNotIn("At a glance", html)
+        self.assertNotIn('id="summary-col"', html)
+        self.assertFalse(hasattr(status, "summary_card"))
 
-    def test_health_in_words(self):
-        for worst, word in (("good", "Fine"), ("warning", "Look soon"), ("critical", "Act now")):
-            self.assertIn(word + "</span>", status.summary_card([], TODAY, [], worst, 0, "#summary", {}, str, False))
+    def test_the_header_has_the_graph_button_when_the_graph_is_built(self):
+        html = page_html()
+        self.assertRegex(html, r'<button class="cog" type="button" id="explore-go" aria-label="Explore the graph" title="Explore the graph">')
+        head = html[html.index('<div class="bacts">'):html.index('id="open-settings"')]
+        self.assertIn('id="explore-go"', head)                            # beside Settings
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            build_workspace(base / "ws")
+            (base / "jobs").mkdir()
+            with mock.patch.object(status, "launch_agents", lambda: base / "LaunchAgents"):
+                plain = status.build(base / "ws", now=dt.datetime(2026, 11, 9, 9, 0), folder=base / "jobs", show_graph=False)
+        self.assertNotIn('id="explore-go"', plain)
+
+
+def build_with_beats(beats, extra=None):
+    """The page built over a jobs folder holding these heartbeats (name -> fields)."""
+    import json as _json
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp).resolve()
+        root = base / "Workspace"
+        build_workspace(root)
+        (base / "jobs").mkdir()
+        (base / "home").mkdir()
+        for name, hb in beats.items():
+            body = {"job": name, "started": "2026-11-13 02:00:00", "finished": "2026-11-13 02:20:00", "finished_ts": 1, "exit": 1,
+                    "seconds": 1151, "ok": False, "quiet": False}
+            body.update(hb)
+            (base / "jobs" / ("%s.heartbeat.json" % name)).write_text(_json.dumps(body), encoding="utf-8")
+        if extra:
+            extra(root)
+        with mock.patch.object(status, "launch_agents", lambda: base / "LaunchAgents"), \
+                mock.patch.dict(status.os.environ, {"HOME": str(base / "home")}):
+            return status.build(root, now=dt.datetime(2026, 11, 14, 9, 0), folder=base / "jobs")
+
+
+class PlainRows(unittest.TestCase):
+    """The Overview says what failed in plain words (#559)."""
+
+    def rows(self, html):
+        start = html.index('id="wneeds"')
+        block = html[start:html.index('id="wrows"', start)]
+        return [(re.sub(r"<[^>]+>", "|", m).replace("||", "|").strip("|")) for m in re.findall(r'<div class="wrow wneed">(.*?)</div>', block, re.S)]
+
+    def test_a_failed_job_reads_title_failed_reason_with_the_day_and_see_the_log(self):
+        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out", "failing_since": "2026-11-13 02:20:00"}})
+        row = next(r for r in self.rows(html) if "Nightly check" in r)
+        self.assertIn("Nightly check failed: Recall timed out", row)
+        self.assertIn("since Fri 13 Nov", row)
+        self.assertTrue(row.endswith("See the log"), row)
+        self.assertNotRegex(html, r"exit \d+: exited \d+")
+        self.assertNotIn("exited 1 after", html.split('id="wneeds"')[1].split('id="wrows"')[0])
+
+    def test_a_heartbeat_with_no_title_uses_the_name_and_no_reason_says_the_code(self):
+        html = build_with_beats({"app-update": {"exit": 1}})
+        row = next(r for r in self.rows(html) if "App update" in r)
+        self.assertIn("App update failed: it exited with code 1", row)
+
+    def test_no_row_has_a_button_that_says_open_it(self):
+        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}})
+        self.assertNotIn(">Open it<", html.split('id="wneeds"')[1].split('id="wrows"')[0])
+        self.assertNotIn('"label": "Open it"', html)
+
+    def test_the_lead_line_holds_counts_only(self):
+        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}})
+        why = re.search(r'<p id="lead-why">([^<]*)</p>', html).group(1)
+        self.assertTrue(why.startswith("1 job failed"), why)
+        self.assertNotIn("Nightly", why)
+
+    def test_broken_is_listed_before_to_do_and_to_do_starts_folded_with_its_count(self):
+        def todo(root):
+            (root / "Zones" / "Work" / "Todo.md").write_text("# Work: open actions\n\n## Inbox\n\n- [ ] Send it 📅 2026-11-02\n\n## Done\n", encoding="utf-8")
+        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}}, todo)
+        block = html.split('id="wneeds"')[1].split('id="wrows"')[0]
+        self.assertLess(block.index('data-g="broken"'), block.index('data-g="todo"'))
+        self.assertRegex(block, r'<details class="wgroup" data-g="todo"><summary class="wgh">To do <span class="wgn">\d+</span></summary>')
+        self.assertNotIn("<details class=\"wgroup\" data-g=\"todo\" open", block)
+
+    def test_with_nothing_broken_to_do_is_open(self):
+        html = build_with_beats({})
+        block = html.split('id="wneeds"')[1].split('id="wrows"')[0]
+        self.assertNotIn('data-g="broken"', block)
+
+    def test_the_zone_is_in_its_column_never_in_the_sentence(self):
+        def todo(root):
+            (root / "Zones" / "Work" / "Todo.md").write_text("# Work: open actions\n\n## Inbox\n\n- [ ] Send it 📅 2026-11-02\n\n## Done\n", encoding="utf-8")
+        html = build_with_beats({}, todo)
+        block = html.split('id="wneeds"')[1].split('id="wrows"')[0]
+        for row in re.findall(r'<div class="wrow wneed">(.*?)</div>', block, re.S):
+            name = re.search(r'<span class="wname">([^<]*)</span>', row).group(1)
+            self.assertNotRegex(name, r"^(Work|Personal|Home):|\bin Work\b", name)
+
+    def test_a_job_title_is_the_name_without_gr_and_hyphens(self):
+        self.assertEqual("Nightly", status.job_title("gr-nightly", {}))
+        self.assertEqual("App update", status.job_title("app-update", {}))
+        self.assertEqual("Updates", status.job_title("app-update", {}, {"GARRICK_JOB_TITLE": "Updates"}))
+
+    def test_a_failed_step_of_a_run_under_way_is_named(self):
+        self.assertEqual("Recall timed out", status.step_reason([{"step": "recall", "exit": 124}]))
+        self.assertEqual("Effort failed", status.step_reason([{"step": "effort", "exit": 1}, {"step": "recall", "exit": 124}]))
+        self.assertEqual("", status.step_reason([{"step": "effort", "exit": 0}]))
 
 
 class Badges(unittest.TestCase):

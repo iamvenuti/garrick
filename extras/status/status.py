@@ -3593,6 +3593,8 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             if failed_steps(live):
                 state, status = "critical", "%s failed in the run under way" % failed_steps(live)
         out.append({"name": name, "when": when, "seconds": hb.get("seconds"), "state": state, "status": status,
+                    "title": job_title(name, hb, env), "code": code, "since": failing_since(hb, when),
+                    "reason": hb["reason"] if isinstance(hb.get("title"), str) and isinstance(hb.get("reason"), str) else "",
                     "schedule": words, "runs": history(folder, name, now, olds), "log": job_log(folder, name, olds),
                     "quiet": tuple(sorted(quiet)), "running": running,
                     "idle": state == "warning" and status.startswith("idle"), "steps": steps,
@@ -3606,11 +3608,40 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = ("critical", "%s failed in the run under way" % failed_steps(live)) if failed_steps(live) \
                 else ("none", "not run yet")
             out.append({"name": name, "when": None, "seconds": None, "state": state, "status": status,
+                        "title": job_title(name, {}, plist.get("env", {})), "code": None, "since": None, "reason": "",
                         "schedule": plist["schedule"], "runs": history(folder, name, now, olds),
                         "log": job_log(folder, name, olds),
                         "quiet": quiet_exits(plist.get("env", {})), "running": running,
                         "idle": False, "steps": live, **plist_facts(plist, name)})
     return sorted(out, key=lambda j: j["name"].casefold())
+
+
+def job_title(name: str, hb: dict, env: Optional[dict] = None) -> str:
+    """A job's plain name for the Overview (#559): the `title` job.py wrote into the heartbeat, else the plist's
+    GARRICK_JOB_TITLE, else the name without its `gr-` prefix, hyphens as spaces, first letter capitalised."""
+    for given in ((hb or {}).get("title"), (env or {}).get("GARRICK_JOB_TITLE")):
+        if isinstance(given, str) and given.strip():
+            return given.strip()[:60]
+    base = name[3:] if name.startswith("gr-") and len(name) > 3 else name
+    base = re.sub(r"[-_]+", " ", base).strip()
+    return base[:1].upper() + base[1:] if base else name
+
+
+def failing_since(hb: dict, when: Optional[dt.datetime]) -> Optional[dt.date]:
+    """The day a job began to fail, from its heartbeat's `failing_since`, else the day its last run finished."""
+    try:
+        return dt.datetime.strptime(str(hb.get("failing_since"))[:19].replace("T", " "), "%Y-%m-%d %H:%M:%S").date()
+    except ValueError:
+        return when.date() if when else None
+
+
+def step_reason(steps: Optional[List[dict]]) -> str:
+    """The first step that failed, as job.py words it: "Recall timed out", "Effort failed"; "" when none did."""
+    for x in steps or []:
+        if isinstance(x.get("exit"), int) and x["exit"] != 0:
+            name = re.sub(r"[-_]+", " ", str(x.get("step"))).strip()
+            return "%s %s" % ((name[:1].upper() + name[1:])[:40], "timed out" if x["exit"] == 124 else "failed")
+    return ""
 
 
 def steps_now(folder: Path, name: str) -> Optional[List[dict]]:
@@ -5359,8 +5390,30 @@ def waits_on_user(waiting: Optional[str], name: str) -> bool:
     name = (name or "").strip()
     if not waiting or not name:          # a name of spaces only is no name
         return False
+    return _user_form(waiting, name) is not None
+
+
+def _user_form(waiting: str, name: str):
+    """The match of the user's name (full, first, "me", "you", "the user") at the start of a Waiting on row,
+    followed by the end, a comma, a colon, a semicolon or a possessive ('s, \u2019s); None when it is not theirs."""
     forms = [name, name.split()[0], "me", "you", "the user"]
-    return any(re.match(r"(?i)%s\s*(?:$|[,:;])" % re.escape(f), waiting) for f in forms)
+    for f in forms:
+        m = re.match(r"(?i)%s(?:\s*(?:$|[,:;])|['\u2019]s\b)" % re.escape(f), waiting)
+        if m:
+            return m
+    return None
+
+
+def user_ask(waiting: Optional[str], name: str) -> str:
+    """What a row that waits on the user asks of them, after their name: "the agenda to the client" from "Alex: the
+    agenda to the client", and the quoted words from "Alex's \"update Garrick\"" (#559). Empty when nothing follows."""
+    name = (name or "").strip()
+    m = _user_form(waiting or "", name) if waiting and name else None
+    if not m:
+        return ""
+    rest = waiting[m.end():].strip(" \t,:;")
+    rest = re.sub(r"^[\"\u201c\u2018']+|[\"\u201d\u2019']+$", "", rest).strip()
+    return rest
 
 
 def waiting_badge(waiting: str) -> str:
@@ -5436,7 +5489,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
                 "name": work_name_for(r), "zone": zone, "project": r["project"], "thread": r["thread"],
                 "note": r["note"], "hub": r["hub"], "rel": r["rel"], "key": key,
                 "example": zone == example, "next": without_owner(nxt, owners), "waiting": waiting,
-                "mine": waits_on_user(waiting, me), "moved": r.get("touched") or r.get("updated"),
+                "mine": waits_on_user(waiting, me), "ask": user_ask(waiting, me), "moved": r.get("touched") or r.get("updated"),
                 "actions": r.get("actions") or [], "row": r,         # the lines and the card the Threads card shows for this thread
             })
     out.sort(key=lambda w: (-(w["moved"] or dt.date.min).toordinal(), w["name"].casefold()))
@@ -5804,29 +5857,39 @@ function going(o){return'Opening '+o.n+' in Claude…'}
    for, Codex and cmux say the clipboard now holds the phrase, Finder names the phrase it
    cannot take, and a failure says what is left to do. An app built before 0.28.0 says
    nothing back, and then this line is all there is. */
-function launch(k,o){var p=phrase(o),say=k==='finder'?'Showing '+o.n+' in Finder…':'Opening '+o.n+' in '+LABEL[k]+'…';
-var l=k==='finder'?'Reveal in Finder':'Open in '+LABEL[k];
-var q=k==='claude'&&cont(o);if(q)return'<button class="act" type="button" data-k="claude"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-act="'+esc(JSON.stringify(q))+'" data-say="'+esc(going(o))+'">'+l+'</button>';
-if(k==='cmux'&&o.dk)return'<button class="act" type="button" data-k="cmux"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-act="'+desk(o,'open')+'"'
-+(o.f?' data-expect="'+esc('live:'+o.f)+'"':'')+' data-say="'+esc('Opening '+o.n+' in cmux…')+'">'+l+'</button>';
-return'<button class="act" type="button" data-launch="'+k+'" data-k="'+k+'"'+dmark(k,o)+' title="'+l+'" aria-label="'+l+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+l+'</button>'}
+function launch(k,o,pl){var p=phrase(o),say=k==='finder'?'Showing '+o.n+' in Finder…':'Opening '+o.n+' in '+LABEL[k]+'…';
+var l=pl?pl.l:k==='finder'?'Reveal in Finder':'Open in '+LABEL[k],txt=pl?(pl.i||'')+esc(pl.l)+(pl.t?TICK:''):l,mk=pl?' data-way="'+k+'"':' data-k="'+k+'"'+dmark(k,o),cls=pl?'act ymi':'act';
+var q=k==='claude'&&cont(o);if(q)return'<button class="'+cls+'" type="button"'+mk+' title="'+l+'" aria-label="'+l+'" data-act="'+esc(JSON.stringify(q))+'" data-say="'+esc(going(o))+'">'+txt+'</button>';
+if(k==='cmux'&&o.dk)return'<button class="'+cls+'" type="button"'+mk+' title="'+l+'" aria-label="'+l+'" data-act="'+desk(o,'open')+'"'
++(o.f?' data-expect="'+esc('live:'+o.f)+'"':'')+' data-say="'+esc('Opening '+o.n+' in cmux…')+'">'+txt+'</button>';
+return'<button class="'+cls+'" type="button" data-launch="'+k+'"'+mk+' title="'+l+'" aria-label="'+l+'" data-folder="'+esc(o.f)+'" data-phrase="'+esc(p)+'" data-say="'+esc(say)+'">'+txt+'</button>'}
 /* the cmux extra's desk: open a session for the thread, or close the project's */
 function deskReq(o,v){var q={verb:v,zone:o.dk[0],project:o.dk[1]};if(o.dk[2])q.thread=o.dk[2];return q}
 function desk(o,v){return esc(JSON.stringify(deskReq(o,v)))}
 /* data-k names the app, so Garrick.app can draw the button as its icon, as its menu bar does; data-d marks the default */
 function dmark(k,o){var d=GarrickPrefs.def();if(!d||!o.f||chosen().indexOf(d)<0)d='note';return k===d?' data-d':''}
-function noteLink(o){return'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>'}
+function noteLink(o,pl){if(pl)return'<a class="act ymi" href="'+esc(o.u)+'" data-way="note" title="'+pl.l+'" aria-label="'+pl.l+'">'+(pl.i||'')+esc(pl.l)+(pl.t?TICK:'')+'</a>';
+return'<a class="act" href="'+esc(o.u)+'" data-k="note"'+dmark('note',o)+' title="Open the note" aria-label="Open the note">Open</a>'}
 function acts(o,pre){var a=(pre||'')+(prefs().note===false?'':noteLink(o));
 if(o.f&&host)chosen().forEach(function(k){a+=launch(k,o)});
 /* the phrase to copy only where nothing opens it: a browser, or a host with no app offered */
 if(o.w&&!(o.f&&host&&chosen().length))a+=copy('open '+o.w);return'<div class="gacts">'+a+'</div>'}
-/* One way to open, for a row of Your work (#523): the main button runs Settings' Default, and a list beside it offers the others
-   that are on and installed, each drawn by launch() as the card draws it. One way on: one plain button. */
+/* One way to resume, for a row of Your work (#523, #559): a text button, Resume, which runs Settings' Default, and beside it a
+   menu of labelled rows, each with a 16 px icon, the default ticked: the ways that are on and installed, then a divider and the
+   folder and the note. One way on: Resume alone. The rows carry no data-k, so the app never draws them as its icons. */
+var IC={cmux:'<path d="M3 4.5l3.5 3.5L3 11.5M8.5 12h4.5"/>',claude:'<path d="M8 2.5v11M2.5 8h11M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6"/>',codex:'<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',finder:'<path d="M2 4.5h4l1.2 1.5H14v6.5H2z"/>',note:'<path d="M4 2.5h5.5L12 5v8.5H4zM9.5 2.5V5H12"/>'};
+function ico(k){return'<svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+IC[k]+'</svg>'}
+var TICK='<svg class="ytick" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-7"/></svg>';
+var RESUME={cmux:'Resume in cmux',claude:'Resume in Claude',codex:'Resume in Codex',finder:'Open folder',note:'Open the note'};
 function opener(o){var ways=(prefs().note===false?[]:['note']).concat(o.f&&host?chosen():[]),d=GarrickPrefs.def();
 if(!ways.length)ways=['note'];if(ways.indexOf(d)<0)d=ways[0];
-function one(k){return k==='note'?noteLink(o):launch(k,o)}
-var rest=ways.filter(function(k){return k!==d});
-return one(d)+(rest.length?'<details class="ymore"><summary class="act" title="Other ways to open" aria-label="Other ways to open">▾</summary><div class="ymenu">'+rest.map(one).join('')+'</div></details>':'')}
+function one(k,pl){return k==='note'?noteLink(o,pl):launch(k,o,pl)}
+var main=one(d,{l:'Resume'});
+if(ways.length<2)return'<span class="ysplit">'+main+'</span>';
+function row(k){return one(k,{l:RESUME[k],i:ico(k),t:k===d}).replace(/^<(button|a) /,'<$1 role="menuitem" ')}
+var apps=['cmux','claude','codex'].filter(function(k){return ways.indexOf(k)>=0}),rest=['finder','note'].filter(function(k){return ways.indexOf(k)>=0});
+var items=apps.map(row).join('')+(apps.length&&rest.length?'<hr class="ydiv" role="separator">':'')+rest.map(row).join('');
+return'<span class="ysplit">'+main+'<details class="ymore"><summary class="act" title="Other ways to resume" aria-label="Other ways to resume" aria-haspopup="menu">▾</summary><div class="ymenu" role="menu">'+items+'</div></details></span>'}
 /* a thread by its note (pa), or a project by its name (pp), its hub then holding every thread in it */
 function park(o){var s=o.h?o.hp:o.s,v=s?'wake':'park',q=o.h?{verb:v,zone:o.pp[0],project:o.pp[1]}:{verb:v,zone:o.pa[0],file:o.pa[1]},
 k=o.h?o.pp[0]+'/'+o.pp[1]+'/'+o.pp[1]+'.md':o.pa[0]+'/'+o.pa[1];
@@ -7053,6 +7116,20 @@ def lead_said(n: int) -> str:
     return "%s things need you." % (NUMBER_WORDS[n] if n < len(NUMBER_WORDS) else n)
 
 
+def attn_need(level: str, line: str, href, **over) -> dict:
+    """One line of the attention list, as one thing that waits. A published file that drifted names its own row.
+    `over` is what the page knows beyond the line (#559): its kind, its figure, the zone it belongs to, the day it
+    began and the button's words. A critical line is Broken; a warning is To do. The button says where it goes."""
+    link = href["href"] if isinstance(href, dict) else href
+    need = {"kind": "problem" if level == "critical" else "other", "group": "broken" if level == "critical" else "todo",
+            "level": level, "zone": "", "text": line, "late": "", "href": link, "tz": "", "count": 1,
+            "blank": link.startswith("https://"), "label": "See the details", "go": "See the details"}
+    need.update(over)
+    if "go" not in over:
+        need["go"] = need["label"]
+    return need
+
+
 def late_need(z: dict, today: dt.date) -> dict:
     """One zone's late actions, as one thing that waits: its count, and since when the oldest has been late. It
     belongs to that zone only; nothing here adds one zone to another."""
@@ -7062,30 +7139,43 @@ def late_need(z: dict, today: dt.date) -> dict:
             if r["late"] and r["when"] is not None and (oldest is None or r["when"] < oldest["when"]):
                 oldest = r
     n = z["late"]
-    return {"kind": "late", "level": "late", "zone": z["zone"], "text": "%d late action%s" % (n, "" if n == 1 else "s"),
+    return {"kind": "late", "group": "todo", "level": "late", "zone": z["zone"], "count": n,
+            "text": "%d late action%s" % (n, "" if n == 1 else "s"),
             "late": late_said(oldest, today).replace("was due", "oldest was due").replace("to chase", "oldest to chase") if oldest else "",
             "href": "#todolist", "tz": z["zone"], "label": "Open the list", "go": "Open the late actions"}
 
 
-def attn_need(level: str, text: str, href) -> dict:
-    """One line of the attention list, as one thing that waits. A published file that drifted names its own row."""
-    link = href["href"] if isinstance(href, dict) else href
-    return {"kind": "attn", "level": level, "zone": "", "text": text, "late": "", "href": link, "tz": "",
-            "blank": link.startswith("https://"), "label": "Open it", "go": "Open it"}
-
-
-def needs_you(attn: List[tuple], lists: List[dict], today: dt.date) -> List[dict]:
+def needs_you(attn: List[tuple], lists: List[dict], today: dt.date, detail: Optional[Dict[str, dict]] = None) -> List[dict]:
     """What waits on the user, apart from the sessions that wait for an answer (the card draws those live):
     what failed first, then each zone's late actions, then the warnings. The lead sentence counts these and the
-    sessions; the card lists them, in the same order, so the two always agree."""
-    out = [attn_need(k, t, h) for k, t, h in attn if k == "critical"]
+    sessions; the card lists them, in the same order, so the two always agree. `detail` is what the build knows
+    of a line beyond its text (job_need, the inbox count, a repository's files), keyed by that text."""
+    detail = detail or {}
+    out = [attn_need(k, t, h, **detail.get(t, {})) for k, t, h in attn if k == "critical"]
     out += [late_need(z, today) for z in lists if z["late"]]
-    out += [attn_need(k, t, h) for k, t, h in attn if k != "critical"]
+    out += [attn_need(k, t, h, **detail.get(t, {})) for k, t, h in attn if k != "critical"]
     return out
 
 
+def day_name(d: dt.date) -> str:
+    """A date as a day: Fri 13 Nov."""
+    return "%s %d %s" % (d.strftime("%a"), d.day, d.strftime("%b"))
+
+
+def job_need(j: dict) -> dict:
+    """A failed job, in plain words (#559): its title, why in a few words, and the day it began to fail. The button
+    goes to the log. A job that did not run on time says so and since when it last ran."""
+    since = "since %s" % day_name(j["since"]) if j.get("since") else ""
+    if str(j["status"]).startswith("late"):
+        return {"kind": "job", "text": "%s did not run on time" % j["title"],
+                "late": "last ran %s" % day_name(j["when"].date()) if j.get("when") else "", "label": "See the log"}
+    why = step_reason(j.get("steps")) if "failed in the run under way" in str(j["status"]) else ""
+    why = why or j.get("reason") or ("it exited with code %d" % j["code"] if isinstance(j.get("code"), int) and j["code"] > 0 else "it did not finish")
+    return {"kind": "job", "text": "%s failed: %s" % (j["title"], why), "late": since, "label": "See the log"}
+
+
 def need_row(n: dict) -> str:
-    """One thing that waits, as a row of the card: an icon, one sentence, its zone, how late, one button."""
+    """One thing that waits, as a row of the card: an icon, one sentence, its zone, how long, one button."""
     cls, path = NEED_ICON[n["level"]]
     icon = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
             'stroke-linejoin="round">%s</svg>' % path)
@@ -7096,15 +7186,50 @@ def need_row(n: dict) -> str:
     return '<div class="wrow wneed"><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s</div>' % (cls, icon, E(n["text"]), where, late, go)
 
 
+def need_groups(needs: List[dict]) -> str:
+    """The rows in two groups (#559): Broken (a job that failed, an error the check found) and To do (late
+    actions, the inboxes, files not committed, warnings). With a row in Broken, To do starts folded and says how
+    many it holds."""
+    broken = [n for n in needs if n.get("group") == "broken"]
+    todo = [n for n in needs if n.get("group") != "broken"]
+    html = ""
+    if broken:
+        html += ('<section class="wgroup" data-g="broken" aria-label="Broken"><h3 class="wgh">Broken <span class="wgn">%d</span></h3>%s</section>'
+                 % (len(broken), "".join(need_row(n) for n in broken)))
+    if todo:
+        rows = "".join(need_row(n) for n in todo)
+        html += ('<details class="wgroup" data-g="todo"><summary class="wgh">To do <span class="wgn">%d</span></summary>%s</details>' % (len(todo), rows)
+                 if broken else
+                 '<section class="wgroup" data-g="todo" aria-label="To do"><h3 class="wgh">To do <span class="wgn">%d</span></h3>%s</section>' % (len(todo), rows))
+    return html
+
+
+# The kinds a lead line counts, in a fixed order: (kind, singular, plural). Each is a figure of its own.
+LEAD_KINDS = (("job", "%d job failed", "%d jobs failed"), ("errors", "%d error", "%d errors"),
+              ("problem", "%d problem", "%d problems"), ("late", "%d late action", "%d late actions"),
+              ("inbox", "%d in the inboxes", "%d in the inboxes"), ("files", "%d file not committed", "%d files not committed"),
+              ("warnings", "%d warning", "%d warnings"), ("other", "%d other thing to look at", "%d other things to look at"))
+
+
+def lead_counts(items: List[dict]) -> List[str]:
+    """The lead line's parts: counts by kind, in the fixed order of LEAD_KINDS, each kind once."""
+    total: Dict[str, int] = {}
+    for i in items:
+        k = i.get("kind") if i.get("kind") in dict((x[0], 1) for x in LEAD_KINDS) else ("other" if i.get("level") != "critical" else "problem")
+        total[k] = total.get(k, 0) + int(i.get("count") or 1)
+    return [(one if total[k] == 1 else many) % total[k] for k, one, many in LEAD_KINDS if total.get(k)]
+
+
 def lead_block(items: List[dict], sessions: int) -> str:
-    """The Overview's lead: one sentence, a line of reasons, and one primary button to the first thing. WAITING_JS
-    redraws it when the sessions that wait change, from the same figures (data-n is what the build counted)."""
+    """The Overview's lead: one sentence, one line of counts by kind, and one primary button to the first thing.
+    The card below lists the rows; this line never repeats them. WAITING_JS redraws it when the sessions that
+    wait change, from the same figures (data-n is what the build counted)."""
     n = len(items) + sessions
-    reasons = [i["text"] + (" in %s" % i["zone"] if i["zone"] else "") for i in items]
-    static = list(reasons)
+    static = lead_counts(items)
+    reasons = list(static)
     if sessions:
         reasons.append("%d session%s waiting for you" % (sessions, " is" if sessions == 1 else "s are"))
-    why = " · ".join(reasons[:3]) + (" · and %d more" % (len(reasons) - 3) if len(reasons) > 3 else "")
+    why = " · ".join(reasons)
     first = items[0] if items else None
     href, label, tz = (first["href"], first["go"], first["tz"]) if first else ("#waiting-now", "See who is waiting", "")
     go = ('<a class="btn primary" id="lead-go" href="%s"%s%s>%s%s</a>'
@@ -7124,36 +7249,6 @@ def tab_badge(id_: str, n: int, one: str, many: str, warn: bool, shown: str = "%
     and every count says what it is to a screen reader. An empty one is built hidden, so a script can fill it."""
     return ('<span class="n%s" id="%s" aria-label="%d%s"%s>%s</span>'
             % (" warn" if warn and n else "", id_, n, one if n == 1 else many, "" if n else " hidden", (shown % n) if n else ""))
-
-
-def todo_counts(z: dict, today: dt.date) -> Tuple[int, int, int]:
-    """One zone's open actions as three counts: late, due in the next seven days, and without a date. Late and due
-    soon never overlap, and a ticked line is not open."""
-    rows = [r for name, group in z["groups"] for r in group]
-    late = sum(1 for r in rows if r["late"])
-    soon = sum(1 for r in rows if r["when"] is not None and not r["late"] and 0 <= (r["when"] - today).days <= 7)
-    return late, soon, sum(1 for r in rows if r["when"] is None)
-
-
-def summary_card(lists: List[dict], today: dt.date, IB, worst: str, attn_n: int, go: str, ZS: Dict[str, dict], link,
-                 graph: bool) -> str:
-    """The Overview's summary column: Todo as three counts, workspace health in words, the inboxes' counts and
-    Explore as a button. Each figure is one zone's own: the zones are listed, never added."""
-    todo_rows = "".join(
-        '<a class="sumz" href="#todolist" data-tz-go="%s"><b%s>%s</b><span class="sumn%s"><b>%d</b> late</span>'
-        '<span class="sumn"><b>%d</b> this week</span><span class="sumn"><b>%d</b> no date</span></a>'
-        % ((E(z["zone"]), zone_attr(z["zone"], ZS), zone_name(z["zone"], ZS)) + ((" bad" if c[0] else ""),) + c)
-        for z, c in ((z, todo_counts(z, today)) for z in lists))
-    health = ('<div class="sumh">%s<span>%s</span></div>'
-              % (pill(worst), '<a href="%s">%d thing%s need%s attention</a>' % (E(go), attn_n, "" if attn_n == 1 else "s", "s" if attn_n == 1 else "")
-                 if attn_n else "Nothing failing, waiting or broken."))
-    inboxes = "".join('<a class="sumi%s" href="%s"><span%s>%s</span><b>%d</b></a>' % (" has" if n else "", E(link(f)), zone_class(name, ZS),
-                                                                                       zone_name(name, ZS), n) for name, f, n in IB)
-    explore = '<button class="btn" type="button" id="explore-go">%sExplore the graph</button>' % GRAPH_ICON if graph else ""
-    body = ('%s<h3 class="sumt">Health</h3>%s<h3 class="sumt">Inboxes</h3><div class="sumis">%s</div>%s'
-            % ('<h3 class="sumt">Todo</h3><div class="sumzs">%s</div>' % todo_rows if todo_rows else "", health,
-               inboxes or '<p class="muted">No inboxes.</p>', '<div class="sumx">%s</div>' % explore if explore else ""))
-    return card("summary-col", "At a glance", "", body)
 
 
 GRAPH_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
@@ -7193,52 +7288,102 @@ def touched_said(moved: Optional[dt.date], today: dt.date) -> str:
     return "Touched today" if days <= 0 else "Touched yesterday" if days == 1 else "Touched %d days ago" % days
 
 
+_TICKED = re.compile(r"`([^`\n]+)`")
+YOUR_WORK_SHOWN = 10           # rows the card shows before Show all
+
+
+def path_name(inner: str) -> str:
+    """The last part of a path, as a person names the file: no folders, no date prefix, no extension."""
+    name = inner.strip().rstrip("/").rsplit("/", 1)[-1]
+    name = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", name)
+    name = re.sub(r"^\d{6}(?:\d{2})?\s*[-\u2013]\s*", "", name).strip()
+    return name or inner.strip()
+
+
+def plain_next(text: str) -> str:
+    """A next step for the Your work card (#559): the first letter capitalised, and a path in backticks shown as its
+    file name with the whole path as its title, so a row never wraps on a long path. Other backticks stay code."""
+    text = text[:1].upper() + text[1:] if text else text
+    out, pos = [], 0
+    for m in _TICKED.finditer(text):
+        inner = m.group(1)
+        out.append(md_inline(text[pos:m.start()]))
+        if "/" in inner or re.search(r"\.[A-Za-z0-9]{1,5}$", inner):
+            out.append('<span class="ypath" title="%s">%s</span>' % (E(inner), E(path_name(inner))))
+        else:
+            out.append(md_inline(m.group(0)))
+        pos = m.end()
+    out.append(md_inline(text[pos:]))
+    return "".join(out)
+
+
+def work_why(w: dict) -> Tuple[str, str]:
+    """The reason beside a state (#559), as (its HTML, what the title says): who the piece of work waits on, or, when
+    it waits on the user, what it asks of them. Empty when it waits on nobody."""
+    if not w["waiting"]:
+        return "", ""
+    if w.get("mine"):
+        ask = w.get("ask") or ""
+        return E(ask), ask
+    return "Waiting on %s" % md_inline(waiting_badge(w["waiting"])), "Waiting on %s" % w["waiting"]
+
+
 def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=None) -> str:
     """Your work, the Overview's opening list: each live piece of work with its next action, who it waits on, its
     open actions and the way to open it (#503, #523). The rows are the ones works() builds; nothing is read or kept
     for this card. A project of one thread is one piece of work, as page_action.py's work_name() counts it.
     The `todo N` chip and its list are the thread's on the Threads card, drawn from the same lines; the way to open
     is that card's own (PANEL_JS's Panel.opener), which follows Settings, drawn by YOURWORK_JS from the card's data
-    (`card_of(row)`, the JSON thread_card() gives the Threads card). In a browser the row copies the phrase instead."""
+    (`card_of(row)`, the JSON thread_card() gives the Threads card). In a browser the row copies the phrase instead.
+    The State column is two lines at most (#559): the state's word, then the reason and the chip on one line, cut with an
+    ellipsis (its title has the whole text); a row that is Fine says nothing there. The first ten rows show, then Show all."""
     rows = ""
-    for w in W:
-        nxt = md_inline(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'
-        waits = ('<span class="ywait" title="Waiting on %s">Waiting on %s</span>' % (E(w["waiting"]), md_inline(waiting_badge(w["waiting"])))
-                 if w["waiting"] and not w.get("mine") else "")
+    for n, w in enumerate(W):
+        nxt = plain_next(w["next"]) if w["next"] else '<span class="muted">No next step written yet</span>'
+        state = work_state(w, today)
+        word, whole = work_why(w)
         row = dict(w["row"], actions=w.get("actions") or [])
         chip = todo_chip(row, today, "yw")
         pop = todo_pop(row, today, acting, "yw")
-        why = ('<span class="ywhy">%s%s</span>' % (waits, '<span class="tchips">%s</span>' % chip if chip else "")) if waits or chip \
-            else '<span class="ywhy"></span>'
+        reason = ('<span class="ywait" title="%s">%s</span>' % (E(whole), word)) if word else ""
+        sep = '<span class="ydot" aria-hidden="true">\u00b7</span>' if word and chip else ""
+        why = ('<span class="ywhy">%s%s%s</span>' % (reason, sep, '<span class="tchips">%s</span>' % chip if chip else "")) if word or chip \
+            else ""
         phrase = "Where am I on %s?" % w["name"]
         data = card_of(w["row"]) if card_of else ""
         go = ('<span class="yopen apponly" data-card="%s"></span>' % E(data) if data else "") + \
-            '<span class="webonly">%s</span>' % copy("Copy “Where am I?”", phrase, "Copied “%s”. Paste it to your assistant." % phrase)
-        n_actions = len(w["actions"])
-        meta = "%s · %d action%s" % (touched_said(w["moved"], today), n_actions, "" if n_actions == 1 else "s")
-        rows += ('<div class="yrow" data-w="%s" role="row"><span class="ycell" role="cell">%s</span>'
+            '<span class="webonly">%s</span>' % copy("Copy \u201cWhere am I?\u201d", phrase, "Copied \u201c%s\u201d. Paste it to your assistant." % phrase)
+        rows += ('<div class="yrow%s" data-w="%s" role="row"%s><span class="ycell" role="cell">%s</span>'
                  '<span class="ycell ynext" role="cell">%s<small class="ymeta">%s</small></span>'
                  '<span class="ycell ystate" role="cell">%s%s</span><span class="ycell yact" role="cell">%s</span>%s</div>'
-                 % (E(w["id"]), work_name_lines(w), nxt, E(meta), pill(work_state(w, today)), why, go, pop))
+                 % (" yextra" if n >= YOUR_WORK_SHOWN else "", E(w["id"]), " hidden" if n >= YOUR_WORK_SHOWN else "", work_name_lines(w), nxt,
+                    E(touched_said(w["moved"], today)), "" if state == "good" else pill(state), why, go, pop))
     head = ('<div class="yhead" role="row"><span role="columnheader">Thread</span><span role="columnheader">Next step</span>'
             '<span role="columnheader">State</span><span role="columnheader"><span class="sr">Action</span></span></div>')
+    foot = ('<div class="yfoot"><button class="act" type="button" id="yall" aria-expanded="false" data-n="%d">Show all %d</button></div>'
+            % (len(W), len(W))) if len(W) > YOUR_WORK_SHOWN else ""
     return card("your-work", "Your work", "%d piece%s, most recent first" % (len(W), "" if len(W) == 1 else "s"),
-                '<div class="yrows" role="table" aria-label="Your work">%s%s</div>' % (head, rows))
+                '<div class="yrows" role="table" aria-label="Your work">%s%s</div>%s' % (head, rows, foot))
 
 
 YOURWORK_CSS = r"""
-.yhead,.yrow{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) 170px;gap:6px 18px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line)}
+.yhead,.yrow{display:grid;grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) 120px;gap:6px 18px;align-items:start;padding:12px 0;border-bottom:1px solid var(--line)}
 .yhead{padding:0 0 8px;font-size:13px;font-weight:600;color:var(--muted)}.yrow:last-child{border-bottom:0}.ycell{min-width:0}
 .yrow:hover{background:color-mix(in srgb,var(--sunk) 55%,transparent)}
 .yname{display:flex;flex-direction:column;min-width:0;overflow-wrap:anywhere}.ynext{overflow-wrap:anywhere;color:var(--ink2)}
 .ymeta{display:block;margin-top:2px;font-size:13px;color:var(--muted)}
 .yzone{font-size:13px;font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
 .ystate{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
-.ywhy{display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0}.ywhy:empty{display:none}.ywhy .tchips{display:inline-flex;gap:4px}.ywhy .chip{margin:0}
-.ywait{color:var(--ink2);font-size:13px}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:12px;font-weight:400;background:var(--wash);color:var(--accent)}
+.ywhy{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0;max-width:100%}.ywhy:empty{display:none}.ywhy .tchips{display:inline-flex;gap:4px;flex:none}.ywhy .chip{margin:0}
+.ywait{color:var(--ink2);font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ydot{color:var(--muted);flex:none}
+.ystate:empty{display:none}.ypath{white-space:nowrap}.yfoot{display:flex;justify-content:center;padding:10px 0 0}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:12px;font-weight:400;background:var(--wash);color:var(--accent)}
 .yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
-.ymore{position:relative}.ymore>summary.act{display:inline-block;padding:0 7px}
-.ymenu{position:absolute;right:0;top:100%;z-index:6;margin-top:4px;display:flex;flex-direction:column;gap:4px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--raise);box-shadow:var(--shadow);white-space:nowrap}
+.ysplit{display:inline-flex;align-items:stretch}.ysplit>.act{border-top-right-radius:0;border-bottom-right-radius:0}
+.ymore{position:relative;display:inline-flex}.ymore>summary.act{display:inline-flex;align-items:center;padding:0 8px;list-style:none;border-left-width:0;border-top-left-radius:0;border-bottom-left-radius:0}
+.ymore>summary::-webkit-details-marker{display:none}
+.ymenu{position:absolute;right:0;top:100%;z-index:6;margin-top:4px;display:flex;flex-direction:column;gap:2px;padding:6px;border:1px solid var(--line);border-radius:10px;background:var(--raise);box-shadow:var(--shadow);white-space:nowrap;min-width:180px}
+.ymenu .act{justify-content:flex-start;gap:8px;border-color:transparent;background:transparent;text-align:left}.ymenu .act svg{width:16px;height:16px;flex:none}
+.ymenu .act .ytick{margin-left:auto;color:var(--accent)}.ymenu .ydiv{border:0;border-top:1px solid var(--line);margin:4px 0;width:100%}
 .yrow .tpop{grid-column:1/-1}
 @media(max-width:720px){.yhead{display:none}.yrow{grid-template-columns:1fr auto;padding:14px 0}.ynext,.ystate{grid-column:1/-1}}
 """
@@ -7246,10 +7391,28 @@ YOURWORK_CSS = r"""
 # Draws each row's way to open from the card's data, as the Threads card's hover card does, and again when the
 # pointer enters the row, so a change in Settings shows without a rebuild. One list open at a time.
 YOURWORK_JS = r"""
-(function(){if(typeof Panel==='undefined'||!Panel.opener)return;
+(function(){
+/* Show all (#559): the first ten rows show, the rest wait behind one button. The choice is this viewer's alone, kept in
+   localStorage; with no storage the card opens on its ten. */
+var all=document.getElementById('yall'),KEY='garrick-your-work-all';
+if(all){var more=[].slice.call(document.querySelectorAll('#your-work .yextra'));
+function kept(){try{return localStorage.getItem(KEY)==='1'}catch(e){return false}}
+function keep(v){try{localStorage.setItem(KEY,v?'1':'0')}catch(e){}}
+function show(on){more.forEach(function(r){r.hidden=!on});all.setAttribute('aria-expanded',on?'true':'false');all.textContent=on?'Show fewer':'Show all '+all.dataset.n}
+show(kept());all.addEventListener('click',function(){var on=all.getAttribute('aria-expanded')!=='true';show(on);keep(on)})}
+if(typeof Panel==='undefined'||!Panel.opener)return;
+/* Draws each row's way to open from the card's data, as the Threads card's hover card does, and again when the
+   pointer enters the row, so a change in Settings shows without a rebuild. One list open at a time. */
 function draw(el){var o;try{o=JSON.parse(el.dataset.card)}catch(e){return}if(!el.querySelector('details[open]'))el.innerHTML=Panel.opener(o)}
 [].forEach.call(document.querySelectorAll('.yrow'),function(r){var y=r.querySelector('.yopen[data-card]');if(!y)return;draw(y);r.addEventListener('mouseenter',function(){draw(y)})});
-document.addEventListener('click',function(e){[].forEach.call(document.querySelectorAll('.ymore[open]'),function(d){if(!d.contains(e.target)||e.target.closest('.ymenu .act'))d.open=false})})})();
+document.addEventListener('click',function(e){[].forEach.call(document.querySelectorAll('.ymore[open]'),function(d){if(!d.contains(e.target)||e.target.closest('.ymenu .act'))d.open=false})});
+/* Enter on Resume resumes (it is a button). Alt+Down opens the menu, the arrows move in it, Escape shuts it */
+document.addEventListener('keydown',function(e){var sp=e.target.closest&&e.target.closest('.ysplit');if(!sp)return;var d=sp.querySelector('details.ymore');if(!d)return;
+var items=[].slice.call(d.querySelectorAll('.ymenu .act'));
+if(e.altKey&&e.key==='ArrowDown'){e.preventDefault();d.open=true;if(items[0])items[0].focus();return}
+if(!d.open)return;
+if(e.key==='Escape'){d.open=false;d.querySelector('summary').focus();return}
+if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();var at=items.indexOf(document.activeElement),n=e.key==='ArrowDown'?at+1:at-1;items[(n+items.length)%items.length].focus()}})})();
 """
 
 
@@ -7263,7 +7426,7 @@ def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]]
     meta = ("%d item%s" if needs else "%d session%s") % (total, "" if total == 1 else "s") if total else ""
     html = card("waiting-now", "Waiting on you now", meta,
                 '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows" aria-live="polite">%s</div>'
-                % ("".join(need_row(n) for n in needs), "".join(waiting_row(r, now) for r in rows)))
+                % (need_groups(needs), "".join(waiting_row(r, now) for r in rows)))
     # Built out of sight (the class, since a card's own Hide uses `hidden`) when nothing waits (#510); GarrickWaiting shows it with the first row and hides it with the last.
     return html if total else html.replace('<details class="card" id="waiting-now"', '<details class="card nowait" id="waiting-now"', 1)
 
@@ -7296,13 +7459,13 @@ return d}
 function lead(sess){var L=document.getElementById('lead');if(!L)return;var st=+L.dataset.n||0,t=st+sess,h=document.getElementById('lead-h'),w=document.getElementById('lead-why'),g=document.getElementById('lead-go');
 h.textContent=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
 var why=L.dataset.why?L.dataset.why.split(' · '):[];if(sess)why.push(sess+(sess===1?' session is':' sessions are')+' waiting for you');
-w.textContent=why.slice(0,3).join(' · ')+(why.length>3?' · and '+(why.length-3)+' more':'');
+w.textContent=why.join(' · ');
 if(g){g.hidden=t<1;if(L.dataset.first!=='1'&&sess){g.setAttribute('href','#waiting-now');g.removeAttribute('data-tz-go');g.innerHTML='See who is waiting'+ARROW}}
 var n=document.getElementById('tabn-overview');if(n){n.textContent=t||'';n.hidden=!t;n.setAttribute('aria-label',t+(t===1?' thing needs you':' things need you'))}}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
 box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});
-var nd=document.getElementById('wneeds'),fixed=nd?nd.children.length:0,total=rows.length+fixed;
+var nd=document.getElementById('wneeds'),fixed=nd?nd.querySelectorAll('.wneed').length:0,total=rows.length+fixed;
 var card=document.getElementById('waiting-now');if(card)card.classList.toggle('nowait',!total);
 var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=total?total+(fixed?(total===1?' item':' items'):(total===1?' session':' sessions')):'';
 lead(rows.length)}
@@ -7376,14 +7539,11 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .wico{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--wash);color:var(--accent)}.wico svg{width:18px;height:18px}
 .wico.crit{background:var(--critical-wash);color:var(--critical)}.wico.warn{background:var(--warning-wash);color:var(--warning)}
 .wrow .act{margin-left:auto}.wname{overflow-wrap:anywhere}.wico{flex:none}
-/* the summary column */
-.sumt{margin:14px 0 6px;font-size:13px;font-weight:600;color:var(--muted)}.sumt:first-child{margin-top:0}
-.sumzs,.sumis{display:grid;gap:8px}
-.sumz{display:grid;grid-template-columns:1fr repeat(3,auto);gap:4px 12px;align-items:baseline;padding:10px 12px;border-radius:8px;background:var(--sunk);color:var(--ink);text-decoration:none}
-.sumz>b{grid-column:1/-1}.sumz .sumn{font-size:13px;color:var(--ink2)}.sumz .sumn b{font:600 24px/1.1 var(--display);color:var(--ink);margin-right:2px}.sumz .sumn.bad b{color:var(--critical)}
-.sumz:hover,.sumi:hover{text-decoration:none;outline:1px solid var(--line2)}
-.sumi{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 12px;border:1px solid var(--line);border-radius:8px;color:var(--ink);text-decoration:none}
-.sumi b{font-weight:700}.sumi.has b{color:var(--accent)}.sumh{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.sumx{margin-top:16px}
+/* the two groups of what waits (#559): Broken, then To do, which starts folded when something is broken */
+.wgroup{margin:0 0 6px}.wgh{display:flex;align-items:baseline;gap:8px;margin:10px 0 2px;font-size:13px;font-weight:600;color:var(--muted);cursor:default;list-style:none}
+details.wgroup>summary.wgh{cursor:pointer}details.wgroup>summary.wgh::-webkit-details-marker{display:none}
+details.wgroup>summary.wgh::before{content:"\25B8";font-size:13px}details.wgroup[open]>summary.wgh::before{content:"\25BE"}
+.wgn{font-weight:600;color:var(--ink2)}
 /* a tab's count */
 .tabs .n{min-width:22px;height:20px;padding:0 6px;border-radius:10px;background:var(--sunk);color:var(--ink2);font-size:12px;font-weight:700;display:inline-grid;place-items:center}
 .tabs .n.warn{background:var(--warning-wash);color:var(--warning)}.tabs .n:empty,.tabs .n[hidden]{display:none}
@@ -7438,17 +7598,24 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
 
     # ---- what needs attention, worst first
     attn = []
+    detail: Dict[str, dict] = {}               # what the Overview's rows know of a line beyond its text (#559), by that text
     check_age = kept_said(C, now)              # a kept result's counts say how old they are, wherever they show (#298)
     of_kept = " (%s)" % (check_age[:1].lower() + check_age[1:]) if check_age else ""
     if C and C.get("pending"):
         attn.append(("warning", "No check result yet", "#checks"))
+        detail["No check result yet"] = {"label": "See the check"}
     elif C and C.get("failed"):
         attn.append(("critical", "The check did not run", "#checks"))
+        detail["The check did not run"] = {"label": "See the check"}
     elif C and C.get("errors"):
-        attn.append(("critical", "The check found %d error%s%s" % (C["errors"], "" if C["errors"] == 1 else "s", of_kept), "#checks"))
+        said_errors = "The check found %d error%s%s" % (C["errors"], "" if C["errors"] == 1 else "s", of_kept)
+        attn.append(("critical", said_errors, "#checks"))
+        detail[said_errors] = {"kind": "errors", "count": C["errors"], "label": "See the errors"}
     for j in J:
         if j["state"] == "critical":
-            attn.append(("critical", "%s: %s" % (j["name"], j["status"]), "#jobs"))
+            line = "%s: %s" % (j["name"], j["status"])
+            attn.append(("critical", line, "#jobs"))
+            detail[line] = job_need(j)
     if L:
         stopped: Dict[str, int] = {}          # one line per job, however many calls it lost
         capped_ask: Dict[str, int] = {}       # and one per cap of Ask's own, named (#294)
@@ -7463,6 +7630,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             attn.append(("critical", "The spending cap stopped %s%s" % (job, "" if n == 1 else " %d times in 24 hours" % n), "#calls"))
         for cap, n in capped_ask.items():
             attn.append(("critical", ask_cap_stopped(cap, n), "#calls"))
+        for tk, tt, th in attn:
+            if th == "#calls" and tt not in detail:
+                detail[tt] = {"label": "See the calls"}
         over: Dict[str, int] = {}
         for e in L["over_budget"]:
             over[str(e.get("job") or "a job")] = over.get(str(e.get("job") or "a job"), 0) + 1
@@ -7476,24 +7646,37 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                 attn.append(("critical", "%s tried a tool the deny list forbids: %s" % (job, ", ".join(hit)), "#calls"))
     waiting = sum(n for _, _, n in IB)
     if waiting:
-        attn.append(("warning", "%d item%s waiting in the inboxes" % (waiting, "" if waiting == 1 else "s"), "#inboxes"))
+        said_inbox = "%d item%s waiting in the inboxes" % (waiting, "" if waiting == 1 else "s")
+        attn.append(("warning", said_inbox, "#inboxes"))
+        detail[said_inbox] = {"kind": "inbox", "count": waiting, "label": "Open the inbox"}
     if C and C.get("warnings"):
-        attn.append(("warning", "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept), "#checks"))
+        said_warn = "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept)
+        attn.append(("warning", said_warn, "#checks"))
+        detail[said_warn] = {"kind": "warnings", "count": C["warnings"], "label": "See the warnings"}
     for j in J:
         if j["idle"]:
-            attn.append(("warning", "%s: %s" % (j["name"], j["status"]), "#jobs"))
+            line = "%s: %s" % (j["name"], j["status"])
+            attn.append(("warning", line, "#jobs"))
+            detail[line] = {"text": "%s has done nothing for a while" % j["title"], "label": "See the log"}
     for r in R:
         if r["dirty"] and r.get("since") and now - r["since"] > STALE_CHANGES:
-            attn.append(("warning", "%s: %s, the oldest changed %s" % (r["name"], say_files(r["dirty"]), age(r["since"], now)), "#repos"))
+            line = "%s: %s, the oldest changed %s" % (r["name"], say_files(r["dirty"]), age(r["since"], now))
+            attn.append(("warning", line, "#repos"))
+            # the zone in its column, never in the sentence (#559)
+            detail[line] = {"kind": "files", "count": r["dirty"], "zone": r["name"], "tz": "", "label": "See the changes",
+                            "text": "%d file%s not committed" % (r["dirty"], "" if r["dirty"] == 1 else "s"),
+                            "late": "oldest changed %s" % age(r["since"], now)}
     notice = release_notice(ws)
     if notice:
         attn.append(("warning", notice[0], notice[1]))
+        detail[notice[0]] = {"label": "See the release notes"}
     for f in drifted(ws):
         # a drift row leads to the row of its project, or of the thread the file is in, and offers Show both (#323)
         go = {"row": row_anchor(f["zone"], f["project"], f["thread"]), "up": row_anchor(f["zone"], f["project"])}
         attn.append(("warning", f["text"], {"href": "#" + go["row"], "go": go,
                                             "reveal": {"zone": f["zone"], "project": f["project"], "thread": f["ledger"],
                                                        "file": f["file"]} if f["both"] else None}))
+        detail[f["text"]] = {"label": "See the file"}
     attn.sort(key=lambda a: a[0] != "critical")
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
     # Where each trouble shows (#443): on its own card, so a tab carries a dot for the cards it holds. A newer Garrick
@@ -7531,8 +7714,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     DK = S is not None and acting and desk_ready()
     controls = ('<div class="bacts"><button class="cog" type="button" id="rebuild" aria-label="Rebuild the page" '
                 'title="Copy the command that rebuilds the page" data-copy="%s" data-say="Copied. Run it in a terminal to rebuild the page.">%s</button>'
-                '<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s</div>'
-                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD, GEAR, THEME_SEG))
+                '%s<button class="cog" type="button" id="open-settings" aria-label="Settings" title="Settings">%s</button>%s</div>'
+                % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD,
+                   ('<button class="cog" type="button" id="explore-go" aria-label="Explore the graph" title="Explore the graph">%s</button>' % GRAPH_ICON)
+                   if show_graph else "", GEAR, THEME_SEG))
 
     # ---- hero and tiles
     if attn:
@@ -7934,7 +8119,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    needs = needs_you(attn, lists, now.date())          # what waits on the user, from what the page knows; the lead counts it (#551)
+    needs = needs_you(attn, lists, now.date(), detail)          # what waits on the user, from what the page knows; the lead counts it (#551)
     lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
@@ -7942,8 +8127,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
                        '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT + lead_block(needs, len(waiting_now or [])), lead, todo_card,
-                          summary_card(lists, now.date(), IB, worst, len(attn), "#" + troubled[0][1] if troubled else "#summary", ZS, link, show_graph)
-                          + inbox_card, graph_card))
+                          inbox_card, graph_card))
     # Every tab with content has a left and a right slot below its own content (#443).
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'

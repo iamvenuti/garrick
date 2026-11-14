@@ -97,8 +97,11 @@ failed run gives names the steps that failed.
 What the status page reads, all in the jobs folder:
 
     <name>.heartbeat.json  the last run: job, started, finished, finished_ts,
-                           exit, seconds, ok, quiet, reason, items, idle_days,
-                           idle, agent, no_call, failing_since, and
+                           exit, seconds, ok, quiet, reason (a few plain words,
+                           80 characters at most, set when the exit is not 0),
+                           title (the job's plain name: GARRICK_JOB_TITLE,
+                           else --title, else the name without `gr-`), items,
+                           idle_days, idle, agent, no_call, failing_since, and
                            steps when the command reported them
     <name>.lock/until      while a run holds it: "<until> <pid> <started>",
                            then " <group> <group started>" once the
@@ -797,6 +800,88 @@ def failed_steps(steps: Optional[List[dict]]) -> str:
                      if isinstance(s.get("exit"), int) and s["exit"] != 0)
 
 
+def job_title(name: str, argument: Optional[str] = None) -> str:
+    """The plain name a job shows on the status page (#559): GARRICK_JOB_TITLE from its plist environment, else
+    `--title`, else the name without its `gr-` prefix, hyphens and underscores as spaces, first letter capitalised."""
+    given = (os.environ.get("GARRICK_JOB_TITLE") or argument or "").strip()
+    if given:
+        return given[:60]
+    base = name[3:] if name.startswith("gr-") and len(name) > 3 else name
+    base = re.sub(r"[-_]+", " ", base).strip()
+    return base[:1].upper() + base[1:] if base else name
+
+
+REASON_MAX = 80
+_ERROR_LINE = re.compile(r"(?i)\b(\w*error|\w*exception|errno|failed|failure|fatal|traceback|exception|denied|refused|timed out|"
+                         r"could not|couldn't|cannot|can't|unable to|no such|not found|not signed in)\b")
+_PATH = re.compile(r"(?:~|/)[^\s:'\"]*/[^\s:'\"]*")
+_SECRETISH = re.compile(r"(?i)(?:[A-Za-z0-9_+/=-]{32,}|\b(?:bearer|basic|token|password|passwd|secret|api[_-]?key|authorization)\b\s*[:=]?\s*\S{6,}"
+                        r"|://[^\s/@:]+:[^\s/@]+@|-----BEGIN)")
+
+
+def words_span(seconds: float) -> str:
+    """A limit in words: "1 hour", "25 minutes"."""
+    if seconds >= 3600 and seconds % 3600 == 0:
+        n = int(seconds // 3600)
+        return "1 hour" if n == 1 else "%d hours" % n
+    if seconds >= 120:
+        return "%d minutes" % round(seconds / 60)
+    return "%d seconds" % round(seconds)
+
+
+def log_error_line(log_path: Path, since: float) -> Optional[str]:
+    """The last line of this run's log that reads as an error, as a short sentence: any path in it cut to its last
+    part, at most REASON_MAX characters. A line that looks like it holds a secret is never used, so the caller
+    says nothing of it (fail closed). job.py's own lines and the run's frame are not the job's error."""
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    marker = text.rfind("===== %s" % stamp(since))
+    lines = (text[marker:] if marker >= 0 else text[-20000:]).splitlines()
+    for line in reversed(lines):
+        line = line.strip()
+        if not line or line.startswith(("=====", "job:")) or not _ERROR_LINE.search(line):
+            continue
+        line = _PATH.sub(lambda m: m.group(0).rstrip("/").rsplit("/", 1)[-1], line)
+        if _SECRETISH.search(line):
+            return None
+        line = re.sub(r"^(?:[A-Za-z]*(?:Error|Exception)|error|fatal|ERROR|FATAL)\s*[:\]]\s*", "", line).strip()
+        line = re.sub(r"\s+", " ", line)
+        if not line:
+            continue
+        line = line[:1].upper() + line[1:]
+        return line if len(line) <= REASON_MAX else line[:REASON_MAX - 1].rstrip() + "\u2026"
+    return None
+
+
+def plain_reason(code: int, cause: Optional[str], timeout: float, steps: Optional[List[dict]],
+                 log_path: Path, since: float) -> Optional[str]:
+    """Why a run failed, in a few plain words for the status page (#559), at most REASON_MAX characters. None when it
+    did not fail. A watchdog stop says the limit; a step that failed names the step ("Recall timed out"); then
+    the last error line of the log; at the last, "it exited with code N"."""
+    if code == 0:
+        return None
+    if cause == "timeout":
+        return "it stopped after %s" % words_span(timeout)
+    if cause == "login":
+        return "it could not sign in"
+    if cause == "start":
+        return "it could not start"
+    if cause == "signal":
+        return "it was stopped by %s" % signal_name(code - 128)
+    if code == agent.EXIT_CONNECTOR:
+        return "it needs a connector"
+    if code == agent.EXIT_CAP:
+        return "it reached a spending cap"
+    for step in steps or []:
+        if isinstance(step.get("exit"), int) and step["exit"] != 0:
+            name = re.sub(r"[-_]+", " ", str(step["step"])).strip()
+            name = (name[:1].upper() + name[1:])[:40]
+            return "%s %s" % (name, "timed out" if step["exit"] == 124 else "failed")
+    return log_error_line(log_path, since) or "it exited with code %d" % code
+
+
 def idle_days(items: Optional[int], lastwork: Path, now: float) -> Optional[int]:
     """Days since the last run that did anything, for jobs that report. The
     first report starts the clock rather than raising the alarm at once."""
@@ -1009,6 +1094,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("name")
     ap.add_argument("--agent", action="store_true", help="the job calls an assistant")
     ap.add_argument("--cwd")
+    ap.add_argument("--title", help="the job's plain name on the status page (GARRICK_JOB_TITLE does the same)")
     ap.add_argument("--timeout", type=float, help="seconds before the watchdog stops the run (1500)")
     ap.add_argument("--detach", action="store_true",
                     help="run in a session of its own and return at once, as a session hook wants")
@@ -1054,6 +1140,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     idle_alert = jobs / ("%s.idle-alert" % name)
     cwd = Path(args.cwd or os.environ.get("GARRICK_WORKSPACE") or Path.home()).expanduser()
     renamed = renamed_fields(name, beat, time.time())
+    title = job_title(name, args.title)
     # The job's lock covers the wait for the shared one, the sign-in retry and
     # the run; the shared one covers the retry and the run.
     hold_job = 2 * args.timeout + retry + SLACK
@@ -1121,7 +1208,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if cause == "timeout":
                         log.write("job: stopped by the watchdog after %ds\n" % args.timeout)
             except Stopped as stop:
-                return stopped(stop.signum, name, start, log, beat, alert_state, bool(args.agent), renamed)
+                return stopped(stop.signum, name, start, log, beat, alert_state, bool(args.agent), renamed, title)
             hold_signals()
             now = time.time()
             seconds = now - start
@@ -1130,6 +1217,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             reason = None if code == 0 else describe(code, seconds, args.timeout, cause)
             steps = read_steps(steps_file)
             failed = failed_steps(steps)
+            plain = plain_reason(code, cause, args.timeout, steps, log_path, start)
             if reason and failed:
                 reason += "; %s failed" % failed
             if is_quiet:
@@ -1160,7 +1248,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                       % (stamp(now), name, code, seconds, "  quiet" if is_quiet else ""))
             write_json(beat, {"job": name, "started": stamp(start), "finished": stamp(now),
                               "finished_ts": round(now, 3), "exit": code, "seconds": round(seconds),
-                              "ok": ok, "quiet": is_quiet, "reason": reason, "items": items,
+                              "ok": ok, "quiet": is_quiet, "reason": plain, "title": title, "items": items,
                               "idle_days": idle, "idle": is_idle, "agent": bool(args.agent), "no_call": no_call,
                               "failing_since": stamp(failing_since) if failing_since else None,
                               **({"steps": steps} if steps is not None else {}), **renamed})
@@ -1189,7 +1277,7 @@ def detach(argv: List[str]) -> int:
 
 
 def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: Path, agent_job: bool,
-            renamed: Optional[dict] = None) -> int:
+            renamed: Optional[dict] = None, title: Optional[str] = None) -> int:
     """This process was asked to stop mid-run, and has stopped its command:
     a line in the log and a heartbeat that say so, and exit 128 plus the
     signal's number. No notice: a stop is something you or the Mac did, and
@@ -1203,7 +1291,8 @@ def stopped(signum: int, name: str, start: float, log, beat: Path, alert_state: 
     since = state.get("since") if state and isinstance(state.get("since"), (int, float)) else None
     write_json(beat, {"job": name, "started": stamp(start), "finished": stamp(now),
                       "finished_ts": round(now, 3), "exit": code, "seconds": round(now - start),
-                      "ok": False, "quiet": False, "reason": reason, "items": None,
+                      "ok": False, "quiet": False, "reason": "it was stopped by %s" % signal_name(signum),
+                      "title": title or job_title(name), "items": None,
                       "idle_days": None, "idle": False, "agent": agent_job, "no_call": False,
                       "failing_since": stamp(since) if since else None, **(renamed or {})})
     return code

@@ -739,7 +739,7 @@ class NoticeTest(FakeAssistants):
         state = json.loads((self.jobs / "sweep.alert.json").read_text())
         self.assertEqual(6, state["exit"])
         beat = self.beat("sweep")
-        self.assertEqual((False, False, "needs a connector claude does not have; see the log"),
+        self.assertEqual((False, False, "it needs a connector"),
                          (beat["ok"], beat["quiet"], beat["reason"]))
         self.assertTrue(beat["failing_since"])
         self.assertEqual(0, self.job("sweep", 0).returncode)
@@ -809,7 +809,7 @@ class NoticeTest(FakeAssistants):
         # A job that exits 4 or 124 itself did not fail job.py's sign-in check or meet its watchdog.
         for code in (4, 124, 127):
             self.assertEqual(code, self.job("sweep%d" % code, code).returncode)
-            self.assertRegex(self.beat("sweep%d" % code)["reason"], r"^exited %d after \d+s$" % code)
+            self.assertEqual("it exited with code %d" % code, self.beat("sweep%d" % code)["reason"])
             self.assertIn("sweep%d exited %d after" % (code, code), self.notices()[-1]["message"])
 
     def test_a_command_killed_by_a_signal_exits_as_a_shell_says(self):
@@ -887,10 +887,57 @@ class JobExtrasTest(FakeAssistants):
         self.assertEqual(0, r.returncode, r.stderr)
         beat = json.loads((self.jobs / "tidy.heartbeat.json").read_text())
         self.assertEqual({"agent", "exit", "failing_since", "finished", "finished_ts", "idle", "idle_days", "items",
-                          "job", "no_call", "ok", "quiet", "reason", "seconds", "started"}, set(beat))
+                          "job", "no_call", "ok", "quiet", "reason", "seconds", "started", "title"}, set(beat))
+        self.assertEqual("Tidy", beat["title"])
         self.assertEqual((True, 0, True, False, None), (beat["agent"], beat["exit"], beat["ok"], beat["quiet"],
                                                         beat["reason"]))
         self.assertLessEqual(beat["started"], beat["finished"])
+
+    def beat_of(self, name):
+        return json.loads((self.jobs / ("%s.heartbeat.json" % name)).read_text())
+
+    def test_the_title_comes_from_the_environment_then_the_argument_then_the_name(self):
+        """#559: GARRICK_JOB_TITLE, else --title, else the name without gr- and its hyphens, first letter up."""
+        ok = (sys.executable, "-c", "pass")
+        self.job("gr-nightly-check", "--", *ok)
+        self.assertEqual("Nightly check", self.beat_of("gr-nightly-check")["title"])
+        self.job("app-update", "--title", "App updates", "--", *ok)
+        self.assertEqual("App updates", self.beat_of("app-update")["title"])
+        self.job("app-update", "--title", "App updates", "--", *ok, env={"GARRICK_JOB_TITLE": "Updates for the app"})
+        self.assertEqual("Updates for the app", self.beat_of("app-update")["title"])
+
+    def test_the_reason_is_the_last_error_line_of_the_log_in_plain_words(self):
+        r = self.job("sweep", "--", sys.executable, "-c", "import sys; print('starting'); print('ValueError: the Cedar list is empty'); sys.exit(1)")
+        self.assertEqual(1, r.returncode)
+        self.assertEqual("The Cedar list is empty", self.beat_of("sweep")["reason"])
+
+    def test_the_reason_is_cut_to_80_characters_and_holds_no_path(self):
+        line = "Error: could not read " + str(self.tmp / "Zones" / "Work" / "Acme" / "notes.md") + " " + "because " * 20
+        self.job("sweep", "--", sys.executable, "-c", "import sys; print(%r); sys.exit(1)" % line)
+        reason = self.beat_of("sweep")["reason"]
+        self.assertLessEqual(len(reason), 80)
+        self.assertNotIn(str(self.tmp), reason)
+        self.assertNotIn("/Zones/", reason)
+        self.assertTrue(reason.startswith("Could not read notes.md"), reason)
+
+    def test_a_line_that_looks_like_a_secret_is_never_the_reason(self):
+        self.job("sweep", "--", sys.executable, "-c",
+                 "import sys; print('Error: request failed with token ghp_" + "a1B2c3D4" * 5 + "'); sys.exit(3)")
+        self.assertEqual("it exited with code 3", self.beat_of("sweep")["reason"])
+
+    def test_a_watchdog_stop_says_the_limit_in_words(self):
+        self.job("slow", "--timeout", "1", "--", sys.executable, "-c", "import time; time.sleep(30)")
+        self.assertEqual("it stopped after 1 seconds", self.beat_of("slow")["reason"])
+        self.assertEqual("1 hour", job.words_span(3600))
+        self.assertEqual("25 minutes", job.words_span(1500))
+
+    def test_a_failed_step_names_the_step(self):
+        script = self.tmp / "steps.py"
+        script.write_text("import sys\nsys.path.insert(0, %r)\nimport agent\nagent.report_steps(["
+                          "{'step': 'nurture', 'exit': 0}, {'step': 'recall', 'exit': 124}])\nsys.exit(1)\n" % str(JOBS))
+        os.environ.pop("GARRICK_STEPS_FILE", None)
+        self.job("gr-nightly", "--", sys.executable, str(script))
+        self.assertEqual("Recall timed out", self.beat_of("gr-nightly")["reason"])
 
     def test_an_agent_job_that_recorded_no_call_says_so(self):
         r = self.job("tidy", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", "pass")
@@ -1675,7 +1722,7 @@ class NightlyTest(FakeAssistants):
                            capture_output=True, text=True)
         self.assertEqual(2, r.returncode, r.stderr)
         beat = json.loads((self.jobs / "gr-nightly.heartbeat.json").read_text())
-        self.assertEqual("exited 2 after 0s; nightly.local (exit 2) failed", beat["reason"])
+        self.assertEqual("Nightly.local failed", beat["reason"])
         self.assertEqual(["2 links point nowhere"], beat["steps"][2]["tail"])
 
     def test_the_shipped_plist_runs_it_at_05_15_with_no_assistant(self):

@@ -231,13 +231,24 @@ class TestPlainWording(unittest.TestCase):
             {"kind": "judgment", "check": "links", "path": q["path"], "line": "Zones/Work/Acme Review/Stray.md: something odd about a link"})},
             q["answers"][1]["req"])
         phrase = q["answers"][0]["phrase"]
-        self.assertIn("something odd about a link", phrase)                                  # the finding's own text, and nothing of another place
-        self.assertIn("Zones/Work/Acme Review/Stray.md", phrase)
+        self.assertNotIn("something odd about a link", phrase)                               # the check's text stays under Details
+        self.assertIn("“Stray” in Work", phrase)                                             # the file's name and its place
+        self.assertNotIn("Zones/Work/Acme Review/Stray.md", phrase)
         markup = fq.question_html(q)
         self.assertEqual(2, markup.count("data-fa"))
         shown = text_of(markup)
         self.assertNotIn("something odd about a link", shown)                                # outside Details it is not shown
         self.assertNotIn("Zones/Work", shown)
+
+    def test_an_other_findings_request_never_carries_a_file_of_another_zone_its_message_names(self):
+        it = {"kind": "judgment", "check": "links", "path": "Zones/Work/Acme Review/Stray.md", "scope": "Zones/Work",
+              "line": "x", "message": "Zones/Work/Acme Review/Stray.md links to Zones/Personal/Birch Home/Garden Plan.md"}
+        q = fq.question(it, "Zones/Work")
+        phrase = q["answers"][0]["phrase"]
+        for text in ("Zones/Personal", "Birch Home", "Garden Plan", "Zones/Work/Acme Review"):
+            self.assertNotIn(text, phrase)
+        self.assertIn("Garden Plan.md", q["details"])                                         # Details keeps the check's text
+        self.assertIn("“Stray” in Work", phrase)
 
     def test_an_other_finding_with_no_file_says_where_it_was_found(self):
         for path, said in (("Zones/Work", "A check found something in Work."), ("Wikis/Meetings", "A check found something in the Meetings wiki."),

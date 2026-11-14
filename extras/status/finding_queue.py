@@ -119,7 +119,6 @@ OTHER = "other"
 ANSWERS_OTHER: List[dict] = [A("fix-now", "Ask my assistant to fix it", "Your assistant looks at it and shows you the change.", "handoff"),
                              A("later", "Not now", "Ask again in a week.", "later")]
 OTHER_WHY = "Garrick has no plain wording for this check yet. Your assistant can look at it with you, and nothing changes until you say yes."
-OTHER_HANDOFF_MAX = 800     # characters of the finding's text a request carries
 # What a long note is asked when its plan moves nothing: no Move and no Show me, the handoff first (#539).
 ANSWERS_NO_MOVE: Dict[str, List[dict]] = {
     "note-long": [A("split", "Split the long sections into their own notes",
@@ -459,10 +458,10 @@ def other_sentence(path: str) -> str:
 
 
 def other_phrase(item: dict) -> str:
-    """The request *Ask my assistant to fix it* hands over: this finding's own text, of its own place, and no other."""
-    text = str(item.get("message") or item.get("line") or "")[:OTHER_HANDOFF_MAX]
-    return ("A check found something in %s (%s). Its text: %s Look at it, fix it if the fix is plain, and show me the change "
-            "before anything is committed." % (item["path"], place(str(item["path"])), text if text.endswith((".", "?", "!")) else text + "."))
+    """The request *Ask my assistant to fix it* hands over: the file's name, its place and the kind's plain sentence, and
+    never the check's own text, which may name a file of another place. The assistant reads the check itself."""
+    return ("%s Look at it, fix it if the fix is plain, and show me the change before anything is committed."
+            % other_sentence(str(item["path"])))
 
 
 def handoff_phrase(plain: str, answer: str, item: dict) -> str:

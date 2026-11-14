@@ -666,6 +666,29 @@ class SessionTest(Base):
         self.extract()
         self.assertEqual(0, recall_sessions.extract_run(self.root, str(self.claude), str(self.codex), 0)[1])     # nothing left to parse: no failure
 
+    def test_sources_placed_nowhere_are_not_parsed_again_and_a_quiet_night_exits_zero(self):
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        for i in range(6):
+            self.session(str(elsewhere), "why did the invoicexport fail %d" % i, "o%d" % i)
+        write_jsonl(self.claude / "p" / "empty.jsonl", [])
+        self.assertIn("written: 0", self.extract())
+        listed = recall_sessions.read_skipped(self.root)
+        self.assertEqual(7, len(listed))
+        self.assertNotIn("invoicexport", (self.root / "System" / ".sessions" / "skipped.json").read_text())
+        with self.parses():
+            said, code = recall_sessions.extract_run(self.root, str(self.claude), str(self.codex), 0)
+        self.assertEqual((0, []), (code, self.calls))                  # a quiet night: nothing parsed, no failure
+        new = self.session(str(elsewhere), "a changed one", "o1")
+        os.utime(str(new), (1_800_000_000, 1_800_000_000))
+        said, code = recall_sessions.extract_run(self.root, str(self.claude), str(self.codex), 0)
+        self.assertEqual(recall_sessions.EXIT_LIMIT, code)             # a source that changed was left unparsed
+        self.assertEqual(7, len(recall_sessions.read_skipped(self.root)) + 1)
+        (self.root / "System" / ".sessions" / "skipped.json").write_text("not json")
+        with self.parses():
+            self.extract()
+        self.assertEqual(7, len(self.calls))                           # an unreadable list: everything is parsed
+
     def test_the_command_exits_zero_when_partial_and_124_when_it_wrote_nothing(self):
         self.many(3)
         out = io.StringIO()

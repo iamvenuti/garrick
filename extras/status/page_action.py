@@ -1642,11 +1642,13 @@ def save_settings(ws: Path, req: dict) -> str:
     {"home": "simple"} or "full", which the page opens on (#175).
     {"graph": {"project": "Teal"}}, Settings › Graph colours (#291).
     {"ask": false}, Settings › Menu bar › Answer in the Ask box (on unless saved off).
+    {"channels": {"telegram": {"autonomy": "act"}}}, Settings › Channels (#571): tier, effort and autonomy of Ask and
+    of Telegram; Full is refused for Telegram.
     {"desk-agent": "claude"} or "codex", which assistant a cmux tab starts,
     is the cmux extra's own setting: the desk writes it in System/desk.json
     (#279), and it is refused without the extra and cmux."""
     if not {"launchers", "zones", "graph", "notifications", "home", "memory", "desk-agent",
-            "release-notice", "release-notice-every", "ask"} & set(req):
+            "release-notice", "release-notice-every", "ask", "channels"} & set(req):
         raise Refused("nothing to save")
     if "desk-agent" in req and req["desk-agent"] not in DESK_AGENTS:
         raise Refused("a cmux tab starts %s, not %r" % (" or ".join(DESK_AGENTS), req["desk-agent"]))
@@ -1655,6 +1657,14 @@ def save_settings(ws: Path, req: dict) -> str:
         if not isinstance(req["ask"], bool):
             raise Refused("Ask is on or off")
         new["ask"] = req["ask"]
+    if "channels" in req:               # Settings › Channels (#571): each channel's tier, effort and autonomy
+        try:
+            kept = prefs().read(ws).get("channels")
+            merged = dict(kept) if isinstance(kept, dict) else {}
+            merged.update(channels_lib().clean(req["channels"]))
+        except ValueError as e:
+            raise Refused(str(e))
+        new["channels"] = merged
     if "release-notice" in req:
         if not isinstance(req["release-notice"], bool):
             raise Refused("the check for a newer Garrick is on or off")
@@ -1717,6 +1727,19 @@ def save_settings(ws: Path, req: dict) -> str:
         if changed:
             recolour(ws, changed)
     return "Settings saved"
+
+
+_CHANNELS = None
+
+
+def channels_lib():
+    """channels.py, beside this file: the choices a channel may be given, and the check of them."""
+    global _CHANNELS
+    if _CHANNELS is None:
+        spec = importlib.util.spec_from_file_location("garrick_channels", str(HERE / "channels.py"))
+        _CHANNELS = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_CHANNELS)
+    return _CHANNELS
 
 
 def zone_styles(ws: Path, given) -> dict:

@@ -310,6 +310,7 @@ SHAPES = {
     "onTick: verb": {"todo-done": (), "todo-undo": ()},
     "request: 'settings'": {"settings": ()},             # PANEL_JS GarrickPrefs.request()
     "window.TaddSend: 'todo-add'": {"todo-add": ()},     # JS: the Todo list's + button
+    "chSave: 'settings'": {"settings": ("channels",)},    # CHANNELS_JS: Settings › Channels (#571)
     "tell: 'settings'": {"settings": ("ask",)},          # MENU_SETTINGS_JS: Settings › Menu bar › Answer in the Ask box (#528)
     "sdReq: 'settings'": {"settings": ("memory", "release-notice", "release-notice-every")},      # JS: what Settings closes with, zones and notifications alone,
                                                          # Memory's form assigned to it (#108)
@@ -347,6 +348,7 @@ SCRIPTS = {"MANAGE_JS": {"onclick: 'new-thread'", "onclick: 'new-project'", "onc
            "PANEL_JS": {"request: 'settings'", "deskReq: v", "park: v", "cont: 'continue'"},
            "JS": {"window.TaddSend: 'todo-add'", "sdReq: 'settings'"},
            "MENU_SETTINGS_JS": {"tell: 'settings'"},
+           "CHANNELS_JS": {"chSave: 'settings'"},
            "MEMORY_JS": {"ask: 'memory-preview'"},
            "RELEASE_JS": {"btn.onclick: 'release-check'", "go: 'release-update'"},
            "NOTE_JS": {"read: 'note-read'", "openIn: 'note-open'"}}

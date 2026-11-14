@@ -882,5 +882,43 @@ def main(argv: Optional[List[str]] = None) -> int:
     return 0
 
 
+# --------------------------------------------------------------------------- a prepared command (the channels' engine)
+
+
+def run_prepared(cmd: List[str], tier: str, cwd: Optional[Path] = None, job: str = ASK, timeout: Optional[float] = None,
+                 env: Optional[Mapping[str, str]] = None) -> Tuple[int, dict]:
+    """One call of a command the caller built, under the same caps and into the same ledger as run(): the channels'
+    engine (extras/status/engine.py) builds its own `claude -p` command, with its own tool list, hook and resumed
+    session, and this counts it. Returns the exit code and what parse_claude_output() read from its output, plus the
+    raw `session_id` and `usage` of the final JSON line when there is one. A call past a cap is not run."""
+    ledger = ledger_path()
+    now = time.time()
+    budget = budget_of(job)
+    reason = cap_reason(read_ledger(ledger, now), now, caps(budget), budget)
+    if reason:
+        append_ledger(ledger, ledger_entry(now, job, tier, {}, 0, EXIT_CAP, refused=reason))
+        return EXIT_CAP, {"text": "", "refused": reason, "session_id": None, "usage": {}}
+    start = time.time()
+    try:
+        # The binding the engine's hook and its servers read goes in through env(1), so call() is as it always was.
+        prefix = ["/usr/bin/env"] + ["%s=%s" % (k, v) for k, v in (env or {}).items()] if env else []
+        code, out, err = call(prefix + list(cmd), cwd, timeout)
+    except FileNotFoundError:
+        return EXIT_MISSING, {"text": "", "refused": "the assistant is not installed, or not on PATH", "session_id": None, "usage": {}}
+    outcome = parse_claude_output(out)
+    code = code or (1 if outcome["is_error"] else 0)
+    extra = {"session_id": None, "usage": {}}
+    for line in reversed((out or "").strip().splitlines()):
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(data, dict) and ("result" in data or data.get("type") == "result"):
+            extra = {"session_id": data.get("session_id"), "usage": data.get("usage") if isinstance(data.get("usage"), dict) else {}}
+            break
+    append_ledger(ledger, ledger_entry(start, job, tier, outcome, time.time() - start, code))
+    return code, dict(outcome, **extra)
+
+
 if __name__ == "__main__":
     sys.exit(main())

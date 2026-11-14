@@ -6,6 +6,7 @@
   "test_autonomy": 2.2,
   "test_backup": 10.6,
   "test_briefing": 11.2,
+  "test_channels": 35.0,
   "test_check": 78.7,
   "test_check_rules": 49.7,
   "test_checkpoint": 1.3,

@@ -513,6 +513,21 @@ class JobTest(FakeAssistants):
         self.assertEqual((0, 3, 0), (beat["exit"], beat["items"], beat["idle_days"]))
         self.assertIn("tidy  exit 0", (self.jobs / "tidy.log").read_text())
 
+    def test_an_agent_run_that_was_refused_a_tool_leaves_a_reason_in_its_heartbeat(self):
+        """#567: a clean exit with a refusal is not a clean run; the page shows Look. A run with none keeps no reason."""
+        script = "import agent; agent.run('sonnet', 'Sweep.', job='sweep')"
+        env = {"PYTHONPATH": str(JOBS)}
+        r = self.job("sweep", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", script, env=env)
+        self.assertEqual(0, r.returncode, r.stderr)
+        beat = self.beat("sweep")
+        self.assertTrue(beat["ok"])
+        self.assertEqual("the assistant was refused Bash", beat["reason"])
+        os.environ["FAKE_RESULT"] = "fine"
+        clean = "import agent; agent.run('sonnet', 'Sweep.', job='tidy')"
+        (self.bin / "claude").write_text((self.bin / "claude").read_text().replace('"permission_denials": [{"tool_name": "Bash"}]', '"permission_denials": []'))
+        self.job("tidy", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", clean, env=env)
+        self.assertIsNone(self.beat("tidy")["reason"])
+
     def test_a_held_lock_skips_the_run(self):
         self.jobs.mkdir(parents=True)
         (self.jobs / "tidy.lock").mkdir()

@@ -2564,6 +2564,18 @@ class TestJobs(StatusCase):
         self.assertEqual(("critical", "nightly.local (exit 2) failed in the run under way"), (row["state"], row["status"]))
         self.assertIn("gr-nightly: nightly.local (exit 2) failed in the run under way", self.attention(html))
 
+    def test_an_agent_job_that_exited_0_with_a_refusal_shows_look_not_fine(self):
+        """#567: exit 0 and a reason in the heartbeat: a warning, with the reason as its words."""
+        (self.jobs / "gr-todo-sweep.heartbeat.json").write_text(json.dumps({
+            "job": "gr-todo-sweep", "finished": self.now.strftime("%Y-%m-%d %H:%M:%S"), "exit": 0, "ok": True, "quiet": False,
+            "agent": True, "reason": "the assistant was refused Bash", "title": "Sweep", "seconds": 5}))
+        (self.jobs / "gr-clean.heartbeat.json").write_text(json.dumps({
+            "job": "gr-clean", "finished": self.now.strftime("%Y-%m-%d %H:%M:%S"), "exit": 0, "ok": True, "quiet": False,
+            "agent": True, "reason": None, "title": "Clean", "seconds": 5}))
+        rows = {j["name"]: (j["state"], j["status"]) for j in status.jobs(self.jobs, self.now)}
+        self.assertEqual(("warning", "the assistant was refused Bash"), rows["gr-todo-sweep"])
+        self.assertEqual(("good", "ok"), rows["gr-clean"])
+
     def test_a_calls_cost_cell_is_never_0_when_the_cost_is_not_known(self):
         """#566: no cost recorded reads `unknown`; an estimate carries a tilde; a known cost is as it was."""
         self.ledger({"job": "gr-nightly", "exit": 124, "cost_usd": None}, {"job": "digest", "exit": 124, "cost_usd": 1.5, "estimated": True},

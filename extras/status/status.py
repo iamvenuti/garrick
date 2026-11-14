@@ -3556,6 +3556,8 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = "critical", "exit %d: %s" % (code, reason)
         elif (hb["idle"] is True) if isinstance(hb.get("idle"), bool) else (idle and idle >= idle_limit(env)):
             state, status = "warning", "idle %d days" % idle
+        elif code in OK_EXITS and hb.get("agent") is True and isinstance(hb.get("reason"), str) and hb["reason"]:
+            state, status = "warning", hb["reason"]               # exit 0, but the assistant was refused a tool (#567)
         elif code in quiet and code not in OK_EXITS:
             state, status = "good", "ok, exit %d is quiet" % code
         elif hb.get("no_call") is True:

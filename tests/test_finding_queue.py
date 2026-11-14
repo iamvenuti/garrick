@@ -227,7 +227,9 @@ class TestPlainWording(unittest.TestCase):
         self.assertEqual("Ask my assistant to fix it", q["answers"][0]["label"])
         self.assertEqual("Not now", q["answers"][1]["label"])
         self.assertEqual("fix-now", q["recommended"])
-        self.assertEqual({"verb": "finding", "kind": "other", "path": q["path"], "answer": "later"}, q["answers"][1]["req"])
+        self.assertEqual({"verb": "finding", "kind": "other", "path": q["path"], "answer": "later-" + fq.which_other(
+            {"kind": "judgment", "check": "links", "path": q["path"], "line": "Zones/Work/Acme Review/Stray.md: something odd about a link"})},
+            q["answers"][1]["req"])
         phrase = q["answers"][0]["phrase"]
         self.assertIn("something odd about a link", phrase)                                  # the finding's own text, and nothing of another place
         self.assertIn("Zones/Work/Acme Review/Stray.md", phrase)
@@ -249,6 +251,16 @@ class TestPlainWording(unittest.TestCase):
         it = dict(item("judgment", "orphans", "Zones/Work/A.md", "%(p)s: an orphan page"), scope="Zones/Work")
         self.assertEqual(1, len(fq.forecast_questions([it], set())["Zones/Work"]))
         self.assertEqual({}, fq.forecast_questions([it], {fq.later_key("other", "Zones/Work/A.md")}))
+
+    def test_not_now_on_one_other_finding_leaves_a_second_one_of_the_same_file(self):
+        a = dict(item("judgment", "links", "Zones/Work/A.md", "%(p)s: a broken link"), scope="Zones/Work")
+        b = dict(item("judgment", "links", "Zones/Work/A.md", "%(p)s: an odd heading"), scope="Zones/Work")
+        qa, qb = (fq.question(i, "Zones/Work") for i in (a, b))
+        self.assertNotEqual(qa["key"], qb["key"])
+        self.assertEqual(qa["key"], fq.later_key("other", "Zones/Work/A.md", qa["answers"][1]["req"]["answer"][6:]))
+        left = fq.forecast_questions([a, b], {qa["key"]})["Zones/Work"]
+        self.assertEqual([qb["key"]], [q["key"] for q in left])                              # only the one that was put off is hidden
+        self.assertEqual({}, fq.forecast_questions([a, b], {fq.later_key("other", "Zones/Work/A.md")}))   # an older key hides both, as before
 
     def test_a_walls_hand_off_names_the_file_and_the_zones_and_never_the_repeated_words(self):
         q = fq.question(KINDS["wall"], "Zones/Work")
@@ -871,6 +883,16 @@ class TestNotNowForTheWikisKinds(ActionCase):
         self.assertEqual("---\nstatus: open\n---\n\n**Who owns it?**\n", (self.root / self.rel).read_text(encoding="utf-8"))   # the file is as it was
         for req in ({"kind": "wiki-question", "answer": "later"}, {"kind": "verdict", "answer": "accept"}, {"kind": "decision-review", "answer": "open"}):
             self.assertFalse(self.ask(path=self.rel, **req)["ok"], req)
+
+    def test_not_now_on_one_other_finding_is_saved_under_that_finding_alone(self):
+        a = fq.question(item("judgment", "links", self.rel, "%(p)s: a broken link"), "Wikis/Meetings")
+        got = self.ask(**{k: v for k, v in a["answers"][1]["req"].items() if k != "verb"})
+        self.assertTrue(got["ok"], got)
+        data = json.loads((self.root / "System" / "generated" / "status-later.json").read_text(encoding="utf-8"))
+        self.assertEqual([a["key"]], list(data["later"]))
+        self.assertNotEqual(fq.later_key("other", self.rel), a["key"])
+        self.assertFalse(self.ask(kind="other", path=self.rel, answer="later-XYZ123")["ok"])
+        self.assertFalse(self.ask(kind="verdict", path=self.rel, answer="later-abcdef")["ok"])
 
     def test_every_request_the_wikis_kinds_send_is_valid_for_the_verb_it_names(self):
         """No verb is new: the executor validates each one as it validates the panel's, so the wall check runs the same."""

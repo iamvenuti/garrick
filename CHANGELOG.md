@@ -4,6 +4,54 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.68.0] - 2026-11-14
+
+*Check for updates* asks before it updates. The nightly recall step reads only what is new, so it stops timing out. The Overview says what needs you in plain words. The status page uses one font and a larger type scale. The Guide no longer shows wall commands: Settings › Walls shows each zone's state.
+
+**Upgrading.**
+- *Check for updates* now asks before it updates. When a newer Garrick is out, it shows the release notes with *Update now* and *Not now*, and nothing changes until you press *Update now*.
+- The nightly recall step no longer times out. It reads only new or grown transcripts, newest first. If a night runs out of time after writing some sessions, the step reports *partial* and the job does not fail.
+- The Overview says what needs you in plain words, without *At a glance*. *Explore the graph* is now a button in the header, beside Settings.
+- The page uses one font, your system's own, and a larger type scale. Nothing is smaller than 13px.
+- The Todo tab has no *Open Todo.md*. Your assistant or Finder still opens the file.
+- The Guide no longer shows wall commands. Settings › Walls shows each zone as *Walled* or *Open*, and *Change…* asks your assistant.
+- A job can set `GARRICK_JOB_TITLE` in its plist environment for the name it shows on the Overview.
+- An updated workspace keeps the old `System/status/fonts/` folder, listed as retired. The page no longer reads it, and you can delete it.
+
+### Added
+
+- ***Check for updates* asks first** (#557). When a newer release is out, the line says "Garrick X is out; this workspace runs Y", with a link to the release notes. *Update now* runs the update as before. *Not now* changes nothing and stores nothing, so the next check offers it again.
+- **Job failures in plain words** (#559). A failed job reads like "Nightly check failed: Recall timed out", with the day it started failing and a *See the log* button. `job.py` writes a short reason of 80 characters at most, and a plain name into the heartbeat. The name comes from `GARRICK_JOB_TITLE`, from `--title`, or from the job's own name without `gr-`. A log line that holds a path, anything shaped like a key, or a word such as password or token is never used as the reason, and a job that calls an assistant never takes its reason from its log: those read "it exited with code N".
+- **Two groups in *Waiting on you now*** (#559): *Broken* and *To do*. When something is broken, *To do* starts folded, with its count shown.
+- ***Your work* reads more clearly** (#559). A row that waits on you reads *Act now* and says why. A path shows as its file name. Each row has one *Resume* button with a labelled menu (*Resume in cmux*, *Claude* or *Codex*, whichever are installed, and *Open folder*). The card shows the ten most recently touched rows, then *Show all*.
+- **Settings › Walls shows each zone** (#561), as *Walled* or *Open*, above *Allowed by you*. *Change…* hands the request to your assistant, which asks for your yes. The page itself runs nothing.
+- **A finding with no plain wording yet gets real answers** (#550). It says where it was found and offers *Ask my assistant to fix it* and *Not now*. The request to your assistant carries only the file's name and its place. The check's own text stays under *Details*. *Not now* puts off that one finding, not every finding of the same file.
+- `recall.py extract` and `recall.py nightly` take `--limit SECONDS`.
+
+### Changed
+
+- **The Overview's lead line gives counts by kind** (#559), on one line: "2 jobs failed · 5 late actions · 2 in the inboxes". The zone always sits in its own column, and each button says where it goes.
+- **One type scale** (#560). Six sizes, from 13px to 38px, and every text on the page uses one of them. Thread names and Todo actions read at 15px.
+- **One font** (#560). The page uses the system UI font for everything, form controls included. Big numbers use it at a heavier weight with figures of even width. Monospace stays only in the Guide's code blocks.
+- **One badge per tab, and it is a number** (#560). Todo shows only its late count, Status its count, and Context its open questions. Overview and the Guide show none. A badge for something critical carries an icon, so colour never carries the meaning alone.
+- **The recall step skips what it already wrote** (#558). Each `.sessions/` folder keeps a small `index.json` of what was written, and `System/.sessions/skipped.json` remembers the transcripts that belong to no place, for a week at most or until a zone or project folder changes. Both hold paths, sizes and times only. If that index is missing or cannot be read, everything is read again, as before. The step's limit is now 3 minutes.
+- The nightly steps' limits add up to two minutes less than the job's hour, so on a slow night a step's own limit stops it, not the watchdog.
+- The update now names a hook of your own that it left in place of the wall check, with one line for each repository, and gives a failure as one line.
+- *Show me both texts* shows only the Meetings page and raw record that the wall check names.
+- After a reload, an answer request still waiting for its place is sent when the page loads, not at the next close.
+
+### Fixed
+
+- The nightly recall step no longer times out every night on a large transcript folder (#558).
+
+### Removed
+
+- The Overview's *At a glance* card (#559).
+- The Guide's Walls block and its commands (#561).
+- *Open Todo.md* on the Todo tab (#560).
+- The embedded Plus Jakarta Sans font and the Baskerville face for big numbers (#560).
+- The question whose only answer was *Something else*, for checks with no plain wording yet (#550).
+
 ## [0.67.0] - 2026-11-13
 
 The Context card asks you only what needs your judgment. A wall false alarm is cleared from the app once you have seen both texts, and a stock sentence that three or more zones share no longer raises one. Hooks, small fixes and the answers you gave happen on their own. The status page has a new look: bigger text with more contrast, status in words, and an Overview that opens on what needs you first.

@@ -94,6 +94,16 @@ def state_path(given: Optional[str] = None) -> Path:
     return Path(given) if given else jobs_dir() / STATE_FILE
 
 
+def state_in_jobs(given: str) -> bool:
+    """Whether a `--state` path is a notes-state file in the jobs folder itself: the state is written whole, so a path
+    anywhere else would overwrite any file the user can write."""
+    try:
+        path = Path(given).expanduser().resolve()
+        return path.parent == jobs_dir().expanduser().resolve() and bool(re.match(r"notes-state[\w.-]*\.json\Z", path.name))
+    except (OSError, ValueError):
+        return False
+
+
 def load_state(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -314,6 +324,9 @@ def prompt_for(zone: str, items: List[dict], shown: Dict[str, dict], today: str)
     return "\n".join(parts)
 
 
+LINK_PARTS = re.compile(r"\[\[|\]\]|\]\(")
+
+
 def parse_judgments(text: str, items: List[dict], shown: Dict[str, dict]) -> Dict[str, dict]:
     """The assistant's answer, checked against the closed list: {id: judgment}. An id it did not name, a class it
     made up, a change of a kind this file does not offer, or a key it was not shown, is dropped; a note with no
@@ -334,7 +347,10 @@ def parse_judgments(text: str, items: List[dict], shown: Dict[str, dict]) -> Dic
         changes = []
         for c in (entry.get("changes") if isinstance(entry.get("changes"), list) else [])[:MOST_CHANGES]:
             if isinstance(c, dict) and c.get("kind") in KINDS and isinstance(c.get("text"), str) and c["text"].strip():
-                changes.append({"kind": c["kind"], "text": " ".join(c["text"].split())[:MOST_TEXT]})
+                # The text lands in a thread note: it may not open a link of its own (a wiki link or a Markdown one).
+                text = LINK_PARTS.sub("", " ".join(c["text"].split()))[:MOST_TEXT].strip()
+                if text:
+                    changes.append({"kind": c["kind"], "text": text})
         keys = {t["key"] for t in shown[entry["id"]]["todo"]}
         tick = [k for k in (entry.get("tick") if isinstance(entry.get("tick"), list) else []) if isinstance(k, str) and k in keys]
         todo = [" ".join(t.split())[:200] for t in (entry.get("todo") if isinstance(entry.get("todo"), list) else [])

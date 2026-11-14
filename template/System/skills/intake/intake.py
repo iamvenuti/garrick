@@ -1386,6 +1386,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             print("%s\t%s\t%d" % (rel(done["note"]), place["said"], len(done["todo"])))
         elif args.command == "process-notes":
             import process_notes
+            if args.state and not process_notes.state_in_jobs(args.state):
+                print("--state must be a notes-state file in the jobs folder (%s): it is written whole, so it may not name "
+                      "any other file." % process_notes.jobs_dir(), file=sys.stderr)
+                return 1
             res = process_notes.run(root, None if (args.dry_run or args.no_assistant) else process_notes.agent_assessor(root, args.tier),
                                     args.state or None, args.today, args.dry_run)
             print(json.dumps(res, sort_keys=True))

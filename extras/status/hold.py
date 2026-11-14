@@ -168,6 +168,8 @@ def sweep(data: dict, now: float) -> bool:
 def pending(now: Optional[float] = None, channel: Optional[str] = None) -> List[dict]:
     """The actions waiting for a yes, oldest first, expired ones taken out."""
     now = now or time.time()
+    if not path().is_file():            # nothing was ever held: a reader (the status page) writes nothing, not even a lock
+        return []
     with locked():
         data = load()
         if sweep(data, now):

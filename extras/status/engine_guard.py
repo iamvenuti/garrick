@@ -80,6 +80,13 @@ def _wiki_ok(path: str, root: str, blind: bool) -> bool:
     return len(rel) >= 4 and rel[:3] == ["meetings" if blind else "Meetings", "raw", "inbox"]
 
 
+def _dot_part(path: str, root: str) -> bool:
+    """Whether any part of the path below the workspace root starts with a dot: .git, .claude, .mcp.json, .envrc,
+    .vscode and the like hold settings another program runs, so an exchange never writes one."""
+    rel = os.path.relpath(path, root)
+    return rel.startswith("..") or any(p.startswith(".") for p in rel.split(os.sep) if p)
+
+
 def hook_command() -> str:
     """The command line of this hook as the session's settings carry it: both words quoted, so a path with a space
     in it still runs this file (a hook that cannot start is not a block)."""
@@ -91,14 +98,14 @@ def bash_ok(command) -> bool:
     pipe, redirect, substitution or line break. The permission list names the wrapper; this holds what it cannot."""
     if not isinstance(command, str) or not command.strip() or "\n" in command or "\r" in command:
         return False
-    if "`" in command or "$(" in command or "${" in command:
+    if any(c in command for c in "`$~*?[]{}\\"):          # no substitution, expansion, glob or escape of any kind
         return False
     lex = shlex.shlex(command, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
     tokens = list(lex)
     if any(t and set(t) <= set(";&|<>()") for t in tokens):
         return False
-    return (len(tokens) >= 3 and os.path.basename(tokens[0]).startswith("python")
+    return (len(tokens) >= 3 and tokens[0] in ("python3", sys.executable)
             and os.path.realpath(tokens[1]) == os.path.join(HERE, "engine_cmd.py"))
 
 
@@ -118,14 +125,14 @@ def decide(event: dict, ws: str, zone: str):
     bad = []
     for path in targets(event):
         shared = SHARED in re.split(r"[\\/]", path)
-        if shared or _git_part(path) or not (any(_inside(path, a, blind) for a in allowed) or _wiki_ok(path, root, blind)):
+        if shared or _git_part(path) or _dot_part(path, root) or not (any(_inside(path, a, blind) for a in allowed) or _wiki_ok(path, root, blind)):
             bad.append(path)
     if not event.get("tool_input") or not targets(event):
         bad = ["(no path)"]
     if not bad:
         return None
     reason = ("Refused: this exchange is bound to the %s zone. A write goes in that zone, a wiki's wiki/ folder or the "
-              "workspace's Inbox, never in another zone, System/, a wiki's raw record, a .git folder, or a shared folder; "
+              "workspace's Inbox, never in another zone, System/, a wiki's raw record, a .git folder or any other dot folder or file, or a shared folder; "
               "a write to a shared folder is queued with hold." % zone)
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": reason}}

@@ -47,19 +47,19 @@ SCAFFOLD_SUBS = ("project", "thread", "checkpoint")
 # flag -> kind. "flag" takes no value; "value" is free text; "file", "project" and "zone" are bound to the exchange.
 SPECS: Dict[str, Dict[str, str]] = {
     "intake parse": {"--file": "file"},
-    "intake file-conversation": {"--file": "file", "--parties": "value", "--title": "value", "--date": "value", "--confirmed": "flag"},
+    "intake file-conversation": {"--file": "file", "--parties": "value", "--title": "value", "--date": "value"},
     "intake file-reading": {"--file": "file", "--title": "value", "--slug": "value", "--kind": "value"},
-    "intake file-to-project": {"--file": "file", "--project": "project", "--parties": "value", "--name": "value",
-                               "--confirmed": "flag", "--as-material": "flag"},
+    "intake file-to-project": {"--file": "file", "--project": "project", "--parties": "value", "--name": "name",
+                               "--as-material": "flag"},
     "intake extract-attachment": {"--mail": "value", "--project": "project", "--name": "value", "--index": "value",
                                   "--save-as": "value"},
     "intake move-to-zone": {"--file": "file", "--zone": "zone"},
     "intake skip": {"--file": "file", "--reason": "value"},
     "intake file-note": {"--file": "file", "--destination": "value", "--title": "value"},
-    "intake notes": {"--project": "project", "--thread": "value"},
-    "scaffold project": {"--zone": "zone", "--name": "value", "--party": "value", "--thread": "value", "--spoken": "value",
+    "intake notes": {"--project": "project", "--thread": "name"},
+    "scaffold project": {"--zone": "zone", "--name": "name", "--party": "name", "--thread": "name", "--spoken": "value",
                          "--thread-spoken": "value"},
-    "scaffold thread": {"--zone": "zone", "--project": "name", "--name": "value", "--spoken": "value", "--touched": "flag"},
+    "scaffold thread": {"--zone": "zone", "--project": "name", "--name": "name", "--spoken": "value", "--touched": "flag"},
     "scaffold checkpoint": {"--json": "json"},
     "check": {"--quick": "flag"},
     "todo digest": {"--zone": "zone", "--json": "flag", "--count": "value"},
@@ -172,8 +172,8 @@ def parse_flags(spec: Dict[str, str], args: List[str], bound: Bound, key: str) -
         elif kind == "zone":
             value = bound.zone_arg(value)
         elif kind == "name":                          # a project named inside the zone: scaffold looks it up there
-            if "/" in value or value.startswith("."):
-                raise Refused("a project is named, not given as a path")
+            if "/" in value or "\\" in value or value.startswith(".") or not value.strip():
+                raise Refused("%s takes a name, not a path" % flag)
         elif kind == "json":
             try:
                 req = json.loads(value)

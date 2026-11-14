@@ -348,7 +348,10 @@ def parse_judgments(text: str, items: List[dict], shown: Dict[str, dict]) -> Dic
         for c in (entry.get("changes") if isinstance(entry.get("changes"), list) else [])[:MOST_CHANGES]:
             if isinstance(c, dict) and c.get("kind") in KINDS and isinstance(c.get("text"), str) and c["text"].strip():
                 # The text lands in a thread note: it may not open a link of its own (a wiki link or a Markdown one).
-                text = LINK_PARTS.sub("", " ".join(c["text"].split()))[:MOST_TEXT].strip()
+                text = " ".join(c["text"].split())
+                while LINK_PARTS.search(text):                 # a mark removed must not leave the parts of another
+                    text = LINK_PARTS.sub("", text)
+                text = text[:MOST_TEXT].strip()
                 if text:
                     changes.append({"kind": c["kind"], "text": text})
         keys = {t["key"] for t in shown[entry["id"]]["todo"]}

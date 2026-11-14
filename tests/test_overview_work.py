@@ -108,7 +108,7 @@ class OverviewWork(unittest.TestCase):
         self.assertEqual({("Work", "Acme Review"), ("Work / Birch Entry", "Market Sizing"), ("Work / Birch Entry", "Interviews")},
                          {(zone, name) for name, zone in names})
         css = status.YOURWORK_CSS
-        self.assertIn(".yzone{font-size:13px;font-weight:400;color:var(--muted)}", css)
+        self.assertIn(".yzone{font-size:var(--fs-meta);font-weight:400;color:var(--muted)}", css)
         self.assertIn(".yline{font-weight:600;color:var(--ink)}", css)
         self.assertIn("grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) 120px", css)
         self.assertIn("@media(max-width:720px){.yhead{display:none}.yrow{grid-template-columns:1fr auto;padding:14px 0}.ynext,.ystate{grid-column:1/-1}}", css)

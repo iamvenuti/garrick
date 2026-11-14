@@ -506,8 +506,8 @@ class TestTabs(StatusCase):
     def test_the_default_split(self):
         self.job(0)
         html = self.page()
-        self.assertRegex(html, r'data-tab="overview">Overview<span class="n[ a-z]*" id="tabn-overview"[^>]*(?: hidden)?>[^<]*</span></button><button type="button" role="tab" data-tab="todo">Todo')
-        self.assertRegex(html, r'</button><button type="button" role="tab" data-tab="status">Status<span class="n')
+        self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="todo">Todo', html)    # no badge on the Overview (#560)
+        self.assertRegex(html, r'</button><button type="button" role="tab" data-tab="status">Status(?:<span class="n (?:crit|warn)"|</button>)')
         overview, machinery = self.section(html, "overview"), self.section(html, "status")
         for card_id in ("graph", "threads", "todo", "inboxes"):
             self.assertIn('id="%s"' % card_id, overview, card_id)
@@ -533,9 +533,9 @@ class TestTabs(StatusCase):
         html = self.page()
         self.assertNotIn('id="attention"', html)
         self.assertIn(["critical", "jobs"], [t[:2] for t in trouble(html)])
-        self.assertIn("function dots(", status.LAYOUT_JS)                      # worst first, a hidden card still counts
-        self.assertIn("w[sec.id]!=='critical'", status.LAYOUT_JS)
+        self.assertIn("function sev(c)", status.LAYOUT_JS)                     # worst first, a hidden card still counts
         self.assertIn("sev(c)", status.LAYOUT_JS)                              # and the hidden-cards list shows it
+        self.assertIn('<span class="n crit" id="tabn-status"', html)           # the tab says it with one number (#560), not a dot with a word
 
     def test_checks_sits_in_the_context_tab_under_the_findings(self):
         html = self.page()
@@ -615,7 +615,7 @@ class TestContextTab(StatusCase):
         self.assertEqual(["overview", "todo", "status", "questions", "guide"], re.findall(r'role="tab" data-tab="([a-z]+)"', html))
         for gone in ("cx-switch", "cx-parties", "cx-who", "data-cx-view", "pp-zone", "cxw-pick", "Who sees what", "data-flip"):
             self.assertNotIn(gone, html, gone)
-        self.assertIn('data-tab="questions">Context<span class="n" id="qp-tab-n"></span></button>', html)
+        self.assertIn('data-tab="questions">Context<span class="n warn" id="qp-tab-n" hidden></span></button>', html)
 
     def test_the_walls_card_and_its_verbs_are_gone(self):
         html = self.page()
@@ -1224,7 +1224,7 @@ class TestOpensOnTheWork(StatusCase):
         row = self.row(html, long_thread)
         self.assertIn(">%s</a>" % long_thread, row)                                # whole, never cut
         self.assertIn("chase the quote " * 19, row)
-        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:12px;overflow:hidden;"
+        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:var(--fs-meta);overflow:hidden;"
                       "text-overflow:ellipsis;white-space:nowrap}", status.CSS)    # one line, cut by the browser
         self.assertIn(".thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}", status.CSS)
 
@@ -2008,7 +2008,7 @@ class TestPreviewFeatures(StatusCase):
     def test_the_todo_list_is_a_tab(self):
         self.todo()
         html = self.page()
-        self.assertIn('<button type="button" role="tab" data-tab="todo">Todo<span class="n">', html)
+        self.assertIn('<button type="button" role="tab" data-tab="todo">Todo', html)
         over, todo = html.index('id="tab-overview"'), html.index('id="tab-todo" hidden')
         self.assertLess(over, html.index('id="graph"'))
         self.assertLess(html.index('id="graph"'), todo)
@@ -2689,7 +2689,7 @@ class TestNameAndMark(StatusCase):
         self.assertIn("var(--display", re.search(r"\.hero \.fig\{[^}]*", status.CSS).group(0))
         for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*"):
             self.assertIn("var(--sans)", re.search(rule, status.CSS + status.BAR_CSS).group(0))
-        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:15px/1.55 var(--sans)', status.CSS)
+        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:var(--fs-body)/1.55 var(--sans)', status.CSS)
         self.assertNotIn("@font-face", status.CSS)           # the faces are embedded by font_css(), not written in the block
         self.assertNotIn("url(", status.CSS)
 
@@ -2964,8 +2964,7 @@ class TestOpenActions(StatusCase):
         for zone in re.findall(r'<div class="zt">(.*?)</div>', block):
             self.assertEqual(1, zone.count("href="), zone)                            # one way to the list (#235)
             self.assertNotIn("changed ", zone)
-        url = (self.root / "Zones" / "Work" / "Todo.md").as_uri()
-        self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open Todo.md</a>' % url, html)   # on the tab
+        self.assertNotIn("Open Todo.md", html)                                 # the tab adds, ticks and re-dates; the file is one sentence away (#560)
 
     def test_no_todo_no_open_actions(self):
         self.assertIn('class="top" style="--tiles:4"', self.page())

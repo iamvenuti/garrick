@@ -172,7 +172,7 @@ class TestOneLineForEachPlace(CardCase):
         self.assertEqual(["*", "Zones/Personal", "Zones/Work", "Wikis/Knowledge"],
                          re.findall(r'<option value="([^"]+)">', card))              # the Zone menu: All, then each place
         self.assertNotIn("4 questions", card)                                        # 2 + 1 + 1: never shown
-        self.assertEqual(["", ], re.findall(r'id="qp-tab-n">([^<]*)<', html))        # the tab's number is set for one place only, by the script
+        self.assertEqual(["", ], re.findall(r'id="qp-tab-n" hidden>([^<]*)<', html))        # the tab's number is set for one place only, by the script
 
 
 QUEUE_HARNESS = r"""

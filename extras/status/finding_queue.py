@@ -832,26 +832,26 @@ def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str], toda
 QUEUE_CSS = r"""
 /* The queue: one finding at a time, in the page's own tokens */
 dialog.queue{width:min(620px,calc(100vw - 32px))}
-.queue .prog{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px;margin:0 0 12px}
+.queue .prog{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:var(--fs-meta);margin:0 0 12px}
 .queue .bar{height:4px;background:var(--line);border-radius:4px;flex:1;margin:0 12px}.queue .bar i{display:block;height:100%;width:0;background:var(--accent);border-radius:4px}
-.queue .q{padding:4px 0}.queue .tag{display:inline-block;font-size:12px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
-.queue .tag.private{color:var(--critical)}.queue .qs{margin:0 0 4px;font-weight:600}.queue .why{color:var(--muted);font-size:13.5px;margin:0 0 12px}
+.queue .q{padding:4px 0}.queue .tag{display:inline-block;font-size:var(--fs-meta);font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.queue .tag.private{color:var(--critical)}.queue .qs{margin:0 0 4px;font-weight:600}.queue .why{color:var(--muted);font-size:var(--fs-sub);margin:0 0 12px}
 .queue .opts{display:flex;flex-direction:column;gap:7px}
-.queue .opt{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:10px 12px;border-radius:10px;width:100%;font:inherit;font-size:13.5px;color:var(--ink);background:var(--surface);border:1px solid var(--line);cursor:pointer}
-.queue .opt .n{flex:none;width:22px;height:22px;border-radius:6px;background:var(--raise);color:var(--muted);font-size:12px;display:grid;place-items:center;font-weight:600}
-.queue .opt small{display:block;color:var(--muted);font-size:12.5px}.queue .opt.rec{border-color:var(--accent);background:var(--wash)}
+.queue .opt{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:10px 12px;border-radius:10px;width:100%;font:inherit;font-size:var(--fs-sub);color:var(--ink);background:var(--surface);border:1px solid var(--line);cursor:pointer}
+.queue .opt .n{flex:none;width:22px;height:22px;border-radius:6px;background:var(--raise);color:var(--muted);font-size:var(--fs-meta);display:grid;place-items:center;font-weight:600}
+.queue .opt small{display:block;color:var(--muted);font-size:var(--fs-meta)}.queue .opt.rec{border-color:var(--accent);background:var(--wash)}
 .queue .opt.rec .n{background:var(--accent);color:#fff}.queue .recd{font-weight:600;color:var(--ink2)}
 .queue .opt.other{cursor:text}.queue .opt.other input{flex:1;border:0;background:transparent;color:var(--ink);font:inherit;outline:none}
 .queue .opt:focus-visible,.queue .opt.other:focus-within{outline:2px solid var(--accent);outline-offset:1px}
-.queue .qsay{margin:8px 0 0}.queue .qsay.bad{color:var(--critical)}.queue .qdet{margin-top:10px;font-size:13px;color:var(--muted)}
-.queue .qdet code,.queue .qdet pre{display:block;white-space:pre-wrap;margin:6px 0 0;font-size:12px;background:var(--raise);padding:8px;border-radius:6px}
-.queue .done{text-align:center;padding:24px 8px}.queue .done b{display:block;font-size:17px;margin-bottom:4px}.queue .qnext{margin-top:14px}
+.queue .qsay{margin:8px 0 0}.queue .qsay.bad{color:var(--critical)}.queue .qdet{margin-top:10px;font-size:var(--fs-meta);color:var(--muted)}
+.queue .qdet code,.queue .qdet pre{display:block;white-space:pre-wrap;margin:6px 0 0;font-size:var(--fs-meta);background:var(--raise);padding:8px;border-radius:6px}
+.queue .done{text-align:center;padding:24px 8px}.queue .done b{display:block;font-size:var(--fs-h3);margin-bottom:4px}.queue .qnext{margin-top:14px}
 .nohost .queue .opt.tacts{display:none}.queue .qweb{display:none;margin:8px 0 0}.nohost .queue .qweb{display:block}
 .queue .opt:disabled{opacity:.55;cursor:not-allowed}.queue .opt:not(.rec) .recd{display:none}.queue .qskip{margin-top:8px}
 .queue .opt.later{cursor:default}.queue .lrow{display:flex;gap:8px;align-items:center;margin-top:6px}
-.queue .lrow input{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:3px 8px}
+.queue .lrow input{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:3px 8px}
 .queue .q[data-kind="wall"]:not(.looked) .opt[data-needlook]{display:none}.nohost .queue .q[data-kind="wall"] .opt[data-needlook]{display:flex}
-.queue .qtexts{margin:10px 0 0}.queue .qtext{background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 8px;font-size:13px;overflow-wrap:anywhere}
+.queue .qtexts{margin:10px 0 0}.queue .qtext{background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 8px;font-size:var(--fs-meta);overflow-wrap:anywhere}
 .queue .qtext small{display:block;color:var(--muted);margin-bottom:3px}.queue .qtext mark{background:var(--wash);color:var(--ink);font-weight:600;border-radius:3px}
 .queue .opt[hidden],.queue .qskip[hidden],.queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
 """

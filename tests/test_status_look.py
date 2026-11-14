@@ -153,21 +153,82 @@ class Page(unittest.TestCase):
     def css(self):
         return "\n".join(re.findall(r"<style>(.*?)</style>", self.html, re.S))
 
-    def test_no_font_size_under_12px(self):
-        css = self.css()
-        sizes = [float(n) for n in re.findall(r"font-size:\s*([0-9.]+)px", css)]
-        sizes += [float(n) for n in re.findall(r"font:[^;}]*?\b([0-9.]+)px", css)]
-        self.assertTrue(sizes)
-        self.assertEqual([], [n for n in sizes if n < 12], "a font size under 12px")
+    SCALE = {"meta": 13, "sub": 14, "body": 15, "h3": 17, "h2": 20, "h1": 38}
 
-    def test_other_modules_css_has_none_either(self):
+    def sizes(self, css):
+        """Every size the CSS sets, as written: in `font-size:` and in the `font:` shorthand."""
+        out = re.findall(r"font-size:\s*([^;}\"']+)", css)
+        out += re.findall(r"(?<![-\w])font:\s*(?:(?:italic|bold|normal|\d{3})\s+)*([^\s/;}\"']+)", css)
+        return [x.strip() for x in out if x.strip() not in ("inherit", "0")]
+
+    def test_the_scale_is_on_root_and_nothing_is_under_13px(self):
+        css = self.css()
+        root = css[css.index(":root{color-scheme:light;"):]
+        root = root[:root.index("}")]
+        got = dict(re.findall(r"--fs-([a-z0-9]+):(\d+)px", root))
+        self.assertEqual({k: str(v) for k, v in self.SCALE.items()}, got)
+        self.assertGreaterEqual(min(int(v) for v in got.values()), 13)
+
+    def test_no_font_size_under_13px(self):
+        css = self.css()
+        literal = [float(n) for n in re.findall(r"font-size:\s*([0-9.]+)px", css) + re.findall(r"(?<![-\w])font:[^;}]*?\b([0-9.]+)px", css)]
+        self.assertEqual([], [n for n in literal if n < 13], "a font size under 13px")
+        used = {m for m in re.findall(r"var\(--fs-([a-z0-9]+)\)", css)}
+        self.assertTrue(used <= set(self.SCALE), used)
+
+    def test_every_font_size_is_a_scale_token_outside_the_token_block(self):
+        css = self.css()
+        css = css.replace(css[css.index(":root{color-scheme:light;"):css.index("}", css.index(":root{color-scheme:light;"))], "")
+        sizes = self.sizes(css)
+        self.assertTrue(sizes)
+        self.assertEqual([], [x for x in sizes if not re.fullmatch(r"var\(--fs-(meta|sub|body|h3|h2|h1)\)", x)])
+
+    def test_the_module_css_strings_hold_no_px_size_either(self):
+        for name in ("finding_queue.py", "guide.py", "status.py"):
+            text = (HERE / name).read_text(encoding="utf-8")
+            left = [m for m in re.findall(r"font-size:\s*([0-9.]+px)", text)]
+            left += re.findall(r"(?<![-\w])font:\s*(?:(?:italic|bold|normal|\d{3})\s+)*([0-9.]+px)", text)
+            left = [x for x in left if x not in ("13px", "14px", "15px", "17px", "20px", "38px") or name != "status.py"]
+            self.assertEqual([], left, name)
+        # the one block this file does not own is mapped when the page is built
+        self.assertEqual("font-size:var(--fs-meta)", status.fs_scale("font-size:12.5px"))
+        self.assertEqual("font:600 var(--fs-body)/1.2 x", status.fs_scale("font:600 14.5px/1.2 x"))
+        self.assertEqual("font-size:var(--fs-h3)", status.fs_scale("font-size:16px"))        # a tie goes to the larger
+        self.assertNotIn("px", status.fs_scale(status.questions_mod().CX_CSS).split("font-size:")[1].split(";")[0])
+
+    def test_the_big_number_is_the_h1_token(self):
+        self.assertIn("font:600 var(--fs-h1)/1 var(--display)", status.CSS)
+
+    def test_other_modules_css_has_none_under_13_either(self):
         for name in ("finding_queue.py", "guide.py", "questions_panel.py", "your_work.py"):
             text = (HERE / name).read_text(encoding="utf-8")
-            small = [n for n in re.findall(r"font-size:\s*([0-9.]+)px", text) if float(n) < 12]
+            small = [n for n in re.findall(r"font-size:\s*([0-9.]+)px", text) if float(n) < 13]
             self.assertEqual([], small, name)
 
-    def test_body_text_is_15px_on_1_55(self):
-        self.assertIn("font:15px/1.55 var(--sans)", status.CSS)
+    def test_body_text_is_the_body_token_on_1_55(self):
+        self.assertIn("font:var(--fs-body)/1.55 var(--sans)", status.CSS)
+
+    def test_threads_names_are_body_sub_threads_sub_and_the_rest_meta(self):
+        css = status.CSS
+        self.assertRegex(css, r"\.thread\{display:grid;grid-template-columns:minmax\(0,1fr\) 70px 34px;[^}]*font-size:var\(--fs-body\)\}")
+        self.assertIn(".thread.sub{padding-left:20px;border-top:1px dashed var(--grid);font-size:var(--fs-sub)}", css)
+        self.assertIn(".thread .num,.thread .chip,.thread .tchips,.thread .thr{font-size:var(--fs-meta)}", css)
+        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:var(--fs-meta)", css)
+
+    def test_the_todo_tab_reads_at_body_with_meta_around_it(self):
+        css = status.TODO_CSS
+        self.assertIn(".ttext{font-size:var(--fs-body);", css)
+        for rule in (".tsum{display:flex;flex-wrap:wrap;align-items:center;gap:6px;color:var(--ink2);font-size:var(--fs-meta)",
+                     ".thr{display:inline-block;font-size:var(--fs-meta)", ".tdate{", ".todotab .tbar .seg button{flex:none;padding:5px 12px;font-size:var(--fs-meta)"):
+            self.assertIn(rule, css)
+        self.assertIn("font-weight:640;font-size:var(--fs-h3)", css)               # the group headings
+
+    def test_the_todo_tab_has_no_open_todo_md_and_add_stays_alone(self):
+        html = status.todo_list_card([{"zone": "Work", "file": Path("/x/Work/Todo.md"), "groups": [("Inbox", [])], "done": [], "open": 0,
+                                       "late": 0, "undated": 0}], TODAY, True, {}, lambda f: "file:///x/Work/Todo.md", {})
+        self.assertNotIn("Open Todo.md", html)
+        self.assertRegex(html, r'<span class="tsum-acts"><button type="button" class="act primary tadd-open"[^>]*>＋ Add</button></span>')
+        self.assertNotIn("Open Todo.md", page_html())
 
     def test_the_font_is_embedded_and_nothing_is_fetched(self):
         css = self.css()
@@ -320,8 +381,9 @@ class Lead(unittest.TestCase):
 
     def test_the_script_redraws_the_lead_from_the_same_figures(self):
         js = status.WAITING_JS
-        for needle in ("function lead(sess)", "Nothing needs you right now.", "One thing needs you.", "tabn-overview", "explore-go"):
+        for needle in ("function lead(sess)", "Nothing needs you right now.", "One thing needs you.", "explore-go"):
             self.assertIn(needle, js)
+        self.assertNotIn("tabn-overview", js)                                # the Overview tab carries no badge (#560)
 
     def test_each_zones_late_actions_stay_that_zones_own(self):
         lists = [zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)]), zone("Home", [todo_row("b", dt.date(2026, 11, 3), True),
@@ -354,8 +416,7 @@ class Lead(unittest.TestCase):
             self.assertEqual(status.lead_said(fixed + n_sessions), said)
             self.assertEqual(n_sessions, len(re.findall(r'<div class="wrow" data-id=', html)))
             self.assertIn('data-n="%d"' % fixed, html)
-            badge = re.search(r'id="tabn-overview" aria-label="(\d+)', html)
-            self.assertEqual(fixed + n_sessions, int(badge.group(1)))
+            self.assertNotIn("tabn-overview", html)
         self.assertGreater(len(re.findall(r'<div class="wrow wneed">', none)) + 2, 0)
 
 
@@ -471,20 +532,82 @@ class PlainRows(unittest.TestCase):
 
 
 class Badges(unittest.TestCase):
-    def test_a_count_that_means_something_is_late_takes_the_warning_colour_and_says_so(self):
-        html = status.tab_badge("x", 3, " action is late", " actions are late", True, "%d late")
-        self.assertIn('class="n warn"', html)
+    """The tab bar (#560): at most one badge on a tab, and it is a number."""
+
+    def tabs(self, html):
+        bar = html[html.index('<div class="tabs" role="tablist">'):]
+        bar = bar[:bar.index("</div>")]
+        return {m.group(1): m.group(2) for m in re.finditer(r'<button[^>]*data-tab="([a-z]+)">(.*?)</button>', bar, re.S)}
+
+    def test_a_critical_badge_has_the_icon_and_the_words_in_its_label_and_title_only(self):
+        html = status.tab_badge("x", 3, " action is late", " actions are late", True)
+        self.assertIn('class="n crit"', html)
         self.assertIn('aria-label="3 actions are late"', html)
-        self.assertIn(">3 late<", html)
+        self.assertIn('title="3 actions are late"', html)
+        self.assertIn("<svg", html)
+        self.assertRegex(re.sub(r"<[^>]+>", "", html), r"^3$")
 
-    def test_an_empty_count_is_built_hidden(self):
-        self.assertIn("hidden", status.tab_badge("x", 0, " a", " b", True))
-        self.assertNotIn("warn", status.tab_badge("x", 0, " a", " b", True))
+    def test_a_warning_badge_has_no_icon(self):
+        html = status.tab_badge("x", 1, " thing needs attention", " things need attention", False)
+        self.assertIn('class="n warn"', html)
+        self.assertNotIn("<svg", html)
+        self.assertIn('aria-label="1 thing needs attention"', html)
 
-    def test_the_tabs_of_the_page_carry_counts(self):
-        html = page_html()
-        self.assertRegex(html, r'data-tab="overview">Overview<span class="n[ a-z]*" id="tabn-overview"')
-        self.assertRegex(html, r'data-tab="status">Status<span class="n[ a-z]*" id="tabn-status"')
+    def test_no_badge_at_zero(self):
+        self.assertEqual("", status.tab_badge("x", 0, " a", " b", True))
+
+    def test_the_overview_and_the_guide_carry_nothing(self):
+        tabs = self.tabs(page_html())
+        self.assertEqual("Overview", tabs["overview"])
+        self.assertEqual("Guide", tabs["guide"])
+
+    def test_no_tab_renders_more_than_one_badge_and_no_badge_holds_a_word(self):
+        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}}, late_todo)
+        tabs = self.tabs(html)
+        self.assertTrue(tabs)
+        for name, inner in tabs.items():
+            self.assertLessEqual(len(re.findall(r'<span class="n ', inner)), 1, name)
+            self.assertNotIn('class="dot', inner, name)
+            for badge in re.findall(r'<span class="n [^"]*"[^>]*>(.*?)</span>', inner, re.S):
+                self.assertRegex(re.sub(r"<svg.*?</svg>", "", badge, flags=re.S), r"^\d*$", name)
+
+    def test_todo_shows_its_late_count_critical_with_the_icon_and_no_total(self):
+        html = build_with_beats({}, late_todo)
+        todo = self.tabs(html)["todo"]
+        self.assertRegex(todo, r'<span class="n crit" id="tabn-late" aria-label="1 action is late" title="1 action is late"><svg[^>]*>.*?</svg>1</span>')
+        self.assertNotIn('<span class="n">', todo)
+        self.assertNotRegex(todo, r"\d+ late")
+
+    def test_todo_has_no_badge_when_nothing_is_late(self):
+        self.assertEqual("Todo", self.tabs(build_with_beats({}))["todo"])
+
+    def test_status_is_critical_when_something_failed_and_warning_otherwise(self):
+        failed = self.tabs(build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}}))["status"]
+        self.assertRegex(failed, r'<span class="n crit" id="tabn-status" aria-label="\d+ things? needs? attention"')
+        self.assertIn("<svg", failed)
+        self.assertNotIn("Act now", failed)
+        warn = self.tabs(page_html())["status"]
+        if warn != "Status":
+            self.assertIn('class="n warn"', warn)
+            self.assertNotIn("<svg", warn)
+
+    def test_the_tab_dots_with_words_are_gone(self):
+        css = status.LOOK_CSS
+        self.assertNotIn(".tabs .dot.tr", css)
+        self.assertNotIn(".tabs .dot.tr", status.CSS)
+        self.assertNotIn("'.tabs [data-tab]').forEach(function(b){var d=b.querySelector('.dot.tr')", status.LAYOUT_JS)
+
+    def test_context_shows_the_open_questions_of_one_place_as_a_warning_number_and_none_at_zero(self):
+        button = status.questions_mod().tab_button()
+        self.assertIn('<span class="n warn" id="qp-tab-n" hidden></span>', button)
+        js = status.CONTEXT_JS
+        self.assertIn("tn.hidden=!c", js)
+        self.assertIn("tn.setAttribute('aria-label',c?w:'')", js)
+        self.assertIn("questions to answer", js)
+
+
+def late_todo(root):
+    (root / "Zones" / "Work" / "Todo.md").write_text("# Work: open actions\n\n## Inbox\n\n- [ ] Send it 📅 2026-11-02\n\n## Done\n", encoding="utf-8")
 
 
 class Work(unittest.TestCase):

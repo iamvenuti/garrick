@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import hashlib
 import json
 import os
 import re
@@ -632,11 +633,37 @@ def skip_folder(root: Path) -> Path:
     return root.resolve() / "System" / recall.SESSIONS_DIR
 
 
+SKIP_DAYS = 7          # a list older than this says nothing: every source on it is parsed again
+
+
+def skip_layout(root: Path) -> str:
+    """A hash of the zone and project folders a session can be placed in. When one is added, renamed or
+    taken away, a source placed nowhere before may be placed now, so the list is dropped."""
+    names = []
+    zones = root.resolve() / "Zones"
+    try:
+        for z in sorted(zones.iterdir()):
+            if z.name.startswith(".") or not z.is_dir():
+                continue
+            names.append(z.name)
+            for d in sorted(z.iterdir()):
+                if not d.name.startswith(".") and d.is_dir():
+                    names.append(z.name + "/" + d.name)
+    except OSError:
+        return ""
+    return hashlib.sha256("\n".join(names).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+
+
 def read_skipped(root: Path) -> Dict[str, Stamp]:
     try:
         data = json.loads((skip_folder(root) / SKIP_NAME).read_text(encoding="utf-8"))
         rows = data["sources"] if isinstance(data, dict) and data.get("version") == 1 else None
-    except (OSError, ValueError, KeyError):
+        since = data.get("since")
+        layout = skip_layout(root)
+        if type(since) is not int or not layout or data.get("layout") != layout \
+                or not 0 <= time.time() - since < SKIP_DAYS * 86400:
+            return {}                               # another layout, or an old list: parse them all again
+    except (OSError, ValueError, KeyError, AttributeError):
         return {}
     if not isinstance(rows, dict):
         return {}
@@ -647,7 +674,15 @@ def read_skipped(root: Path) -> Dict[str, Stamp]:
     return out
 
 
-def write_skipped(root: Path, rows: Dict[str, Stamp]) -> None:
+def skipped_since(root: Path) -> Optional[int]:
+    try:
+        since = json.loads((skip_folder(root) / SKIP_NAME).read_text(encoding="utf-8")).get("since")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return since if type(since) is int else None
+
+
+def write_skipped(root: Path, rows: Dict[str, Stamp], since: Optional[int] = None) -> None:
     """Atomic; nothing is written where git would see it, or where a link or sync stands. A failure leaves the old list."""
     folder = skip_folder(root)
     if folder.is_symlink() or recall.synced(folder) or not recall.safe_to_write(folder / "session.md"):
@@ -657,7 +692,8 @@ def write_skipped(root: Path, rows: Dict[str, Stamp]) -> None:
         folder.mkdir(mode=0o700, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=str(folder), prefix=".skipped-")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump({"version": 1, "sources": {k: list(v) for k, v in rows.items()}}, fh, sort_keys=True)
+            json.dump({"version": 1, "since": int(since if since is not None else time.time()), "layout": skip_layout(root),
+                       "sources": {k: list(v) for k, v in rows.items()}}, fh, sort_keys=True)
         os.chmod(tmp, 0o600)
         os.replace(tmp, str(folder / SKIP_NAME))
     except OSError:
@@ -778,7 +814,7 @@ def extract_run(root: Path, claude: Optional[str] = None, codex: Optional[str] =
             if now.get(k) == v:
                 keep.setdefault(k, v)
     if keep != skipped:
-        write_skipped(root, keep)
+        write_skipped(root, keep, skipped_since(root) if skipped else None)
     text = "sessions written: %d; placed nowhere: %d" % (wrote, nowhere)
     if not stopped:
         return text, 0

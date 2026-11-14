@@ -109,7 +109,9 @@ def load_config(path: Path) -> dict:
 
 
 def yaml_quote(value: str) -> str:
-    return '"%s"' % str(value).replace("\\", "\\\\").replace('"', '\\"')
+    """A value as one double-quoted YAML line: whitespace and line breaks collapse to single spaces first, so a value
+    cannot end the line and start a key of its own."""
+    return '"%s"' % " ".join(str(value).split()).replace("\\", "\\\\").replace('"', '\\"')
 
 
 class Receiver:
@@ -215,7 +217,7 @@ class Receiver:
                 self.save(data)
         for uid in fresh:
             self.m["channel_state"].write(last_received=self.now(), state="running")
-            self.arrive(uid)
+            self.arrive_safe(uid)
         return len(fresh)
 
     # ---------------------------------------------------------------- deciding, in code
@@ -227,6 +229,18 @@ class Receiver:
         """A reply by code (a receipt, a question), through the one delivery path."""
         link = (lambda mid: self.m["exchanges"].link(ex["id"], mid, self.now())) if ex else None
         return self.m["telegram_delivery"].deliver(self.bot, self.chat, self.chat, ex, text, reply_to, self.name_of(ex), link)
+
+    def arrive_safe(self, uid) -> None:
+        """`arrive`, with a fault caught: the message is marked failed, and the owner is told in one line to send it
+        again. A fault here must not end the service loop and leave a saved message that nothing will ever look at."""
+        try:
+            self.arrive(uid)
+        except Exception as e:
+            self.set_message(uid, state="failed", why=type(e).__name__)
+            try:
+                self.say("I could not read that; send it again.", None, (self.load()["messages"].get(str(uid)) or {}).get("message_id"))
+            except Exception:
+                pass
 
     def arrive(self, uid) -> None:
         """Decide what one saved message is, the moment it is saved: no assistant is asked."""
@@ -327,6 +341,7 @@ class Receiver:
             for r in batch:
                 r["state"] = "running"
             self.save(data)
+        ex, told = None, False
         try:
             ex = ex_mod.get(eid)
             if ex_mod.expired(ex, self.now()):          # between turns, by the clock: no model call to expire a session
@@ -344,9 +359,12 @@ class Receiver:
             pending = {"question": answer.strip().splitlines()[-1][:300]} if answer.strip().endswith("?") else None
             last = batch[-1]["message_id"]
             sent = self.say(answer, ex, last)
+            told = True
             if pending and sent.get("ids"):
                 pending["message_id"] = sent["ids"][-1]
-            ex_mod.record_turn(eid, text, answer, got.get("session"), tokens, pending, self.now())
+            ex_mod.record_turn(eid, text, answer, got.get("session"), tokens, pending, self.now(), fresh)
+            if not got.get("ok") and not str(got.get("say", "")).startswith("Not run:") and ex.get("session"):
+                ex_mod.end_session(eid, self.now())      # a failed resume must not stick: the next turn starts from the saved state
             for e in got.get("held") or []:
                 asked = self.say("%s Reply yes to run it." % hold.say(e), ex, last)
                 if asked.get("ids"):
@@ -358,6 +376,13 @@ class Receiver:
         except Exception as e:                           # a fault is recorded, never retried on its own: no repeated calls
             for r in batch:
                 self.set_message(r["id"], state="failed", why=type(e).__name__)
+            try:
+                if ex and ex.get("session"):
+                    ex_mod.end_session(eid, self.now())
+                if not told:
+                    self.say("That did not work. Nothing more was done; send it again.", ex, batch[-1]["message_id"])
+            except Exception:
+                pass
         finally:
             with self.lock:
                 self.running.discard(eid)
@@ -380,17 +405,31 @@ class Receiver:
 
     def recover(self) -> int:
         """After a restart: a request that was running is not run again (what it did may be committed already): its owner
-        is told once. Queued messages stay queued."""
-        n = 0
+        is told once. Queued messages stay queued. A message saved but never decided (no exchange) is decided now, once:
+        a second restart with it still undecided marks it failed. Exchanges untouched for a month are dropped."""
+        n, again = 0, []
         with self.lock:
             data = self.load()
-            for rec in data["messages"].values():
+            for uid, rec in data["messages"].items():
                 if rec["state"] == "running":
                     rec["state"] = "interrupted"
                     n += 1
                 elif rec["state"] == "received":
-                    rec["state"] = "queued" if rec.get("exchange") else "received"
+                    if rec.get("exchange"):
+                        rec["state"] = "queued"
+                    elif rec.get("retried"):
+                        rec["state"] = "failed"
+                        rec["why"] = "NotDecided"
+                    else:
+                        rec["retried"] = True
+                        again.append(uid)
             self.save(data)
+        try:
+            self.m["exchanges"].sweep(self.now())
+        except Exception:
+            pass
+        for uid in again:
+            self.arrive_safe(uid)
         if n:
             try:
                 self.say("A request was interrupted when Garrick restarted. Whatever it had already committed is saved; send it again if it did not finish.")

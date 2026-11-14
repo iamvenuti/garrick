@@ -173,6 +173,15 @@ class OverviewWork(unittest.TestCase):
         self.assertIn("text-overflow:ellipsis", status.YOURWORK_CSS)
         self.assertIn("white-space:nowrap", status.YOURWORK_CSS.split(".ywait{")[1].split("}")[0])
 
+    def test_the_todo_chip_never_wraps_and_the_reason_takes_the_cut(self):
+        """The chip keeps its line whole; only the reason shrinks, so a chip with no reason never drops to a third line."""
+        css = status.YOURWORK_CSS
+        self.assertIn("white-space:nowrap", css.split(".ywhy .chip{")[1].split("}")[0])
+        self.assertIn("white-space:nowrap", css.split(".ywhy .tchips{")[1].split("}")[0])
+        self.assertIn("flex:none", css.split(".ywhy .tchips{")[1].split("}")[0])
+        self.assertIn("flex-wrap:nowrap", css.split(".ywhy{")[1].split("}")[0])
+        self.assertIn("min-width:0", css.split(".ywait{")[1].split("}")[0])
+
     def test_no_row_holds_both_a_count_of_actions_and_a_chip_and_no_row_has_an_app_icon(self):
         self.todo("Work", "[[Pricing]]: send the floor to Dana", "[[Pricing]]: send the renewal")
         card = self.card(self.page())

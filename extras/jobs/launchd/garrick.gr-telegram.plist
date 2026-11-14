@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Telegram receiver: a service, not a timed job. It starts when you log in,
+  long-polls your private bot all day, and starts again if it stops. Idle, it
+  makes no assistant call. The status page shows whether it is running and when
+  it last heard from you.
+  Run setup first (python3 extras/fetch/telegram_receiver.py setup), which pairs
+  your private chat and checks that no other program reads the same bot. The
+  bot's token is in the macOS Keychain, never in this file.
+  Copy this file to ~/Library/LaunchAgents/ and edit the copy.
+  Replace each /Users/&lt;you&gt;/garrick with the full path of your Garrick download,
+  each /Users/&lt;you&gt;/Garrick with your workspace, and every other &lt;you&gt;
+  (written that way because this is XML) with your macOS user name; launchd
+  does not expand ~. Load it:
+
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/garrick.gr-telegram.plist
+
+  Unload with `launchctl bootout gui/$(id -u)/garrick.gr-telegram`.
+  PATH must include the folder your assistant's command is installed in.
+  launchd does not create the log folder: make it once.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>garrick.gr-telegram</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/&lt;you&gt;/garrick/extras/fetch/telegram_receiver.py</string>
+    <string>run</string>
+    <string>--config</string>
+    <string>/Users/&lt;you&gt;/.config/garrick/telegram.json</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>GARRICK_ABOUT</key>
+    <string>Listens to your private Telegram bot all day and answers about your work threads; idle, it calls no assistant.</string>
+    <key>PATH</key>
+    <string>/Users/&lt;you&gt;/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>GARRICK_HARNESS</key>
+    <string>claude</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-telegram.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/&lt;you&gt;/Library/Logs/garrick-jobs/gr-telegram.launchd.log</string>
+</dict>
+</plist>

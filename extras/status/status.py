@@ -3498,6 +3498,26 @@ def idle_limit(env: dict) -> float:
     return value if value >= 0 else 7.0
 
 
+def job_say(state: str, status: str, code: int) -> Tuple[str, str]:
+    """What a job's status cell says beside its pill, and its tooltip (#565). The pill already says
+    Fine, so a fine job says nothing: a quiet exit and a run that called no assistant go to the
+    tooltip. A failure says its reason once; a reason that only restates the code is `exit N`."""
+    if state == "good":
+        if status == "ok":
+            return "", ""
+        if status.startswith("ok, exit "):
+            return "", "Exit %d counts as fine for this job." % code
+        if status == "ok, called no assistant":
+            return "", "It called no assistant: there was nothing to do."
+    prefix = "exit %d: " % code
+    if state == "critical" and status.startswith(prefix):
+        reason = status[len(prefix):]
+        if reason in ("it exited with code %d" % code, "failed"):
+            return "exit %d" % code, ""
+        return reason, "Exit %d" % code
+    return status, ""
+
+
 def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None) -> List[dict]:
     """One row per heartbeat in the jobs folder. A run whose exit job.py
     calls fine (the heartbeat's `ok` or `quiet`), or whose code the plist
@@ -3556,6 +3576,8 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = "critical", "exit %d: %s" % (code, reason)
         elif (hb["idle"] is True) if isinstance(hb.get("idle"), bool) else (idle and idle >= idle_limit(env)):
             state, status = "warning", "idle %d days" % idle
+        elif code in OK_EXITS and hb.get("agent") is True and isinstance(hb.get("reason"), str) and hb["reason"]:
+            state, status = "warning", hb["reason"]               # exit 0, but the assistant was refused a tool (#567)
         elif code in quiet and code not in OK_EXITS:
             state, status = "good", "ok, exit %d is quiet" % code
         elif hb.get("no_call") is True:
@@ -3572,7 +3594,9 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             steps = live
             if failed_steps(live):
                 state, status = "critical", "%s failed in the run under way" % failed_steps(live)
+        say, tip = job_say(state, status, code)
         out.append({"name": name, "when": when, "seconds": hb.get("seconds"), "state": state, "status": status,
+                    "say": say, "tip": tip,
                     "title": job_title(name, hb, env), "code": code, "since": failing_since(hb, when),
                     "reason": hb["reason"] if isinstance(hb.get("title"), str) and isinstance(hb.get("reason"), str) else "",
                     "schedule": words, "runs": history(folder, name, now, olds), "log": job_log(folder, name, olds),
@@ -3588,6 +3612,7 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = ("critical", "%s failed in the run under way" % failed_steps(live)) if failed_steps(live) \
                 else ("none", "not run yet")
             out.append({"name": name, "when": None, "seconds": None, "state": state, "status": status,
+                        "say": status, "tip": "",
                         "title": job_title(name, {}, plist.get("env", {})), "code": None, "since": None, "reason": "",
                         "schedule": plist["schedule"], "runs": history(folder, name, now, olds),
                         "log": job_log(folder, name, olds),
@@ -3812,15 +3837,20 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
         return new if new and e["ts"] < cut else name
     by = {}
     for e in entries:
-        j = by.setdefault(whose(e), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
+        j = by.setdefault(whose(e), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "denied_n": {}, "turns": [],
+                                              "unknown": 0, "estimated": 0})
         if e.get("refused"):
             j["refused"] += 1
             continue
         j["calls"] += 1
         j["cost"] += float(e.get("cost_usd") or 0)
+        j["unknown"] += 1 if e.get("cost_usd") is None else 0      # no cost recorded: not $0.00 (#566)
+        j["estimated"] += 1 if e.get("estimated") and e.get("cost_usd") is not None else 0
         # A request ended with Ask's Stop is billed with exit 1, but it did not fail (#294).
         j["failed"] += 1 if e.get("exit") and e.get("subtype") != "stopped" else 0
         j["denied"] |= set(e.get("denied") or [])
+        for t in set(e.get("denied") or []):           # in how many of the job's calls each tool was refused (#568)
+            j["denied_n"][t] = j["denied_n"].get(t, 0) + 1
         if isinstance(e.get("turns"), (int, float)):
             j["turns"].append(e["turns"])
     per_day: Dict[dt.date, list] = {}
@@ -3838,6 +3868,15 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
             "over_budget": [e for e in calls if now.timestamp() - e["ts"] < 86400 and e.get("subtype") == "error_max_budget_usd"],
             "budget": call_budget(agent, sched), "deny": deny_list(agent), "ask_job": ask,
             "ask": ask_calls(agent, calls, now) if ask and any(e.get("job") == ask for e in entries) else None}
+
+
+def call_cost(d: dict) -> str:
+    """A job's Cost cell: its spend, never $0.00 for calls that recorded none. A call with no cost recorded is `unknown`; a spend
+    that holds a call's estimate carries a tilde."""
+    if d["unknown"] and d["unknown"] == d["calls"]:
+        return "unknown"
+    text = "%s$%.2f" % ("~" if d["estimated"] else "", d["cost"])
+    return text + " + %d unknown" % d["unknown"] if d["unknown"] else text
 
 
 # Which of Ask's own caps refused a call, from the reason agent.py wrote for
@@ -4379,6 +4418,103 @@ def menu_settings() -> str:
             '<button class="act" type="button" id="menu-finder">Open Login Items &amp; Extensions</button></div></section>')
 
 
+
+# ---- Settings › Channels (#571, #570) --------------------------------------------------------------
+# Ask and the Telegram channel run through one engine (engine.py). Each has a tier, an effort and an autonomy; Telegram
+# never offers Full. The section also says, in plain words, whether the assistant passed the capability check, whether
+# the Telegram receiver is running and when it last heard from you, and which actions wait for your yes.
+_CHANNELS_MOD = None
+_CHANNEL_MODS = {}
+
+
+def channels_mod():
+    global _CHANNELS_MOD
+    if _CHANNELS_MOD is None:
+        spec = importlib.util.spec_from_file_location("garrick_status_channels", str(Path(__file__).with_name("channels.py")))
+        _CHANNELS_MOD = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_CHANNELS_MOD)
+    return _CHANNELS_MOD
+
+
+def channel_mod(name: str):
+    if name not in _CHANNEL_MODS:
+        spec = importlib.util.spec_from_file_location("garrick_status_" + name, str(Path(__file__).with_name(name + ".py")))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CHANNEL_MODS[name] = mod
+    return _CHANNEL_MODS[name]
+
+
+CHANNEL_NAMES = {"ask": "Ask", "telegram": "Telegram"}
+LEVEL_NAMES = {"read": "Read", "act": "Act", "full": "Full"}
+TIER_NAMES = {"haiku": "Small (haiku)", "sonnet": "Medium (sonnet)", "opus": "Large (opus)"}
+
+
+def telegram_service_row() -> str:
+    """The Telegram receiver's row: running or down, and when it last received a message."""
+    try:
+        row = channel_mod("channel_state").row()
+    except Exception:
+        return ""
+    return '<p class="chnote" id="telegram-service" data-state="%s">%s</p>' % (E(row["state"]), E(row["said"]))
+
+
+def held_list() -> str:
+    """The actions waiting for your yes, each with what it would do, where, and how long it has left."""
+    try:
+        rows = channel_mod("hold").listing()
+    except Exception:
+        return ""
+    if not rows:
+        return '<p class="chnote" id="held-actions">Nothing is waiting for your yes.</p>'
+    items = "".join('<li>%s <small>(%s, %s; %d h left)</small></li>' % (E(r["what"]), E(r["where"] or "no destination"),
+                                                                       E(CHANNEL_NAMES.get(r["channel"], r["channel"])), r["hours_left"])
+                    for r in rows)
+    return '<div id="held-actions"><p class="chnote">Waiting for your yes. Nothing runs until you say so:</p><ul>%s</ul></div>' % items
+
+
+def channels_settings(ws: Path) -> str:
+    """Settings › Channels: Ask's and Telegram's tier, effort and autonomy, in the app only, as the sections that save are."""
+    try:
+        ch = channels_mod()
+        cfg = ch.settings(ws)
+        cap = ch.kept() or {"ok": True}          # what the last check found; the page never runs one
+    except Exception:
+        return ""
+
+    def select(channel: str, key: str, values, names, label: str) -> str:
+        opts = "".join('<option value="%s"%s>%s</option>' % (v, " selected" if cfg[channel][key] == v else "", E(names.get(v, v.capitalize())))
+                       for v in values)
+        return ('<div class="launcher-row"><label class="launcher-choice" for="ch-%s-%s"><span>%s</span></label>'
+                '<select id="ch-%s-%s" class="menu-style" data-channel="%s" data-key="%s">%s</select></div>'
+                % (channel, key, E(label), channel, key, channel, key, opts))
+    body = ""
+    for channel in ch.CHANNELS:
+        body += '<p class="chnote"><b>%s</b></p>' % E(CHANNEL_NAMES[channel])
+        body += select(channel, "tier", ch.TIERS, TIER_NAMES, "Model size")
+        body += select(channel, "effort", ch.EFFORTS, {}, "Effort")
+        body += select(channel, "autonomy", ch.LEVELS_FOR[channel], LEVEL_NAMES, "How far it may go")
+    limit = ""
+    if not cap.get("ok"):
+        limit = ('<p class="chnote" id="channels-limit">Running at Read: %s. Check: %s.</p>'
+                 % (E("; ".join(cap.get("said") or [])), E(", ".join(c.replace("_", " ") for c in cap.get("failed") or []))))
+    lede = "How far the Ask box and a Telegram chat may go: read and answer, or also act, with every send held for your yes."
+    return ('<section class="setsec apponly" id="channels-settings" hidden>%s%s%s%s%s%s</section>'
+            % (set_head("Channels", "channels", lede),
+               help_text("channels", "Read answers. Act also does what git can undo, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking; Telegram never offers it. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
+                         "Saved in <code>%s</code> when you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
+                         "walled zone sent to Telegram is held on Telegram&#39;s servers." % E(prefs().FILE)),
+               body, limit, telegram_service_row(), held_list()))
+
+
+CHANNELS_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
+var box=document.getElementById('channels-settings');if(!host||!box)return;box.hidden=false;
+function chSave(sel){var c=sel.dataset.channel,o={};o[c]={tier:document.getElementById('ch-'+c+'-tier').value,effort:document.getElementById('ch-'+c+'-effort').value,autonomy:document.getElementById('ch-'+c+'-autonomy').value};
+host.postMessage({act:{verb:'settings',channels:o}})}
+box.querySelectorAll('select[data-channel]').forEach(function(sel){sel.addEventListener('change',function(e){e.stopPropagation();chSave(sel)})})})();
+"""
+
 def copy(label: str, text: str, say: str) -> str:
     """A button that copies a phrase for your assistant, or a command for your
     terminal. The page acts on nothing itself."""
@@ -4652,7 +4788,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
     filed = {"look": [launcher_choices(installed, agent=agent),
                       follow_settings() if graph else "", zone_settings(list(zones), styles or {}),
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
-             "tell": [notify_settings(ws, CMUXLIB.is_file())],
+             "tell": [notify_settings(ws, CMUXLIB.is_file()), channels_settings(ws)],
              "keep": [memory_settings(ws, link)],
              "walls": [walls_settings(ws), allowed_settings(allowed or [])],
              "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
@@ -5551,7 +5687,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .chev{width:16px;height:16px;flex:none;color:var(--muted);transition:transform .15s}details[open]>summary .chev{transform:rotate(90deg)}
 .body{padding:0 16px 16px}.muted{color:var(--muted)}.ink2{color:var(--ink2)}.num{font-variant-numeric:tabular-nums}
 .row{display:grid;align-items:center;gap:12px;padding:8px 2px;border-top:1px solid var(--grid)}.rows>.row:first-child{border-top:0}
-.jobs .row{grid-template-columns:18px minmax(0,1fr) 180px 86px 140px}.jobs .row .status{overflow:hidden;text-overflow:ellipsis}
+.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px minmax(0,300px)}.jobs .row .status{min-width:0;overflow:hidden}.calls .rts{white-space:normal;overflow-wrap:anywhere;min-width:0}.calls .rt{display:flex;align-items:flex-start;gap:6px;color:var(--ink2)}.calls .rt svg{width:14px;height:14px;flex:none;margin-top:2px}.calls .rt.deny{color:var(--critical)}.jobs .status .say{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .jgroup h3{margin:12px 0 2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted)}.jgroup:first-child h3{margin-top:0}.jgroup>h3+.row{border-top:0}
 .jname{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}.jname:hover{color:var(--accent)}
 .jobs .name small{overflow:hidden;text-overflow:ellipsis}.jobs .name small.about{color:var(--ink2)}
@@ -5947,7 +6083,7 @@ var m=document.createElement('span');m.textContent='This page is '+Math.round(h)
 var rb=document.createElement('button');rb.type='button';rb.className='act';rb.textContent='Refresh';rb.onclick=function(){var c=document.getElementById('rebuild');if(c)c.click()};s.appendChild(rb);
 var d=document.createElement('details');d.className='stdet';var sm=document.createElement('summary');sm.textContent='Details';d.appendChild(sm);
 var dp=document.createElement('p');dp.textContent='Built '+document.body.dataset.built+'. Refresh rebuilds it in the Mac app; in a browser it copies the command to run status.py again.';d.appendChild(dp);s.appendChild(d)}
-var tip=document.getElementById('tip');function show(e){var t=e.target.closest&&e.target.closest('[data-tip]');if(!t){tip.style.opacity=0;return}tip.textContent=t.dataset.tip;tip.style.opacity=1;
+var tip=document.getElementById('tip');function show(e){var t=e.target.closest&&e.target.closest('[data-tip]');if(!t||!t.dataset.tip){tip.style.opacity=0;return}tip.textContent=t.dataset.tip;tip.style.opacity=1;
 var r=t.getBoundingClientRect(),x=e.type==='focusin'?r.left+r.width/2:e.clientX,y=e.type==='focusin'?r.top:e.clientY,w=tip.offsetWidth;tip.style.left=Math.min(innerWidth-w-8,Math.max(8,x-w/2))+'px';tip.style.top=(y-tip.offsetHeight-12)+'px'}
 document.addEventListener('mousemove',show);document.addEventListener('focusin',show);document.addEventListener('scroll',function(){tip.style.opacity=0},true);
 var toast=document.getElementById('toast');function say(s){toast.textContent=s;toast.style.opacity=1;clearTimeout(say.t);say.t=setTimeout(function(){toast.style.opacity=0},2600)}
@@ -7526,7 +7662,7 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .st.good{color:var(--good);background:var(--good-wash)}.st.warn{color:var(--warning);background:var(--warning-wash)}
 .st.crit{color:var(--critical);background:var(--critical-wash)}.st.idle{color:var(--ink2);background:var(--sunk)}
 .item>.st{margin-left:auto}.chip .st{padding:0 8px 0 6px;margin-right:4px}
-.jobs .row{grid-template-columns:18px minmax(0,1fr) 180px 86px minmax(200px,auto)}
+.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px minmax(0,300px)}
 @media (max-width:820px){.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 /* the Overview's lead: one sentence, its reasons, one button */
@@ -7976,7 +8112,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         for i, j in enumerate(J):
             strip = "".join('<i class="%s" tabindex="0" data-tip="%s"></i>' % (s, E(t)) for s, t in day_cells(j["runs"], now, j["quiet"]))
             last = age(j["when"], now) if j["when"] else "never"
-            said = "running now" if j["running"] else j["status"]      # its lock is held: a run is under way
+            say, why = j["say"], j["tip"]
+            said = "running now" if j["running"] else say      # its lock is held: a run is under way
+            tip = "Last run: " + j["status"] if j["running"] else (
+                "%s (%s)" % (say, why) if why and len(say) > 28 else say if len(say) > 28 else why)   # clipped text stays readable
             ok = j["state"] in ("good", "none")
             about = '<small class="about" data-tip="%s">%s</small>' % (E(j["about"]), E(j["about"])) if j["about"] else ""
             # a job not run yet is neither fine nor wrong: a hollow mark, and out of "Only what needs attention"
@@ -7984,10 +8123,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             groups[j["garrick"]].append((ok,
                 '<div class="row" data-ok="%d">%s<div class="name"><button type="button" class="jname" aria-expanded="false" '
                 'aria-controls="jp-%d">%s</button>%s<small>%s</small></div><div class="strip">%s</div>'
-                '<div class="ink2 num"%s>%s</div><span class="status%s" data-tip="%s">%s%s</span></div>%s'
+                '<div class="ink2 num"%s>%s</div><span class="status%s"%s>%s%s</span></div>%s'
                 % (ok, ICON[j["state"]], i, E(j["name"]), about, E(j["schedule"]), strip,
                    ' data-tip="took %ss"' % E(str(j["seconds"])) if j["seconds"] is not None else "", E(last), " running" if j["running"] else "",
-                   E("Last run: " + j["status"]) if j["running"] else "", pill("late" if j["status"].startswith("late") else j["state"]), E(said) + (
+                   ' data-tip="%s"' % E(tip) if tip else "", pill("late" if j["status"].startswith("late") else j["state"]), ('<span class="say">%s</span>' % E(said) if said else "") + (
                        ' <button class="act tacts" type="button" data-act="%s" data-say="Starting %s…">Run now</button>'
                        % (E(json.dumps({"verb": "run", "job": j["name"]})), E(j["name"]))
                        if acting and j["name"] in sched and not j["running"] else ""),
@@ -8018,20 +8157,32 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         m += ('<div class="m" data-tip="What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD">'
                '<span class="ink2">Per call</span><span class="num">%s</span></div>' % ("$%g max" % L["budget"] if L["budget"] else "no cap"))
 
-        def refused(tools):
-            """A refused tool the deny list names is red; one no allow rule named is amber."""
-            return "".join('<span class="chip" title="%s">%s%s</span> ' % (
-                "On the deny list" if denied_by_list(t, L["deny"]) else "Not allowed for this job",
-                pill("critical" if denied_by_list(t, L["deny"]) else "warning"), E(t))
-                for t in sorted(tools)) or '<span class="muted">none</span>'
-        trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td class="r">%s</td><td>%s</td>'
-                      '<td class="r">%d</td><td class="r">%d</td></tr>'
-                      % (0 if d["denied"] or d["failed"] or d["refused"] else 1, E(job), d["calls"], d["cost"],
-                         "%.1f" % (sum(d["turns"]) / len(d["turns"])) if d["turns"] else "–", refused(d["denied"]), d["failed"], d["refused"])
+        def short_tool(t):
+            """`mcp__plaud__get_transcript` reads `plaud get_transcript`; any other name as it is."""
+            parts = t.split("__", 2)
+            return "%s %s" % (parts[1], parts[2]) if len(parts) == 3 and parts[0] == "mcp" and parts[1] and parts[2] else t
+
+        def refused(d):
+            """One line of plain text for each refused tool: its name, in how many of the job's calls, and why.
+            The deny list alone is red, with a line icon so the colour is never alone (#568)."""
+            lines = []
+            for t in sorted(d["denied"]):
+                listed = denied_by_list(t, L["deny"])
+                n = d.get("denied_n", {}).get(t)
+                icon = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" '
+                        'stroke-linecap="round" stroke-linejoin="round">%s</svg>' % _PILL_PATHS["alert"]) if listed else ""
+                said = [short_tool(t)] + (["%d of %d calls" % (n, d["calls"])] if n else []) + [
+                    "on the deny list" if listed else "not allowed for this job"]
+                lines.append('<div class="rt%s" title="%s">%s<span>%s</span></div>' % (" deny" if listed else "", E(t), icon, E(" \u00b7 ".join(said))))
+            return "".join(lines) or '<span class="muted">none</span>'
+        trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">%s</td><td class="r">%s</td>'
+                      '<td class="r">%d</td><td class="r">%d</td><td class="rts">%s</td></tr>'
+                      % (0 if d["denied"] or d["failed"] or d["refused"] else 1, E(job), d["calls"], call_cost(d),
+                         "%.1f" % (sum(d["turns"]) / len(d["turns"])) if d["turns"] else "–", d["failed"], d["refused"], refused(d))
                       for job, d in sorted(L["by"].items(), key=lambda kv: (-kv[1]["cost"], kv[0])))
-        table = ('<div class="scroll"><table><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th>'
-                 '<th class="r" title="Turns per call, on average">Turns</th><th>Refused tools</th>'
-                 '<th class="r">Failed</th><th class="r">Capped</th></tr></thead><tbody>%s</tbody></table></div>' % trs) if trs else '<p class="muted">No calls yet.</p>'
+        table = ('<div class="scroll"><table class="calls"><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th>'
+                 '<th class="r" title="Turns per call, on average">Turns</th><th class="r">Failed</th><th class="r">Capped</th>'
+                 '<th>Refused tools</th></tr></thead><tbody>%s</tbody></table></div>' % trs) if trs else '<p class="muted">No calls yet.</p>'
         calls_card = card("calls", "Assistant calls", "",
                           '<div class="meters">%s</div>%s<div style="margin-top:14px">%s</div>' % (m, cost_chart(L), table))
 
@@ -8185,7 +8336,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

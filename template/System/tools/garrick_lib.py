@@ -3435,9 +3435,10 @@ def release_repository(root: PathLike) -> str:
 # status page's Explore draws (#291); "release-notice" and
 # "release-notice-every" are Settings › About Garrick's switch and its cadence
 # (#410), which release.py reads; "ask" is Settings › Menu bar › Answer in the
-# Ask box (#528): on unless it is false.
+# Ask box (#528): on unless it is false. "channels" is each channel's tier, effort and autonomy (#571):
+# {"ask": {...}, "telegram": {...}}, read by extras/status/channels.py, which holds the choices and their defaults.
 PREFERENCES = ("zones", "launchers", "default", "notifications", "home", "memory", "catch-up", "graph",
-               "release-notice", "release-notice-every", "ask")
+               "release-notice", "release-notice-every", "ask", "channels")
 PREFERENCES_FILE = "/".join(SETTINGS)
 SHARED_SETTINGS_WAS = ("System", "generated", "status-settings.json")
 

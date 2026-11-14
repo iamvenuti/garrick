@@ -88,6 +88,18 @@ class TestTheNightlyWorksInWhatIsWaiting(Case):
         self.assertNotIn("meetings skill", calls[1])
         self.assertEqual({}, self.held())
 
+    def test_a_call_stopped_at_its_limit_fails_the_step_and_the_place_is_still_left(self):
+        """#566: exit 124 for the nightly summary, and the other places are still tried."""
+        code, calls = self.run_main(TWO_PLACES, [(agent.EXIT_TIMEOUT, "", None), (0, DONE, "Wikis/Knowledge/wiki/b.md")])
+        self.assertEqual(agent.EXIT_TIMEOUT, code)
+        self.assertEqual(2, len(calls))
+        self.assertEqual({"Zones/Work": {"why": "assistant", "day": "2026-11-13"}}, self.held())
+
+    def test_a_run_with_no_stopped_call_still_exits_0_after_one(self):
+        self.run_main(TWO_PLACES[:1], [(agent.EXIT_TIMEOUT, "", None)])
+        code, _ = self.run_main(TWO_PLACES[:1], [(0, DONE, "Wikis/Meetings/wiki/a.md")])
+        self.assertEqual(0, code)
+
     def test_a_place_with_nothing_waiting_costs_no_call(self):
         code, calls = self.run_main([], [])
         self.assertEqual((0, []), (code, calls))

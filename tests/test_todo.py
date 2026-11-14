@@ -384,6 +384,44 @@ class SweepJobTest(unittest.TestCase):
         self.assertEqual(LIST, self.text())
         self.assertEqual("", self.git("status", "--porcelain").strip())
 
+    def next_rows(self, project, thread, action, status="active"):
+        note = self.zone / project / "Threads" / thread / (thread + ".md")
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text("---\ntitle: %s\nstatus: %s\n---\n\n# %s\n\n### Resume here\n\n**Where it stands, 1 March 2026.** x.\n\n"
+                        "| | |\n|---|---|\n| Next action | %s |\n| Waiting on | nobody |\n\n### Checkpoint\n\n| Next action | not this one |\n"
+                        % (thread, status, thread, action), encoding="utf-8")
+
+    def test_the_script_finds_the_meetings_pages_and_next_actions_of_the_zone_alone(self):
+        """#567: the listing is the script's; the assistant is handed paths and rows of this zone only."""
+        sources = self.root / "Wikis" / "Meetings" / "wiki" / "sources"
+        write(sources / "260310-acme-kickoff.md", "---\ntitle: A\ndate: 2026-03-10\nzone: Work\n---\n")
+        write(sources / "260101-old.md", "---\ntitle: B\ndate: 2026-01-01\nzone: Work\n---\n")
+        write(sources / "260311-home.md", "---\ntitle: C\ndate: 2026-03-11\nzone: Personal\n---\n")
+        write(sources / "260312-nozone.md", "---\ntitle: D\ndate: 2026-03-12\n---\n")
+        self.next_rows("Acme Review", "Pricing", "Dana to send the volumes")
+        self.next_rows("Acme Review", "Parked One", "never listed", status="parked")
+        self.next_rows("Birch Entry", "Market Sizing", "<what is next>")
+        self.assertEqual(["Wikis/Meetings/wiki/sources/260310-acme-kickoff.md", "Wikis/Meetings/wiki/sources/260312-birch-kickoff.md"],
+                         self.job.meeting_pages(self.root, "Work", dt.date(2026, 3, 20)))
+        rows = self.job.next_actions(self.root, self.zone)
+        self.assertEqual([("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "Dana to send the volumes")], rows)
+
+    def test_the_prompt_lists_paths_and_rows_and_names_its_tools_and_needs_no_listing(self):
+        prompt = self.job.prompt_for("Work", "2026-03-20", 7, ["Wikis/Meetings/wiki/sources/260310-acme-kickoff.md"],
+                                     [("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "Dana to send the volumes")])
+        self.assertIn("Use Read, Grep, Glob and Edit only; there is no shell.", prompt)
+        self.assertIn("  - Wikis/Meetings/wiki/sources/260310-acme-kickoff.md", prompt)
+        self.assertIn("Pricing.md: Dana to send the volumes", prompt)
+        for listing in ("whose `zone` is", "in the last 30 days", "of each live thread note", "find ", " ls ", "list the"):
+            self.assertNotIn(listing, prompt, listing)
+
+    def test_a_sweep_hands_the_assistant_the_found_paths(self):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "sources" / "260310-acme-kickoff.md",
+              "---\ntitle: A\ndate: %s\nzone: Work\n---\n" % dt.date.today().isoformat())
+        with self.fake("ADDED 0 FOLDED 0\n" + self.job.SENTINEL + "\n", edit=False):
+            self.job.sweep_zone(self.root, self.zone, "sonnet", dt.date.today().isoformat())
+        self.assertIn("  - Wikis/Meetings/wiki/sources/260310-acme-kickoff.md", self.prompts[0])
+
     def test_the_prompt_follows_the_chase_days(self):
         self.assertIn("7 days from today when the source gives none", self.job.prompt_for("Work", "2026-10-12"))
         write(self.root / "System" / "garrick-checks.json", json.dumps({"todo-chase-days": 0}))

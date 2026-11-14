@@ -17,6 +17,9 @@ wall is the zone's.
     python3 intake.py file-reading --file FILE [--title "..."] [--slug SLUG]
     python3 intake.py file-to-project --file FILE --project PATH [--parties a,b] [--name NAME] [--as-material]
     python3 intake.py extract-attachment --mail RAW --project PATH (--name NAME | --index N) [--save-as NAME]
+    python3 intake.py file-note --file FILE [--destination "Acme, pricing"] [--title "..."]
+    python3 intake.py process-notes [--tier sonnet] [--dry-run]     file the notes waiting, and update a thread when one warrants it (#572)
+    python3 intake.py notes --project PATH [--thread NAME]  the notes since the thread's last wrap, and those awaiting review
     python3 intake.py learn --domain DOMAIN --party TAG     mail from DOMAIN suggests TAG from now on
 
 Every command takes `--root PATH` (default: the workspace this script sits in)
@@ -65,6 +68,8 @@ from garrick_lib import (  # noqa: E402
     workspace_root,
     write_new,
 )
+import importlib.util  # noqa: E402
+import os  # noqa: E402
 from ingest import (  # noqa: E402
     RAW_EXTS, Refusal, build_slug, filing, meetings_root, refuse_if_filed, source_id, taken_stems,
 )
@@ -72,7 +77,7 @@ from ingest import (  # noqa: E402
 BODY_LIMIT = 50_000  # characters of text `parse` gives; the file keeps the rest
 TEXT_EXTS = {".md", ".txt", ".csv", ".tsv", ".json", ".html", ".htm", ".vtt", ".xml", ".yaml", ".yml"}
 SUBJECT_PREFIX_RE = re.compile(r"^\s*(?:re|fw|fwd|aw|wg|sv|vs|tr|rif|r)\s*(?:\[\d+\])?\s*:\s*", re.I)
-KINDS = ("transcript", "mail", "file", "unreadable")
+KINDS = ("transcript", "mail", "file", "note", "unreadable")
 WALL_REFUSAL = ("Refused: this came from a walled zone other than that project's. "
                 "Nothing was moved. Tell the user only this, word for word: \"A wall holds some "
                 "material back from this project, so I have not used it. Nothing was written.\"")
@@ -126,6 +131,8 @@ def kind_of(path: Path, where: str) -> Tuple[str, Optional[dict]]:
         return "transcript", None
     if ext == ".eml":
         return "mail", _parse_quietly(path)
+    if ext in (".md", ".txt") and read_note(path) is not None:
+        return "note", None
     if ext in (".md", ".txt"):
         m = _parse_quietly(path)
         if m and m["from"]:
@@ -181,6 +188,16 @@ def skip(root: Path, path: Path, reason: str, today: Optional[str] = None) -> st
     return "Skipped %s (%s)." % (subject or path.name, reason)
 
 
+def _describe_note(item: dict, path: Path) -> None:
+    """A note's row: where it came by, its date and its first words, and the destination it names, if any."""
+    if item["kind"] != "note":
+        return
+    info = read_note(path) or {}
+    item.update({"date": note_date(info.get("date", ""), ""), "from": info.get("via", ""),
+                 "subject": info.get("title") or first_words(info.get("text", "")),
+                 "destination": info.get("destination", "")})
+
+
 def list_items(root: Path) -> List[dict]:
     """Every item waiting, in every inbox: the Meetings inbox first, then each
     zone's, mail and files together, oldest first by the date they were sent
@@ -195,6 +212,7 @@ def list_items(root: Path) -> List[dict]:
     for p in _waiting(root / INBOX):
         kind, m = kind_of(p, "workspace")
         item = {"kind": kind, "zone": "", "file": _rel(root, p), "date": "", "from": "", "subject": ""}
+        _describe_note(item, p)
         if p.name.startswith(READING_PREFIX):
             item["route"] = "reading"
         if m:
@@ -206,6 +224,7 @@ def list_items(root: Path) -> List[dict]:
         for p in _waiting(zone / INBOX):
             kind, m = kind_of(p, "zone")
             item = {"kind": kind, "zone": zone.name, "file": _rel(root, p), "date": "", "from": "", "subject": ""}
+            _describe_note(item, p)
             if p.name.startswith(READING_PREFIX):
                 item["route"] = "reading"            # fetched from an address kept for reading
             sent = ""
@@ -394,6 +413,12 @@ def parse(root: Path, path: Path) -> dict:
     path, where, zone, kind, m = _item(root, path)
     info = {"file": _rel(root, path), "zone": zone, "kind": kind, "name": path.name,
             "bytes": path.stat().st_size}
+    if kind == "note":
+        got = read_note(path) or {}
+        info.update({"via": got.get("via", ""), "destination": got.get("destination", ""), "date": got.get("date", ""),
+                     "from_owner": True, "title": note_title(got.get("text", ""), got.get("title", "")),
+                     "text": got.get("text", "")[:BODY_LIMIT], "truncated": len(got.get("text", "")) > BODY_LIMIT})
+        return info
     if kind != "mail":
         text = _text_of(path) if kind != "unreadable" else None
         info.update({"text": (text or "")[:BODY_LIMIT] if text is not None else None,
@@ -825,6 +850,369 @@ def extract_attachment(root: Path, mail: str, project: Optional[str], name: str 
 # --------------------------------------------------------------------------- learn
 
 
+# --------------------------------------------------------------------------- notes to yourself (#569)
+
+NOTES = "Notes"                    # the folder a note lands in, under its thread (or its one-thread project)
+NOTE_WORDS = 6                    # words of a note that make its title, and name it in a question
+FRONT_RE = re.compile(r"\A\ufeff?---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)(.*)\Z", re.S)
+# What reads as something the owner owes: a line that opens with a marker, or with a verb of doing. Nothing else in
+# a note is taken for an action: the rest stays text.
+OWE_MARK = re.compile(r"^(?:[-*]\s*(?:\[ \]\s*)?)?(?:todo|to do|to-do|action|task|remember to|remind me to|"
+                      r"i (?:need|have|must|ought) to|need to|must)\b\s*:?\s*(.+)$", re.I)
+OWE_VERB = re.compile(r"^(?:[-*]\s*(?:\[ \]\s*)?)?((?:call|phone|email|e-mail|mail|send|ask|book|schedule|review|"
+                      r"follow up with|chase|draft|write|pay|order|buy|confirm|prepare|share|update|fix|check|"
+                      r"ping|text|reply to|forward|file|sign|renew|cancel|arrange|organise|organize)\b.{2,})$", re.I)
+
+
+def split_front(text: str) -> Tuple[dict, str]:
+    """(frontmatter, body) of a note: the body is everything after the closing line, as it was written."""
+    m = FRONT_RE.match(text)
+    if not m:
+        return {}, text
+    from garrick_lib import parse_frontmatter_text
+    return parse_frontmatter_text("---\n%s\n---\n" % m.group(1)), m.group(2)
+
+
+def read_note(path: Path) -> Optional[dict]:
+    """The note a file in an inbox is, or None. A fetcher that checked the sender writes `kind: note` and
+    `from-owner: true` in the frontmatter, and an item is a note only when both are there: any other file is
+    sorted as it always was, whatever else it says."""
+    if path.suffix.lower() not in (".md", ".txt"):
+        return None
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in data[:8192]:
+        return None
+    front, body = split_front(data.decode("utf-8", errors="replace"))
+    if str(front.get("kind") or "").strip().lower() != "note":
+        return None
+    if str(front.get("from-owner") or "").strip().lower() != "true":
+        return None
+    return {"via": str(front.get("via") or "").strip(), "destination": str(front.get("destination") or "").strip(),
+            "date": str(front.get("date") or "").strip(), "text": body.strip("\n"), "title": str(front.get("title") or "").strip()}
+
+
+def first_words(text: str, most: int = NOTE_WORDS) -> str:
+    words = re.sub(r"[#*_`>\[\]|]", " ", text or "").split()
+    return " ".join(words[:most])
+
+
+def note_title(text: str, given: str = "") -> str:
+    """A note's title: the one given, or its first words; safe as a file name."""
+    title = " ".join((given or first_words(text)).split())
+    title = re.sub(r'[\x00-\x1f:/\\"<>|?*]', " ", title)
+    title = " ".join(title.split()).strip(" .")[:60].strip(" .")
+    return title or "Note"
+
+
+def owed(text: str) -> List[str]:
+    """The lines of a note that read as something the owner owes, as plain action text. Only a marker
+    (`todo:`, `remind me to`, a checkbox) or a verb of doing at the start of a line counts."""
+    out: List[str] = []
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or len(line) > 300:
+            continue
+        m = OWE_MARK.match(line) or OWE_VERB.match(line)
+        if m:
+            out.append(" ".join(m.group(1).split()).rstrip("."))
+    seen, kept = set(), []
+    for line in out:
+        if line.casefold() not in seen:
+            seen.add(line.casefold())
+            kept.append(line)
+    return kept[:5]
+
+
+_MODS: Dict[str, object] = {}
+
+
+def _extra_module(root: Path, name: str):
+    """One of the status extra's modules (ask.py, ask_scope.py), the ones Ask uses to settle a spoken name: the
+    workspace's own copy, or, in a Garrick clone, the one under extras/. None where there is none: a destination
+    cannot then be settled here, and the note waits to be asked about."""
+    key = "%s|%s" % (root, name)
+    if key not in _MODS:
+        found = None
+        places = [Path(root) / "System" / "status" / name]
+        clone = HERE.parents[3]
+        if (clone / "template" / "System" / "skills" / "intake").is_dir():
+            places.append(clone / "extras" / "status" / name)
+        for src in places:
+            if not src.is_file():
+                continue
+            mod_name = "garrick_intake_%s_%d" % (src.stem, abs(hash(str(src))))
+            try:
+                spec = importlib.util.spec_from_file_location(mod_name, str(src))
+                mod = importlib.util.module_from_spec(spec)
+                sys.modules[mod_name] = mod
+                spec.loader.exec_module(mod)
+                found = mod
+                break
+            except Exception:
+                sys.modules.pop(mod_name, None)
+        _MODS[key] = found
+    return _MODS[key]
+
+
+def _live_threads(folder: Path) -> List[str]:
+    out = []
+    threads = folder / "Threads"
+    if threads.is_dir():
+        for t in sorted(p for p in threads.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
+            if (t / (t.name + ".md")).is_file():
+                out.append(t.name)
+    return out
+
+
+def _said(project: str, thread: Optional[str]) -> str:
+    return "%s, %s" % (project, thread) if thread else project
+
+
+def _which(options: List[str]) -> str:
+    return ", ".join(options[:-1]) + " or " + options[-1] if len(options) > 1 else options[0]
+
+
+def resolve_destination(root: Path, spoken: str, about: str = "") -> dict:
+    """Where a note goes, from the words it was given: {"zone", "project", "thread" (or None), "folder", "said"}.
+
+    The words are settled as Ask settles any name, by ask_scope.mentions(): the Parties, People and Aliases of
+    context.md, a project's or a thread's name and its spoken form. Nothing is guessed. A name that fits two
+    places, or none, comes back as a question (Confirm) and nothing is filed; a destination in two zones is
+    refused, as a note is about one place; a project that holds several threads asks which thread."""
+    ask_q = "Where does the note about %s go?" % (first_words(about) or "this")
+    spoken = " ".join((spoken or "").split())
+    if not spoken:
+        raise Confirm(ask_q)
+    ask, scope = _extra_module(root, "ask.py"), _extra_module(root, "ask_scope.py")
+    if ask is None or scope is None:
+        raise Confirm("%s A spoken name can be settled only with the status extra installed." % ask_q)
+    lib_ = scope.lib(root)
+    if lib_ is None:
+        raise Confirm(ask_q)
+    names = ask.scan(root)
+    ctx = load_context(root)
+    found = scope.mentions(root, spoken, names, ctx, lib_)
+    if found.question:
+        raise Confirm(found.question)
+    places = found.places
+    if not places:
+        raise Confirm(ask_q)
+    zones = sorted({z for z, _, _ in places})
+    if len(zones) > 1:
+        raise Refusal("The destination names places in two zones, %s. A note is about one place: say one, and "
+                      "nothing was filed." % " and ".join(zones))
+    zone = zones[0]
+    threads = sorted({(p, t) for _, p, t in places if t})
+    projects = sorted({p for _, p, t in places if not t})
+    if len(threads) > 1:
+        raise Confirm("Which thread is the note about: %s?" % _which([_said(p, t) for p, t in threads]))
+    if threads:
+        project, thread = threads[0]
+        if any(p != project for p in projects):
+            raise Confirm("Which place is the note about: %s?" % _which([_said(p, None) for p in sorted(set(projects) | {project})]))
+    else:
+        if len(projects) > 1:
+            raise Confirm("Which project is the note about: %s?" % _which(projects))
+        project, thread = projects[0], None
+        many = _live_threads(root / "Zones" / zone / project)
+        if many:
+            raise Confirm("Which thread of %s is the note about: %s?" % (project, _which(many)))
+    folder = root / "Zones" / zone / project
+    if thread:
+        folder = folder / "Threads" / thread
+    if not (folder / (folder.name + ".md")).is_file():
+        raise Refusal("%s has no note of its own, so there is nowhere to put a note." % _said(project, thread))
+    return {"zone": zone, "project": project, "thread": thread, "folder": folder, "said": _said(project, thread)}
+
+
+def place_for(root: Path, zone: str, project: str, thread: Optional[str] = None) -> dict:
+    """The place a note goes when the caller has settled it already (the Ask box checked the names against the live
+    list): the same answer resolve_destination() gives, from the folders. Refuses a place that is not there, and a
+    project with threads and no thread named."""
+    if not zone or not project or any(("/" in x or "\\" in x or x.startswith((".", "_"))) for x in (zone, project, thread or "a")):
+        raise Refusal("That is not a place a note can go.")
+    folder = root / "Zones" / zone / project
+    if thread is None:
+        many = _live_threads(folder)
+        if many:
+            raise Refusal("Which thread of %s is the note about: %s?" % (project, _which(many)))
+    else:
+        folder = folder / "Threads" / thread
+    if not (folder / (folder.name + ".md")).is_file():
+        raise Refusal("%s has no note of its own, so there is nowhere to put a note." % _said(project, thread))
+    return {"zone": zone, "project": project, "thread": thread, "folder": folder, "said": _said(project, thread)}
+
+
+def _label_for(zone: Path, project: str, thread: Optional[str]) -> str:
+    """The `[[...]]` a Todo line opens with: the thread's name, the project's for a one-thread project, with the
+    note's path where another note in the zone has the same name."""
+    name = thread or project
+    note = zone / project / ("Threads/%s" % thread if thread else "") / (name + ".md")
+    same = 0
+    for _, dirnames, files in os.walk(str(zone)):
+        dirnames[:] = [d for d in dirnames if not d.startswith((".", "_")) and d != "archive"]
+        same += sum(1 for f in files if f.lower() == (name + ".md").lower())
+    if same <= 1:
+        return name
+    return "%s|%s" % (note.relative_to(zone).with_suffix("").as_posix(), name)
+
+
+def _todo_module():
+    spec = importlib.util.spec_from_file_location("garrick_intake_todo", str(HERE.parent / "todo" / "todo.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _plain(line: str) -> str:
+    body = re.sub(r"\s*·\s*\[[^\]]*\]\([^)\s]*\)", "", line[6:] if line.startswith("- [") else line)
+    body = re.sub(r"\s*(?:📅|⏳|🛫)️?\s*\d{4}-\d{2}-\d{2}", "", body)
+    return re.sub(r"\s+", " ", body).strip().rstrip(".!").casefold()
+
+
+def add_todo(zone: Path, label: str, text: str, source: Tuple[str, str]) -> bool:
+    """One open line at the top of the Todo list's Inbox, in the list's own shape, with the note as its source:
+    `- [ ] [[Thread]]: text · [title](path)`. False when the list already holds the action."""
+    tl = _todo_module()
+    lines = tl.read(zone)
+    line = "- [ ] [[%s]]: %s · [%s](%s)" % (label, text, source[0].replace("]", ")").replace("[", "("),
+                                          source[1].replace(" ", "%20"))
+    mine = _plain(line)
+    if any(l.startswith("- [ ] ") and _plain(l) == mine for l in lines):
+        return False
+    span = tl.sections(lines).get("Inbox")
+    if span is None:
+        raise Refusal("%s's Todo.md has no Inbox section." % zone.name)
+    start, end = span
+    body = [l for l in lines[start:end] if l.strip() != "*Nothing recorded yet.*"]
+    j = 0
+    while j < len(body) and not body[j].strip():
+        j += 1
+    k = j
+    while k < len(body) and body[k].strip() and not body[k].startswith("- ["):
+        k += 1                                   # the description paragraph
+    desc, rest = body[j:k], body[k:]
+    while rest and not rest[0].strip():
+        rest.pop(0)
+    new = [""] + (desc + [""] if desc else []) + [line] + rest
+    if new[-1].strip():
+        new.append("")                           # a blank line before the next heading
+    lines[start:end] = new
+    tl.write(zone, lines)
+    return True
+
+
+def note_text(text: str, via: str, created: str, review: bool = False) -> str:
+    head = ["---", "kind: note"]
+    if review:
+        head.append("review: pending")        # the processor could not take it for a decision (#572): the owner decides
+    if via:
+        head.append("via: %s" % _yaml(via))
+    head += ["created: %s" % _yaml(created), "---", ""]
+    return "\n".join(head) + text.strip("\n") + "\n"
+
+
+def note_date(value: str, today: str) -> str:
+    """YYYY-MM-DD of a note: its own date when it carries one, else today."""
+    m = re.match(r"\d{4}-\d{2}-\d{2}", value or "")
+    return m.group(0) if m else today
+
+
+def add_note(root: Path, place: dict, text: str, title: str = "", via: str = "", date: str = "",
+             today: Optional[str] = None, review: bool = False) -> dict:
+    """Write one note into the place `resolve_destination` settled, and the actions it holds into that zone's
+    Todo.md. Returns {"note": Path, "todo": [lines added], "todo_file": Path or None, "before": the Todo.md's
+    bytes before}. It writes nothing else: the thread's note, its Resume here block and every rule stay as they
+    are. The text is a note's own and runs nothing."""
+    today = today or datetime.date.today().isoformat()
+    text = (text or "").strip()
+    if not text:
+        raise Refusal("There is nothing in the note.")
+    if len(text) > BODY_LIMIT:
+        raise Refusal("The note is longer than %d characters." % BODY_LIMIT)
+    day = note_date(date, today)
+    stamp = datetime.date.fromisoformat(day).strftime("%y%m%d")
+    name = note_title(text, title)
+    folder = place["folder"] / NOTES
+    zone = root / "Zones" / place["zone"]
+    target = folder / ("%s - %s.md" % (stamp, name))
+    n = 1
+    while target.exists():
+        n += 1
+        target = folder / ("%s - %s (%d).md" % (stamp, name, n))
+    created = date if re.match(r"\d{4}-\d{2}-\d{2}T", date or "") else datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    todo_file = zone / "Todo.md"
+    before = todo_file.read_bytes() if todo_file.is_file() else None
+    lines = owed(text)
+    if lines and before is None:
+        raise Refusal("%s has no Todo.md, so its actions cannot be listed." % place["zone"])
+    landing(root, place["folder"], target)
+    folder.mkdir(exist_ok=True)
+    write_new(root, place["folder"], target, note_text(text, via, created, review).encode("utf-8"))
+    added: List[str] = []
+    label = _label_for(zone, place["project"], place["thread"]) if lines else ""
+    for line in lines:
+        if add_todo(zone, label, line, (target.stem, target.relative_to(zone).as_posix())):
+            added.append(line)
+    return {"note": target, "todo": added, "todo_file": todo_file if added else None, "before": before}
+
+
+def file_note(root: Path, path: Path, destination: str = "", title: str = "", today: Optional[str] = None) -> Tuple[dict, dict]:
+    """File a note waiting in an inbox: its destination resolved (the one given, else the note's own), the note
+    written under that thread, its actions to that zone's Todo.md, and the inbox item removed. Refuses an item
+    that is not a note (it needs `kind: note` and `from-owner: true`), asks when the destination does not
+    settle, and refuses one in another zone than the zone inbox it waits in. Returns (what it wrote, the place)."""
+    path, where, zone, kind, _ = _item(root, path)
+    if where == "meetings":
+        raise Refusal("%s is in the Meetings inbox, which holds conversations, never notes." % path.name)
+    info = read_note(path) if kind == "note" else None
+    if info is None:
+        raise Refusal("%s is not a note: a note carries `kind: note` and `from-owner: true` in its frontmatter, "
+                      "written by a fetcher that checked the sender. Sort it as any other item." % path.name)
+    place = resolve_destination(root, destination or info["destination"], info["text"])
+    if where == "zone" and place["zone"] != zone:
+        raise Refusal("%s is in the %s inbox but its destination is in %s. Zones never mix: move the note to the %s "
+                      "inbox first if that is where it belongs." % (path.name, zone, place["zone"], place["zone"]))
+    done = add_note(root, place, info["text"], title or info["title"], info["via"], info["date"], today)
+    path.unlink()
+    return done, place
+
+
+def _notes_in(folder: Path) -> List[Path]:
+    notes = folder / NOTES
+    return sorted(p for p in notes.iterdir() if p.is_file() and p.suffix == ".md" and not p.name.startswith(".")) \
+        if notes.is_dir() else []
+
+
+def notes_since(root: Path, project: str, thread: Optional[str] = None) -> dict:
+    """The notes of a thread (or of a one-thread project) since its last wrap, and those awaiting review. The
+    last wrap is when the thread's note was last written: a note counts when it was made after that, or is marked
+    `review: pending`."""
+    folder, _ = resolve_project(root, project)
+    place = folder / "Threads" / thread if thread else folder
+    if thread and not place.is_dir():
+        raise Refusal("%s has no thread %s." % (folder.name, thread))
+    note = place / (place.name + ".md")
+    wrapped = note.stat().st_mtime if note.is_file() else 0.0
+    new, pending = [], []
+    for n in _notes_in(place):
+        front, _ = split_front(n.read_text(encoding="utf-8", errors="replace"))
+        made = n.stat().st_mtime
+        try:
+            made = datetime.datetime.fromisoformat(str(front.get("created") or "")).timestamp()
+        except ValueError:
+            pass
+        item = {"file": _rel(root, n), "title": n.stem}
+        if str(front.get("review") or "").strip().lower() == "pending":
+            pending.append(item)
+        elif made > wrapped:
+            new.append(item)
+    return {"since_wrap": new, "awaiting_review": pending}
+
+
 def _cells(line: str) -> List[str]:
     s = line.strip()
     s = s[1:] if s.startswith("|") else s
@@ -945,6 +1333,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     k = sub.add_parser("skip", help="take an item too thin to keep out of a zone's Inbox, with the reason logged")
     k.add_argument("--file", required=True)
     k.add_argument("--reason", required=True, help="why, in a few words: thin, a promotion, a duplicate")
+    n = sub.add_parser("file-note", help="file a note to yourself under the thread it names")
+    n.add_argument("--file", required=True)
+    n.add_argument("--destination", default="", help="where it goes, as you would say it: \"Acme, pricing\" (default: the note's own)")
+    n.add_argument("--title", default="", help="the note's title (default: its first words)")
+    q = sub.add_parser("process-notes", help="file the notes waiting in the inboxes and update a thread when one warrants it")
+    q.add_argument("--tier", default="sonnet", choices=("haiku", "sonnet", "opus"))
+    q.add_argument("--state", default="", help="the durable record (default: notes-state.json in the jobs folder)")
+    q.add_argument("--dry-run", action="store_true", help="count what is waiting; write and call nothing")
+    q.add_argument("--no-assistant", action="store_true", help="file every resolved note for review, with no assistant")
+    w = sub.add_parser("notes", help="the notes since a thread's last wrap, and those waiting for review")
+    w.add_argument("--project", required=True, help="Zones/<Zone>/<Project>")
+    w.add_argument("--thread", default="", help="a thread of it; leave out for a one-thread project")
     l = sub.add_parser("learn", help="record that mail from a domain belongs to a party")
     l.add_argument("--domain", required=True)
     l.add_argument("--party", required=True)
@@ -981,6 +1381,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(rel(move_to_zone(root, Path(args.file), args.zone)))
         elif args.command == "skip":
             print(skip(root, Path(args.file), args.reason, args.today))
+        elif args.command == "file-note":
+            done, place = file_note(root, Path(args.file), args.destination, args.title, args.today)
+            print("%s\t%s\t%d" % (rel(done["note"]), place["said"], len(done["todo"])))
+        elif args.command == "process-notes":
+            import process_notes
+            if args.state and not process_notes.state_in_jobs(args.state):
+                print("--state must be a notes-state file in the jobs folder (%s): it is written whole, so it may not name "
+                      "any other file." % process_notes.jobs_dir(), file=sys.stderr)
+                return 1
+            res = process_notes.run(root, None if (args.dry_run or args.no_assistant) else process_notes.agent_assessor(root, args.tier),
+                                    args.state or None, args.today, args.dry_run)
+            print(json.dumps(res, sort_keys=True))
+            return 1 if res["failed"] else 0
+        elif args.command == "notes":
+            print(json.dumps(notes_since(root, args.project, args.thread or None), indent=2))
         elif args.command == "learn":
             print("%s\t%s\t%s" % (learn(root, args.domain, args.party), args.domain.strip().lower(), strip_tag(args.party)))
     except Refusal as exc:

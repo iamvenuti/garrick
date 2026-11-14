@@ -190,6 +190,12 @@ DECLARED: Dict[str, Op] = {
     # The line it adds has no key yet: a line already in the note is refused
     # by the handler, which is that verb's own check.
     "todo-add": _op(("zone", "text", "target", "date", "confirm"), ("text", "target", "date"), "zone", True, "safe"),
+    # A note to yourself (#569): the text goes into a dated file under the thread or project it is about, its actions
+    # into that zone's Todo.md, one commit. The place is a `destination`, as the owner would say it, or the `zone`,
+    # `project` and `thread` the ask box has checked; the handler refuses one that does not settle to one folder.
+    # A second run writes a second note, so a retry is not safe.
+    "note-add": _op(("zone", "project", "thread", "destination", "text", "title"),
+                    ("project", "thread", "destination", "text"), "zone", True),
     # Declared, and nothing else: each of these keeps the validation it has.
     # They are here so that one table answers what a verb accepts, and so the
     # test that enumerates what the page sends has something to check against.
@@ -209,7 +215,7 @@ DECLARED: Dict[str, Op] = {
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.
     "settings": _op(("launchers", "default", "zones", "graph", "notifications", "home", "memory",
-                     "desk-agent", "release-notice", "release-notice-every", "ask"), (), "workspace"),
+                     "desk-agent", "release-notice", "release-notice-every", "ask", "channels"), (), "workspace"),
     # Settings › About Garrick (#410): Check for updates asks GitHub now and writes only the kept answer; the update
     # that follows a newer release runs release.py's own, which commits in each repository it changes.
     "release-check": _op((), (), "workspace", retry="safe"),

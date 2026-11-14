@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(21, html.count("</script>"))         # the Waiting on you now card's script, the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -1733,7 +1733,7 @@ class TestSettingsLayout(StatusCase):
     for, and the one being read marked."""
 
     ORDER = ["launcher-settings", "follow-settings", "zone-settings", "graph-colour-settings", "menu-settings",
-             "notify-settings", "memory-settings", "allowed-settings", "about-settings", "preview-settings"]
+             "notify-settings", "channels-settings", "memory-settings", "allowed-settings", "about-settings", "preview-settings"]
 
     def dialog(self, **kw):
         html = self.page(**kw)
@@ -2473,7 +2473,7 @@ class TestJobs(StatusCase):
 
     def test_every_shipped_plist_says_what_its_job_does(self):
         shipped = sorted(REPO.joinpath("extras").rglob("*.plist"))
-        self.assertEqual(5, len(shipped))                       # the evening status build is the nightly's last step (#276)
+        self.assertEqual(7, len(shipped))                       # the evening status build is the nightly's last step (#276)
         for plist in shipped:
             with self.subTest(plist.name):
                 p = plistlib.loads(plist.read_bytes())
@@ -2563,6 +2563,31 @@ class TestJobs(StatusCase):
                 html = self.page()
         self.assertEqual(("critical", "nightly.local (exit 2) failed in the run under way"), (row["state"], row["status"]))
         self.assertIn("gr-nightly: nightly.local (exit 2) failed in the run under way", self.attention(html))
+
+    def test_an_agent_job_that_exited_0_with_a_refusal_shows_look_not_fine(self):
+        """#567: exit 0 and a reason in the heartbeat: a warning, with the reason as its words."""
+        (self.jobs / "gr-todo-sweep.heartbeat.json").write_text(json.dumps({
+            "job": "gr-todo-sweep", "finished": self.now.strftime("%Y-%m-%d %H:%M:%S"), "exit": 0, "ok": True, "quiet": False,
+            "agent": True, "reason": "the assistant was refused Bash", "title": "Sweep", "seconds": 5}))
+        (self.jobs / "gr-clean.heartbeat.json").write_text(json.dumps({
+            "job": "gr-clean", "finished": self.now.strftime("%Y-%m-%d %H:%M:%S"), "exit": 0, "ok": True, "quiet": False,
+            "agent": True, "reason": None, "title": "Clean", "seconds": 5}))
+        rows = {j["name"]: (j["state"], j["status"]) for j in status.jobs(self.jobs, self.now)}
+        self.assertEqual(("warning", "the assistant was refused Bash"), rows["gr-todo-sweep"])
+        self.assertEqual(("good", "ok"), rows["gr-clean"])
+
+    def test_a_calls_cost_cell_is_never_0_when_the_cost_is_not_known(self):
+        """#566: no cost recorded reads `unknown`; an estimate carries a tilde; a known cost is as it was."""
+        self.ledger({"job": "gr-nightly", "exit": 124, "cost_usd": None}, {"job": "digest", "exit": 124, "cost_usd": 1.5, "estimated": True},
+                    {"job": "brief", "exit": 0, "cost_usd": 0.5}, {"job": "mixed", "exit": 0, "cost_usd": 0.5}, {"job": "mixed", "exit": 124})
+        with self.plists():
+            L = status.ledger(status.load_agent(self.root), self.jobs, self.now)
+        self.assertEqual({"gr-nightly": "unknown", "digest": "~$1.50", "brief": "$0.50", "mixed": "$0.50 + 1 unknown"},
+                         {k: status.call_cost(v) for k, v in L["by"].items()})
+        with self.plists():
+            html = self.page()
+        self.assertIn('<td class="r">unknown</td>', html)
+        self.assertIn('<td class="r">~$1.50</td>', html)
 
     def test_a_renamed_jobs_calls_count_under_its_new_name(self):
         self.ledger({"job": "todo-sweep", "cost_usd": 0.5, "exit": 0}, {"job": "gr-todo-sweep", "cost_usd": 0.25, "exit": 0})

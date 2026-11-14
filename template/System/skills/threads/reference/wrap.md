@@ -197,6 +197,13 @@ focus, as under *No name given*). Then:
    show its items and ask in one line whether any still hold. Made and Decided
    items carry their sources and fold without a question; a Next action that
    differs from the confirmed one is asked about.
+   **Read the notes made since the last wrap**: `python3
+   System/skills/intake/intake.py notes --project Zones/<Zone>/<Project>
+   --thread <Thread>` lists them (a note to yourself, in the thread's
+   `Notes/`). Read each, and offer to fold in whatever it settles, in one
+   line each; a note stays as it is, and only the user's yes changes the
+   Resume here block. When the user settles a note marked `review: pending`,
+   delete that line from the note.
 6. **Rewrite the Resume here block** so it describes now. Replace it; do not
    append to it.
    ```markdown

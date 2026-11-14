@@ -440,7 +440,7 @@ class TestMakingThem(MakeCase):
         self.assertIn("make a project or a thread", ask.NEED_CLAUDE)
 
     def test_only_the_ask_flag_is_needed(self):
-        self.assertEqual(("open", "park", "wake", "todo-add", "new-project", "new-thread"), ask.VERBS)
+        self.assertEqual(("open", "park", "wake", "todo-add", "note-add", "new-project", "new-thread"), ask.VERBS)
 
     def test_the_brief_tells_the_session_about_both(self):
         brief = (REPO / "extras" / "status" / "ask-command-brief.md").read_text(encoding="utf-8")
@@ -480,7 +480,7 @@ class TestTheBriefSpeaksAsGarrick(unittest.TestCase):
             self.assertFalse(any(verb in v for v in ask.VERBS), verb)
 
     def test_what_it_says_it_does_is_what_the_box_runs(self):
-        self.assertEqual(("open", "park", "wake", "todo-add", "new-project", "new-thread"), ask.VERBS)
+        self.assertEqual(("open", "park", "wake", "todo-add", "note-add", "new-project", "new-thread"), ask.VERBS)
         for route in ("meetings", "knowledge", "thread", "docs", "actions"):
             self.assertIn('"%s"' % route, self.brief)
         self.assertIn('"order": "recent"', self.brief)

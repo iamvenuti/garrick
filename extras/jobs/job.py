@@ -1056,6 +1056,14 @@ def recorded_calls(name: str, since: float, now: float) -> int:
                if e.get("job") == name and e["ts"] >= since - 1)
 
 
+def refused_tools(name: str, since: float, now: float) -> List[str]:
+    """The tools the assistant was refused in this run's calls, from agent.py's ledger, sorted. A refusal is a finding (#567): a
+    run that asked for a tool its job does not have has read less than it was asked to."""
+    hours = (now - since) / 3600 + 0.1
+    return sorted({t for e in agent.read_ledger(agent.ledger_path(), now, hours)
+                   if e.get("job") == name and e["ts"] >= since - 1 for t in e.get("denied") or [] if isinstance(t, str)})
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "check-scripts" and "--" not in argv:
@@ -1218,6 +1226,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             steps = read_steps(steps_file)
             failed = failed_steps(steps)
             plain = plain_reason(code, cause, args.timeout, steps, log_path, start, bool(args.agent))
+            if code == 0 and args.agent:
+                refused = refused_tools(name, start, now)
+                if refused:                     # a clean exit that was refused a tool is not a clean run: the page shows Look
+                    plain = ("the assistant was refused %s" % ", ".join(refused))[:REASON_MAX]
             if reason and failed:
                 reason += "; %s failed" % failed
             if is_quiet:

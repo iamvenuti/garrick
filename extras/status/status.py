@@ -3576,6 +3576,8 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             state, status = "critical", "exit %d: %s" % (code, reason)
         elif (hb["idle"] is True) if isinstance(hb.get("idle"), bool) else (idle and idle >= idle_limit(env)):
             state, status = "warning", "idle %d days" % idle
+        elif code in OK_EXITS and hb.get("agent") is True and isinstance(hb.get("reason"), str) and hb["reason"]:
+            state, status = "warning", hb["reason"]               # exit 0, but the assistant was refused a tool (#567)
         elif code in quiet and code not in OK_EXITS:
             state, status = "good", "ok, exit %d is quiet" % code
         elif hb.get("no_call") is True:
@@ -3835,12 +3837,15 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
         return new if new and e["ts"] < cut else name
     by = {}
     for e in entries:
-        j = by.setdefault(whose(e), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "denied_n": {}, "turns": []})
+        j = by.setdefault(whose(e), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "denied_n": {}, "turns": [],
+                                              "unknown": 0, "estimated": 0})
         if e.get("refused"):
             j["refused"] += 1
             continue
         j["calls"] += 1
         j["cost"] += float(e.get("cost_usd") or 0)
+        j["unknown"] += 1 if e.get("cost_usd") is None else 0      # no cost recorded: not $0.00 (#566)
+        j["estimated"] += 1 if e.get("estimated") and e.get("cost_usd") is not None else 0
         # A request ended with Ask's Stop is billed with exit 1, but it did not fail (#294).
         j["failed"] += 1 if e.get("exit") and e.get("subtype") != "stopped" else 0
         j["denied"] |= set(e.get("denied") or [])
@@ -3863,6 +3868,15 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
             "over_budget": [e for e in calls if now.timestamp() - e["ts"] < 86400 and e.get("subtype") == "error_max_budget_usd"],
             "budget": call_budget(agent, sched), "deny": deny_list(agent), "ask_job": ask,
             "ask": ask_calls(agent, calls, now) if ask and any(e.get("job") == ask for e in entries) else None}
+
+
+def call_cost(d: dict) -> str:
+    """A job's Cost cell: its spend, never $0.00 for calls that recorded none. A call with no cost recorded is `unknown`; a spend
+    that holds a call's estimate carries a tilde."""
+    if d["unknown"] and d["unknown"] == d["calls"]:
+        return "unknown"
+    text = "%s$%.2f" % ("~" if d["estimated"] else "", d["cost"])
+    return text + " + %d unknown" % d["unknown"] if d["unknown"] else text
 
 
 # Which of Ask's own caps refused a call, from the reason agent.py wrote for
@@ -8064,9 +8078,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                     "on the deny list" if listed else "not allowed for this job"]
                 lines.append('<div class="rt%s" title="%s">%s<span>%s</span></div>' % (" deny" if listed else "", E(t), icon, E(" \u00b7 ".join(said))))
             return "".join(lines) or '<span class="muted">none</span>'
-        trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td class="r">%s</td>'
+        trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">%s</td><td class="r">%s</td>'
                       '<td class="r">%d</td><td class="r">%d</td><td class="rts">%s</td></tr>'
-                      % (0 if d["denied"] or d["failed"] or d["refused"] else 1, E(job), d["calls"], d["cost"],
+                      % (0 if d["denied"] or d["failed"] or d["refused"] else 1, E(job), d["calls"], call_cost(d),
                          "%.1f" % (sum(d["turns"]) / len(d["turns"])) if d["turns"] else "–", d["failed"], d["refused"], refused(d))
                       for job, d in sorted(L["by"].items(), key=lambda kv: (-kv[1]["cost"], kv[0])))
         table = ('<div class="scroll"><table class="calls"><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th>'

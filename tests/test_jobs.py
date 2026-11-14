@@ -513,6 +513,21 @@ class JobTest(FakeAssistants):
         self.assertEqual((0, 3, 0), (beat["exit"], beat["items"], beat["idle_days"]))
         self.assertIn("tidy  exit 0", (self.jobs / "tidy.log").read_text())
 
+    def test_an_agent_run_that_was_refused_a_tool_leaves_a_reason_in_its_heartbeat(self):
+        """#567: a clean exit with a refusal is not a clean run; the page shows Look. A run with none keeps no reason."""
+        script = "import agent; agent.run('sonnet', 'Sweep.', job='sweep')"
+        env = {"PYTHONPATH": str(JOBS)}
+        r = self.job("sweep", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", script, env=env)
+        self.assertEqual(0, r.returncode, r.stderr)
+        beat = self.beat("sweep")
+        self.assertTrue(beat["ok"])
+        self.assertEqual("the assistant was refused Bash", beat["reason"])
+        os.environ["FAKE_RESULT"] = "fine"
+        clean = "import agent; agent.run('sonnet', 'Sweep.', job='tidy')"
+        (self.bin / "claude").write_text((self.bin / "claude").read_text().replace('"permission_denials": [{"tool_name": "Bash"}]', '"permission_denials": []'))
+        self.job("tidy", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", clean, env=env)
+        self.assertIsNone(self.beat("tidy")["reason"])
+
     def test_a_held_lock_skips_the_run(self):
         self.jobs.mkdir(parents=True)
         (self.jobs / "tidy.lock").mkdir()
@@ -645,6 +660,29 @@ class RunnerExtrasTest(FakeAssistants):
         self.assertLess(time.time() - started, 20)
         self.assertEqual(124, self.ledger()[-1]["exit"])
         self.assertIn("--timeout", sys.stderr.getvalue())
+
+    def test_a_call_stopped_at_its_limit_is_recorded_with_an_estimated_cost_and_the_cap_counts_it(self):
+        """#566: a stopped call spent tokens; its line carries an estimate marked as one, never null."""
+        os.environ["FAKE_SLEEP"] = "30"
+        code, _ = agent.run("opus", "Sweep.", timeout=1)
+        line = self.ledger()[-1]
+        self.assertEqual(agent.EXIT_TIMEOUT, code)
+        self.assertTrue(line["estimated"])
+        self.assertGreater(line["cost_usd"], 0)
+        self.assertLessEqual(line["cost_usd"], agent.DEFAULT_MAX_CALL_USD)
+        now = time.time()
+        self.assertEqual("cost_day", agent.cap_reached([line], now, {"cost_day": line["cost_usd"] / 2})["cap"])
+
+    def test_a_call_that_finishes_has_no_estimate(self):
+        agent.run("sonnet", "Sweep.")
+        line = self.ledger()[-1]
+        self.assertNotIn("estimated", line)
+        self.assertEqual(0.25, line["cost_usd"])
+
+    def test_the_estimate_is_the_seconds_at_the_tiers_rate_and_never_above_the_budget(self):
+        self.assertEqual(1.2, agent.estimated_cost("sonnet", 100))
+        self.assertEqual(5.0, agent.estimated_cost("opus", 3600))
+        self.assertEqual(0, agent.estimated_cost("sonnet", -5))
 
     def test_a_call_stopped_by_its_budget_exits_as_a_cap(self):
         os.environ["FAKE_SUBTYPE"] = "error_max_budget_usd"

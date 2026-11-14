@@ -18,8 +18,9 @@ What it could not work in is kept for the Context card, which asks about it: `Sy
 for each place, the day and a reason from a short fixed list (never a path, a title or an answer), and nothing else.
 A place that works in cleanly is taken out of the file.
 
-Exit codes: 0 (a place left unworked is no fault of the night: the card asks about it); the assistant's own for a hard
-failure to start (2 usage, 127 missing); 64 for a workspace without the status page's panel.
+Exit codes: 0 (a place left unworked is no fault of the night: the card asks about it); 124 when an assistant call was
+stopped at its time limit, so that the nightly summary says `answers exit 124` and the step is not read as ok (#566); the
+assistant's own for a hard failure to start (2 usage, 127 missing); 64 for a workspace without the status page's panel.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ HELD_FILE = ("System", "generated", "status-answers.json")
 SENTINEL = "END OF WORK-IN"
 COUNTS = re.compile(r"^WORKED (\d+) HELD (\d+)\s*$", re.M)
 EXIT_NO_PANEL = 64
+STOPPED: List[str] = []      # the places whose call was stopped at its time limit, in this run
 KNOWLEDGE = "Wikis/Knowledge"
 # The reasons a place was left, by code: the words the card says are in finding_queue.ANSWERS_HELD.
 REASONS = ("cap", "assistant", "incomplete", "held", "commit")
@@ -198,6 +200,8 @@ def work_place(ws: Path, scope: str, place: str, n: int, tier: str, deadline: Op
     before = changes(repo, rel)
     extra = {} if deadline is None else {"timeout": max(1.0, deadline - time.time() - MARGIN)}
     code, text = agent.run(tier, prompt_for(scope, place), cwd=ws, allow=ALLOW, **extra)
+    if code == agent.EXIT_TIMEOUT:
+        STOPPED.append(place)
     if code == agent.EXIT_CAP:
         restore(repo, before, rel)
         return "cap"
@@ -229,13 +233,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     for scope in [s for s in held if s not in {p[0] for p in places}]:
         del held[scope]                               # nothing waits there any more
     total = 0
+    del STOPPED[:]
     deadline = time.time() + args.limit if args.limit else None
     for scope, place, n in places:
         if deadline is not None and deadline - time.time() < MIN_LEFT:
             why = "cap"
         else:
             why = work_place(ws, scope, place, n, args.tier, deadline)
-        print("work_in: %s: %s" % (place, "worked in" if why is None else "left (%s)" % why))
+        print("work_in: %s: %s%s" % (place, "worked in" if why is None else "left (%s)" % why,
+                                     ", the call was stopped at its time limit" if place in STOPPED else ""))
         if why is None:
             held.pop(scope, None)
             total += n
@@ -247,7 +253,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if ws.joinpath(*HELD_FILE).exists():
             write_held(ws, held)
     agent.report_items(total)
-    return 0
+    return agent.EXIT_TIMEOUT if STOPPED else 0
 
 
 if __name__ == "__main__":

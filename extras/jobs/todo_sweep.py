@@ -4,8 +4,9 @@ a time, as the todo skill's Sweep does.
 
     python3 todo_sweep.py --workspace /Users/<you>/Garrick --zone Work [--zone Personal] [--digest]
 
-For each zone: one assistant call that sweeps that zone's Meetings pages of
-the last 30 days and its live threads' Next action rows into Todo.md,
+For each zone: this script finds that zone's Meetings pages of the last 30
+days and its live threads' Next action rows, and one assistant call, given
+those paths and rows, sweeps them into Todo.md (it has no shell),
 appending under Inbox and Waiting on and folding repeats into the line
 already there; then the skill's script, which expires, archives and tidies
 with no assistant; then one commit in the zone, through its wall check, of
@@ -62,14 +63,88 @@ def chase_rule(days: int) -> str:
     return "with #waiting and a ⏳ day to chase, %d days from today when the source gives none" % days
 
 
-def prompt_for(zone: str, today: str, chase_days: int = 7) -> str:
+MEETINGS = ("Wikis", "Meetings", "wiki", "sources")
+RECENT_DAYS = 30
+RESUME = re.compile(r"^#{1,6}\s+Resume here\b", re.I)
+ROW = re.compile(r"^\|\s*([^|]*?)\s*\|\s*(.*?)\s*\|\s*$")
+FIELD = re.compile(r"^(zone|date|status):\s*(.*?)\s*$", re.M)
+NO_STEP = re.compile(r"(?i)^(none|nobody|no one|n/a|-|\u2013|\u2014)\.?$")
+
+
+def front(path: Path) -> dict:
+    """The zone, date and status keys of a page's frontmatter, as written, unquoted. Empty for a page with none."""
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return {}
+    if not head.startswith("---"):
+        return {}
+    block = head[3:].split("\n---", 1)[0]
+    return {k: v.strip("\"' ") for k, v in FIELD.findall(block)}
+
+
+def meeting_pages(workspace: Path, zone: str, today: datetime.date) -> List[str]:
+    """The Meetings pages of this zone alone, dated in the last 30 days, as paths from the workspace, oldest first. A page whose
+    zone is another, or none, is never listed: the zone is compared here, so the assistant is never handed another's page."""
+    folder = workspace.joinpath(*MEETINGS)
+    found = []
+    for page in sorted(folder.glob("*.md")) if folder.is_dir() else []:
+        fm = front(page)
+        try:
+            day = datetime.date.fromisoformat(fm.get("date", "")[:10])
+        except ValueError:
+            continue
+        if fm.get("zone", "").casefold() == zone.casefold() and 0 <= (today - day).days <= RECENT_DAYS:
+            found.append((day, page))
+    return [str(p.relative_to(workspace)) for _, p in sorted(found, key=lambda t: (t[0], t[1].name))]
+
+
+def next_action(note: Path) -> str:
+    """The `Next action` row of a note's Resume here block, or "" where it is empty or still the template's prompt. Never the
+    Checkpoint block beside it."""
+    try:
+        lines = note.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    start = next((i for i, line in enumerate(lines) if RESUME.match(line)), None)
+    for line in lines[start + 1:] if start is not None else []:
+        if line.startswith("#") or line.strip() == "---":
+            break
+        m = ROW.match(line)
+        if m and m.group(1).lower() == "next action":
+            value = m.group(2).replace("\\|", "|").strip()
+            return "" if not value or re.fullmatch(r"<[^>]*>", value) or NO_STEP.match(value) else value
+    return ""
+
+
+def thread_notes(zone: Path) -> List[Path]:
+    """The live thread notes of the zone, and the hubs of projects that have no threads: a note whose status is done or parked is left out."""
+    notes = []
+    for project in sorted(p for p in zone.iterdir() if p.is_dir() and not p.name.startswith((".", "_")) and p.name != "archive"):
+        threads = project / "Threads"
+        found = [t / (t.name + ".md") for t in sorted(threads.iterdir()) if t.is_dir()] if threads.is_dir() else [project / (project.name + ".md")]
+        notes += [n for n in found if n.is_file() and front(n).get("status", "active").lower() not in ("done", "parked")]
+    return notes
+
+
+def next_actions(workspace: Path, zone: Path) -> List[Tuple[str, str]]:
+    """(note path from the workspace, its Next action row) for each live thread of the zone that has one."""
+    rows = [(str(n.relative_to(workspace)), next_action(n)) for n in thread_notes(zone)] if zone.is_dir() else []
+    return [r for r in rows if r[1]]
+
+
+def prompt_for(zone: str, today: str, chase_days: int = 7, pages: Optional[List[str]] = None,
+               rows: Optional[List[Tuple[str, str]]] = None) -> str:
+    """The sweep's request. The script has already found what may hold actions: it lists the Meetings pages and quotes the Next
+    action rows, so the assistant reads, compares and edits, and needs no listing and no shell."""
+    pages = pages or []
+    rows = rows or []
     return (
-        "You are running unattended as a scheduled job, and nobody is watching. Follow the todo skill's "
-        "*Sweep* in System/skills/todo/SKILL.md, steps 2 to 6, for the %s zone only, today %s:\n\n"
+        "You are running unattended as a scheduled job, and nobody is watching. Use Read, Grep, Glob and Edit only; there is no shell. "
+        "Follow the todo skill's *Sweep* in System/skills/todo/SKILL.md, steps 2 to 6, for the %s zone only, today %s:\n\n"
         "- read Zones/%s/Todo.md first;\n"
-        "- read the Meetings pages in Wikis/Meetings/wiki/sources/ whose `zone` is %s and whose date is in the "
-        "last 30 days, each one's actions table, and the `Next action` row of each live thread note in Zones/%s/; "
-        "never a page whose zone is another, and nothing else;\n"
+        "- read these Meetings pages, each one's actions table, and no other page:\n%s\n"
+        "- these are the `Next action` rows of the live threads in Zones/%s/, and nothing else counts:\n%s\n"
         "- keep only rows with one named owner and a concrete verb; the user's go under `## Inbox`, what a named "
         "person owes the user under `## Waiting on` %s;\n"
         "- before adding a line, compare it with every open line, the lines ticked in the last 14 days and the "
@@ -78,7 +153,8 @@ def prompt_for(zone: str, today: str, chase_days: int = 7) -> str:
         "- edit Zones/%s/Todo.md and no other file; never reword, move, tick or delete a line; do not commit.\n\n"
         "Then write one line exactly: ADDED <n> FOLDED <n>, with the numbers of lines you added and folded, "
         "and after it one line that says exactly %s"
-        % (zone, today, zone, zone, zone, chase_rule(chase_days), zone, SENTINEL))
+        % (zone, today, zone, "\n".join("  - " + p for p in pages) or "  (none)", zone,
+           "\n".join("  - %s: %s" % (n, row) for n, row in rows) or "  (none)", chase_rule(chase_days), zone, SENTINEL))
 
 
 def counts(text: str) -> Optional[Tuple[int, int]]:
@@ -134,7 +210,9 @@ def sweep_zone(workspace: Path, zone: Path, tier: str, today: str) -> Tuple[int,
     todo = zone / "Todo.md"
     before = todo.read_bytes()
     days = skill(workspace).chase_days(workspace, zone.name)
-    code, text = agent.run(tier, prompt_for(zone.name, today, days), allow=["Read", "Grep", "Glob", "Edit"], cwd=workspace)
+    pages = meeting_pages(workspace, zone.name, datetime.date.fromisoformat(today))
+    code, text = agent.run(tier, prompt_for(zone.name, today, days, pages, next_actions(workspace, zone)),
+                           allow=["Read", "Grep", "Glob", "Edit"], cwd=workspace)
     found = counts(text) if code == 0 else None
     if found is None:
         now = todo.read_bytes()

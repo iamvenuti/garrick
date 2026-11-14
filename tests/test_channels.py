@@ -189,8 +189,9 @@ class TestWhatTheSessionHas(EngineCase):
         tools = cmd[cmd.index("--allowedTools") + 1:]
         self.assertNotIn("Bash", tools)
         self.assertFalse([t for t in tools if t.startswith("Bash") and not t.startswith("Bash(")])
-        self.assertTrue(any(t.startswith("Bash(git -C ") and t.endswith(" commit:*)") and "/Zones/Work" in t for t in tools))
-        for forbidden in ("curl", "gh ", "mail", "ssh", "scp", "rsync", "scaffold.py party", "intake.py learn", "page_action", "allow"):
+        self.assertTrue(any(t.startswith("Bash(python3 ") and "engine_cmd.py git commit:*)" in t for t in tools))
+        for forbidden in ("curl", "gh ", "mail", "ssh", "scp", "rsync", "scaffold.py party", "intake.py learn", "page_action", "allow",
+                          "git -C", "list", "process-notes", "intake.py", "scaffold.py"):
             self.assertFalse([t for t in tools if forbidden in t], forbidden)
         self.assertIn("mcp__garrick_hold__hold", tools)
         for tool in tools:
@@ -199,11 +200,13 @@ class TestWhatTheSessionHas(EngineCase):
         servers = json.loads((folder / "mcp.json").read_text())["mcpServers"]
         self.assertEqual({"garrick", "garrick_hold"}, set(servers))
 
-    def test_git_is_the_exchanges_zone_only(self):
+    def test_every_command_is_one_call_of_the_wrapper_and_none_names_a_zone(self):
         (cmd, _), _ = self.build()
-        git_tools = [t for t in cmd[cmd.index("--allowedTools") + 1:] if t.startswith("Bash(git")]
-        self.assertTrue(git_tools)
-        self.assertTrue(all("/Zones/Work" in t and "Personal" not in t for t in git_tools))
+        bash = [t for t in cmd[cmd.index("--allowedTools") + 1:] if t.startswith("Bash(")]
+        self.assertTrue(bash)
+        self.assertTrue(all("engine_cmd.py " in t for t in bash))
+        self.assertTrue(all("Zones/Work" not in t for t in bash))          # the zone is the exchange's own environment, not a pattern
+        self.assertFalse([t for t in bash if "intake list" in t or "process-notes" in t or " learn" in t])
 
     def test_the_guard_is_the_sessions_own_pre_tool_hook(self):
         (cmd, env), folder = self.build()
@@ -211,6 +214,7 @@ class TestWhatTheSessionHas(EngineCase):
         hook = settings["hooks"]["PreToolUse"][0]
         self.assertIn("Edit", hook["matcher"])
         self.assertIn("engine_guard.py", hook["hooks"][0]["command"])
+        self.assertIn("Bash", hook["matcher"])
         self.assertEqual("Work", env["GARRICK_ENGINE_ZONE"])
         self.assertIn("mcp__claude_ai_Gmail__send_message", settings["permissions"]["deny"])
 
@@ -285,6 +289,193 @@ class TestWallsAtAct(EngineCase):
         out = subprocess.run([sys.executable, script], input=json.dumps(fine), capture_output=True, text=True,
                              env={k: v for k, v in env.items() if k != "GARRICK_ENGINE_ZONE"})
         self.assertEqual("deny", json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"])
+
+
+class TestHardenedGuard(EngineCase):
+    def decide(self, path, tool="Write", zone="Work"):
+        return self.guard.decide({"tool_name": tool, "tool_input": {"file_path": str(path)}}, str(self.root), zone)
+
+    def test_a_write_into_a_git_folder_or_a_git_file_is_refused_anywhere(self):
+        for path in (self.work / ".git" / "config", self.work / ".git" / "hooks" / "pre-commit", self.work / ".GIT" / "config",
+                     self.work / "Acme Review" / ".gitattributes", self.work / "Acme Review" / ".gitmodules",
+                     self.work / "Acme Review" / ".GitAttributes", self.root / "Wikis" / "Meetings" / "wiki" / ".git" / "config"):
+            self.assertIsNotNone(self.decide(path), path)
+        self.assertIsNone(self.decide(self.work / "Acme Review" / ".gitignore.md"))
+
+    def test_only_a_wikis_wiki_folder_and_the_meetings_inbox_are_open(self):
+        for path in (self.root / "Wikis" / "Meetings" / "wiki" / "x.md", self.root / "Wikis" / "Knowledge" / "wiki" / "sources" / "x.md",
+                     self.root / "Wikis" / "Meetings" / "raw" / "inbox" / "x.md"):
+            self.assertIsNone(self.decide(path), path)
+        for path in (self.root / "Wikis" / "Meetings" / "raw" / "x.eml", self.root / "Wikis" / "Knowledge" / "raw" / "x.pdf",
+                     self.root / "Wikis" / "Meetings" / "questions" / "x.md", self.root / "Wikis" / "x.md",
+                     self.root / "Wikis" / "Knowledge" / "raw" / "inbox" / "x.md"):
+            self.assertIsNotNone(self.decide(path), path)
+
+    def test_a_refusal_exits_2_and_so_does_a_failure(self):
+        script = str(STATUS / "engine_guard.py")
+        env = dict(os.environ, GARRICK_ENGINE_WS=str(self.root), GARRICK_ENGINE_ZONE="Work")
+        bad = {"tool_name": "Write", "tool_input": {"file_path": str(self.work / ".git" / "config")}}
+        out = subprocess.run([sys.executable, script], input=json.dumps(bad), capture_output=True, text=True, env=env)
+        self.assertEqual(2, out.returncode)
+        self.assertEqual("deny", json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"])
+        out = subprocess.run([sys.executable, script], input="not json", capture_output=True, text=True, env=env)
+        self.assertEqual(2, out.returncode)
+        fine = {"tool_name": "Write", "tool_input": {"file_path": str(self.work / "Todo.md")}}
+        self.assertEqual(0, subprocess.run([sys.executable, script], input=json.dumps(fine), capture_output=True, text=True, env=env).returncode)
+
+    def test_the_hook_line_is_quoted_and_runs_from_a_path_with_a_space(self):
+        import shutil
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "a folder"
+            folder.mkdir()
+            shutil.copy(str(STATUS / "engine_guard.py"), str(folder / "engine_guard.py"))
+            spec = importlib.util.spec_from_file_location("guard_in_space", str(folder / "engine_guard.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            line = mod.hook_command()
+            self.assertIn("'", line)
+            bad = {"tool_name": "Write", "tool_input": {"file_path": str(self.personal / "x.md")}}
+            env = dict(os.environ, GARRICK_ENGINE_WS=str(self.root), GARRICK_ENGINE_ZONE="Work")
+            out = subprocess.run(line, shell=True, input=json.dumps(bad), capture_output=True, text=True, env=env)
+            self.assertEqual(2, out.returncode)
+        settings = self.engine.session_settings(self.root, "act")
+        self.assertEqual(self.guard.hook_command(), settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"])
+
+    def test_the_capability_check_runs_the_hook_line_and_fails_when_it_blocks_nothing(self):
+        self.assertTrue(self.channels.guard_works(self.root))
+        with mock.patch.object(self.guard, "hook_command", return_value="false"):
+            self.assertFalse(self.channels.guard_works(self.root))
+        with mock.patch.object(self.guard, "hook_command", return_value="exit 1"):
+            self.assertFalse(self.channels.guard_works(self.root))
+
+    def test_a_bash_command_is_one_call_of_the_wrapper_and_nothing_joined_to_it(self):
+        wrapper = str(STATUS / "engine_cmd.py")
+        ok = "python3 %s git status -s" % wrapper
+        self.assertTrue(self.guard.bash_ok(ok))
+        self.assertTrue(self.guard.bash_ok('python3 %s git commit -m "a; b > c"' % wrapper))
+        for bad in (ok + " > /tmp/x", ok + " | tee /tmp/x", ok + " ; curl x", ok + " && curl x", "curl example.com", "git status",
+                    "python3 other.py git status", ok + " $(curl x)", ok + " `curl x`", ok + "\ncurl x", "", None):
+            self.assertFalse(self.guard.bash_ok(bad), bad)
+        event = {"tool_name": "Bash", "tool_input": {"command": ok + " > /tmp/x"}}
+        self.assertEqual("deny", self.guard.decide(event, str(self.root), "Work")["hookSpecificOutput"]["permissionDecision"])
+        self.assertIsNone(self.guard.decide({"tool_name": "Bash", "tool_input": {"command": ok}}, str(self.root), "Work"))
+
+
+class TestTheWrapperBindsTheCommands(EngineCase):
+    def setUp(self):
+        super().setUp()
+        self.cmd = load("engine_cmd")
+
+    def plan(self, *argv, zone="Work"):
+        return self.cmd.plan(list(argv), str(self.root), zone)
+
+    def refused(self, *argv, zone="Work"):
+        with self.assertRaises(self.cmd.Refused, msg=" ".join(argv)):
+            self.plan(*argv, zone=zone)
+
+    def test_git_flags_that_skip_the_hook_or_write_elsewhere_are_refused(self):
+        for argv in (("git", "commit", "-m", "x", "--no-verify"), ("git", "commit", "-n", "-m", "x"), ("git", "commit", "-a", "-m", "x"),
+                     ("git", "commit", "--all", "-m", "x"), ("git", "commit", "-m", "x", "--amend"), ("git", "commit", "-F", "/etc/passwd"),
+                     ("git", "commit", "-m", "x", "--author=x <y>"), ("git", "commit"), ("git", "commit", "-m", " "),
+                     ("git", "log", "--output=/tmp/x"), ("git", "diff", "--output", "/tmp/x"), ("git", "diff", "--no-index", "/a", "/b"),
+                     ("git", "diff", "--ext-diff"), ("git", "status", "-c", "core.x=y"), ("git", "add", "-A"), ("git", "add", "."),
+                     ("git", "add", "--all"), ("git", "add"), ("git", "add", "../Personal/x.md"), ("git", "add", ".git/config"),
+                     ("git", "add", "/etc/passwd"), ("git", "log", "--exec-path"), ("git", "status", "--git-dir=/x"),
+                     ("git", "status", "--work-tree=/x"), ("git", "push"), ("git", "config", "x", "y"), ("git", "reset", "--hard")):
+            self.refused(*argv)
+
+    def test_git_that_stays_in_the_zone_is_planned_with_the_zones_repository(self):
+        cmd, _ = self.plan("git", "commit", "-m", "Work: filed a note")
+        self.assertEqual(["git", "-C", str(self.work.resolve()), "--no-pager", "commit", "-m", "Work: filed a note"], cmd)
+        cmd, _ = self.plan("git", "add", "Acme Review/Todo.md", "--", "Todo.md")
+        self.assertEqual(["Acme Review/Todo.md", "--", "Todo.md"], cmd[-3:])
+        cmd, _ = self.plan("git", "log", "-n", "3", "--oneline")
+        self.assertIn("--no-ext-diff", cmd)
+        self.plan("git", "diff", "--cached", "--stat")
+        self.plan("git", "status", "-s")
+
+    def test_a_real_commit_with_no_verify_is_refused_and_a_plain_one_runs_the_hook(self):
+        env = dict(os.environ, GARRICK_ENGINE_WS=str(self.root), GARRICK_ENGINE_ZONE="Work")
+        script = str(STATUS / "engine_cmd.py")
+        write(self.work / "Acme Review" / "from-wrapper.md", "x\n")
+        got = subprocess.run([sys.executable, script, "git", "commit", "-m", "x", "--no-verify"], capture_output=True, text=True, env=env)
+        self.assertEqual(2, got.returncode)
+        got = subprocess.run([sys.executable, script, "git", "add", "Acme Review/from-wrapper.md"], capture_output=True, text=True, env=env)
+        self.assertEqual(0, got.returncode, got.stderr)
+        got = subprocess.run([sys.executable, script, "git", "commit", "-q", "-m", "Work: from the wrapper"], capture_output=True, text=True, env=env)
+        self.assertEqual(0, got.returncode, got.stderr)
+        self.assertEqual("Work: from the wrapper", git(self.work, "log", "-1", "--format=%s").strip())
+
+    def test_no_environment_binding_no_command(self):
+        got = subprocess.run([sys.executable, str(STATUS / "engine_cmd.py"), "git", "status"], capture_output=True, text=True,
+                             env={k: v for k, v in os.environ.items() if not k.startswith("GARRICK_ENGINE")})
+        self.assertEqual(2, got.returncode)
+
+    def test_scaffold_and_todo_take_the_exchanges_zone_only(self):
+        cmd, _ = self.plan("scaffold", "project", "--zone", "work", "--name", "Birch", "--thread", "Intro")
+        self.assertEqual(["project", "--zone", "Work", "--name", "Birch", "--thread", "Intro"], cmd[2:])
+        cmd, _ = self.plan("scaffold", "thread", "--zone=Work", "--project", "Acme Review", "--name", "Kickoff")
+        self.assertIn("Kickoff", cmd)
+        self.refused("scaffold", "project", "--zone", "Personal", "--name", "Birch", "--thread", "Intro")
+        self.refused("scaffold", "thread", "--zone", "Personal", "--project", "Home Move", "--name", "x")
+        self.refused("scaffold", "thread", "--zone", "Work", "--project", "../../Personal/Home Move", "--name", "x")
+        self.refused("scaffold", "project", "--name", "Birch", "--thread", "Intro")            # no zone given: refused, not defaulted
+        self.refused("scaffold", "party", "--name", "x")
+        self.refused("scaffold", "project", "--root", "/tmp", "--zone", "Work", "--name", "b", "--thread", "t")
+        self.plan("todo", "digest", "--zone", "Work")
+        self.refused("todo", "digest", "--zone", "Personal")
+        self.refused("todo", "all", "--zone", "Work")
+        self.plan("check", "--quick")
+        self.refused("check", "--quick", "--fix")
+        self.refused("check", "allow")
+
+    def test_the_checkpoint_request_names_the_exchanges_zone(self):
+        cmd, stdin = self.plan("scaffold", "checkpoint", "--json", json.dumps({"verb": "checkpoint", "zone": "Work", "project": "Acme Review"}))
+        self.assertEqual(["checkpoint"], cmd[2:])
+        self.assertIn("Acme Review", stdin)
+        self.refused("scaffold", "checkpoint", "--json", json.dumps({"verb": "checkpoint", "zone": "Personal", "project": "Home Move"}))
+        self.refused("scaffold", "checkpoint", "--json", "not json")
+
+    def test_intake_is_bound_to_the_zones_inbox_and_projects(self):
+        inbox = self.work / "Inbox"
+        inbox.mkdir(exist_ok=True)
+        mine = inbox / "a.md"
+        mine.write_text("x")
+        other = self.personal / "Inbox"
+        other.mkdir(exist_ok=True)
+        (other / "b.md").write_text("x")
+        top = self.root / "Inbox"
+        top.mkdir(exist_ok=True)
+        (top / "c.md").write_text("x")
+        cmd, _ = self.plan("intake", "file-note", "--file", str(mine), "--destination", "Acme, Pricing")
+        self.assertEqual(str(mine.resolve()), cmd[cmd.index("--file") + 1])
+        self.plan("intake", "file-to-project", "--file", str(mine), "--project", "Zones/Work/Acme Review")
+        self.plan("intake", "notes", "--project", "Acme Review")
+        self.plan("intake", "parse", "--file", str(top / "c.md"))
+        self.plan("intake", "move-to-zone", "--file", str(top / "c.md"), "--zone", "Work")
+        self.refused("intake", "file-note", "--file", str(other / "b.md"))
+        self.refused("intake", "file-note", "--file", str(top / "c.md"))                       # a note is filed from the zone's inbox
+        self.refused("intake", "file-note", "--file", str(mine) + "/../../../Personal/Inbox/b.md")
+        self.refused("intake", "move-to-zone", "--file", str(top / "c.md"), "--zone", "Personal")
+        self.refused("intake", "file-to-project", "--file", str(mine), "--project", "Zones/Personal/Home Move")
+        self.refused("intake", "file-to-project", "--file", str(mine), "--project", "../Personal/Home Move")
+        self.refused("intake", "notes", "--project", "Zones/Personal/Home Move")
+        self.refused("intake", "extract-attachment", "--mail", "x", "--project", "Zones/Personal/Home Move")
+        self.refused("intake", "list")
+        self.refused("intake", "list", "--json")
+        self.refused("intake", "process-notes", "--dry-run")
+        self.refused("intake", "learn", "--domain", "x.com", "--party", "x")
+        self.refused("intake", "parse", "--file", str(mine), "--root", "/tmp")
+
+    def test_a_link_out_of_the_inbox_is_judged_where_it_leads(self):
+        inbox = self.work / "Inbox"
+        inbox.mkdir(exist_ok=True)
+        other = self.personal / "Inbox"
+        other.mkdir(exist_ok=True)
+        (other / "b.md").write_text("x")
+        (inbox / "link.md").symlink_to(other / "b.md")
+        self.refused("intake", "parse", "--file", str(inbox / "link.md"))
 
 
 class TestActDoesTheWork(EngineCase):
@@ -430,6 +621,90 @@ class TestASendIsHeld(EngineCase):
         self.assertFalse(ok)
 
 
+class TestWhatTheOwnerSees(EngineCase):
+    def test_a_tool_must_be_a_connector_tool_that_sends_shares_or_deletes(self):
+        for tool in ("Bash", "mcp__mail__", "mcp__mail__forward --x", "mcp__mail__forward;ls", "mail__forward", "../mcp__a__send", "",
+                     "mcp__gmail__create_draft", "mcp__gmail__list_threads", "mcp__a__b__c d"):
+            with self.assertRaises(ValueError, msg=tool):
+                self.hold.add("ask", "Work", "e1", "x", "y", {"tool": tool, "args": {}})
+        for tool in ("mcp__mail__forward", "mcp__claude_ai_Gmail__send_message", "mcp__drive__share_file", "mcp__drive__delete_file"):
+            self.hold.add("ask", "Work", "e1", "x", "y", {"tool": tool, "args": {}})
+        with self.assertRaises(ValueError):
+            self.hold.add("ask", "Work", "e1", "x", "y", {"tool": "mcp__mail__forward", "args": "to=x"})
+        self.assertEqual([], self.hold.pending(channel="telegram"))
+
+    def test_the_hold_tool_refuses_an_unknown_tool(self):
+        text, bad = self.tools.call({"what": "x", "where": "y", "tool": "Bash", "args": {}})
+        self.assertTrue(bad)
+        self.assertEqual([], self.hold.pending())
+
+    def test_the_confirmation_shows_the_tool_and_the_recipients_from_the_arguments(self):
+        entry = self.hold.add("telegram", "Work", "e1", "Forward the price sheet", "Dana", {
+            "tool": "mcp__claude_ai_Gmail__send_message",
+            "args": {"to": ["eve@example.net", "dana@example.com"], "cc": "bob@example.org", "bcc": [{"email": "fay@example.io"}],
+                     "body": "long private text"}})
+        said = self.hold.say(entry)
+        for expected in ("Forward the price sheet (Dana)?", "tool send_message", "eve@example.net, dana@example.com", "bob@example.org",
+                         "fay@example.io"):
+            self.assertIn(expected, said)
+        self.assertNotIn("long private text", said)
+        self.assertIn("send_message", self.hold.listing()[0]["detail"])
+
+    def test_a_shared_write_shows_its_path(self):
+        entry = self.hold.add("ask", "Work", "e1", "Write the brief", "team folder", {"write": ".shared/team/brief.md", "text": "hi"})
+        self.assertIn(".shared/team/brief.md", self.hold.say(entry))
+
+    def test_a_held_action_with_a_made_up_tool_never_reaches_the_assistant(self):
+        run = self.runner("x")
+        for tool in ("Bash", "mcp__gmail__create_draft", "mcp__mail__forward --dangerously"):
+            ok, said = self.engine.execute_held(self.root, {"request": {"tool": tool, "args": {}}}, run)
+            self.assertFalse(ok, tool)
+        self.assertEqual([], run.seen)
+
+    def test_two_yes_replies_run_the_action_once(self):
+        import threading
+        entry = self.hold.add("telegram", "Work", "e1", "Forward it", "Dana", {"tool": "mcp__mail__forward", "args": {}})
+        did, out = [], []
+
+        def runner(ws, rec):
+            did.append(1)
+            time.sleep(0.3)
+            return True, "Sent."
+        threads = [threading.Thread(target=lambda: out.append(self.hold.run(entry["id"], self.root, runner))) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(1, len(did))
+        self.assertEqual(3, out.count("That action is not waiting any more."))
+        self.assertEqual("done", self.hold.get(entry["id"])["state"])
+
+    def test_writes_from_two_threads_are_all_kept(self):
+        import threading
+        threads = [threading.Thread(target=lambda: self.hold.add("ask", "Work", "e1", "x", "y", {"tool": "mcp__mail__forward", "args": {}}))
+                   for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(12, len(self.hold.load()["held"]))
+
+
+class TestAPartialSave(EngineCase):
+    def test_a_partial_channels_save_keeps_the_other_keys(self):
+        self.settings(telegram={"tier": "opus", "effort": "high"})
+        self.settings(telegram={"autonomy": "read"})
+        self.assertEqual({"tier": "opus", "effort": "high", "autonomy": "read"}, self.channels.settings(self.root)["telegram"])
+        self.settings(ask={"effort": "low"})
+        self.assertEqual({"tier": "sonnet", "effort": "low", "autonomy": "act"}, self.channels.settings(self.root)["ask"])
+        self.assertEqual({"tier": "opus", "effort": "high", "autonomy": "read"}, self.channels.settings(self.root)["telegram"])
+
+    def test_a_hand_edited_full_for_telegram_does_not_block_a_save_and_is_not_kept(self):
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"channels": {"telegram": {"autonomy": "full", "tier": "opus"}}}))
+        self.settings(telegram={"effort": "low"})
+        self.assertEqual({"tier": "opus", "effort": "low", "autonomy": "act"}, self.channels.settings(self.root)["telegram"])
+
+
 class TestAskUsesTheEngine(EngineCase):
     def asker(self):
         self.ask_mod = self.ask
@@ -475,6 +750,24 @@ class TestAskUsesTheEngine(EngineCase):
 
 
 class TestPreparedCalls(unittest.TestCase):
+    def test_a_prepared_call_stopped_at_its_limit_records_an_estimate_not_null(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with mock.patch.dict(os.environ, {"GARRICK_JOBS_DIR": tmp.name}):
+            spec = importlib.util.spec_from_file_location("garrick_test_agent_estimate", str(REPO / "extras" / "jobs" / "agent.py"))
+            agent = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(agent)
+            seen = []
+            agent.estimated_cost = lambda tier, seconds, budget=0: seen.append((tier, budget)) or 0.25   # the jobs release's estimate
+            with mock.patch.object(agent, "call", return_value=(agent.EXIT_TIMEOUT, "", "")):
+                code, got = agent.run_prepared(["claude", "-p", "x"], "sonnet", job="ask", timeout=1)
+            self.assertEqual(agent.EXIT_TIMEOUT, code)
+            self.assertEqual(0.25, got["cost_usd"])
+            self.assertTrue(got["estimated"])
+            self.assertEqual("sonnet", seen[0][0])
+
+
     def test_a_prepared_call_counts_against_the_ledger_and_returns_the_session(self):
         import tempfile
         tmp = tempfile.TemporaryDirectory()

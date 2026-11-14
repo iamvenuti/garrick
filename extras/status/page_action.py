@@ -1661,7 +1661,7 @@ def save_settings(ws: Path, req: dict) -> str:
         try:
             kept = prefs().read(ws).get("channels")
             merged = dict(kept) if isinstance(kept, dict) else {}
-            merged.update(channels_lib().clean(req["channels"]))
+            merged.update(channels_lib().clean(req["channels"], merged))
         except ValueError as e:
             raise Refused(str(e))
         new["channels"] = merged

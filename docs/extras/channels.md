@@ -20,11 +20,11 @@ They follow the *Autonomy* section of `System/rules.md`.
 
 An updated workspace gets the defaults: Ask at Act. Telegram stays off until you [set it up](telegram.md).
 
-The walls hold at every level, as in any session: a write goes only in the zone the exchange is bound to, a wiki or the workspace's `Inbox/` (the engine's guard refuses the rest), the zone's commit check runs on every commit, and when material is held back the wall sentence says so.
+The walls hold at every level, as in any session: a write goes only in the zone the exchange is bound to, a wiki's `wiki/` folder (never its `raw/` record, except the Meetings inbox) or the workspace's `Inbox/`, and never into a `.git` folder or a `.gitattributes` or `.gitmodules` file (the engine's guard refuses the rest, and exits with the code that makes Claude block), the zone's commit check runs on every commit, and when material is held back the wall sentence says so.
 
 ## The question before a send is asked by code
 
-At Act the send, share and delete tools are not in the session at all, nor is any tool Garrick does not know: the session has Garrick's read tools, file tools, a fixed list of commands (the workspace's own scripts, and `git add` and `git commit` in the zone's repository) and one tool, `hold`. There is no open shell, because a shell can send. `hold` queues the action with what it would do and where it would go. The queued action runs only after your yes:
+At Act the send, share and delete tools are not in the session at all, nor is any tool Garrick does not know: the session has Garrick's read tools, file tools, a fixed list of commands and one tool, `hold`. There is no open shell, because a shell can send. Every command is one call of a wrapper that checks each argument against the zone the exchange is bound to, and nothing may be joined to it (no pipe, redirect or second command). The list: `git add` (named files only), `git commit` (with `-m`; never `-a`, `--amend`, `-n` or `--no-verify`), `git status`, `git diff` and `git log` in the zone's repository; the intake commands `parse`, `file-conversation`, `file-reading`, `file-to-project`, `extract-attachment`, `move-to-zone`, `skip`, `file-note` and `notes`, with files taken from the zone's `Inbox/` and projects inside the zone; `scaffold project`, `thread` and `checkpoint` for the zone only; `check --quick`; and the todo digest for the zone. `intake list` (it returns every zone's inbox), `process-notes`, `learn` and every other command are not offered. `hold` queues the action with what it would do and where it would go. It accepts only a connector tool named `mcp__<server>__<tool>` that sends, shares or deletes. The confirmation shows, rendered by code and beside the assistant's own words, the tool's name and the arguments that say who it reaches (`to`, `cc`, `bcc`, `recipients`, `attendees`, `email`, a share target or a path). The queued action runs only after your yes, and runs once however many times you say it:
 
 - **In Ask**, a dialog shows the action and where it goes, with *Run it* and *Cancel*.
 - **In Telegram**, the bot asks ("Send the price sheet to dana@…?"), and a reply of `yes` to that message runs it. A `yes` that is not a reply to that message runs nothing.
@@ -37,7 +37,7 @@ Act needs three things of the assistant, and Garrick checks them for the one you
 
 - **Resume.** A session can be continued, so a follow-up does not repeat the discovery.
 - **Removable tools.** Its tools can be named one by one, a shell narrowed to a list of commands, and its servers limited to the ones Garrick gives it.
-- **Walls outside the model.** The engine's guard loads and refuses a write into another zone.
+- **Walls outside the model.** The engine's guard loads, and its own command line, run once as a session runs it, stops a write outside the zone with the exit code Claude blocks on.
 
 An assistant that fails a check runs the channel at Read, and Settings names the check that failed. An assistant gets the full engine on the day it passes.
 

@@ -30,7 +30,9 @@ SERVER = "garrick_hold"
 TOOL = "hold"
 SCHEMA = {"name": TOOL,
           "description": ("Queue an action that sends, shares or deletes, or writes under a shared folder, for the owner to "
-                          "approve. Nothing is done now: the owner sees what it would do and where, and says yes or no. "
+                          "approve. Nothing is done now: the owner sees what it would do and where, and the tool and its recipients as "
+                          "code reads them from `args`, and says yes or no. The tool is named mcp__<server>__<tool> and sends, "
+                          "shares or deletes; any other name is refused. "
                           "Give `what` (one sentence: what it would do), `where` (its destination: an address, a folder, "
                           "a person), and either `tool` and `args` (the connector tool and its arguments) or, for a "
                           "write under a shared folder, `write` (its path inside the zone) and `text`."),

@@ -925,6 +925,11 @@ def run_prepared(cmd: List[str], tier: str, cwd: Optional[Path] = None, job: str
         return EXIT_MISSING, {"text": "", "refused": "the assistant is not installed, or not on PATH", "session_id": None, "usage": {}}
     outcome = parse_claude_output(out)
     code = code or (1 if outcome["is_error"] else 0)
+    estimate = globals().get("estimated_cost")        # the jobs release's estimate; absent from a tree without it
+    if code == EXIT_TIMEOUT and outcome.get("cost_usd") is None and estimate:
+        # Stopped before the final result, so the call never said what it spent: an estimate, marked, never null.
+        outcome["cost_usd"] = estimate(tier, time.time() - start, _number("GARRICK_MAX_CALL_USD", DEFAULT_MAX_CALL_USD))
+        outcome["estimated"] = True
     extra = {"session_id": None, "usage": {}}
     for line in reversed((out or "").strip().splitlines()):
         try:

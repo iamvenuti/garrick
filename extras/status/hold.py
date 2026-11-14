@@ -21,15 +21,22 @@ Standard library only, Python 3.9 or later.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 import os
 import re
 import secrets
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
+
+try:
+    import fcntl
+except ImportError:                 # no flock on this platform: the in-process lock stays
+    fcntl = None
 
 sys.dont_write_bytecode = True
 
@@ -41,6 +48,16 @@ KIND_WORDS = (("delete", re.compile(r"delete|trash|remove|destroy|purge", re.I))
               ("share", re.compile(r"share|publish|upload|invite|permission", re.I)),
               ("send", re.compile(r"send|forward|reply|draft_send|post|respond|create_event|update_event|message", re.I)))
 MOST_TEXT = 20_000
+# A connector tool as the assistant names it: mcp__<server>__<tool>, nothing else. A name with any other shape is
+# not a tool Garrick knows, whatever the model wrote.
+TOOL_RE = re.compile(r"mcp__[A-Za-z0-9_-]+__[A-Za-z0-9_-]+\Z")
+HELD_KINDS = ("send", "share", "delete")        # a held tool is one of these kinds; any other is refused
+# The arguments a confirmation shows, whatever `what` and `where` say: who it goes to, and what it touches.
+SHOWN_ARGS = ("to", "cc", "bcc", "recipients", "recipient", "attendees", "email", "emails", "target", "share_with",
+              "shared_with", "user", "users", "path", "file_path")
+_mutex = threading.RLock()
+_depth = [0]
+_lock_fh: list = []
 ID_RE = re.compile(r"[0-9a-f]{8}")
 
 
@@ -55,6 +72,32 @@ def jobs_dir() -> Path:
 
 def path() -> Path:
     return jobs_dir() / FILE
+
+
+@contextlib.contextmanager
+def locked():
+    """One writer at a time, across threads and processes: load, change and save happen inside it. Reentrant."""
+    with _mutex:
+        if _depth[0] == 0 and fcntl is not None:
+            lock = path().with_name(FILE + ".lock")
+            try:
+                lock.parent.mkdir(parents=True, exist_ok=True)
+                fh = open(str(lock), "a+")
+                fcntl.flock(fh, fcntl.LOCK_EX)
+                _lock_fh.append(fh)
+            except OSError:
+                pass
+        _depth[0] += 1
+        try:
+            yield
+        finally:
+            _depth[0] -= 1
+            if _depth[0] == 0 and _lock_fh:
+                fh = _lock_fh.pop()
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_UN)
+                finally:
+                    fh.close()
 
 
 def load() -> dict:
@@ -78,6 +121,8 @@ def kind_of(request: dict) -> str:
     if "write" in request:
         return "write-shared"
     tool = str(request.get("tool") or "")
+    if TOOL_RE.match(tool):
+        tool = tool.split("__", 2)[2]               # the tool's own name: a server called Share is not a share tool
     for kind, words in KIND_WORDS:
         if words.search(tool):
             return kind
@@ -88,6 +133,14 @@ def add(channel: str, zone: str, exchange: str, what: str, where: str, request: 
     """Queue one action. Nothing is done: the owner decides. Returns the entry."""
     if not isinstance(request, dict) or not ({"tool"} <= set(request) or {"write", "text"} <= set(request)):
         raise ValueError("a held action names a tool, or a file under a shared folder and its text")
+    if "tool" in request and "write" not in request:
+        tool = str(request.get("tool") or "")
+        if not TOOL_RE.match(tool):
+            raise ValueError("%r is not the name of a connector tool (mcp__<server>__<tool>)" % tool[:60])
+        if kind_of({"tool": tool}) not in HELD_KINDS:
+            raise ValueError("%s is not a tool that sends, shares or deletes, so it is not held" % tool[:60])
+        if not isinstance(request.get("args", {}), dict):
+            raise ValueError("the tool's arguments are an object")
     now = now or time.time()
     entry = {"id": secrets.token_hex(4), "channel": channel, "zone": zone, "exchange": exchange,
              "what": " ".join(str(what).split())[:300], "where": " ".join(str(where).split())[:300],
@@ -95,9 +148,10 @@ def add(channel: str, zone: str, exchange: str, what: str, where: str, request: 
              "request": {k: v for k, v in request.items() if k in ("tool", "args", "write", "text")}}
     if len(json.dumps(entry["request"])) > MOST_TEXT:
         raise ValueError("that action is too long to hold")
-    data = load()
-    data["held"].append(entry)
-    save(data)
+    with locked():
+        data = load()
+        data["held"].append(entry)
+        save(data)
     return entry
 
 
@@ -114,9 +168,10 @@ def sweep(data: dict, now: float) -> bool:
 def pending(now: Optional[float] = None, channel: Optional[str] = None) -> List[dict]:
     """The actions waiting for a yes, oldest first, expired ones taken out."""
     now = now or time.time()
-    data = load()
-    if sweep(data, now):
-        save(data)
+    with locked():
+        data = load()
+        if sweep(data, now):
+            save(data)
     return [e for e in data["held"] if e.get("state") == "held" and (channel is None or e.get("channel") == channel)]
 
 
@@ -125,12 +180,13 @@ def get(hid: str) -> Optional[dict]:
 
 
 def _set(hid: str, **fields) -> Optional[dict]:
-    data = load()
-    for e in data["held"]:
-        if e.get("id") == hid:
-            e.update(fields)
-            save(data)
-            return e
+    with locked():
+        data = load()
+        for e in data["held"]:
+            if e.get("id") == hid:
+                e.update(fields)
+                save(data)
+                return e
     return None
 
 
@@ -147,33 +203,62 @@ def by_message(message_id: int) -> Optional[dict]:
 
 
 def cancel(hid: str) -> str:
-    e = get(hid)
-    if e is None or e.get("state") != "held":
-        return "That action is not waiting any more."
-    _set(hid, state="cancelled")
+    with locked():
+        e = get(hid)
+        if e is None or e.get("state") != "held":
+            return "That action is not waiting any more."
+        _set(hid, state="cancelled")
     return "Cancelled. Nothing was done."
 
 
+def _flat(value, depth: int = 0) -> List[str]:
+    if isinstance(value, (list, tuple)) and depth < 2:
+        return [x for v in list(value)[:20] for x in _flat(v, depth + 1)]
+    if isinstance(value, dict) and depth < 2:
+        pick = [value[k] for k in ("email", "address", "name", "id") if k in value]
+        return [x for v in pick[:2] for x in _flat(v, depth + 1)] or [json.dumps(value, ensure_ascii=False)[:80]]
+    return [" ".join(str(value).split())[:120]] if value not in (None, "") else []
+
+
+def shown(e: dict) -> str:
+    """What code shows of a held tool action, apart from the model's own `what` and `where`: the tool's short name and
+    the arguments that say who or what it reaches. Rendered here, from `request`, so the owner reads what will run."""
+    req = e.get("request") or {}
+    if "write" in req:
+        return "writes the file %s" % " ".join(str(req.get("write")).split())[:200]
+    tool = str(req.get("tool") or "")
+    parts = ["tool %s" % (tool.split("__", 2)[2] if TOOL_RE.match(tool) else "(unknown)")]
+    args = req.get("args") if isinstance(req.get("args"), dict) else {}
+    for key in SHOWN_ARGS:
+        if key in args:
+            got = _flat(args[key])
+            if got:
+                parts.append("%s: %s" % (key, ", ".join(got)))
+    return "; ".join(parts)
+
+
 def say(e: dict) -> str:
-    return "%s (%s)?" % (e["what"].rstrip("?.!"), e["where"]) if e.get("where") else "%s?" % e["what"].rstrip("?.!")
+    base = "%s (%s)?" % (e["what"].rstrip("?.!"), e["where"]) if e.get("where") else "%s?" % e["what"].rstrip("?.!")
+    return "%s [%s]" % (base, shown(e))
 
 
 def run(hid: str, ws: Path, runner: Callable[[Path, dict], Tuple[bool, str]], now: Optional[float] = None) -> str:
     """Run a held action, once, after the owner's yes. Refused when it is not waiting, or has expired. The queue
     keeps it as done, or as failed with the reason: a second yes never repeats it."""
     now = now or time.time()
-    data = load()
-    e = next((x for x in data["held"] if x.get("id") == hid), None)
-    if e is not None and e.get("state") == "expired":
-        return "That action waited more than a day and was dropped. Nothing was done."
-    if e is None or e.get("state") != "held":
-        return "That action is not waiting any more."
-    if e.get("expires", 0) <= now:
-        e["state"] = "expired"
+    with locked():                      # held -> running is one step under the lock: two yes replies run it once
+        data = load()
+        e = next((x for x in data["held"] if x.get("id") == hid), None)
+        if e is not None and e.get("state") == "expired":
+            return "That action waited more than a day and was dropped. Nothing was done."
+        if e is None or e.get("state") != "held":
+            return "That action is not waiting any more."
+        if e.get("expires", 0) <= now:
+            e["state"] = "expired"
+            save(data)
+            return "That action waited more than a day and was dropped. Nothing was done."
+        e["state"] = "running"
         save(data)
-        return "That action waited more than a day and was dropped. Nothing was done."
-    e["state"] = "running"
-    save(data)
     try:
         ok, said = runner(Path(ws), e)
     except Exception as exc:
@@ -208,5 +293,5 @@ def listing(now: Optional[float] = None) -> List[dict]:
     for e in pending(now):
         left = max(0, int(e["expires"] - now))
         out.append({"id": e["id"], "what": e["what"], "where": e["where"], "channel": e["channel"], "zone": e["zone"],
-                    "kind": e["kind"], "hours_left": left // 3600 + (1 if left % 3600 else 0)})
+                    "kind": e["kind"], "detail": shown(e), "hours_left": left // 3600 + (1 if left % 3600 else 0)})
     return out

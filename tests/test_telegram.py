@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -251,8 +252,7 @@ class TestOneChatManyThreads(TelegramCase):
         self.api.say("Home Move, boxes: what is left?")
         self.pump()
         self.assertEqual("Personal", self.calls[0]["env"]["GARRICK_ENGINE_ZONE"])
-        self.assertIn("/Zones/Personal", " ".join(self.calls[0]["cmd"]))
-        self.assertNotIn("/Zones/Work", " ".join(self.calls[0]["cmd"]))
+        self.assertNotIn("Zones/Work", " ".join(self.calls[0]["cmd"]))
 
     def test_a_reply_to_an_older_question_reaches_its_exchange_after_a_switch(self):
         self.rx.runner = self.assistant(lambda c: "Which forecast do you mean?" if c["n"] == 1 else "Noted.")
@@ -606,6 +606,117 @@ class TestOneReceiver(TelegramCase):
         self.assertEqual((True, True, "garrick.gr-telegram"), (plist["KeepAlive"], plist["RunAtLoad"], plist["Label"]))
         self.assertNotRegex(raw.decode().replace("telegram_receiver", ""), r"\d{6,}:[A-Za-z0-9_-]{20,}")        # no bot token
         self.assertNotIn("GARRICK_TELEGRAM_TOKEN", raw.decode())
+
+
+class TestFaultsAndLimits(TelegramCase):
+    def test_a_failed_resume_ends_the_session_and_the_next_turn_starts_from_saved_state(self):
+        self.api.say("Acme Review, pricing: the floor is now 450")
+        self.pump()
+        self.rx.runner = lambda cmd, tier, cwd, env: (1, {"text": ""})
+        self.api.say("and the volumes?")
+        self.pump()
+        ex = self.exchange_of("Acme Review, Pricing")
+        self.assertIsNone(ex["session"])
+        self.assertIn("did not work", self.texts()[-1])
+        self.rx.runner = self.assistant()
+        self.api.say("try again")
+        self.pump()
+        self.assertIsNone(self.calls[-1]["resumed"])
+        self.assertIn("the floor is now 450", self.calls[-1]["prompt"])
+
+    def test_a_cap_refusal_keeps_the_session(self):
+        self.api.say("Acme Review, pricing: one")
+        self.pump()
+        self.rx.runner = lambda cmd, tier, cwd, env: (8, {"text": "", "refused": "the hourly limit is reached"})
+        self.api.say("two")
+        self.pump()
+        self.assertEqual("sess-1", self.exchange_of("Acme Review, Pricing")["session"])
+
+    def test_a_new_session_id_on_a_resumed_turn_does_not_move_the_start(self):
+        seq = []
+
+        def runner(cmd, tier, cwd, env):
+            seq.append(1)
+            return 0, {"text": "Fine.", "session_id": "other-%d" % len(seq), "usage": {"input_tokens": 10}, "cost_usd": 0.01}
+        self.rx.runner = runner
+        self.api.say("Acme Review, pricing: one")
+        self.pump()
+        started = self.exchange_of("Acme Review, Pricing")["started"]
+        for _ in range(3):
+            self.clock.advance(1800)
+            self.api.say("another")
+            self.pump()
+        ex = self.exchange_of("Acme Review, Pricing")
+        self.assertEqual(started, ex["started"])
+        self.assertEqual("other-4", ex["session"])
+        self.clock.advance(1800)
+        self.assertTrue(self.mods["exchanges"].expired(ex, self.clock()))     # more than two hours after the start
+
+    def test_a_fault_deciding_a_message_marks_it_failed_and_tells_the_owner(self):
+        self.api.say("Acme Review, pricing: one")
+        with mock.patch.object(self.mods["dispatcher"], "route", side_effect=RuntimeError("boom")):
+            self.rx.poll_once(0)                                  # does not raise
+        [rec] = self.rx.load()["messages"].values()
+        self.assertEqual(("failed", "RuntimeError"), (rec["state"], rec["why"]))
+        self.assertEqual("I could not read that; send it again.", self.texts()[-1])
+
+    def test_a_saved_message_nobody_decided_is_decided_after_a_restart_once(self):
+        self.api.say("Acme Review, pricing: one")
+        with mock.patch.object(self.rx, "arrive", side_effect=SystemExit):
+            with self.assertRaises(SystemExit):
+                self.rx.poll_once(0)
+        [rec] = self.rx.load()["messages"].values()
+        self.assertEqual(("received", None), (rec["state"], rec["exchange"]))
+        fresh = self.make()
+        fresh.recover()
+        [rec] = fresh.load()["messages"].values()
+        self.assertEqual(("queued", True), (rec["state"], bool(rec["exchange"])))
+        self.clock.advance(11)
+        fresh.flush()
+        self.assertEqual(1, len(self.calls))
+        # one that is still undecided at a second restart is failed, not looped on
+        self.api.say("Birch Entry, market sizing: two")
+        with mock.patch.object(self.rx, "arrive", side_effect=SystemExit):
+            with self.assertRaises(SystemExit):
+                self.rx.poll_once(0)
+        again = self.make()
+        with mock.patch.object(again, "arrive", side_effect=SystemExit):
+            with self.assertRaises(SystemExit):
+                again.recover()
+        again.recover()
+        self.assertIn("failed", {r["state"] for r in again.load()["messages"].values()})
+
+    def test_a_fault_in_a_turn_sends_one_short_reply_and_ends_the_session(self):
+        self.api.say("Acme Review, pricing: one")
+        self.pump()
+        def boom(*a):
+            raise RuntimeError("down")
+        self.rx.runner = boom
+        self.api.say("two")
+        self.pump()
+        self.assertIn("That did not work", self.texts()[-1])
+        self.assertIsNone(self.exchange_of("Acme Review, Pricing")["session"])
+        self.assertEqual(1, len([t for t in self.texts() if "That did not work" in t]))
+
+    def test_recover_sweeps_old_exchanges(self):
+        ex_mod = self.mods["exchanges"]
+        old = ex_mod.new("Work", "Acme Review", "Pricing", "Old", self.clock() - 40 * 86400)
+        self.rx.recover()
+        self.assertIsNone(ex_mod.get(old["id"]))
+
+    def test_a_value_in_a_note_header_cannot_end_its_line(self):
+        self.assertEqual('"Acme, pricing key: injected"', self.rcv.yaml_quote("Acme, pricing\nkey: injected"))
+        self.assertEqual('"a \\"b\\" c"', self.rcv.yaml_quote('a "b"\r\n c'))
+
+    def test_exchange_writes_from_two_threads_are_all_kept(self):
+        import threading
+        ex_mod = self.mods["exchanges"]
+        threads = [threading.Thread(target=lambda: ex_mod.new("Work", "Acme Review", "Pricing", "x")) for _ in range(12)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(12, len(ex_mod.load()["exchanges"]))
 
 
 class TestRestart(TelegramCase):

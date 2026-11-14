@@ -8,13 +8,16 @@ settings say, and returns what the assistant said and the actions it held.
 
 **Read.** The session has Garrick's read tools (search, read, places, thread_state, owed) and nothing else: it answers.
 
-**Act.** The session has, besides, file tools and a fixed list of commands, in the zone the exchange is bound to:
-the workspace's own scripts (intake.py, scaffold.py for a project, a thread, a park or a wake, check.py's quick
-check, the todo reader) and `git add` and `git commit` in that zone's repository. There is **no open shell**: a
-shell can send (`curl`, `gh`, `mail`) and would walk round `hold`, so every command is named. The servers the session
-has are Garrick's two and no others (`--strict-mcp-config`): the send, share and delete tools of the owner's
-connectors are not there, and neither is any tool Garrick does not know. In their place is `hold`, which queues the
-action for the owner's yes (hold.py). A write outside the zone, a wiki or the workspace's Inbox is refused by the
+**Act.** The session has, besides, file tools and a fixed list of commands, in the zone the exchange is bound to.
+Every command is one call of one wrapper (engine_cmd.py), which checks each argument against the zone and then runs
+the real command: the workspace's own scripts (intake.py without `list`, `process-notes` and `learn`; scaffold.py for
+a project, a thread and a checkpoint; the quick check; the todo reader) and `git add`, `commit`, `status`, `diff` and
+`log` in that zone's repository, with no flag that skips the hook or writes elsewhere. There is **no open shell**: a
+shell can send (`curl`, `gh`, `mail`) and would walk round `hold`, so every command is named, and the pre-tool hook
+refuses a command that is anything but one call of the wrapper. The servers the session has are Garrick's two and no
+others (`--strict-mcp-config`): the send, share and delete tools of the owner's connectors are not there, and neither
+is any tool Garrick does not know. In their place is `hold`, which queues the action for the owner's yes (hold.py). A
+write outside the zone, a wiki's `wiki/` folder or the workspace's Inbox, or into a `.git` folder, is refused by the
 engine's guard (engine_guard.py), a pre-tool hook bound to the zone; the zones' commit check runs as for any commit.
 
 **Full** (Ask only) is Act, with `hold` answered for the owner without asking: the sends run. Garrick's default is
@@ -36,6 +39,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -56,14 +60,16 @@ READ_SERVER = "garrick"
 HOLD_SERVER = "garrick_hold"
 READ_TOOLS = ("search", "read", "places", "thread_state", "owed")
 FILE_TOOLS = ("Read", "Grep", "Glob", "Edit", "Write")
-# The commands an Act session may run, by script and subcommand. Everything the shell offers beyond them is absent.
-# Left out on purpose: intake.py learn and scaffold.py party and zone (they write the wall's own tables), rename,
-# move, delete and undo (not what a message from a phone should do unattended), check.py allow, page_action.py (its
-# `settings` and `run` verbs would let a session raise its own level), and every command that reaches the network.
-INTAKE = ("list", "parse", "file-conversation", "file-reading", "file-to-project", "extract-attachment", "move-to-zone",
-          "skip", "file-note", "notes", "process-notes")
+# The commands an Act session may run, by script and subcommand, each through engine_cmd.py (which binds every
+# argument to the exchange's zone). Left out on purpose: intake.py list (it returns every zone's inbox), process-notes
+# (the job's own pass), learn, and scaffold.py party and zone (they write the wall's own tables), rename, move, delete
+# and undo (not what a message from a phone should do unattended), check.py allow, page_action.py (its `settings` and
+# `run` verbs would let a session raise its own level), and every command that reaches the network.
+INTAKE = ("parse", "file-conversation", "file-reading", "file-to-project", "extract-attachment", "move-to-zone",
+          "skip", "file-note", "notes")
 SCAFFOLD = ("project", "thread", "checkpoint")
 TODO = ("digest",)
+GIT = ("add", "commit", "status", "diff", "log")
 JOB = "ask"                 # the ledger's name for an interactive call: both channels count against Ask's own caps
 TURN_TIMEOUT = 240
 MOST_REQUEST = 4000
@@ -89,20 +95,14 @@ def tool_names(server: str, names) -> List[str]:
 
 
 def act_commands(ws: Path, zone: str) -> List[str]:
-    """The Bash patterns an Act session is allowed: named commands only, with their absolute paths."""
-    ws = Path(ws).resolve()
-    py = "python3"
+    """The Bash patterns an Act session is allowed: one wrapper, one pattern per tool and subcommand. The zone is not
+    in a pattern: the wrapper takes it from the exchange's own environment and refuses any other."""
+    import engine_cmd
     out = []
-    for sub in INTAKE:
-        out.append("Bash(%s %s %s:*)" % (py, ws / "System" / "skills" / "intake" / "intake.py", sub))
-    for sub in SCAFFOLD:
-        out.append("Bash(%s %s %s:*)" % (py, ws / "System" / "tools" / "scaffold.py", sub))
-    out.append("Bash(%s %s --quick:*)" % (py, ws / "System" / "tools" / "check.py"))
-    for sub in TODO:
-        out.append("Bash(%s %s %s:*)" % (py, ws / "System" / "skills" / "todo" / "todo.py", sub))
-    repo = ws / "Zones" / zone
-    for word in ("add", "commit", "status", "diff", "log"):
-        out.append('Bash(git -C "%s" %s:*)' % (repo, word))
+    for tool, subs in (("intake", INTAKE), ("scaffold", SCAFFOLD), ("todo", TODO), ("git", GIT)):
+        for sub in subs:
+            out.append("Bash(%s:*)" % engine_cmd.prefix(tool, sub))
+    out.append("Bash(%s --quick)" % engine_cmd.prefix("check"))
     return out
 
 
@@ -134,8 +134,9 @@ def session_settings(ws: Path, level: str) -> dict:
         base = {}
     out = {"permissions": {"deny": list((base.get("permissions") or {}).get("deny") or [])}}
     if level in ("act", "full"):
-        out["hooks"] = {"PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": [
-            {"type": "command", "command": "%s %s" % (sys.executable or "python3", HERE / "engine_guard.py")}]}]}
+        import engine_guard
+        out["hooks"] = {"PreToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash", "hooks": [
+            {"type": "command", "command": engine_guard.hook_command()}]}]}
     return out
 
 
@@ -220,13 +221,20 @@ def run(ws: Path, channel: str, text: str, zone: str, exchange: Optional[dict] =
 
 def execute_held(ws: Path, e: dict, runner: Optional[Callable] = None) -> Tuple[bool, str]:
     """Do one held action, after the owner's yes. A write under a shared folder is code's; a connector tool runs
-    through one assistant call that is allowed that tool and no other."""
+    through one assistant call that is allowed that tool and no other: the one name, checked again here against the
+    shape of a connector tool and the kinds a hold may be.
+
+    Not narrowed to one server: the owner's connectors are the assistant account's own, with no config file Garrick
+    could name in `--strict-mcp-config` without guessing, so the call loads them as the owner's settings do, and
+    `--allowedTools` is the one tool."""
     if "write" in (e.get("request") or {}):
         return hold.write_shared(ws, e)
     tool = str((e.get("request") or {}).get("tool") or "")
     args = (e.get("request") or {}).get("args") or {}
     if not tool:
         return False, "the action names no tool"
+    if not hold.TOOL_RE.match(tool) or hold.kind_of({"tool": tool}) not in hold.HELD_KINDS:
+        return False, "the action names a tool that is not a connector tool that sends, shares or deletes"
     claude = shutil.which("claude") or "claude"
     prompt = ("The owner has approved this one action. Do exactly it, with the tool %s and these arguments, and "
               "nothing else; then say in one sentence what happened.\n<arguments>\n%s\n</arguments>" % (tool, json.dumps(args)[:8000]))

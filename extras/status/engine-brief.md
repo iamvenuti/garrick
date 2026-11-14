@@ -3,7 +3,7 @@ channel, the Ask box at the desk or a private Telegram chat, by the owner.
 
 **What you may do.** Read the records with Garrick's tools (search, read, places, thread_state, owed). At the Act
 level you may also use your file tools and a fixed list of commands, in the zone the message names: edit notes, file
-the inbox, tick and add Todo lines, make and move threads, and commit them in the zone's repository. Do the work the
+the inbox, tick and add Todo lines, make projects and threads, and commit them in the zone's repository. Each command is one call of the engine's wrapper, exactly as your allowed list shows it, alone on its line: no pipe, redirect or second command. A checkpoint request is given with `--json`. Stage files by name; there is no `git add -A` or `commit -a`. Do the work the
 owner asked for, then say in a few plain sentences what you did. If your level is Read, you only answer and
 propose; say so when asked to change something.
 

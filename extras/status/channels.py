@@ -61,7 +61,7 @@ CHECKS = ("resume", "removable_tools", "walls_outside_model")
 CHECK_SAID = {
     "resume": "the assistant cannot continue a session",
     "removable_tools": "the assistant's tools cannot be narrowed to a fixed list",
-    "walls_outside_model": "the guard on writes could not be loaded",
+    "walls_outside_model": "the guard on writes could not be loaded or did not stop a write",
 }
 DEEP = re.compile(r"^\s*deep\s*:\s*", re.I)
 # A plain command keeps its fast path, and its small tier: open, park or wake something.
@@ -84,15 +84,18 @@ def jobs_dir() -> Path:
 # ---------------------------------------------------------------- the settings
 
 
-def clean_one(channel: str, given) -> dict:
+def clean_one(channel: str, given, kept=None) -> dict:
     """One channel's settings as they may be kept: `ValueError` with a sentence for the owner when a value is not
-    one of the choices, or when Full is asked of a channel that never offers it. Missing keys take the default."""
+    one of the choices, or when Full is asked of a channel that never offers it. A key left out keeps the value
+    already kept for the channel (`kept`), when that is one of the choices, else takes the default."""
     if channel not in CHANNELS:
         raise ValueError("there is no channel called %r" % (channel,))
     if not isinstance(given, dict) or set(given) - set(DEFAULTS):
         raise ValueError("a channel has a tier, an effort and an autonomy")
     out = dict(DEFAULTS)
     for key, allowed in (("tier", TIERS), ("effort", EFFORTS), ("autonomy", LEVELS)):
+        if isinstance(kept, dict) and kept.get(key) in (LEVELS_FOR[channel] if key == "autonomy" else allowed):
+            out[key] = kept[key]
         if key in given:
             if given[key] not in allowed:
                 raise ValueError("%s is %s" % (key, " or ".join(allowed)))
@@ -103,12 +106,14 @@ def clean_one(channel: str, given) -> dict:
     return out
 
 
-def clean(given) -> dict:
+def clean(given, kept=None) -> dict:
     """The `channels` block as Settings sends it, validated: {"ask": {...}, "telegram": {...}}. A channel left out
-    keeps no value, so it reads as its defaults."""
+    keeps no value, so it reads as its defaults. With `kept`, the block now in the file, a key a channel's entry
+    leaves out keeps its kept value instead of going back to the default."""
     if not isinstance(given, dict):
         raise ValueError("not settings for the channels")
-    return {channel: clean_one(channel, value) for channel, value in given.items()}
+    kept = kept if isinstance(kept, dict) else {}
+    return {channel: clean_one(channel, value, kept.get(channel)) for channel, value in given.items()}
 
 
 def settings(ws: Path) -> Dict[str, dict]:
@@ -195,11 +200,29 @@ def guard_works(ws: Path) -> bool:
         mine = {"tool_name": "Write", "tool_input": {"file_path": str(base / "Zones" / here / "x.md")}}
         theirs = {"tool_name": "Write", "tool_input": {"file_path": str(base / "Zones" / other / "x.md")}}
         system = {"tool_name": "Edit", "tool_input": {"file_path": str(base / "System" / "garrick-settings.json")}}
+        git = {"tool_name": "Write", "tool_input": {"file_path": str(base / "Zones" / here / ".git" / "config")}}
+        raw = {"tool_name": "Write", "tool_input": {"file_path": str(base / "Wikis" / "Meetings" / "raw" / "x.md")}}
         return (engine_guard.decide(mine, str(base), here) is None
                 and engine_guard.decide(theirs, str(base), here) is not None
-                and engine_guard.decide(system, str(base), here) is not None)
+                and engine_guard.decide(system, str(base), here) is not None
+                and engine_guard.decide(git, str(base), here) is not None
+                and engine_guard.decide(raw, str(base), here) is not None
+                and hook_line_works(base, here, engine_guard.hook_command(), system, mine))
     except Exception:
         return False
+
+
+def hook_line_works(base: Path, zone: str, line: str, bad: dict, good: dict) -> bool:
+    """Whether the hook's own command line, as the session's settings carry it and a shell runs it, stops a write
+    outside the zone with the exit code Claude blocks on (2) and lets one inside the zone through. A hook that cannot
+    start, or exits with any other code, blocks nothing."""
+    env = dict(os.environ, GARRICK_ENGINE_WS=str(base), GARRICK_ENGINE_ZONE=zone)
+    try:
+        stopped = subprocess.run(line, shell=True, input=json.dumps(bad), capture_output=True, text=True, env=env, timeout=20)
+        let = subprocess.run(line, shell=True, input=json.dumps(good), capture_output=True, text=True, env=env, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return stopped.returncode == 2 and let.returncode == 0
 
 
 def evaluate(ws: Path, help_text: str, guard: bool) -> dict:

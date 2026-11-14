@@ -216,6 +216,20 @@ class TestWhatANoteWarrants(ProcessCase):
         self.assertEqual({"class", "changes", "tick", "todo", "reason"}, set(got[it[0]["id"]]))
         self.assertEqual({}, self.pn.parse_judgments("not json", it, shown))
 
+    def test_a_change_cannot_carry_a_link_into_the_thread_note(self):
+        self.drop_note()
+        it = self.pn.queue(self.root)
+        it[0]["place"] = {"said": "x"}
+        shown = {it[0]["id"]: {"todo": []}}
+        text = json.dumps({"items": [{"id": it[0]["id"], "class": "decision", "changes": [
+            {"kind": "next_action", "text": "See [[Personal/Home Move/Home Move|the plan]] and [x](https://example.com/a)"},
+            {"kind": "decision", "text": "[[]]"}]}]})
+        [change, *rest] = self.pn.parse_judgments(text, it, shown)[it[0]["id"]]["changes"]
+        for part in ("[[", "]]", "]("):
+            self.assertNotIn(part, change["text"])
+        self.assertIn("Home Move", change["text"])
+        self.assertEqual([], rest)                           # a change that is only link marks is empty and dropped
+
     def test_a_failed_call_files_nothing_and_the_note_waits(self):
         self.drop_note()
         res = self.run_pass(lambda prompt, zone: (1, ""))
@@ -369,6 +383,21 @@ class TestTheJob(ProcessCase):
         self.assertEqual(0, run.returncode, run.stderr)
         self.assertEqual(1, json.loads(run.stdout)["waiting"])
         self.assertTrue((self.root / "Inbox" / "n.md").is_file())
+
+    def test_the_state_file_is_written_only_in_the_jobs_folder(self):
+        self.drop_note()
+        script = str(self.root / "System" / "skills" / "intake" / "intake.py")
+        elsewhere = self.root / "Zones" / "Work" / "Todo.md"
+        before = elsewhere.read_text()
+        for bad in (str(elsewhere), str(self.root / "System" / "rules.md"), "/tmp/notes-state.json", str(Path(self.state).parent / "held-actions.json"),
+                    str(Path(self.state).parent / "sub" / "notes-state.json")):
+            run = subprocess.run([sys.executable, script, "--root", str(self.root), "process-notes", "--no-assistant", "--state", bad],
+                                 capture_output=True, text=True)
+            self.assertEqual(1, run.returncode, bad)
+            self.assertIn("jobs folder", run.stderr)
+        self.assertEqual(before, elsewhere.read_text())
+        self.assertTrue((self.root / "Inbox" / "n.md").is_file())
+        self.assertTrue(self.pn.state_in_jobs(self.state))
 
 
 if __name__ == "__main__":

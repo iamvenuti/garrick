@@ -33,13 +33,20 @@ Standard library only, Python 3.9 or later.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import secrets
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
+
+try:
+    import fcntl
+except ImportError:                 # no flock on this platform: the in-process lock stays
+    fcntl = None
 
 sys.dont_write_bytecode = True
 
@@ -67,6 +74,38 @@ def path() -> Path:
     return jobs_dir() / FILE
 
 
+_mutex = threading.RLock()
+_depth = [0]
+_lock_fh: list = []
+
+
+@contextlib.contextmanager
+def locked():
+    """One writer at a time, across the poll and worker threads and across processes: each load, change and save of the
+    file happens inside it. Reentrant."""
+    with _mutex:
+        if _depth[0] == 0 and fcntl is not None:
+            lock = path().with_name(FILE + ".lock")
+            try:
+                lock.parent.mkdir(parents=True, exist_ok=True)
+                fh = open(str(lock), "a+")
+                fcntl.flock(fh, fcntl.LOCK_EX)
+                _lock_fh.append(fh)
+            except OSError:
+                pass
+        _depth[0] += 1
+        try:
+            yield
+        finally:
+            _depth[0] -= 1
+            if _depth[0] == 0 and _lock_fh:
+                fh = _lock_fh.pop()
+                try:
+                    fcntl.flock(fh, fcntl.LOCK_UN)
+                finally:
+                    fh.close()
+
+
 def load() -> dict:
     try:
         data = json.loads(path().read_text(encoding="utf-8"))
@@ -91,6 +130,11 @@ def new(zone: Optional[str], project: Optional[str], thread: Optional[str], said
     """Open an exchange bound to a place, or, with no place yet, one that holds the question the bot asked about the
     subject (`pending_subject`). Returns it, saved."""
     now = now or time.time()
+    with locked():
+        return _new(zone, project, thread, said, now, more)
+
+
+def _new(zone, project, thread, said, now, more) -> dict:
     data = load()
     ex = {"id": "tg-" + secrets.token_hex(4), "zone": zone, "project": project, "thread": thread, "said": said,
           "created": now, "touched": now, "session": None, "started": None, "ended": None, "tokens": 0, "closed": None,
@@ -106,26 +150,28 @@ def get(eid: str) -> Optional[dict]:
 
 
 def update(eid: str, **fields) -> Optional[dict]:
-    data = load()
-    ex = data["exchanges"].get(eid)
-    if ex is None:
-        return None
-    ex.update(fields)
-    save(data)
-    return ex
+    with locked():
+        data = load()
+        ex = data["exchanges"].get(eid)
+        if ex is None:
+            return None
+        ex.update(fields)
+        save(data)
+        return ex
 
 
 def link(eid: str, message_id: int, now: Optional[float] = None) -> None:
     """Message `message_id` of the chat belongs to this exchange."""
-    data = load()
-    ex = data["exchanges"].get(eid)
-    if ex is None:
-        return
-    data["by_message"][str(int(message_id))] = eid
-    if int(message_id) not in ex["messages"]:
-        ex["messages"].append(int(message_id))
-    ex["touched"] = now or time.time()
-    save(data)
+    with locked():
+        data = load()
+        ex = data["exchanges"].get(eid)
+        if ex is None:
+            return
+        data["by_message"][str(int(message_id))] = eid
+        if int(message_id) not in ex["messages"]:
+            ex["messages"].append(int(message_id))
+        ex["touched"] = now or time.time()
+        save(data)
 
 
 def for_message(message_id) -> Optional[dict]:
@@ -185,18 +231,20 @@ def end_session(eid: str, now: Optional[float] = None) -> None:
 
 
 def record_turn(eid: str, asked: str, answered: str, session: Optional[str], tokens: int, pending: Optional[dict],
-                now: Optional[float] = None) -> Optional[dict]:
+                now: Optional[float] = None, fresh: bool = False) -> Optional[dict]:
     """Save one completed turn durably: the session to resume, the measured input, the question waiting if the answer
-    asks one, and the turn itself, cut short, among the last few."""
-    ex = get(eid)
-    if ex is None:
-        return None
-    now = now or time.time()
-    sess = session or ex.get("session")
-    started = now if (sess and sess != ex.get("session")) else ex.get("started")
-    recent = (ex.get("recent") or []) + [{"asked": asked[:RECENT_CHARS], "answered": answered[:RECENT_CHARS], "at": now}]
-    return update(eid, session=sess, started=started,
-                  tokens=int(tokens or 0), pending=pending, recent=recent[-RECENT_TURNS:], touched=now, ended=None)
+    asks one, and the turn itself, cut short, among the last few. `started` is set when the turn began a session
+    (`fresh`), never because a resumed turn answered with another session id: the two-hour limit counts from the start."""
+    with locked():
+        ex = get(eid)
+        if ex is None:
+            return None
+        now = now or time.time()
+        sess = session or ex.get("session")
+        started = now if (sess and (fresh or not ex.get("started"))) else ex.get("started")
+        recent = (ex.get("recent") or []) + [{"asked": asked[:RECENT_CHARS], "answered": answered[:RECENT_CHARS], "at": now}]
+        return update(eid, session=sess, started=started,
+                      tokens=int(tokens or 0), pending=pending, recent=recent[-RECENT_TURNS:], touched=now, ended=None)
 
 
 def resume_context(ex: dict) -> str:
@@ -219,11 +267,12 @@ def pending_for(text_is_reply_to: Optional[int] = None) -> List[dict]:
 def sweep(now: Optional[float] = None) -> int:
     """Drop exchanges untouched for KEEP_DAYS, with their message ids. Returns how many."""
     now = now or time.time()
-    data = load()
-    old = [k for k, e in data["exchanges"].items() if now - e.get("touched", 0) > KEEP_DAYS * 86400]
-    for k in old:
-        del data["exchanges"][k]
-    if old:
-        data["by_message"] = {m: e for m, e in data["by_message"].items() if e in data["exchanges"]}
-        save(data)
-    return len(old)
+    with locked():
+        data = load()
+        old = [k for k, e in data["exchanges"].items() if now - e.get("touched", 0) > KEEP_DAYS * 86400]
+        for k in old:
+            del data["exchanges"][k]
+        if old:
+            data["by_message"] = {m: e for m, e in data["by_message"].items() if e in data["exchanges"]}
+            save(data)
+        return len(old)

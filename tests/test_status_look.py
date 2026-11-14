@@ -666,6 +666,7 @@ class JobRows(unittest.TestCase):
         for cols in wide:
             self.assertIn("minmax(160px,1fr)", cols)            # the name never shrinks to nothing
             self.assertNotIn("auto", cols)                      # the last column has no open end: every row has the same tracks
+            self.assertTrue(cols.endswith("minmax(0,300px)"))   # the status column gives way in a narrow card, up to 300px in a wide one
         row = next(r for r in self.rows(html) if "gr-nightly" in r)
         self.assertIn(">gr-nightly</button>", row)
         self.assertIn('<span class="say">%s</span>' % reason, row)   # the whole reason is in the page, clipped by the style

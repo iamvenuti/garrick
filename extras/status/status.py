@@ -5576,7 +5576,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .chev{width:16px;height:16px;flex:none;color:var(--muted);transition:transform .15s}details[open]>summary .chev{transform:rotate(90deg)}
 .body{padding:0 16px 16px}.muted{color:var(--muted)}.ink2{color:var(--ink2)}.num{font-variant-numeric:tabular-nums}
 .row{display:grid;align-items:center;gap:12px;padding:8px 2px;border-top:1px solid var(--grid)}.rows>.row:first-child{border-top:0}
-.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px 300px}.jobs .row .status{min-width:0;overflow:hidden}.calls .rts{white-space:normal;overflow-wrap:anywhere;min-width:0}.calls .rt{display:flex;align-items:flex-start;gap:6px;color:var(--ink2)}.calls .rt svg{width:14px;height:14px;flex:none;margin-top:2px}.calls .rt.deny{color:var(--critical)}.jobs .status .say{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px minmax(0,300px)}.jobs .row .status{min-width:0;overflow:hidden}.calls .rts{white-space:normal;overflow-wrap:anywhere;min-width:0}.calls .rt{display:flex;align-items:flex-start;gap:6px;color:var(--ink2)}.calls .rt svg{width:14px;height:14px;flex:none;margin-top:2px}.calls .rt.deny{color:var(--critical)}.jobs .status .say{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .jgroup h3{margin:12px 0 2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted)}.jgroup:first-child h3{margin-top:0}.jgroup>h3+.row{border-top:0}
 .jname{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}.jname:hover{color:var(--accent)}
 .jobs .name small{overflow:hidden;text-overflow:ellipsis}.jobs .name small.about{color:var(--ink2)}
@@ -7551,7 +7551,7 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .st.good{color:var(--good);background:var(--good-wash)}.st.warn{color:var(--warning);background:var(--warning-wash)}
 .st.crit{color:var(--critical);background:var(--critical-wash)}.st.idle{color:var(--ink2);background:var(--sunk)}
 .item>.st{margin-left:auto}.chip .st{padding:0 8px 0 6px;margin-right:4px}
-.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px 300px}
+.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px minmax(0,300px)}
 @media (max-width:820px){.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 /* the Overview's lead: one sentence, its reasons, one button */

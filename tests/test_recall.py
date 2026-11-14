@@ -689,6 +689,26 @@ class SessionTest(Base):
             self.extract()
         self.assertEqual(7, len(self.calls))                           # an unreadable list: everything is parsed
 
+    def test_the_skip_list_is_dropped_when_a_project_is_added_and_after_a_week(self):
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        for i in range(3):
+            self.session(str(elsewhere), "an unplaced chat %d" % i, "u%d" % i)
+        self.extract()
+        self.assertEqual(3, len(recall_sessions.read_skipped(self.root)))
+        zone = next(z for z in sorted((self.root / "Zones").iterdir()) if z.is_dir() and not z.name.startswith("."))
+        (zone / "Cedar Launch").mkdir()                                # a project the sources may now belong to
+        self.assertEqual({}, recall_sessions.read_skipped(self.root))
+        with self.parses():
+            self.extract()
+        self.assertEqual(3, len(self.calls))                           # every one is read again
+        listed = self.root / "System" / ".sessions" / "skipped.json"
+        data = json.loads(listed.read_text())
+        self.assertEqual(3, len(recall_sessions.read_skipped(self.root)))
+        data["since"] -= recall_sessions.SKIP_DAYS * 86400 + 60
+        listed.write_text(json.dumps(data))
+        self.assertEqual({}, recall_sessions.read_skipped(self.root))  # an old list says nothing
+
     def test_the_command_exits_zero_when_partial_and_124_when_it_wrote_nothing(self):
         self.many(3)
         out = io.StringIO()

@@ -623,6 +623,51 @@ def written_sources(root: Path) -> Dict[str, Set[Stamp]]:
     return known
 
 
+# The skip list (#558): sources parsed and placed nowhere, or empty, by path, size and mtime only. `System/.sessions/skipped.json`,
+# beside the root's own sessions, ignored by git like them. A missing, unreadable or odd list says nothing: every source is parsed.
+SKIP_NAME = "skipped.json"
+
+
+def skip_folder(root: Path) -> Path:
+    return root.resolve() / "System" / recall.SESSIONS_DIR
+
+
+def read_skipped(root: Path) -> Dict[str, Stamp]:
+    try:
+        data = json.loads((skip_folder(root) / SKIP_NAME).read_text(encoding="utf-8"))
+        rows = data["sources"] if isinstance(data, dict) and data.get("version") == 1 else None
+    except (OSError, ValueError, KeyError):
+        return {}
+    if not isinstance(rows, dict):
+        return {}
+    out: Dict[str, Stamp] = {}
+    for k, v in rows.items():
+        if isinstance(k, str) and isinstance(v, list) and len(v) == 2 and all(type(n) is int for n in v):
+            out[k] = (v[0], v[1])
+    return out
+
+
+def write_skipped(root: Path, rows: Dict[str, Stamp]) -> None:
+    """Atomic; nothing is written where git would see it, or where a link or sync stands. A failure leaves the old list."""
+    folder = skip_folder(root)
+    if folder.is_symlink() or recall.synced(folder) or not recall.safe_to_write(folder / "session.md"):
+        return
+    tmp = None
+    try:
+        folder.mkdir(mode=0o700, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=str(folder), prefix=".skipped-")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "sources": {k: list(v) for k, v in rows.items()}}, fh, sort_keys=True)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(folder / SKIP_NAME))
+    except OSError:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def write_session(root: Path, source: Path, s: Session) -> Optional[Path]:
     if not any(k in ("user", "assistant") for k, _, _ in s.turns):
         return None
@@ -697,27 +742,43 @@ def extract_run(root: Path, claude: Optional[str] = None, codex: Optional[str] =
         stamped.append((st.st_mtime_ns, str(source), parse, source, st))
     stamped.sort(key=lambda row: (-row[0], row[1]))
     known = written_sources(root)
+    skipped = read_skipped(root)
+    keep: Dict[str, Stamp] = {}
     deadline = time.monotonic() + limit if limit is not None else None
     wrote = nowhere = 0
     stopped = False
     for _, _, parse, source, st in stamped:
         if (st.st_size, st.st_mtime_ns) in known.get(os.path.abspath(str(source)), ()):
             continue                                # written as it stands: not parsed
+        where = os.path.abspath(str(source))
+        stamp = (st.st_size, st.st_mtime_ns)
+        if skipped.get(where) == stamp:
+            keep[where] = stamp
+            continue                                # parsed before and placed nowhere, or empty, and not changed
         if deadline is not None and time.monotonic() >= deadline:
             stopped = True
             break
         try:
             s = parse(source)
             if not any(k in ("user", "assistant") for k, _, _ in s.turns) or not s.cwds:
+                keep[where] = stamp
                 continue
             if destination(root, s) is None:
                 if any(recall.locate(root.resolve(), c) is not None for c in s.cwds if Path(c).is_absolute()):
                     nowhere += 1
+                keep[where] = stamp
                 continue
             if write_session(root, source, s) is not None:
                 wrote += 1
         except OSError:
             continue
+    if stopped:                                     # the sources behind the stop keep their rows
+        now = {os.path.abspath(str(row[3])): (row[4].st_size, row[4].st_mtime_ns) for row in stamped}
+        for k, v in skipped.items():
+            if now.get(k) == v:
+                keep.setdefault(k, v)
+    if keep != skipped:
+        write_skipped(root, keep)
     text = "sessions written: %d; placed nowhere: %d" % (wrote, nowhere)
     if not stopped:
         return text, 0

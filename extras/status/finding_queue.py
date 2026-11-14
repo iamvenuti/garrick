@@ -119,7 +119,6 @@ OTHER = "other"
 ANSWERS_OTHER: List[dict] = [A("fix-now", "Ask my assistant to fix it", "Your assistant looks at it and shows you the change.", "handoff"),
                              A("later", "Not now", "Ask again in a week.", "later")]
 OTHER_WHY = "Garrick has no plain wording for this check yet. Your assistant can look at it with you, and nothing changes until you say yes."
-OTHER_HANDOFF_MAX = 800     # characters of the finding's text a request carries
 # What a long note is asked when its plan moves nothing: no Move and no Show me, the handoff first (#539).
 ANSWERS_NO_MOVE: Dict[str, List[dict]] = {
     "note-long": [A("split", "Split the long sections into their own notes",
@@ -236,10 +235,17 @@ def about(n: int) -> str:
     return "about {:,}".format(int(round(n / step) * step))
 
 
-def later_key(kind: str, path: str) -> str:
+def later_key(kind: str, path: str, which: str = "") -> str:
     """A finding's key in the Not now file: a hash of its plain kind and its path, so the file holds no path and no
-    text of any zone."""
-    return hashlib.sha1(("%s\0%s" % (kind, path)).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    text of any zone. `which` (kind other only, see which_other) tells two findings of one path apart; a key made
+    without it is the one an older page wrote, and it still hides every finding of that path."""
+    return hashlib.sha1(("%s\0%s%s" % (kind, path, "\0" + which if which else "")).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+
+
+def which_other(item: dict) -> str:
+    """Six hex digits of the finding's own check and text: the Not now key of a kind other finding names this one finding."""
+    text = "%s\0%s" % (item.get("check") or "", item.get("message") or item.get("line") or "")
+    return hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:6]
 
 
 def later_path(ws) -> Path:
@@ -452,10 +458,10 @@ def other_sentence(path: str) -> str:
 
 
 def other_phrase(item: dict) -> str:
-    """The request *Ask my assistant to fix it* hands over: this finding's own text, of its own place, and no other."""
-    text = str(item.get("message") or item.get("line") or "")[:OTHER_HANDOFF_MAX]
-    return ("A check found something in %s (%s). Its text: %s Look at it, fix it if the fix is plain, and show me the change "
-            "before anything is committed." % (item["path"], place(str(item["path"])), text if text.endswith((".", "?", "!")) else text + "."))
+    """The request *Ask my assistant to fix it* hands over: the file's name, its place and the kind's plain sentence, and
+    never the check's own text, which may name a file of another place. The assistant reads the check itself."""
+    return ("%s Look at it, fix it if the fix is plain, and show me the change before anything is committed."
+            % other_sentence(str(item["path"])))
 
 
 def handoff_phrase(plain: str, answer: str, item: dict) -> str:
@@ -522,7 +528,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
     details = str(item.get("message") or item.get("line") or "")
     if plain == "wall" and not item.get("listed"):
         return unlisted_wall(item, scope)
-    q = {"id": plain or "other", "scope": scope, "path": path, "key": later_key(plain or "other", path), "details": details,
+    which = which_other(item) if plain not in PLAIN_KINDS else ""
+    q = {"id": plain or "other", "scope": scope, "path": path, "key": later_key(plain or "other", path, which), "details": details,
          "recommended": "", "other": wall_other(item) if plain == "wall" else ""}
     if plain not in PLAIN_KINDS:
         answers = []
@@ -531,7 +538,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
             if a["action"] == "handoff":
                 a["phrase"] = other_phrase(item)
             else:
-                a["req"] = {"verb": "finding", "kind": OTHER, "path": path, "answer": a["id"]}
+                # the executor's request has three fields and no more: the finding's own mark rides in the answer, `later-<which>`
+                a["req"] = {"verb": "finding", "kind": OTHER, "path": path, "answer": "later-" + which}
             answers.append(a)
         q.update(tag=str(item.get("title") or "Check finding"), sentence=other_sentence(path), why=OTHER_WHY, answers=answers,
                  free=free_prefix("", item), recommended=answers[0]["id"])
@@ -624,6 +632,8 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) ->
             plain = "hooks-blocked"
         if plain not in NEVER_LATER and (plain in PLAIN_KINDS or not plain) and later_key(plain or OTHER, str(item["path"])) in hidden:
             continue
+        if plain not in PLAIN_KINDS and later_key(plain or OTHER, str(item["path"]), which_other(item)) in hidden:
+            continue                # this finding was put off; an older key, made with no `which`, hid them all and still does
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None
         out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"]), plan))
     settle(out)

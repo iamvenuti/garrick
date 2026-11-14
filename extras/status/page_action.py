@@ -5185,11 +5185,14 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     kind, answer = req.get("kind"), req.get("answer")
     if not isinstance(kind, str) or kind not in fq.VERB_ANSWERS:
         raise Refused("not a kind of finding Garrick answers")
+    which = ""
+    if kind == fq.OTHER and isinstance(answer, str) and re.fullmatch(r"later-[0-9a-f]{6}", answer):
+        answer, which = "later", answer[6:]        # this one finding is put off, not every finding of the file
     if not isinstance(answer, str) or answer not in fq.VERB_ANSWERS[kind]:
         raise Refused("not an answer Garrick offers for this finding")
     rel, _ = finding_path(ws, req)
     if answer == "later":
-        until = fq.later_put(ws, fq.later_key(kind, rel), today)
+        until = fq.later_put(ws, fq.later_key(kind, rel, which), today)
         return "Put off until %s" % dt.date.fromisoformat(until).strftime("%a %d %b")
     if answer == "preview":
         return finding_preview(ws, rel)

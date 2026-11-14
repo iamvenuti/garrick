@@ -506,8 +506,8 @@ class TestTabs(StatusCase):
     def test_the_default_split(self):
         self.job(0)
         html = self.page()
-        self.assertRegex(html, r'data-tab="overview">Overview<span class="n[ a-z]*" id="tabn-overview"[^>]*(?: hidden)?>[^<]*</span></button><button type="button" role="tab" data-tab="todo">Todo')
-        self.assertRegex(html, r'</button><button type="button" role="tab" data-tab="status">Status<span class="n')
+        self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="todo">Todo', html)    # no badge on the Overview (#560)
+        self.assertRegex(html, r'</button><button type="button" role="tab" data-tab="status">Status(?:<span class="n (?:crit|warn)"|</button>)')
         overview, machinery = self.section(html, "overview"), self.section(html, "status")
         for card_id in ("graph", "threads", "todo", "inboxes"):
             self.assertIn('id="%s"' % card_id, overview, card_id)
@@ -533,9 +533,9 @@ class TestTabs(StatusCase):
         html = self.page()
         self.assertNotIn('id="attention"', html)
         self.assertIn(["critical", "jobs"], [t[:2] for t in trouble(html)])
-        self.assertIn("function dots(", status.LAYOUT_JS)                      # worst first, a hidden card still counts
-        self.assertIn("w[sec.id]!=='critical'", status.LAYOUT_JS)
+        self.assertIn("function sev(c)", status.LAYOUT_JS)                     # worst first, a hidden card still counts
         self.assertIn("sev(c)", status.LAYOUT_JS)                              # and the hidden-cards list shows it
+        self.assertIn('<span class="n crit" id="tabn-status"', html)           # the tab says it with one number (#560), not a dot with a word
 
     def test_checks_sits_in_the_context_tab_under_the_findings(self):
         html = self.page()
@@ -615,7 +615,7 @@ class TestContextTab(StatusCase):
         self.assertEqual(["overview", "todo", "status", "questions", "guide"], re.findall(r'role="tab" data-tab="([a-z]+)"', html))
         for gone in ("cx-switch", "cx-parties", "cx-who", "data-cx-view", "pp-zone", "cxw-pick", "Who sees what", "data-flip"):
             self.assertNotIn(gone, html, gone)
-        self.assertIn('data-tab="questions">Context<span class="n" id="qp-tab-n"></span></button>', html)
+        self.assertIn('data-tab="questions">Context<span class="n warn" id="qp-tab-n" hidden></span></button>', html)
 
     def test_the_walls_card_and_its_verbs_are_gone(self):
         html = self.page()
@@ -628,26 +628,59 @@ class TestContextTab(StatusCase):
         self.fake_check({"check": "walls", "severity": "error", "path": "Zones/Work/Acme Review/Memo.md", "message": "links a file of zone Personal"})
         self.assertNotIn("cxgo", self.page())
 
-    def test_the_guide_reads_the_zone_flags_and_changes_none(self):
-        html = self.page()
-        guide = html[html.index('id="guide-zones"'):]
-        guide = guide[:guide.index("</section>")]
-        self.assertIn("Each zone is either <b>walled</b> or <b>open</b>.", guide)
-        self.assertIn("is split before it is filed.", guide)
-        self.assertEqual(["Personal", "Work"], re.findall(r"<li><b>(\w+)</b>: ", guide))
-        self.assertIn("python3 System/tools/scaffold.py zone --name Work --open", guide)     # a walled zone says how to open it
-        self.assertNotIn("<button", guide)                                                   # the page flips nothing
+    def walls(self, html=None):
+        html = html or self.page()
+        start = html.index('<section class="setsec" id="walls-settings">')
+        return html[start:html.index("</section>", start)]
 
-    def test_a_zone_that_is_open_says_so_and_how_to_wall_it(self):
+    def test_the_guide_holds_no_walls_block_and_no_command(self):
+        html = self.page()
+        guide = html[html.index('id="tab-guide"'):html.index("</section>", html.index('id="tab-guide"'))]
+        for gone in ("scaffold.py", "--open", "--walled", "guide-zones", "gd-zones"):
+            self.assertNotIn(gone, guide, gone)
+        self.assertFalse(hasattr(status, "zone_flags"))
+        self.assertNotIn("guide-zones", html)
+
+    def test_settings_lists_every_zone_with_its_state_and_holds_no_code(self):
+        walls = self.walls()
+        self.assertEqual(["Personal", "Work"], re.findall(r'<li class="wallrow" data-zone="(\w+)">', walls))
+        self.assertEqual(["Walled", "Walled"], re.findall(r'<span class="st \w+">(\w+)</span>', walls))
+        self.assertNotIn("<code", walls)
+        self.assertNotIn("scaffold.py", walls)
+
+    def test_change_hands_a_request_to_the_assistant_and_runs_nothing_itself(self):
+        def tree():
+            return {str(p): p.read_bytes() for p in self.root.rglob("*") if p.is_file() and ".git" not in p.parts}
+        before = tree()
+        html = self.page()
+        walls = self.walls(html)
+        buttons = re.findall(r'<button class="wchange" type="button" data-request="([^"]*)" data-folder="([^"]*)"', walls)
+        self.assertEqual([("Make Personal open", str(self.root)), ("Make Work open", str(self.root))], buttons)
+        self.assertNotIn("data-act", walls)                              # no verb of the page's: nothing here writes or runs
+        self.assertIn("button[data-request]", html)                      # the existing hand-off, which Process the Inbox uses, takes it
+        self.assertEqual(before, tree())                                 # and no file in the workspace changed
+
+    def test_a_zone_that_is_open_says_so_and_offers_to_wall_it(self):
         text = (self.root / "System" / "context.md").read_text(encoding="utf-8")
         write(self.root / "System" / "context.md", text.replace("| Zone | Holds | Party | New parties |\n|---|---|---|---|\n| Work | Client work | | walled |\n| Personal | Everything else | | walled |",
                                                               "| Zone | Holds | Walled |\n|---|---|---|\n| Work | Client work | no |\n| Personal | Everything else | yes |")
               .replace("| Party | What it is | Zone | Tag | Walled | Domains |\n|---|---|---|---|---|---|", "| Party | What it is | Zone | Tag | Domains |\n|---|---|---|---|---|")
               .replace("| yes | acmecorp.example |", "| acmecorp.example |").replace("| yes | birchco.example", "| birchco.example"))
-        guide = status.zone_flags(self.root)
-        self.assertIn("<b>Work</b>: open <code>python3 System/tools/scaffold.py zone --name Work --walled</code>", guide)
-        self.assertIn("<b>Personal</b>: walled", guide)
-        self.assertNotIn("until the update to zone walls is accepted", guide)
+        walls = self.walls()
+        self.assertRegex(walls, r'data-zone="Work"><b>Work</b><span class="st idle">Open</span>')
+        self.assertIn('data-request="Make Work walled"', walls)
+        self.assertRegex(walls, r'data-zone="Personal"><b>Personal</b><span class="st good">Walled</span>')
+        self.assertNotIn("until the update to zone walls is accepted", walls)
+
+    def test_the_walls_rows_come_above_allowed_by_you(self):
+        html = status.settings(self.root, (), ("Work", "Personal"), allowed=[{"path": "Zones/Work/a.md", "id": "x", "rule": "r", "date": "2026-11-01", "by": "me", "href": "", "state": "same"}])
+        self.assertIn('id="walls-settings"', html)
+        self.assertLess(html.index('id="walls-settings"'), html.index('id="allowed-settings"'))
+        self.assertIn('<a href="#walls-settings" data-setgo="walls-settings">', html)
+
+    def test_the_pending_update_note_is_in_settings(self):
+        with mock.patch.object(status, "workspace_context", lambda ws: {"zone_walled": {"Work": True}, "pending": True}):
+            self.assertIn("These flags are read from your Parties and Zones tables until the update to zone walls is accepted.", status.walls_settings(self.root))
 
 
 class TestAllowedByYou(StatusCase):
@@ -1224,7 +1257,7 @@ class TestOpensOnTheWork(StatusCase):
         row = self.row(html, long_thread)
         self.assertIn(">%s</a>" % long_thread, row)                                # whole, never cut
         self.assertIn("chase the quote " * 19, row)
-        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:12px;overflow:hidden;"
+        self.assertIn(".thread .t small{display:block;color:var(--muted);font-size:var(--fs-meta);overflow:hidden;"
                       "text-overflow:ellipsis;white-space:nowrap}", status.CSS)    # one line, cut by the browser
         self.assertIn(".thread .t a{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}", status.CSS)
 
@@ -2008,7 +2041,7 @@ class TestPreviewFeatures(StatusCase):
     def test_the_todo_list_is_a_tab(self):
         self.todo()
         html = self.page()
-        self.assertIn('<button type="button" role="tab" data-tab="todo">Todo<span class="n">', html)
+        self.assertIn('<button type="button" role="tab" data-tab="todo">Todo', html)
         over, todo = html.index('id="tab-overview"'), html.index('id="tab-todo" hidden')
         self.assertLess(over, html.index('id="graph"'))
         self.assertLess(html.index('id="graph"'), todo)
@@ -2682,15 +2715,14 @@ class TestNameAndMark(StatusCase):
         self.assertNotIn("<style>", icon)                   # sips draws it without a stylesheet
         self.assertIn("mod.app_icon()", (Path(status.__file__).parent / "app" / "make-app.sh").read_text())
 
-    def test_display_face_for_big_numbers_and_sans_for_the_rest(self):
-        # The Baskerville stack stays, from fonts already on the machine, for the big numbers; the headings take the sans (#551).
-        stack = '"Baskervville","Libre Baskerville",Baskerville,"Baskerville Old Face",Georgia,serif'
-        self.assertIn("--display:%s;" % stack, status.CSS)
-        self.assertIn("var(--display", re.search(r"\.hero \.fig\{[^}]*", status.CSS).group(0))
+    def test_one_sans_for_the_numbers_and_the_headings_alike(self):
+        # The page has one family: the system's sans, from --sans. No serif display face and no font file (#560).
+        self.assertNotIn("--display", status.CSS)
+        self.assertIn("var(--sans)", re.search(r"\.hero \.fig\{[^}]*", status.CSS).group(0))
         for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*"):
             self.assertIn("var(--sans)", re.search(rule, status.CSS + status.BAR_CSS).group(0))
-        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:15px/1.55 var(--sans)', status.CSS)
-        self.assertNotIn("@font-face", status.CSS)           # the faces are embedded by font_css(), not written in the block
+        self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:var(--fs-body)/1.55 var(--sans)', status.CSS)
+        self.assertNotIn("@font-face", status.CSS)
         self.assertNotIn("url(", status.CSS)
 
     def test_accent_is_readable_in_both_themes(self):
@@ -2964,8 +2996,7 @@ class TestOpenActions(StatusCase):
         for zone in re.findall(r'<div class="zt">(.*?)</div>', block):
             self.assertEqual(1, zone.count("href="), zone)                            # one way to the list (#235)
             self.assertNotIn("changed ", zone)
-        url = (self.root / "Zones" / "Work" / "Todo.md").as_uri()
-        self.assertIn('<a class="act" href="%s" title="Open Work/Todo.md">Open Todo.md</a>' % url, html)   # on the tab
+        self.assertNotIn("Open Todo.md", html)                                 # the tab adds, ticks and re-dates; the file is one sentence away (#560)
 
     def test_no_todo_no_open_actions(self):
         self.assertIn('class="top" style="--tiles:4"', self.page())

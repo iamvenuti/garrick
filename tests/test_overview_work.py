@@ -108,9 +108,9 @@ class OverviewWork(unittest.TestCase):
         self.assertEqual({("Work", "Acme Review"), ("Work / Birch Entry", "Market Sizing"), ("Work / Birch Entry", "Interviews")},
                          {(zone, name) for name, zone in names})
         css = status.YOURWORK_CSS
-        self.assertIn(".yzone{font-size:13px;font-weight:400;color:var(--muted)}", css)
+        self.assertIn(".yzone{font-size:var(--fs-meta);font-weight:400;color:var(--muted)}", css)
         self.assertIn(".yline{font-weight:600;color:var(--ink)}", css)
-        self.assertIn("grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) 170px", css)
+        self.assertIn("grid-template-columns:minmax(150px,.9fr) minmax(220px,2.4fr) minmax(150px,1fr) 120px", css)
         self.assertIn("@media(max-width:720px){.yhead{display:none}.yrow{grid-template-columns:1fr auto;padding:14px 0}.ynext,.ystate{grid-column:1/-1}}", css)
 
     def test_the_examples_tag_stays_on_the_bold_line(self):
@@ -154,9 +154,32 @@ class OverviewWork(unittest.TestCase):
         write(self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md",
               thread("Acme Review", "Pricing", next_="Dana's: send the price sheet"))
         card = self.card(self.page())
-        self.assertIn("send the price sheet", card)
+        self.assertIn("Send the price sheet", card)       # and the first letter is capital (#559)
         self.assertNotIn("Dana&#x27;s:", card)
         self.assertNotIn("Dana's:", card)
+
+    def test_the_state_column_never_holds_more_than_two_lines(self):
+        write(self.work / "Birch Entry" / "Threads" / "Market Sizing" / "Market Sizing.md",
+              thread("Birch Entry", "Market Sizing", "birch", "Theo to send the volumes", waiting="Theo Marsh: " + "a very long wait " * 20))
+        self.todo("Work", "[[Market Sizing]]: send the floor", "[[Market Sizing]]: send the renewal")
+        card = self.card(self.page())
+        rows = re.findall(r'<span class="ycell ystate" role="cell">(.*?)</span><span class="ycell yact"', card, re.S)
+        self.assertTrue(rows)
+        for state in rows:
+            self.assertLessEqual(len(re.findall(r'class="st |class="ywhy"', state)), 2)       # the badge, and one line of reason and chip
+        long = next(r for r in rows if "a very long wait" in r)
+        self.assertEqual(1, long.count('class="ywhy"'))
+        self.assertIn('title="Waiting on Theo Marsh: a very long wait', long)                 # the whole text is in the title
+        self.assertIn("text-overflow:ellipsis", status.YOURWORK_CSS)
+        self.assertIn("white-space:nowrap", status.YOURWORK_CSS.split(".ywait{")[1].split("}")[0])
+
+    def test_no_row_holds_both_a_count_of_actions_and_a_chip_and_no_row_has_an_app_icon(self):
+        self.todo("Work", "[[Pricing]]: send the floor to Dana", "[[Pricing]]: send the renewal")
+        card = self.card(self.page())
+        self.assertNotRegex(card, r"\d+ actions?\b")
+        self.assertIn("Touched", card)
+        self.assertNotIn("<img", card)
+        self.assertNotIn(">Fine<", card)
 
     def todo(self, zone, *lines):
         write(self.root / "Zones" / zone / "Todo.md", "# %s: open actions\n\n## Inbox\n\n" % zone
@@ -274,6 +297,66 @@ class OverviewWork(unittest.TestCase):
             self.assertIn(htmllib.escape(n), html)
 
 
+
+
+class YourWorkWords(unittest.TestCase):
+    """The Your work card in plain words (#559)."""
+
+    TODAY = dt.date(2026, 3, 3)
+
+    def w(self, name="Pricing", **kw):
+        base = {"id": "pw-%s" % name.lower(), "name": name, "zone": "Work", "project": "Acme Review", "thread": name, "example": False,
+                "row": {}, "actions": [], "waiting": None, "mine": False, "ask": "", "next": "Send it", "moved": self.TODAY}
+        base.update(kw)
+        return base
+
+    def card(self, rows):
+        return status.work_list_card(rows, self.TODAY)
+
+    def test_a_possessive_owner_waits_on_the_user(self):
+        self.assertTrue(status.waits_on_user("Alex's \"update Garrick\"", "Alex Birch"))
+        self.assertTrue(status.waits_on_user("Alex\u2019s update", "Alex Birch"))
+        self.assertTrue(status.waits_on_user("Alex Birch: the agenda", "Alex Birch"))
+        self.assertFalse(status.waits_on_user("Alexander: the agenda", "Alex Birch"))
+        self.assertFalse(status.waits_on_user("Dana's update", "Alex Birch"))
+        self.assertEqual("update Garrick", status.user_ask("Alex's \"update Garrick\"", "Alex Birch"))
+        self.assertEqual("the agenda to the client", status.user_ask("Alex: the agenda to the client", "Alex Birch"))
+
+    def test_an_act_now_row_carries_its_reason(self):
+        html = self.card([self.w(waiting="Alex: the agenda to the client", mine=True, ask="the agenda to the client")])
+        self.assertIn("Act now", html)
+        self.assertRegex(html, r'<span class="ywait" title="the agenda to the client">the agenda to the client</span>')
+
+    def test_a_row_waiting_on_somebody_else_says_who(self):
+        html = self.card([self.w(waiting="Dana: the volumes")])
+        self.assertIn("Waiting on Dana", html)
+
+    def test_no_fine_pill_and_a_fine_row_leaves_the_state_column_empty(self):
+        html = self.card([self.w()])
+        self.assertNotIn(">Fine<", html)
+        self.assertIn('<span class="ycell ystate" role="cell"></span>', html)
+
+    def test_a_next_step_with_a_path_shows_its_file_name_and_starts_with_a_capital(self):
+        html = self.card([self.w(next="send `Zones/Work/Acme/Deliverables/260315 - Price sheet.docx` to Dana")])
+        self.assertIn('<span class="ypath" title="Zones/Work/Acme/Deliverables/260315 - Price sheet.docx">Price sheet</span>', html)
+        self.assertNotIn("<code>", html)
+        self.assertIn("Send ", html)
+
+    def test_ten_rows_show_and_show_all_holds_the_rest(self):
+        rows = [self.w("Thread %02d" % i) for i in range(14)]
+        html = self.card(rows)
+        shown = re.findall(r'<div class="yrow" data-w=', html)
+        hidden = re.findall(r'<div class="yrow yextra" data-w="[^"]*" role="row" hidden>', html)
+        self.assertEqual((10, 4), (len(shown), len(hidden)))
+        self.assertIn('id="yall"', html)
+        self.assertIn(">Show all 14<", html)
+        self.assertNotIn('id="yall"', self.card(rows[:10]))
+
+    def test_the_choice_is_kept_in_storage_that_may_be_missing(self):
+        js = status.YOURWORK_JS
+        self.assertIn("try{return localStorage.getItem(KEY)==='1'}catch(e){return false}", js)
+        self.assertIn("try{localStorage.setItem(KEY,v?'1':'0')}catch(e){}", js)
+
 OPENER = textwrap.dedent("""
     const vm = require("vm");
     const [js, launchers, installed, def, card, host] = JSON.parse(process.argv[1]);
@@ -306,28 +389,44 @@ class TestTheWayToOpen(unittest.TestCase):
         return done.stdout
 
     def kinds(self, html):
-        return re.findall(r'data-k="([a-z]+)"', html)
+        return re.findall(r' data-way="([a-z]+)"', html)
 
-    def test_the_main_button_runs_the_default_and_the_list_offers_the_others_that_are_on_and_installed(self):
+    def menu(self, html):
+        return html.split('<div class="ymenu"')[1] if '<div class="ymenu"' in html else ""
+
+    def test_the_main_button_is_one_text_button_and_the_menu_lists_every_way_that_is_on_and_installed(self):
         for default in ("cmux", "finder", "codex"):
             html = self.opener(default, ("finder", "cmux", "codex", "claude"))
-            main, rest = html.split("<details")
-            self.assertEqual([default], self.kinds(main), default)
-            self.assertIn("data-d", main)
-            self.assertEqual({"note", "finder", "cmux", "codex", "claude"} - {default}, set(self.kinds(rest)), default)
+            main = html.split("<details")[0]
+            self.assertIn(">Resume</", main, default)
+            self.assertNotIn("data-k=", html)                                # no app tile, no app icon
+            self.assertEqual({"note", "finder", "cmux", "codex", "claude"}, set(self.kinds(self.menu(html))), default)
 
-    def test_with_codex_turned_off_or_not_installed_the_list_does_not_offer_it(self):
+    def test_every_menu_row_has_a_label_and_a_16px_icon_and_the_default_is_ticked(self):
+        html = self.opener("cmux", ("finder", "cmux", "codex", "claude"))
+        rows = re.findall(r'<(?:button|a) role="menuitem" class="act ymi"[^>]*>(.*?)</(?:button|a)>', self.menu(html), re.S)
+        self.assertEqual(5, len(rows))
+        labels = [re.sub(r"<[^>]+>", "", r).strip() for r in rows]
+        self.assertEqual(["Resume in cmux", "Resume in Claude", "Resume in Codex", "Open folder", "Open the note"], labels)
+        for r in rows:
+            self.assertIn('width="16" height="16"', r)
+        self.assertEqual(1, self.menu(html).count('class="ytick"'))
+        self.assertIn("ytick", rows[0])                                       # cmux is the default
+        self.assertIn('<hr class="ydiv" role="separator">', html)
+        self.assertEqual(5, html.count('role="menuitem"'))
+
+    def test_with_codex_turned_off_or_not_installed_the_menu_does_not_offer_it(self):
         html = self.opener("cmux", ("finder", "cmux", "claude"))
-        self.assertNotIn('data-k="codex"', html)
+        self.assertNotIn("Resume in Codex", html)
         html = self.opener("cmux", ("finder", "cmux", "codex", "claude"), installed=("finder", "cmux", "claude"))
-        self.assertNotIn('data-k="codex"', html)
+        self.assertNotIn("Resume in Codex", html)
 
     def test_with_the_default_claude_the_request_is_the_continue_hand_off(self):
         html = self.opener("claude", ("finder", "cmux", "claude"))
         main = html.split("<details")[0]
         act = json.loads(htmllib.unescape(re.search(r'data-act="([^"]+)"', main).group(1)))
         self.assertEqual({"verb": "continue", "zone": "Work", "file": "Acme Review/Threads/Pricing/Pricing.md"}, act)
-        self.assertIn("Open in Claude", main)
+        self.assertIn(">Resume<", main)
 
     def test_the_cmux_button_is_the_desks(self):
         main = self.opener("cmux", ("cmux", "claude")).split("<details")[0]
@@ -337,16 +436,22 @@ class TestTheWayToOpen(unittest.TestCase):
     def test_one_way_on_is_one_plain_button(self):
         html = self.opener("claude", ("claude",), note=False)
         self.assertNotIn("<details", html)
-        self.assertEqual(["claude"], self.kinds(html))
+        self.assertIn(">Resume<", html)
         html = self.opener("note", (), note=True)
         self.assertNotIn("<details", html)
-        self.assertEqual(["note"], self.kinds(html))
         self.assertIn('href="file:///x/Pricing.md"', html)
+        self.assertIn(">Resume<", html)
 
     def test_a_default_that_is_off_falls_back_to_the_first_way_on(self):
         html = self.opener("codex", ("finder", "claude"))
-        self.assertEqual(["note"], self.kinds(html.split("<details")[0]))
-        self.assertNotIn('data-k="codex"', html)
+        main = html.split("<details")[0]
+        self.assertIn('href="file:///x/Pricing.md"', main)                    # the note is first
+        self.assertNotIn("Resume in Codex", html)
+
+    def test_enter_resumes_and_alt_down_opens_the_menu(self):
+        js = status.YOURWORK_JS
+        self.assertIn("e.altKey&&e.key==='ArrowDown'", js)
+        self.assertNotIn("<details", js.split("keydown")[0].split("function draw")[0] or "")
 
 
 if __name__ == "__main__":

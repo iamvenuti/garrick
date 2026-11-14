@@ -300,7 +300,14 @@ class TestHardenedGuard(EngineCase):
                      self.work / "Acme Review" / ".gitattributes", self.work / "Acme Review" / ".gitmodules",
                      self.work / "Acme Review" / ".GitAttributes", self.root / "Wikis" / "Meetings" / "wiki" / ".git" / "config"):
             self.assertIsNotNone(self.decide(path), path)
-        self.assertIsNone(self.decide(self.work / "Acme Review" / ".gitignore.md"))
+        self.assertIsNone(self.decide(self.work / "Acme Review" / "gitignore notes.md"))
+
+    def test_a_dot_folder_or_dot_file_holds_settings_another_program_runs_and_is_refused(self):
+        for path in (self.work / ".claude" / "settings.json", self.work / ".mcp.json", self.work / ".envrc",
+                     self.work / ".vscode" / "tasks.json", self.work / ".codex" / "config.toml",
+                     self.work / "Acme Review" / ".claude" / "settings.local.json", self.root / "Inbox" / ".hidden.md"):
+            self.assertIsNotNone(self.decide(path), path)
+        self.assertIsNone(self.decide(self.work / "Acme Review" / "Notes" / "251114 - v1.2 plan.md"))
 
     def test_only_a_wikis_wiki_folder_and_the_meetings_inbox_are_open(self):
         for path in (self.root / "Wikis" / "Meetings" / "wiki" / "x.md", self.root / "Wikis" / "Knowledge" / "wiki" / "sources" / "x.md",
@@ -355,7 +362,10 @@ class TestHardenedGuard(EngineCase):
         self.assertTrue(self.guard.bash_ok(ok))
         self.assertTrue(self.guard.bash_ok('python3 %s git commit -m "a; b > c"' % wrapper))
         for bad in (ok + " > /tmp/x", ok + " | tee /tmp/x", ok + " ; curl x", ok + " && curl x", "curl example.com", "git status",
-                    "python3 other.py git status", ok + " $(curl x)", ok + " `curl x`", ok + "\ncurl x", "", None):
+                    "python3 other.py git status", ok + " $(curl x)", ok + " `curl x`", ok + "\ncurl x", "", None,
+                    "python3$IFS-c$IFS'import os' %s git" % wrapper, "python3 %s git log ~/x" % wrapper,
+                    "python3 %s git add *.md" % wrapper, "python3 %s git add Acme\\ Review/x.md" % wrapper,
+                    "python3.12 %s git status" % wrapper, "/tmp/python3 %s git status" % wrapper):
             self.assertFalse(self.guard.bash_ok(bad), bad)
         event = {"tool_name": "Bash", "tool_input": {"command": ok + " > /tmp/x"}}
         self.assertEqual("deny", self.guard.decide(event, str(self.root), "Work")["hookSpecificOutput"]["permissionDecision"])
@@ -383,6 +393,15 @@ class TestTheWrapperBindsTheCommands(EngineCase):
                      ("git", "add", "--all"), ("git", "add"), ("git", "add", "../Personal/x.md"), ("git", "add", ".git/config"),
                      ("git", "add", "/etc/passwd"), ("git", "log", "--exec-path"), ("git", "status", "--git-dir=/x"),
                      ("git", "status", "--work-tree=/x"), ("git", "push"), ("git", "config", "x", "y"), ("git", "reset", "--hard")):
+            self.refused(*argv)
+
+    def test_a_name_is_never_a_path_and_the_owners_confirmation_is_not_offered(self):
+        for argv in (("intake", "notes", "--project", "Acme Review", "--thread", "../../../../Personal/Home/Threads/Move"),
+                     ("scaffold", "project", "--zone", "Work", "--name", "../Personal/X"),
+                     ("scaffold", "project", "--zone", "Work", "--name", "Fine", "--thread", "a/b"),
+                     ("scaffold", "thread", "--zone", "Work", "--project", "Acme Review", "--name", ".hidden"),
+                     ("intake", "file-conversation", "--file", "Inbox/x.md", "--confirmed"),
+                     ("intake", "file-to-project", "--file", "Inbox/x.md", "--project", "Acme Review", "--confirmed")):
             self.refused(*argv)
 
     def test_git_that_stays_in_the_zone_is_planned_with_the_zones_repository(self):

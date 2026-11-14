@@ -223,12 +223,14 @@ class TestWhatANoteWarrants(ProcessCase):
         shown = {it[0]["id"]: {"todo": []}}
         text = json.dumps({"items": [{"id": it[0]["id"], "class": "decision", "changes": [
             {"kind": "next_action", "text": "See [[Personal/Home Move/Home Move|the plan]] and [x](https://example.com/a)"},
-            {"kind": "decision", "text": "[[]]"}]}]})
+            {"kind": "decision", "text": "[[]]"},
+            {"kind": "keep_in_mind", "text": "[a][[(http://x) and []][x]] and []]]("}]}]})
         [change, *rest] = self.pn.parse_judgments(text, it, shown)[it[0]["id"]]["changes"]
-        for part in ("[[", "]]", "]("):
-            self.assertNotIn(part, change["text"])
+        for c in [change] + rest:
+            for part in ("[[", "]]", "]("):
+                self.assertNotIn(part, c["text"])                # a mark removed never leaves the parts of another
         self.assertIn("Home Move", change["text"])
-        self.assertEqual([], rest)                           # a change that is only link marks is empty and dropped
+        self.assertEqual(1, len(rest))                       # a change that is only link marks is empty and dropped
 
     def test_a_failed_call_files_nothing_and_the_note_waits(self):
         self.drop_note()

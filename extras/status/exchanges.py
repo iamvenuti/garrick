@@ -135,6 +135,7 @@ def new(zone: Optional[str], project: Optional[str], thread: Optional[str], said
 
 
 def _new(zone, project, thread, said, now, more) -> dict:
+    sweep(now)                                         # a receiver that runs for weeks drops old exchanges as it goes
     data = load()
     ex = {"id": "tg-" + secrets.token_hex(4), "zone": zone, "project": project, "thread": thread, "said": said,
           "created": now, "touched": now, "session": None, "started": None, "ended": None, "tokens": 0, "closed": None,

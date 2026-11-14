@@ -928,6 +928,9 @@ class JobExtrasTest(FakeAssistants):
                 "Error: request failed with key abcdefghij0123456789",
                 "Error: request failed with sk-ab12",
                 "Error: request failed with xoxb",
+                "Error: login failed, password hunter2",
+                "Error: invalid token abc123",
+                "Error: Bearer q1w2e3 was refused",
         )):
             name = "sweep%d" % n
             self.job(name, "--", sys.executable, "-c", "import sys; print(%r); sys.exit(4)" % line)

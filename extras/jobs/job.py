@@ -814,7 +814,7 @@ def job_title(name: str, argument: Optional[str] = None) -> str:
 REASON_MAX = 80
 _ERROR_LINE = re.compile(r"(?i)\b(\w*error|\w*exception|errno|failed|failure|fatal|traceback|exception|denied|refused|timed out|"
                          r"could not|couldn't|cannot|can't|unable to|no such|not found|not signed in)\b")
-_NOT_A_REASON = re.compile(r"[/\\~]|[A-Za-z0-9_+=.-]{20,}|sk-|ghp_|gho_|github_pat_|xox|AKIA|AIza|-----BEGIN")
+_NOT_A_REASON = re.compile(r"[/\\~]|[A-Za-z0-9_+=.-]{20,}|sk-|ghp_|gho_|github_pat_|xox|AKIA|AIza|-----BEGIN|(?i:password|passwd|passphrase|secret|token|api[ _-]?key|bearer|authorization|credential)")
 
 
 def words_span(seconds: float) -> str:

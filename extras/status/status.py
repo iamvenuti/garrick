@@ -3835,7 +3835,7 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
         return new if new and e["ts"] < cut else name
     by = {}
     for e in entries:
-        j = by.setdefault(whose(e), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "turns": []})
+        j = by.setdefault(whose(e), {"calls": 0, "cost": 0.0, "failed": 0, "refused": 0, "denied": set(), "denied_n": {}, "turns": []})
         if e.get("refused"):
             j["refused"] += 1
             continue
@@ -3844,6 +3844,8 @@ def ledger(agent, folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict
         # A request ended with Ask's Stop is billed with exit 1, but it did not fail (#294).
         j["failed"] += 1 if e.get("exit") and e.get("subtype") != "stopped" else 0
         j["denied"] |= set(e.get("denied") or [])
+        for t in set(e.get("denied") or []):           # in how many of the job's calls each tool was refused (#568)
+            j["denied_n"][t] = j["denied_n"].get(t, 0) + 1
         if isinstance(e.get("turns"), (int, float)):
             j["turns"].append(e["turns"])
     per_day: Dict[dt.date, list] = {}
@@ -5574,7 +5576,7 @@ summary{list-style:none;cursor:pointer}summary::-webkit-details-marker{display:n
 .chev{width:16px;height:16px;flex:none;color:var(--muted);transition:transform .15s}details[open]>summary .chev{transform:rotate(90deg)}
 .body{padding:0 16px 16px}.muted{color:var(--muted)}.ink2{color:var(--ink2)}.num{font-variant-numeric:tabular-nums}
 .row{display:grid;align-items:center;gap:12px;padding:8px 2px;border-top:1px solid var(--grid)}.rows>.row:first-child{border-top:0}
-.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px 300px}.jobs .row .status{min-width:0;overflow:hidden}.jobs .status .say{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jobs .row{grid-template-columns:18px minmax(160px,1fr) 180px 86px 300px}.jobs .row .status{min-width:0;overflow:hidden}.calls .rts{white-space:normal;overflow-wrap:anywhere;min-width:0}.calls .rt{display:flex;align-items:flex-start;gap:6px;color:var(--ink2)}.calls .rt svg{width:14px;height:14px;flex:none;margin-top:2px}.calls .rt.deny{color:var(--critical)}.jobs .status .say{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .jgroup h3{margin:12px 0 2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted)}.jgroup:first-child h3{margin-top:0}.jgroup>h3+.row{border-top:0}
 .jname{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:left}.jname:hover{color:var(--accent)}
 .jobs .name small{overflow:hidden;text-overflow:ellipsis}.jobs .name small.about{color:var(--ink2)}
@@ -8044,20 +8046,32 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         m += ('<div class="m" data-tip="What one Claude call may spend before it is stopped: GARRICK_MAX_CALL_USD">'
                '<span class="ink2">Per call</span><span class="num">%s</span></div>' % ("$%g max" % L["budget"] if L["budget"] else "no cap"))
 
-        def refused(tools):
-            """A refused tool the deny list names is red; one no allow rule named is amber."""
-            return "".join('<span class="chip" title="%s">%s%s</span> ' % (
-                "On the deny list" if denied_by_list(t, L["deny"]) else "Not allowed for this job",
-                pill("critical" if denied_by_list(t, L["deny"]) else "warning"), E(t))
-                for t in sorted(tools)) or '<span class="muted">none</span>'
-        trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td class="r">%s</td><td>%s</td>'
-                      '<td class="r">%d</td><td class="r">%d</td></tr>'
+        def short_tool(t):
+            """`mcp__plaud__get_transcript` reads `plaud get_transcript`; any other name as it is."""
+            parts = t.split("__", 2)
+            return "%s %s" % (parts[1], parts[2]) if len(parts) == 3 and parts[0] == "mcp" and parts[1] and parts[2] else t
+
+        def refused(d):
+            """One line of plain text for each refused tool: its name, in how many of the job's calls, and why.
+            The deny list alone is red, with a line icon so the colour is never alone (#568)."""
+            lines = []
+            for t in sorted(d["denied"]):
+                listed = denied_by_list(t, L["deny"])
+                n = d.get("denied_n", {}).get(t)
+                icon = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" '
+                        'stroke-linecap="round" stroke-linejoin="round">%s</svg>' % _PILL_PATHS["alert"]) if listed else ""
+                said = [short_tool(t)] + (["%d of %d calls" % (n, d["calls"])] if n else []) + [
+                    "on the deny list" if listed else "not allowed for this job"]
+                lines.append('<div class="rt%s" title="%s">%s<span>%s</span></div>' % (" deny" if listed else "", E(t), icon, E(" \u00b7 ".join(said))))
+            return "".join(lines) or '<span class="muted">none</span>'
+        trs = "".join('<tr data-ok="%d"><td>%s</td><td class="r">%d</td><td class="r">$%.2f</td><td class="r">%s</td>'
+                      '<td class="r">%d</td><td class="r">%d</td><td class="rts">%s</td></tr>'
                       % (0 if d["denied"] or d["failed"] or d["refused"] else 1, E(job), d["calls"], d["cost"],
-                         "%.1f" % (sum(d["turns"]) / len(d["turns"])) if d["turns"] else "–", refused(d["denied"]), d["failed"], d["refused"])
+                         "%.1f" % (sum(d["turns"]) / len(d["turns"])) if d["turns"] else "–", d["failed"], d["refused"], refused(d))
                       for job, d in sorted(L["by"].items(), key=lambda kv: (-kv[1]["cost"], kv[0])))
-        table = ('<div class="scroll"><table><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th>'
-                 '<th class="r" title="Turns per call, on average">Turns</th><th>Refused tools</th>'
-                 '<th class="r">Failed</th><th class="r">Capped</th></tr></thead><tbody>%s</tbody></table></div>' % trs) if trs else '<p class="muted">No calls yet.</p>'
+        table = ('<div class="scroll"><table class="calls"><thead><tr><th>Job</th><th class="r">Calls</th><th class="r">Cost</th>'
+                 '<th class="r" title="Turns per call, on average">Turns</th><th class="r">Failed</th><th class="r">Capped</th>'
+                 '<th>Refused tools</th></tr></thead><tbody>%s</tbody></table></div>' % trs) if trs else '<p class="muted">No calls yet.</p>'
         calls_card = card("calls", "Assistant calls", "",
                           '<div class="meters">%s</div>%s<div style="margin-top:14px">%s</div>' % (m, cost_chart(L), table))
 

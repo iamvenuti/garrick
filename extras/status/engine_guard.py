@@ -102,6 +102,7 @@ def bash_ok(command) -> bool:
         return False
     lex = shlex.shlex(command, posix=True, punctuation_chars=True)
     lex.whitespace_split = True
+    lex.commenters = ""                                 # bash reads "x#;" as x# then ;, so this reader must too
     tokens = list(lex)
     if any(t and set(t) <= set(";&|<>()") for t in tokens):
         return False
@@ -115,7 +116,8 @@ def decide(event: dict, ws: str, zone: str):
         if bash_ok((event.get("tool_input") or {}).get("command")):
             return None
         return _deny("Refused: a command here is one call of the engine's own wrapper (engine_cmd.py), alone on its line, "
-                     "with no pipe, redirect, substitution or second command.")
+                     "with no pipe, redirect, substitution or second command, and none of $ ~ * ? [ ] { } \\ ` in it, "
+                     "even in quotes: reword a title or message without them.")
     if event.get("tool_name") not in WRITES:
         return None
     root = os.path.realpath(ws)

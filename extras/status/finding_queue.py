@@ -4,9 +4,9 @@
 status.py builds the queue at page build, for every scope, from the one-pass forecast (the latest Nurture record's
 standing findings), so the number on a scope's line on the card and the number in its queue are one list's. A kind
 with plain wording says one short sentence and one line on why it matters, with no path, setting name or command in
-either; those stay in *Details*, closed. Every other kind shows the check's own text under a plain label, with
-*Something else* as its only answer. PLAIN_KINDS lists the kinds that have plain wording, and a test holds the list,
-so a new kind cannot get one silently.
+either; those stay in *Details*, closed. Every other kind (`other`) says one generic sentence that names the file and its place,
+with the check's own text under *Details* and two answers, *Ask my assistant to fix it* and *Not now* (#550). PLAIN_KINDS lists the
+kinds that have wording of their own, and a test holds the list, so a new kind cannot get one silently.
 
 Each answer names the action it takes, from the fixed table in ANSWERS:
 
@@ -76,7 +76,7 @@ NO_FREE_FOR = ()          # every question keeps the free-text field, last
 # The one table of finding kinds (#550). A kind is `automatic` (Garrick does it without asking; the user hears of it only when it
 # fails) or `question` (a reasonable user could answer two ways and Garrick cannot tell which). The test for a kind: would a user
 # ever say no? If not, it is not asked. A kind in neither class fails test_finding_queue, and so does a `question` kind whose
-# only answer is *Something else*, except the kinds in FREE_ONLY, which have no plain wording yet and stay as they are today.
+# only answer is *Something else*: there is no exception.
 AUTOMATIC, QUESTION = "automatic", "question"
 KIND_CLASS = {
     "wall": QUESTION, "note-long": QUESTION, "resume-long": QUESTION, "todo-long": QUESTION, "meeting-long": QUESTION,
@@ -84,7 +84,6 @@ KIND_CLASS = {
     "wiki-question": QUESTION, "verdict": QUESTION, "decision-review": QUESTION, "answers-held": QUESTION,
     "other": QUESTION,
 }
-FREE_ONLY = ("other",)    # the check's own text under a plain label, *Something else* alone: no plain wording yet (listed in the release notes)
 
 
 def A(id_: str, label: str, does: str, action: str) -> dict:
@@ -115,6 +114,11 @@ ANSWERS: Dict[str, List[dict]] = {
                    A("later", "Not now", "Ask again in a week.", "later")],
     "hooks-blocked": [A("add-check", "Add the wall check to my hook", "Your assistant adds one line to your hook and shows you the change.", "handoff")],
 }
+# The kind with no wording of its own: a finding of a check Garrick has no plain sentence for yet. The assistant looks at it, or it waits.
+OTHER = "other"
+ANSWERS_OTHER: List[dict] = [A("fix-now", "Ask my assistant to fix it", "Your assistant looks at it and shows you the change.", "handoff"),
+                             A("later", "Not now", "Ask again in a week.", "later")]
+OTHER_WHY = "Garrick has no plain wording for this check yet. Your assistant can look at it with you, and nothing changes until you say yes."
 # What a long note is asked when its plan moves nothing: no Move and no Show me, the handoff first (#539).
 ANSWERS_NO_MOVE: Dict[str, List[dict]] = {
     "note-long": [A("split", "Split the long sections into their own notes",
@@ -156,7 +160,7 @@ ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
 # The wiki's own kinds (#542) are put off, and nothing else, through the same verb: the question's file stays as it is.
 ASKED_KINDS = ("wiki-question", "verdict", "decision-review", "answers-held")
-VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",), "answers-held": ("later",)})
+VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",), "answers-held": ("later",), OTHER: ("later",)})
 
 NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
 RESUME_RE = re.compile(r"Resume here block has (\d+) words, over the \d+ of `resume-max-words`")
@@ -231,10 +235,17 @@ def about(n: int) -> str:
     return "about {:,}".format(int(round(n / step) * step))
 
 
-def later_key(kind: str, path: str) -> str:
+def later_key(kind: str, path: str, which: str = "") -> str:
     """A finding's key in the Not now file: a hash of its plain kind and its path, so the file holds no path and no
-    text of any zone."""
-    return hashlib.sha1(("%s\0%s" % (kind, path)).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    text of any zone. `which` (kind other only, see which_other) tells two findings of one path apart; a key made
+    without it is the one an older page wrote, and it still hides every finding of that path."""
+    return hashlib.sha1(("%s\0%s%s" % (kind, path, "\0" + which if which else "")).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+
+
+def which_other(item: dict) -> str:
+    """Six hex digits of the finding's own check and text: the Not now key of a kind other finding names this one finding."""
+    text = "%s\0%s" % (item.get("check") or "", item.get("message") or item.get("line") or "")
+    return hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:6]
 
 
 def later_path(ws) -> Path:
@@ -431,6 +442,28 @@ def said(plain: str, item: dict) -> Tuple[str, str]:
     raise KeyError(plain)
 
 
+def file_place(path: str) -> Tuple[str, str]:
+    """(the file's name, where it is in words) for a finding's path; the name is "" when the path is no file (no extension on its
+    last part). Never a path or a command."""
+    last = path.rsplit("/", 1)[-1]
+    name = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", last) if re.search(r"\.[A-Za-z0-9]{1,5}$", last) else ""
+    return name if name and not re.search(r"[`<>|$]", name) else "", place(path)
+
+
+def other_sentence(path: str) -> str:
+    name, where = file_place(path)
+    if name:
+        return "A check found something in “%s” in %s." % (name, where)
+    return "A check found something in %s." % where
+
+
+def other_phrase(item: dict) -> str:
+    """The request *Ask my assistant to fix it* hands over: the file's name, its place and the kind's plain sentence, and
+    never the check's own text, which may name a file of another place. The assistant reads the check itself."""
+    return ("%s Look at it, fix it if the fix is plain, and show me the change before anything is committed."
+            % other_sentence(str(item["path"])))
+
+
 def handoff_phrase(plain: str, answer: str, item: dict) -> str:
     """The request an answer that needs judgment hands to the assistant. It carries the finding's kind, its path and
     its zones, and never the check's wording: a wall finding's request names the file and the two zones and nothing
@@ -495,11 +528,21 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
     details = str(item.get("message") or item.get("line") or "")
     if plain == "wall" and not item.get("listed"):
         return unlisted_wall(item, scope)
-    q = {"id": plain or "other", "scope": scope, "path": path, "key": later_key(plain or "other", path), "details": details,
+    which = which_other(item) if plain not in PLAIN_KINDS else ""
+    q = {"id": plain or "other", "scope": scope, "path": path, "key": later_key(plain or "other", path, which), "details": details,
          "recommended": "", "other": wall_other(item) if plain == "wall" else ""}
     if plain not in PLAIN_KINDS:
-        q.update(tag=str(item.get("title") or "Check finding"), sentence=re.sub(r"^%s: " % re.escape(path), "", details), why="", answers=[],
-                 free=free_prefix("", item))
+        answers = []
+        for a in ANSWERS_OTHER:
+            a = dict(a)
+            if a["action"] == "handoff":
+                a["phrase"] = other_phrase(item)
+            else:
+                # the executor's request has three fields and no more: the finding's own mark rides in the answer, `later-<which>`
+                a["req"] = {"verb": "finding", "kind": OTHER, "path": path, "answer": "later-" + which}
+            answers.append(a)
+        q.update(tag=str(item.get("title") or "Check finding"), sentence=other_sentence(path), why=OTHER_WHY, answers=answers,
+                 free=free_prefix("", item), recommended=answers[0]["id"])
         return q
     sentence, why = said(plain, item)
     table = ANSWERS[plain]
@@ -587,8 +630,10 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) ->
             if not hooks_blocked(ws, str(item["path"])):
                 continue            # automatic: the update and the nightly run install it; it is never asked
             plain = "hooks-blocked"
-        if plain not in NEVER_LATER and plain in PLAIN_KINDS and later_key(plain, str(item["path"])) in hidden:
+        if plain not in NEVER_LATER and (plain in PLAIN_KINDS or not plain) and later_key(plain or OTHER, str(item["path"])) in hidden:
             continue
+        if plain not in PLAIN_KINDS and later_key(plain or OTHER, str(item["path"]), which_other(item)) in hidden:
+            continue                # this finding was put off; an older key, made with no `which`, hid them all and still does
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None
         out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"]), plan))
     settle(out)
@@ -832,26 +877,26 @@ def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str], toda
 QUEUE_CSS = r"""
 /* The queue: one finding at a time, in the page's own tokens */
 dialog.queue{width:min(620px,calc(100vw - 32px))}
-.queue .prog{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:13px;margin:0 0 12px}
+.queue .prog{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:var(--fs-meta);margin:0 0 12px}
 .queue .bar{height:4px;background:var(--line);border-radius:4px;flex:1;margin:0 12px}.queue .bar i{display:block;height:100%;width:0;background:var(--accent);border-radius:4px}
-.queue .q{padding:4px 0}.queue .tag{display:inline-block;font-size:12px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
-.queue .tag.private{color:var(--critical)}.queue .qs{margin:0 0 4px;font-weight:600}.queue .why{color:var(--muted);font-size:13.5px;margin:0 0 12px}
+.queue .q{padding:4px 0}.queue .tag{display:inline-block;font-size:var(--fs-meta);font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.queue .tag.private{color:var(--critical)}.queue .qs{margin:0 0 4px;font-weight:600}.queue .why{color:var(--muted);font-size:var(--fs-sub);margin:0 0 12px}
 .queue .opts{display:flex;flex-direction:column;gap:7px}
-.queue .opt{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:10px 12px;border-radius:10px;width:100%;font:inherit;font-size:13.5px;color:var(--ink);background:var(--surface);border:1px solid var(--line);cursor:pointer}
-.queue .opt .n{flex:none;width:22px;height:22px;border-radius:6px;background:var(--raise);color:var(--muted);font-size:12px;display:grid;place-items:center;font-weight:600}
-.queue .opt small{display:block;color:var(--muted);font-size:12.5px}.queue .opt.rec{border-color:var(--accent);background:var(--wash)}
+.queue .opt{display:flex;gap:10px;align-items:flex-start;text-align:left;padding:10px 12px;border-radius:10px;width:100%;font:inherit;font-size:var(--fs-sub);color:var(--ink);background:var(--surface);border:1px solid var(--line);cursor:pointer}
+.queue .opt .n{flex:none;width:22px;height:22px;border-radius:6px;background:var(--raise);color:var(--muted);font-size:var(--fs-meta);display:grid;place-items:center;font-weight:600}
+.queue .opt small{display:block;color:var(--muted);font-size:var(--fs-meta)}.queue .opt.rec{border-color:var(--accent);background:var(--wash)}
 .queue .opt.rec .n{background:var(--accent);color:#fff}.queue .recd{font-weight:600;color:var(--ink2)}
 .queue .opt.other{cursor:text}.queue .opt.other input{flex:1;border:0;background:transparent;color:var(--ink);font:inherit;outline:none}
 .queue .opt:focus-visible,.queue .opt.other:focus-within{outline:2px solid var(--accent);outline-offset:1px}
-.queue .qsay{margin:8px 0 0}.queue .qsay.bad{color:var(--critical)}.queue .qdet{margin-top:10px;font-size:13px;color:var(--muted)}
-.queue .qdet code,.queue .qdet pre{display:block;white-space:pre-wrap;margin:6px 0 0;font-size:12px;background:var(--raise);padding:8px;border-radius:6px}
-.queue .done{text-align:center;padding:24px 8px}.queue .done b{display:block;font-size:17px;margin-bottom:4px}.queue .qnext{margin-top:14px}
+.queue .qsay{margin:8px 0 0}.queue .qsay.bad{color:var(--critical)}.queue .qdet{margin-top:10px;font-size:var(--fs-meta);color:var(--muted)}
+.queue .qdet code,.queue .qdet pre{display:block;white-space:pre-wrap;margin:6px 0 0;font-size:var(--fs-meta);background:var(--raise);padding:8px;border-radius:6px}
+.queue .done{text-align:center;padding:24px 8px}.queue .done b{display:block;font-size:var(--fs-h3);margin-bottom:4px}.queue .qnext{margin-top:14px}
 .nohost .queue .opt.tacts{display:none}.queue .qweb{display:none;margin:8px 0 0}.nohost .queue .qweb{display:block}
 .queue .opt:disabled{opacity:.55;cursor:not-allowed}.queue .opt:not(.rec) .recd{display:none}.queue .qskip{margin-top:8px}
 .queue .opt.later{cursor:default}.queue .lrow{display:flex;gap:8px;align-items:center;margin-top:6px}
-.queue .lrow input{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:3px 8px}
+.queue .lrow input{font:inherit;font-size:var(--fs-meta);color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:3px 8px}
 .queue .q[data-kind="wall"]:not(.looked) .opt[data-needlook]{display:none}.nohost .queue .q[data-kind="wall"] .opt[data-needlook]{display:flex}
-.queue .qtexts{margin:10px 0 0}.queue .qtext{background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 8px;font-size:13px;overflow-wrap:anywhere}
+.queue .qtexts{margin:10px 0 0}.queue .qtext{background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 8px;font-size:var(--fs-meta);overflow-wrap:anywhere}
 .queue .qtext small{display:block;color:var(--muted);margin-bottom:3px}.queue .qtext mark{background:var(--wash);color:var(--ink);font-weight:600;border-radius:3px}
 .queue .opt[hidden],.queue .qskip[hidden],.queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
 """
@@ -931,7 +976,7 @@ cur=s;tally=fresh();gone={};notes={};skip={};refused={};pend=null;if(!dlg.open)d
    answer sent just before the reload is counted from what the new page shows */
 function restore(){var r=null;try{r=JSON.parse(st.get(KEY)||'null')}catch(e){}if(!r||Date.now()-r.t>9e5){st.del(KEY);return}
 taken=r.taken||{};var s=r.scope&&all().filter(function(x){return x.dataset.scope===r.scope})[0];
-if(!s){if(Object.keys(taken).length)st.set(KEY,JSON.stringify({taken:taken,t:Date.now()}));else st.del(KEY);return}
+if(!s){workIn(true);return}
 cur=s;gone=r.gone||{};tally=Object.assign(fresh(),r.tally||{});notes=r.notes||{};skip={};refused={};pend=null;
 if(r.done){dlg.showModal();show(true);return}
 if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.gk===r.pend.key});
@@ -973,9 +1018,12 @@ if(e.key==='Enter'){if(e.target.closest&&e.target.closest('summary,a,input,texta
 if(/^[1-4]$/.test(e.key)){var opts=[].filter.call(q.querySelectorAll('.opt'),function(x){return!x.hidden&&x.getClientRects().length}),o=opts[+e.key-1];if(!o)return;e.preventDefault();
 if(o.classList.contains('other')||o.classList.contains('later')){o.querySelector('input').focus()}else o.click()}});
 /* Closing the queue works in the answers it took (#550): one request that names the place, to the default assistant, for each place that took
-   an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none. */
-dlg.addEventListener('close',function(){var sent=taken;taken={};st.del(KEY);
-Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;handoff(t.work)})});
+   an answer since the last close. The count is cleared as the request goes, so a second close sends none, and a queue that took none sends none.
+   A reload that leaves no section for a place whose answers were taken sends the request when the page loads (restore), once: the count is cleared
+   as it goes, as at a close. The kept count still goes after 15 minutes. */
+function workIn(later){var sent=taken;taken={};st.del(KEY);
+var go=function(){Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;handoff(t.work)})};if(later)setTimeout(go,0);else go()}
+dlg.addEventListener('close',function(){workIn(false)});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}

@@ -360,11 +360,11 @@ def counts_of(data: dict) -> dict:
 
 
 def tab_button(dot: str = "") -> str:
-    """The tab. Its number is the count of the one place the card's Zone menu shows, set by the
-    card's own script: a number made here would add up zones. `dot` is the
-    title of a red dot."""
+    """The tab. Its one badge is a number, the count of the one place the card's Zone menu shows, set by the
+    card's own script (with its aria-label and title): a number made here would add up zones. Built hidden,
+    since it is 0 until a place is chosen. `dot` is the title of a red dot."""
     mark = '<span class="dot critical" title="%s"></span>' % html.escape(dot, quote=True) if dot else ""
-    return '<button type="button" role="tab" data-tab="questions">Context<span class="n" id="qp-tab-n"></span>%s</button>' % mark
+    return '<button type="button" role="tab" data-tab="questions">Context<span class="n warn" id="qp-tab-n" hidden></span>%s</button>' % mark
 
 
 CX_CSS = r"""

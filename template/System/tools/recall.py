@@ -1606,7 +1606,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     e = sub.add_parser("extract", help="write new sessions to .sessions/ folders")
     e.add_argument("--claude", help="Claude Code's projects folder")
     e.add_argument("--codex", help="Codex's sessions folder")
-    sub.add_parser("nightly", help="extract new sessions, then bring every index up to date")
+    e.add_argument("--limit", type=float, help="seconds the extract may take before it stops (partial if it wrote any)")
+    n = sub.add_parser("nightly", help="extract new sessions, then bring every index up to date")
+    n.add_argument("--limit", type=float, help="seconds the extract may take before it stops (partial if it wrote any)")
     args = ap.parse_args(argv)
     try:
         root = Path(args.root).resolve() if args.root else workspace_root()
@@ -1620,13 +1622,17 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     if args.cmd == "nightly":
         import recall_sessions
-        print(recall_sessions.extract_all(root))
+        said, code = recall_sessions.extract_run(root, limit=args.limit)
+        print(said)
+        if code:
+            return code                  # stopped at its limit with nothing written: a failure, and no time left to build
         print("built: " + ", ".join(build(root)))
         return 0
     if args.cmd == "extract":
         import recall_sessions
-        print(recall_sessions.extract_all(root, args.claude, args.codex))
-        return 0
+        said, code = recall_sessions.extract_run(root, args.claude, args.codex, args.limit)
+        print(said)
+        return code
     held, problem = cli_scope(root, args.scope)
     if args.cmd == "stats":
         if held is not None:

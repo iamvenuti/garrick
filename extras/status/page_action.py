@@ -83,7 +83,9 @@ zone's repository, as the skills would:
                 written by the cmux extra's desk.py into System/desk.json
     release-check  Settings › About Garrick's Check for updates (#410):
                 release.py latest --now, the click being the consent for that
-                one request; says what it found and whether this workspace
+                one request, not for the update: the page offers a newer release
+                with two buttons and posts release-update only on Update now (#557).
+                Says what it found and whether this workspace
                 may be updated. It changes no workspace file but the kept answer
     release-update  the update to the release the check found, after it:
                 release.py update --tag <that release> --apply (it never says yes
@@ -1393,7 +1395,8 @@ def release_words(state: dict) -> dict:
     if state.get("failed"):
         out["line"] = "Could not ask GitHub (%s). Nothing was changed." % str(state["failed"]).rstrip(".")
     elif state.get("newer"):
-        out.update(state="newer", line="Garrick %s is out; this workspace runs %s." % (state["latest"], state["running"]))
+        out.update(state="newer", line="Garrick %s is out; this workspace runs %s." % (state["latest"], state["running"]),
+                   url=release_notes_url(state))
     elif state.get("why"):
         out.update(state="current" if state.get("running") else "unknown", line="%s." % state["why"])
     else:
@@ -2166,9 +2169,29 @@ def walls_findings(tool, ws: Path, rel: str) -> tuple:
     return got[0], got[1]
 
 
-def walls_other_files(ws: Path, message: str) -> list:
+def walls_meeting_pair(ws: Path, name: str, tool) -> list:
+    """The page of the Meetings wiki that the wall check calls `name`, and its raw record, as the check's own owner list
+    names them (discover() and meeting_raws() of the workspace's check.py), and nothing else. A name that two pages
+    share, a page the check does not list, a missing check or more than one raw record is []: the page shows nothing
+    rather than words of a file the finding did not name."""
+    if tool is None or not all(callable(getattr(tool, n, None)) for n in ("discover", "meeting_raws")):
+        return []
+    try:
+        view = tool.discover(ws)
+        pages = [(p, fm) for p, fm in view.meetings.items() if p.stem == name]
+        if len(pages) != 1:
+            return []
+        page, fm = pages[0]
+        raws = sorted(set(tool.meeting_raws(view, page, fm)))
+    except Exception:
+        return []
+    return [page] + raws if len(raws) <= 1 else []
+
+
+def walls_other_files(ws: Path, message: str, tool=None) -> list:
     """The file(s) a wording finding names as the other side, from the check's text: a path, or the name of a page of
-    the Meetings wiki, which can be a page and its raw record. Only files of this workspace, never a link."""
+    the Meetings wiki, which is that page and its raw record as the wall check names them, and nothing else with the same
+    name. Only files of this workspace, never a link."""
     m = WALL_OTHER_PATH_RE.search(message) or WALL_OTHER_FROM_RE.search(message)
     if not m:
         return []
@@ -2177,10 +2200,8 @@ def walls_other_files(ws: Path, message: str) -> list:
     if "/" in name:
         found = [ws / name]
     else:
-        wiki = ws / "Wikis" / "Meetings"
-        for here, dirs, files in os.walk(wiki):
-            dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not (Path(here) / d).is_symlink())
-            found += [Path(here) / f for f in sorted(files) if Path(f).stem == name and not f.startswith(".")]
+        wiki = (ws / "Wikis" / "Meetings").resolve()
+        found = [p for p in walls_meeting_pair(ws, name, tool or walls_allowed_tool(ws)) if wiki in p.resolve().parents]
     out = []
     for p in found:
         try:
@@ -2282,7 +2303,7 @@ def walls_look(ws: Path, req: dict) -> dict:
     if blob is None:
         raise Refused("the file is not known to git yet, so it cannot be shown for a decision")
     mine = tool.read_text(ws / rel)
-    others = walls_other_files(ws, hit.message)
+    others = walls_other_files(ws, hit.message, tool)
     if mine is None or not others:
         raise Refused("Garrick could not tell which other file this matches, so it shows nothing")
     mine = tool.body_of(tool.transcript_text(ws / rel, mine))
@@ -5164,11 +5185,14 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     kind, answer = req.get("kind"), req.get("answer")
     if not isinstance(kind, str) or kind not in fq.VERB_ANSWERS:
         raise Refused("not a kind of finding Garrick answers")
+    which = ""
+    if kind == fq.OTHER and isinstance(answer, str) and re.fullmatch(r"later-[0-9a-f]{6}", answer):
+        answer, which = "later", answer[6:]        # this one finding is put off, not every finding of the file
     if not isinstance(answer, str) or answer not in fq.VERB_ANSWERS[kind]:
         raise Refused("not an answer Garrick offers for this finding")
     rel, _ = finding_path(ws, req)
     if answer == "later":
-        until = fq.later_put(ws, fq.later_key(kind, rel), today)
+        until = fq.later_put(ws, fq.later_key(kind, rel, which), today)
         return "Put off until %s" % dt.date.fromisoformat(until).strftime("%a %d %b")
     if answer == "preview":
         return finding_preview(ws, rel)

@@ -8,6 +8,7 @@ what they were asked and answer like the real ones. Invented names only.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -739,7 +740,7 @@ class NoticeTest(FakeAssistants):
         state = json.loads((self.jobs / "sweep.alert.json").read_text())
         self.assertEqual(6, state["exit"])
         beat = self.beat("sweep")
-        self.assertEqual((False, False, "needs a connector claude does not have; see the log"),
+        self.assertEqual((False, False, "it needs a connector"),
                          (beat["ok"], beat["quiet"], beat["reason"]))
         self.assertTrue(beat["failing_since"])
         self.assertEqual(0, self.job("sweep", 0).returncode)
@@ -809,7 +810,7 @@ class NoticeTest(FakeAssistants):
         # A job that exits 4 or 124 itself did not fail job.py's sign-in check or meet its watchdog.
         for code in (4, 124, 127):
             self.assertEqual(code, self.job("sweep%d" % code, code).returncode)
-            self.assertRegex(self.beat("sweep%d" % code)["reason"], r"^exited %d after \d+s$" % code)
+            self.assertEqual("it exited with code %d" % code, self.beat("sweep%d" % code)["reason"])
             self.assertIn("sweep%d exited %d after" % (code, code), self.notices()[-1]["message"])
 
     def test_a_command_killed_by_a_signal_exits_as_a_shell_says(self):
@@ -887,10 +888,74 @@ class JobExtrasTest(FakeAssistants):
         self.assertEqual(0, r.returncode, r.stderr)
         beat = json.loads((self.jobs / "tidy.heartbeat.json").read_text())
         self.assertEqual({"agent", "exit", "failing_since", "finished", "finished_ts", "idle", "idle_days", "items",
-                          "job", "no_call", "ok", "quiet", "reason", "seconds", "started"}, set(beat))
+                          "job", "no_call", "ok", "quiet", "reason", "seconds", "started", "title"}, set(beat))
+        self.assertEqual("Tidy", beat["title"])
         self.assertEqual((True, 0, True, False, None), (beat["agent"], beat["exit"], beat["ok"], beat["quiet"],
                                                         beat["reason"]))
         self.assertLessEqual(beat["started"], beat["finished"])
+
+    def beat_of(self, name):
+        return json.loads((self.jobs / ("%s.heartbeat.json" % name)).read_text())
+
+    def test_the_title_comes_from_the_environment_then_the_argument_then_the_name(self):
+        """#559: GARRICK_JOB_TITLE, else --title, else the name without gr- and its hyphens, first letter up."""
+        ok = (sys.executable, "-c", "pass")
+        self.job("gr-nightly-check", "--", *ok)
+        self.assertEqual("Nightly check", self.beat_of("gr-nightly-check")["title"])
+        self.job("app-update", "--title", "App updates", "--", *ok)
+        self.assertEqual("App updates", self.beat_of("app-update")["title"])
+        self.job("app-update", "--title", "App updates", "--", *ok, env={"GARRICK_JOB_TITLE": "Updates for the app"})
+        self.assertEqual("Updates for the app", self.beat_of("app-update")["title"])
+
+    def test_the_reason_is_the_last_error_line_of_the_log_in_plain_words(self):
+        r = self.job("sweep", "--", sys.executable, "-c", "import sys; print('starting'); print('ValueError: the Cedar list is empty'); sys.exit(1)")
+        self.assertEqual(1, r.returncode)
+        self.assertEqual("The Cedar list is empty", self.beat_of("sweep")["reason"])
+
+    def test_the_reason_is_cut_to_80_characters(self):
+        line = "Error: could not read the Acme list because " + "because " * 20
+        self.job("sweep", "--", sys.executable, "-c", "import sys; print(%r); sys.exit(1)" % line)
+        reason = self.beat_of("sweep")["reason"]
+        self.assertLessEqual(len(reason), 80)
+        self.assertTrue(reason.startswith("Could not read the Acme list"), reason)
+
+    def test_a_line_that_could_hold_a_path_or_a_secret_is_never_the_reason(self):
+        """Fail closed: a path (with a space too), a ~, a 20-character key, an sk- key: the exit code is the reason."""
+        for n, line in enumerate((
+                "Error: could not read /Users/jo/Acme Files/notes.md",
+                "Error: could not read ~/Acme/notes",
+                "Error: could not read C:\\Acme\\notes.md",
+                "Error: request failed with key abcdefghij0123456789",
+                "Error: request failed with sk-ab12",
+                "Error: request failed with xoxb",
+                "Error: login failed, password hunter2",
+                "Error: invalid token abc123",
+                "Error: Bearer q1w2e3 was refused",
+        )):
+            name = "sweep%d" % n
+            self.job(name, "--", sys.executable, "-c", "import sys; print(%r); sys.exit(4)" % line)
+            self.assertEqual("it exited with code 4", self.beat_of(name)["reason"], line)
+
+    def test_an_agent_job_never_takes_its_reason_from_its_log(self):
+        log = self.tmp / "agent.log"
+        log.write_text("starting\nError: the Cedar list is empty\n", encoding="utf-8")
+        self.assertEqual("The Cedar list is empty", job.plain_reason(1, None, 60, None, log, 0))
+        self.assertEqual("it exited with code 1", job.plain_reason(1, None, 60, None, log, 0, True))
+        self.assertEqual("it stopped after 2 minutes", job.plain_reason(1, "timeout", 120, None, log, 0, True))
+
+    def test_a_watchdog_stop_says_the_limit_in_words(self):
+        self.job("slow", "--timeout", "1", "--", sys.executable, "-c", "import time; time.sleep(30)")
+        self.assertEqual("it stopped after 1 seconds", self.beat_of("slow")["reason"])
+        self.assertEqual("1 hour", job.words_span(3600))
+        self.assertEqual("25 minutes", job.words_span(1500))
+
+    def test_a_failed_step_names_the_step(self):
+        script = self.tmp / "steps.py"
+        script.write_text("import sys\nsys.path.insert(0, %r)\nimport agent\nagent.report_steps(["
+                          "{'step': 'nurture', 'exit': 0}, {'step': 'recall', 'exit': 124}])\nsys.exit(1)\n" % str(JOBS))
+        os.environ.pop("GARRICK_STEPS_FILE", None)
+        self.job("gr-nightly", "--", sys.executable, str(script))
+        self.assertEqual("Recall timed out", self.beat_of("gr-nightly")["reason"])
 
     def test_an_agent_job_that_recorded_no_call_says_so(self):
         r = self.job("tidy", "--agent", "--cwd", str(self.tmp), "--", sys.executable, "-c", "pass")
@@ -1324,6 +1389,52 @@ class GarrickPrefixTest(FakeAssistants):
         self.assertEqual((1, "gr-backup"), (jobs["backup"]["heartbeat"]["exit"], jobs["gr-backup"]["heartbeat"]["job"]))
 
 
+class NightlyRecallStep(unittest.TestCase):
+    """#558: the recall step gives its extract a time budget shorter than the step's limit, and a partial run is not a failure."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.tmp, ignore_errors=True))
+        self.ws = build_workspace(self.tmp / "ws")
+        (self.ws / "System" / "tools").mkdir(parents=True, exist_ok=True)
+        (self.ws / "System" / "tools" / "recall.py").write_text("")
+        self.args = nightly.argparse.Namespace(scope=[], digest=False, also=[], moved=[])
+
+    def test_the_extract_stops_before_the_step_does(self):
+        cmd = next(c for step, c, why in nightly.steps(self.ws, self.args) if step == "recall")
+        self.assertEqual(["nightly", "--limit", str(nightly.LIMITS["recall"] - nightly.RECALL_BUILD)], cmd[-3:])
+        self.assertGreater(nightly.LIMITS["recall"], nightly.RECALL_BUILD)
+
+    def run_with(self, code, tail):
+        reports = []
+        only = [("recall", ["x"], "")]
+        out = io.StringIO()
+        with mock.patch.object(nightly, "steps", return_value=only), mock.patch.object(nightly, "release_check"), \
+                mock.patch.object(nightly, "run_step", return_value=(code, tail, 5.0)), \
+                mock.patch.object(nightly.agent, "report_steps", side_effect=lambda d: reports.append(json.loads(json.dumps(d)))), \
+                contextlib.redirect_stdout(out):
+            result = nightly.run_steps(self.ws, self.args)
+        return result, out.getvalue(), reports[-1]
+
+    def test_a_partial_run_is_not_a_failure_and_the_log_says_partial(self):
+        result, log, steps = self.run_with(0, ["sessions written: 40; placed nowhere: 2; partial, 40 written, the rest next night", "built: Work"])
+        self.assertEqual(0, result)
+        self.assertIn("nightly: recall exit 0 (5s), partial, 40 written, the rest next night", log)
+        self.assertIn("nightly: recall partial", log)
+        self.assertEqual("partial, 40 written", steps[0]["partial"])
+
+    def test_a_run_that_wrote_nothing_at_its_limit_still_fails(self):
+        result, log, steps = self.run_with(124, ["sessions written: 0; placed nowhere: 0; stopped at its limit with nothing written"])
+        self.assertEqual(1, result)
+        self.assertIn("nightly: recall exit 124", log)
+        self.assertNotIn("partial", log)
+
+    def test_an_ordinary_run_says_nothing_of_partial(self):
+        result, log, steps = self.run_with(0, ["sessions written: 3; placed nowhere: 0"])
+        self.assertEqual((0, "nightly: recall exit 0 (5s)"), (result, [l for l in log.splitlines() if "exit 0" in l][0]))
+        self.assertNotIn("partial", steps[0])
+
+
 class NightlyHooksStep(unittest.TestCase):
     """#550: the nightly run installs a wall check a repository lacks, and a hook of the user's own is left alone."""
 
@@ -1675,7 +1786,7 @@ class NightlyTest(FakeAssistants):
                            capture_output=True, text=True)
         self.assertEqual(2, r.returncode, r.stderr)
         beat = json.loads((self.jobs / "gr-nightly.heartbeat.json").read_text())
-        self.assertEqual("exited 2 after 0s; nightly.local (exit 2) failed", beat["reason"])
+        self.assertEqual("Nightly.local failed", beat["reason"])
         self.assertEqual(["2 links point nowhere"], beat["steps"][2]["tail"])
 
     def test_the_shipped_plist_runs_it_at_05_15_with_no_assistant(self):
@@ -1684,7 +1795,9 @@ class NightlyTest(FakeAssistants):
         self.assertEqual(["/usr/bin/python3", "/Users/<you>/Garrick/System/jobs/job.py", "gr-nightly"], args[:3])
         self.assertNotIn("--agent", args)
         self.assertEqual("3600", args[args.index("--timeout") + 1])
-        self.assertGreaterEqual(3600, sum(nightly.LIMITS.values()))
+        timeout = int(args[args.index("--timeout") + 1])
+        self.assertGreaterEqual(timeout - nightly.MARGIN, sum(nightly.LIMITS.values()))       # a margin, so a step's limit ends a slow night
+        self.assertGreaterEqual(nightly.MARGIN, 120)
         self.assertEqual("/Users/<you>/Garrick/System/jobs/nightly.py", args[args.index("--") + 2])
         self.assertIn("--digest", args)
         self.assertEqual({"Hour": 5, "Minute": 15}, plist["StartCalendarInterval"])

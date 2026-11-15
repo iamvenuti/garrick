@@ -770,6 +770,15 @@ class TestAllowedByYou(StatusCase):
         self.assertNotIn("Plan.md", work)
         self.assertIn("k.hidden=!(z==='*'||k.dataset.scope===z)", status.CONTEXT_JS)      # the card's Zone menu shows one place's line
 
+    def test_a_kept_file_with_no_zone_shows_under_all_places_only(self):
+        loose = "Notes/Loose.md"
+        write(self.root / loose, "# Loose\n")
+        self.ledger(self.entry(path=loose, id="eeeeeeeeee", blob=self.blob(loose)))
+        box = self.section(self.page())
+        self.assertIn('data-scope="" data-n="1"', box)                                     # a place of its own, with no scope
+        self.assertIn("k.hidden=!(z==='*'||k.dataset.scope===z)", status.CONTEXT_JS)       # so a chosen zone never matches it
+        self.assertIn("never under a chosen zone", Path(status.__file__).with_name("questions_panel.py").read_text(encoding="utf-8"))
+
     def test_only_the_committed_ledger_is_listed(self):
         self.ledger(self.entry(), commit=True)
         self.assertIn('id="kept-by-you"', self.page())
@@ -3984,7 +3993,7 @@ class TestMemorySettings(StatusCase):
         write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"wikis": {"Meetings": False}}}))
         off = self.section().split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
         self.assertNotIn("data-request", off)                                           # nothing would move: no button
-        self.assertIn("review(false)", status.MEMORY_JS)                                # an unsaved change hides it: the list is the saved one
+        self.assertIn("review(!changed)", status.MEMORY_JS)                             # an unsaved change hides it, an undone or saved one shows it: the list is the saved one
         self.assertNotIn("host.postMessage({act:{verb:'fade", status.MEMORY_JS)         # it never fades anything itself
 
     def test_the_kind_rules_are_inside_a_closed_advanced_with_plain_labels_and_fields_that_wrap(self):

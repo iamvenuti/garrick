@@ -193,7 +193,7 @@ const dlg=el({dataset:{folder:'/w',today:'2026-11-13'},open:false,
  addEventListener:(t,f)=>{(handlers[t]=handlers[t]||[]).push(f)},showModal(){this.open=true},close(){this.open=false;(handlers.close||[]).forEach(f=>f())},
  appendChild(b){this.last=b}});
 global.window={webkit:{messageHandlers:{garrick:{postMessage:(m)=>posted.push(m)}}}};
-if(process.argv[3]==='away'||process.argv[3]==='away-handed'||process.argv[3]==='away-dismissed')global.window.webkit=undefined;   // no host: a browser, with no assistant to hand to
+if(process.argv[3].startsWith('away'))global.window.webkit=undefined;   // no host: a browser, with no assistant to hand to
 const body=el({kids:[]});body.insertBefore=function(n){this.kids.push(n)};const checks=el({});checks.querySelector=(s)=>s===".body"?body:null;
 global.sessionStorage={getItem:(k)=>store[k]||null,setItem:(k,v)=>{store[k]=v},removeItem:(k)=>{delete store[k]}};
 global.document={getElementById:(id)=>id==='queue'?dlg:id==='checks'?checks:id==='qkept'?body.kids.filter(k=>k.id==='qkept')[0]||null:null,addEventListener:(t,f)=>{(handlers['doc'+t]=handlers['doc'+t]||[]).push(f)},
@@ -225,10 +225,15 @@ if(steps.startsWith('away')){const mode=steps;(async()=>{const tick=()=>new Prom
  const first=shown();
  handlers.close=[];handlers.docclick=[];body.kids=[];new Function(js)();await tick();      // and again: still there
  const second=shown();
- if(mode==='away-handed'||mode==='away-dismissed'){const row=body.kids.filter(k=>k.id==='qkept')[0].kids[0],btn=row.kids[mode==='away-handed'?1:2];
-  const t=el({dataset:mode==='away-handed'?{qkgo:btn['data-request']}:{qkdrop:btn['data-qkdrop']}});t.closest=(s)=>s==='[data-qkgo]'&&mode==='away-handed'?t:s==='[data-qkdrop]'&&mode==='away-dismissed'?t:null;
-  (handlers.docclick||[]).forEach(f=>f({target:t,preventDefault(){}}));await tick()}
- console.log(JSON.stringify({atLoad,first,second,clicked,after:shown(),store:store['garrick-queue-kept']||null}))})();
+ let folder=null;
+ if(mode==='away-old'||mode==='away-legacy'){const k=JSON.parse(store['garrick-queue-kept']);Object.keys(k).forEach(p=>{k[p]=mode==='away-old'?Date.now()-25*3600*1000:'/some/other/folder'});store['garrick-queue-kept']=JSON.stringify(k);
+  handlers.close=[];handlers.docclick=[];body.kids=[];new Function(js)();await tick()}
+ if(mode==='away-handed'||mode==='away-click-only'||mode==='away-dismissed'){const row=body.kids.filter(k=>k.id==='qkept')[0].kids[0],btn=row.kids[mode==='away-dismissed'?2:1];
+  folder=btn['data-folder'];
+  const t=el({dataset:mode==='away-dismissed'?{qkdrop:btn['data-qkdrop']}:{qkgo:btn['data-request']}});t.closest=(s)=>s==='[data-qkgo]'&&mode!=='away-dismissed'?t:s==='[data-qkdrop]'&&mode==='away-dismissed'?t:null;
+  (handlers.docclick||[]).forEach(f=>f({target:t,preventDefault(){}}));await tick();
+  if(mode==='away-handed'){window.GarrickHanded(btn['data-request']);await tick()}}      // the page's own handler reports a handoff that worked
+ console.log(JSON.stringify({atLoad,first,second,clicked,folder,after:shown(),store:store['garrick-queue-kept']||null}))})();
  steps='done'}
 if(steps==='later'){acted('question-later','Meetings','questions/a.md',true);dlg.close()}
 if(steps!=='done')setTimeout(()=>{const loaded=clicked.slice();if(dlg.open)dlg.close();
@@ -351,6 +356,23 @@ class TestAKeptRequestSurvivesAPageLoadWithNoHost(CardCase):
         gone = self.run_steps("away-dismissed")
         self.assertEqual([], gone["after"])
         self.assertIsNone(gone["store"])
+
+    def test_a_click_that_did_not_hand_it_over_keeps_it(self):
+        kept = self.run_steps("away-click-only")                 # Hand it over pressed, the handoff never reported as done
+        self.assertEqual(["work in the answers in Work"], kept["after"])
+        self.assertIsNotNone(kept["store"])
+        self.assertIn("window.GarrickHanded=function(p){if(kept()[p])drop(p)}", fq.QUEUE_JS)
+        self.assertNotIn("setTimeout(function(){drop(gp)},0)", fq.QUEUE_JS)
+
+    def test_it_goes_to_the_dialogs_folder_never_a_stored_one(self):
+        got = self.run_steps("away-click-only")
+        self.assertEqual("/w", got["folder"])                    # the place the page is on now
+        self.assertNotIn("/w", got["store"])                     # the store holds the phrase and a time, no folder
+
+    def test_a_request_kept_for_over_a_day_or_by_an_older_page_is_dropped(self):
+        for mode in ("away-old", "away-legacy"):
+            got = self.run_steps(mode)
+            self.assertEqual([], got["after"], mode)
 
     def test_with_an_assistant_the_request_goes_at_load_as_before(self):
         self.assertIn("function away(){return!host||!!(window.GarrickAssistant&&!GarrickAssistant())}", fq.QUEUE_JS)

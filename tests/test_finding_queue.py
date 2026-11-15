@@ -573,18 +573,6 @@ class TestQueueOnThePage(QueueCase):
         self.assertIn("a hook of yours is in the way", q["why"])
         self.assertEqual("handoff", q["answers"][0]["action"])
 
-    def test_not_now_is_kept_by_the_findings_id_so_a_check_whose_text_changes_keeps_it(self):
-        path = "Zones/Work/Acme Review/Stray.md"
-        said = {"kind": "judgment", "check": "links", "path": path, "scope": "Zones/Work", "fid": "3f9a1c2b7d", "line": "3 files link out of the zone"}
-        later = dict(said, line="4 files link out of the zone")                           # the check's text changed, the finding did not
-        self.assertEqual(fq.which_other(said), fq.which_other(later))
-        key = fq.later_key("other", path, fq.which_other(said))
-        self.assertEqual({}, fq.forecast_questions([later], {key}, self.root))              # still put off
-        bare = {k: v for k, v in said.items() if k != "fid"}                                # no id: named by its text, as before
-        self.assertNotEqual(fq.which_other(bare), fq.which_other(dict(bare, line="4 files link out of the zone")))
-        old = fq.later_key("other", path, "abcdef")                                         # a key an older page wrote by text
-        self.assertEqual(["other"], [q["id"] for q in fq.forecast_questions([later], {old}, self.root)["Zones/Work"]])   # is ignored: it asks again
-
     def test_merge_hooks_missing_is_the_same_automatic_kind(self):
         line = "Zones/Work: has the pre-commit wall check but not post-merge, so a merge brings changes in with no wall check; run `x`"
         self.assertEqual(fq.HOOKS, fq.plain_kind({"kind": "judgment", "check": "zones", "path": "Zones/Work", "line": line}))

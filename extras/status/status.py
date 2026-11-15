@@ -1461,7 +1461,7 @@ CONTEXT_JS = r"""
 var sel=document.getElementById('nzone'),sum=document.getElementById('nsum'),tn=document.getElementById('qp-tab-n'),KEY='garrick-context-zone';
 var lines=[].slice.call(card.querySelectorAll('.need[data-scope]'));
 function ss(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sessionStorage.setItem(k,v)}catch(e){return null}}
-/* The Zone menu filters the lines. Each line is one place's own, so what shows is a place's count or nothing, and a number for the tab is a single place's, never a sum */
+/* The Zone menu filters the lines; a kept file with no zone shows under All places only. Each line is one place's own, so what shows is a place's count or nothing, and a number for the tab is a single place's, never a sum */
 function apply(){var z=sel?sel.value:'*';card.querySelectorAll('.kept[data-scope]').forEach(function(k){k.hidden=!(z==='*'||k.dataset.scope===z)});var shown=lines.filter(function(l){var on=z==='*'||l.dataset.scope===z;l.hidden=!on;return on});
 if(sum&&sum.dataset.some)sum.textContent=shown.length+' place'+(shown.length===1?' needs you.':'s need you.');
 if(tn){var c=z!=='*'&&shown.length&&shown[0].dataset.n!=='0'?+shown[0].dataset.n:0,w=c+(c===1?' question to answer':' questions to answer');
@@ -6187,8 +6187,8 @@ if(window.GarrickAct&&GarrickAct(r,x.dataset.say))return;host.postMessage({act:r
 /* A button named for a request, Process the Inbox or Nurture Work (#234): in the app, to the assistant the menu's
    rows open, at the folder given, with the request typed in; in a browser, or with no assistant on, copied. */
 var q=t.closest('button[data-request]');if(q){var a=host&&GarrickAssistant(),p=q.dataset.request;
-if(a){host.postMessage({launch:a,folder:q.dataset.folder,phrase:p});say('Opening '+ASKS[a]+' on “'+p+'”…');return}
-put(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')},function(){say(p)});return}
+if(a){host.postMessage({launch:a,folder:q.dataset.folder,phrase:p});say('Opening '+ASKS[a]+' on “'+p+'”…');if(window.GarrickHanded)GarrickHanded(p);return}
+put(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.');if(window.GarrickHanded)GarrickHanded(p)},function(){say(p)});return}
 var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
@@ -6648,12 +6648,15 @@ if(c&&e)e.textContent=line(w.dataset.mw,c)})}
 function tell(t){said.textContent=t;said.hidden=false}
 /* Review hands over the list as saved, so it waits while a change is not saved */
 function review(on){sec.querySelectorAll('.mcount [data-request]').forEach(function(b){b.hidden=!on})}
+/* what the form held when it was saved or the page loaded: an edit that is put back, or saved, shows Review again */
+var base=JSON.stringify(request());
+function touch(){changed=JSON.stringify(request())!==base;review(!changed)}
 function ask(){if(!host||!window.GarrickReadsMemory){tell('Counted as saved; closing Settings saves the change and counts again.');return}
 tell('Counting…');clearTimeout(timer);timer=setTimeout(function(){host.postMessage({act:{verb:'memory-preview',memory:request()}})},250)}
 function sync(){sec.querySelectorAll('.mkind').forEach(function(f){var a=f.querySelector('[data-mk="archived"]'),d=f.querySelector('[data-mk="dormant"]');
 a.disabled=f.querySelector('[data-mk="never"]').checked;if(!a.disabled&&n(a)<n(d))a.value=n(d)})}
-sec.addEventListener('change',function(){changed=true;review(false);sync();ask()});
-sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],textarea')){changed=true;review(false);if(e.target.matches('textarea')){e.target.value=e.target.value.replace(/\n/g,' ');e.target.title=e.target.value;fit(e.target)}ask()}});
+sec.addEventListener('change',function(){sync();touch();ask()});
+sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],textarea')){if(e.target.matches('textarea')){e.target.value=e.target.value.replace(/\n/g,' ');e.target.title=e.target.value;fit(e.target)}touch();ask()}});
 sec.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.matches('textarea'))e.preventDefault()});
 /* a kind's lists wrap and grow to show the whole of them; measured when Advanced opens, since a closed section has no size */
 function fit(t){t.style.height='auto';t.style.height=t.scrollHeight+2+'px'}
@@ -6661,7 +6664,7 @@ var adv=sec.querySelector('.madv');if(adv)adv.addEventListener('toggle',function
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='memory-preview'){
 if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}else tell((out&&out.say)||'Could not count.');return}
 if(prev)return prev(q,out)};
-window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){changed=false}};
+window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){base=JSON.stringify(request());changed=false;review(true)}};
 })();
 """
 # ---- end of Settings › Memory -----------------------------------------------------

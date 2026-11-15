@@ -610,6 +610,7 @@ def _turn_file(ws: Path, session: str) -> Path:
 
 TOLD = "told.json"
 TOLD_WINDOW = 120          # seconds: a wait told by one of the two senders is not told again by the other
+TOLD_SKEW = 5              # seconds: a notice the hook sent counts for a wait only if it went at or after the wait began, give or take this
 
 
 def _since(text) -> Optional[float]:
@@ -626,10 +627,11 @@ def _told(ws: Path) -> dict:
     return told if isinstance(told, dict) else {}
 
 
-def _tell(ws: Path, session: str, by: str, now: float) -> None:
-    """Record that a notice went for this session's wait, by the hook or by the poll, so the other does not send a second."""
+def _tell(ws: Path, session: str, by: str, now: float, since: Optional[float] = None) -> None:
+    """Record that a notice went for this session's wait, by the hook or by the poll, so the other does not send a second.
+    `since` is when that wait began, kept so a later wait of the same session is not taken for it."""
     told = {k: v for k, v in _told(ws).items() if isinstance(v, dict) and now - float(v.get("at") or 0) < TURN_DAYS * 86400}
-    told[SESSION_ID.sub("", session)[:80] or "unnamed"] = {"by": by, "at": now}
+    told[SESSION_ID.sub("", session)[:80] or "unnamed"] = {"by": by, "at": now, "since": now if since is None else since}
     try:
         _write_json(state_dir(ws) / TOLD, told)
     except OSError:
@@ -642,6 +644,10 @@ def _was_told(ws: Path, session: str, by: str, since: Optional[float], now: floa
     if not isinstance(got, dict) or got.get("by") != by:
         return False
     at = float(got.get("at") or 0)
+    if by == "hook" and since is not None:
+        # the hook tells a wait as it begins, so its notice is for this wait only if it went once this wait had begun; one
+        # that went before it began, within the window or not, was for the wait before
+        return at >= since - TOLD_SKEW and at >= now - TURN_DAYS * 86400
     return at >= (since if since is not None else now) - TOLD_WINDOW and at >= now - TURN_DAYS * 86400
 
 
@@ -743,7 +749,7 @@ def waiting(rows, ws: Optional[Path] = None, env=None, now: Optional[dt.datetime
         if override(env) and not zone:
             continue                    # a sender's own command is told a zone; with none known it is not run for this event
         send("waiting", "Waiting on you", "%s: waiting on you, for %s." % (place_said, what), zone, root=ws, env=env, now=now)
-        _tell(ws, sid, "poll", at)
+        _tell(ws, sid, "poll", at, _since(since))
         sent += 1
     if kept != told:
         try:

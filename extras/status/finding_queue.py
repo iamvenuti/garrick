@@ -243,12 +243,8 @@ def later_key(kind: str, path: str, which: str = "") -> str:
 
 
 def which_other(item: dict) -> str:
-    """Six hex digits that name one finding of kind other in the Not now key: its check and its stable id (`fid`, kept when the
-    check rewrites the finding's words), so a check whose text changes keeps what was put off. A finding with no id is named by
-    its check and its text, as before; a key an older page wrote by text is simply not found, and the question shows again."""
-    fid = str(item.get("fid") or "")
-    text = ("%s\0id\0%s" % (item.get("check") or "", fid)) if fid else \
-        "%s\0%s" % (item.get("check") or "", item.get("message") or item.get("line") or "")
+    """Six hex digits of the finding's own check and text: the Not now key of a kind other finding names this one finding."""
+    text = "%s\0%s" % (item.get("check") or "", item.get("message") or item.get("line") or "")
     return hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:6]
 
 
@@ -1032,19 +1028,24 @@ var go=function(){Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!
    after every load, until it is handed over or dismissed (C5) */
 var KEPT='garrick-queue-kept';
 function away(){return!host||!!(window.GarrickAssistant&&!GarrickAssistant())}
-function kept(){var o={};try{o=JSON.parse(st.get(KEPT)||'{}')}catch(e){}return o&&typeof o==='object'?o:{}}
-function keep(p){var o=kept();o[p]=dlg.dataset.folder||'';st.set(KEPT,JSON.stringify(o))}
+/* A kept request is a phrase and the time it was kept, never a folder: it goes to the place the page is on when it is handed over, and a
+   request kept for more than a day, or kept by an older page with a folder, is dropped */
+var DAY=864e5;
+function kept(){var o={},r={};try{o=JSON.parse(st.get(KEPT)||'{}')}catch(e){}if(!o||typeof o!=='object')return r;
+Object.keys(o).forEach(function(p){if(typeof o[p]==='number'&&Date.now()-o[p]<DAY)r[p]=o[p]});return r}
+function keep(p){var o=kept();o[p]=Date.now();st.set(KEPT,JSON.stringify(o))}
 function drop(p){var o=kept();delete o[p];if(Object.keys(o).length)st.set(KEPT,JSON.stringify(o));else st.del(KEPT);showKept()}
 function showKept(){var o=kept(),k=Object.keys(o),box=document.getElementById('qkept');
 if(!box){if(!k.length)return;var c=document.getElementById('checks'),body=c&&c.querySelector('.body');if(!body)return;box=document.createElement('div');box.id='qkept';box.className='qkept';body.insertBefore(box,body.firstChild)}
 box.textContent='';box.hidden=!k.length;
 k.forEach(function(p){var row=document.createElement('div');row.className='qk';var t=document.createElement('span');t.textContent='Waiting to go to your assistant: \u201c'+p+'\u201d.';
-var h=document.createElement('button');h.type='button';h.className='act';h.setAttribute('data-request',p);h.setAttribute('data-folder',o[p]);h.setAttribute('data-qkgo',p);h.textContent='Hand it over';
+var h=document.createElement('button');h.type='button';h.className='act';h.setAttribute('data-request',p);h.setAttribute('data-folder',dlg.dataset.folder||'');h.setAttribute('data-qkgo',p);h.textContent='Hand it over';
 var d=document.createElement('button');d.type='button';d.className='act';d.setAttribute('data-qkdrop',p);d.textContent='Dismiss';
 row.appendChild(t);row.appendChild(h);row.appendChild(d);box.appendChild(row)})}
 document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target:null;if(!t)return;
-var g=t.closest('[data-qkgo]');if(g){var gp=g.dataset.qkgo;setTimeout(function(){drop(gp)},0);return}
 var x=t.closest('[data-qkdrop]');if(x)drop(x.dataset.qkdrop)});
+/* the page's own request handler calls this once a request was opened in the assistant or copied: only then is a kept one done */
+window.GarrickHanded=function(p){if(kept()[p])drop(p)};
 dlg.addEventListener('close',function(){workIn(false)});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){

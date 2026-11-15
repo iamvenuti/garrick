@@ -402,6 +402,14 @@ class TestWaiting(Case):
         self.assertEqual(0, n.waiting([dict(row, id="s2")], self.ws, env={}, now=NOON))
         self.assertEqual(2, len(self.osascripts()))
 
+    def test_a_second_wait_soon_after_a_told_one_with_no_hook_is_told(self):
+        hook = {"hook_event_name": "Notification", "session_id": "s1", "notification_type": "elicitation_dialog", "cwd": str(self.ws)}
+        stamp = NOON.timestamp()
+        n.hook(hook, self.ws, env={}, now=stamp, detach=False)                     # the hook told wait A
+        row = dict(self.ROW, since=(NOON + dt.timedelta(seconds=60)).astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        self.assertEqual(1, n.waiting([row], self.ws, env={}, now=NOON + dt.timedelta(seconds=90)))   # wait B began a minute later
+        self.assertEqual(2, len(self.osascripts()))
+
     def test_a_wait_the_hook_never_saw_is_still_told(self):
         self.assertEqual(1, n.waiting([self.ROW], self.ws, env={}, now=NOON))        # a Codex session has no Notification hook
 

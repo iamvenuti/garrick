@@ -795,6 +795,10 @@ def apply(root, p, only=None, today=None):
                     if not (path.endswith("/.git/hooks") and (path[:-len("/.git/hooks")] in said or "Zones/" + path[:-len("/.git/hooks")] in said))]
 
     tidied = clear_retired_state(root) if picked is None else []
+    if picked is None:
+        gone, left = clear_retired_fonts(root)
+        tidied += gone
+        skipped += left
     written = [path for kind in ("replace", "add", "restore") for path in done[kind]]
     problems = check_errors(root, written)
     stamped, unstamped = False, ""
@@ -831,6 +835,54 @@ def clear_retired_state(root):
             continue
         gone.append(rel)
     return gone
+
+
+# The folder the status page's fonts once shipped in. The page now carries its font inside itself and nothing reads this
+# folder, so an update removes it, but only when it holds nothing but files Garrick shipped, by name and by content.
+RETIRED_FONTS = "System/status/fonts"
+
+
+def clear_retired_fonts(root):
+    """(removed, left): the files of the retired fonts folder an update took out, and a (folder, why) line when it left
+    the folder alone. It is removed only when every entry is a plain file that an earlier release shipped, by its path and
+    by its SHA-256 in release-hashes.json; a link, a folder inside it, or any file Garrick did not ship leaves it all as
+    it is, and the report says so."""
+    folder = root / RETIRED_FONTS
+    if folder.is_symlink() or not folder.is_dir():
+        return [], []
+    known = known_hashes()
+    found, odd = [], []
+    for path in sorted(folder.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if path.is_symlink() or not path.is_file():
+            if path.is_dir() and not path.is_symlink():
+                continue                    # a folder is judged by what is in it
+            odd.append(rel)
+            continue
+        data = read(path)
+        if data is None or digest(data) not in known.get(rel, []):
+            odd.append(rel)
+        else:
+            found.append(rel)
+    if odd:
+        names = ", ".join(odd[:3]) + (" and %d more" % (len(odd) - 3) if len(odd) > 3 else "")
+        return [], [(RETIRED_FONTS, "it holds files Garrick did not ship (%s), so the folder was left as it is; delete it yourself "
+                                    "if you do not need it" % names)]
+    for rel in found:
+        try:
+            (root / rel).unlink()
+        except OSError:
+            return [], [(RETIRED_FONTS, "a file could not be removed, so the folder was left as it is")]
+    for path in sorted(folder.rglob("*"), reverse=True):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+    try:
+        folder.rmdir()
+    except OSError:
+        pass
+    return found, []
 
 
 def commit_files(root, files, message):
@@ -1001,7 +1053,9 @@ def say_applied(p, result):
         lines.append("Refreshed the wall check in: %s." % ", ".join(refreshed))
     lines += say_allowlist(result.get("allowlist"), applied=True)
     for rel in result.get("tidied", []):
-        lines.append("Removed %s: Back now reads the thread notes, and nothing keeps that file." % rel)
+        lines.append("Removed %s: %s." % (rel, "the page now carries its font itself, and nothing reads that folder"
+                                                if rel.startswith(RETIRED_FONTS + "/") else
+                                                "Back now reads the thread notes, and nothing keeps that file"))
     for path, why in result["skipped"]:
         lines.append("Skipped %s: %s." % (path, why))
     if result.get("unstamped"):

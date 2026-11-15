@@ -70,6 +70,8 @@
       "Bash(codex:*)",
       "Edit(System/**)",
       "Write(System/**)",
+      "Edit(System/notes-ledger.json*)",
+      "Write(System/notes-ledger.json*)",
       "Edit(**/.git/**)",
       "Write(**/.git/**)",
       "Edit(~/.claude/**)",

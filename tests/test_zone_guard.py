@@ -102,6 +102,22 @@ class ZoneGuardTest(unittest.TestCase):
         self.assertIn("Work › Acme Review", reason)
         self.assertIn("System (System/tools/check.py)", reason)
 
+    def test_the_notes_ledger_is_refused_from_every_home_and_to_a_job(self):
+        for name in ("notes-ledger.json", "notes-ledger.json.lock", "notes-ledger.json.new"):
+            path = self.root / "System" / name
+            for home in (self.thread, self.root, self.root / "System"):
+                decision, reason = self.decision(self.claude(path, home=home))
+                self.assertEqual(decision, "deny", (name, home))
+                self.assertIn("notes ledger", reason)
+            event = {"session_id": "j", "hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": str(self.root),
+                     "tool_input": {"file_path": str(path)}}
+            self.assertEqual(self.decision(self.run_guard(event, project_dir=self.root, headless=True))[0], "deny")
+        patch = "*** Begin Patch\n*** Update File: %s\n@@\n-a\n+b\n*** End Patch" % (self.root / "System" / "notes-ledger.json")
+        self.assertEqual(self.decision(self.codex(patch, home=self.root))[0], "deny")
+        other = {"session_id": "j", "hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": str(self.root),
+                 "tool_input": {"file_path": str(self.root / "System" / "tools" / "x.py")}}
+        self.assertIsNone(self.run_guard(other, project_dir=self.root, headless=True))      # a job's other writes stand as before
+
     def test_another_project_and_another_zone_are_asked(self):
         decision, reason = self.decision(self.claude(self.root / "Zones/Work/Birch Entry/Birch Entry.md"))
         self.assertEqual(decision, "ask")

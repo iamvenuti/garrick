@@ -26,12 +26,16 @@ file, run a command or reach the web. The tools:
   say so when you cite one. Set `raw` to true only when the user asks for the
   exact words said, or a page does not hold the detail: it ranks the raw
   records beside the pages.
-- `read(id)`: the text of a record, by an id a tool gave you in this
+- `read(id, offset?)`: the text of a record, by an id a tool gave you in this
   conversation. Read a record before you rest a claim on more than its
-  snippet. A record that was edited is read again as it is now.
+  snippet. A record that was edited is read again as it is now. A long record
+  comes in parts: when the result ends with an offset and the characters
+  left, call `read` again with that `offset` until nothing is left, before you
+  say the record does not hold something.
 - `places(zone?)`: the projects and threads with their status.
-- `thread_state(place)`: a thread's or project's Resume here block, where it
-  stands, what is next and who it waits on.
+- `thread_state(place, offset?)`: a thread's or project's Resume here block, where it
+  stands, what is next and who it waits on. A long block comes in parts, as
+  `read`'s do.
 - `owed(period?, party?, waiting?)`: what the user owes or waits on, as
   Garrick builds the list from the Todo lists and the threads. `period` is a
   date, `today`, `tomorrow`, `this week` or `this month`.

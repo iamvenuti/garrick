@@ -3099,7 +3099,8 @@ def garrick_ignores(zones) -> Dict[str, str]:
              "# Links to shared cloud folders carry the provider's own path, which is this machine's alone.\n.shared/\n")
     transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
                    "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
-    generated = "# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
+    generated = ("# Pages tools write for you, such as the status page: rebuilt, never committed.\nSystem/generated/\n"
+                 "# The notes a channel wrote into an inbox, with their hashes: this machine's alone.\nSystem/notes-ledger.json*\n")
     shared = ("# Mail forwarded to one address for every zone waits in Inbox/ until intake moves it to its zone.\n"
               "Inbox/*\n!Inbox/.gitkeep\n")
     example = ("# The example's shared drive, read and never written, and what System/tools/example.py\n"

@@ -16,7 +16,7 @@ Every reply opens with its thread's name, so a wrong guess shows at once. Text o
 
 ## How far it may go
 
-The Telegram channel has its own tier, effort and autonomy in Settings under *Channels* (see [Channels](channels.md)). The default is Act: it edits notes, files, ticks and commits, since git can undo each. A send, share or delete is held, and the bot asks in the chat: *Send the price sheet (dana@example.com)? [tool send_message; to: dana@example.com] Reply yes to run it.* The part in brackets is added by code from the action itself, not written by the assistant. Reply `yes` **to that message**, and it runs. A `yes` that is not a reply to that message runs nothing. Telegram never offers Full.
+The Telegram channel has its own tier, effort and autonomy in Settings under *Channels* (see [Channels](channels.md)). The default is Act: it edits notes, files, ticks and commits, since git can undo each. A send, share or delete is held, and the bot asks in the chat: *Send the price sheet (dana@example.com)? [tool send_message; to: dana@example.com] Reply yes to run it, or no to cancel it.* The part in brackets is added by code from the action itself, not written by the assistant. Reply `yes` **to that message**, and it runs. A `yes` that is not a reply to that message runs nothing. Reply `no`, `cancel` or `stop` (alone, in any case) **to that message**, and the action is cancelled at once: it leaves the held list, the bot says nothing was done, and a later `yes` to the same message runs nothing. A `no` that is not a reply to that message cancels nothing. Telegram never offers Full.
 
 ## Conversations, sessions and the two-hour limit
 

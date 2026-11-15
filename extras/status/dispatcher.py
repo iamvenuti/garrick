@@ -7,6 +7,9 @@ No model call sorts a message. `route()` reads one message of the paired private
     {"do": "note", "destination": ..., "text": ...}       the message starts with `note` or `note:`: saved as a note under
                                                            #569's contract, never reaching an assistant
     {"do": "yes", "held": <entry>}                         a reply of `yes` to the message that asked for a held action
+    {"do": "no", "held": <entry>}                          a reply of `no`, `cancel` or `stop` to it: the action is cancelled
+    {"do": "gone", "held": <entry>}                        a reply of yes or no to the message of an action already cancelled:
+                                                           nothing runs, and the answer says it was cancelled
     {"do": "done", "exchange": ex}                         the owner says they are done: save and close the exchange
     {"do": "continue", "exchange": ex, "text": ...}        a turn in an exchange that already exists
     {"do": "bind", "place": {...}, "text": ...}            a clear destination: a new exchange (the old one, if the subject
@@ -15,7 +18,8 @@ No model call sorts a message. `route()` reads one message of the paired private
                                                            the name is ambiguous, or no thread is named and no session is open
 
 The order is fixed. (1) A reply to one of the bot's messages always continues that message's exchange, whatever its
-first word, except that `yes` to a held-action message runs that action. (2) A message that starts with `note` or `note:`
+first word, except that `yes` to a held-action message runs that action and `no`, `cancel` or `stop` (alone, in any case)
+cancels it. (2) A message that starts with `note` or `note:`
 is a note. (3) "done" closes the open exchange. (4) A message that names a thread binds to it, or gets one question when
 the name is ambiguous; naming the thread the open exchange is bound to continues it, and naming another switches. (5) A
 message that names no thread continues the open exchange while its session is still open (inside the two-hour limit, not
@@ -47,6 +51,7 @@ NOTE = re.compile(r"^\s*note\b\s*:?\s*(.*)\Z", re.I | re.S)
 NOTE_FOR = re.compile(r"^for\s+(.+?)\s*:\s*(.+)\Z", re.I | re.S)
 DONE = re.compile(r"^\s*(?:i['’]?m\s+)?(?:done|that['’]?s\s+all|all\s+done)\s*[.!]?\s*\Z", re.I)
 YES = re.compile(r"^\s*yes\s*[.!]?\s*\Z", re.I)
+NO = re.compile(r"^\s*(?:no|cancel|stop)\s*[.!]?\s*\Z", re.I)         # a no to a held action: these words alone, nothing after
 WHICH = "Which thread?"
 
 
@@ -71,7 +76,7 @@ def settle(intake, root: Path, text: str):
         return "refused", str(e)
 
 
-def route(intake, root: Path, message: dict, held_by_message, now: Optional[float] = None) -> dict:
+def route(intake, root: Path, message: dict, held_by_message, now: Optional[float] = None, cancelled_by_message=None) -> dict:
     """The decision for one message: {"text", "reply_to" (the message id replied to or None)}. `held_by_message(id)` is
     hold.by_message. Reads the exchange record; changes nothing."""
     now = now or time.time()
@@ -81,6 +86,11 @@ def route(intake, root: Path, message: dict, held_by_message, now: Optional[floa
         held = held_by_message(reply_to)
         if held is not None and YES.match(text):
             return {"do": "yes", "held": held}
+        if held is not None and NO.match(text):
+            return {"do": "no", "held": held}
+        gone = cancelled_by_message(reply_to, now) if cancelled_by_message is not None else None
+        if gone is not None and (YES.match(text) or NO.match(text)):
+            return {"do": "gone", "held": gone}
         ex = exchanges.for_message(reply_to)
         if ex is not None:
             if ex.get("pending_subject"):            # an answer to "Which thread?" or a question about a name

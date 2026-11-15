@@ -6588,13 +6588,13 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
             '<h4 class="nsub">Search and the morning digest</h4>'
             '<div class="launcher-row"><span class="mreach">Without being asked, search reads <select id="m-reach" aria-label="How far search reaches unasked">'
             '<option value="working"%s>working pages only</option><option value="dormant"%s>working and dormant pages</option></select></span></div>'
-            '<div class="launcher-row"><label class="launcher-choice">%s <span>Say what would fade in the morning digest'
+            '<div class="launcher-row"><label class="launcher-choice">%s <span>Say in the morning digest which pages would change grade'
             '<small>Once at least this many pages would</small></span></label><span class="mafter">%s pages</span></div></details></section>'
             % (head, blocks, advanced, pin_rows,
                box('id="m-wake"', cfg.get("wake", True) is not False, "Propose bringing back a dormant page that active work links again"),
                '<p class="hint msaid">%s</p>' % said_html(wake) if isinstance(wake, str) else "",
                " selected" if reach == "working" else "", " selected" if reach != "working" else "",
-               box('id="m-night"', nightly.get("on", True) is not False, "Say what would fade in the morning digest"),
+               box('id="m-night"', nightly.get("on", True) is not False, "Say in the morning digest which pages would change grade"),
                num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line")))
 
 

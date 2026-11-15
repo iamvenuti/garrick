@@ -1136,8 +1136,14 @@ def nurture_outcome(ws: Path, day: dt.date) -> Optional[dict]:
         return None
 
 
+def noun(n: int, one: str, many: str = "") -> str:
+    """The noun that agrees with a count: "error" for 1, "errors" for any other. Every place the page joins a count to a
+    noun goes through here (or counted(), or the script's pl()), so none reads "1 errors"."""
+    return one if n == 1 else (many or one + "s")
+
+
 def counted(n: int, one: str, many: str = "") -> str:
-    return "%d %s" % (n, one if n == 1 else (many or one + "s"))
+    return "%d %s" % (n, noun(n, one, many))
 
 
 def nurture_said(kinds: Dict[str, int]) -> str:
@@ -1187,7 +1193,7 @@ def needing_you(scopes: Dict[str, Dict[str, int]]) -> List[dict]:
 def need_said(n: dict) -> str:
     parts = [p for p in (counted(n["walls"], "wall finding") if n["walls"] else "",
                          counted(n["calls"], "judgment call") if n["calls"] else "") if p]
-    return "%s, about %d minutes" % (" and ".join(parts), n["minutes"])
+    return "%s, about %s" % (" and ".join(parts), counted(n["minutes"], "minute"))
 
 
 def trend_word(history: List[Tuple[dt.date, dict]], today: dt.date) -> str:
@@ -1389,7 +1395,7 @@ def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[st
     for scope in places:
         qs = queues.get(scope) or []
         walls = sum(1 for q in qs if q["id"] == "wall")
-        said_ = [counted(len(qs), "question"), "about %d minutes" % minutes_for(walls, len(qs) - walls)]
+        said_ = [counted(len(qs), "question"), "about %s" % counted(minutes_for(walls, len(qs) - walls), "minute")]
         buttons = '<button class="act primary" type="button" data-qopen="%s">Go through them</button>' % E(scope)
         out += ('<div class="need" data-scope="%s" data-n="%d"><span class="nsay"><b>%s</b>: %s</span><span class="nbtn">%s</span></div>'
                 % (E(scope), len(qs), E(scope_title(scope, said)), E(" · ".join(said_)), buttons))
@@ -1802,7 +1808,8 @@ dialog.tadd::backdrop{background:rgba(0,0,0,.28)}
 .tnode{display:inline-flex;align-items:center;gap:7px;padding:4px 2px;font-size:var(--fs-meta);cursor:pointer}.tnode input{accent-color:var(--accent);margin:0}
 .tproj{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;border-top:1px solid var(--grid)}.tproj small{color:var(--muted);font-size:var(--fs-meta)}
 .tsep{font-size:var(--fs-meta);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:10px 2px 2px;border-top:1px solid var(--grid)}
-.tchev,.tchev-sp{width:20px;height:20px;flex:none}.tchev{border:0;background:none;padding:0;cursor:pointer;color:var(--muted);line-height:0}
+.tchev,.tchev-sp{width:20px;height:20px;flex:none}.tchev{position:relative;border:0;background:none;padding:0;cursor:pointer;color:var(--muted);line-height:0}
+.tchev::after{content:"";position:absolute;inset:-2px}
 .tchev .chev{width:13px;height:13px}.tchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
 .tsubs{flex-basis:100%;padding-left:26px;display:flex;flex-direction:column}.tsubs[hidden]{display:none}.tnode.tsub{font-size:var(--fs-sub)}
 .tadd-dates{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.tadd-dates .seg button{padding:5px 10px;font-size:var(--fs-meta);line-height:1.2}
@@ -2427,7 +2434,11 @@ function say(s){var t=document.getElementById('toast');if(!t)return;t.textConten
 function has(z){return panes.some(function(p){return p.dataset.zone===z})}
 function zone(z){if(!has(z))z=has('Work')?'Work':panes[0]&&panes[0].dataset.zone;
 panes.forEach(function(p){p.hidden=p.dataset.zone!==z});todo.querySelectorAll('[data-tz]').forEach(function(b){b.classList.toggle('on',b.dataset.tz===z)});
-st.set('garrick-todo-zone',z);empties()}
+st.set('garrick-todo-zone',z);empties();lateBadge(z)}
+/* the tab's badge counts the late actions of the zone shown, not of every zone */
+function lateBadge(z){var b=document.getElementById('tabn-late'),sd=document.getElementById('state-data'),m={};if(!b||!sd)return;
+try{m=JSON.parse(sd.textContent).late||{}}catch(e){}var n=m[z]||0,w=n+(n===1?' action is late':' actions are late');
+if(b.lastChild&&b.lastChild.nodeType===3)b.lastChild.textContent=n;b.hidden=!n;b.setAttribute('aria-label',w);b.title=w}
 window.TodoZone=zone;
 todo.querySelectorAll('[data-tz]').forEach(function(b){b.onclick=function(){zone(b.dataset.tz)}});
 function filt(f){todo.dataset.tf=f;todo.querySelectorAll('[data-tf]').forEach(function(b){b.classList.toggle('on',b.dataset.tf===f)});st.set('garrick-todo-filter',f);empties()}
@@ -3575,7 +3586,7 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             reason = hb.get("reason") if isinstance(hb.get("reason"), str) and hb.get("reason") else EXIT.get(code, "failed")
             state, status = "critical", "exit %d: %s" % (code, reason)
         elif (hb["idle"] is True) if isinstance(hb.get("idle"), bool) else (idle and idle >= idle_limit(env)):
-            state, status = "warning", "idle %d days" % idle
+            state, status = "warning", "idle %s" % counted(idle, "day")
         elif code in OK_EXITS and hb.get("agent") is True and isinstance(hb.get("reason"), str) and hb["reason"]:
             state, status = "warning", hb["reason"]               # exit 0, but the assistant was refused a tool (#567)
         elif code in quiet and code not in OK_EXITS:
@@ -5969,7 +5980,7 @@ dialog.settings .setlede{margin:0 0 8px;font-size:var(--fs-meta);line-height:1.4
 .setnavgrp+.setnavgrp{margin-top:0}.setnavh{display:none}.setnav ul{display:flex;gap:2px}.setnav a{white-space:nowrap}
 .setnav a[aria-current]{box-shadow:inset 0 -2px 0 var(--accent)}.setmain{padding:14px 16px 22px}.sethead{padding:14px 52px 10px 16px}}
 /* a section's explanation, word for word, behind the "?" beside its heading; each row's own line always shows */
-.qhelp{flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:var(--fs-meta);font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
+.qhelp{position:relative;flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:var(--fs-meta);font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
 .qhelp:hover,.qhelp[aria-expanded="true"]{color:var(--ink);border-color:var(--muted)}.qhelp:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 dialog.settings .sethelp{margin:2px 0 6px}
 .setfoot{margin-top:30px}dialog.settings .setsec:focus{outline:none}.setrule{padding-top:10px;border-top:1px solid var(--line)}
@@ -7018,7 +7029,7 @@ N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg+
 var have={};N.forEach(function(n){if(n.z===zsel&&(parked||!n.s))have[n.k]=1});
 document.querySelectorAll('.glegend [data-k]').forEach(function(s){var k=+s.dataset.k;s.hidden=!have[k];s.setAttribute('aria-pressed',ks[k]?'true':'false')});
 var zs=document.querySelector('.gzsel');if(zs){zs.value=zsel;zmark(zs)}
-var sum=document.getElementById('gsum');if(sum)sum.textContent=zsel+' · '+V.length+' notes, '+E.length+' links · names only';seek()}
+var sum=document.getElementById('gsum');if(sum)sum.textContent=zsel+' · '+V.length+(V.length===1?' note, ':' notes, ')+E.length+(E.length===1?' link':' links')+' · names only';seek()}
 /* Every note pushes every other away, which costs the square of the notes a
    step. Past BIG notes a quadtree stands in for each far group by its centre,
    which keeps a step near n log n; near notes still push one by one. */
@@ -7452,15 +7463,15 @@ LATE_ICON = ('<svg class="bi" viewBox="0 0 16 16" width="12" height="12" aria-hi
              'stroke-linecap="round" stroke-linejoin="round">%s</svg>' % _PILL_PATHS["late"])
 
 
-def tab_badge(id_: str, n: int, one: str, many: str, critical: bool) -> str:
+def tab_badge(id_: str, n: int, one: str, many: str, critical: bool, keep: bool = False) -> str:
     """The one badge a tab may carry (#560): a number, and nothing when it is 0. Critical (something failed, an action is
     late) has the line icon `late` before its number so colour never carries it alone; a warning has none. The words are in
-    its aria-label and its title, never in its text."""
-    if not n:
+    its aria-label and its title, never in its text. `keep` draws a hidden one for 0, for a script that sets it later."""
+    if not n and not keep:
         return ""
     words = "%d%s" % (n, one if n == 1 else many)
-    return ('<span class="n %s" id="%s" aria-label="%s" title="%s">%s%d</span>'
-            % ("crit" if critical else "warn", id_, E(words), E(words), LATE_ICON if critical else "", n))
+    return ('<span class="n %s" id="%s" aria-label="%s" title="%s"%s>%s%d</span>'
+            % ("crit" if critical else "warn", id_, E(words), E(words), "" if n else " hidden", LATE_ICON if critical else "", n))
 
 
 GRAPH_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
@@ -7557,7 +7568,8 @@ def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=
         row = dict(w["row"], actions=w.get("actions") or [])
         chip = todo_chip(row, today, "yw")
         pop = todo_pop(row, today, acting, "yw")
-        reason = ('<span class="ywait" title="%s">%s</span>' % (E(whole), word)) if word else ""
+        # the whole reason, when the line is cut, on hover and on focus (the page's own tip shows both)
+        reason = ('<span class="ywait" tabindex="0" data-tip="%s">%s</span>' % (E(whole), word)) if word else ""
         sep = '<span class="ydot" aria-hidden="true">\u00b7</span>' if word and chip else ""
         why = ('<span class="ywhy">%s%s%s</span>' % (reason, sep, '<span class="tchips">%s</span>' % chip if chip else "")) if word or chip \
             else ""
@@ -7587,7 +7599,7 @@ YOURWORK_CSS = r"""
 .yzone{font-size:var(--fs-meta);font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
 .ystate{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .ywhy{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0;max-width:100%}.ywhy:empty{display:none}.ywhy .tchips{display:inline-flex;gap:4px;flex:none;white-space:nowrap}.ywhy .chip{margin:0;white-space:nowrap}
-.ywait{color:var(--ink2);font-size:var(--fs-meta);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ydot{color:var(--muted);flex:none}
+.ywait{color:var(--ink2);font-size:var(--fs-meta);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ydot{color:var(--muted);flex:none}.ywait:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 .ystate:empty{display:none}.ypath{white-space:nowrap}.yfoot{display:flex;justify-content:center;padding:10px 0 0}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:var(--fs-meta);font-weight:400;background:var(--wash);color:var(--accent)}
 .yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
 .ysplit{display:inline-flex;align-items:stretch}.ysplit>.act{border-top-right-radius:0;border-bottom-right-radius:0}
@@ -7714,6 +7726,7 @@ LOOK_CSS = r"""
 button.act,a.act,.tabs button,.seg button,.cog,.gbar button,.gbar .gfind,.gzsel,.switch,.zbtn,.moveto button{min-height:40px}
 button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .appicons .act[data-k]{width:40px;height:40px}
+.qhelp::after{content:"";position:absolute;inset:-4px}
 .grip,.hide,.totab,.tick,.pchev,button.chip,.jname{position:relative}
 .grip::after,.hide::after,.totab::after,.tick::after,.pchev::after,button.chip::after,.jname::after{content:"";position:absolute;inset:-9px -6px}
 .trow.done .tick::after{inset:auto}
@@ -7932,7 +7945,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         tiles.append(("Todo", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
                       "todolist" if lists else "todo"))
     tiles += [("Inboxes", "%d" % waiting, "", "inboxes"),
-              ("Context", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
+              ("Context", ("%d<small>%s</small>%d<small>%s</small>" % (C.get("errors", 0), noun(C.get("errors", 0), "error"),
+                                                                       C.get("warnings", 0), noun(C.get("warnings", 0), "warning")))
                if C and not C.get("failed") else "—", check_age if C else "check.py not found", "checks")]
     if L:
         cap = L["caps"]["calls_day"]
@@ -8113,7 +8127,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         body = ""
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     listed_kept = ""
-    found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
+    found = " · ".join(counted(n, w) for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
@@ -8305,8 +8319,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                           '<input type="search" class="gfind" id="gfind" placeholder="Find a note" aria-label="Find a note on the graph" autocomplete="off" spellcheck="false">'
                           '<button id="gfmore" type="button" hidden></button><button id="gpark" type="button"></button></div>'
                           '<div class="gbar gcorner"><button id="gspin"></button><button id="gfit">Fit</button></div>'
-                          '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
-                          '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data),
+                          '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%s, %s · %s · names only</p>'
+                          '<script type="application/json" id="graph-data">%s</script>' % (legend, counted(len(GR["nodes"]), "note"), counted(len(GR["edges"]), "link"),
+                                                                                           counted(core, "project or thread", "projects and threads"), data),
                           open_=False)
 
     todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T), link, ZS) if lists else ""
@@ -8348,7 +8363,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
                          % (top, "".join(machinery[0::2]), "".join(machinery[1::2])))
-    late = sum(z["late"] for z in lists)
+    # The Todo tab's badge is the late actions of the zone the list shows, never a sum across zones (the list's own script keeps it
+    # in step as the zone changes): the first one shown is Work when there is one, else the first.
+    late_by = {z["zone"]: z["late"] for z in lists}
+    late = late_by.get("Work" if "Work" in late_by else next(iter(late_by), ""), 0)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or (C.get("failed") and not C.get("pending")))) or bool(L and L["refused_today"])
     # At most one badge on a tab, and it is a number (#560): none on the Overview, the late actions on Todo, the things that need
     # attention on Status (critical when one failed), and on Context the open questions of the one place chosen (CONTEXT_JS).
@@ -8356,7 +8374,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<button type="button" role="tab" data-tab="status">Status%s</button>%s'
             '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo%s</button>'
-               % tab_badge("tabn-late", late, " action is late", " actions are late", True) if todo_tab else "",
+               % tab_badge("tabn-late", late, " action is late", " actions are late", True, keep=any(late_by.values())) if todo_tab else "",
                tab_badge("tabn-status", len(attn), " thing needs attention", " things need attention", worst == "critical"),
                questions_mod().tab_button() if qdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
@@ -8371,7 +8389,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # What RELOAD_JS compares a button's expectation with: the parked threads
     # and, with the cmux extra, the folders a session is open in.
     folders = {f for z in T.values() for r in z["rows"] + z["parked"] for f in (r["note"].parent, (r["hub"] or r["note"]).parent)}
-    state = {"parked": sorted({"%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["parked"]}
+    state = {"late": late_by,          # each zone's late actions, for the Todo tab's badge, which follows the zone shown
+             "parked": sorted({"%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["parked"]}
                               | {"%s/%s/%s.md" % (zone, p, p) for zone, z in T.items() for p in z.get("held", ())}),
              "live": sorted(str(f) for f in folders if session_in(S, f)),
              # every live and parked note by its path, for a rename from the page (#184)

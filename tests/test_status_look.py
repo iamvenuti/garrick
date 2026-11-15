@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import json
 import re
 import sys
 import tempfile
@@ -794,6 +795,75 @@ class ChannelsCard(unittest.TestCase):
         for t in tiers:
             self.assertEqual(["Small", "Medium", "Large"], re.findall(r"<option[^>]*>([^<]*)</option>", t))
         self.assertIn("changes that can be undone", html)
+
+
+def two_zones_one_late_each(root):
+    """Work has one late action and Personal two: a sum would read 3."""
+    (root / "Zones" / "Work" / "Todo.md").write_text("# Work: open actions\n\n## Inbox\n\n- [ ] Send it \U0001F4C5 2026-11-02\n\n## Done\n", encoding="utf-8")
+    personal = root / "Zones" / "Personal"
+    personal.mkdir(parents=True, exist_ok=True)
+    (personal / "Todo.md").write_text("# Personal: open actions\n\n## Inbox\n\n- [ ] Pay it \U0001F4C5 2026-11-01\n- [ ] Book it \U0001F4C5 2026-11-03\n\n## Done\n", encoding="utf-8")
+
+
+class LookItems(unittest.TestCase):
+    """The look items of the 0.68.0 review: plural agreement, the Todo badge, the State reason, hit targets, the Guide's commands."""
+
+    def test_a_count_and_its_noun_agree_in_one_helper(self):
+        self.assertEqual(["1 error", "2 errors", "0 errors"], [status.counted(n, "error") for n in (1, 2, 0)])
+        self.assertEqual("1 project or thread", status.counted(1, "project or thread", "projects and threads"))
+        self.assertEqual("idle 1 day", "idle %s" % status.counted(1, "day"))
+        self.assertEqual("about 1 minute", "about %s" % status.counted(1, "minute"))
+        self.assertIn("(V.length===1?' note, ':' notes, ')+E.length+(E.length===1?' link':' links')", page_html())
+
+    def test_the_context_tile_and_caption_say_1_error_not_1_errors(self):
+        def check(errors, warnings):
+            def extra(root):
+                tools = root / "System" / "tools"
+                tools.mkdir(parents=True, exist_ok=True)
+                found = [{"check": "walls", "severity": "error", "path": "Zones/Work/Acme/Memo.md", "message": "links a file of zone Personal"}] * errors \
+                    + [{"check": "threads", "severity": "warning", "path": "Zones/Work/Acme/Pricing.md", "message": "no resume block"}] * warnings
+                (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {"errors": errors, "warnings": warnings, "findings": found})
+            return build_with_beats({}, extra)
+        one = check(1, 1)
+        self.assertIn("1<small>error</small>1<small>warning</small>", one)
+        self.assertNotRegex(one, r"\b1 (errors|warnings)\b")
+        two = check(2, 3)
+        self.assertIn("2<small>errors</small>3<small>warnings</small>", two)
+
+    def test_the_todo_badge_counts_the_zone_shown_and_the_script_follows_the_zone(self):
+        html = build_with_beats({}, two_zones_one_late_each)
+        bar = html[html.index('<div class="tabs" role="tablist">'):]
+        todo = bar[bar.index('data-tab="todo"'):bar.index("</button>", bar.index('data-tab="todo"'))]
+        self.assertRegex(todo, r'<span class="n crit" id="tabn-late" aria-label="1 action is late" title="1 action is late">')   # Work, the first zone: 1, not 3
+        state = html[html.index('id="state-data">'):]
+        data = json.loads(state[len('id="state-data">'):state.index("</script>")])
+        self.assertEqual({"Work": 1, "Personal": 2}, data["late"])                                    # each zone's own, for the script
+        self.assertIn("function lateBadge(z)", html)
+        self.assertIn("st.set('garrick-todo-zone',z);empties();lateBadge(z)", html)               # every change of zone sets it again
+        self.assertIn("b.hidden=!n", html)
+
+    def test_the_state_reason_shows_on_focus_as_well_as_hover(self):
+        # the row's markup is pinned in test_overview_work: a focusable span carrying the page's own tip, which listens for focus
+        self.assertIn("document.addEventListener('focusin',show)", status.JS)
+        self.assertIn("t.closest('[data-tip]')", status.JS)
+        self.assertIn(".ywait:focus-visible{outline", page_html())
+
+    def test_small_carets_and_help_marks_reach_24_pixels(self):
+        html = page_html()
+        self.assertIn('.tchev::after{content:"";position:absolute;inset:-2px}', html)             # 20px and 2px either side: 24
+        self.assertIn(".qhelp{position:relative;flex:none;width:17px;height:17px", html)
+        self.assertIn('.qhelp::after{content:"";position:absolute;inset:-4px}', html)             # 17px and 4px either side: 25
+        self.assertIn(".grip::after,.hide::after,.totab::after,.tick::after,.pchev::after", html)  # the rest were already padded out
+
+    def test_the_guide_shows_a_zone_command_only_behind_details(self):
+        gd = status.guide_mod()
+        text = "# Zones\n\nChange a flag:\n\n```\npython3 System/tools/scaffold.py zone --name Garden --walled\n```\n\nList them:\n\n```\nls Zones\n```\n"
+        html = gd.Renderer().render(text) if hasattr(gd, "Renderer") else ""
+        self.assertTrue(html)
+        shown = re.sub(r"<details class=\"gd-cmd\">.*?</details>", "", html, flags=re.S)
+        self.assertNotIn("scaffold.py", shown)
+        self.assertIn('<details class="gd-cmd"><summary>Details</summary><pre><code>python3 System/tools/scaffold.py zone', html)
+        self.assertIn("<pre><code>ls Zones</code></pre>", shown)                      # any other block stays as it was
 
 
 if __name__ == "__main__":

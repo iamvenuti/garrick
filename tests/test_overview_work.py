@@ -123,7 +123,7 @@ class OverviewWork(unittest.TestCase):
               thread("Birch Entry", "Market Sizing", "birch", "Theo to send the volumes", waiting="**Theo Marsh**: the volumes"))
         card = self.card(self.page())
         self.assertIn('Waiting on <b>Theo Marsh</b>', card)
-        self.assertIn('title="Waiting on **Theo Marsh**: the volumes"', card)
+        self.assertIn('data-tip="Waiting on **Theo Marsh**: the volumes"', card)
         self.assertNotIn(">Waiting on **", card)
 
     def test_an_owner_is_removed_from_the_head_of_a_next_action_as_from_its_tail(self):
@@ -169,7 +169,7 @@ class OverviewWork(unittest.TestCase):
             self.assertLessEqual(len(re.findall(r'class="st |class="ywhy"', state)), 2)       # the badge, and one line of reason and chip
         long = next(r for r in rows if "a very long wait" in r)
         self.assertEqual(1, long.count('class="ywhy"'))
-        self.assertIn('title="Waiting on Theo Marsh: a very long wait', long)                 # the whole text is in the title
+        self.assertIn('data-tip="Waiting on Theo Marsh: a very long wait', long)                 # the whole text is in the tip, shown on hover and on focus
         self.assertIn("text-overflow:ellipsis", status.YOURWORK_CSS)
         self.assertIn("white-space:nowrap", status.YOURWORK_CSS.split(".ywait{")[1].split("}")[0])
 
@@ -334,7 +334,7 @@ class YourWorkWords(unittest.TestCase):
     def test_an_act_now_row_carries_its_reason(self):
         html = self.card([self.w(waiting="Alex: the agenda to the client", mine=True, ask="the agenda to the client")])
         self.assertIn("Act now", html)
-        self.assertRegex(html, r'<span class="ywait" title="the agenda to the client">the agenda to the client</span>')
+        self.assertRegex(html, r'<span class="ywait" tabindex="0" data-tip="the agenda to the client">the agenda to the client</span>')
 
     def test_a_row_waiting_on_somebody_else_says_who(self):
         html = self.card([self.w(waiting="Dana: the volumes")])

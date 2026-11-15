@@ -822,7 +822,7 @@ def decide(page: Page, refs: List[Ref], s: dict, today: datetime.date, p: Plan) 
 # promises a wake this file does not make.
 WAKE_SAID = ("A dormant page is proposed to come back when a live thread, a live project's notes or an open action "
              "links it, where that protection is switched on, or when a working page links it afresh rather than "
-             "through the link the fade rewrote. Marking it `pinned: true` brings it back too, and is the only way "
+             "through the link the move rewrote. Marking it `pinned: true` brings it back too, and is the only way "
              "back from the archive. Opening, reading or quoting a page brings nothing back, nothing comes back until "
              "you confirm a review, and a superseded page never comes back.")
 

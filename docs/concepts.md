@@ -92,7 +92,7 @@ An organisation or person whose confidences you hold. Each has a tag, one lowerc
 
 ### The Zones table
 
-The table in `System/context.md` that lists every zone: its name, what it holds and whether it is walled. A new zone is walled. `scaffold.py zone --walled` or `--open` changes the flag.
+The table in `System/context.md` that lists every zone: its name, what it holds and whether it is walled. A new zone is walled. *Change…* in Settings › Walls changes the flag, through your assistant.
 
 ### The Parties table
 

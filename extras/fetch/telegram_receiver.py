@@ -301,6 +301,7 @@ class Receiver:
         path = inbox / ("telegram-%s.md" % msg["id"])
         if not path.exists():
             path.write_text("\n".join(head) + decision["text"] + "\n", encoding="utf-8")
+            self.m["intake"].record_note(self.ws, path, msg["id"])      # the ledger is what proves the note is ours (#584)
         self.set_message(msg["id"], state="completed")
         self.say("Noted.", None, msg["message_id"])
 

@@ -210,6 +210,10 @@ class TestNotesNeverReachTheAssistant(TelegramCase):
         self.assertEqual(["Noted."], self.texts())
         [item] = self.mods["intake"].list_items(self.root)
         self.assertEqual("note", item["kind"])
+        self.assertIn("Inbox/%s" % f.name, self.mods["intake"].load_ledger(self.root)["notes"])
+        f.write_text(text.replace("450", "250"))              # edited after the receiver wrote it: no longer ours
+        [item] = self.mods["intake"].list_items(self.root)
+        self.assertEqual("file", item["kind"])
 
     def test_note_with_a_colon_or_none_both_count(self):
         self.api.say("note: buy envelopes")
@@ -545,6 +549,7 @@ class TestHeldSends(TelegramCase):
         self.assertEqual("done", hold.get(entry["id"])["state"])
         self.assertEqual(1, len(ran))
         self.assertEqual("Sent.", self.texts()[-1].split(": ", 1)[-1])
+
 
 
 class TestBesideTheDesk(TelegramCase):

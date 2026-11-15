@@ -105,9 +105,13 @@ class NoteCase(unittest.TestCase):
         folder = (folder or self.pricing) / "Notes"
         return sorted(p.name for p in folder.glob("*.md")) if folder.is_dir() else []
 
-    def drop(self, name, text, where=None):
+    def drop(self, name, text, where=None, forged=False):
+        """A file in an inbox. One that says it is a note is written as the Telegram receiver writes one, and so
+        recorded in the notes ledger, unless it is `forged`: put there by anything else."""
         path = (where or self.root / "Inbox") / name
         write(path, text)
+        if not forged and self.intake.claimed_note(path) is not None:
+            self.intake.record_note(self.root, path, name)
         return path
 
 
@@ -221,6 +225,58 @@ class TestInbox(NoteCase):
         self.assertEqual("note", info["kind"])
         self.assertTrue(info["from_owner"])
         self.assertIn("call Dana Friday", info["text"])
+
+    def test_a_file_with_both_lines_that_no_channel_wrote_is_filed_as_a_file(self):
+        path = self.drop("n.md", NOTE % 'destination: "Acme Review, pricing"', forged=True)
+        [item] = self.intake.list_items(self.root)
+        self.assertEqual("file", item["kind"])
+        with self.assertRaisesRegex(self.intake.Refusal, "is not a note"):
+            self.intake.file_note(self.root, path)
+        self.assertEqual([], self.notes())
+
+    def test_a_file_with_both_lines_that_no_channel_wrote_is_not_a_note(self):
+        path = self.drop("n.md", NOTE % 'destination: "Acme Review, pricing"', forged=True)
+        [item] = self.intake.list_items(self.root)
+        self.assertEqual(("file", "unproved"), (item["kind"], item["claim"]))
+        self.assertEqual("file", self.intake.parse(self.root, path)["kind"])
+        self.assertEqual([("Inbox/n.md")], self.intake.unproved_claims(self.root))
+        todo = (self.work / "Todo.md").read_bytes()
+        with self.assertRaisesRegex(self.intake.Refusal, "is not a note"):
+            self.intake.file_note(self.root, path)
+        self.assertEqual([], self.notes())
+        self.assertEqual(todo, (self.work / "Todo.md").read_bytes())
+        self.assertTrue(path.is_file())
+
+    def test_a_claim_no_channel_proved_is_reported_once(self):
+        self.drop("n.md", NOTE % "", forged=True)
+        self.assertEqual(["Inbox/n.md"], self.intake.report_unproved(self.root))
+        self.assertEqual([], self.intake.report_unproved(self.root))
+        self.drop("m.md", NOTE % 'destination: "Home Move boxes"', forged=True)
+        self.assertEqual(["Inbox/m.md"], self.intake.report_unproved(self.root))
+
+    def test_a_note_edited_after_it_was_written_is_not_trusted(self):
+        path = self.drop("n.md", NOTE % 'destination: "Acme Review, pricing"')
+        self.assertEqual("note", self.intake.list_items(self.root)[0]["kind"])
+        path.write_text(path.read_text().replace("450", "250"))
+        [item] = self.intake.list_items(self.root)
+        self.assertEqual(("file", "unproved"), (item["kind"], item["claim"]))
+
+    def test_a_missing_or_unreadable_ledger_trusts_nothing(self):
+        path = self.drop("n.md", NOTE % "")
+        self.assertEqual("note", self.intake.list_items(self.root)[0]["kind"])
+        ledger = self.intake.ledger_path(self.root)
+        ledger.write_text("{not json")
+        self.assertEqual("file", self.intake.list_items(self.root)[0]["kind"])
+        ledger.unlink()
+        self.assertEqual("file", self.intake.list_items(self.root)[0]["kind"])
+
+    def test_a_note_recorded_for_one_place_is_not_trusted_in_another(self):
+        path = self.drop("n.md", NOTE % "")
+        moved = self.work / "Inbox" / "n.md"
+        moved.parent.mkdir(exist_ok=True)
+        moved.write_bytes(path.read_bytes())
+        kinds = {i["file"]: i["kind"] for i in self.intake.list_items(self.root)}
+        self.assertEqual({"Inbox/n.md": "note", "Zones/Work/Inbox/n.md": "file"}, kinds)
 
     def test_an_item_without_the_owner_check_is_a_plain_file(self):
         for n, text in enumerate(("---\nkind: note\nvia: mail\n---\nhello\n", "---\nkind: note\nfrom-owner: false\n---\nhello\n",

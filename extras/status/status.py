@@ -1462,7 +1462,7 @@ CONTEXT_JS = r"""
 var sel=document.getElementById('nzone'),sum=document.getElementById('nsum'),tn=document.getElementById('qp-tab-n'),KEY='garrick-context-zone';
 var lines=[].slice.call(card.querySelectorAll('.need[data-scope]'));
 function ss(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sessionStorage.setItem(k,v)}catch(e){return null}}
-/* The Zone menu filters the lines. Each line is one place's own, so what shows is a place's count or nothing, and a number for the tab is a single place's, never a sum */
+/* The Zone menu filters the lines; a kept file with no zone shows under All places only. Each line is one place's own, so what shows is a place's count or nothing, and a number for the tab is a single place's, never a sum */
 function apply(){var z=sel?sel.value:'*';card.querySelectorAll('.kept[data-scope]').forEach(function(k){k.hidden=!(z==='*'||k.dataset.scope===z)});var shown=lines.filter(function(l){var on=z==='*'||l.dataset.scope===z;l.hidden=!on;return on});
 if(sum&&sum.dataset.some)sum.textContent=shown.length+' place'+(shown.length===1?' needs you.':'s need you.');
 if(tn){var c=z!=='*'&&shown.length&&shown[0].dataset.n!=='0'?+shown[0].dataset.n:0,w=c+(c===1?' question to answer':' questions to answer');

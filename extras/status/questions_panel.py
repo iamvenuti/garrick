@@ -380,7 +380,8 @@ def kept_card(rows: List[dict], title: Callable[[str], str]) -> str:
     """Kept by you (#582), under the Context card's queue: what the user let through the wall check, once, a collapsed line
     for each place with its own count (two places' counts are never added) and, opened, its rows with Remove; "" with none.
     A row names its file and where it sits, and what kind of finding it was in plain words. It never quotes what was kept.
-    `title` names a place; a file of no zone or wiki sits in a place of its own, shown with every place."""
+    `title` names a place; a file of no zone or wiki sits in a place of its own with no scope, which shows under All places only and
+    never under a chosen zone (the card's Zone menu)."""
     groups: dict = {}
     for r in rows:
         groups.setdefault(kept_place(r["path"]), []).append(r)

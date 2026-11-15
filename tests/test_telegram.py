@@ -551,6 +551,70 @@ class TestHeldSends(TelegramCase):
         self.assertEqual("Sent.", self.texts()[-1].split(": ", 1)[-1])
 
 
+    def hold_one(self):
+        """A send held by the assistant and asked about in Telegram: (the entry, the bot's message that asked)."""
+        first = len(self.calls) + 1
+        self.rx.runner = self.assistant("I queued it.", act=lambda c, e: self.asking(c, e) if len(self.calls) == first else None)
+        self.api.say("Acme Review, pricing: send the price sheet to Dana")
+        self.pump()
+        entry = self.mods["hold"].pending()[-1]
+        return entry, self.api.sent[-1]
+
+    def refuse_to_run(self):
+        ran = []
+        self.rx.runner = lambda cmd, tier, cwd, env: ran.append(cmd) or (0, {"text": "Sent.", "session_id": None, "usage": {}})
+        return ran
+
+    def test_a_no_reply_cancels_and_a_later_yes_runs_nothing(self):
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        self.assertIn("or no to cancel it", asked["text"])
+        ran = self.refuse_to_run()
+        self.api.say("no", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual("cancelled", hold.get(entry["id"])["state"])
+        self.assertEqual([], hold.pending())
+        self.assertIn("Cancelled", self.texts()[-1])
+        self.api.say("yes", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual([], ran)
+        self.assertEqual("cancelled", hold.get(entry["id"])["state"])
+        self.assertIn("cancelled", self.texts()[-1])
+        self.assertEqual(1, len(self.calls))                      # neither reply reached the assistant
+
+    def test_a_no_that_is_not_a_reply_to_the_held_message_cancels_nothing(self):
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        self.api.say("no")
+        self.pump()
+        self.api.say("no", reply_to=self.api.sent[0]["message_id"])           # a reply, but to another message
+        self.pump()
+        self.assertEqual("held", hold.get(entry["id"])["state"])
+
+    def test_cancel_and_stop_cancel_and_other_words_do_not(self):
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        self.api.say("no thanks", reply_to=asked["message_id"])
+        self.api.say("not now", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual("held", hold.get(entry["id"])["state"])
+        self.api.say("STOP.", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual("cancelled", hold.get(entry["id"])["state"])
+        entry, asked = self.hold_one()
+        self.api.say("  Cancel!  ", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual("cancelled", hold.get(entry["id"])["state"])
+
+    def test_a_cancelled_record_answers_a_later_yes_until_the_day_is_up(self):
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        self.api.say("no", reply_to=asked["message_id"])
+        self.pump()
+        now = time.time()                                       # the queue keeps real time; the receiver's clock is a stub
+        self.assertIsNotNone(hold.cancelled_by_message(asked["message_id"], now + 23 * 3600))
+        self.assertIsNone(hold.cancelled_by_message(asked["message_id"], now + 25 * 3600))
+
 
 class TestBesideTheDesk(TelegramCase):
     def test_the_assistant_is_told_to_leave_other_sessions_work_alone(self):

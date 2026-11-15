@@ -735,5 +735,66 @@ class OpeningAThread(unittest.TestCase):
         self.assertIn("GarrickPrefs.set(p,moved?'note':dpref())", status.JS)
         self.assertIn("Clicking a thread now opens the note.", status.JS)
 
+
+class ChannelsCard(unittest.TestCase):
+    """Settings > Channels: Telegram's state first, its menus greyed while it is off, the held list on its own (#581)."""
+
+    def card(self, state=None):
+        import json as _json
+        import os as _os
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            root = base / "Workspace"
+            build_workspace(root)
+            jobs = base / "jobs"
+            jobs.mkdir()
+            if state:
+                (jobs / "telegram-status.json").write_text(_json.dumps(state), encoding="utf-8")
+            with mock.patch.dict(_os.environ, {"GARRICK_JOBS_DIR": str(jobs), "HOME": str(base)}):
+                return status.channels_settings(root)
+
+    def telegram_block(self, html):
+        return html[html.index("<b>Telegram</b>"):html.index('<div id="held-actions">')]
+
+    def test_off_the_state_line_comes_first_and_the_menus_are_greyed_with_a_button(self):
+        block = self.telegram_block(self.card())
+        self.assertTrue(block.index("Telegram is not set up.") < block.index("<select"))
+        self.assertEqual(3, len(re.findall(r"<select[^>]* disabled ", block)))
+        self.assertIn(status.NOT_SET_UP, block)
+        self.assertRegex(block, r'<button class="act" type="button" data-request="set up Telegram"[^>]*>Set up Telegram</button>')
+        self.assertLess(block.index("Set up Telegram"), block.index("<select"))
+
+    def test_running_the_menus_are_live_and_there_is_no_button(self):
+        import time as _time
+        block = self.telegram_block(self.card({"state": "running", "beat": _time.time(), "pid": 1, "last_received": None}))
+        self.assertNotIn(" disabled", block)
+        self.assertNotIn("Set up Telegram", block)
+
+    def test_another_program_reading_the_bot_is_said_in_plain_words(self):
+        why = "Another program is already reading this bot's messages."
+        block = self.telegram_block(self.card({"state": "conflict", "why": why, "beat": 1, "pid": 1}))
+        import html as _h
+        text = _h.unescape(block)
+        self.assertIn(why, text)
+        self.assertLess(text.index(why), text.index("<select"))
+
+    def test_the_held_list_has_its_own_heading_outside_both_channels(self):
+        html = self.card()
+        self.assertIn('<div id="held-actions"><p class="chnote"><b>Waiting for your yes</b></p>', html)
+        self.assertLess(html.index("<b>Telegram</b>"), html.index("Waiting for your yes"))
+        self.assertGreater(html.index("Waiting for your yes"), html.rindex('data-key="autonomy"'))
+
+    def test_no_path_and_no_model_code_name_in_the_visible_text(self):
+        html = self.card()
+        text = re.sub(r"<[^>]+>", " ", html)
+        for word in ("System/", "garrick-settings", "haiku", "sonnet", "opus", "git "):
+            self.assertNotIn(word, text.lower() if word != "System/" else text)
+        tiers = re.findall(r'data-key="tier"[^>]*>(.*?)</select>', html)
+        self.assertEqual(2, len(tiers))
+        for t in tiers:
+            self.assertEqual(["Small", "Medium", "Large"], re.findall(r"<option[^>]*>([^<]*)</option>", t))
+        self.assertIn("changes that can be undone", html)
+
+
 if __name__ == "__main__":
     unittest.main()

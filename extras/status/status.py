@@ -4447,30 +4447,37 @@ def channel_mod(name: str):
 
 CHANNEL_NAMES = {"ask": "Ask", "telegram": "Telegram"}
 LEVEL_NAMES = {"read": "Read", "act": "Act", "full": "Full"}
-TIER_NAMES = {"haiku": "Small (haiku)", "sonnet": "Medium (sonnet)", "opus": "Large (opus)"}
+TIER_NAMES = {"haiku": "Small", "sonnet": "Medium", "opus": "Large"}
+NOT_SET_UP = "Set Telegram up first. Its choices apply once it runs."
 
 
-def telegram_service_row() -> str:
-    """The Telegram receiver's row: running or down, and when it last received a message."""
+def telegram_service_row(ws: Optional[Path] = None) -> Tuple[str, bool]:
+    """The Telegram receiver's state line, first in its block, and whether the channel is off. While it is off, a
+    *Set up Telegram* button hands the setup to the assistant, as Process the Inbox does (#581)."""
     try:
         row = channel_mod("channel_state").row()
     except Exception:
-        return ""
-    return '<p class="chnote" id="telegram-service" data-state="%s">%s</p>' % (E(row["state"]), E(row["said"]))
+        return "", False
+    off = row["state"] == "off"
+    button = request_button("Set up Telegram", "set up Telegram", ws) if ws is not None and row["state"] in ("off", "unpaired") else ""
+    return ('<p class="chnote" id="telegram-service" data-state="%s">%s%s</p>' % (E(row["state"]), E(row["said"]), (" " + button) if button else ""),
+            off)
 
 
 def held_list() -> str:
-    """The actions waiting for your yes, each with what it would do, where, and how long it has left."""
+    """The actions waiting for your yes, each with what it would do, where, and how long it has left. Its own heading,
+    outside both channels' blocks: the list covers Ask and Telegram."""
     try:
         rows = channel_mod("hold").listing()
     except Exception:
         return ""
+    head = '<p class="chnote"><b>Waiting for your yes</b></p>'
     if not rows:
-        return '<p class="chnote" id="held-actions">Nothing is waiting for your yes.</p>'
+        return '<div id="held-actions">%s<p class="chnote">Nothing is waiting for your yes.</p></div>' % head
     items = "".join('<li>%s <small>(%s, %s; %d h left)</small></li>' % (E(r["what"]), E(r["where"] or "no destination"),
                                                                        E(CHANNEL_NAMES.get(r["channel"], r["channel"])), r["hours_left"])
                     for r in rows)
-    return '<div id="held-actions"><p class="chnote">Waiting for your yes. Nothing runs until you say so:</p><ul>%s</ul></div>' % items
+    return '<div id="held-actions">%s<p class="chnote">Nothing runs until you say so:</p><ul>%s</ul></div>' % (head, items)
 
 
 def channels_settings(ws: Path) -> str:
@@ -4482,29 +4489,34 @@ def channels_settings(ws: Path) -> str:
     except Exception:
         return ""
 
-    def select(channel: str, key: str, values, names, label: str) -> str:
+    def select(channel: str, key: str, values, names, label: str, off: bool = False) -> str:
         opts = "".join('<option value="%s"%s>%s</option>' % (v, " selected" if cfg[channel][key] == v else "", E(names.get(v, v.capitalize())))
                        for v in values)
         return ('<div class="launcher-row"><label class="launcher-choice" for="ch-%s-%s"><span>%s</span></label>'
-                '<select id="ch-%s-%s" class="menu-style" data-channel="%s" data-key="%s">%s</select></div>'
-                % (channel, key, E(label), channel, key, channel, key, opts))
+                '<select id="ch-%s-%s" class="menu-style" data-channel="%s" data-key="%s"%s>%s</select></div>'
+                % (channel, key, E(label), channel, key, channel, key,
+                   ' disabled title="%s"' % E(NOT_SET_UP) if off else "", opts))
     body = ""
     for channel in ch.CHANNELS:
         body += '<p class="chnote"><b>%s</b></p>' % E(CHANNEL_NAMES[channel])
-        body += select(channel, "tier", ch.TIERS, TIER_NAMES, "Model size")
-        body += select(channel, "effort", ch.EFFORTS, {}, "Effort")
-        body += select(channel, "autonomy", ch.LEVELS_FOR[channel], LEVEL_NAMES, "How far it may go")
+        off = False
+        if channel == "telegram":
+            line, off = telegram_service_row(ws)
+            body += line
+        body += select(channel, "tier", ch.TIERS, TIER_NAMES, "Model size", off)
+        body += select(channel, "effort", ch.EFFORTS, {}, "Effort", off)
+        body += select(channel, "autonomy", ch.LEVELS_FOR[channel], LEVEL_NAMES, "How far it may go", off)
     limit = ""
     if not cap.get("ok"):
         limit = ('<p class="chnote" id="channels-limit">Running at Read: %s. Check: %s.</p>'
                  % (E("; ".join(cap.get("said") or [])), E(", ".join(c.replace("_", " ") for c in cap.get("failed") or []))))
     lede = "How far the Ask box and a Telegram chat may go: read and answer, or also act, with every send held for your yes."
-    return ('<section class="setsec apponly" id="channels-settings" hidden>%s%s%s%s%s%s</section>'
+    return ('<section class="setsec apponly" id="channels-settings" hidden>%s%s%s%s%s</section>'
             % (set_head("Channels", "channels", lede),
-               help_text("channels", "Read answers. Act also does what git can undo, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking; Telegram never offers it. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
-                         "Saved in <code>%s</code> when you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
-                         "walled zone sent to Telegram is held on Telegram&#39;s servers." % E(prefs().FILE)),
-               body, limit, telegram_service_row(), held_list()))
+               help_text("channels", "Read answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking; Telegram never offers Full. Small, Medium and Large are the size of the model. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
+                         "Saved as you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
+                         "walled zone sent to Telegram is held on Telegram&#39;s servers."),
+               body, limit, held_list()))
 
 
 CHANNELS_JS = r"""

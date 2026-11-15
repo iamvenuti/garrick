@@ -4691,8 +4691,8 @@ def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optiona
                    '%s<span>Preview</span></label></div>' % GLASS)
     if agent is not None:
         at = next(i for i, h in enumerate(html) if 'data-launcher="cmux"' in h) + 1
-        html.insert(at, '<div class="launcher-row apponly" id="desk-agent-row"><label class="launcher-choice" for="desk-agent">'
-                        '<span>A cmux tab starts<small>Saved in System/desk.json</small></span></label>'
+        html.insert(at, '<div class="launcher-row apponly launcher-sub" id="desk-agent-row"><label class="launcher-choice" for="desk-agent">'
+                        '<span>A cmux tab starts</span></label>'
                         '<select id="desk-agent" class="menu-style">%s</select></div>'
                         % "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == agent else "", label)
                                   for k, label in DESK_AGENTS))
@@ -5873,7 +5873,8 @@ SETTINGS_CSS = r"""
 .cog:hover,.cog:focus-visible{color:var(--ink);background:var(--wash)}
 .launcher-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .launcher-default{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink2)}.launcher-default input{accent-color:var(--accent)}
-.launcher-default:has(input:disabled){opacity:.4}
+.launcher-default:has(input:disabled){opacity:.4}.launcher-default.nodefault{visibility:hidden}
+.launcher-sub{padding-left:28px}
 .nohost .apponly{display:none}.launcher-choice:has(input:disabled){opacity:.5}.hotkey{display:flex;gap:6px;align-items:center}
 .hotkey input{width:150px;font:inherit;font-size:var(--fs-meta);text-align:center;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 8px;cursor:pointer}
 .hotkey input:focus{outline:2px solid var(--accent);outline-offset:1px}
@@ -6213,12 +6214,12 @@ document.getElementById('close-settings').onclick=sdShut;
 function lprefs(){return GarrickPrefs.launchers()}
 function dpref(){return GarrickPrefs.def()}
 function radios(){sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){var c=sd.querySelector('input[data-launcher="'+r.value+'"]');
-r.disabled=!c||c.disabled||!c.checked;r.checked=r.value===dpref()});if(!sd.querySelector('input[name="garrick-default"]:checked')){var n=sd.querySelector('input[value="note"]');if(n)n.checked=true}}
+r.disabled=!c||c.disabled||!c.checked;r.checked=r.value===dpref();r.parentNode.classList.toggle('nodefault',r.disabled)});if(!sd.querySelector('input[name="garrick-default"]:checked')){var n=sd.querySelector('input[value="note"]');if(n)n.checked=true}}
 sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){r.onchange=function(){GarrickPrefs.set(lprefs(),r.value);lpChanged=true;
 say('Clicking a thread now: '+r.closest('.launcher-row').querySelector('span').firstChild.textContent.trim()+'.')}});
 sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
-c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,!c.checked&&dpref()===c.dataset.launcher?'note':dpref());lpChanged=true;radios();
-say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.');daRow()}});radios();
+c.onchange=function(){var p=lprefs(),moved=!c.checked&&dpref()===c.dataset.launcher;p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,moved?'note':dpref());lpChanged=true;radios();
+say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.'+(moved?' Clicking a thread now opens the note.':''));daRow()}});radios();
 /* which assistant a cmux tab starts (#279): shown while Open in cmux is on, saved through the desk when Settings closes */
 var daSel=document.getElementById('desk-agent');function daRow(){var r=document.getElementById('desk-agent-row'),c=sd.querySelector('input[data-launcher="cmux"]');
 if(r)r.style.display=!c||c.disabled||!c.checked?'none':''}daRow();if(daSel)daSel.onchange=function(){daChanged=true;say('A cmux tab now starts '+daSel.options[daSel.selectedIndex].text+'.')};

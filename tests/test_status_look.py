@@ -704,5 +704,36 @@ class JobRows(unittest.TestCase):
         self.assertIn("if(!t||!t.dataset.tip){tip.style.opacity=0;return}", html)
 
 
+class OpeningAThread(unittest.TestCase):
+    """Settings > Opening a thread: no path, the cmux setting under its row, a Default only where it can apply (#577)."""
+
+    def card(self):
+        return status.launcher_choices(("finder", "claude", "cmux"), why={}, agent="claude")
+
+    def test_the_card_holds_no_system_path(self):
+        self.assertNotIn("System/", re.sub(r"<[^>]+>", " ", self.card()))
+        self.assertNotIn("desk.json", self.card())
+
+    def test_the_agent_row_sits_under_cmux_indented_and_hides_with_its_box(self):
+        card = self.card()
+        self.assertLess(card.index('data-launcher="cmux"'), card.index('id="desk-agent-row"'))
+        self.assertRegex(card, r'class="launcher-row apponly launcher-sub" id="desk-agent-row"')
+        self.assertRegex(status.SETTINGS_CSS, r"\.launcher-sub\{padding-left:\d+px\}")
+        # shown and hidden in the script as the box is ticked, with no rebuild
+        self.assertIn("r.style.display=!c||c.disabled||!c.checked?'none':''", status.JS)
+        self.assertIn("daRow()", status.JS[status.JS.index("c.onchange=function(){var p=lprefs()"):][:600])
+
+    def test_a_default_is_drawn_only_on_a_row_that_is_on(self):
+        self.assertIn("r.parentNode.classList.toggle('nodefault',r.disabled)", status.JS)
+        self.assertIn(".launcher-default.nodefault{visibility:hidden}", status.SETTINGS_CSS)
+        self.assertIn("r.disabled=!c||c.disabled||!c.checked", status.JS)          # unticked, uninstalled: no radio
+        card = self.card()
+        self.assertNotIn('data-launcher="preview"></label><label class="launcher-default"', card)   # Preview never had one
+        self.assertEqual(5, card.count('name="garrick-default"'))
+
+    def test_switching_off_the_default_row_moves_it_and_says_so(self):
+        self.assertIn("GarrickPrefs.set(p,moved?'note':dpref())", status.JS)
+        self.assertIn("Clicking a thread now opens the note.", status.JS)
+
 if __name__ == "__main__":
     unittest.main()

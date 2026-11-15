@@ -189,6 +189,7 @@ class Item:
     held: str = ""                  # why a fix was not applied
     said: str = ""                  # what a fix did, once applied
     key: str = ""                   # opaque and stable: the review record's Id for this finding
+    fid: str = ""                   # the finding's own stable id when the check gave one: the status page keys Not now by it
 
     def __post_init__(self) -> None:
         # Made when the finding is, before a kind blanks what a wall matched,
@@ -357,7 +358,7 @@ def check_items(f: dict) -> List[Item]:
     page's Checks card sorts the findings it shows through this and
     sort_item(), so its kinds are Nurture's."""
     item = Item("check", f.get("check", ""), strip_line(f.get("path", "")), f.get("message", ""),
-                f.get("ear", ""), f.get("severity", "warning"))
+                f.get("ear", ""), f.get("severity", "warning"), fid=str(f.get("fid") or ""))
     m = TODO_BROKEN.match(item.message)
     if item.check == "todo" and m:
         # One finding names every broken thread link; each is its own fix.
@@ -1591,6 +1592,8 @@ def stored(item: Item) -> dict:
     d = {"kind": item.kind, "path": item.path, "line": item.line()}
     if item.kind != "wall":
         d["check"] = item.check
+    if item.fid:
+        d["fid"] = item.fid
     return d
 
 

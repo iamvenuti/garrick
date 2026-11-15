@@ -1257,7 +1257,7 @@ def forecast_items(ws: Path, day: dt.date) -> List[dict]:
         if kind and (kind == "wall" or weights.get(kind, getattr(N, "UNKNOWN_WEIGHT", 1))):
             path = re.sub(r":\d+$", "", str(f.get("path", "")))
             out.append({"kind": kind, "path": path, "line": str(f.get("line") or ""), "check": str(f.get("check") or ""),
-                        "scope": N.debt_scope(path)})
+                        "fid": str(f.get("fid") or ""), "scope": N.debt_scope(path)})
     return out
 
 
@@ -1294,6 +1294,7 @@ def quick_needs(ws: Path, C: Optional[dict], covered: Dict[str, List[dict]]) -> 
             continue
         seen.add((path, wall, message))
         out.append({"kind": "wall" if wall else "judgment", "check": "" if wall else check, "path": path, "scope": scope,
+                    "fid": str(f.get("fid") or ""),
                     "line": "%s: %s" % (path, message) if path else message, "message": message, "listed": True,
                     "title": check.capitalize() if check else "Check finding"})
     return out

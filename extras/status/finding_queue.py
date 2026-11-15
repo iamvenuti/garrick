@@ -902,6 +902,7 @@ dialog.queue{width:min(620px,calc(100vw - 32px))}
 .queue .q[data-kind="wall"]:not(.looked) .opt[data-needlook]{display:none}.nohost .queue .q[data-kind="wall"] .opt[data-needlook]{display:flex}
 .queue .qtexts{margin:10px 0 0}.queue .qtext{background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 8px;font-size:var(--fs-meta);overflow-wrap:anywhere}
 .queue .qtext small{display:block;color:var(--muted);margin-bottom:3px}.queue .qtext mark{background:var(--wash);color:var(--ink);font-weight:600;border-radius:3px}
+.qkept{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;font-size:var(--fs-meta)}.qkept[hidden]{display:none}.qkept .qk{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:3px 0}.qkept .qk span{flex:1 1 220px}
 .queue .opt[hidden],.queue .qskip[hidden],.queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
 """
 
@@ -1026,7 +1027,24 @@ if(o.classList.contains('other')||o.classList.contains('later')){o.querySelector
    A reload that leaves no section for a place whose answers were taken sends the request when the page loads (restore), once: the count is cleared
    as it goes, as at a close. The kept count still goes after 15 minutes. */
 function workIn(later){var sent=taken;taken={};st.del(KEY);
-var go=function(){Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;handoff(t.work)})};if(later)setTimeout(go,0);else go()}
+var go=function(){Object.keys(sent).forEach(function(sc){var t=sent[sc];if(!t||!t.n||!t.work)return;if(later&&away())keep(t.work);else handoff(t.work)});showKept()};if(later)setTimeout(go,0);else go()}
+/* With no assistant to hand a request to, a page that loads cannot copy it either (a copy needs a click), so the request is kept, shown again
+   after every load, until it is handed over or dismissed (C5) */
+var KEPT='garrick-queue-kept';
+function away(){return!host||!!(window.GarrickAssistant&&!GarrickAssistant())}
+function kept(){var o={};try{o=JSON.parse(st.get(KEPT)||'{}')}catch(e){}return o&&typeof o==='object'?o:{}}
+function keep(p){var o=kept();o[p]=dlg.dataset.folder||'';st.set(KEPT,JSON.stringify(o))}
+function drop(p){var o=kept();delete o[p];if(Object.keys(o).length)st.set(KEPT,JSON.stringify(o));else st.del(KEPT);showKept()}
+function showKept(){var o=kept(),k=Object.keys(o),box=document.getElementById('qkept');
+if(!box){if(!k.length)return;var c=document.getElementById('checks'),body=c&&c.querySelector('.body');if(!body)return;box=document.createElement('div');box.id='qkept';box.className='qkept';body.insertBefore(box,body.firstChild)}
+box.textContent='';box.hidden=!k.length;
+k.forEach(function(p){var row=document.createElement('div');row.className='qk';var t=document.createElement('span');t.textContent='Waiting to go to your assistant: \u201c'+p+'\u201d.';
+var h=document.createElement('button');h.type='button';h.className='act';h.setAttribute('data-request',p);h.setAttribute('data-folder',o[p]);h.setAttribute('data-qkgo',p);h.textContent='Hand it over';
+var d=document.createElement('button');d.type='button';d.className='act';d.setAttribute('data-qkdrop',p);d.textContent='Dismiss';
+row.appendChild(t);row.appendChild(h);row.appendChild(d);box.appendChild(row)})}
+document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target:null;if(!t)return;
+var g=t.closest('[data-qkgo]');if(g){var gp=g.dataset.qkgo;setTimeout(function(){drop(gp)},0);return}
+var x=t.closest('[data-qkdrop]');if(x)drop(x.dataset.qkdrop)});
 dlg.addEventListener('close',function(){workIn(false)});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
@@ -1039,5 +1057,5 @@ else if(q.answer==='later'||q.verb==='question-later')finish(el,'later');else fi
 else{var say=(res&&res.say)||'That did not work.';delete notes[el.dataset.gk];
 refused[el.dataset.gk]={say:say,id:(p&&p.id)||q.answer,cant:/^nothing (can move|is old enough)/i.test(say)};refuse(el,refused[el.dataset.gk]);save();foc(el)}}}
 if(prev)return prev(q,res)};
-restore()})();
+restore();showKept()})();
 """

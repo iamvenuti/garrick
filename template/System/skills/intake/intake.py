@@ -944,25 +944,28 @@ def record_note(root: Path, path: Path, note_id: str = "") -> None:
     _update_ledger(root, change)
 
 
-def proved(path: Path) -> bool:
-    """Whether the ledger holds this inbox file with the bytes it was written with."""
+def proved(path: Path, data: Optional[bytes] = None) -> bool:
+    """Whether the ledger holds this inbox file with the bytes it was written with. `data` is the bytes the caller
+    already read: they are hashed as given, so what is parsed and what is hashed are the same bytes."""
     root = inbox_root(Path(path).resolve())
     if root is None:
         return False
     try:
+        if data is None:
+            data = Path(path).read_bytes()
         entry = load_ledger(root)["notes"].get(Path(path).resolve().relative_to(root).as_posix())
-        return bool(entry) and entry.get("sha256") == hashlib.sha256(Path(path).read_bytes()).hexdigest()
+        return bool(entry) and entry.get("sha256") == hashlib.sha256(data).hexdigest()
     except (OSError, ValueError):
         return False
 
 
-def claimed_note(path: Path) -> Optional[dict]:
+def claimed_note(path: Path, data: Optional[bytes] = None) -> Optional[dict]:
     """What a file in an inbox says it is, a note from the owner: `kind: note` and `from-owner: true` in its
     frontmatter. It says nothing of who wrote it: `read_note` checks that."""
     if path.suffix.lower() not in (".md", ".txt"):
         return None
     try:
-        data = path.read_bytes()
+        data = path.read_bytes() if data is None else data
     except OSError:
         return None
     if b"\0" in data[:8192]:
@@ -981,8 +984,12 @@ def read_note(path: Path) -> Optional[dict]:
     `kind: note` and `from-owner: true` in the frontmatter and records the file in the notes ledger. An item is a
     note only when both lines are there and the ledger holds the file unchanged (#584): any other file is sorted as
     it always was, whatever else it says."""
-    got = claimed_note(path)
-    return got if got is not None and proved(path) else None
+    try:
+        data = Path(path).read_bytes()              # read once: the same bytes are parsed and hashed
+    except OSError:
+        return None
+    got = claimed_note(path, data)
+    return got if got is not None and proved(path, data) else None
 
 
 def unproved_claims(root: Path) -> List[str]:

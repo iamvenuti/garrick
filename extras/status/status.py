@@ -6188,8 +6188,8 @@ if(window.GarrickAct&&GarrickAct(r,x.dataset.say))return;host.postMessage({act:r
 /* A button named for a request, Process the Inbox or Nurture Work (#234): in the app, to the assistant the menu's
    rows open, at the folder given, with the request typed in; in a browser, or with no assistant on, copied. */
 var q=t.closest('button[data-request]');if(q){var a=host&&GarrickAssistant(),p=q.dataset.request;
-if(a){host.postMessage({launch:a,folder:q.dataset.folder,phrase:p});say('Opening '+ASKS[a]+' on “'+p+'”…');return}
-put(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')},function(){say(p)});return}
+if(a){host.postMessage({launch:a,folder:q.dataset.folder,phrase:p});say('Opening '+ASKS[a]+' on “'+p+'”…');if(window.GarrickHanded)GarrickHanded(p);return}
+put(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.');if(window.GarrickHanded)GarrickHanded(p)},function(){say(p)});return}
 var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}

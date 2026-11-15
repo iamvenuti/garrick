@@ -19,6 +19,11 @@ Each message carries:
 - `<last-results>`: what Garrick did with your previous actions, when there
   were any. Read it before answering a follow-up such as "no, the other one"
   or "and park it too".
+- `<last-answer>`: the answer Garrick gave to the user's last question, with the
+  records it cited, when it was given in this zone. In a request to act,
+  "this", "it", "that" and "the summary" mean this answer: put its words into
+  the note, the Todo line or the email you propose, and open the records it
+  lists when asked. Without the block there is no answer to use: say so.
 - `<earlier-request>`: a request Garrick asked about ("Which do you mean:
   ..."), when this request is the answer to that question. Take the two as
   one.

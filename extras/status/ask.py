@@ -307,6 +307,8 @@ LEASE = 10 * 60             # seconds: the server stays up this long after the a
 TICK = 15                   # seconds: how often a held lease looks for a dead session, the accept timeout then
 IDLE_TICK = 60              # seconds: the accept timeout with no lease
 MAX_REQUEST = 2000
+MAX_LAST_ANSWER = 4000          # characters of the last answer a request to act is given (#578)
+MOST_SOURCES = 8                # the sources listed under it
 GONE = ("done",)
 STOP = b'{"stop": true}\n'    # said on a request's own connection: stop that request
 KINDS = ("command", "clarify", "answer")    # what a final line's `kind` says it is
@@ -1431,6 +1433,7 @@ class Asker:
         self.sent = None            # the hash of the list the session was last given
         self.told = None            # the `started` of the process last given the whole list
         self.results = ""           # what the last actions did, for the next turn
+        self.last_answer = None     # the last answer's text, sources and zone, for a request that acts on it (#578)
         self.asked = {}             # each request the last turn was asked about: the action to confirm
         self.answers = None         # the second session, which answers from records: started on the first question
         self.answer_sent = None     # its `sent` and `told`, as above
@@ -1540,7 +1543,7 @@ class Asker:
         if self.session.remembers and self.session.fresh():
             # The turn starts a new process, which was told none of what the
             # last actions did nor asked any question waiting for a yes.
-            self.results, self.asked = "", {}
+            self.results, self.asked, self.last_answer = "", {}, None
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat(),
                  "<workspace>\n%s\n</workspace>" % listing if whole else "<workspace unchanged/>"]
         if "command" in self.refreshed:             # renewed by size: what it said before is gone
@@ -1550,6 +1553,9 @@ class Asker:
             parts.append("<zone>%s</zone>" % inert(here))
         if self.results:
             parts.append("<last-results>\n%s\n</last-results>" % self.results)
+        block = self.last_answer_block(here)
+        if block:                                   # "this", "it", "the summary" in a request to act (#578)
+            parts.append(block)
         if earlier is not None:                     # the request the box asked about, which this one answers
             parts.append("<earlier-request>\n%s\n</earlier-request>" % earlier[:MAX_REQUEST])
         known = heard_names(named, self.ctx)
@@ -1696,7 +1702,7 @@ class Asker:
         first, as a wall does."""
         sc = scope_lib()
         lib = sc.lib(self.ws)
-        self.results, self.asked = "", {}
+        self.results, self.asked, self.last_answer = "", {}, None
         if isinstance(find, dict) and isinstance(find.get("zone"), str) and find["zone"] in names \
                 and not sc.zone_named(request, find["zone"]):
             # A zone the request never names as a zone is the session's, copied from <zone>, or a
@@ -1801,7 +1807,21 @@ class Asker:
                    sources=self.sources([this_turn[i] for i in dict.fromkeys(ids)], names))
         out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
+        answered = zoned or where.zone or self.zone
+        self.last_answer = {"text": say, "zone": answered, "sources": out["sources"]} if answered and say else None
         return self.in_zone(out, zoned, why), reset
+
+    def last_answer_block(self, here: Optional[str]) -> str:
+        """The last answer as the command session is given it, `<last-answer>`: its words and the records it cited, only
+        when it was given in the zone the request is sent in. A reset, a zone change, New conversation and Stop clear it
+        with `<last-results>`; a renewal by size carries nothing over (#578)."""
+        got = self.last_answer
+        if not got or not here or got.get("zone") != here:
+            return ""
+        lines = ["- %s (%s%s)" % (inert(" ".join(str(s.get("title") or s.get("path") or "").split()))[:120], inert(s.get("path") or ""),
+                                  ", " + s["date"] if s.get("date") else "") for s in got.get("sources") or []]
+        body = inert(got["text"])[:MAX_LAST_ANSWER]
+        return "<last-answer>\n%s%s\n</last-answer>" % (body, "\nSources:\n" + "\n".join(lines[:MOST_SOURCES]) if lines else "")
 
     # ------------------------------------------------------------ the one session (#358)
 
@@ -1847,7 +1867,7 @@ class Asker:
             sess = self.session
         sess.zone = here
         if sess is self.session and sess.fresh():
-            self.results, self.asked = "", {}       # a new process was told none of what the last actions did
+            self.results, self.asked, self.last_answer = "", {}, None       # a new process was told none of what the last actions did
         sess.ready()
         sess.tell(here, named.zones)
         parts = ["<today>%s</today>" % (today or dt.date.today()).isoformat()]
@@ -2157,7 +2177,7 @@ class Asker:
         said to the command process, so they go with it too."""
         if isinstance(self.session, AgentSession):
             if not self.session.alive():
-                self.results, self.asked = "", {}
+                self.results, self.asked, self.last_answer = "", {}, None
                 return set()
             return self.session.held()
         s = self.answers
@@ -2166,7 +2186,7 @@ class Asker:
         c = self.session
         if c is None or not c.alive() or c.started != self.heard_for:
             self.heard = set()
-            self.results, self.asked = "", {}
+            self.results, self.asked, self.last_answer = "", {}, None
         return self.seen | self.heard
 
     def hear(self, zones) -> None:
@@ -2208,7 +2228,7 @@ class Asker:
         for s in (self.answers, self.session, self.quick):
             if s is not None:
                 s.stop()
-        self.results, self.asked, self.unclear, self.asking = "", {}, None, False
+        self.results, self.asked, self.last_answer, self.unclear, self.asking = "", {}, None, None, False
         self.question = None
         self.zone, self.zone_question = None, None      # last_zone stays: a zone's name, the window's default
         self.seen, self.seen_for, self.passages = set(), None, []
@@ -2467,7 +2487,7 @@ def clarify(question: str) -> dict:
 
 # The tags a message is built from: a record's own text never opens or closes one,
 # with a space after its "<" or before its "/" either.
-_TAGS = re.compile(r"<\s*(?=/?\s*(?:records?|request|earlier-request|workspace|names|today|last-results|correction"
+_TAGS = re.compile(r"<\s*(?=/?\s*(?:records?|request|earlier-request|workspace|names|today|last-results|last-answer|correction"
                    r"|refreshed|you|zone)\b)", re.I)
 # Characters that show nothing: a tag with one inside it still reads as the tag.
 _UNSEEN = re.compile("[\u00ad\u034f\u180e\u200b-\u200f\u2060-\u2064\ufeff]")

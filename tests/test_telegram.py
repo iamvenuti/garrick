@@ -645,6 +645,17 @@ class TestHeldSends(TelegramCase):
         self.assertIsNotNone(hold.cancelled_by_message(asked["message_id"], now + 23 * 3600))
         self.assertIsNone(hold.cancelled_by_message(asked["message_id"], now + 25 * 3600))
 
+    def test_the_day_a_cancelled_record_answers_counts_from_the_cancel(self):
+        """An action held for 23 hours and then cancelled still answers a yes for a day after the no, never as plain text before."""
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        hold._set(entry["id"], expires=time.time() + 600)      # ten minutes left of its own day
+        self.api.say("no", reply_to=asked["message_id"])
+        self.pump()
+        self.assertGreater(hold.get(entry["id"])["expires"], time.time() + 23 * 3600)
+        self.assertIsNotNone(hold.cancelled_by_message(asked["message_id"], time.time() + 23 * 3600))
+        self.assertIsNone(hold.cancelled_by_message(asked["message_id"], time.time() + 25 * 3600))
+
 
 class TestBesideTheDesk(TelegramCase):
     def test_the_assistant_is_told_to_leave_other_sessions_work_alone(self):

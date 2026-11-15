@@ -222,7 +222,7 @@ def cancel(hid: str) -> str:
         e = get(hid)
         if e is None or e.get("state") != "held":
             return "That action is not waiting any more."
-        _set(hid, state="cancelled")
+        _set(hid, state="cancelled", expires=time.time() + TTL)     # the day a later yes is answered counts from the cancel
     return "Cancelled. Nothing was done."
 
 

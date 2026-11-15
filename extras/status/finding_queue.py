@@ -243,8 +243,12 @@ def later_key(kind: str, path: str, which: str = "") -> str:
 
 
 def which_other(item: dict) -> str:
-    """Six hex digits of the finding's own check and text: the Not now key of a kind other finding names this one finding."""
-    text = "%s\0%s" % (item.get("check") or "", item.get("message") or item.get("line") or "")
+    """Six hex digits that name one finding of kind other in the Not now key: its check and its stable id (`fid`, kept when the
+    check rewrites the finding's words), so a check whose text changes keeps what was put off. A finding with no id is named by
+    its check and its text, as before; a key an older page wrote by text is simply not found, and the question shows again."""
+    fid = str(item.get("fid") or "")
+    text = ("%s\0id\0%s" % (item.get("check") or "", fid)) if fid else \
+        "%s\0%s" % (item.get("check") or "", item.get("message") or item.get("line") or "")
     return hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:6]
 
 

@@ -52,7 +52,9 @@ from __future__ import annotations
 import collections
 import hashlib
 import importlib.util
+import datetime
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -686,6 +688,37 @@ def _imported(fm: dict, path: Path) -> str:
     from."""
     value = fm.get("created")
     return value[:10] if isinstance(value, str) and re.match(r"\d{4}-\d{2}-\d{2}", value) else ""
+
+
+def is_note_page(rel: str) -> bool:
+    """Whether a path in the workspace is a project's hub note or a thread's note: pages edited in place, so a date
+    of filing says little about them."""
+    parts = str(rel).replace("\\", "/").split("/")
+    if len(parts) == 4 and parts[0] == "Zones":
+        return parts[3] == parts[2] + ".md"
+    return len(parts) == 6 and parts[0] == "Zones" and parts[3] == "Threads" and parts[5] == parts[4] + ".md"
+
+
+def updated_of(ws: Path, rel: str) -> str:
+    """When a hub or thread note last changed, YYYY-MM-DD: the date of the last commit of its own repository that
+    touched it, else the file's own modification date, else nothing. Git is run with the repository named, never
+    through a shell, and is given a few seconds."""
+    path = Path(ws) / rel
+    if not is_note_page(rel) or path.is_symlink() or not path.is_file():
+        return ""
+    zone = Path(ws) / "Zones" / str(rel).replace("\\", "/").split("/")[1]
+    try:
+        got = subprocess.run(["git", "-C", str(zone), "log", "-1", "--format=%cs", "--", path.relative_to(zone).as_posix()],
+                             capture_output=True, text=True, timeout=5, stdin=subprocess.DEVNULL)
+        said = got.stdout.strip() if got.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError, ValueError):
+        said = ""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", said):
+        return said
+    try:
+        return datetime.date.fromtimestamp(path.stat().st_mtime).isoformat()
+    except OSError:
+        return ""
 
 
 _SECTION = re.compile(r"^#{1,6}\s+State of play\b.*$", re.I | re.M)

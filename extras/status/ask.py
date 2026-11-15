@@ -742,6 +742,15 @@ def cited(text: str, allowed: Dict[str, dict], partial: bool = False) -> Tuple[L
     return claims, say, obj.get("incomplete") is True or dropped
 
 
+def share_marks(claims: List[dict]) -> List[dict]:
+    """When consecutive claims rest on the same one record, only the last of them shows its marker: the others carry
+    `mark: false`, which the window reads. The words and the ids of every claim stay as they were said (#579)."""
+    for i, c in enumerate(claims[:-1]):
+        if len(c.get("ids") or []) == 1 and c["ids"] == claims[i + 1].get("ids"):
+            c["mark"] = False
+    return claims
+
+
 def work_name(value, what: str) -> str:
     """A name the request gives a new project or thread, as page_action.field() reads one: text on one line, not
     an option. Whether it is a name that will do is scaffold.py's to say, in check-name, before anything is written."""
@@ -1788,6 +1797,7 @@ class Asker:
         # trace in the reply (#261, slice D).
         this_turn = {p["id"]: p for p in self.passages[before:]}
         claims, rest, incomplete = cited(text, this_turn, partial=matched > len(records))
+        share_marks(claims)
         self.asking = asks_back(text, " ".join([c["text"] for c in claims] + [rest]), [])
         after = []
         partial = matched > len(records)
@@ -1949,7 +1959,7 @@ class Asker:
                 claims.append({"text": clean, "ids": ids})
                 order += [i for i in ids if i not in order]
         cited_ = [{"id": i, **{k: handed[i].get(k) or "" for k in ("path", "title", "date", "imported")}} for i in order]
-        return claims, self.sources(cited_, names)
+        return share_marks(claims), self.sources(cited_, names)
 
     def offered(self, props: List[dict], names) -> List[dict]:
         """A button for each proposal that passes the same checks an action does (proposal()): what it would do, and
@@ -2124,6 +2134,9 @@ class Asker:
         out, desk = [], None
         for p in cited_:
             src = {k: p[k] for k in ("id", "path", "title", "date", "imported")}
+            updated = scope_lib().updated_of(self.ws, p["path"])
+            if updated:                              # a hub or thread note: when it last changed, shown in place of its filing
+                src["updated"] = updated
             parts = p["path"].split("/")
             if (len(parts) == 6 and parts[0] == "Zones" and parts[3] == "Threads" and parts[5] == parts[4] + ".md"
                     and parts[4] in names.get(parts[1], {}).get(parts[2], {}).get("threads", {})):

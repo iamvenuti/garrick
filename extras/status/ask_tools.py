@@ -74,7 +74,8 @@ PROPOSED = ("open", "park", "wake", "todo-add", "note-add")     # what propose()
 LIMIT = 10                  # records one search returns, unless it asks for more
 MOST = 50                   # the most it may ask for
 OVERSAMPLE = 5              # rows asked of the index for each one returned, since the zone and kind are cut after
-MOST_TEXT = 6000            # characters of one record read() returns
+MOST_TEXT = 6000            # characters of one record read() returns in one call; `offset` reads on
+BAD_OFFSET = "That offset is not inside the record. Read again without one, or with the offset a result gave."
 MOST_TODO = 200             # characters of a Todo line a proposal may carry: the button shows all of it
 MOST_NOTE = 4000            # longest note a proposal may carry
 MOST_OWED = 40              # items owed() returns
@@ -311,9 +312,23 @@ class Conversation:
                 "title": title.strip(), "date": sc._date(fm, p), "imported": sc._imported(fm, p),
                 "zones": zones, "public": kind in ("library", "docs"), "body": body, "text": sc.passage(body, words or [])}
 
+    def updated(self, d: dict) -> str:
+        """The date a hub or thread note last changed, for its citation; nothing for any other record."""
+        path = d.get("path") or ""
+        sc, _, _, _ = self.world()
+        if not sc.is_note_page(path):
+            return ""
+        cache = self.__dict__.setdefault("_updated", {})
+        if path not in cache:
+            cache[path] = sc.updated_of(self.ws, path)
+        return cache[path]
+
     def line(self, rid: str, d: dict, snippet: str = "") -> str:
         when = [d["date"]] if d.get("date") else ["no date"]
-        if d.get("imported"):
+        updated = self.updated(d)
+        if updated:
+            when.append("updated " + updated)          # a hub or thread note is edited in place: when it last changed
+        elif d.get("imported"):
             when.append("filed " + d["imported"])
         label = {"meetings": "Meetings", "library": "Library", "docs": "Garrick docs", "todo": "Todo list"}.get(
             d["kind"], d.get("zone") or "Thread")
@@ -631,6 +646,26 @@ class Conversation:
             head += " There may be more: ask for a larger limit, or narrow the words."
         return head + ("" if kind == "docs" else " " + INDEX_DOWN) + ("\n" + "\n".join(lines) if lines else "")
 
+    def part(self, text: str, a: dict) -> str:
+        """One call's worth of a record's text, from `offset` (0 when none is given), at most MOST_TEXT characters.
+        When more is left, the result says how much and where the next part starts. An offset that is not a
+        whole number inside the text reads nothing: it never reads another record. The record was admitted before this
+        is called, by the same test as the first part."""
+        raw = a.get("offset")
+        if raw is None or raw == "":
+            start = 0
+        elif isinstance(raw, bool) or not (isinstance(raw, int) or (isinstance(raw, str) and raw.strip().isdigit())):
+            return BAD_OFFSET
+        else:
+            start = int(raw)
+        if start < 0 or start > len(text) or (start == len(text) and start > 0):
+            return BAD_OFFSET
+        chunk = text[start:start + MOST_TEXT]
+        left = len(text) - start - len(chunk)
+        if left <= 0:
+            return chunk
+        return "%s\n\n[offset %d: %d characters left. Read again with this offset for the next part.]" % (chunk, start + len(chunk), left)
+
     def read(self, a: dict) -> str:
         rid = a.get("id")
         rec = self.handed.get(rid) if isinstance(rid, str) else None
@@ -658,14 +693,14 @@ class Conversation:
             if text.startswith("---"):
                 body = sc_body(self, text)
             self.save()
-            return "%s\n\n%s" % (self.line(rid, d), inert(body.strip())[:MOST_TEXT])
+            return "%s\n\n%s" % (self.line(rid, d), self.part(inert(body.strip()), a))
         d = self.describe(rec["path"])
         if d is None:
             return NOT_GIVEN
         if not self.admit(set(d["zones"]) | set(rec.get("zones") or [])):
             return STOPPED
         self.save()
-        return "%s\n\n%s" % (self.line(rid, d), inert(d["body"].strip())[:MOST_TEXT])
+        return "%s\n\n%s" % (self.line(rid, d), self.part(inert(d["body"].strip()), a))
 
     # ------------------------------------------------------------ places, threads, what is owed
 
@@ -733,7 +768,7 @@ class Conversation:
         rid = self.hand(d)
         self.save()
         block = self.resume(d["body"]) or "(no Resume here block)"
-        return "%s\n\n%s" % (self.line(rid, d), inert(block)[:MOST_TEXT])
+        return "%s\n\n%s" % (self.line(rid, d), self.part(inert(block), a))
 
     def period_end(self, text) -> Tuple[Optional[dt.date], str]:
         if text in (None, ""):
@@ -884,12 +919,12 @@ def schemas() -> List[dict]:
                              "limit": {"type": "integer"}, "after": dict(s, description="YYYY-MM-DD"),
                              "raw": {"type": "boolean", "description": "rank raw records beside the pages; "
                                      "by default they come only when no page matches"}}, ["words"])},
-        {"name": "read", "description": "The text of a record, by an id that search, thread_state or owed returned in this conversation.",
-         "inputSchema": obj({"id": s}, ["id"])},
+        {"name": "read", "description": "The text of a record, by an id that search, thread_state or owed returned in this conversation. A long record comes in parts: the result says the offset of the next one.",
+         "inputSchema": obj({"id": s, "offset": dict({"type": "integer"}, description="where to read on from, as a result's offset says")}, ["id"])},
         {"name": "places", "description": "The projects and threads, with their status.",
          "inputSchema": obj({"zone": s})},
         {"name": "thread_state", "description": "A thread's or a project's Resume here block: where it stands, the next action, who it waits on.",
-         "inputSchema": obj({"place": s}, ["place"])},
+         "inputSchema": obj({"place": s, "offset": dict({"type": "integer"}, description="where to read on from, as a result's offset says")}, ["place"])},
         {"name": "owed", "description": "What the user owes or waits on: the Todo lines and the threads' next actions, as Garrick builds the list.",
          "inputSchema": obj({"period": dict(s, description="a date YYYY-MM-DD, today, tomorrow, this week or this month"),
                              "party": s, "waiting": {"type": "boolean"}})},

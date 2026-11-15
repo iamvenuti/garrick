@@ -1737,6 +1737,25 @@ class TestCitations(AnswerCase):
         out = a.ask("And Dana, about the pallet price?")
         self.assertEqual((True, [], [], ask.NOTHING_FOUND), (out["incomplete"], out["claims"], out["sources"], out["say"]))
 
+    def test_consecutive_claims_on_one_record_show_its_marker_once(self):
+        self.sonnet(["pallet quote", cites(("One.", ["r1"]), ("Two.", ["r1"]), ("Three.", ["r1"]))])
+        out = self.asker().ask("What did Dana say about the pallet quote?")
+        self.assertEqual([{"text": "One.", "ids": ["r1"], "mark": False}, {"text": "Two.", "ids": ["r1"], "mark": False},
+                          {"text": "Three.", "ids": ["r1"]}], out["claims"])
+        self.assertEqual("One. Two. Three.", out["say"])                         # what was said is as it was
+
+    def test_five_lines_that_end_in_one_marker_show_it_once(self):
+        a = self.asker()
+        rid = "r1-abcd"
+        handed = {rid: {"path": self.KICKOFF, "title": "Acme kick-off", "date": "2026-03-10", "imported": ""}}
+        text = "\n".join("- Line %d. [%s]" % (n, rid) for n in range(5))
+        claims, sources = a.claims_of(text, handed, {})
+        self.assertEqual([rid] * 5, [c["ids"][0] for c in claims])
+        self.assertEqual([False] * 4 + [None], [c.get("mark") for c in claims])
+        self.assertEqual(1, len(sources))
+        mixed, _ = a.claims_of("A [r1-abcd]\nB [r1-abcd]\nC\nD [r1-abcd]", handed, {})
+        self.assertEqual([False, None, None, None], [c.get("mark") for c in mixed])    # C breaks the run
+
     def test_three_claims_at_most(self):
         self.sonnet(["pallet quote", cites(("One.", []), ("Two.", []), ("Three.", []), ("Four.", ["r1"]))])
         out = self.asker().ask("What did Dana say about the pallet quote?")
@@ -1815,6 +1834,15 @@ class TestTheWindowCites(unittest.TestCase):
         self.assertIn("guard view === askLog else { return false }", clicked)
         self.assertIn("askOpenSource(askTurns[n[0]].sources[n[1]])", clicked)
         self.assertIn("askLog.delegate = self", self.body("showAsk"))
+
+    def test_a_source_says_updated_for_a_note_and_a_marker_stands_for_a_run_of_claims(self):
+        """#579: a hub or thread note is shown by the day it last changed, a meeting by the day it was filed, and a claim
+        that rests on the same record as the next one leaves its marker to that one."""
+        cited = self.body("askCited")
+        self.assertIn('if let d = s["updated"] as? String, !d.isEmpty { when.append("updated " + askDay(d)) }', cited)
+        self.assertIn('else if let d = s["imported"] as? String, !d.isEmpty { when.append("filed " + askDay(d)) }', cited)
+        self.assertIn('if claim["mark"] as? Bool == false { continue }', cited)
+        self.assertLess(cited.index('claim["mark"]'), cited.index('for id in claim["ids"]'))
 
     def test_and_n_more_lists_the_rest_with_no_request(self):
         """#329: "And N more" under an actions list is a link to the turn; a

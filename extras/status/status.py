@@ -6424,17 +6424,26 @@ def fade_lib(ws: Path):
     return _FADE[ws]
 
 
+GRADES_SAID = ("working pages are read by every answer, dormant ones only by a search that reaches back, archived ones only when you ask; "
+               "nothing is deleted, and nothing moves until you say so")
+
+
+def memory_moves(c: dict) -> int:
+    """How many pages the next pass would give another grade (down, or back up); 0 for a wiki switched off."""
+    return sum(c.get(k, 0) for k in ("to_dormant", "to_archive", "to_wake")) if c.get("on", True) else 0
+
+
 def memory_said(w: str, c: dict) -> str:
-    """One wiki's line: "Meetings: 600 working · 17 dormant · next pass
-    moves 5". MEMORY_JS says it the same way when the counts come back for
-    unsaved values."""
+    """One wiki's line: "Meetings: 600 working · 17 dormant · 12 would change grade".
+    MEMORY_JS says it the same way when the counts come back for unsaved values. One word for each grade, as the
+    lede says them."""
     grades = "%s: %d working · %d dormant" % (w, c.get("working", 0), c.get("dormant", 0))
     if c.get("archived"):
         grades += " · %d archived" % c["archived"]
     if not c.get("on", True):
         return grades + " · off"
-    moves = sum(c.get(k, 0) for k in ("to_dormant", "to_archive", "to_wake"))
-    return grades + (" · next pass moves %d" % moves if moves else " · nothing to move")
+    moves = memory_moves(c)
+    return grades + (" · %d would change grade" % moves if moves else " · none would change grade")
 
 
 def memory_list(values) -> str:
@@ -6462,13 +6471,10 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
     if lib is None:
         return ""
     age = getattr(lib, "AGE_SAID", None)
-    head = set_head("Manage older material", "memory", "Old meetings and reading leave the index after the months set here; "
-                    "nothing is deleted, and nothing moves until you say &#8220;fade the meetings&#8221; or &#8220;fade the "
-                    "library&#8221;.") + help_text("memory", (
-        'A page older than its kind&#39;s months goes dormant: out of the index, still found when a search reaches back. Later '
-        'it moves to the archive, found only when you ask. &#8220;What would fade&#8221; writes the full list; &#8220;fade the '
-        'meetings&#8221; or &#8220;fade the library&#8221; moves exactly that list and keeps every link working. %s'
-        'Saved in <code>%s</code> when you close Settings.' % (said_html(age) + " " if isinstance(age, str) else "", E(prefs().FILE))))
+    head = set_head("Manage older material", "memory", "Old meetings and reading change grade after the months set here: %s." % GRADES_SAID) + help_text("memory", (
+        'A page older than its kind&#39;s months becomes dormant, and later archived. &#8220;What would fade&#8221; writes the full '
+        'list; &#8220;fade the meetings&#8221; or &#8220;fade the library&#8221; moves exactly that list and keeps every link working. %s'
+        'Saved when you close Settings.' % (said_html(age) + " " if isinstance(age, str) else "")))
     try:
         with tools_path(ws):
             cfg = lib.settings(ws)
@@ -6488,6 +6494,12 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
         path = paths(ws, w)[0] if callable(paths) else ws / "System" / "generated" / "fade" / ("%s.md" % w)
         return (' <a class="mfull" href="%s">Full list</a>' % E(link(path))) if link is not None and path.is_file() else ""
 
+    def review(w, c):
+        """*Review the 12*, beside a count with something to move: hands "what would fade in Meetings" to the assistant, which
+        shows the list and asks for the yes. It moves nothing itself; no button when nothing would move."""
+        n = memory_moves(c)
+        return " " + request_button("Review the %d" % n, "what would fade in %s" % w, ws) if n else ""
+
     blocks, advanced = "", ""
     for w in MEMORY_WIKIS:
         kind_rows = ""
@@ -6498,21 +6510,21 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
             dormant = k.get("dormant") if isinstance(k.get("dormant"), int) else 6
             kind_rows += (
                 '<div class="mkind" data-mkind="%s" data-mwiki="%s"><span class="mkname">%s</span>'
-                '<label>dormant after %s months</label><label>archived after %s</label><label class="mnever">%s never</label></div>'
+                '<label>dormant after %s months</label><label>archived after %s months</label><label class="mnever">%s never archived</label></div>'
                 % (E(name), E(w), E(name[:1].upper() + name[1:]),
                    num('data-mk="dormant"', dormant, MEMORY_MONTHS[0], MEMORY_MONTHS[1], "%s: months to dormant" % name),
                    num('data-mk="archived"', dormant if never else k.get("archived"), MEMORY_MONTHS[0], MEMORY_MONTHS[1],
                        "%s: months to archived" % name, never),
                    box('data-mk="never"', never, "%s: never archived" % name)))
             advanced += ('<div class="mlists" data-mkl="%s"><b>%s</b>'
-                         '<label class="mlist">Types <input type="text" data-mk="types" value="%s" placeholder="none" aria-label="%s types"></label>'
-                         '<label class="mlist">Domains <input type="text" data-mk="domains" value="%s" placeholder="none" aria-label="%s domains"></label></div>'
-                         % (E(name), E(name[:1].upper() + name[1:]), E(memory_list(k.get("types"))), E(name),
-                            E(memory_list(k.get("domains"))), E(name)))
-        blocks += ('<div class="mwiki" data-mw="%s"><div class="launcher-row"><label class="launcher-choice">%s <span>Let old %s pages fade'
+                         '<label class="mlist">Page types <textarea rows="1" data-mk="types" placeholder="none" title="%s" aria-label="%s page types">%s</textarea></label>'
+                         '<label class="mlist">Page domains <textarea rows="1" data-mk="domains" placeholder="none" title="%s" aria-label="%s page domains">%s</textarea></label></div>'
+                         % (E(name), E(name[:1].upper() + name[1:]), E(memory_list(k.get("types"))), E(name), E(memory_list(k.get("types"))),
+                            E(memory_list(k.get("domains"))), E(name), E(memory_list(k.get("domains")))))
+        blocks += ('<div class="mwiki" data-mw="%s"><div class="launcher-row"><label class="launcher-choice">%s <span>Let old %s pages become dormant, then archived'
                    '</span></label></div>%s%s</div>'
                    % (E(w), box('data-mwikion="%s"' % w, wikis.get(w, True) is not False, "%s pages fade" % w), E(w), kind_rows,
-                      '<p class="mcount"><span data-mc="line">%s</span>%s</p>' % (E(memory_said(w, grades[w])), full_list(w))
+                      '<p class="mcount"><span data-mc="line">%s</span>%s%s</p>' % (E(memory_said(w, grades[w])), full_list(w), review(w, grades[w]))
                       if w in grades else ""))
     pin_rows = "".join('<label class="mpin">%s <span>%s</span></label>' % (box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), E(said))
                        for key, said in MEMORY_PINS)
@@ -6522,7 +6534,7 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
     return ('<section class="setsec apponly" id="memory-settings">%s<div class="mgrades" id="m-prev" aria-live="polite">%s</div>'
             '<p class="hint" id="m-prevsaid" hidden></p>'
             '<details class="madv"><summary>Advanced</summary>'
-            '<h4 class="nsub">Which pages each kind takes</h4><p class="hint">Its <code>type</code> or domain, separated by commas.</p>%s'
+            '<h4 class="nsub">Which pages each kind takes</h4><p class="hint">A page belongs to a kind when its page type or its domain is listed. Separate entries with commas.</p>%s'
             '<h4 class="nsub">What keeps a page working</h4><p class="hint mlede">While any of these holds, a page stays working, however '
             'old. Person, organisation and topic pages, and the wiki&#39;s own lists, never move.</p><div class="mpins">%s</div>'
             '<h4 class="nsub">Bringing a page back</h4>'
@@ -6553,10 +6565,12 @@ border:1px solid var(--line);border-radius:7px;min-width:0}
 .mkind label{display:flex;align-items:center;gap:5px}.mkname{flex:0 0 92px;font-weight:560;color:var(--ink)}
 .mcount{margin:4px 0 0 28px;font-size:var(--fs-meta);color:var(--ink2)}.mcount .mfull{margin-left:6px}
 .madv{margin-top:8px}.madv>summary{display:block;list-style:none;cursor:pointer;font-size:var(--fs-meta);font-weight:560;color:var(--ink2);padding:3px 0}
-.madv>summary::-webkit-details-marker{display:none}.madv>summary::before{content:'\203A';display:inline-block;width:12px;transition:transform .15s}
-.madv[open]>summary::before{transform:rotate(90deg)}
-.mlists{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin:4px 0;font-size:var(--fs-meta)}.mlists b{flex:0 0 92px;font-weight:560}
-.mlist{display:flex;align-items:center;gap:6px;color:var(--ink2);flex:1 1 160px;min-width:0}.mlist input{flex:1 1 0;width:0;min-width:0}
+.madv>summary::-webkit-details-marker{display:none}.madv>summary::before{content:'\25B8';display:inline-block;width:14px}
+.madv[open]>summary::before{content:'\25BE'}.madv>:not(summary){margin-left:18px}
+.mlists{display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 10px;margin:6px 0;font-size:var(--fs-meta)}.mlists b{flex:1 0 100%;font-weight:560}
+.mlist{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:start;gap:8px;color:var(--ink2);flex:1 1 100%;min-width:0;line-height:1.4}
+.mlist textarea{width:100%;box-sizing:border-box;min-width:0;resize:none;overflow:hidden;white-space:normal;overflow-wrap:break-word;font:inherit;font-size:var(--fs-meta);padding:2px 6px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px}
+.mcount .act{margin-left:8px}.mcount [data-request][hidden]{display:none}
 .mpins{display:flex;flex-direction:column;gap:3px;margin:0 0 6px}.mpin{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta)}
 .mreach,.mafter{font-size:var(--fs-meta);color:var(--ink2)}.mreach{display:flex;flex-wrap:wrap;align-items:center;gap:4px}.mreach select{max-width:100%}
 .mafter{white-space:nowrap}#memory-settings{min-width:0;overflow-wrap:anywhere}
@@ -6583,16 +6597,22 @@ l=sec.querySelector('[data-mkl="'+f.dataset.mkind+'"]'),t=function(k){return l&&
 m.kinds[f.dataset.mkind]={wiki:f.dataset.mwiki,types:list(t('types')),domains:list(t('domains')),dormant:d,archived:q('never').checked?null:Math.max(d,n(q('archived')))}});
 return m}
 function line(w,c){var g=w+': '+(c.working||0)+' working · '+(c.dormant||0)+' dormant'+(c.archived?' · '+c.archived+' archived':'');
-if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?' · next pass moves '+mv:' · nothing to move')}
+if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?' · '+mv+' would change grade':' · none would change grade')}
 function paint(counts){sec.querySelectorAll('#m-prev [data-mw]').forEach(function(w){var c=counts[w.dataset.mw],e=w.querySelector('[data-mc="line"]');
 if(c&&e)e.textContent=line(w.dataset.mw,c)})}
 function tell(t){said.textContent=t;said.hidden=false}
+/* Review hands over the list as saved, so it waits while a change is not saved */
+function review(on){sec.querySelectorAll('.mcount [data-request]').forEach(function(b){b.hidden=!on})}
 function ask(){if(!host||!window.GarrickReadsMemory){tell('Counted as saved; closing Settings saves the change and counts again.');return}
 tell('Counting…');clearTimeout(timer);timer=setTimeout(function(){host.postMessage({act:{verb:'memory-preview',memory:request()}})},250)}
 function sync(){sec.querySelectorAll('.mkind').forEach(function(f){var a=f.querySelector('[data-mk="archived"]'),d=f.querySelector('[data-mk="dormant"]');
 a.disabled=f.querySelector('[data-mk="never"]').checked;if(!a.disabled&&n(a)<n(d))a.value=n(d)})}
-sec.addEventListener('change',function(){changed=true;sync();ask()});
-sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],input[type=text]')){changed=true;ask()}});
+sec.addEventListener('change',function(){changed=true;review(false);sync();ask()});
+sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],textarea')){changed=true;review(false);if(e.target.matches('textarea')){e.target.value=e.target.value.replace(/\n/g,' ');e.target.title=e.target.value;fit(e.target)}ask()}});
+sec.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.matches('textarea'))e.preventDefault()});
+/* a kind's lists wrap and grow to show the whole of them; measured when Advanced opens, since a closed section has no size */
+function fit(t){t.style.height='auto';t.style.height=t.scrollHeight+2+'px'}
+var adv=sec.querySelector('.madv');if(adv)adv.addEventListener('toggle',function(){if(adv.open)adv.querySelectorAll('textarea').forEach(fit)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='memory-preview'){
 if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}else tell((out&&out.say)||'Could not count.');return}
 if(prev)return prev(q,out)};

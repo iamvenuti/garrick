@@ -3887,15 +3887,15 @@ class TestMemorySettings(StatusCase):
         self.assertRegex(reference, r'data-mk="archived"[^>]*disabled>')
         advanced = sec[sec.index('<details class="madv"><summary>Advanced</summary>'):]
         self.assertIn('<div class="mlists" data-mkl="meetings"><b>Meetings</b>', advanced)
-        self.assertIn('data-mk="types" value="meeting, email"', advanced)                  # each kind's lists, under Advanced
+        self.assertIn('data-mk="types" placeholder="none" title="meeting, email" aria-label="meetings page types">meeting, email</textarea>', advanced)    # each kind's lists, under Advanced
         self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', advanced)))
         self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Propose bringing back a dormant page that active '
                       'work links again">', advanced)
         self.assertIn('<option value="dormant" selected>working and dormant pages</option>', advanced)
         self.assertIn('<input type="checkbox" id="m-night" checked', advanced)
         self.assertIn('id="m-min" min="1" max="1000" value="10"', advanced)
-        self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived · next pass moves 7'
-                      '</span></p>', sec)                                                    # no list written yet: no link
+        self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived · 7 would change grade'
+                      '</span> <button class="act" type="button" data-request="what would fade in Meetings"', sec)       # no list written yet: no link
         self.assertIn("Knowledge: ", sec)
         self.assertNotIn('class="hint msaid"', sec)            # a fade.py older than its sentences: no rule worded here in its place
 
@@ -3906,12 +3906,12 @@ class TestMemorySettings(StatusCase):
                                           "dormant": 12, "archived": None}}}}))
         sec = self.section()
         self.assertEqual(["board meetings"], re.findall(r'data-mkind="([^"]+)"', sec))      # whatever kinds fade.py returns
-        self.assertIn('data-mk="domains" value="board.example"', sec)
+        self.assertIn('>board.example</textarea>', sec)
         self.assertIn('<input type="checkbox" data-mwikion="Knowledge" aria-label', sec)
         self.assertIn('<option value="working" selected>', sec)
         self.assertIn('<input type="checkbox" id="m-wake" aria-label', sec)
         self.assertIn('id="m-min" min="1" max="1000" value="25"', sec)
-        self.assertIn("next pass moves 2</span>", sec)                                      # 24 // 12, never archived, no waking
+        self.assertIn("2 would change grade</span>", sec)                                   # 24 // 12, never archived, no waking
         self.assertRegex(sec, r'data-mc="line">Knowledge: [^<]* · off</span>')
 
     def test_left_out_without_fade_and_said_when_it_fails(self):
@@ -3945,19 +3945,18 @@ class TestMemorySettings(StatusCase):
 
     def test_the_page_and_its_script_say_the_counts_alike(self):
         c = {"on": True, "working": 3, "dormant": 2, "archived": 1, "to_dormant": 0, "to_archive": 4, "to_wake": 0}
-        self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · next pass moves 4", status.memory_said("Meetings", c))
-        self.assertEqual("Meetings: 3 working · 2 dormant · nothing to move",
+        self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · 4 would change grade", status.memory_said("Meetings", c))
+        self.assertEqual("Meetings: 3 working · 2 dormant · none would change grade",
                          status.memory_said("Meetings", dict(c, to_archive=0, archived=0)))
         self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · off", status.memory_said("Meetings", dict(c, on=False)))
-        for words in ("' working · '", "' dormant'", "' archived'", "' · off'", "' · next pass moves '", "' · nothing to move'"):
+        for words in ("' working · '", "' dormant'", "' archived'", "' · off'", "' would change grade'", "' · none would change grade'"):
             self.assertIn(words, status.MEMORY_JS)
         self.assertIn("textContent", status.MEMORY_JS)
         self.assertNotIn("innerHTML", status.MEMORY_JS)
 
     def test_the_choices_and_a_count_with_the_rest_behind_advanced(self):
         sec = htmllib.unescape(self.section())
-        self.assertIn('<p class="setlede">Old meetings and reading leave the index after the months set here; nothing is deleted, '
-                      'and nothing moves until you say “fade the meetings” or “fade the library”.</p>', sec)
+        self.assertIn('<p class="setlede">Old meetings and reading change grade after the months set here: %s.</p>' % status.GRADES_SAID, sec)
         shown = sec[:sec.index('<details class="madv">')]
         for gone in ("Put aside: out of the index", "Closing Settings saves the rules below", "msteps", "mgradesay",
                      "Active work is never put aside", 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"',
@@ -3968,6 +3967,47 @@ class TestMemorySettings(StatusCase):
         order = [sec.index(x) for x in ('data-mwikion="Meetings"', 'data-mkind="meetings"', 'Meetings: ', 'data-mwikion="Knowledge"',
                                         '<details class="madv">', 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"')]
         self.assertEqual(sorted(order), order)
+
+    def test_one_word_for_each_grade_said_once_and_no_other_words_for_them(self):
+        sec = htmllib.unescape(self.section())
+        visible = re.sub(r"<[^>]+>", " ", sec[:sec.index('id="help-memory"')] + sec[sec.index("</p>", sec.index('id="help-memory"')):])
+        self.assertEqual(1, visible.count("working pages are read by every answer, dormant ones only by a search that reaches back, archived ones only when you ask; nothing is deleted"))
+        for old in ("leave the index", "next pass moves", "nothing to move", "Let old Meetings pages fade", "Put aside"):
+            self.assertNotIn(old, sec)
+        self.assertIn("Let old Meetings pages become dormant, then archived", sec)
+
+    def test_a_count_with_something_to_move_has_a_review_button_and_one_without_has_none(self):
+        sec = self.section()
+        meetings = sec.split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
+        self.assertRegex(meetings, r'<button class="act" type="button" data-request="what would fade in Meetings" data-folder="[^"]+" '
+                                   r'title="[^"]*">Review the 7</button>')
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"wikis": {"Meetings": False}}}))
+        off = self.section().split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
+        self.assertNotIn("data-request", off)                                           # nothing would move: no button
+        self.assertIn("review(false)", status.MEMORY_JS)                                # an unsaved change hides it: the list is the saved one
+        self.assertNotIn("host.postMessage({act:{verb:'fade", status.MEMORY_JS)         # it never fades anything itself
+
+    def test_the_kind_rules_are_inside_a_closed_advanced_with_plain_labels_and_fields_that_wrap(self):
+        sec = self.section()
+        adv = sec.index('<details class="madv">')
+        self.assertLess(adv, sec.index("Which pages each kind takes"))
+        self.assertNotIn('<details class="madv" open', sec)                              # closed, so its content is hidden
+        advanced = sec[adv:]
+        self.assertIn(">Page types <textarea", advanced)
+        self.assertIn(">Page domains <textarea", advanced)
+        self.assertNotIn("<code>type</code>", advanced)
+        self.assertNotIn('<input type="text" data-mk=', sec)
+        self.assertIn(".mlist textarea{width:100%", status.MEMORY_CSS)                    # a row of its own, the width of the section
+        self.assertIn("overflow-wrap:break-word", status.MEMORY_CSS)
+        self.assertNotIn("text-overflow", status.MEMORY_CSS)                              # a list wraps, it is never cut
+        self.assertIn("if(adv.open)adv.querySelectorAll('textarea').forEach(fit)", status.MEMORY_JS)
+        self.assertIn('title="meeting, email"', advanced)                                 # the whole list on hover as well
+
+    def test_advanced_is_indented_with_a_chevron_that_shows_its_state(self):
+        css = status.MEMORY_CSS
+        self.assertIn(".madv>summary::before{content:'\\25B8'", css)                       # right while closed
+        self.assertIn(".madv[open]>summary::before{content:'\\25BE'}", css)                # down while open
+        self.assertIn(".madv>:not(summary){margin-left:18px}", css)
 
     def test_with_the_real_fade_it_says_its_own_rules_and_links_the_full_list(self):
         fixtures.write_fade(self.root)

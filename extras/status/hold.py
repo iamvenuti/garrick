@@ -4,7 +4,8 @@
 At Act an engine session has no tool that sends, shares or deletes: those tools are not in it. It has one, `hold`
 (hold_tools.py), which queues the action with what it would do and where. Nothing runs from the queue until the
 owner says yes: a dialog in Ask (*Run it*, *Cancel*), or, in Telegram, a reply of `yes` to the message that asked,
-and nothing else. A `yes` that is not a reply to that message runs nothing. A held action expires after 24 hours;
+and nothing else. A `yes` that is not a reply to that message runs nothing. A reply of `no`, `cancel` or `stop` to
+the message cancels the action: it leaves the list, and a later `yes` to the same message runs nothing. A held action expires after 24 hours;
 the status page lists it until then.
 
 The confirmation is asked by code, not by the model's judgment: text the engine reads can at most produce a queued
@@ -204,12 +205,24 @@ def by_message(message_id: int) -> Optional[dict]:
     return None
 
 
+def cancelled_by_message(message_id: int, now: Optional[float] = None) -> Optional[dict]:
+    """The action a message asked about when the owner cancelled it, until its day is up: so a later `yes` to the
+    same message is answered, and runs nothing (#585)."""
+    now = now or time.time()
+    if not path().is_file():
+        return None
+    for e in load()["held"]:
+        if e.get("state") == "cancelled" and e.get("message_id") == int(message_id) and e.get("expires", 0) > now:
+            return e
+    return None
+
+
 def cancel(hid: str) -> str:
     with locked():
         e = get(hid)
         if e is None or e.get("state") != "held":
             return "That action is not waiting any more."
-        _set(hid, state="cancelled")
+        _set(hid, state="cancelled", expires=time.time() + TTL)     # the day a later yes is answered counts from the cancel
     return "Cancelled. Nothing was done."
 
 

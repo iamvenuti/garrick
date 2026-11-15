@@ -1136,8 +1136,14 @@ def nurture_outcome(ws: Path, day: dt.date) -> Optional[dict]:
         return None
 
 
+def noun(n: int, one: str, many: str = "") -> str:
+    """The noun that agrees with a count: "error" for 1, "errors" for any other. Every place the page joins a count to a
+    noun goes through here (or counted(), or the script's pl()), so none reads "1 errors"."""
+    return one if n == 1 else (many or one + "s")
+
+
 def counted(n: int, one: str, many: str = "") -> str:
-    return "%d %s" % (n, one if n == 1 else (many or one + "s"))
+    return "%d %s" % (n, noun(n, one, many))
 
 
 def nurture_said(kinds: Dict[str, int]) -> str:
@@ -1187,7 +1193,7 @@ def needing_you(scopes: Dict[str, Dict[str, int]]) -> List[dict]:
 def need_said(n: dict) -> str:
     parts = [p for p in (counted(n["walls"], "wall finding") if n["walls"] else "",
                          counted(n["calls"], "judgment call") if n["calls"] else "") if p]
-    return "%s, about %d minutes" % (" and ".join(parts), n["minutes"])
+    return "%s, about %s" % (" and ".join(parts), counted(n["minutes"], "minute"))
 
 
 def trend_word(history: List[Tuple[dt.date, dict]], today: dt.date) -> str:
@@ -1389,7 +1395,7 @@ def need_lines(ws: Path, history: List[Tuple[dt.date, dict]], said: Callable[[st
     for scope in places:
         qs = queues.get(scope) or []
         walls = sum(1 for q in qs if q["id"] == "wall")
-        said_ = [counted(len(qs), "question"), "about %d minutes" % minutes_for(walls, len(qs) - walls)]
+        said_ = [counted(len(qs), "question"), "about %s" % counted(minutes_for(walls, len(qs) - walls), "minute")]
         buttons = '<button class="act primary" type="button" data-qopen="%s">Go through them</button>' % E(scope)
         out += ('<div class="need" data-scope="%s" data-n="%d"><span class="nsay"><b>%s</b>: %s</span><span class="nbtn">%s</span></div>'
                 % (E(scope), len(qs), E(scope_title(scope, said)), E(" · ".join(said_)), buttons))
@@ -1455,8 +1461,8 @@ CONTEXT_JS = r"""
 var sel=document.getElementById('nzone'),sum=document.getElementById('nsum'),tn=document.getElementById('qp-tab-n'),KEY='garrick-context-zone';
 var lines=[].slice.call(card.querySelectorAll('.need[data-scope]'));
 function ss(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sessionStorage.setItem(k,v)}catch(e){return null}}
-/* The Zone menu filters the lines. Each line is one place's own, so what shows is a place's count or nothing, and a number for the tab is a single place's, never a sum */
-function apply(){var z=sel?sel.value:'*',shown=lines.filter(function(l){var on=z==='*'||l.dataset.scope===z;l.hidden=!on;return on});
+/* The Zone menu filters the lines; a kept file with no zone shows under All places only. Each line is one place's own, so what shows is a place's count or nothing, and a number for the tab is a single place's, never a sum */
+function apply(){var z=sel?sel.value:'*';card.querySelectorAll('.kept[data-scope]').forEach(function(k){k.hidden=!(z==='*'||k.dataset.scope===z)});var shown=lines.filter(function(l){var on=z==='*'||l.dataset.scope===z;l.hidden=!on;return on});
 if(sum&&sum.dataset.some)sum.textContent=shown.length+' place'+(shown.length===1?' needs you.':'s need you.');
 if(tn){var c=z!=='*'&&shown.length&&shown[0].dataset.n!=='0'?+shown[0].dataset.n:0,w=c+(c===1?' question to answer':' questions to answer');
 tn.textContent=c||'';tn.hidden=!c;tn.setAttribute('aria-label',c?w:'');if(c)tn.title=w;else tn.removeAttribute('title')}}
@@ -1802,7 +1808,8 @@ dialog.tadd::backdrop{background:rgba(0,0,0,.28)}
 .tnode{display:inline-flex;align-items:center;gap:7px;padding:4px 2px;font-size:var(--fs-meta);cursor:pointer}.tnode input{accent-color:var(--accent);margin:0}
 .tproj{display:flex;flex-wrap:wrap;align-items:center;gap:2px 4px;border-top:1px solid var(--grid)}.tproj small{color:var(--muted);font-size:var(--fs-meta)}
 .tsep{font-size:var(--fs-meta);font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);padding:10px 2px 2px;border-top:1px solid var(--grid)}
-.tchev,.tchev-sp{width:20px;height:20px;flex:none}.tchev{border:0;background:none;padding:0;cursor:pointer;color:var(--muted);line-height:0}
+.tchev,.tchev-sp{width:20px;height:20px;flex:none}.tchev{position:relative;border:0;background:none;padding:0;cursor:pointer;color:var(--muted);line-height:0}
+.tchev::after{content:"";position:absolute;inset:-2px}
 .tchev .chev{width:13px;height:13px}.tchev[aria-expanded="true"] .chev{transform:rotate(90deg)}
 .tsubs{flex-basis:100%;padding-left:26px;display:flex;flex-direction:column}.tsubs[hidden]{display:none}.tnode.tsub{font-size:var(--fs-sub)}
 .tadd-dates{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.tadd-dates .seg button{padding:5px 10px;font-size:var(--fs-meta);line-height:1.2}
@@ -2427,7 +2434,11 @@ function say(s){var t=document.getElementById('toast');if(!t)return;t.textConten
 function has(z){return panes.some(function(p){return p.dataset.zone===z})}
 function zone(z){if(!has(z))z=has('Work')?'Work':panes[0]&&panes[0].dataset.zone;
 panes.forEach(function(p){p.hidden=p.dataset.zone!==z});todo.querySelectorAll('[data-tz]').forEach(function(b){b.classList.toggle('on',b.dataset.tz===z)});
-st.set('garrick-todo-zone',z);empties()}
+st.set('garrick-todo-zone',z);empties();lateBadge(z)}
+/* the tab's badge counts the late actions of the zone shown, not of every zone */
+function lateBadge(z){var b=document.getElementById('tabn-late'),sd=document.getElementById('state-data'),m={};if(!b||!sd)return;
+try{m=JSON.parse(sd.textContent).late||{}}catch(e){}var n=m[z]||0,w=n+(n===1?' action is late':' actions are late');
+if(b.lastChild&&b.lastChild.nodeType===3)b.lastChild.textContent=n;b.hidden=!n;b.setAttribute('aria-label',w);b.title=w}
 window.TodoZone=zone;
 todo.querySelectorAll('[data-tz]').forEach(function(b){b.onclick=function(){zone(b.dataset.tz)}});
 function filt(f){todo.dataset.tf=f;todo.querySelectorAll('[data-tf]').forEach(function(b){b.classList.toggle('on',b.dataset.tf===f)});st.set('garrick-todo-filter',f);empties()}
@@ -3575,7 +3586,7 @@ def jobs(folder: Path, now: dt.datetime, sched: Optional[Dict[str, dict]] = None
             reason = hb.get("reason") if isinstance(hb.get("reason"), str) and hb.get("reason") else EXIT.get(code, "failed")
             state, status = "critical", "exit %d: %s" % (code, reason)
         elif (hb["idle"] is True) if isinstance(hb.get("idle"), bool) else (idle and idle >= idle_limit(env)):
-            state, status = "warning", "idle %d days" % idle
+            state, status = "warning", "idle %s" % counted(idle, "day")
         elif code in OK_EXITS and hb.get("agent") is True and isinstance(hb.get("reason"), str) and hb["reason"]:
             state, status = "warning", hb["reason"]               # exit 0, but the assistant was refused a tool (#567)
         elif code in quiet and code not in OK_EXITS:
@@ -4337,18 +4348,6 @@ def set_head(name: str, key: str, lede: str = "") -> str:
     return '<h3>%s%s</h3>%s' % (E(name), help_button(name, key), '<p class="setlede">%s</p>' % lede if lede else "")
 
 
-def allowed_settings(rows: List[dict]) -> str:
-    """Settings › Allowed by you (#542): what the user let through the wall check, once, each with Remove, as the Context tab
-    listed it; "" with none. Remove is the page's `walls-unallow`; nothing here allows anything."""
-    body = questions_mod().allowed_rows(rows)
-    if not body:
-        return ""
-    return ('<section class="setsec" id="allowed-settings">%s%s<ul>%s</ul></section>'
-            % (set_head("Allowed by you", "allowed", "A finding you chose to let through, once, for the file as it was."),
-               help_text("allowed", "Editing the file ends the allowance. Remove puts the refusal back at the next commit. "
-                                    "Only <code>check.py allow</code>, typed in a terminal, adds one."), body))
-
-
 def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:
     """Settings › Walls (#561): one row for each zone, its name and Walled or Open as a pill, with a quiet Change… that hands
     "Make <zone> open" (or walled) to the assistant, the way Process the Inbox does (`data-request`). The page writes
@@ -4447,30 +4446,37 @@ def channel_mod(name: str):
 
 CHANNEL_NAMES = {"ask": "Ask", "telegram": "Telegram"}
 LEVEL_NAMES = {"read": "Read", "act": "Act", "full": "Full"}
-TIER_NAMES = {"haiku": "Small (haiku)", "sonnet": "Medium (sonnet)", "opus": "Large (opus)"}
+TIER_NAMES = {"haiku": "Small", "sonnet": "Medium", "opus": "Large"}
+NOT_SET_UP = "Set Telegram up first. Its choices apply once it runs."
 
 
-def telegram_service_row() -> str:
-    """The Telegram receiver's row: running or down, and when it last received a message."""
+def telegram_service_row(ws: Optional[Path] = None) -> Tuple[str, bool]:
+    """The Telegram receiver's state line, first in its block, and whether the channel is off. While it is off, a
+    *Set up Telegram* button hands the setup to the assistant, as Process the Inbox does (#581)."""
     try:
         row = channel_mod("channel_state").row()
     except Exception:
-        return ""
-    return '<p class="chnote" id="telegram-service" data-state="%s">%s</p>' % (E(row["state"]), E(row["said"]))
+        return "", False
+    off = row["state"] == "off"
+    button = request_button("Set up Telegram", "set up Telegram", ws) if ws is not None and row["state"] in ("off", "unpaired") else ""
+    return ('<p class="chnote" id="telegram-service" data-state="%s">%s%s</p>' % (E(row["state"]), E(row["said"]), (" " + button) if button else ""),
+            off)
 
 
 def held_list() -> str:
-    """The actions waiting for your yes, each with what it would do, where, and how long it has left."""
+    """The actions waiting for your yes, each with what it would do, where, and how long it has left. Its own heading,
+    outside both channels' blocks: the list covers Ask and Telegram."""
     try:
         rows = channel_mod("hold").listing()
     except Exception:
         return ""
+    head = '<p class="chnote"><b>Waiting for your yes</b></p>'
     if not rows:
-        return '<p class="chnote" id="held-actions">Nothing is waiting for your yes.</p>'
+        return '<div id="held-actions">%s<p class="chnote">Nothing is waiting for your yes.</p></div>' % head
     items = "".join('<li>%s <small>(%s, %s; %d h left)</small></li>' % (E(r["what"]), E(r["where"] or "no destination"),
                                                                        E(CHANNEL_NAMES.get(r["channel"], r["channel"])), r["hours_left"])
                     for r in rows)
-    return '<div id="held-actions"><p class="chnote">Waiting for your yes. Nothing runs until you say so:</p><ul>%s</ul></div>' % items
+    return '<div id="held-actions">%s<p class="chnote">Nothing runs until you say so:</p><ul>%s</ul></div>' % (head, items)
 
 
 def channels_settings(ws: Path) -> str:
@@ -4482,29 +4488,34 @@ def channels_settings(ws: Path) -> str:
     except Exception:
         return ""
 
-    def select(channel: str, key: str, values, names, label: str) -> str:
+    def select(channel: str, key: str, values, names, label: str, off: bool = False) -> str:
         opts = "".join('<option value="%s"%s>%s</option>' % (v, " selected" if cfg[channel][key] == v else "", E(names.get(v, v.capitalize())))
                        for v in values)
         return ('<div class="launcher-row"><label class="launcher-choice" for="ch-%s-%s"><span>%s</span></label>'
-                '<select id="ch-%s-%s" class="menu-style" data-channel="%s" data-key="%s">%s</select></div>'
-                % (channel, key, E(label), channel, key, channel, key, opts))
+                '<select id="ch-%s-%s" class="menu-style" data-channel="%s" data-key="%s"%s>%s</select></div>'
+                % (channel, key, E(label), channel, key, channel, key,
+                   ' disabled title="%s"' % E(NOT_SET_UP) if off else "", opts))
     body = ""
     for channel in ch.CHANNELS:
         body += '<p class="chnote"><b>%s</b></p>' % E(CHANNEL_NAMES[channel])
-        body += select(channel, "tier", ch.TIERS, TIER_NAMES, "Model size")
-        body += select(channel, "effort", ch.EFFORTS, {}, "Effort")
-        body += select(channel, "autonomy", ch.LEVELS_FOR[channel], LEVEL_NAMES, "How far it may go")
+        off = False
+        if channel == "telegram":
+            line, off = telegram_service_row(ws)
+            body += line
+        body += select(channel, "tier", ch.TIERS, TIER_NAMES, "Model size", off)
+        body += select(channel, "effort", ch.EFFORTS, {}, "Effort", off)
+        body += select(channel, "autonomy", ch.LEVELS_FOR[channel], LEVEL_NAMES, "How far it may go", off)
     limit = ""
     if not cap.get("ok"):
         limit = ('<p class="chnote" id="channels-limit">Running at Read: %s. Check: %s.</p>'
                  % (E("; ".join(cap.get("said") or [])), E(", ".join(c.replace("_", " ") for c in cap.get("failed") or []))))
     lede = "How far the Ask box and a Telegram chat may go: read and answer, or also act, with every send held for your yes."
-    return ('<section class="setsec apponly" id="channels-settings" hidden>%s%s%s%s%s%s</section>'
+    return ('<section class="setsec apponly" id="channels-settings" hidden>%s%s%s%s%s</section>'
             % (set_head("Channels", "channels", lede),
-               help_text("channels", "Read answers. Act also does what git can undo, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking; Telegram never offers it. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
-                         "Saved in <code>%s</code> when you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
-                         "walled zone sent to Telegram is held on Telegram&#39;s servers." % E(prefs().FILE)),
-               body, limit, telegram_service_row(), held_list()))
+               help_text("channels", "Read answers. Act also makes changes that can be undone, and asks you before anything is sent, shared or deleted. Full, for Ask only, sends without asking; Telegram never offers Full. Small, Medium and Large are the size of the model. A leading <code>deep:</code> in a message runs that one request on the large model at high effort. "
+                         "Saved as you change a choice. Bot chats are not end-to-end encrypted: an answer from a "
+                         "walled zone sent to Telegram is held on Telegram&#39;s servers."),
+               body, limit, held_list()))
 
 
 CHANNELS_JS = r"""
@@ -4691,8 +4702,8 @@ def launcher_choices(installed: Tuple[str, ...], why: Optional[Dict[str, Optiona
                    '%s<span>Preview</span></label></div>' % GLASS)
     if agent is not None:
         at = next(i for i, h in enumerate(html) if 'data-launcher="cmux"' in h) + 1
-        html.insert(at, '<div class="launcher-row apponly" id="desk-agent-row"><label class="launcher-choice" for="desk-agent">'
-                        '<span>A cmux tab starts<small>Saved in System/desk.json</small></span></label>'
+        html.insert(at, '<div class="launcher-row apponly launcher-sub" id="desk-agent-row"><label class="launcher-choice" for="desk-agent">'
+                        '<span>A cmux tab starts</span></label>'
                         '<select id="desk-agent" class="menu-style">%s</select></div>'
                         % "".join('<option value="%s"%s>%s</option>' % (k, " selected" if k == agent else "", label)
                                   for k, label in DESK_AGENTS))
@@ -4773,8 +4784,7 @@ def settings_nav(groups: List[Tuple[str, str, List[str]]]) -> str:
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
              styles: Optional[Dict[str, dict]] = None, graph: bool = False,
              link: Optional["Links"] = None,
-             kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None,
-             allowed: Optional[List[dict]] = None) -> str:
+             kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None) -> str:
     """The Settings dialog: which apps to open
     projects in, whether Explore follows the zone in view (with the graph),
     each zone's colour and icon, the colour of each kind of note Explore
@@ -4790,7 +4800,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
              "tell": [notify_settings(ws, CMUXLIB.is_file()), channels_settings(ws)],
              "keep": [memory_settings(ws, link)],
-             "walls": [walls_settings(ws), allowed_settings(allowed or [])],
+             "walls": [walls_settings(ws)],
              "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
     groups = [(key, title, [h for h in filed[key] if h]) for key, title in SET_GROUPS]
     main = "".join('<div class="setgroup" role="group" aria-labelledby="sg-%s"><p class="setgrp" id="sg-%s">%s</p>%s</div>'
@@ -5082,21 +5092,30 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
     if lib is None or not hasattr(lib, "TELL"):
         return ""
     cfg = lib.settings(ws)
+    own = notify_own_way(lib)
     def box(attr, on, label=""):
         return '<input type="checkbox" %s%s%s>' % (attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "")
     after = ('<input type="number" id="n-after" min="0" max="%d" value="%d" aria-label="Minutes a task must run">'
              % (lib.AFTER_MAX, cfg["after"]))
     words = {"finished": 'a long task finishes, <span class="nsafter">after %s min</span>' % after}
-    tell = "".join('<label>%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""),
-                                                          words.get(e, E(label)))
-                   for e, label in lib.TELL)
+
+    def row(e, label):
+        said = own.get(e)
+        if said:         # a job sends this its own way: the box keeps what is saved, and shows as not in use
+            return ('<label class="nsown" title="%s">%s <span>%s<small class="nsnote">%s</small></span></label>'
+                    % (E(said), box('data-nt="%s" disabled aria-disabled="true"' % e, cfg["tell"][e]), E(label), E(said)))
+        return '<label>%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""), words.get(e, E(label)))
+    tell = "".join(row(e, label) for e, label in lib.TELL)
     q = cfg["quiet"]
-    rule = "At night only &#8220;a session needs me&#8221;%s get%s through." % ((" and the desk", "") if desk else ("", "s"))
+    rule = ("At night only &#8220;a session needs me&#8221; gets through%s."
+            % (", and so do cmux&#39;s notices about starting or closing the day" if desk else ""))
     help_html = ('A notice names the zone or thread and what happened, never what a note or a meeting says. In cmux it lands on '
                  'the session&#39;s own tab. &#8220;A session needs me&#8221; and &#8220;a long task finishes&#8221; need hooks in '
-                 'Claude Code or Codex: ask your assistant to set up notifications. With every choice off, Garrick sends nothing. '
-                 'A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way. '
-                 'Saved in <code>%s</code> when you close Settings.' % E(prefs().FILE))
+                 'Claude Code or Codex: ask your assistant to set up notifications. &#8220;A session needs me&#8221; covers a permission, '
+                 'a question and an approval, and is sent once for each wait. &#8220;A scheduled job fails or recovers&#8221; also '
+                 'covers a line a job sends of its own. With every choice off, Garrick sends nothing. '
+                 'A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way. Its row says so. '
+                 'Saved when you close Settings.')
     return ('<section class="setsec apponly" id="notify-settings">%s%s<div class="nsimple"><div class="nsrow">'
             '<span class="nslab">Tell me when</span><span class="nsopts nscol">%s</span></div>'
             '<div class="nsrow nsq"><label>%s Quiet from</label><input type="time" id="n-from" value="%s" aria-label="Quiet from">'
@@ -5104,6 +5123,30 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
             '</div><p class="hint" id="n-said" role="status" hidden></p></section>'
             % (set_head("Notifications", "notify", "Notices appear on this Mac."), help_text("notify", help_html),
                tell, box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"]), rule))
+
+
+# The jobs that send a row's notice, by the name their plist runs them under (job.py <name>): the todo sweep's morning
+# summary, and the nightly job's Context digest.
+NOTIFY_JOBS = {"todo-summary": (("gr-todo-sweep", "todo-sweep"), "the todo sweep"), "context-summary": (("gr-nightly", "nightly"), "the nightly job")}
+
+
+def notify_own_way(lib) -> Dict[str, str]:
+    """Event -> a plain sentence, for each row whose job's launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD: that job
+    sends its notice its own way, past the switch, so the row says where it goes and its box is not in use."""
+    out: Dict[str, str] = {}
+    try:
+        jobs_ = launchd_jobs()
+        over = getattr(lib, "override", None)
+        for event, (names, said) in NOTIFY_JOBS.items():
+            job = next((jobs_[n] for n in names if n in jobs_), {})
+            env = {str(k): str(v) for k, v in (job.get("env") or {}).items()}
+            kinds = over(env) if callable(over) else ()
+            if kinds:
+                out[event] = ("Sent by %s to the command you set, not by this switch." if "GARRICK_NOTIFY_CMD" in kinds
+                              else "Sent by %s as its own Mac notice, not by this switch.") % said
+    except Exception:
+        return {}
+    return out
 
 
 def script_json(data) -> str:
@@ -5451,8 +5494,16 @@ def questions_data(ws: Path, C: Optional[dict], today: dt.date, link: "Links") -
         return None
 
 
+def kept_by_you(rows: list, said: Callable[[str], Tuple[str, str]]) -> str:
+    """The Context card's collapsed *Kept by you* lines under the queue (#582), one for each place with its own count; "" with none."""
+    try:
+        return questions_mod().kept_card(rows, lambda sc: scope_title(sc, said))
+    except Exception:
+        return ""
+
+
 def allowed_data(ws: Path, link: "Links") -> list:
-    """What the user allowed once, for the Context tab's Allowed by you; none on any fault."""
+    """What the user allowed once, for the Context card's Kept by you; none on any fault."""
     try:
         return questions_mod().read_allowed(ws, link)
     except Exception:
@@ -5873,7 +5924,8 @@ SETTINGS_CSS = r"""
 .cog:hover,.cog:focus-visible{color:var(--ink);background:var(--wash)}
 .launcher-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .launcher-default{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink2)}.launcher-default input{accent-color:var(--accent)}
-.launcher-default:has(input:disabled){opacity:.4}
+.launcher-default:has(input:disabled){opacity:.4}.launcher-default.nodefault{visibility:hidden}
+.launcher-sub{padding-left:28px}
 .nohost .apponly{display:none}.launcher-choice:has(input:disabled){opacity:.5}.hotkey{display:flex;gap:6px;align-items:center}
 .hotkey input{width:150px;font:inherit;font-size:var(--fs-meta);text-align:center;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:5px 8px;cursor:pointer}
 .hotkey input:focus{outline:2px solid var(--accent);outline-offset:1px}
@@ -5928,7 +5980,7 @@ dialog.settings .setlede{margin:0 0 8px;font-size:var(--fs-meta);line-height:1.4
 .setnavgrp+.setnavgrp{margin-top:0}.setnavh{display:none}.setnav ul{display:flex;gap:2px}.setnav a{white-space:nowrap}
 .setnav a[aria-current]{box-shadow:inset 0 -2px 0 var(--accent)}.setmain{padding:14px 16px 22px}.sethead{padding:14px 52px 10px 16px}}
 /* a section's explanation, word for word, behind the "?" beside its heading; each row's own line always shows */
-.qhelp{flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:var(--fs-meta);font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
+.qhelp{position:relative;flex:none;width:17px;height:17px;padding:0;display:inline-flex;align-items:center;justify-content:center;font:inherit;font-size:var(--fs-meta);font-weight:600;line-height:1;color:var(--muted);background:none;border:1px solid var(--line);border-radius:50%;cursor:pointer}
 .qhelp:hover,.qhelp[aria-expanded="true"]{color:var(--ink);border-color:var(--muted)}.qhelp:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 dialog.settings .sethelp{margin:2px 0 6px}
 .setfoot{margin-top:30px}dialog.settings .setsec:focus{outline:none}.setrule{padding-top:10px;border-top:1px solid var(--line)}
@@ -5947,6 +5999,7 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 #notify-settings .nsopts.nscol{flex-direction:column;align-items:flex-start;gap:5px}
 #notify-settings .nsimple label{display:inline-flex;align-items:center;gap:6px}
 #notify-settings .nsimple input[type=checkbox]{accent-color:var(--accent)}
+#notify-settings .nsown{align-items:flex-start;color:var(--muted)}#notify-settings .nsown input{visibility:hidden;width:0;margin:0 8px 0 0}#notify-settings .nsown small{display:block}#notify-settings .nsown::before{content:"\2013";flex:none;width:16px;text-align:center}
 #notify-settings .nsafter{white-space:nowrap}#notify-settings .nsq{align-items:center;gap:6px}#notify-settings .nsrule{margin:-4px 0 0 24px;font-size:var(--fs-meta)}
 #notify-settings input[type=time],#notify-settings input[type=number]{font:inherit;font-size:var(--fs-meta);
 color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:4px 7px}
@@ -6134,8 +6187,8 @@ if(window.GarrickAct&&GarrickAct(r,x.dataset.say))return;host.postMessage({act:r
 /* A button named for a request, Process the Inbox or Nurture Work (#234): in the app, to the assistant the menu's
    rows open, at the folder given, with the request typed in; in a browser, or with no assistant on, copied. */
 var q=t.closest('button[data-request]');if(q){var a=host&&GarrickAssistant(),p=q.dataset.request;
-if(a){host.postMessage({launch:a,folder:q.dataset.folder,phrase:p});say('Opening '+ASKS[a]+' on “'+p+'”…');return}
-put(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.')},function(){say(p)});return}
+if(a){host.postMessage({launch:a,folder:q.dataset.folder,phrase:p});say('Opening '+ASKS[a]+' on “'+p+'”…');if(window.GarrickHanded)GarrickHanded(p);return}
+put(p).then(function(){say('Copied “'+p+'”. Paste it to your assistant.');if(window.GarrickHanded)GarrickHanded(p)},function(){say(p)});return}
 var c=t.closest('button[data-launch]');if(c&&host){var m={launch:c.dataset.launch,folder:c.dataset.folder,phrase:c.dataset.phrase||''};
 if(m.launch==='cmux'){m.cmux=m.folder;m.copy=m.phrase}   /* an app built before 0.5.0 knows only this form */
 host.postMessage(m);say(c.dataset.say);return}
@@ -6213,12 +6266,12 @@ document.getElementById('close-settings').onclick=sdShut;
 function lprefs(){return GarrickPrefs.launchers()}
 function dpref(){return GarrickPrefs.def()}
 function radios(){sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){var c=sd.querySelector('input[data-launcher="'+r.value+'"]');
-r.disabled=!c||c.disabled||!c.checked;r.checked=r.value===dpref()});if(!sd.querySelector('input[name="garrick-default"]:checked')){var n=sd.querySelector('input[value="note"]');if(n)n.checked=true}}
+r.disabled=!c||c.disabled||!c.checked;r.checked=r.value===dpref();r.parentNode.classList.toggle('nodefault',r.disabled)});if(!sd.querySelector('input[name="garrick-default"]:checked')){var n=sd.querySelector('input[value="note"]');if(n)n.checked=true}}
 sd.querySelectorAll('input[name="garrick-default"]').forEach(function(r){r.onchange=function(){GarrickPrefs.set(lprefs(),r.value);lpChanged=true;
 say('Clicking a thread now: '+r.closest('.launcher-row').querySelector('span').firstChild.textContent.trim()+'.')}});
 sd.querySelectorAll('input[data-launcher]').forEach(function(c){c.checked=!c.disabled&&lprefs()[c.dataset.launcher]!==false;
-c.onchange=function(){var p=lprefs();p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,!c.checked&&dpref()===c.dataset.launcher?'note':dpref());lpChanged=true;radios();
-say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.');daRow()}});radios();
+c.onchange=function(){var p=lprefs(),moved=!c.checked&&dpref()===c.dataset.launcher;p[c.dataset.launcher]=c.checked;GarrickPrefs.set(p,moved?'note':dpref());lpChanged=true;radios();
+say((c.checked?'Showing ':'Hiding ')+c.parentNode.querySelector('span').firstChild.textContent.trim()+'.'+(moved?' Clicking a thread now opens the note.':''));daRow()}});radios();
 /* which assistant a cmux tab starts (#279): shown while Open in cmux is on, saved through the desk when Settings closes */
 var daSel=document.getElementById('desk-agent');function daRow(){var r=document.getElementById('desk-agent-row'),c=sd.querySelector('input[data-launcher="cmux"]');
 if(r)r.style.display=!c||c.disabled||!c.checked?'none':''}daRow();if(daSel)daSel.onchange=function(){daChanged=true;say('A cmux tab now starts '+daSel.options[daSel.selectedIndex].text+'.')};
@@ -6416,17 +6469,26 @@ def fade_lib(ws: Path):
     return _FADE[ws]
 
 
+GRADES_SAID = ("working pages are read by every answer, dormant ones only by a search that reaches back, archived ones only when you ask; "
+               "nothing is deleted, and nothing moves until you say so")
+
+
+def memory_moves(c: dict) -> int:
+    """How many pages the next pass would give another grade (down, or back up); 0 for a wiki switched off."""
+    return sum(c.get(k, 0) for k in ("to_dormant", "to_archive", "to_wake")) if c.get("on", True) else 0
+
+
 def memory_said(w: str, c: dict) -> str:
-    """One wiki's line: "Meetings: 600 working · 17 dormant · next pass
-    moves 5". MEMORY_JS says it the same way when the counts come back for
-    unsaved values."""
+    """One wiki's line: "Meetings: 600 working · 17 dormant · 12 would change grade".
+    MEMORY_JS says it the same way when the counts come back for unsaved values. One word for each grade, as the
+    lede says them."""
     grades = "%s: %d working · %d dormant" % (w, c.get("working", 0), c.get("dormant", 0))
     if c.get("archived"):
         grades += " · %d archived" % c["archived"]
     if not c.get("on", True):
         return grades + " · off"
-    moves = sum(c.get(k, 0) for k in ("to_dormant", "to_archive", "to_wake"))
-    return grades + (" · next pass moves %d" % moves if moves else " · nothing to move")
+    moves = memory_moves(c)
+    return grades + (" · %d would change grade" % moves if moves else " · none would change grade")
 
 
 def memory_list(values) -> str:
@@ -6454,13 +6516,10 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
     if lib is None:
         return ""
     age = getattr(lib, "AGE_SAID", None)
-    head = set_head("Manage older material", "memory", "Old meetings and reading leave the index after the months set here; "
-                    "nothing is deleted, and nothing moves until you say &#8220;fade the meetings&#8221; or &#8220;fade the "
-                    "library&#8221;.") + help_text("memory", (
-        'A page older than its kind&#39;s months goes dormant: out of the index, still found when a search reaches back. Later '
-        'it moves to the archive, found only when you ask. &#8220;What would fade&#8221; writes the full list; &#8220;fade the '
-        'meetings&#8221; or &#8220;fade the library&#8221; moves exactly that list and keeps every link working. %s'
-        'Saved in <code>%s</code> when you close Settings.' % (said_html(age) + " " if isinstance(age, str) else "", E(prefs().FILE))))
+    head = set_head("Manage older material", "memory", "Old meetings and reading change grade after the months set here: %s." % GRADES_SAID) + help_text("memory", (
+        'A page older than its kind&#39;s months becomes dormant, and later archived. &#8220;What would fade&#8221; writes the full '
+        'list; &#8220;fade the meetings&#8221; or &#8220;fade the library&#8221; moves exactly that list and keeps every link working. %s'
+        'Saved when you close Settings.' % (said_html(age) + " " if isinstance(age, str) else "")))
     try:
         with tools_path(ws):
             cfg = lib.settings(ws)
@@ -6480,6 +6539,12 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
         path = paths(ws, w)[0] if callable(paths) else ws / "System" / "generated" / "fade" / ("%s.md" % w)
         return (' <a class="mfull" href="%s">Full list</a>' % E(link(path))) if link is not None and path.is_file() else ""
 
+    def review(w, c):
+        """*Review the 12*, beside a count with something to move: hands "what would fade in Meetings" to the assistant, which
+        shows the list and asks for the yes. It moves nothing itself; no button when nothing would move."""
+        n = memory_moves(c)
+        return " " + request_button("Review the %d" % n, "what would fade in %s" % w, ws) if n else ""
+
     blocks, advanced = "", ""
     for w in MEMORY_WIKIS:
         kind_rows = ""
@@ -6490,21 +6555,21 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
             dormant = k.get("dormant") if isinstance(k.get("dormant"), int) else 6
             kind_rows += (
                 '<div class="mkind" data-mkind="%s" data-mwiki="%s"><span class="mkname">%s</span>'
-                '<label>dormant after %s months</label><label>archived after %s</label><label class="mnever">%s never</label></div>'
+                '<label>dormant after %s months</label><label>archived after %s months</label><label class="mnever">%s never archived</label></div>'
                 % (E(name), E(w), E(name[:1].upper() + name[1:]),
                    num('data-mk="dormant"', dormant, MEMORY_MONTHS[0], MEMORY_MONTHS[1], "%s: months to dormant" % name),
                    num('data-mk="archived"', dormant if never else k.get("archived"), MEMORY_MONTHS[0], MEMORY_MONTHS[1],
                        "%s: months to archived" % name, never),
                    box('data-mk="never"', never, "%s: never archived" % name)))
             advanced += ('<div class="mlists" data-mkl="%s"><b>%s</b>'
-                         '<label class="mlist">Types <input type="text" data-mk="types" value="%s" placeholder="none" aria-label="%s types"></label>'
-                         '<label class="mlist">Domains <input type="text" data-mk="domains" value="%s" placeholder="none" aria-label="%s domains"></label></div>'
-                         % (E(name), E(name[:1].upper() + name[1:]), E(memory_list(k.get("types"))), E(name),
-                            E(memory_list(k.get("domains"))), E(name)))
-        blocks += ('<div class="mwiki" data-mw="%s"><div class="launcher-row"><label class="launcher-choice">%s <span>Let old %s pages fade'
+                         '<label class="mlist">Page types <textarea rows="1" data-mk="types" placeholder="none" title="%s" aria-label="%s page types">%s</textarea></label>'
+                         '<label class="mlist">Page domains <textarea rows="1" data-mk="domains" placeholder="none" title="%s" aria-label="%s page domains">%s</textarea></label></div>'
+                         % (E(name), E(name[:1].upper() + name[1:]), E(memory_list(k.get("types"))), E(name), E(memory_list(k.get("types"))),
+                            E(memory_list(k.get("domains"))), E(name), E(memory_list(k.get("domains")))))
+        blocks += ('<div class="mwiki" data-mw="%s"><div class="launcher-row"><label class="launcher-choice">%s <span>Let old %s pages become dormant, then archived'
                    '</span></label></div>%s%s</div>'
                    % (E(w), box('data-mwikion="%s"' % w, wikis.get(w, True) is not False, "%s pages fade" % w), E(w), kind_rows,
-                      '<p class="mcount"><span data-mc="line">%s</span>%s</p>' % (E(memory_said(w, grades[w])), full_list(w))
+                      '<p class="mcount"><span data-mc="line">%s</span>%s%s</p>' % (E(memory_said(w, grades[w])), full_list(w), review(w, grades[w]))
                       if w in grades else ""))
     pin_rows = "".join('<label class="mpin">%s <span>%s</span></label>' % (box('data-mpin="%s"' % key, pins.get(key, True) is not False, said), E(said))
                        for key, said in MEMORY_PINS)
@@ -6514,7 +6579,7 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
     return ('<section class="setsec apponly" id="memory-settings">%s<div class="mgrades" id="m-prev" aria-live="polite">%s</div>'
             '<p class="hint" id="m-prevsaid" hidden></p>'
             '<details class="madv"><summary>Advanced</summary>'
-            '<h4 class="nsub">Which pages each kind takes</h4><p class="hint">Its <code>type</code> or domain, separated by commas.</p>%s'
+            '<h4 class="nsub">Which pages each kind takes</h4><p class="hint">A page belongs to a kind when its page type or its domain is listed. Separate entries with commas.</p>%s'
             '<h4 class="nsub">What keeps a page working</h4><p class="hint mlede">While any of these holds, a page stays working, however '
             'old. Person, organisation and topic pages, and the wiki&#39;s own lists, never move.</p><div class="mpins">%s</div>'
             '<h4 class="nsub">Bringing a page back</h4>'
@@ -6523,13 +6588,13 @@ def memory_settings(ws: Path, link: Optional["Links"] = None) -> str:
             '<h4 class="nsub">Search and the morning digest</h4>'
             '<div class="launcher-row"><span class="mreach">Without being asked, search reads <select id="m-reach" aria-label="How far search reaches unasked">'
             '<option value="working"%s>working pages only</option><option value="dormant"%s>working and dormant pages</option></select></span></div>'
-            '<div class="launcher-row"><label class="launcher-choice">%s <span>Say what would fade in the morning digest'
+            '<div class="launcher-row"><label class="launcher-choice">%s <span>Say in the morning digest which pages would change grade'
             '<small>Once at least this many pages would</small></span></label><span class="mafter">%s pages</span></div></details></section>'
             % (head, blocks, advanced, pin_rows,
                box('id="m-wake"', cfg.get("wake", True) is not False, "Propose bringing back a dormant page that active work links again"),
                '<p class="hint msaid">%s</p>' % said_html(wake) if isinstance(wake, str) else "",
                " selected" if reach == "working" else "", " selected" if reach != "working" else "",
-               box('id="m-night"', nightly.get("on", True) is not False, "Say what would fade in the morning digest"),
+               box('id="m-night"', nightly.get("on", True) is not False, "Say in the morning digest which pages would change grade"),
                num('id="m-min"', nightly.get("min", 10), MEMORY_MIN[0], MEMORY_MIN[1], "Smallest count worth a line")))
 
 
@@ -6545,10 +6610,12 @@ border:1px solid var(--line);border-radius:7px;min-width:0}
 .mkind label{display:flex;align-items:center;gap:5px}.mkname{flex:0 0 92px;font-weight:560;color:var(--ink)}
 .mcount{margin:4px 0 0 28px;font-size:var(--fs-meta);color:var(--ink2)}.mcount .mfull{margin-left:6px}
 .madv{margin-top:8px}.madv>summary{display:block;list-style:none;cursor:pointer;font-size:var(--fs-meta);font-weight:560;color:var(--ink2);padding:3px 0}
-.madv>summary::-webkit-details-marker{display:none}.madv>summary::before{content:'\203A';display:inline-block;width:12px;transition:transform .15s}
-.madv[open]>summary::before{transform:rotate(90deg)}
-.mlists{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin:4px 0;font-size:var(--fs-meta)}.mlists b{flex:0 0 92px;font-weight:560}
-.mlist{display:flex;align-items:center;gap:6px;color:var(--ink2);flex:1 1 160px;min-width:0}.mlist input{flex:1 1 0;width:0;min-width:0}
+.madv>summary::-webkit-details-marker{display:none}.madv>summary::before{content:'\25B8';display:inline-block;width:14px}
+.madv[open]>summary::before{content:'\25BE'}.madv>:not(summary){margin-left:18px}
+.mlists{display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 10px;margin:6px 0;font-size:var(--fs-meta)}.mlists b{flex:1 0 100%;font-weight:560}
+.mlist{display:grid;grid-template-columns:92px minmax(0,1fr);align-items:start;gap:8px;color:var(--ink2);flex:1 1 100%;min-width:0;line-height:1.4}
+.mlist textarea{width:100%;box-sizing:border-box;min-width:0;resize:none;overflow:hidden;white-space:normal;overflow-wrap:break-word;font:inherit;font-size:var(--fs-meta);padding:2px 6px;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px}
+.mcount .act{margin-left:8px}.mcount [data-request][hidden]{display:none}
 .mpins{display:flex;flex-direction:column;gap:3px;margin:0 0 6px}.mpin{display:flex;align-items:center;gap:6px;font-size:var(--fs-meta)}
 .mreach,.mafter{font-size:var(--fs-meta);color:var(--ink2)}.mreach{display:flex;flex-wrap:wrap;align-items:center;gap:4px}.mreach select{max-width:100%}
 .mafter{white-space:nowrap}#memory-settings{min-width:0;overflow-wrap:anywhere}
@@ -6575,20 +6642,29 @@ l=sec.querySelector('[data-mkl="'+f.dataset.mkind+'"]'),t=function(k){return l&&
 m.kinds[f.dataset.mkind]={wiki:f.dataset.mwiki,types:list(t('types')),domains:list(t('domains')),dormant:d,archived:q('never').checked?null:Math.max(d,n(q('archived')))}});
 return m}
 function line(w,c){var g=w+': '+(c.working||0)+' working · '+(c.dormant||0)+' dormant'+(c.archived?' · '+c.archived+' archived':'');
-if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?' · next pass moves '+mv:' · nothing to move')}
+if(c.on===false)return g+' · off';var mv=(c.to_dormant||0)+(c.to_archive||0)+(c.to_wake||0);return g+(mv?' · '+mv+' would change grade':' · none would change grade')}
 function paint(counts){sec.querySelectorAll('#m-prev [data-mw]').forEach(function(w){var c=counts[w.dataset.mw],e=w.querySelector('[data-mc="line"]');
 if(c&&e)e.textContent=line(w.dataset.mw,c)})}
 function tell(t){said.textContent=t;said.hidden=false}
+/* Review hands over the list as saved, so it waits while a change is not saved */
+function review(on){sec.querySelectorAll('.mcount [data-request]').forEach(function(b){b.hidden=!on})}
+/* what the form held when it was saved or the page loaded: an edit that is put back, or saved, shows Review again */
+var base=JSON.stringify(request());
+function touch(){changed=JSON.stringify(request())!==base;review(!changed)}
 function ask(){if(!host||!window.GarrickReadsMemory){tell('Counted as saved; closing Settings saves the change and counts again.');return}
 tell('Counting…');clearTimeout(timer);timer=setTimeout(function(){host.postMessage({act:{verb:'memory-preview',memory:request()}})},250)}
 function sync(){sec.querySelectorAll('.mkind').forEach(function(f){var a=f.querySelector('[data-mk="archived"]'),d=f.querySelector('[data-mk="dormant"]');
 a.disabled=f.querySelector('[data-mk="never"]').checked;if(!a.disabled&&n(a)<n(d))a.value=n(d)})}
-sec.addEventListener('change',function(){changed=true;sync();ask()});
-sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],input[type=text]')){changed=true;ask()}});
+sec.addEventListener('change',function(){sync();touch();ask()});
+sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],textarea')){if(e.target.matches('textarea')){e.target.value=e.target.value.replace(/\n/g,' ');e.target.title=e.target.value;fit(e.target)}touch();ask()}});
+sec.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.matches('textarea'))e.preventDefault()});
+/* a kind's lists wrap and grow to show the whole of them; measured when Advanced opens, since a closed section has no size */
+function fit(t){t.style.height='auto';t.style.height=t.scrollHeight+2+'px'}
+var adv=sec.querySelector('.madv');if(adv)adv.addEventListener('toggle',function(){if(adv.open)adv.querySelectorAll('textarea').forEach(fit)});
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='memory-preview'){
 if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}else tell((out&&out.say)||'Could not count.');return}
 if(prev)return prev(q,out)};
-window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){changed=false}};
+window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){base=JSON.stringify(request());changed=false;review(true)}};
 })();
 """
 # ---- end of Settings › Memory -----------------------------------------------------
@@ -6956,7 +7032,7 @@ N.forEach(function(n){n.deg=0});E.forEach(function(e){N[e[0]].deg++;N[e[1]].deg+
 var have={};N.forEach(function(n){if(n.z===zsel&&(parked||!n.s))have[n.k]=1});
 document.querySelectorAll('.glegend [data-k]').forEach(function(s){var k=+s.dataset.k;s.hidden=!have[k];s.setAttribute('aria-pressed',ks[k]?'true':'false')});
 var zs=document.querySelector('.gzsel');if(zs){zs.value=zsel;zmark(zs)}
-var sum=document.getElementById('gsum');if(sum)sum.textContent=zsel+' · '+V.length+' notes, '+E.length+' links · names only';seek()}
+var sum=document.getElementById('gsum');if(sum)sum.textContent=zsel+' · '+V.length+(V.length===1?' note, ':' notes, ')+E.length+(E.length===1?' link':' links')+' · names only';seek()}
 /* Every note pushes every other away, which costs the square of the notes a
    step. Past BIG notes a quadtree stands in for each far group by its centre,
    which keeps a step near n log n; near notes still push one by one. */
@@ -7390,15 +7466,15 @@ LATE_ICON = ('<svg class="bi" viewBox="0 0 16 16" width="12" height="12" aria-hi
              'stroke-linecap="round" stroke-linejoin="round">%s</svg>' % _PILL_PATHS["late"])
 
 
-def tab_badge(id_: str, n: int, one: str, many: str, critical: bool) -> str:
+def tab_badge(id_: str, n: int, one: str, many: str, critical: bool, keep: bool = False) -> str:
     """The one badge a tab may carry (#560): a number, and nothing when it is 0. Critical (something failed, an action is
     late) has the line icon `late` before its number so colour never carries it alone; a warning has none. The words are in
-    its aria-label and its title, never in its text."""
-    if not n:
+    its aria-label and its title, never in its text. `keep` draws a hidden one for 0, for a script that sets it later."""
+    if not n and not keep:
         return ""
     words = "%d%s" % (n, one if n == 1 else many)
-    return ('<span class="n %s" id="%s" aria-label="%s" title="%s">%s%d</span>'
-            % ("crit" if critical else "warn", id_, E(words), E(words), LATE_ICON if critical else "", n))
+    return ('<span class="n %s" id="%s" aria-label="%s" title="%s"%s>%s%d</span>'
+            % ("crit" if critical else "warn", id_, E(words), E(words), "" if n else " hidden", LATE_ICON if critical else "", n))
 
 
 GRAPH_ICON = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" '
@@ -7495,7 +7571,8 @@ def work_list_card(W: List[dict], today: dt.date, acting: bool = False, card_of=
         row = dict(w["row"], actions=w.get("actions") or [])
         chip = todo_chip(row, today, "yw")
         pop = todo_pop(row, today, acting, "yw")
-        reason = ('<span class="ywait" title="%s">%s</span>' % (E(whole), word)) if word else ""
+        # the whole reason, when the line is cut, on hover and on focus (the page's own tip shows both)
+        reason = ('<span class="ywait" tabindex="0" data-tip="%s">%s</span>' % (E(whole), word)) if word else ""
         sep = '<span class="ydot" aria-hidden="true">\u00b7</span>' if word and chip else ""
         why = ('<span class="ywhy">%s%s%s</span>' % (reason, sep, '<span class="tchips">%s</span>' % chip if chip else "")) if word or chip \
             else ""
@@ -7525,7 +7602,7 @@ YOURWORK_CSS = r"""
 .yzone{font-size:var(--fs-meta);font-weight:400;color:var(--muted)}.yline{font-weight:600;color:var(--ink)}
 .ystate{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .ywhy{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;min-width:0;max-width:100%}.ywhy:empty{display:none}.ywhy .tchips{display:inline-flex;gap:4px;flex:none;white-space:nowrap}.ywhy .chip{margin:0;white-space:nowrap}
-.ywait{color:var(--ink2);font-size:var(--fs-meta);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ydot{color:var(--muted);flex:none}
+.ywait{color:var(--ink2);font-size:var(--fs-meta);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ydot{color:var(--muted);flex:none}.ywait:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 .ystate:empty{display:none}.ypath{white-space:nowrap}.yfoot{display:flex;justify-content:center;padding:10px 0 0}.ytag{margin-left:6px;padding:0 6px;border-radius:8px;font-size:var(--fs-meta);font-weight:400;background:var(--wash);color:var(--accent)}
 .yact{justify-self:end;position:relative}.yopen{display:inline-flex;align-items:center;gap:4px}
 .ysplit{display:inline-flex;align-items:stretch}.ysplit>.act{border-top-right-radius:0;border-bottom-right-radius:0}
@@ -7652,6 +7729,7 @@ LOOK_CSS = r"""
 button.act,a.act,.tabs button,.seg button,.cog,.gbar button,.gbar .gfind,.gzsel,.switch,.zbtn,.moveto button{min-height:40px}
 button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .appicons .act[data-k]{width:40px;height:40px}
+.qhelp::after{content:"";position:absolute;inset:-4px}
 .grip,.hide,.totab,.tick,.pchev,button.chip,.jname{position:relative}
 .grip::after,.hide::after,.totab::after,.tick::after,.pchev::after,button.chip::after,.jname::after{content:"";position:absolute;inset:-9px -6px}
 .trow.done .tick::after{inset:auto}
@@ -7733,7 +7811,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
     qdata = questions_data(ws, C, now.date(), link)        # the Context tab (#224), None where it cannot be placed
-    allowed = allowed_data(ws, link)                       # the Context tab's Allowed by you (#447): what the user let through, once
+    allowed = allowed_data(ws, link)                       # the Context card's Kept by you (#447, #582): what the user let through, once
 
     # ---- what needs attention, worst first
     attn = []
@@ -7870,7 +7948,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         tiles.append(("Todo", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
                       "todolist" if lists else "todo"))
     tiles += [("Inboxes", "%d" % waiting, "", "inboxes"),
-              ("Context", ("%d<small>errors</small>%d<small>warnings</small>" % (C.get("errors", 0), C.get("warnings", 0)))
+              ("Context", ("%d<small>%s</small>%d<small>%s</small>" % (C.get("errors", 0), noun(C.get("errors", 0), "error"),
+                                                                       C.get("warnings", 0), noun(C.get("warnings", 0), "warning")))
                if C and not C.get("failed") else "—", check_age if C else "check.py not found", "checks")]
     if L:
         cap = L["caps"]["calls_day"]
@@ -8051,7 +8130,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         body = ""
     # A caption says what is wrong, so a folded card still tells it (#231), and nothing when nothing is.
     listed_kept = ""
-    found = " · ".join("%d %s%s" % (n, w, "" if n == 1 else "s") for n, w in
+    found = " · ".join(counted(n, w) for n, w in
                        (((C or {}).get("errors", 0), "error"), ((C or {}).get("warnings", 0), "warning")) if n)
     if check_age:                              # a tool's rebuild showed the last result rather than run the check (#260)
         body = '<p class="hint ckept">%s; a build by hand or on schedule runs it again.</p>' % E(check_age) + body
@@ -8082,7 +8161,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
     checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
                        need_lines(ws, history, said_scope, queues, qdata, failed=queues_failed and queues is not None)
-                       + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
+                       + kept_by_you(allowed, said_scope) + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
     queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names, now.date().isoformat(), work_places) if fq else ""
 
@@ -8243,8 +8322,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                           '<input type="search" class="gfind" id="gfind" placeholder="Find a note" aria-label="Find a note on the graph" autocomplete="off" spellcheck="false">'
                           '<button id="gfmore" type="button" hidden></button><button id="gpark" type="button"></button></div>'
                           '<div class="gbar gcorner"><button id="gspin"></button><button id="gfit">Fit</button></div>'
-                          '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%d notes, %d links · %d projects and threads · names only</p>'
-                          '<script type="application/json" id="graph-data">%s</script>' % (legend, len(GR["nodes"]), len(GR["edges"]), core, data),
+                          '<div class="gpop" id="gpop" hidden></div></div>%s<p class="hint gsum" id="gsum">%s, %s · %s · names only</p>'
+                          '<script type="application/json" id="graph-data">%s</script>' % (legend, counted(len(GR["nodes"]), "note"), counted(len(GR["edges"]), "link"),
+                                                                                           counted(core, "project or thread", "projects and threads"), data),
                           open_=False)
 
     todo_tab = todo_list_card(lists, now.date(), acting, add_projects(T), link, ZS) if lists else ""
@@ -8286,7 +8366,10 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
                          % (top, "".join(machinery[0::2]), "".join(machinery[1::2])))
-    late = sum(z["late"] for z in lists)
+    # The Todo tab's badge is the late actions of the zone the list shows, never a sum across zones (the list's own script keeps it
+    # in step as the zone changes): the first one shown is Work when there is one, else the first.
+    late_by = {z["zone"]: z["late"] for z in lists}
+    late = late_by.get("Work" if "Work" in late_by else next(iter(late_by), ""), 0)
     trouble = any(j["state"] == "critical" for j in J) or bool(C and (C.get("errors") or (C.get("failed") and not C.get("pending")))) or bool(L and L["refused_today"])
     # At most one badge on a tab, and it is a number (#560): none on the Overview, the late actions on Todo, the things that need
     # attention on Status (critical when one failed), and on Context the open questions of the one place chosen (CONTEXT_JS).
@@ -8294,7 +8377,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<button type="button" role="tab" data-tab="status">Status%s</button>%s'
             '<button type="button" role="tab" data-tab="guide">Guide</button></div>'
             % ('<button type="button" role="tab" data-tab="todo">Todo%s</button>'
-               % tab_badge("tabn-late", late, " action is late", " actions are late", True) if todo_tab else "",
+               % tab_badge("tabn-late", late, " action is late", " actions are late", True, keep=any(late_by.values())) if todo_tab else "",
                tab_badge("tabn-status", len(attn), " thing needs attention", " things need attention", worst == "critical"),
                questions_mod().tab_button() if qdata else ""))
     header = bar(mark(full=False, attrs=' class="mark" aria-hidden="true"'), E(NAME), now.strftime("%a %d %b, %H:%M"), tabs, controls)
@@ -8309,7 +8392,8 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # What RELOAD_JS compares a button's expectation with: the parked threads
     # and, with the cmux extra, the folders a session is open in.
     folders = {f for z in T.values() for r in z["rows"] + z["parked"] for f in (r["note"].parent, (r["hub"] or r["note"]).parent)}
-    state = {"parked": sorted({"%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["parked"]}
+    state = {"late": late_by,          # each zone's late actions, for the Todo tab's badge, which follows the zone shown
+             "parked": sorted({"%s/%s" % (r["zone"], r["rel"]) for z in T.values() for r in z["parked"]}
                               | {"%s/%s/%s.md" % (zone, p, p) for zone, z in T.items() for p in z.get("held", ())}),
              "live": sorted(str(f) for f in folders if session_in(S, f)),
              # every live and parked note by its path, for a rename from the page (#184)
@@ -8343,7 +8427,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else "") + LOOK_CSS,
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS, allowed) + queue_view,
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

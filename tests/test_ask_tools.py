@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -355,6 +356,108 @@ class TestRead(ToolCase):
         page.write_text(page.read_text().replace("zone: Work", "zone: Personal"))
         self.assertEqual((tools.NOT_GIVEN, False), c.call("read", {"id": rid}))
         self.assertFalse(self.out()["wall"])
+
+
+class TestReadsInPartsAndCitationDates(ToolCase):
+    """#579: a long record is read on in parts; a hub or thread note is cited by when it last changed."""
+
+    LONG = "Wikis/Meetings/wiki/sources/260403-long-call.md"
+
+    def long_page(self):
+        body = "".join("Line %04d of the long call, zebrafinch. %s\n" % (n, "x" * 20) for n in range(240))
+        scoped.write(self.root / self.LONG, scoped.meeting_page("Work", "[acme]", "Long call") + "\n" + body + "\nENDMARK\n")
+        c = self.conv(told={"acme"})
+        text, _ = c.call("search", {"words": "zebrafinch", "kind": "meetings"})
+        return c, first_id(text)
+
+    @staticmethod
+    def more(text):
+        m = re.search(r"\[offset (\d+): (\d+) characters left", text)
+        return (int(m.group(1)), int(m.group(2))) if m else (None, 0)
+
+    def test_a_long_note_is_read_to_its_end_in_three_calls(self):
+        c, rid = self.long_page()
+        calls, seen, args = 0, "", {"id": rid}
+        while True:
+            text, bad = c.call("read", dict(args))
+            calls += 1
+            self.assertFalse(bad)
+            self.assertLessEqual(len(text.split("\n\n", 1)[1]), tools.MOST_TEXT + 200)
+            seen += text
+            offset, left = self.more(text)
+            if offset is None:
+                break
+            args["offset"] = offset
+            self.assertGreater(left, 0)
+            self.assertLess(calls, 10)
+        self.assertEqual(3, calls)
+        self.assertIn("ENDMARK", seen)
+        self.assertIn("Line 0000", seen)
+
+    def test_a_short_note_has_no_offset_to_read_on_from(self):
+        c = self.conv(told={"acme"})
+        rid = first_id(c.call("search", {"words": "pallet quote", "kind": "meetings"})[0])
+        text, _ = c.call("read", {"id": rid})
+        self.assertEqual((None, 0), self.more(text))
+
+    def test_a_bad_offset_reads_nothing_and_never_another_record(self):
+        c, rid = self.long_page()
+        first = c.call("read", {"id": rid})[0]
+        for bad in (-1, 10 ** 9, "abc", "\u00b2", "\u0663", True, 1.5, [], {"a": 1}):
+            text, _ = c.call("read", {"id": rid, "offset": bad})
+            self.assertTrue(text.endswith(tools.BAD_OFFSET), bad)
+            self.assertNotIn("Line 0", text)
+        self.assertEqual(first, c.call("read", {"id": rid, "offset": 0})[0])
+        self.assertEqual(first, c.call("read", {"id": rid, "offset": "0"})[0])
+
+    def test_an_offset_goes_through_the_same_admission_as_the_first_read(self):
+        c, rid = self.long_page()
+        self.assertEqual((tools.NOT_GIVEN, False), c.call("read", {"id": "r9-" + self.out()["nonce"], "offset": 6000}))
+        self.assertEqual((tools.NOT_GIVEN, False), c.call("read", {"id": "../x", "offset": 6000}))
+        page = self.root / self.LONG
+        page.write_text(page.read_text().replace("zone: Work", "zone: Personal"))      # moved across a wall since it was handed
+        self.assertEqual((tools.NOT_GIVEN, False), c.call("read", {"id": rid, "offset": 6000}))
+
+    def test_a_long_resume_block_is_read_on_with_thread_state(self):
+        note = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        text = note.read_text()
+        note.write_text(text.replace("### Resume here\n", "### Resume here\n\n" + "".join("Row %04d of the block.\n" % n for n in range(700)), 1))
+        c = self.conv()
+        first = c.call("thread_state", {"place": "Pricing"})[0]
+        offset, left = self.more(first)
+        self.assertIsNotNone(offset)
+        second = c.call("thread_state", {"place": "Pricing", "offset": offset})[0]
+        self.assertIn("Row 0699", second + c.call("thread_state", {"place": "Pricing", "offset": self.more(second)[0] or 0})[0])
+
+    def test_a_hub_or_thread_note_is_cited_with_when_it_last_changed(self):
+        note = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        note.write_text(note.read_text().replace("---\n", "---\ncreated: 2026-09-03\n", 1))
+        env = dict(os.environ, GIT_COMMITTER_DATE="2026-11-10T10:00:00+00:00", GIT_AUTHOR_DATE="2026-11-10T10:00:00+00:00")
+        subprocess.run(["git", "-C", str(self.work), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.work), "commit", "-q", "-m", "edited this week"], check=True, capture_output=True, env=env)
+        head = self.conv().call("thread_state", {"place": "Pricing"})[0].splitlines()[0]
+        self.assertIn("updated 2026-11-10", head)
+        self.assertNotIn("filed", head)
+        self.assertNotIn("2026-09-03", head)
+
+    def test_a_note_with_no_history_is_cited_with_its_own_date(self):
+        sc = tools.scope_mod()
+        fresh = self.work / "Acme Review" / "Threads" / "Fresh" / "Fresh.md"
+        scoped.write(fresh, scoped.thread_note("Acme Review", "Fresh", "acme"))           # never committed
+        os.utime(fresh, (1767225600, 1767225600))                                      # 1 January 2026, UTC
+        self.assertRegex(sc.updated_of(self.root, "Zones/Work/Acme Review/Threads/Fresh/Fresh.md"), r"^2026-01-0[12]$")
+        self.assertEqual("", sc.updated_of(self.root, "Wikis/Meetings/wiki/sources/260310-acme-kickoff.md"))
+        self.assertEqual("", sc.updated_of(self.root, "Zones/Work/Acme Review/Sources/260301 - Pallet terms.docx"))
+
+    def test_a_meeting_keeps_filed_and_a_note_says_updated(self):
+        c = self.conv(told={"acme"})
+        meeting = {"date": "2026-03-10", "imported": "2026-03-12", "kind": "meetings", "title": "Kick-off",
+                   "path": ACME_PAGE}
+        self.assertIn("filed 2026-03-12", c.line("r1", meeting))
+        hub = dict(meeting, kind="threads", zone="Work", path="Zones/Work/Acme Review/Acme Review.md")
+        got = c.line("r2", hub)
+        self.assertIn("updated ", got)
+        self.assertNotIn("filed", got)
 
 
 class TestTheOtherTools(ToolCase):

@@ -15,7 +15,7 @@ and no network call but the poll.
 **What it decides, in code** (dispatcher.py): a message that starts with `note` is saved as a note under #569's contract
 (a Markdown file in the workspace's `Inbox/` with `kind: note`, `from-owner: true`, the chat's fixed id being the check),
 and never reaches an assistant; a reply to one of the bot's messages continues that message's exchange, whatever its first
-word, and `yes` to a held-action message runs that action and nothing else does; a message that names a thread binds to it
+word, and `yes` to a held-action message runs that action and nothing else does, while `no`, `cancel` or `stop` alone cancels it for good; a message that names a thread binds to it
 (one question when the name is ambiguous); a message that names none continues the open exchange, or gets "Which thread?".
 
 **What the assistant does.** Work for an exchange goes to the engine (engine.py) at the Telegram channel's level, in the
@@ -247,12 +247,14 @@ class Receiver:
         data = self.load()
         msg = data["messages"][str(uid)]
         disp, ex_mod, hold, intake = self.m["dispatcher"], self.m["exchanges"], self.m["hold"], self.m["intake"]
-        decision = disp.route(intake, self.ws, msg, hold.by_message, self.now())
+        decision = disp.route(intake, self.ws, msg, hold.by_message, self.now(), hold.cancelled_by_message)
         do = decision["do"]
         if do == "note":
             self.file_note(msg, decision)
         elif do == "yes":
             self.run_held(msg, decision["held"])
+        elif do in ("no", "gone"):
+            self.cancel_held(msg, decision["held"])
         elif do == "done":
             ex = decision["exchange"]
             ex_mod.close(ex["id"], "done", self.now())
@@ -298,9 +300,23 @@ class Receiver:
         if decision.get("destination"):
             head.append("destination: %s" % yaml_quote(decision["destination"]))
         head += ["date: %s" % yaml_quote(when), "---", ""]
-        path = inbox / ("telegram-%s.md" % msg["id"])
-        if not path.exists():
-            path.write_text("\n".join(head) + decision["text"] + "\n", encoding="utf-8")
+        data = ("\n".join(head) + decision["text"] + "\n").encode("utf-8")
+        for n in range(1, 1000):
+            path = inbox / ("telegram-%s.md" % msg["id"] if n == 1 else "telegram-%s-%d.md" % (msg["id"], n))
+            try:
+                with open(str(path), "xb") as f:                         # exclusive: a file already there is never written over
+                    f.write(data)
+            except FileExistsError:
+                try:
+                    same = path.read_bytes() == data                     # a retry after a crash between the write and the record
+                except OSError:
+                    same = False
+                if not same:
+                    continue                                             # another file at this name: this note takes the next one
+            self.m["intake"].record_note(self.ws, path, msg["id"])      # the ledger is what proves the note is ours (#584)
+            break
+        else:
+            raise OSError("no free name for the note in the inbox")
         self.set_message(msg["id"], state="completed")
         self.say("Noted.", None, msg["message_id"])
 
@@ -308,6 +324,15 @@ class Receiver:
         """The owner's yes, as a reply to the message that asked: run that one action, once."""
         eng, hold = self.m["engine"], self.m["hold"]
         said = hold.run(held["id"], self.ws, lambda w, rec: eng.execute_held(w, rec, self.runner))
+        ex = self.m["exchanges"].get(held.get("exchange"))
+        self.set_message(msg["id"], state="completed", exchange=held.get("exchange"))
+        self.say(said, ex, msg["message_id"])
+
+    def cancel_held(self, msg: dict, held: dict) -> None:
+        """The owner's no, or a yes to an action already cancelled, as a reply to the message that asked: that action is
+        cancelled (or stays so), nothing runs, and the answer says so (#585)."""
+        said = "That action was cancelled. Nothing was done." if held.get("state") == "cancelled" \
+            else self.m["hold"].cancel(held["id"])
         ex = self.m["exchanges"].get(held.get("exchange"))
         self.set_message(msg["id"], state="completed", exchange=held.get("exchange"))
         self.say(said, ex, msg["message_id"])
@@ -366,7 +391,7 @@ class Receiver:
             if not got.get("ok") and not str(got.get("say", "")).startswith("Not run:") and ex.get("session"):
                 ex_mod.end_session(eid, self.now())      # a failed resume must not stick: the next turn starts from the saved state
             for e in got.get("held") or []:
-                asked = self.say("%s Reply yes to run it." % hold.say(e), ex, last)
+                asked = self.say("%s Reply yes to run it, or no to cancel it." % hold.say(e), ex, last)
                 if asked.get("ids"):
                     hold.note_message(e["id"], asked["ids"][-1])
             self.log_turn(eid, fresh, tokens, got)

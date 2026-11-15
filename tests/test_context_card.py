@@ -179,7 +179,7 @@ QUEUE_HARNESS = r"""
 const fs=require('fs');
 const js=fs.readFileSync(process.argv[2],'utf8');
 function el(extra){const base={dataset:{},hidden:false,textContent:'',style:{},classList:{toggle(){},add(){},remove(){},contains(){return false}},
- getClientRects(){return[1]},querySelectorAll(){return[]},querySelector(){return el()},closest(){return null},focus(){},setAttribute(k,v){this[k]=v},getAttribute(){return ''},appendChild(){},remove(){},click(){}};
+ getClientRects(){return[1]},querySelectorAll(){return[]},querySelector(){return el()},closest(){return null},focus(){},setAttribute(k,v){this[k]=v},getAttribute(){return ''},appendChild(c){(this.kids=this.kids||[]).push(c)},remove(){},click(){}};
  return Object.assign(base,extra||{})}
 const clicked=[],handlers={},store={};
 const q1=el({dataset:{gk:'k1',wiki:'Meetings',file:'questions/a.md',kind:'wiki-question',path:'Wikis/Meetings/questions/a.md'}});
@@ -193,14 +193,16 @@ const dlg=el({dataset:{folder:'/w',today:'2026-11-13'},open:false,
  addEventListener:(t,f)=>{(handlers[t]=handlers[t]||[]).push(f)},showModal(){this.open=true},close(){this.open=false;(handlers.close||[]).forEach(f=>f())},
  appendChild(b){this.last=b}});
 global.window={webkit:{messageHandlers:{garrick:{postMessage:(m)=>posted.push(m)}}}};
+if(process.argv[3].startsWith('away'))global.window.webkit=undefined;   // no host: a browser, with no assistant to hand to
+const body=el({kids:[]});body.insertBefore=function(n){this.kids.push(n)};const checks=el({});checks.querySelector=(s)=>s===".body"?body:null;
 global.sessionStorage={getItem:(k)=>store[k]||null,setItem:(k,v)=>{store[k]=v},removeItem:(k)=>{delete store[k]}};
-global.document={getElementById:(id)=>id==='queue'?dlg:null,addEventListener:(t,f)=>{(handlers['doc'+t]=handlers['doc'+t]||[]).push(f)},
+global.document={getElementById:(id)=>id==='queue'?dlg:id==='checks'?checks:id==='qkept'?body.kids.filter(k=>k.id==='qkept')[0]||null:null,addEventListener:(t,f)=>{(handlers['doc'+t]=handlers['doc'+t]||[]).push(f)},
  createElement:()=>{const b=el();b.click=function(){clicked.push(this['data-request'])};return b}};
 global.Object=Object;
 new Function(js)();
 function open(scope){const t=el({dataset:{qopen:scope}});t.closest=(s)=>s==='[data-qopen]'?t:null;(handlers.docclick||[]).forEach(f=>f({target:t,preventDefault(){}}))}
 function acted(verb,wiki,file,ok){window.GarrickActed({verb,wiki,file,answer:undefined},{ok})}
-const steps=process.argv[3];
+let steps=process.argv[3];
 open('Zones/Work');
 if(steps==='none'){dlg.close()}
 if(steps==='one'){acted('question-answer','Meetings','questions/a.md',true);dlg.close();dlg.open=true;dlg.close()}
@@ -215,8 +217,26 @@ if(steps.startsWith('load-')){acted('question-answer','Meetings','questions/a.md
  scopes=steps==='load-open'?[work,other]:[other];handlers.close=[];handlers.docclick=[];dlg.open=false;new Function(js)();
  if(steps==='load-twice'){handlers.close=[];handlers.docclick=[];dlg.open=false;new Function(js)()}
  atLoad=clicked.length}
+if(steps.startsWith('away')){const mode=steps;(async()=>{const tick=()=>new Promise(r=>setTimeout(r,10));
+ acted('question-answer','Meetings','questions/a.md',true);
+ scopes=[other];handlers.close=[];handlers.docclick=[];dlg.open=false;new Function(js)();      // the page loads again with no section for Work and no host
+ await tick();const atLoad=clicked.length;
+ const shown=()=>{const b=body.kids.filter(k=>k.id==='qkept')[0];return b&&!b.hidden?(b.kids||[]).filter(r=>r.className==='qk').map(r=>r.kids[1]['data-request']):[]};
+ const first=shown();
+ handlers.close=[];handlers.docclick=[];body.kids=[];new Function(js)();await tick();      // and again: still there
+ const second=shown();
+ let folder=null;
+ if(mode==='away-old'||mode==='away-legacy'){const k=JSON.parse(store['garrick-queue-kept']);Object.keys(k).forEach(p=>{k[p]=mode==='away-old'?Date.now()-25*3600*1000:'/some/other/folder'});store['garrick-queue-kept']=JSON.stringify(k);
+  handlers.close=[];handlers.docclick=[];body.kids=[];new Function(js)();await tick()}
+ if(mode==='away-handed'||mode==='away-click-only'||mode==='away-dismissed'){const row=body.kids.filter(k=>k.id==='qkept')[0].kids[0],btn=row.kids[mode==='away-dismissed'?2:1];
+  folder=btn['data-folder'];
+  const t=el({dataset:mode==='away-dismissed'?{qkdrop:btn['data-qkdrop']}:{qkgo:btn['data-request']}});t.closest=(s)=>s==='[data-qkgo]'&&mode!=='away-dismissed'?t:s==='[data-qkdrop]'&&mode==='away-dismissed'?t:null;
+  (handlers.docclick||[]).forEach(f=>f({target:t,preventDefault(){}}));await tick();
+  if(mode==='away-handed'){window.GarrickHanded(btn['data-request']);await tick()}}      // the page's own handler reports a handoff that worked
+ console.log(JSON.stringify({atLoad,first,second,clicked,folder,after:shown(),store:store['garrick-queue-kept']||null}))})();
+ steps='done'}
 if(steps==='later'){acted('question-later','Meetings','questions/a.md',true);dlg.close()}
-setTimeout(()=>{const loaded=clicked.slice();if(dlg.open)dlg.close();
+if(steps!=='done')setTimeout(()=>{const loaded=clicked.slice();if(dlg.open)dlg.close();
  console.log(JSON.stringify(atLoad===null?clicked:{atLoad,loaded,final:clicked.slice()}))},20);
 """
 
@@ -302,6 +322,62 @@ class TestAnswersAreWorkedInWithoutAButton(CardCase):
         self.assertEqual({"atLoad": 0, "loaded": sent, "final": sent}, got["load-twice"])  # a second load finds nothing kept
         self.assertEqual({"atLoad": 0, "loaded": [], "final": sent}, got["load-open"])          # the queue is open again: its close sends
         self.assertEqual({"atLoad": 0, "loaded": [], "final": []}, got["load-stale"])           # dropped after 15 minutes
+
+
+class TestAKeptRequestSurvivesAPageLoadWithNoHost(CardCase):
+    """C5: with no assistant app to hand to, a request kept for the place whose section is gone is shown again, load after load,
+    until it is handed over or dismissed, instead of being lost to a copy a page load cannot make."""
+
+    def run_steps(self, steps):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node")
+        with tempfile.TemporaryDirectory() as tmp:
+            script, queue = Path(tmp) / "h.js", Path(tmp) / "q.js"
+            script.write_text(QUEUE_HARNESS, encoding="utf-8")
+            queue.write_text(fq.QUEUE_JS, encoding="utf-8")
+            out = subprocess.run([node, str(script), str(queue), steps], capture_output=True, text=True, timeout=60)
+            self.assertEqual(0, out.returncode, out.stderr)
+            return json.loads(out.stdout.strip().splitlines()[-1])
+
+    def test_it_is_shown_again_after_every_load_and_sent_nowhere(self):
+        phrase = ["work in the answers in Work"]
+        got = self.run_steps("away")
+        self.assertEqual(0, got["atLoad"])                       # nothing was copied or opened at load
+        self.assertEqual(phrase, got["first"])                   # shown at the load that finds it
+        self.assertEqual(phrase, got["second"])                  # and at the next one
+        self.assertEqual([], got["clicked"])
+        self.assertIsNotNone(got["store"])
+
+    def test_handing_it_over_or_dismissing_it_clears_it(self):
+        gone = self.run_steps("away-handed")
+        self.assertEqual([], gone["after"])
+        self.assertIsNone(gone["store"])
+        gone = self.run_steps("away-dismissed")
+        self.assertEqual([], gone["after"])
+        self.assertIsNone(gone["store"])
+
+    def test_a_click_that_did_not_hand_it_over_keeps_it(self):
+        kept = self.run_steps("away-click-only")                 # Hand it over pressed, the handoff never reported as done
+        self.assertEqual(["work in the answers in Work"], kept["after"])
+        self.assertIsNotNone(kept["store"])
+        self.assertIn("window.GarrickHanded=function(p){if(kept()[p])drop(p)}", fq.QUEUE_JS)
+        self.assertNotIn("setTimeout(function(){drop(gp)},0)", fq.QUEUE_JS)
+
+    def test_it_goes_to_the_dialogs_folder_never_a_stored_one(self):
+        got = self.run_steps("away-click-only")
+        self.assertEqual("/w", got["folder"])                    # the place the page is on now
+        self.assertNotIn("/w", got["store"])                     # the store holds the phrase and a time, no folder
+
+    def test_a_request_kept_for_over_a_day_or_by_an_older_page_is_dropped(self):
+        for mode in ("away-old", "away-legacy"):
+            got = self.run_steps(mode)
+            self.assertEqual([], got["after"], mode)
+
+    def test_with_an_assistant_the_request_goes_at_load_as_before(self):
+        self.assertIn("function away(){return!host||!!(window.GarrickAssistant&&!GarrickAssistant())}", fq.QUEUE_JS)
+        self.assertIn("if(later&&away())keep(t.work);else handoff(t.work)", fq.QUEUE_JS)       # only a load, only with nowhere to hand it
+        self.assertIn(".qkept{", fq.QUEUE_CSS)
 
 
 class TestLater(CardCase):

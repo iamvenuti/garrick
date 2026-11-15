@@ -120,7 +120,7 @@ class WordsTest(unittest.TestCase):
             self.assertIsNone(fade.wake(self.page(), [self.ref(where)], fade.merged({"pins": {where: False}})))
         self.assertIn("where that protection is switched on", said)
         self.assertIsNone(fade.wake(self.page(), [self.ref("thread")], fade.merged({"wake": False})))
-        self.assertIn("a working page links it afresh rather than through the link the fade rewrote", said)
+        self.assertIn("a working page links it afresh rather than through the link the move rewrote", said)
         self.assertEqual("working", fade.wake(self.page(), [self.ref("working")], s).to)
         self.assertIsNone(fade.wake(self.page(), [self.ref("working", "dormant/wiki/sources/260401-review")], s))
         self.assertIn("Marking it `pinned: true` brings it back too, and is the only way back from the archive", said)

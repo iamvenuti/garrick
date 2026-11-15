@@ -58,7 +58,7 @@ Every point that enforces a wall asks the same three functions in `System/tools/
 
 **Mixed conversations.** A record that touches two walled zones is not filed whole. Intake stops and asks, and on your yes the transcript is cut in the inbox by zone, one file for each. A record already filed is never edited: an extract is a new raw file cut from it. The assistant proposes where a passage belongs; you decide.
 
-**Changing a flag.** `scaffold.py zone --walled` or `--open` is the only way to flip one. Open to walled only restricts: the workspace is rechecked and commits are refused until each file in violation is fixed. Walled to open releases history at once, so the tool says how many files it releases and writes only on your yes. Git holds who changed what.
+**Changing a flag.** Only the zone tool flips one. Your assistant runs it when you press *Change…* in Settings › Walls or ask it to; the command is in [Commands](commands.md). Open to walled only restricts: the workspace is rechecked and commits are refused until each file in violation is fixed. Walled to open releases history at once, so the tool says how many files it releases and writes only on your yes. Git holds who changed what.
 
 `tests/walls/cases.md` is the table of what each point must answer, and `check.py --walls-cases` runs it against your own Zones table.
 

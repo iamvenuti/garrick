@@ -75,7 +75,7 @@ When Garrick installed your workspace it recorded a fingerprint of every file it
 | Split | One of Garrick's instruction files, `System/rules.md` or an `AGENTS.md`, that you changed | Nothing, and no `.new`. Your text belongs in the local file beside it: `--split` moves it there, below |
 | Yours | A starting file you have filled in since, such as a zone's `Todo.md` or a wiki's log | Nothing, now or later |
 | Removed by you | A file Garrick still ships that you deleted | Nothing, unless you name it with `--only` |
-| Retired | A file Garrick no longer ships | Nothing. Delete it yourself if you want it gone |
+| Retired | A file Garrick no longer ships | Nothing. Delete it yourself if you want it gone. The one exception is the old `System/status/fonts/` folder: the update removes it when it holds only the files Garrick shipped, by name and content, and leaves it, saying so, when it holds anything else |
 
 A file you changed that Garrick hasn't changed stays as you left it and isn't listed, unless it is one of Garrick's instruction files. `System/context.md`, your own answers, is never read or written but for the one step under [Zone flags](#zone-flags), and neither is a local file beside an instruction file, such as `System/rules.local.md`.
 

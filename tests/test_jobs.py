@@ -282,6 +282,7 @@ class ProfileTest(unittest.TestCase):
                      "mcp__claude_ai_Google_Drive__share_file", "mcp__claude_ai_Google_Calendar__create_event",
                      "mcp__claude_ai_Notion__notion-create-comment", "Bash(git push:*)", "Bash(curl:*)",
                      "Bash(rm:*)", "Edit(System/**)", "Write(**/.git/**)",
+                     "Edit(System/notes-ledger.json*)", "Write(System/notes-ledger.json*)",
                      # Publishing a document, starting another agent, and driving a browser or the screen.
                      "mcp__claude_ai_Claude_Docs__create", "mcp__claude_ai_Notion__notion-spawn-session",
                      "mcp__claude-in-chrome", "mcp__cmux-cua",

@@ -1018,12 +1018,12 @@ class TestCheckReuse(StatusCase):
         ran = self.build()
         self.assertIn("The check found 1 error", attention(ran))
         self.assertIn("The check found 2 warnings", attention(ran))
-        self.assertEqual(("1<small>errors</small>2<small>warnings</small>", ""), tile(ran))
+        self.assertEqual(("1<small>error</small>2<small>warnings</small>", ""), tile(ran))
         page = self.build(reuse=600, now=self.now + dt.timedelta(minutes=4))
         self.assertIn("As the check found it 4 min ago;", page)                          # the Checks card's words
         self.assertIn("The check found 1 error (as the check found it 4 min ago)", attention(page))
         self.assertIn("The check found 2 warnings (as the check found it 4 min ago)", attention(page))
-        self.assertEqual(("1<small>errors</small>2<small>warnings</small>", "As the check found it 4 min ago"), tile(page))
+        self.assertEqual(("1<small>error</small>2<small>warnings</small>", "As the check found it 4 min ago"), tile(page))
 
     def test_a_result_of_any_age_is_shown_and_the_check_never_runs(self):
         """#382: a rebuild a tool asks for never waits on the check, whatever

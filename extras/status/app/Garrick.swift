@@ -2790,6 +2790,7 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 				out.append(NSAttributedString(string: first ? "" : between, attributes: said))
 				out.append(askInline(text, said))
 				first = false
+				if claim["mark"] as? Bool == false { continue }      // the next claim rests on the same record: its marker stands for both
 				for id in claim["ids"] as? [String] ?? [] {
 					guard let n = ids.firstIndex(of: id) else { continue }
 					out.append(NSAttributedString(string: " ", attributes: said))
@@ -2820,7 +2821,8 @@ final class StatusApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenu
 			out.append(link(title.isEmpty ? (path as NSString).lastPathComponent : title, n))
 			var when: [String] = []
 			if let d = s["date"] as? String, !d.isEmpty { when.append(askDay(d)) }
-			if let d = s["imported"] as? String, !d.isEmpty { when.append("filed " + askDay(d)) }
+			if let d = s["updated"] as? String, !d.isEmpty { when.append("updated " + askDay(d)) }
+			else if let d = s["imported"] as? String, !d.isEmpty { when.append("filed " + askDay(d)) }
 			out.append(NSAttributedString(string: (when.isEmpty ? "" : " · " + when.joined(separator: " · ")) + "\n", attributes: aside))
 		}
 		out.append(NSAttributedString(string: "\n", attributes: said))

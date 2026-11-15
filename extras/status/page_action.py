@@ -861,7 +861,7 @@ def todo(ws: Path, req: dict) -> str:
         if len(messages) == 1:
             message = messages[0]
         else:
-            message = "%s: %s, %d actions" % (zone.name, "done" if req["verb"] == "todo-done" else "reopened", len(messages))
+            message = "%s: %s, %d action%s" % (zone.name, "done" if req["verb"] == "todo-done" else "reopened", len(messages), "" if len(messages) == 1 else "s")
         commit(zone, note, before, message[:200], wall=wall_refusal(ws))
     if already:
         return "Saved %d, %d already %s" % (len(said), len(already), "done" if req["verb"] == "todo-done" else "open")

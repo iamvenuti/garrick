@@ -129,6 +129,9 @@ def slug(text: str) -> str:
 
 # --------------------------------------------------------------------------- blocks
 
+# A command that flips a zone's wall, in a code block of a docs page: shown only behind a closed Details, as the page no longer
+# prints a command for each zone (#561). The assistant makes the change when asked in Settings.
+ZONE_COMMAND = re.compile(r"scaffold\.py\s+zone\b|--walled\b")
 FENCE = re.compile(r"^( {0,3})(`{3,}|~{3,})[ \t]*([^`\s]*)")
 HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 RULE = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
@@ -219,7 +222,10 @@ class Renderer:
                     i += 1
                 i += 1
                 cls = ' class="lang-%s"' % E(lang) if lang else ""
-                out.append("<pre><code%s>%s</code></pre>" % (cls, E("\n".join(body))))
+                block = "<pre><code%s>%s</code></pre>" % (cls, E("\n".join(body)))
+                if ZONE_COMMAND.search("\n".join(body)):       # the zone and wall commands are the assistant's to run (#561): behind Details
+                    block = '<details class="gd-cmd"><summary>Details</summary>%s</details>' % block
+                out.append(block)
                 continue
             m = HEADING.match(line)
             if m:
@@ -524,7 +530,7 @@ GUIDE_CSS = r"""
 .gd-page ul,.gd-page ol{padding-left:22px}.gd-page li{margin:3px 0}
 .gd-table{overflow-x:auto;margin:12px 0}.gd-table table{border-collapse:collapse;font-size:var(--fs-meta);line-height:1.45}
 .gd-table th,.gd-table td{border:1px solid var(--grid);padding:6px 10px;vertical-align:top;text-align:left}.gd-table th{background:var(--raise)}
-.gd-empty{max-width:620px}.gd-empty h2{font:700 var(--fs-h2)/1.25 var(--sans)}
+.gd-cmd{margin:10px 0}.gd-cmd>summary{cursor:pointer;color:var(--muted);font-size:var(--fs-meta);min-height:24px}.gd-empty{max-width:620px}.gd-empty h2{font:700 var(--fs-h2)/1.25 var(--sans)}
 @media (max-width:820px){.gd{grid-template-columns:1fr;gap:16px}.gd-side{position:static;max-height:none}.gd-page{padding:4px 18px 22px}}
 """
 

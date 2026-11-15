@@ -68,6 +68,7 @@ from garrick_lib import (  # noqa: E402
     workspace_root,
     write_new,
 )
+import hashlib  # noqa: E402
 import importlib.util  # noqa: E402
 import os  # noqa: E402
 from ingest import (  # noqa: E402
@@ -198,6 +199,12 @@ def _describe_note(item: dict, path: Path) -> None:
                  "destination": info.get("destination", "")})
 
 
+def _flag_claim(item: dict, path: Path) -> None:
+    """A file that says it is the owner's note and that no channel recorded stays an ordinary item, and says so."""
+    if item["kind"] != "note" and claimed_note(path) is not None:
+        item["claim"] = "unproved"
+
+
 def list_items(root: Path) -> List[dict]:
     """Every item waiting, in every inbox: the Meetings inbox first, then each
     zone's, mail and files together, oldest first by the date they were sent
@@ -213,6 +220,7 @@ def list_items(root: Path) -> List[dict]:
         kind, m = kind_of(p, "workspace")
         item = {"kind": kind, "zone": "", "file": _rel(root, p), "date": "", "from": "", "subject": ""}
         _describe_note(item, p)
+        _flag_claim(item, p)
         if p.name.startswith(READING_PREFIX):
             item["route"] = "reading"
         if m:
@@ -225,6 +233,7 @@ def list_items(root: Path) -> List[dict]:
             kind, m = kind_of(p, "zone")
             item = {"kind": kind, "zone": zone.name, "file": _rel(root, p), "date": "", "from": "", "subject": ""}
             _describe_note(item, p)
+            _flag_claim(item, p)
             if p.name.startswith(READING_PREFIX):
                 item["route"] = "reading"            # fetched from an address kept for reading
             sent = ""
@@ -873,14 +882,90 @@ def split_front(text: str) -> Tuple[dict, str]:
     return parse_frontmatter_text("---\n%s\n---\n" % m.group(1)), m.group(2)
 
 
-def read_note(path: Path) -> Optional[dict]:
-    """The note a file in an inbox is, or None. A fetcher that checked the sender writes `kind: note` and
-    `from-owner: true` in the frontmatter, and an item is a note only when both are there: any other file is
-    sorted as it always was, whatever else it says."""
+LEDGER = ("System", "notes-ledger.json")
+
+
+def inbox_root(path: Path) -> Optional[Path]:
+    """The workspace an inbox file sits in: its parent is an `Inbox/`, the workspace's or a zone's. None for any
+    other place."""
+    path = Path(path)
+    if path.parent.name != "Inbox":
+        return None
+    top = path.parent.parent
+    return top.parent.parent if top.parent.name == "Zones" else top
+
+
+def ledger_path(root: Path) -> Path:
+    return Path(root).joinpath(*LEDGER)
+
+
+def load_ledger(root: Path) -> dict:
+    """The notes ledger: {"notes": {inbox path: {"id", "sha256"}}, "reported": [hashes]}. A ledger that is missing,
+    unreadable or not in this shape is empty, so it trusts nothing."""
+    try:
+        data = json.loads(ledger_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    notes = data.get("notes") if isinstance(data.get("notes"), dict) else {}
+    reported = data.get("reported") if isinstance(data.get("reported"), list) else []
+    return {"notes": {k: v for k, v in notes.items() if isinstance(v, dict)}, "reported": [r for r in reported if isinstance(r, str)]}
+
+
+def _update_ledger(root: Path, change) -> None:
+    """Read the ledger, let `change` edit it, write it back through a temporary file and a rename, under a lock
+    that the writers share (the Telegram receiver, and the step that reports a claim)."""
+    path = ledger_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = path.with_name(path.name + ".lock")
+    with open(str(lock), "a") as handle:
+        try:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            pass
+        data = load_ledger(root)
+        change(data)
+        tmp = path.with_name(path.name + ".new")
+        tmp.write_text(json.dumps(data, indent=1, sort_keys=True), encoding="utf-8")
+        os.replace(str(tmp), str(path))
+
+
+def record_note(root: Path, path: Path, note_id: str = "") -> None:
+    """A channel that wrote a note into an inbox records it here: the note's id and the hash of the file as it was
+    written. Only a note the ledger holds, unchanged, is the owner's (#584)."""
+    path = Path(path)
+    rel = path.resolve().relative_to(Path(root).resolve()).as_posix()
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    def change(data: dict) -> None:
+        data["notes"] = {k: v for k, v in data["notes"].items() if (Path(root) / k).is_file()}
+        data["notes"][rel] = {"id": str(note_id), "sha256": digest}
+    _update_ledger(root, change)
+
+
+def proved(path: Path, data: Optional[bytes] = None) -> bool:
+    """Whether the ledger holds this inbox file with the bytes it was written with. `data` is the bytes the caller
+    already read: they are hashed as given, so what is parsed and what is hashed are the same bytes."""
+    root = inbox_root(Path(path).resolve())
+    if root is None:
+        return False
+    try:
+        if data is None:
+            data = Path(path).read_bytes()
+        entry = load_ledger(root)["notes"].get(Path(path).resolve().relative_to(root).as_posix())
+        return bool(entry) and entry.get("sha256") == hashlib.sha256(data).hexdigest()
+    except (OSError, ValueError):
+        return False
+
+
+def claimed_note(path: Path, data: Optional[bytes] = None) -> Optional[dict]:
+    """What a file in an inbox says it is, a note from the owner: `kind: note` and `from-owner: true` in its
+    frontmatter. It says nothing of who wrote it: `read_note` checks that."""
     if path.suffix.lower() not in (".md", ".txt"):
         return None
     try:
-        data = path.read_bytes()
+        data = path.read_bytes() if data is None else data
     except OSError:
         return None
     if b"\0" in data[:8192]:
@@ -892,6 +977,46 @@ def read_note(path: Path) -> Optional[dict]:
         return None
     return {"via": str(front.get("via") or "").strip(), "destination": str(front.get("destination") or "").strip(),
             "date": str(front.get("date") or "").strip(), "text": body.strip("\n"), "title": str(front.get("title") or "").strip()}
+
+
+def read_note(path: Path) -> Optional[dict]:
+    """The note a file in an inbox is, or None. A channel that checked the sender (the Telegram receiver) writes
+    `kind: note` and `from-owner: true` in the frontmatter and records the file in the notes ledger. An item is a
+    note only when both lines are there and the ledger holds the file unchanged (#584): any other file is sorted as
+    it always was, whatever else it says."""
+    try:
+        data = Path(path).read_bytes()              # read once: the same bytes are parsed and hashed
+    except OSError:
+        return None
+    got = claimed_note(path, data)
+    return got if got is not None and proved(path, data) else None
+
+
+def unproved_claims(root: Path) -> List[str]:
+    """The files waiting in the inboxes that claim to be the owner's note and that no channel recorded."""
+    out = []
+    for folder in [Path(root) / INBOX] + [z / INBOX for z in _zones(Path(root))]:
+        for p in _waiting(folder):
+            if claimed_note(p) is not None and not proved(p):
+                out.append(_rel(root, p))
+    return out
+
+
+def report_unproved(root: Path) -> List[str]:
+    """The claims `unproved_claims` finds that were not reported before, each once: the ledger keeps the hash of
+    what it reported."""
+    fresh: List[str] = []
+
+    def change(data: dict) -> None:
+        for rel in unproved_claims(root):
+            digest = hashlib.sha256((Path(root) / rel).read_bytes()).hexdigest()
+            if digest not in data["reported"]:
+                data["reported"].append(digest)
+                fresh.append(rel)
+        data["reported"] = data["reported"][-200:]
+    if unproved_claims(root):
+        _update_ledger(root, change)
+    return fresh
 
 
 def first_words(text: str, most: int = NOTE_WORDS) -> str:
@@ -1171,7 +1296,7 @@ def file_note(root: Path, path: Path, destination: str = "", title: str = "", to
     info = read_note(path) if kind == "note" else None
     if info is None:
         raise Refusal("%s is not a note: a note carries `kind: note` and `from-owner: true` in its frontmatter, "
-                      "written by a fetcher that checked the sender. Sort it as any other item." % path.name)
+                      "written by a channel that checked the sender and recorded it. Sort it as any other item." % path.name)
     place = resolve_destination(root, destination or info["destination"], info["text"])
     if where == "zone" and place["zone"] != zone:
         raise Refusal("%s is in the %s inbox but its destination is in %s. Zones never mix: move the note to the %s "
@@ -1361,7 +1486,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             if args.json:
                 print(json.dumps(items, indent=2))
             for i in ([] if args.json else items):
-                print("\t".join((i["kind"], i["zone"], i["file"], i["date"], i["from"], i["subject"])).rstrip("\t"))
+                print("\t".join((i["kind"], i["zone"], i["file"], i["date"], i["from"], i["subject"]
+                                 + (" (says it is a note; no channel recorded it)" if i.get("claim") else ""))).rstrip("\t"))
         elif args.command == "parse":
             print(json.dumps(parse(root, Path(args.file)), indent=2))
         elif args.command == "file-conversation":

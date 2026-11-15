@@ -466,6 +466,91 @@ class TestRetiredState(Case):
         self.assertTrue(target.exists())
 
 
+class TestRetiredFonts(Case):
+    """The status page's old fonts folder (#fonts): taken out when it holds only files Garrick shipped, left, and said, when it holds
+    anything else."""
+
+    FOLDER = "System/status/fonts"
+
+    def shipped(self):
+        """The folder as an earlier release wrote it: every file by name and content from release-hashes.json, on a scratch tree."""
+        hashes = update.known_hashes()
+        made = []
+        for rel, digests in sorted(hashes.items()):
+            if not rel.startswith(self.FOLDER + "/"):
+                continue
+            self.assertTrue(digests)
+            made.append(rel)
+        self.assertTrue(made, "release-hashes.json lists the fonts Garrick shipped")
+        return made
+
+    def put(self, rel, data=b"x"):
+        path = self.root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        return path
+
+    def test_a_folder_of_nothing_but_shipped_files_is_removed_and_said(self):
+        # a scratch tree whose "shipped" files are given the hashes release-hashes.json lists, by standing in for the lookup
+        names = self.shipped()
+        blobs = {rel: ("font %s" % rel).encode() for rel in names}
+        fake = {rel: [update.digest(blob)] for rel, blob in blobs.items()}
+        for rel, blob in blobs.items():
+            self.put(rel, blob)
+        with mock.patch.object(update, "known_hashes", lambda zones=(): fake):
+            gone, left = update.clear_retired_fonts(self.root)
+        self.assertEqual(sorted(names), sorted(gone))
+        self.assertEqual([], left)
+        self.assertFalse((self.root / self.FOLDER).exists())
+
+    def test_a_folder_with_anything_else_in_it_is_left_whole_and_said(self):
+        names = self.shipped()
+        blobs = {rel: ("font %s" % rel).encode() for rel in names}
+        fake = {rel: [update.digest(blob)] for rel, blob in blobs.items()}
+        for rel, blob in blobs.items():
+            self.put(rel, blob)
+        mine = self.put(self.FOLDER + "/Mine.woff2", b"my own font")
+        with mock.patch.object(update, "known_hashes", lambda zones=(): fake):
+            gone, left = update.clear_retired_fonts(self.root)
+        self.assertEqual([], gone)
+        self.assertEqual(self.FOLDER, left[0][0])
+        self.assertIn("Mine.woff2", left[0][1])
+        self.assertTrue(mine.exists())
+        self.assertTrue(all((self.root / rel).exists() for rel in names))                  # nothing was removed
+
+    def test_a_shipped_name_with_changed_content_counts_as_the_user_s(self):
+        name = self.shipped()[0]
+        self.put(name, b"edited by hand")
+        gone, left = update.clear_retired_fonts(self.root)
+        self.assertEqual([], gone)
+        self.assertTrue((self.root / name).exists())
+        self.assertEqual(self.FOLDER, left[0][0])
+
+    def test_no_folder_says_nothing_and_a_link_is_left_alone(self):
+        self.assertEqual(([], []), update.clear_retired_fonts(self.root))
+        target = self.base / "elsewhere"
+        target.mkdir()
+        (self.root / "System" / "status").mkdir(parents=True, exist_ok=True)
+        (self.root / self.FOLDER).symlink_to(target)
+        self.assertEqual(([], []), update.clear_retired_fonts(self.root))
+        self.assertTrue(target.exists())
+
+    def test_the_update_runs_it_and_the_report_says_which(self):
+        names = self.shipped()
+        blobs = {rel: ("font %s" % rel).encode() for rel in names}
+        fake = {rel: [update.digest(blob)] for rel, blob in blobs.items()}
+        for rel, blob in blobs.items():
+            self.put(rel, blob)
+        real = update.known_hashes
+        with mock.patch.object(update, "known_hashes", lambda zones=(): dict(real(zones), **fake)):
+            result = self.apply()
+        self.assertEqual(sorted(names), sorted(x for x in result["tidied"] if x.startswith(self.FOLDER)))
+        said = update.say_applied(self.plan(), result)
+        self.assertIn("Removed %s/OFL.txt: the page now carries its font itself" % self.FOLDER, said)
+        self.put(self.FOLDER + "/Mine.woff2", b"mine")
+        self.assertIn(self.FOLDER, " ".join(p for p, _ in self.apply()["skipped"]))
+
+
 class TestSafety(Case):
     def test_a_removed_zone_is_not_put_back(self):
         shutil.rmtree(self.root / "Zones" / "Personal")

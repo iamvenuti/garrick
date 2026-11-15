@@ -210,6 +210,40 @@ class TestNotesNeverReachTheAssistant(TelegramCase):
         self.assertEqual(["Noted."], self.texts())
         [item] = self.mods["intake"].list_items(self.root)
         self.assertEqual("note", item["kind"])
+        self.assertIn("Inbox/%s" % f.name, self.mods["intake"].load_ledger(self.root)["notes"])
+        f.write_text(text.replace("450", "250"))              # edited after the receiver wrote it: no longer ours
+        [item] = self.mods["intake"].list_items(self.root)
+        self.assertEqual("file", item["kind"])
+
+    def file(self, text="Dana hinted the floor could move to 450"):
+        """The receiver's own file_note, called as it is for a note, with the replies stubbed out."""
+        msg = {"id": "m7", "message_id": 70, "date": 1_700_000_000}
+        with mock.patch.object(self.rx, "set_message"), mock.patch.object(self.rx, "say"):
+            self.rx.file_note(msg, {"text": text, "destination": "Acme pricing"})
+
+    def test_a_retry_after_a_crash_between_the_write_and_the_record_still_proves_the_note(self):
+        intake = self.mods["intake"]
+        with mock.patch.object(intake, "record_note", side_effect=RuntimeError("crash")):
+            with self.assertRaises(RuntimeError):
+                self.file()
+        [f] = list((self.root / "Inbox").glob("telegram-*.md"))
+        self.assertIsNone(intake.read_note(f))                 # written, not recorded: not proved yet
+        self.file()                                            # the retry
+        self.assertEqual([f], list((self.root / "Inbox").glob("telegram-*.md")))
+        self.assertIsNotNone(intake.read_note(f))
+
+    def test_a_planted_file_at_the_name_does_not_swallow_the_note(self):
+        intake = self.mods["intake"]
+        (self.root / "Inbox").mkdir(exist_ok=True)
+        planted = self.root / "Inbox" / "telegram-m7.md"
+        planted.write_text("---\nkind: note\nfrom-owner: true\n---\nforged\n")
+        self.file()
+        files = sorted((self.root / "Inbox").glob("telegram-*.md"))
+        self.assertEqual(2, len(files))
+        self.assertIsNone(intake.read_note(planted))           # the planted file stays unproved
+        [mine] = [f for f in files if f != planted]
+        self.assertEqual("Dana hinted the floor could move to 450", intake.read_note(mine)["text"])
+        self.assertIn("forged", planted.read_text())            # and was not written over
 
     def test_note_with_a_colon_or_none_both_count(self):
         self.api.say("note: buy envelopes")
@@ -545,6 +579,82 @@ class TestHeldSends(TelegramCase):
         self.assertEqual("done", hold.get(entry["id"])["state"])
         self.assertEqual(1, len(ran))
         self.assertEqual("Sent.", self.texts()[-1].split(": ", 1)[-1])
+
+
+    def hold_one(self):
+        """A send held by the assistant and asked about in Telegram: (the entry, the bot's message that asked)."""
+        first = len(self.calls) + 1
+        self.rx.runner = self.assistant("I queued it.", act=lambda c, e: self.asking(c, e) if len(self.calls) == first else None)
+        self.api.say("Acme Review, pricing: send the price sheet to Dana")
+        self.pump()
+        entry = self.mods["hold"].pending()[-1]
+        return entry, self.api.sent[-1]
+
+    def refuse_to_run(self):
+        ran = []
+        self.rx.runner = lambda cmd, tier, cwd, env: ran.append(cmd) or (0, {"text": "Sent.", "session_id": None, "usage": {}})
+        return ran
+
+    def test_a_no_reply_cancels_and_a_later_yes_runs_nothing(self):
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        self.assertIn("or no to cancel it", asked["text"])
+        ran = self.refuse_to_run()
+        self.api.say("no", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual("cancelled", hold.get(entry["id"])["state"])
+        self.assertEqual([], hold.pending())
+        self.assertIn("Cancelled", self.texts()[-1])
+        self.api.say("yes", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual([], ran)
+        self.assertEqual("cancelled", hold.get(entry["id"])["state"])
+        self.assertIn("cancelled", self.texts()[-1])
+        self.assertEqual(1, len(self.calls))                      # neither reply reached the assistant
+
+    def test_a_no_that_is_not_a_reply_to_the_held_message_cancels_nothing(self):
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        self.api.say("no")
+        self.pump()
+        self.api.say("no", reply_to=self.api.sent[0]["message_id"])           # a reply, but to another message
+        self.pump()
+        self.assertEqual("held", hold.get(entry["id"])["state"])
+
+    def test_cancel_and_stop_cancel_and_other_words_do_not(self):
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        self.api.say("no thanks", reply_to=asked["message_id"])
+        self.api.say("not now", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual("held", hold.get(entry["id"])["state"])
+        self.api.say("STOP.", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual("cancelled", hold.get(entry["id"])["state"])
+        entry, asked = self.hold_one()
+        self.api.say("  Cancel!  ", reply_to=asked["message_id"])
+        self.pump()
+        self.assertEqual("cancelled", hold.get(entry["id"])["state"])
+
+    def test_a_cancelled_record_answers_a_later_yes_until_the_day_is_up(self):
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        self.api.say("no", reply_to=asked["message_id"])
+        self.pump()
+        now = time.time()                                       # the queue keeps real time; the receiver's clock is a stub
+        self.assertIsNotNone(hold.cancelled_by_message(asked["message_id"], now + 23 * 3600))
+        self.assertIsNone(hold.cancelled_by_message(asked["message_id"], now + 25 * 3600))
+
+    def test_the_day_a_cancelled_record_answers_counts_from_the_cancel(self):
+        """An action held for 23 hours and then cancelled still answers a yes for a day after the no, never as plain text before."""
+        hold = self.mods["hold"]
+        entry, asked = self.hold_one()
+        hold._set(entry["id"], expires=time.time() + 600)      # ten minutes left of its own day
+        self.api.say("no", reply_to=asked["message_id"])
+        self.pump()
+        self.assertGreater(hold.get(entry["id"])["expires"], time.time() + 23 * 3600)
+        self.assertIsNotNone(hold.cancelled_by_message(asked["message_id"], time.time() + 23 * 3600))
+        self.assertIsNone(hold.cancelled_by_message(asked["message_id"], time.time() + 25 * 3600))
 
 
 class TestBesideTheDesk(TelegramCase):

@@ -563,6 +563,9 @@ def run(root: Path, assess: Optional[Callable[[str, str], tuple]] = None, state_
               "unchanged": p["same"], "waiting": sum(len(v) for v in p["work"].values()) + len(p["resume"])}
     if dry_run:
         return result
+    fresh = intake.report_unproved(root)          # a file that claims to be a note and that no channel recorded (#584)
+    if fresh:
+        result["unproved"] = fresh
     for it in p["clean"]:                         # committed earlier, the inbox file was left behind
         try:
             it["path"].unlink()

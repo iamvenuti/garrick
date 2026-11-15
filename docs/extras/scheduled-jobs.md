@@ -212,7 +212,7 @@ A job may add codes of its own, such as 5 for a sweep that reached some of its s
 
 ### Being told
 
-`job.py` tells you when a job fails, when it works again, and when it has gone idle. It tells you on this Mac, as the Garrick App's [Settings › Notifications](status-page.md#settings) says: *a scheduled job fails* switches *Job failed or recovered* on or off, and *Job idle* goes while any notice is on, outside quiet hours. The todo sweep's *Todo summary* follows *the morning Todo summary is ready*, the nightly job's nurture line goes as *Todo summary* too, and *Todo refreshed* is never shown. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited for them.
+`job.py` tells you when a job fails, when it works again, and when it has gone idle. It tells you on this Mac, as the Garrick App's [Settings › Notifications](status-page.md#settings) says: *a scheduled job fails or recovers* switches *Job failed or recovered* on or off (on in a new workspace), and *Job idle* goes while any notice is on, outside quiet hours. The todo sweep's *Todo summary* follows *the morning Todo summary is ready*, the nightly job's nurture line goes as *Context summary* and follows *the morning Context summary is ready*, and *Todo refreshed* is never shown. All of them go through `System/tools/notifications.py`, so a job never needs its plist edited for them.
 
 To send a job's notices somewhere else, such as a chat app or a mail relay, set one of these in its plist. Each keeps working past those settings, for that job alone:
 

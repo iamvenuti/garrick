@@ -13,6 +13,8 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import shutil
+import subprocess
 import re
 import sys
 import tempfile
@@ -868,3 +870,40 @@ class LookItems(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+MEMORY_HARNESS = r"""
+const js=require('fs').readFileSync(process.argv[2],'utf8');
+const listeners={};
+const field=(o)=>Object.assign({value:'',checked:false,defaultValue:'',min:'0',max:'99',dataset:{},matches:()=>false,querySelector:()=>null,querySelectorAll:()=>[]},o||{});
+const els={'m-wake':field({checked:true}),'m-reach':field({value:'mid'}),'m-night':field({checked:true}),'m-min':field({value:'30',max:'600'}),'m-prevsaid':field({hidden:true}),'m-prev':field()};
+const review=field({hidden:false});
+const sec={querySelector:(q)=>q==='#m-prev'?els['m-prev']:null,querySelectorAll:(q)=>q==='.mcount [data-request]'?[review]:[],addEventListener:(t,f)=>{listeners[t]=f}};
+global.document={getElementById:(id)=>id==='memory-settings'?sec:els[id]||null};
+global.window={};
+new Function(js)();
+const edit=(v)=>{els['m-min'].value=v;listeners.change({target:els['m-min']})};
+const out=[];
+edit('45');out.push(review.hidden);       // edited: Review waits
+edit('30');out.push(review.hidden);       // put back: Review shows again
+edit('45');out.push(review.hidden);
+window.GarrickMemory.saved();out.push(review.hidden);   // saved: Review shows again
+edit('45');out.push(review.hidden);       // the saved value again, not a change
+console.log(JSON.stringify(out));
+"""
+
+
+class MemoryReview(unittest.TestCase):
+    """The Review button waits while a Memory edit is unsaved and shows again once it is saved or put back, with no reload."""
+
+    def test_review_shows_again_when_the_edit_is_saved_or_undone(self):
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node")
+        with tempfile.TemporaryDirectory() as tmp:
+            script, js = Path(tmp) / "h.js", Path(tmp) / "m.js"
+            script.write_text(MEMORY_HARNESS, encoding="utf-8")
+            js.write_text(status.MEMORY_JS, encoding="utf-8")
+            out = subprocess.run([node, str(script), str(js)], capture_output=True, text=True, timeout=60)
+        self.assertEqual(0, out.returncode, out.stderr)
+        self.assertEqual([True, False, True, False, False], json.loads(out.stdout.strip().splitlines()[-1]))

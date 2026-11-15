@@ -6649,12 +6649,15 @@ if(c&&e)e.textContent=line(w.dataset.mw,c)})}
 function tell(t){said.textContent=t;said.hidden=false}
 /* Review hands over the list as saved, so it waits while a change is not saved */
 function review(on){sec.querySelectorAll('.mcount [data-request]').forEach(function(b){b.hidden=!on})}
+/* what the form held when it was saved or the page loaded: an edit that is put back, or saved, shows Review again */
+var base=JSON.stringify(request());
+function touch(){changed=JSON.stringify(request())!==base;review(!changed)}
 function ask(){if(!host||!window.GarrickReadsMemory){tell('Counted as saved; closing Settings saves the change and counts again.');return}
 tell('Counting…');clearTimeout(timer);timer=setTimeout(function(){host.postMessage({act:{verb:'memory-preview',memory:request()}})},250)}
 function sync(){sec.querySelectorAll('.mkind').forEach(function(f){var a=f.querySelector('[data-mk="archived"]'),d=f.querySelector('[data-mk="dormant"]');
 a.disabled=f.querySelector('[data-mk="never"]').checked;if(!a.disabled&&n(a)<n(d))a.value=n(d)})}
-sec.addEventListener('change',function(){changed=true;review(false);sync();ask()});
-sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],textarea')){changed=true;review(false);if(e.target.matches('textarea')){e.target.value=e.target.value.replace(/\n/g,' ');e.target.title=e.target.value;fit(e.target)}ask()}});
+sec.addEventListener('change',function(){sync();touch();ask()});
+sec.addEventListener('input',function(e){if(e.target.matches('input[type=number],textarea')){if(e.target.matches('textarea')){e.target.value=e.target.value.replace(/\n/g,' ');e.target.title=e.target.value;fit(e.target)}touch();ask()}});
 sec.addEventListener('keydown',function(e){if(e.key==='Enter'&&e.target.matches('textarea'))e.preventDefault()});
 /* a kind's lists wrap and grow to show the whole of them; measured when Advanced opens, since a closed section has no size */
 function fit(t){t.style.height='auto';t.style.height=t.scrollHeight+2+'px'}
@@ -6662,7 +6665,7 @@ var adv=sec.querySelector('.madv');if(adv)adv.addEventListener('toggle',function
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){if(q&&q.verb==='memory-preview'){
 if(out&&out.ok&&out.counts){paint(out.counts);tell('With these changes, not saved yet.')}else tell((out&&out.say)||'Could not count.');return}
 if(prev)return prev(q,out)};
-window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){changed=false}};
+window.GarrickMemory={changed:function(){return changed},request:request,saved:function(){base=JSON.stringify(request());changed=false;review(true)}};
 })();
 """
 # ---- end of Settings › Memory -----------------------------------------------------

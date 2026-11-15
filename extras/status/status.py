@@ -5081,21 +5081,30 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
     if lib is None or not hasattr(lib, "TELL"):
         return ""
     cfg = lib.settings(ws)
+    own = notify_own_way(lib)
     def box(attr, on, label=""):
         return '<input type="checkbox" %s%s%s>' % (attr, " checked" if on else "", ' aria-label="%s"' % E(label) if label else "")
     after = ('<input type="number" id="n-after" min="0" max="%d" value="%d" aria-label="Minutes a task must run">'
              % (lib.AFTER_MAX, cfg["after"]))
     words = {"finished": 'a long task finishes, <span class="nsafter">after %s min</span>' % after}
-    tell = "".join('<label>%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""),
-                                                          words.get(e, E(label)))
-                   for e, label in lib.TELL)
+
+    def row(e, label):
+        said = own.get(e)
+        if said:         # a job sends this its own way: the box keeps what is saved, and shows as not in use
+            return ('<label class="nsown" title="%s">%s <span>%s<small class="nsnote">%s</small></span></label>'
+                    % (E(said), box('data-nt="%s" disabled aria-disabled="true"' % e, cfg["tell"][e]), E(label), E(said)))
+        return '<label>%s <span>%s</span></label>' % (box('data-nt="%s"' % e, cfg["tell"][e], label if e == "finished" else ""), words.get(e, E(label)))
+    tell = "".join(row(e, label) for e, label in lib.TELL)
     q = cfg["quiet"]
-    rule = "At night only &#8220;a session needs me&#8221;%s get%s through." % ((" and the desk", "") if desk else ("", "s"))
+    rule = ("At night only &#8220;a session needs me&#8221; gets through%s."
+            % (", and so do cmux&#39;s notices about starting or closing the day" if desk else ""))
     help_html = ('A notice names the zone or thread and what happened, never what a note or a meeting says. In cmux it lands on '
                  'the session&#39;s own tab. &#8220;A session needs me&#8221; and &#8220;a long task finishes&#8221; need hooks in '
-                 'Claude Code or Codex: ask your assistant to set up notifications. With every choice off, Garrick sends nothing. '
-                 'A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way. '
-                 'Saved in <code>%s</code> when you close Settings.' % E(prefs().FILE))
+                 'Claude Code or Codex: ask your assistant to set up notifications. &#8220;A session needs me&#8221; covers a permission, '
+                 'a question and an approval, and is sent once for each wait. &#8220;A scheduled job fails or recovers&#8221; also '
+                 'covers a line a job sends of its own. With every choice off, Garrick sends nothing. '
+                 'A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way. Its row says so. '
+                 'Saved when you close Settings.')
     return ('<section class="setsec apponly" id="notify-settings">%s%s<div class="nsimple"><div class="nsrow">'
             '<span class="nslab">Tell me when</span><span class="nsopts nscol">%s</span></div>'
             '<div class="nsrow nsq"><label>%s Quiet from</label><input type="time" id="n-from" value="%s" aria-label="Quiet from">'
@@ -5103,6 +5112,30 @@ def notify_settings(ws: Path, desk: bool = False) -> str:
             '</div><p class="hint" id="n-said" role="status" hidden></p></section>'
             % (set_head("Notifications", "notify", "Notices appear on this Mac."), help_text("notify", help_html),
                tell, box('id="n-quiet"', q["on"]), E(q["from"]), E(q["to"]), rule))
+
+
+# The jobs that send a row's notice, by the name their plist runs them under (job.py <name>): the todo sweep's morning
+# summary, and the nightly job's Context digest.
+NOTIFY_JOBS = {"todo-summary": (("gr-todo-sweep", "todo-sweep"), "the todo sweep"), "context-summary": (("gr-nightly", "nightly"), "the nightly job")}
+
+
+def notify_own_way(lib) -> Dict[str, str]:
+    """Event -> a plain sentence, for each row whose job's launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD: that job
+    sends its notice its own way, past the switch, so the row says where it goes and its box is not in use."""
+    out: Dict[str, str] = {}
+    try:
+        jobs_ = launchd_jobs()
+        over = getattr(lib, "override", None)
+        for event, (names, said) in NOTIFY_JOBS.items():
+            job = next((jobs_[n] for n in names if n in jobs_), {})
+            env = {str(k): str(v) for k, v in (job.get("env") or {}).items()}
+            kinds = over(env) if callable(over) else ()
+            if kinds:
+                out[event] = ("Sent by %s to the command you set, not by this switch." if "GARRICK_NOTIFY_CMD" in kinds
+                              else "Sent by %s as its own Mac notice, not by this switch.") % said
+    except Exception:
+        return {}
+    return out
 
 
 def script_json(data) -> str:
@@ -5955,6 +5988,7 @@ dialog.settings .setfoot .gacts{align-items:center;margin:0}dialog.settings .hid
 #notify-settings .nsopts.nscol{flex-direction:column;align-items:flex-start;gap:5px}
 #notify-settings .nsimple label{display:inline-flex;align-items:center;gap:6px}
 #notify-settings .nsimple input[type=checkbox]{accent-color:var(--accent)}
+#notify-settings .nsown{align-items:flex-start;color:var(--muted)}#notify-settings .nsown input{visibility:hidden;width:0;margin:0 8px 0 0}#notify-settings .nsown small{display:block}#notify-settings .nsown::before{content:"\2013";flex:none;width:16px;text-align:center}
 #notify-settings .nsafter{white-space:nowrap}#notify-settings .nsq{align-items:center;gap:6px}#notify-settings .nsrule{margin:-4px 0 0 24px;font-size:var(--fs-meta)}
 #notify-settings input[type=time],#notify-settings input[type=number]{font:inherit;font-size:var(--fs-meta);
 color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:7px;padding:4px 7px}

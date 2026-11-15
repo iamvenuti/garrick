@@ -271,7 +271,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Garrick's nightly run: nurture, the effort record, your own checks, the page.")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--scope", action="append", default=[], help="for nurture: a zone, project or wiki; repeat for more")
-    ap.add_argument("--digest", action="store_true", help="for nurture: send its one line as the Todo summary notice")
+    ap.add_argument("--digest", action="store_true", help="for nurture: send its one line as the Context summary notice")
     ap.add_argument("--install-hooks-step", action="store_true", help=argparse.SUPPRESS)
     ap.add_argument("--also", action="append", default=[], metavar="FOLDER",
                     help="for effort: a folder the workspace used to live in (repeatable)")

@@ -18,7 +18,7 @@ with nobody watching: they wait in the day's report,
 `System/generated/nurture/<YYYY-MM-DD>.md`, for "nurture the context".
 
 With --digest, one line goes through System/tools/notifications.py as the
-*Todo summary* event, the morning digest's, saying what was fixed first and
+*Context summary* event, the morning digest's, saying what was fixed first and
 then what waits, in counts: never a file's content. Nothing to fix and
 nothing waiting sends nothing; a copy only behind the share is not waiting.
 A wall waits whatever else does, so one wall is enough for a notice. When the
@@ -74,14 +74,14 @@ def run(workspace: Path, scopes: List[str]) -> dict:
 
 def send_digest(said: str) -> None:
     import job
-    job.notify("digest", "Context", said, event="todo-summary")
+    job.notify("digest", "Context", said, event="context-summary")
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Apply the mechanical context fixes overnight; leave the rest for a session.")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--scope", action="append", default=[], help="a zone, project or wiki, from the workspace's top; repeat for more")
-    ap.add_argument("--digest", action="store_true", help="send one line, what was fixed and what waits, as the Todo summary notice")
+    ap.add_argument("--digest", action="store_true", help="send one line, what was fixed and what waits, as the Context summary notice")
     args = ap.parse_args(argv)
     workspace = Path(args.workspace).expanduser().resolve()
     if not (workspace / "System" / "tools" / "nurture.py").is_file():

@@ -4,6 +4,37 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.69.1] - 2026-11-15
+
+A patch of fixes. A file in an inbox can no longer pass itself off as your own note, and a `no` to a held action cancels it. Ask can act on the answer it just gave and reads long notes to the end. Settings and the Context card are easier to read.
+
+**Upgrading.**
+- *A session needs me* now covers what *a session is waiting on me* did.
+- *Allowed by you* moved from Settings to the Context tab, where it is called *Kept by you*.
+- A note from 0.69.0's Telegram receiver that still waits in an inbox when you update is filed as an ordinary item, and the notes step names it once.
+
+### Fixed
+
+- **Only a note the channel wrote is trusted as yours** (#584). The Telegram receiver records each note it writes in a ledger outside the inboxes, with a fingerprint of the file. Intake and the hourly note step treat a note as yours only when the ledger lists it and the file is unchanged. Any other file that says `from-owner: true` is filed like ordinary mail, and the notes step reports it once. With no ledger, nothing is trusted.
+- **A `no` cancels a held action** (#585). Reply `no`, `cancel` or `stop` to the bot's message about a held action and it is cancelled at once. A later `yes` to that message runs nothing and says the action was cancelled. A `no` sent anywhere else cancels nothing.
+- **Ask can act on its last answer** (#578). After an answer, "email me this" or "add a line from it" gets the answer and its sources. This holds only in the same zone, and a new conversation, *Stop* or a change of zone clears it.
+- **Ask reads a long note to its end** (#579). A note longer than one read comes back in parts, and Ask reads on from where it stopped. A project or thread note is cited with the day it last changed, marked *updated*. Meetings and library pages keep *filed*. When several lines rest on one source, its number shows once, after the last of them.
+- A request kept for your assistant no longer disappears when the page loads with no assistant to hand it to. It stays on the Context card with *Hand it over* and *Dismiss*.
+- The update removes the old `System/status/fonts/` folder when it holds only files Garrick shipped.
+
+### Changed
+
+- **Notifications** (#580). *A session needs me* also covers a session waiting on a question or an approval. It is sent once for each wait and gets through at night. The job switch is now called *A scheduled job fails or recovers*, since it carries both, and it is on in a new workspace. The morning Context digest has its own switch, which starts with the value the Todo switch had. A row whose notice a job sends its own way says so, and its box shows as not in use.
+- **Channels** (#581). Telegram's block opens with its state. Its menus stay greyed until it is set up, and a *Set up Telegram* button hands the setup to your assistant. The actions waiting for your yes have their own heading below both channels. Model sizes read Small, Medium and Large.
+- **Kept by you** (#582). The Context card has a collapsed *Kept by you* line for each zone or wiki that has words you let through the wall check. Each row shows the file's name and its place, says in plain words why it was kept, and never quotes the words. *Remove* flags them again at the next commit.
+- **Manage older material** (#583). One word for each grade, working, dormant and archived, and one line on what each does. A *Review* button beside a count with pages to move hands "what would fade" to your assistant and moves nothing itself. The kind rules sit inside *Advanced*, and their lists wrap.
+- **Opening a thread** (#577). *A cmux tab starts* sits under *Open in cmux* and hides with it. *Default* shows only on rows that are switched on.
+- Counts agree with their noun ("1 error"). The Todo tab's badge counts the zone shown. A state's reason shows on keyboard focus too. Carets and headers have click targets of at least 24 pixels. The Guide shows a zone command only behind *Details*.
+
+### Removed
+
+- Settings has no *Allowed by you* section, and its help names no file under `System/`.
+
 ## [0.69.0] - 2026-11-14
 
 Ask now does the work you ask for, and it asks you before it sends, shares or deletes anything. Telegram becomes a private channel to your threads. Notes you write to yourself are filed under the thread they name, and a new hourly step can file them for you. On the status page, a job row keeps its name, the *Assistant calls* table fits its card, and a stopped call no longer shows as free.

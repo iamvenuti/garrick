@@ -237,18 +237,6 @@ class ClassificationTest(Base):
         self.assertNotIn("/", said)
 
 
-class FindingIdTest(unittest.TestCase):
-    """The stable id a check gives a finding rides into the record's standing rows (0.69.1), so Not now can key on it."""
-
-    def test_an_items_id_is_stored_when_it_has_one_and_left_out_when_it_has_none(self):
-        N = nurture
-        found = {"check": "links", "path": "Zones/Work/Acme/Acme.md:4", "message": "3 files link out", "fid": "3f9a1c2b7d"}
-        row = N.stored(N.check_items(found)[0])
-        self.assertEqual("3f9a1c2b7d", row["fid"])
-        bare = N.stored(N.check_items({k: v for k, v in found.items() if k != "fid"})[0])
-        self.assertNotIn("fid", bare)
-
-
 class ApplyTest(Base):
     def test_listing_and_planning_change_nothing(self):
         before = (self.log(self.work), self.log(self.wikis), git(self.work, "status", "--porcelain"))

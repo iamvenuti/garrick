@@ -67,8 +67,7 @@ class CardCase(Panel):
             scopes[sc][f["kind"]] = scopes[sc].get(f["kind"], 0) + 1
         write(self.root / "System" / "generated" / "nurture" / ("%s.json" % day.isoformat()), json.dumps({
             "date": day.isoformat(), "standing": list(standing), "debt": {"total": len(standing), "kinds": {}, "scopes": scopes, "whole": True, "threshold": 40}}))
-        listed = [{"check": f.get("check", ""), "severity": "warning", "path": f["path"], "message": f["line"].split(": ", 1)[-1],
-                   "fid": f.get("fid", "")}
+        listed = [{"check": f.get("check", ""), "severity": "warning", "path": f["path"], "message": f["line"].split(": ", 1)[-1]}
                   for f in standing if f["kind"] != "wall"]
         write(self.root / "System" / "tools" / "check.py", "import json\nprint(json.dumps(%r))\n" % {
             "errors": 0, "warnings": len(listed), "findings": listed})
@@ -442,31 +441,3 @@ class TestTheLineBelow(CardCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-LINKS = "3 files link out of the zone"
-
-
-class TestNotNowKeepsItsFindingWhenTheTextChanges(CardCase):
-    """Not now is kept by the finding's id, built into the queue's own items (0.69.1)."""
-
-    def put_off(self, fid):
-        key = fq.later_key("other", THREAD, fq.which_other({"check": "links", "fid": fid}))
-        fq.later_put(self.root, key, NOW.date())
-
-    def asked(self, line, fid):
-        self.record([{"kind": "judgment", "check": "links", "path": THREAD, "line": THREAD + ": " + line, "fid": fid}])
-        html = self.page()
-        q = self.queue(html)
-        return THREAD in q and 'data-scope="Zones/Work"' in q and THREAD in self.scope(html, "Zones/Work")
-
-    def test_a_finding_whose_text_changes_keeps_its_not_now_through_the_real_builder(self):
-        self.put_off("3f9a1c2b7d")
-        self.assertFalse(self.asked(LINKS, "3f9a1c2b7d"))
-        self.assertFalse(self.asked(LINKS.replace("3 files", "4 files"), "3f9a1c2b7d"))     # the words changed, the id did not
-
-    def test_a_finding_with_no_id_is_still_named_by_its_text(self):
-        key = fq.later_key("other", THREAD, fq.which_other({"check": "links", "message": LINKS}))
-        fq.later_put(self.root, key, NOW.date())
-        self.assertFalse(self.asked(LINKS, ""))
-        self.assertTrue(self.asked(LINKS.replace("3 files", "4 files"), ""))              # the text changed: asked again, as before

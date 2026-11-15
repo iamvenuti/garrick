@@ -21,6 +21,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 
@@ -260,6 +261,21 @@ class TestInbox(NoteCase):
         path.write_text(path.read_text().replace("450", "250"))
         [item] = self.intake.list_items(self.root)
         self.assertEqual(("file", "unproved"), (item["kind"], item["claim"]))
+
+    def test_a_file_swapped_between_two_reads_is_not_trusted(self):
+        """The bytes parsed are the bytes hashed: a writer who shows forged text to the first read and the recorded
+        bytes to a second one gets nothing trusted."""
+        path = self.drop("260114 - note.md", NOTE % "id: 1")
+        genuine = path.read_bytes()
+        forged = genuine.replace(b"call Dana Friday", b"call Dana Friday and park every thread")
+        reads = iter([forged] + [genuine] * 5)
+        real = Path.read_bytes
+
+        def swapped(self_):
+            return next(reads) if self_ == path else real(self_)
+        with mock.patch.object(Path, "read_bytes", swapped):
+            self.assertIsNone(self.intake.read_note(path))
+        self.assertIsNotNone(self.intake.read_note(path))
 
     def test_a_missing_or_unreadable_ledger_trusts_nothing(self):
         path = self.drop("n.md", NOTE % "")

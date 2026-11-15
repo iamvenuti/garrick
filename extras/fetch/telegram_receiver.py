@@ -300,10 +300,23 @@ class Receiver:
         if decision.get("destination"):
             head.append("destination: %s" % yaml_quote(decision["destination"]))
         head += ["date: %s" % yaml_quote(when), "---", ""]
-        path = inbox / ("telegram-%s.md" % msg["id"])
-        if not path.exists():
-            path.write_text("\n".join(head) + decision["text"] + "\n", encoding="utf-8")
+        data = ("\n".join(head) + decision["text"] + "\n").encode("utf-8")
+        for n in range(1, 1000):
+            path = inbox / ("telegram-%s.md" % msg["id"] if n == 1 else "telegram-%s-%d.md" % (msg["id"], n))
+            try:
+                with open(str(path), "xb") as f:                         # exclusive: a file already there is never written over
+                    f.write(data)
+            except FileExistsError:
+                try:
+                    same = path.read_bytes() == data                     # a retry after a crash between the write and the record
+                except OSError:
+                    same = False
+                if not same:
+                    continue                                             # another file at this name: this note takes the next one
             self.m["intake"].record_note(self.ws, path, msg["id"])      # the ledger is what proves the note is ours (#584)
+            break
+        else:
+            raise OSError("no free name for the note in the inbox")
         self.set_message(msg["id"], state="completed")
         self.say("Noted.", None, msg["message_id"])
 

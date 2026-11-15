@@ -87,6 +87,15 @@ def _dot_part(path: str, root: str) -> bool:
     return rel.startswith("..") or any(p.startswith(".") for p in rel.split(os.sep) if p)
 
 
+def _ledger(path: str, root: str, blind: bool) -> bool:
+    """Whether the path is the notes ledger, its lock or its temporary file: what proves a note is the owner's (#584)."""
+    base = os.path.join(root, "System")
+    name = os.path.basename(path)
+    if blind:
+        return os.path.dirname(path).casefold() == base.casefold() and name.casefold().startswith("notes-ledger.json")
+    return os.path.dirname(path) == base and name.startswith("notes-ledger.json")
+
+
 def hook_command() -> str:
     """The command line of this hook as the session's settings carry it: both words quoted, so a path with a space
     in it still runs this file (a hook that cannot start is not a block)."""
@@ -131,6 +140,9 @@ def decide(event: dict, ws: str, zone: str):
             bad.append(path)
     if not event.get("tool_input") or not targets(event):
         bad = ["(no path)"]
+    if any(_ledger(path, root, blind) for path in targets(event)):
+        return _deny("Refused: the notes ledger (System/notes-ledger.json) is written only by the channel that receives a note, "
+                     "never by an exchange.")
     if not bad:
         return None
     reason = ("Refused: this exchange is bound to the %s zone. A write goes in that zone, a wiki's wiki/ folder or the "

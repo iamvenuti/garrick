@@ -34,6 +34,8 @@ otherwise the event's cwd. Paths are judged where they really lead, through
 any link, and on a disk that ignores case, as a Mac's does, without it. A scheduled job (GARRICK_HEADLESS=1) has nobody to
 ask, so the guard stands aside for it. It reads files only, and never calls a
 model. Any error lets the edit through: a broken guard must not stop work.
+One place is never let through, in a session of any home and in a scheduled job: the notes ledger,
+System/notes-ledger.json and the files beside it, which only the receiver's own code writes (#584).
 
     python3 zone_guard.py --check
 
@@ -241,9 +243,30 @@ def outside(event):
     return home, out
 
 
+LEDGER = "notes-ledger.json"      # System/notes-ledger.json, its lock and its temporary file: only the receiver's code writes them
+
+
+def ledger_edits(event):
+    """The notes ledger files the tool call would write (#584): the ledger is what proves a note is the owner's, so
+    no assistant session writes it, whatever its home, and a scheduled job least of all."""
+    found = []
+    for path in edits(event):
+        root = workspace_root(os.path.dirname(path))
+        if root is None:
+            continue
+        names = parts(root, path, case_blind(root))
+        if names and len(names) == 2 and names[0].casefold() == "system" and names[1].casefold().startswith(LEDGER):
+            found.append(path)
+    return found
+
+
 def decide(event):
     """The hook's reply as a dict, or None to stay silent and let the edit run."""
     stage = event.get("hook_event_name")
+    if stage == "PreToolUse" and ledger_edits(event):
+        return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                       "permissionDecisionReason": "Zone guard: the notes ledger is written only by the channel that "
+                                       "receives a note. An assistant session never writes it."}}
     home, away = outside(event)
     if not away:
         return None
@@ -368,10 +391,12 @@ def check():
 def main():
     if sys.argv[1:] == ["--check"]:
         return check()
-    if os.environ.get("GARRICK_HEADLESS") == "1":
-        return 0
     try:
-        reply = decide(json.load(sys.stdin))
+        event = json.load(sys.stdin)
+        if os.environ.get("GARRICK_HEADLESS") == "1":          # nobody to ask, so the zone check stands aside; the ledger never does
+            reply = decide(dict(event, hook_event_name="PreToolUse")) if ledger_edits(event) else None
+        else:
+            reply = decide(event)
     except Exception:
         return 0
     if reply:

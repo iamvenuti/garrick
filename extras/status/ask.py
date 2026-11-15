@@ -1818,13 +1818,19 @@ class Asker:
         out["usage"] = {k: sum(u.get(k) or 0 for u in (usage or {}, more or {}))
                         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens")}
         answered = zoned or where.zone or self.zone
-        self.last_answer = {"text": say, "zone": answered, "sources": out["sources"]} if answered and say else None
+        # Recorded only when every walled zone the cited records sit in is the zone it is recorded under: a question
+        # across every zone, a mixed answer, or a record whose zone cannot be told records nothing (#578).
+        held = {r["path"]: r["zones"] for r in records}
+        cited_in = [held.get(s["path"]) for s in out["sources"]]
+        clean = (not where.every and None not in cited_in
+                 and sc.walled_zones(self.ctx, {z for zs in cited_in for z in zs}, lib) <= {answered})
+        self.last_answer = {"text": say, "zone": answered, "sources": out["sources"]} if answered and say and clean else None
         return self.in_zone(out, zoned, why), reset
 
     def last_answer_block(self, here: Optional[str]) -> str:
         """The last answer as the command session is given it, `<last-answer>`: its words and the records it cited, only
         when it was given in the zone the request is sent in. A reset, a zone change, New conversation and Stop clear it
-        with `<last-results>`; a renewal by size carries nothing over (#578)."""
+        with `<last-results>`; a renewal by size resends it, in the same zone only (#578)."""
         got = self.last_answer
         if not got or not here or got.get("zone") != here:
             return ""

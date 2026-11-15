@@ -403,7 +403,7 @@ class TestReadsInPartsAndCitationDates(ToolCase):
     def test_a_bad_offset_reads_nothing_and_never_another_record(self):
         c, rid = self.long_page()
         first = c.call("read", {"id": rid})[0]
-        for bad in (-1, 10 ** 9, "abc", True, 1.5, [], {"a": 1}):
+        for bad in (-1, 10 ** 9, "abc", "\u00b2", "\u0663", True, 1.5, [], {"a": 1}):
             text, _ = c.call("read", {"id": rid, "offset": bad})
             self.assertTrue(text.endswith(tools.BAD_OFFSET), bad)
             self.assertNotIn("Line 0", text)

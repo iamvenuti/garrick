@@ -654,7 +654,7 @@ class Conversation:
         raw = a.get("offset")
         if raw is None or raw == "":
             start = 0
-        elif isinstance(raw, bool) or not (isinstance(raw, int) or (isinstance(raw, str) and raw.strip().isdigit())):
+        elif isinstance(raw, bool) or not (isinstance(raw, int) or (isinstance(raw, str) and raw.strip().isascii() and raw.strip().isdigit())):
             return BAD_OFFSET
         else:
             start = int(raw)

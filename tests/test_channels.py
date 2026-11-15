@@ -295,6 +295,13 @@ class TestHardenedGuard(EngineCase):
     def decide(self, path, tool="Write", zone="Work"):
         return self.guard.decide({"tool_name": tool, "tool_input": {"file_path": str(path)}}, str(self.root), zone)
 
+    def test_the_notes_ledger_is_never_written_by_an_exchange(self):
+        for name in ("notes-ledger.json", "notes-ledger.json.lock", "notes-ledger.json.new", "Notes-Ledger.json"):
+            for tool in ("Write", "Edit"):
+                got = self.decide(self.root / "System" / name, tool=tool)
+                self.assertIsNotNone(got, name)
+                self.assertIn("notes ledger", got["hookSpecificOutput"]["permissionDecisionReason"])
+
     def test_a_write_into_a_git_folder_or_a_git_file_is_refused_anywhere(self):
         for path in (self.work / ".git" / "config", self.work / ".git" / "hooks" / "pre-commit", self.work / ".GIT" / "config",
                      self.work / "Acme Review" / ".gitattributes", self.work / "Acme Review" / ".gitmodules",

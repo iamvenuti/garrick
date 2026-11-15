@@ -13,7 +13,7 @@ cmux desk, and the session hooks. Notices go to this Mac and nowhere else
 kept under `notifications` in System/garrick-settings.json, committed with
 the workspace:
 
-    {"tell": {"needs-you": true, "finished": true, "waiting": true, "todo-summary": true, "job-failed": true,
+    {"tell": {"needs-you": true, "finished": true, "todo-summary": true, "context-summary": true, "job-failed": true,
               "release": true},
      "after": 2,
      "quiet": {"on": true, "from": "22:00", "to": "07:00"}}
@@ -23,13 +23,24 @@ each on or off, and the minutes a turn must run before Finished is sent.
 Job idle and the Desk (FOLLOW) are sent whenever any of the six is on, so
 six boxes left empty mean no notice at all; Todo refreshed is never sent.
 
-**Waiting on you** is the one event no hook sends. The status extra's
-agents_working.py reads the sessions once a minute and hands the waiting ones
-to `waiting()` (`notifications.py waiting`, on standard input), which sends
-one notice for each wait and records it in System/generated/notifications/,
-so a wait is told once, never repeated, and a session that waits again later is
-told again. The notice names the thread and what it waits for ("a question",
-"an approval for Bash"), never the question's text.
+**A session needs me** is one row for two events. `needs-you` comes from a
+hook (a permission, a question, an idle prompt); `waiting` is the one event
+no hook sends. The status extra's agents_working.py reads the sessions once a
+minute and hands the waiting ones to `waiting()` (`notifications.py waiting`,
+on standard input), which sends one notice for each wait and records it in
+System/generated/notifications/, so a wait is told once, never repeated, and a
+session that waits again later is told again. The notice names the thread and
+what it waits for ("a question", "an approval for Bash"), never the question's
+text. Both events follow the one row, and both get through at night. When the
+hook has already told of a wait, the poll does not tell it again, and the other
+way round (`told.json`): one wait sends one notice. Settings saved by a release
+that had a row of its own for `waiting` still read: either one on keeps the
+merged row on. `waiting` is never written back.
+
+**The two summaries** have a row each: `todo-summary` is each zone's Todo
+digest, `context-summary` the Context digest the nurture sweep sends. A
+settings file that has no `context-summary` yet gives it the value
+`todo-summary` has, so an update loses no digest.
 
 A notice from a session running in cmux lands on that session's own tab,
 through cmux's own notification; anything else, or a cmux that will not
@@ -99,9 +110,10 @@ STATE = ("System", "generated", "notifications")
 EVENTS = (
     ("needs-you", "Needs you", "A session is waiting: a permission to give, a question, an idle prompt"),
     ("finished", "Finished", "A session has ended its turn, after running longer than the minutes set"),
-    ("waiting", "Waiting on you", "A session has stopped on a question or an approval; sent once for each wait"),
+    ("waiting", "Waiting on you", "A session has stopped on a question or an approval; sent once for each wait. Follows the needs-you row"),
     ("todo-refreshed", "Todo refreshed", "The nightly sweep has run: lines added, folded, expired"),
     ("todo-summary", "Todo summary", "Each zone's morning digest from the sweep: what is late and what is due today"),
+    ("context-summary", "Context summary", "The nurture sweep's morning digest: what it fixed and what waits for you"),
     ("job-failed", "Job failed or recovered", "A scheduled job fails or works again, and a line a job sends of its own"),
     ("job-idle", "Job idle", "A job has run cleanly but done nothing for days"),
     ("desk", "Desk", "The cmux desk starting the day or shutting down"),
@@ -112,13 +124,17 @@ LABELS = {e[0]: e[1] for e in EVENTS}
 SESSION_EVENTS = ("needs-you", "finished")       # from a session: cmux takes the Mac's place
 # What Settings offers, in its order and its words: each event on or off.
 TELL = (("needs-you", "a session needs me"), ("finished", "a long task finishes"),
-        ("waiting", "a session is waiting on me"), ("todo-summary", "the morning Todo summary is ready"), ("job-failed", "a scheduled job fails"),
-        ("release", "a newer Garrick is out"))
+        ("todo-summary", "the morning Todo summary is ready"), ("context-summary", "the morning Context summary is ready"),
+        ("job-failed", "a scheduled job fails or recovers"), ("release", "a newer Garrick is out"))
 TELL_NAMES = tuple(e for e, _ in TELL)
+# An event with no row of its own is sent by the row of another: a session waiting is a session that needs you.
+FOLDED = {"waiting": "needs-you"}
+# A row an older settings file filled under another name: the value that name had.
+INHERITS = {"context-summary": "todo-summary"}
 FOLLOW = ("job-idle", "desk")                    # sent while any of TELL is on
 QUIET_CHOICES = ("send", "hold", "drop")
-QUIET = {"needs-you": "send", "finished": "drop", "waiting": "hold", "todo-refreshed": "hold", "todo-summary": "hold",
-         "job-failed": "hold", "job-idle": "hold", "desk": "send", "release": "hold"}
+QUIET = {"needs-you": "send", "finished": "drop", "waiting": "send", "todo-refreshed": "hold", "todo-summary": "hold",
+         "context-summary": "hold", "job-failed": "hold", "job-idle": "hold", "desk": "send", "release": "hold"}
 # job.py's kinds, as GARRICK_NOTIFY_KIND has always carried them, and the event each is.
 KINDS = {"failed": "job-failed", "recovered": "job-failed", "message": "job-failed", "idle": "job-idle",
          "digest": "todo-summary", "refreshed": "todo-refreshed"}
@@ -194,14 +210,23 @@ def normal(raw) -> dict:
     events = raw.get("events") if isinstance(raw.get("events"), dict) else {}
     if given is not None:
         tell = {e: given.get(e, True) is not False for e in TELL_NAMES}
+        tell["needs-you"] = _merged(given)
+        for new, old in INHERITS.items():
+            if new not in given:
+                tell[new] = given.get(old, True) is not False
     else:                                       # an older Garrick's: an event that went to this Mac is on
         ch = raw.get("channels") if isinstance(raw.get("channels"), dict) else {}
         mac = ch.get("mac", True) is not False
         tell = {}
         for e in TELL_NAMES:
             g = events.get(e) if isinstance(events.get(e), dict) else {}
+            if not g and e in INHERITS and isinstance(events.get(INHERITS[e]), dict):
+                g = events[INHERITS[e]]
             to = g.get("to") if isinstance(g.get("to"), list) else ["mac"]
             tell[e] = mac and "mac" in to
+        waits = events.get("waiting") if isinstance(events.get("waiting"), dict) else {}
+        if waits:
+            tell["needs-you"] = tell["needs-you"] or (mac and "mac" in (waits.get("to") if isinstance(waits.get("to"), list) else ["mac"]))
     after = raw.get("after")
     if not _minutes_ok(after):
         old = events.get("finished") if isinstance(events.get("finished"), dict) else {}
@@ -211,6 +236,12 @@ def normal(raw) -> dict:
              "from": q.get("from") if isinstance(q.get("from"), str) and CLOCK.match(q["from"]) else "22:00",
              "to": q.get("to") if isinstance(q.get("to"), str) and CLOCK.match(q["to"]) else "07:00"}
     return {"tell": tell, "after": after, "quiet": quiet}
+
+
+def _merged(given: dict) -> bool:
+    """The merged row, from a settings file's `needs-you` and the `waiting` an older release saved beside it: on when either is on."""
+    said = [given[k] for k in ("needs-you", "waiting") if k in given]
+    return not said or any(v is not False for v in said)
 
 
 class Invalid(ValueError):
@@ -226,7 +257,7 @@ def clean(given) -> dict:
     if unknown:
         raise Invalid("not a notification setting: %s" % ", ".join(unknown))
     tell = given.get("tell", {})
-    if not isinstance(tell, dict) or set(tell) - set(TELL_NAMES) or not all(isinstance(v, bool) for v in tell.values()):
+    if not isinstance(tell, dict) or set(tell) - set(TELL_NAMES) - set(FOLDED) or not all(isinstance(v, bool) for v in tell.values()):
         raise Invalid("not a set of notices, each on or off")
     after = given.get("after", AFTER)
     if not _minutes_ok(after):
@@ -239,7 +270,12 @@ def clean(given) -> dict:
     for k in ("from", "to"):
         if k in q and not (isinstance(q[k], str) and CLOCK.match(q[k])):
             raise Invalid("quiet hours are times such as 22:00")
-    return {"tell": {e: tell.get(e, True) for e in TELL_NAMES}, "after": after,
+    kept = {e: tell.get(e, True) for e in TELL_NAMES}
+    kept["needs-you"] = _merged(tell)                      # `waiting` from an older page is read, never written
+    for new, old in INHERITS.items():
+        if new not in tell:
+            kept[new] = tell.get(old, True)
+    return {"tell": kept, "after": after,
             "quiet": {"on": q.get("on", True), "from": q.get("from", "22:00"), "to": q.get("to", "07:00")}}
 
 
@@ -266,6 +302,7 @@ def keep(ws: Path, cfg: dict) -> dict:
 
 def wanted(cfg: dict, event: str) -> bool:
     """Whether this event is sent at all, as the settings stand."""
+    event = FOLDED.get(event, event)
     if event in cfg["tell"]:
         return cfg["tell"][event]
     return event in FOLLOW and any(cfg["tell"].values())
@@ -571,6 +608,43 @@ def _turn_file(ws: Path, session: str) -> Path:
     return state_dir(ws) / "turns" / (SESSION_ID.sub("", session)[:80] or "unnamed")
 
 
+TOLD = "told.json"
+TOLD_WINDOW = 120          # seconds: a wait told by one of the two senders is not told again by the other
+
+
+def _since(text) -> Optional[float]:
+    """The epoch second an agents_working.py `since` (an ISO time) names, or None."""
+    try:
+        t = dt.datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t.timestamp()
+
+
+def _told(ws: Path) -> dict:
+    told = _read_json(state_dir(ws) / TOLD, {})
+    return told if isinstance(told, dict) else {}
+
+
+def _tell(ws: Path, session: str, by: str, now: float) -> None:
+    """Record that a notice went for this session's wait, by the hook or by the poll, so the other does not send a second."""
+    told = {k: v for k, v in _told(ws).items() if isinstance(v, dict) and now - float(v.get("at") or 0) < TURN_DAYS * 86400}
+    told[SESSION_ID.sub("", session)[:80] or "unnamed"] = {"by": by, "at": now}
+    try:
+        _write_json(state_dir(ws) / TOLD, told)
+    except OSError:
+        pass
+
+
+def _was_told(ws: Path, session: str, by: str, since: Optional[float], now: float) -> bool:
+    """Whether `by` already sent a notice for this session's wait: lately, or after the wait began."""
+    got = _told(ws).get(SESSION_ID.sub("", session)[:80] or "unnamed")
+    if not isinstance(got, dict) or got.get("by") != by:
+        return False
+    at = float(got.get("at") or 0)
+    return at >= (since if since is not None else now) - TOLD_WINDOW and at >= now - TURN_DAYS * 86400
+
+
 def background(env=None) -> bool:
     """Whether this is a session Garrick runs in the background, Ask's."""
     env = os.environ if env is None else env
@@ -605,6 +679,10 @@ def hook(payload: dict, ws: Optional[Path] = None, env=None, now: Optional[float
     if name == "Notification":
         why = waiting_for(payload)
         if why:
+            if session and _was_told(ws, session, "poll", now - TOLD_WINDOW / 2, now):
+                return                  # the minute's read told this wait a moment ago: one wait, one notice
+            if session:
+                _tell(ws, session, "hook", now)
             dispatch({"event": "needs-you", "title": "Needs you",
                       "message": "%s: needs you. %s." % (label, why), "zone": zone}, ws, env, detach, now)
         return
@@ -659,9 +737,13 @@ def waiting(rows, ws: Optional[Path] = None, env=None, now: Optional[dt.datetime
         where = place(ws, str(r.get("folder") or ""))
         zone = where[1] if where else None
         kept[sid] = since
+        at = now.timestamp() if now is not None else time.time()
+        if _was_told(ws, sid, "hook", _since(since), at):
+            continue                    # the hook told this wait when it began: one wait, one notice
         if override(env) and not zone:
             continue                    # a sender's own command is told a zone; with none known it is not run for this event
         send("waiting", "Waiting on you", "%s: waiting on you, for %s." % (place_said, what), zone, root=ws, env=env, now=now)
+        _tell(ws, sid, "poll", at)
         sent += 1
     if kept != told:
         try:

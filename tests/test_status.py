@@ -672,10 +672,11 @@ class TestContextTab(StatusCase):
         self.assertRegex(walls, r'data-zone="Personal"><b>Personal</b><span class="st good">Walled</span>')
         self.assertNotIn("until the update to zone walls is accepted", walls)
 
-    def test_the_walls_rows_come_above_allowed_by_you(self):
-        html = status.settings(self.root, (), ("Work", "Personal"), allowed=[{"path": "Zones/Work/a.md", "id": "x", "rule": "r", "date": "2026-11-01", "by": "me", "href": "", "state": "same"}])
+    def test_settings_holds_the_walls_rows_and_no_allowed_by_you(self):
+        html = status.settings(self.root, (), ("Work", "Personal"))
         self.assertIn('id="walls-settings"', html)
-        self.assertLess(html.index('id="walls-settings"'), html.index('id="allowed-settings"'))
+        self.assertNotIn("Allowed by you", html)                                       # it lives on the Context card (#582)
+        self.assertNotIn('id="allowed-settings"', html)
         self.assertIn('<a href="#walls-settings" data-setgo="walls-settings">', html)
 
     def test_the_pending_update_note_is_in_settings(self):
@@ -684,9 +685,9 @@ class TestContextTab(StatusCase):
 
 
 class TestAllowedByYou(StatusCase):
-    """Allowed by you: the ledger of System/walls-allowed.json, read, shown in Settings with Remove (#542), and nothing more."""
+    """Kept by you: the ledger of System/walls-allowed.json, read, shown on the Context card with Remove (#542, #582), and nothing more."""
 
-    FILE = "Zones/Work/Acme Review/Memo.md"
+    FILE = "Zones/Work/Acme Review/Threads/Pricing/Memo.md"
 
     def setUp(self):
         super().setUp()
@@ -708,33 +709,71 @@ class TestAllowedByYou(StatusCase):
             fixtures.commit_all(self.root, "ledger")
 
     def entry(self, **kw):
-        row = {"path": self.FILE, "id": "3f9a1c2b7d", "blob": self.blob(self.FILE), "rule": "name", "date": "2026-11-10", "by": "terminal"}
+        row = {"path": self.FILE, "id": "3f9a1c2b7d", "blob": self.blob(self.FILE), "rule": "wording", "date": "2026-11-13", "by": "terminal"}
         row.update(kw)
         return row
 
     def section(self, html):
-        start = html.index('<section class="setsec" id="allowed-settings">')
-        return html[start:html.index("</section>", start)]
+        start = html.index('<div id="kept-by-you">')
+        return html[start:html.index("</div>", html.index("</ul></details>", start)) + 6]
 
-    def test_each_allowance_shows_its_file_rule_date_and_remove(self):
+    def test_each_allowance_shows_its_file_where_it_sits_a_plain_line_and_remove(self):
         self.ledger(self.entry())
         html = self.page()
-        self.assertGreater(html.index('id="allowed-settings"'), html.index('<dialog id="settings"'))       # in Settings, under the walls
-        self.assertIn('<p class="setgrp" id="sg-walls">Walls</p>', html)
-        tab = html[html.index('id="tab-questions"'):] if 'id="tab-questions"' in html else ""
-        self.assertNotIn("Allowed by you", tab[:tab.find("</section>")] if tab else "")                # no longer on the tab
+        self.assertNotIn("Allowed by you", html)                                       # not in Settings (#582)
+        self.assertNotIn('id="allowed-settings"', html)
+        dialog = html[html.index('<dialog id="settings"'):html.index("</dialog>", html.index('<dialog id="settings"'))]
+        self.assertNotIn("kept-by-you", dialog)
+        self.assertGreater(html.index('id="kept-by-you"'), html.index('id="checks"'))     # on the Context card
         box = self.section(html)
-        self.assertIn("<h3>Allowed by you<", box)
-        self.assertIn(">Zones/Work/Acme Review/Memo.md</a>", box)                     # a link that opens the file
-        self.assertIn("name · allowed 2026-11-10 by terminal", box)
-        self.assertIn('data-id="3f9a1c2b7d" data-path="Zones/Work/Acme Review/Memo.md"', box)
-        self.assertIn('data-unallow="1">Remove</button>', box)
+        self.assertRegex(box, r'<details class="kept" data-scope="Zones/Work" data-n="1">')        # collapsed: no open attribute
+        self.assertNotIn(" open", box[:box.index(">", box.index("<details"))])
+        self.assertIn("Kept by you \u00b7 1", box)
+        self.assertRegex(box, r'<small class="cxa-where">Work \u00b7 Acme Review \u00b7 Pricing</small><a [^>]*>Memo\.md</a>')   # a link that opens the file
+        self.assertIn("Words also found in another zone \u00b7 you kept them on 13 November", box)
+        self.assertIn('data-id="3f9a1c2b7d" data-path="%s"' % self.FILE, box)
+        self.assertRegex(box, r'data-unallow="1" title="Flag these words again at the next commit\.">Remove</button>')
         self.assertNotIn("no longer allows", box)
+
+    def test_no_row_shows_a_zones_path_the_word_terminal_a_check_kind_or_the_kept_words(self):
+        self.ledger(self.entry(), self.entry(rule="link", id="bbbbbbbbbb", by="page"))
+        box = self.section(self.page())
+        text = re.sub(r"<[^>]+>", " ", box)
+        self.assertNotIn("Zones/", text)
+        self.assertNotIn("terminal", text.replace("From the command line", ""))
+        for said in ("by page", "by terminal", "allowed 2026", "2026-11-13"):
+            self.assertNotIn(said, text)
+        self.assertNotRegex(text, r"\b(wording|link|name|path|unlabelled|copy) \u00b7")        # a check's kind, as the ledger names it
+        self.assertIn("A link to another zone \u00b7 you kept it on 13 November", text)
+
+    def test_the_help_names_both_ways_to_add_one_and_that_editing_ends_it(self):
+        self.ledger(self.entry())
+        box = self.section(self.page())
+        self.assertIn("The words are mine, keep them", box)
+        self.assertIn("Editing the file ends it.", box)
+        self.assertIn("<code>python3 System/tools/check.py allow</code>", box[box.index('<details class="kdet">'):])   # the command: in Details only
+        self.assertNotIn("check.py", box[:box.index('<details class="kdet">')])
+
+    def test_only_a_place_s_own_rows_are_counted_in_its_line(self):
+        other = "Zones/Personal/Home/Threads/Solar/Plan.md"
+        write(self.root / other, "# Plan\n")
+        self.ledger(self.entry(), self.entry(path=other, id="cccccccccc", blob=self.blob(other)),
+                    self.entry(path="Zones/Work/Acme Review/Threads/Pricing/Other.md", id="dddddddddd"))
+        # the third entry names a file that does not exist: still Work's, and never counted with Personal's
+        box = self.section(self.page())
+        self.assertIn('data-scope="Zones/Work" data-n="2"', box)
+        self.assertIn('data-scope="Zones/Personal" data-n="1"', box)
+        self.assertIn("Kept by you \u00b7 2", box)
+        self.assertIn("Kept by you \u00b7 1", box)
+        self.assertNotIn("Kept by you \u00b7 3", box)
+        work = box[box.index('data-scope="Zones/Work"'):box.index('data-scope="Zones/Personal"')]
+        self.assertNotIn("Plan.md", work)
+        self.assertIn("k.hidden=!(z==='*'||k.dataset.scope===z)", status.CONTEXT_JS)      # the card's Zone menu shows one place's line
 
     def test_only_the_committed_ledger_is_listed(self):
         self.ledger(self.entry(), commit=True)
-        self.assertIn('id="allowed-settings"', self.page())
-        self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Other.md", id="bbbbbbbbbb"), commit=False)   # on disk only
+        self.assertIn('id="kept-by-you"', self.page())
+        self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Threads/Pricing/Other.md", id="bbbbbbbbbb"), commit=False)   # on disk only
         box = self.section(self.page())
         self.assertIn("Memo.md", box)
         self.assertNotIn("Other.md", box)                                             # the hook does not honour it, so it is not listed
@@ -745,42 +784,42 @@ class TestAllowedByYou(StatusCase):
 
     def test_a_ledger_never_committed_or_no_repository_lists_nothing(self):
         self.ledger(self.entry(), commit=False)                                       # no repository at all
-        self.assertNotIn('id="allowed-settings"', self.page())
+        self.assertNotIn('id="kept-by-you"', self.page())
         fixtures.git_init(self.root)
         fixtures.commit_all(self.root, "start")                                       # the ledger is committed here, then deleted and committed again
         (self.root / "System" / "walls-allowed.json").unlink()
         fixtures.commit_all(self.root, "gone")
-        self.assertNotIn('id="allowed-settings"', self.page())
+        self.assertNotIn('id="kept-by-you"', self.page())
 
     def test_the_section_offers_no_way_to_allow(self):
         self.ledger(self.entry())
         box = self.section(self.page())
         self.assertNotIn("walls-allow", box)
-        self.assertEqual(["?", "Remove"], re.findall(r"<button[^>]*>([^<]*)</button>", box))      # the explanation's "?" and Remove
+        self.assertEqual(["Remove"], re.findall(r"<button[^>]*>([^<]*)</button>", box))
         self.assertNotIn("walls-allow'", status.questions_mod().CX_JS)
         self.assertNotIn("verb:'walls-allow", status.questions_mod().CX_JS)
 
     def test_a_file_edited_since_or_gone_says_so(self):
-        self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Gone.md", id="aaaaaaaaaa"))
+        self.ledger(self.entry(), self.entry(path="Zones/Work/Acme Review/Threads/Pricing/Gone.md", id="aaaaaaaaaa"))
         (self.root / self.FILE).write_text("# Memo\n\nEdited.\n")
         box = self.section(self.page())
         self.assertIn("The file has changed since, so this no longer allows anything.", box)
         self.assertIn("The file is gone.", box)
 
     def test_nothing_is_shown_without_a_readable_ledger(self):
-        self.assertNotIn('id="allowed-settings"', self.page())                                      # none at all: no section
+        self.assertNotIn('id="kept-by-you"', self.page())                                      # none at all: no line
         (self.root / "System" / "walls-allowed.json").write_text("{not json")
-        self.assertNotIn('id="allowed-settings"', self.page())
+        self.assertNotIn('id="kept-by-you"', self.page())
         self.ledger(self.entry(), version=2)                                          # a version this page does not know
-        self.assertNotIn('id="allowed-settings"', self.page())
+        self.assertNotIn('id="kept-by-you"', self.page())
         self.ledger(self.entry(path="../outside.md"), self.entry(path="/etc/hosts"), {"path": self.FILE})
-        self.assertNotIn('id="allowed-settings"', self.page())                                      # an entry that does not read is no allowance
+        self.assertNotIn('id="kept-by-you"', self.page())                                      # an entry that does not read is no allowance
 
     def test_a_names_free_row_and_escaped_text(self):
         self.ledger(self.entry(rule="<b>x</b>", by="<i>me</i>"))
         box = self.section(self.page())
         self.assertNotIn("<b>x</b>", box)
-        self.assertIn("&lt;b&gt;x&lt;/b&gt;", box)
+        self.assertNotIn("<i>me</i>", box)
 
     @unittest.skipUnless(shutil.which("node"), "Node is not installed")
     def test_remove_sends_walls_unallow_and_a_yes_takes_the_row_away(self):
@@ -788,13 +827,14 @@ class TestAllowedByYou(StatusCase):
         const vm = require("vm");
         const js = process.argv[1];
         const attrs = { "data-path": "Zones/Work/Acme Review/Memo.md", "data-id": "3f9a1c2b7d" };
-        const row = { getAttribute: a => attrs[a], removed: false, remove() { this.removed = true; } };
+        const group = { dataset: {}, querySelectorAll: s => [], querySelector: s => null, remove() {} };
+        const row = { getAttribute: a => attrs[a], removed: false, remove() { this.removed = true; }, closest: s => s === ".kept" ? group : null };
         const button = { closest: s => s === ".cxa-row" ? row : null };
         const handlers = [];
         const cx = { querySelectorAll: s => s === ".cxa-row" ? [row] : [], addEventListener: (t, f) => handlers.push(f) };
         const sent = [], said = [];
         const window = { webkit: { messageHandlers: { garrick: { postMessage: m => sent.push(m) } } }, GarrickSay: s => said.push(s) };
-        const ctx = { JSON, Object, window, GarrickSay: window.GarrickSay, document: { getElementById: id => id === "allowed-settings" ? cx : null } };
+        const ctx = { JSON, Object, window, GarrickSay: window.GarrickSay, document: { getElementById: id => id === "kept-by-you" ? cx : null } };
         vm.createContext(ctx);
         vm.runInContext(js, ctx);
         handlers.forEach(h => h({ target: { closest: s => s === "[data-unallow]" ? button : null } }));
@@ -3847,15 +3887,15 @@ class TestMemorySettings(StatusCase):
         self.assertRegex(reference, r'data-mk="archived"[^>]*disabled>')
         advanced = sec[sec.index('<details class="madv"><summary>Advanced</summary>'):]
         self.assertIn('<div class="mlists" data-mkl="meetings"><b>Meetings</b>', advanced)
-        self.assertIn('data-mk="types" value="meeting, email"', advanced)                  # each kind's lists, under Advanced
+        self.assertIn('data-mk="types" placeholder="none" title="meeting, email" aria-label="meetings page types">meeting, email</textarea>', advanced)    # each kind's lists, under Advanced
         self.assertEqual(4, len(re.findall(r'data-mpin="[a-z]+" checked', advanced)))
         self.assertIn('<input type="checkbox" id="m-wake" checked aria-label="Propose bringing back a dormant page that active '
                       'work links again">', advanced)
         self.assertIn('<option value="dormant" selected>working and dormant pages</option>', advanced)
         self.assertIn('<input type="checkbox" id="m-night" checked', advanced)
         self.assertIn('id="m-min" min="1" max="1000" value="10"', advanced)
-        self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived · next pass moves 7'
-                      '</span></p>', sec)                                                    # no list written yet: no link
+        self.assertIn('<p class="mcount"><span data-mc="line">Meetings: 40 working · 12 dormant · 5 archived · 7 would change grade'
+                      '</span> <button class="act" type="button" data-request="what would fade in Meetings"', sec)       # no list written yet: no link
         self.assertIn("Knowledge: ", sec)
         self.assertNotIn('class="hint msaid"', sec)            # a fade.py older than its sentences: no rule worded here in its place
 
@@ -3866,12 +3906,12 @@ class TestMemorySettings(StatusCase):
                                           "dormant": 12, "archived": None}}}}))
         sec = self.section()
         self.assertEqual(["board meetings"], re.findall(r'data-mkind="([^"]+)"', sec))      # whatever kinds fade.py returns
-        self.assertIn('data-mk="domains" value="board.example"', sec)
+        self.assertIn('>board.example</textarea>', sec)
         self.assertIn('<input type="checkbox" data-mwikion="Knowledge" aria-label', sec)
         self.assertIn('<option value="working" selected>', sec)
         self.assertIn('<input type="checkbox" id="m-wake" aria-label', sec)
         self.assertIn('id="m-min" min="1" max="1000" value="25"', sec)
-        self.assertIn("next pass moves 2</span>", sec)                                      # 24 // 12, never archived, no waking
+        self.assertIn("2 would change grade</span>", sec)                                   # 24 // 12, never archived, no waking
         self.assertRegex(sec, r'data-mc="line">Knowledge: [^<]* · off</span>')
 
     def test_left_out_without_fade_and_said_when_it_fails(self):
@@ -3905,19 +3945,18 @@ class TestMemorySettings(StatusCase):
 
     def test_the_page_and_its_script_say_the_counts_alike(self):
         c = {"on": True, "working": 3, "dormant": 2, "archived": 1, "to_dormant": 0, "to_archive": 4, "to_wake": 0}
-        self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · next pass moves 4", status.memory_said("Meetings", c))
-        self.assertEqual("Meetings: 3 working · 2 dormant · nothing to move",
+        self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · 4 would change grade", status.memory_said("Meetings", c))
+        self.assertEqual("Meetings: 3 working · 2 dormant · none would change grade",
                          status.memory_said("Meetings", dict(c, to_archive=0, archived=0)))
         self.assertEqual("Meetings: 3 working · 2 dormant · 1 archived · off", status.memory_said("Meetings", dict(c, on=False)))
-        for words in ("' working · '", "' dormant'", "' archived'", "' · off'", "' · next pass moves '", "' · nothing to move'"):
+        for words in ("' working · '", "' dormant'", "' archived'", "' · off'", "' would change grade'", "' · none would change grade'"):
             self.assertIn(words, status.MEMORY_JS)
         self.assertIn("textContent", status.MEMORY_JS)
         self.assertNotIn("innerHTML", status.MEMORY_JS)
 
     def test_the_choices_and_a_count_with_the_rest_behind_advanced(self):
         sec = htmllib.unescape(self.section())
-        self.assertIn('<p class="setlede">Old meetings and reading leave the index after the months set here; nothing is deleted, '
-                      'and nothing moves until you say “fade the meetings” or “fade the library”.</p>', sec)
+        self.assertIn('<p class="setlede">Old meetings and reading change grade after the months set here: %s.</p>' % status.GRADES_SAID, sec)
         shown = sec[:sec.index('<details class="madv">')]
         for gone in ("Put aside: out of the index", "Closing Settings saves the rules below", "msteps", "mgradesay",
                      "Active work is never put aside", 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"',
@@ -3928,6 +3967,47 @@ class TestMemorySettings(StatusCase):
         order = [sec.index(x) for x in ('data-mwikion="Meetings"', 'data-mkind="meetings"', 'Meetings: ', 'data-mwikion="Knowledge"',
                                         '<details class="madv">', 'data-mpin=', 'id="m-wake"', 'id="m-reach"', 'id="m-night"')]
         self.assertEqual(sorted(order), order)
+
+    def test_one_word_for_each_grade_said_once_and_no_other_words_for_them(self):
+        sec = htmllib.unescape(self.section())
+        visible = re.sub(r"<[^>]+>", " ", sec[:sec.index('id="help-memory"')] + sec[sec.index("</p>", sec.index('id="help-memory"')):])
+        self.assertEqual(1, visible.count("working pages are read by every answer, dormant ones only by a search that reaches back, archived ones only when you ask; nothing is deleted"))
+        for old in ("leave the index", "next pass moves", "nothing to move", "Let old Meetings pages fade", "Put aside"):
+            self.assertNotIn(old, sec)
+        self.assertIn("Let old Meetings pages become dormant, then archived", sec)
+
+    def test_a_count_with_something_to_move_has_a_review_button_and_one_without_has_none(self):
+        sec = self.section()
+        meetings = sec.split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
+        self.assertRegex(meetings, r'<button class="act" type="button" data-request="what would fade in Meetings" data-folder="[^"]+" '
+                                   r'title="[^"]*">Review the 7</button>')
+        write(self.root / "System" / "garrick-settings.json", json.dumps({"memory": {"wikis": {"Meetings": False}}}))
+        off = self.section().split('data-mw="Meetings"', 1)[1].split('data-mw="Knowledge"', 1)[0]
+        self.assertNotIn("data-request", off)                                           # nothing would move: no button
+        self.assertIn("review(false)", status.MEMORY_JS)                                # an unsaved change hides it: the list is the saved one
+        self.assertNotIn("host.postMessage({act:{verb:'fade", status.MEMORY_JS)         # it never fades anything itself
+
+    def test_the_kind_rules_are_inside_a_closed_advanced_with_plain_labels_and_fields_that_wrap(self):
+        sec = self.section()
+        adv = sec.index('<details class="madv">')
+        self.assertLess(adv, sec.index("Which pages each kind takes"))
+        self.assertNotIn('<details class="madv" open', sec)                              # closed, so its content is hidden
+        advanced = sec[adv:]
+        self.assertIn(">Page types <textarea", advanced)
+        self.assertIn(">Page domains <textarea", advanced)
+        self.assertNotIn("<code>type</code>", advanced)
+        self.assertNotIn('<input type="text" data-mk=', sec)
+        self.assertIn(".mlist textarea{width:100%", status.MEMORY_CSS)                    # a row of its own, the width of the section
+        self.assertIn("overflow-wrap:break-word", status.MEMORY_CSS)
+        self.assertNotIn("text-overflow", status.MEMORY_CSS)                              # a list wraps, it is never cut
+        self.assertIn("if(adv.open)adv.querySelectorAll('textarea').forEach(fit)", status.MEMORY_JS)
+        self.assertIn('title="meeting, email"', advanced)                                 # the whole list on hover as well
+
+    def test_advanced_is_indented_with_a_chevron_that_shows_its_state(self):
+        css = status.MEMORY_CSS
+        self.assertIn(".madv>summary::before{content:'\\25B8'", css)                       # right while closed
+        self.assertIn(".madv[open]>summary::before{content:'\\25BE'}", css)                # down while open
+        self.assertIn(".madv>:not(summary){margin-left:18px}", css)
 
     def test_with_the_real_fade_it_says_its_own_rules_and_links_the_full_list(self):
         fixtures.write_fade(self.root)

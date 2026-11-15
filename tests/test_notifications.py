@@ -13,6 +13,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -86,12 +87,12 @@ class Case(unittest.TestCase):
 class TestSettings(Case):
     def test_defaults(self):
         cfg = n.settings(self.ws)
-        self.assertEqual({"tell": {"needs-you": True, "finished": True, "waiting": True, "todo-summary": True,
+        self.assertEqual({"tell": {"needs-you": True, "finished": True, "todo-summary": True, "context-summary": True,
                                     "job-failed": True, "release": True},
-                          "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}}, cfg)
-        self.assertEqual(["needs-you", "finished", "waiting", "todo-summary", "job-failed", "release"], list(n.TELL_NAMES))
+                          "after": 2, "quiet": {"on": True, "from": "22:00", "to": "07:00"}}, cfg)      # a fresh workspace: a job failing is on
+        self.assertEqual(["needs-you", "finished", "todo-summary", "context-summary", "job-failed", "release"], list(n.TELL_NAMES))
         self.assertEqual("hold", n.QUIET["release"])                       # a newer Garrick waits for the morning
-        self.assertEqual({"needs-you": "send", "finished": "drop", "desk": "send"},
+        self.assertEqual({"needs-you": "send", "finished": "drop", "waiting": "send", "desk": "send"},       # a session that needs me gets through at night, as either event
                          {k: v for k, v in n.QUIET.items() if v != "hold"})
 
     def test_the_settings_file_is_garrick_libs(self):
@@ -103,13 +104,17 @@ class TestSettings(Case):
         self.assertFalse({"test", "token", "find-chat"} & set(ops.DECLARED["settings"].fields))
 
     def test_clean_keeps_what_the_page_sends(self):
-        given = {"tell": {"needs-you": True, "finished": False, "waiting": True, "todo-summary": True,
+        given = {"tell": {"needs-you": True, "finished": False, "todo-summary": True, "context-summary": False,
                           "job-failed": False, "release": True},
                  "after": 5, "quiet": {"on": True, "from": "21:30", "to": "06:45"}}
         self.assertEqual(given, n.clean(given))
         self.assertEqual(n.normal(given), n.normal(n.clean(given)))
-        self.assertEqual({"needs-you": True, "finished": True, "waiting": True, "todo-summary": True, "job-failed": True,
+        self.assertEqual({"needs-you": True, "finished": True, "todo-summary": True, "context-summary": True, "job-failed": True,
                           "release": True}, n.clean({})["tell"])
+        # a page of the release before still sends `waiting`: it is read into the merged row and never written
+        old = n.clean({"tell": {"needs-you": False, "waiting": True, "todo-summary": False}})["tell"]
+        self.assertEqual((True, False, False), (old["needs-you"], old["todo-summary"], old["context-summary"]))
+        self.assertNotIn("waiting", old)
 
     def test_clean_refuses(self):
         for bad in ({"token": "x"},
@@ -136,10 +141,10 @@ class TestSettings(Case):
                           "todo-summary": {"to": ["telegram"]}, "job-failed": {"to": ["mac", "command"]}},
                "quiet": {"on": False, "from": "23:00", "to": "06:00"},
                "zones": {"Personal": {"to": ["telegram"], "chat": "777"}}}
-        self.assertEqual({"tell": {"needs-you": True, "finished": False, "waiting": True, "todo-summary": False,
+        self.assertEqual({"tell": {"needs-you": True, "finished": False, "todo-summary": False, "context-summary": False,
                                     "job-failed": True, "release": True},
                           "after": 7, "quiet": {"on": False, "from": "23:00", "to": "06:00"}}, n.normal(old))
-        self.assertEqual({"needs-you": False, "finished": False, "waiting": False, "todo-summary": False,
+        self.assertEqual({"needs-you": False, "finished": False, "todo-summary": False, "context-summary": False,
                           "job-failed": False, "release": False},
                          n.normal(dict(old, channels={"mac": False}))["tell"])        # this Mac switched off: every notice off
         self.assertEqual(n.settings(self.ws)["tell"], n.normal({"events": {}})["tell"])
@@ -371,11 +376,34 @@ class TestWaiting(Case):
         self.assertEqual(1, n.waiting([dict(self.ROW, since="2026-10-14T12:00:00Z")], self.ws, env={}, now=NOON))
         self.assertEqual(2, len(self.osascripts()))
 
-    def test_it_is_a_choice_in_settings_and_off_means_nothing_is_sent(self):
-        self.assertIn("waiting", n.TELL_NAMES)
-        self.save({"tell": {"waiting": False}})
+    def test_it_follows_the_one_session_row_and_off_means_nothing_is_sent(self):
+        self.assertNotIn("waiting", n.TELL_NAMES)                            # no row of its own
+        self.save({"tell": {"needs-you": False}})
         n.waiting([self.ROW], self.ws, env={}, now=NOON)
         self.assertEqual([], self.osascripts())
+
+    def test_settings_saved_with_either_switch_on_keep_the_merged_row_on(self):
+        self.assertTrue(n.normal({"tell": {"needs-you": False, "waiting": True}})["tell"]["needs-you"])
+        self.assertTrue(n.normal({"tell": {"needs-you": True, "waiting": False}})["tell"]["needs-you"])
+        self.assertFalse(n.normal({"tell": {"needs-you": False, "waiting": False}})["tell"]["needs-you"])
+        self.save({"tell": {"needs-you": False, "waiting": True}})
+        self.assertEqual(1, n.waiting([self.ROW], self.ws, env={}, now=NOON))
+
+    def test_one_wait_sends_one_notice_with_every_switch_on(self):
+        hook = {"hook_event_name": "Notification", "session_id": "s1", "notification_type": "elicitation_dialog", "cwd": str(self.ws)}
+        stamp = NOON.timestamp()
+        row = dict(self.ROW, since=NOON.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        n.hook(hook, self.ws, env={}, now=stamp, detach=False)                    # the hook tells the wait as it begins
+        self.assertEqual(0, n.waiting([row], self.ws, env={}, now=NOON))          # the minute's read does not tell it again
+        self.assertEqual(1, len(self.osascripts()))
+        self.assertEqual(1, n.waiting([dict(row, id="s2")], self.ws, env={}, now=NOON))   # the other way round: the read tells it first
+        n.hook(dict(hook, session_id="s2"), self.ws, env={}, now=stamp + 30, detach=False)  # and the hook does not tell it again
+        self.assertEqual(2, len(self.osascripts()))                                # two sessions, two notices
+        self.assertEqual(0, n.waiting([dict(row, id="s2")], self.ws, env={}, now=NOON))
+        self.assertEqual(2, len(self.osascripts()))
+
+    def test_a_wait_the_hook_never_saw_is_still_told(self):
+        self.assertEqual(1, n.waiting([self.ROW], self.ws, env={}, now=NOON))        # a Codex session has no Notification hook
 
     def test_the_text_of_a_question_is_never_in_a_notice_and_a_job_sends_none(self):
         row = dict(self.ROW, question="Should we tell Birch about the discount?", waiting_for="a question\nBirch discount")
@@ -392,10 +420,10 @@ class TestWaiting(Case):
             n.waiting([dict(self.ROW, id="s2", folder="/elsewhere")], self.ws, env=env, now=NOON)
             self.assertEqual(1, legacy.call_count)                           # no zone known: the command is not run
 
-    def test_quiet_hours_hold_it_for_the_morning(self):
-        self.assertEqual("hold", n.QUIET["waiting"])
+    def test_quiet_hours_let_it_through_as_the_session_row_does(self):
+        self.assertEqual(n.QUIET["needs-you"], n.QUIET["waiting"])
         n.waiting([self.ROW], self.ws, env={}, now=NIGHT)
-        self.assertEqual([], self.osascripts())
+        self.assertEqual(1, len(self.osascripts()))
 
     def test_the_command_reads_agents_workings_json_on_standard_input(self):
         self.save({"quiet": {"on": False}})                                  # the command judges quiet hours by the clock
@@ -503,12 +531,13 @@ class TestPageAndSettings(Case):
         self.addCleanup(p.stop)
 
     def section(self):
-        html = self.status.build(self.ws, folder=self.base / "jobs")
+        with mock.patch.object(self.status, "launch_agents", lambda: self.base / "NoLaunchAgents"):      # never this Mac's
+            html = self.status.build(self.ws, folder=self.base / "jobs")
         start = html.index('<section class="setsec apponly" id="notify-settings"')
         return html[start:html.index("</section>", start)]
 
     def page_request(self, **more):
-        return dict({"tell": {"needs-you": True, "finished": False, "waiting": True, "todo-summary": True,
+        return dict({"tell": {"needs-you": True, "finished": False, "todo-summary": True, "context-summary": True,
                               "job-failed": True, "release": True},
                      "after": 4, "quiet": {"on": True, "from": "22:30", "to": "07:00"}}, **more)
 
@@ -541,10 +570,13 @@ class TestPageAndSettings(Case):
     def test_six_choices_and_quiet_hours_and_nothing_else(self):
         sec = self.section()
         for words in ("Notices appear on this Mac.", "Tell me when", "a session needs me", "a long task finishes",
-                      "a session is waiting on me", "the morning Todo summary is ready", "a scheduled job fails", "a newer Garrick is out", "Quiet from"):
+                      "the morning Todo summary is ready", "the morning Context summary is ready", "a scheduled job fails or recovers",
+                      "a newer Garrick is out", "Quiet from"):
             self.assertIn(words, sec)
+        self.assertNotIn("a session is waiting on me", sec)                                    # one row for both events
         self.assertIn('a long task finishes, <span class="nsafter">after <input type="number" id="n-after"', sec)
-        self.assertIn('<p class="hint nsrule">At night only &#8220;a session needs me&#8221; and the desk get through.</p>', sec)
+        self.assertRegex(sec, r'<p class="hint nsrule">At night only &#8220;a session needs me&#8221; gets through(\.|, and so do cmux)')
+        self.assertNotIn("desk", sec.lower())                                                  # the cmux extra's own name for itself
         self.assertIn("With every choice off, Garrick sends nothing.", sec)                      # behind the "?"
         for gone in ("Telegram", "My phone", "More options", "data-nch", "n-chat", "A command of your own", "data-nzto",
                      "Send to", "Send a test", "custom", "data-naway", "nover"):
@@ -559,10 +591,46 @@ class TestPageAndSettings(Case):
             "Label": "garrick.todo-sweep", "ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "todo-sweep", "--", "true"],
             "EnvironmentVariables": {"GARRICK_NOTIFY_CMD": "/bin/sh /opt/acme/notify.sh"}}))
         with mock.patch.object(self.status, "launch_agents", lambda: agents):
-            sec = self.section()
+            html = self.status.build(self.ws, folder=self.base / "jobs")
+        start = html.index('<section class="setsec apponly" id="notify-settings"')
+        sec = html[start:html.index("</section>", start)]
         self.assertNotIn("scheduled job sends", sec)
         self.assertIn("A scheduled job whose launchd plist sets GARRICK_NOTIFY or GARRICK_NOTIFY_CMD sends its notices its own way.",
                       sec)                                                                      # said once, behind the "?"
+
+    def test_a_row_a_job_sends_its_own_way_says_so_and_its_box_is_not_in_use(self):
+        agents = self.base / "LaunchAgents"
+        agents.mkdir()
+        import plistlib
+        (agents / "gr-todo-sweep.plist").write_bytes(plistlib.dumps({
+            "Label": "garrick.gr-todo-sweep", "ProgramArguments": ["/usr/bin/python3", "/w/System/jobs/job.py", "gr-todo-sweep", "--", "true"],
+            "EnvironmentVariables": {"GARRICK_NOTIFY_CMD": "/bin/sh /opt/acme/notify.sh"}}))
+        with mock.patch.object(self.status, "launch_agents", lambda: agents):
+            html = self.status.build(self.ws, folder=self.base / "jobs")
+        sec = html[html.index('id="notify-settings"'):]
+        sec = sec[:sec.index("</section>")]
+        todo = sec[sec.index('<label class="nsown"'):]
+        todo = todo[:todo.index("</label>") + 8]
+        self.assertIn("Sent by the todo sweep to the command you set, not by this switch.", todo)
+        self.assertIn('data-nt="todo-summary" disabled aria-disabled="true" checked', todo)    # not in use, and what is saved is kept
+        self.assertEqual(1, sec.count('class="nsown"'))                                       # the Context row has no job that does it
+        self.assertIn("nsown input{visibility:hidden", self.status.SETTINGS_CSS)
+        self.assertNotIn("desk", re.sub(r"<[^>]+>", " ", sec).lower())                       # the card holds no word desk
+
+    def test_switching_off_the_todo_row_stops_the_todo_digest_and_not_the_context_digest(self):
+        self.pa.save_settings(self.ws, {"verb": "settings", "notifications": self.page_request(tell={
+            "needs-you": True, "finished": False, "todo-summary": False, "context-summary": True, "job-failed": True, "release": True})})
+        self.assertFalse(self.lib.send("todo-summary", "Todo", "Todo · Work", root=self.ws, now=NOON, env={}))
+        self.assertTrue(self.lib.send("context-summary", "Context", "2 fixed", root=self.ws, now=NOON, env={}))
+        import importlib.util as _u
+        src = (REPO / "extras" / "jobs" / "nurture_sweep.py").read_text(encoding="utf-8")
+        self.assertIn('event="context-summary"', src)                                          # the nurture sweep's digest has its own event
+        self.assertNotIn('event="todo-summary"', src)
+
+    def test_an_update_gives_the_context_row_the_todo_rows_value(self):
+        self.assertFalse(n.normal({"tell": {"todo-summary": False}})["tell"]["context-summary"])
+        self.assertTrue(n.normal({"tell": {"todo-summary": True}})["tell"]["context-summary"])
+        self.assertTrue(n.normal({"tell": {"todo-summary": False, "context-summary": True}})["tell"]["context-summary"])   # its own, once saved
 
     def test_the_script_reads_the_form_into_what_clean_takes(self):
         js = self.status.NOTIFY_JS

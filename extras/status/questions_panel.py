@@ -329,20 +329,74 @@ def _href(link: Callable, path: Path) -> str:
     return link.attrs(path) if hasattr(link, "attrs") else 'href="%s"' % html.escape(str(link(path)), quote=True)
 
 
-def allowed_rows(rows: List[dict]) -> str:
-    """Allowed by you, for Settings (#542): each allowance with its file, rule, date and Remove, as the Context tab listed it;
-    "" where there is none."""
-    if not rows:
+KEPT_KIND = {"wording": ("Words also found in another zone", "them"), "link": ("A link to another zone", "it"),
+             "name": ("A name from another zone", "it"), "path": ("A path that leads to another zone", "it"),
+             "unlabelled": ("A page that names no zone", "it"), "copy": ("A copy of a file from another zone", "it")}
+KEPT_STATE = {"same": "", "changed": "The file has changed since, so this no longer allows anything.", "gone": "The file is gone."}
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
+
+
+def kept_place(path: str) -> str:
+    """The place a kept file belongs to: "Zones/<Zone>" or "Wikis/<Wiki>", "" for any other path."""
+    parts = path.split("/")
+    return "/".join(parts[:2]) if len(parts) > 2 and parts[0] in ("Zones", "Wikis") else ""
+
+
+def kept_where(path: str) -> str:
+    """Zone, project and thread of a kept file, from its path, as the Your work rows name them; a wiki's file names the wiki."""
+    parts = path.split("/")
+    if parts[0] == "Zones" and len(parts) > 3:
+        names = [parts[1], parts[2]]
+        if len(parts) > 5 and parts[3] == "Threads":
+            names.append(parts[4])
+        return " \u00b7 ".join(names)
+    return parts[1] if parts[0] == "Wikis" and len(parts) > 2 else ""
+
+
+def kept_day(day: str) -> str:
+    try:
+        y, m, d = (int(x) for x in day.split("-"))
+        return "%d %s" % (d, MONTHS[m - 1])
+    except (ValueError, IndexError):
         return ""
-    state = {"same": "", "changed": "The file has changed since, so this no longer allows anything.", "gone": "The file is gone."}
-    items = []
+
+
+def kept_row(r: dict) -> str:
+    said, them = KEPT_KIND.get(r["rule"], ("A finding you kept", "it"))
+    day = kept_day(r["date"])
+    name = Path(r["path"]).name
+    link = '<a %s>%s</a>' % (r["href"], _e(name)) if r["href"] else '<span>%s</span>' % _e(name)
+    where = kept_where(r["path"])
+    line = "%s \u00b7 you kept %s%s" % (said, them, " on " + day if day else "")
+    if KEPT_STATE[r["state"]]:
+        line += " \u00b7 " + KEPT_STATE[r["state"]]
+    tip = "Flag these words again at the next commit." if r["rule"] == "wording" else "Flag this again at the next commit."
+    return ('<li class="cxa-row" data-id="%s" data-path="%s"><div>%s%s</div><div class="muted">%s</div>'
+            '<button type="button" class="act" data-unallow="1" title="%s">Remove</button></li>'
+            % (_e(r["id"]), _e(r["path"]), '<small class="cxa-where">%s</small>' % _e(where) if where else "", link, _e(line), _e(tip)))
+
+
+def kept_card(rows: List[dict], title: Callable[[str], str]) -> str:
+    """Kept by you (#582), under the Context card's queue: what the user let through the wall check, once, a collapsed line
+    for each place with its own count (two places' counts are never added) and, opened, its rows with Remove; "" with none.
+    A row names its file and where it sits, and what kind of finding it was in plain words. It never quotes what was kept.
+    `title` names a place; a file of no zone or wiki sits in a place of its own, shown with every place."""
+    groups: dict = {}
     for r in rows:
-        name = '<a %s>%s</a>' % (r["href"], _e(r["path"])) if r["href"] else '<span>%s</span>' % _e(r["path"])
-        items.append('<li class="cxa-row" data-id="%s" data-path="%s"><div>%s</div><div class="muted">%s · allowed %s by %s%s</div>'
-                     '<button type="button" class="act" data-unallow="1">Remove</button></li>' % (
-                         _e(r["id"]), _e(r["path"]), name, _e(r["rule"]), _e(r["date"]), _e(r["by"]),
-                         (" · " + state[r["state"]]) if state[r["state"]] else ""))
-    return "".join(items)
+        groups.setdefault(kept_place(r["path"]), []).append(r)
+    if not groups:
+        return ""
+    help_ = ('<p class="hint">You kept these once, each for the file as it was. An allowance comes from <i>The words are mine, keep them</i> '
+             'in the queue, or from the command line. Editing the file ends it.</p>'
+             '<details class="kdet"><summary>Details</summary><p class="hint">From the command line, '
+             '<code>python3 System/tools/check.py allow</code> adds one.</p></details>')
+    out = ""
+    for place in sorted(groups, key=lambda sc: (sc == "", sc)):
+        n = len(groups[place])
+        out += ('<details class="kept" data-scope="%s" data-n="%d"><summary><span class="kn">Kept by you \u00b7 %d</span>%s</summary>%s<ul>%s</ul></details>'
+                % (_e(place), n, n, '<span class="muted kz">%s</span>' % _e(title(place)) if place else "", help_,
+                   "".join(kept_row(r) for r in groups[place])))
+    return '<div id="kept-by-you">%s</div>' % out
 
 
 def tab(findings: str) -> str:
@@ -368,20 +422,24 @@ def tab_button(dot: str = "") -> str:
 
 
 CX_CSS = r"""
-#allowed-settings ul{list-style:none;margin:8px 0 0;padding:0}.cxa-row{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
-.cxa-row .muted{grid-column:1}.cxa-row .act{grid-column:2;grid-row:1/3;align-self:center}
+#kept-by-you{margin:10px 0 0}#kept-by-you .kept{border-top:1px solid var(--line);padding:6px 0}#kept-by-you .kept[hidden]{display:none}
+#kept-by-you summary{cursor:pointer;font-size:13px;display:flex;gap:10px;align-items:center;min-height:24px}#kept-by-you .kz{font-size:13px}
+#kept-by-you ul{list-style:none;margin:8px 0 0;padding:0}.cxa-row{display:grid;grid-template-columns:1fr auto;gap:2px 13px;padding:8px 0;border-top:1px solid var(--line);font-size:13px}
+.cxa-row .muted{grid-column:1}.cxa-row .act{grid-column:2;grid-row:1/3;align-self:center}.cxa-where{display:block;color:var(--muted);font-size:13px}
+#kept-by-you .kdet summary{font-size:13px;color:var(--muted)}#kept-by-you .hint{margin:6px 0 0}
 """
 
 CX_JS = r"""
-(function(){var cx=document.getElementById('allowed-settings');if(!cx)return;
+(function(){var cx=document.getElementById('kept-by-you');if(!cx)return;
 var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 function say(s){if(window.GarrickSay)GarrickSay(s)}
-/* Allowed by you: Remove puts the refusal back, through the page's walls-unallow */
+/* Kept by you: Remove puts the refusal back, through the page's walls-unallow */
 cx.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-unallow]');if(!b)return;var r=b.closest('.cxa-row');if(!r)return;
 var q={verb:'walls-unallow',path:r.getAttribute('data-path'),id:r.getAttribute('data-id')};
 if(!host){say('A browser cannot change anything. Remove it in the Garrick app.');return}
 if(!(window.GarrickAct&&GarrickAct(q,'Removing…')))host.postMessage({act:q});say('Removing…')});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
-if(q&&q.verb==='walls-unallow'&&res&&res.ok){[].forEach.call(cx.querySelectorAll('.cxa-row'),function(r){if(r.getAttribute('data-path')===q.path&&r.getAttribute('data-id')===q.id)r.remove()})}
+if(q&&q.verb==='walls-unallow'&&res&&res.ok){[].forEach.call(cx.querySelectorAll('.cxa-row'),function(r){if(r.getAttribute('data-path')===q.path&&r.getAttribute('data-id')===q.id){var d=r.closest('.kept');r.remove();
+if(d){var n=d.querySelectorAll('.cxa-row').length;d.dataset.n=n;var k=d.querySelector('.kn');if(k)k.textContent='Kept by you \u00b7 '+n;if(!n)d.remove()}}})}
 if(prev)return prev(q,res)}})();
 """

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import json
 import re
 import sys
 import tempfile
@@ -702,6 +703,167 @@ class JobRows(unittest.TestCase):
         html = build_with_beats({"gr-ok": {"exit": 0, "ok": True}, "gr-bad": {"exit": 1}})
         self.assertNotIn('data-tip=""', html)
         self.assertIn("if(!t||!t.dataset.tip){tip.style.opacity=0;return}", html)
+
+
+class OpeningAThread(unittest.TestCase):
+    """Settings > Opening a thread: no path, the cmux setting under its row, a Default only where it can apply (#577)."""
+
+    def card(self):
+        return status.launcher_choices(("finder", "claude", "cmux"), why={}, agent="claude")
+
+    def test_the_card_holds_no_system_path(self):
+        self.assertNotIn("System/", re.sub(r"<[^>]+>", " ", self.card()))
+        self.assertNotIn("desk.json", self.card())
+
+    def test_the_agent_row_sits_under_cmux_indented_and_hides_with_its_box(self):
+        card = self.card()
+        self.assertLess(card.index('data-launcher="cmux"'), card.index('id="desk-agent-row"'))
+        self.assertRegex(card, r'class="launcher-row apponly launcher-sub" id="desk-agent-row"')
+        self.assertRegex(status.SETTINGS_CSS, r"\.launcher-sub\{padding-left:\d+px\}")
+        # shown and hidden in the script as the box is ticked, with no rebuild
+        self.assertIn("r.style.display=!c||c.disabled||!c.checked?'none':''", status.JS)
+        self.assertIn("daRow()", status.JS[status.JS.index("c.onchange=function(){var p=lprefs()"):][:600])
+
+    def test_a_default_is_drawn_only_on_a_row_that_is_on(self):
+        self.assertIn("r.parentNode.classList.toggle('nodefault',r.disabled)", status.JS)
+        self.assertIn(".launcher-default.nodefault{visibility:hidden}", status.SETTINGS_CSS)
+        self.assertIn("r.disabled=!c||c.disabled||!c.checked", status.JS)          # unticked, uninstalled: no radio
+        card = self.card()
+        self.assertNotIn('data-launcher="preview"></label><label class="launcher-default"', card)   # Preview never had one
+        self.assertEqual(5, card.count('name="garrick-default"'))
+
+    def test_switching_off_the_default_row_moves_it_and_says_so(self):
+        self.assertIn("GarrickPrefs.set(p,moved?'note':dpref())", status.JS)
+        self.assertIn("Clicking a thread now opens the note.", status.JS)
+
+
+class ChannelsCard(unittest.TestCase):
+    """Settings > Channels: Telegram's state first, its menus greyed while it is off, the held list on its own (#581)."""
+
+    def card(self, state=None):
+        import json as _json
+        import os as _os
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve()
+            root = base / "Workspace"
+            build_workspace(root)
+            jobs = base / "jobs"
+            jobs.mkdir()
+            if state:
+                (jobs / "telegram-status.json").write_text(_json.dumps(state), encoding="utf-8")
+            with mock.patch.dict(_os.environ, {"GARRICK_JOBS_DIR": str(jobs), "HOME": str(base)}):
+                return status.channels_settings(root)
+
+    def telegram_block(self, html):
+        return html[html.index("<b>Telegram</b>"):html.index('<div id="held-actions">')]
+
+    def test_off_the_state_line_comes_first_and_the_menus_are_greyed_with_a_button(self):
+        block = self.telegram_block(self.card())
+        self.assertTrue(block.index("Telegram is not set up.") < block.index("<select"))
+        self.assertEqual(3, len(re.findall(r"<select[^>]* disabled ", block)))
+        self.assertIn(status.NOT_SET_UP, block)
+        self.assertRegex(block, r'<button class="act" type="button" data-request="set up Telegram"[^>]*>Set up Telegram</button>')
+        self.assertLess(block.index("Set up Telegram"), block.index("<select"))
+
+    def test_running_the_menus_are_live_and_there_is_no_button(self):
+        import time as _time
+        block = self.telegram_block(self.card({"state": "running", "beat": _time.time(), "pid": 1, "last_received": None}))
+        self.assertNotIn(" disabled", block)
+        self.assertNotIn("Set up Telegram", block)
+
+    def test_another_program_reading_the_bot_is_said_in_plain_words(self):
+        why = "Another program is already reading this bot's messages."
+        block = self.telegram_block(self.card({"state": "conflict", "why": why, "beat": 1, "pid": 1}))
+        import html as _h
+        text = _h.unescape(block)
+        self.assertIn(why, text)
+        self.assertLess(text.index(why), text.index("<select"))
+
+    def test_the_held_list_has_its_own_heading_outside_both_channels(self):
+        html = self.card()
+        self.assertIn('<div id="held-actions"><p class="chnote"><b>Waiting for your yes</b></p>', html)
+        self.assertLess(html.index("<b>Telegram</b>"), html.index("Waiting for your yes"))
+        self.assertGreater(html.index("Waiting for your yes"), html.rindex('data-key="autonomy"'))
+
+    def test_no_path_and_no_model_code_name_in_the_visible_text(self):
+        html = self.card()
+        text = re.sub(r"<[^>]+>", " ", html)
+        for word in ("System/", "garrick-settings", "haiku", "sonnet", "opus", "git "):
+            self.assertNotIn(word, text.lower() if word != "System/" else text)
+        tiers = re.findall(r'data-key="tier"[^>]*>(.*?)</select>', html)
+        self.assertEqual(2, len(tiers))
+        for t in tiers:
+            self.assertEqual(["Small", "Medium", "Large"], re.findall(r"<option[^>]*>([^<]*)</option>", t))
+        self.assertIn("changes that can be undone", html)
+
+
+def two_zones_one_late_each(root):
+    """Work has one late action and Personal two: a sum would read 3."""
+    (root / "Zones" / "Work" / "Todo.md").write_text("# Work: open actions\n\n## Inbox\n\n- [ ] Send it \U0001F4C5 2026-11-02\n\n## Done\n", encoding="utf-8")
+    personal = root / "Zones" / "Personal"
+    personal.mkdir(parents=True, exist_ok=True)
+    (personal / "Todo.md").write_text("# Personal: open actions\n\n## Inbox\n\n- [ ] Pay it \U0001F4C5 2026-11-01\n- [ ] Book it \U0001F4C5 2026-11-03\n\n## Done\n", encoding="utf-8")
+
+
+class LookItems(unittest.TestCase):
+    """The look items of the 0.68.0 review: plural agreement, the Todo badge, the State reason, hit targets, the Guide's commands."""
+
+    def test_a_count_and_its_noun_agree_in_one_helper(self):
+        self.assertEqual(["1 error", "2 errors", "0 errors"], [status.counted(n, "error") for n in (1, 2, 0)])
+        self.assertEqual("1 project or thread", status.counted(1, "project or thread", "projects and threads"))
+        self.assertEqual("idle 1 day", "idle %s" % status.counted(1, "day"))
+        self.assertEqual("about 1 minute", "about %s" % status.counted(1, "minute"))
+        self.assertIn("(V.length===1?' note, ':' notes, ')+E.length+(E.length===1?' link':' links')", page_html())
+
+    def test_the_context_tile_and_caption_say_1_error_not_1_errors(self):
+        def check(errors, warnings):
+            def extra(root):
+                tools = root / "System" / "tools"
+                tools.mkdir(parents=True, exist_ok=True)
+                found = [{"check": "walls", "severity": "error", "path": "Zones/Work/Acme/Memo.md", "message": "links a file of zone Personal"}] * errors \
+                    + [{"check": "threads", "severity": "warning", "path": "Zones/Work/Acme/Pricing.md", "message": "no resume block"}] * warnings
+                (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {"errors": errors, "warnings": warnings, "findings": found})
+            return build_with_beats({}, extra)
+        one = check(1, 1)
+        self.assertIn("1<small>error</small>1<small>warning</small>", one)
+        self.assertNotRegex(one, r"\b1 (errors|warnings)\b")
+        two = check(2, 3)
+        self.assertIn("2<small>errors</small>3<small>warnings</small>", two)
+
+    def test_the_todo_badge_counts_the_zone_shown_and_the_script_follows_the_zone(self):
+        html = build_with_beats({}, two_zones_one_late_each)
+        bar = html[html.index('<div class="tabs" role="tablist">'):]
+        todo = bar[bar.index('data-tab="todo"'):bar.index("</button>", bar.index('data-tab="todo"'))]
+        self.assertRegex(todo, r'<span class="n crit" id="tabn-late" aria-label="1 action is late" title="1 action is late">')   # Work, the first zone: 1, not 3
+        state = html[html.index('id="state-data">'):]
+        data = json.loads(state[len('id="state-data">'):state.index("</script>")])
+        self.assertEqual({"Work": 1, "Personal": 2}, data["late"])                                    # each zone's own, for the script
+        self.assertIn("function lateBadge(z)", html)
+        self.assertIn("st.set('garrick-todo-zone',z);empties();lateBadge(z)", html)               # every change of zone sets it again
+        self.assertIn("b.hidden=!n", html)
+
+    def test_the_state_reason_shows_on_focus_as_well_as_hover(self):
+        # the row's markup is pinned in test_overview_work: a focusable span carrying the page's own tip, which listens for focus
+        self.assertIn("document.addEventListener('focusin',show)", status.JS)
+        self.assertIn("t.closest('[data-tip]')", status.JS)
+        self.assertIn(".ywait:focus-visible{outline", page_html())
+
+    def test_small_carets_and_help_marks_reach_24_pixels(self):
+        html = page_html()
+        self.assertIn('.tchev::after{content:"";position:absolute;inset:-2px}', html)             # 20px and 2px either side: 24
+        self.assertIn(".qhelp{position:relative;flex:none;width:17px;height:17px", html)
+        self.assertIn('.qhelp::after{content:"";position:absolute;inset:-4px}', html)             # 17px and 4px either side: 25
+        self.assertIn(".grip::after,.hide::after,.totab::after,.tick::after,.pchev::after", html)  # the rest were already padded out
+
+    def test_the_guide_shows_a_zone_command_only_behind_details(self):
+        gd = status.guide_mod()
+        text = "# Zones\n\nChange a flag:\n\n```\npython3 System/tools/scaffold.py zone --name Garden --walled\n```\n\nList them:\n\n```\nls Zones\n```\n"
+        html = gd.Renderer().render(text) if hasattr(gd, "Renderer") else ""
+        self.assertTrue(html)
+        shown = re.sub(r"<details class=\"gd-cmd\">.*?</details>", "", html, flags=re.S)
+        self.assertNotIn("scaffold.py", shown)
+        self.assertIn('<details class="gd-cmd"><summary>Details</summary><pre><code>python3 System/tools/scaffold.py zone', html)
+        self.assertIn("<pre><code>ls Zones</code></pre>", shown)                      # any other block stays as it was
 
 
 if __name__ == "__main__":

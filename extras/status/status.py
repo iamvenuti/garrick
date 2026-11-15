@@ -1456,7 +1456,7 @@ var sel=document.getElementById('nzone'),sum=document.getElementById('nsum'),tn=
 var lines=[].slice.call(card.querySelectorAll('.need[data-scope]'));
 function ss(k,v){try{if(v===undefined)return sessionStorage.getItem(k);sessionStorage.setItem(k,v)}catch(e){return null}}
 /* The Zone menu filters the lines. Each line is one place's own, so what shows is a place's count or nothing, and a number for the tab is a single place's, never a sum */
-function apply(){var z=sel?sel.value:'*',shown=lines.filter(function(l){var on=z==='*'||l.dataset.scope===z;l.hidden=!on;return on});
+function apply(){var z=sel?sel.value:'*';card.querySelectorAll('.kept[data-scope]').forEach(function(k){k.hidden=!(z==='*'||k.dataset.scope===z)});var shown=lines.filter(function(l){var on=z==='*'||l.dataset.scope===z;l.hidden=!on;return on});
 if(sum&&sum.dataset.some)sum.textContent=shown.length+' place'+(shown.length===1?' needs you.':'s need you.');
 if(tn){var c=z!=='*'&&shown.length&&shown[0].dataset.n!=='0'?+shown[0].dataset.n:0,w=c+(c===1?' question to answer':' questions to answer');
 tn.textContent=c||'';tn.hidden=!c;tn.setAttribute('aria-label',c?w:'');if(c)tn.title=w;else tn.removeAttribute('title')}}
@@ -4337,18 +4337,6 @@ def set_head(name: str, key: str, lede: str = "") -> str:
     return '<h3>%s%s</h3>%s' % (E(name), help_button(name, key), '<p class="setlede">%s</p>' % lede if lede else "")
 
 
-def allowed_settings(rows: List[dict]) -> str:
-    """Settings › Allowed by you (#542): what the user let through the wall check, once, each with Remove, as the Context tab
-    listed it; "" with none. Remove is the page's `walls-unallow`; nothing here allows anything."""
-    body = questions_mod().allowed_rows(rows)
-    if not body:
-        return ""
-    return ('<section class="setsec" id="allowed-settings">%s%s<ul>%s</ul></section>'
-            % (set_head("Allowed by you", "allowed", "A finding you chose to let through, once, for the file as it was."),
-               help_text("allowed", "Editing the file ends the allowance. Remove puts the refusal back at the next commit. "
-                                    "Only <code>check.py allow</code>, typed in a terminal, adds one."), body))
-
-
 def walls_settings(ws: Path, folder: Optional[Path] = None) -> str:
     """Settings › Walls (#561): one row for each zone, its name and Walled or Open as a pill, with a quiet Change… that hands
     "Make <zone> open" (or walled) to the assistant, the way Process the Inbox does (`data-request`). The page writes
@@ -4785,8 +4773,7 @@ def settings_nav(groups: List[Tuple[str, str, List[str]]]) -> str:
 def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] = (),
              styles: Optional[Dict[str, dict]] = None, graph: bool = False,
              link: Optional["Links"] = None,
-             kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None,
-             allowed: Optional[List[dict]] = None) -> str:
+             kinds: Optional[List[Tuple[str, str, str]]] = None, kind_styles: Optional[Dict[str, str]] = None) -> str:
     """The Settings dialog: which apps to open
     projects in, whether Explore follows the zone in view (with the graph),
     each zone's colour and icon, the colour of each kind of note Explore
@@ -4802,7 +4789,7 @@ def settings(ws: Path, installed: Tuple[str, ...] = (), zones: Tuple[str, ...] =
                       graph_colour_settings(kinds or [], kind_styles or {}) if graph else "", menu_settings()],
              "tell": [notify_settings(ws, CMUXLIB.is_file()), channels_settings(ws)],
              "keep": [memory_settings(ws, link)],
-             "walls": [walls_settings(ws), allowed_settings(allowed or [])],
+             "walls": [walls_settings(ws)],
              "about": [about_garrick(release_number(ws), ws), preview_section(preview_flags(ws))]}
     groups = [(key, title, [h for h in filed[key] if h]) for key, title in SET_GROUPS]
     main = "".join('<div class="setgroup" role="group" aria-labelledby="sg-%s"><p class="setgrp" id="sg-%s">%s</p>%s</div>'
@@ -5463,8 +5450,16 @@ def questions_data(ws: Path, C: Optional[dict], today: dt.date, link: "Links") -
         return None
 
 
+def kept_by_you(rows: list, said: Callable[[str], Tuple[str, str]]) -> str:
+    """The Context card's collapsed *Kept by you* lines under the queue (#582), one for each place with its own count; "" with none."""
+    try:
+        return questions_mod().kept_card(rows, lambda sc: scope_title(sc, said))
+    except Exception:
+        return ""
+
+
 def allowed_data(ws: Path, link: "Links") -> list:
-    """What the user allowed once, for the Context tab's Allowed by you; none on any fault."""
+    """What the user allowed once, for the Context card's Kept by you; none on any fault."""
     try:
         return questions_mod().read_allowed(ws, link)
     except Exception:
@@ -7746,7 +7741,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
     S = sessions(ws)                                       # None without the cmux extra
     qdata = questions_data(ws, C, now.date(), link)        # the Context tab (#224), None where it cannot be placed
-    allowed = allowed_data(ws, link)                       # the Context tab's Allowed by you (#447): what the user let through, once
+    allowed = allowed_data(ws, link)                       # the Context card's Kept by you (#447, #582): what the user let through, once
 
     # ---- what needs attention, worst first
     attn = []
@@ -8095,7 +8090,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     queue_names = {sc: scope_title(sc, said_scope) for sc in (queues or {})}
     checks_card = card("checks", "Context", ("no result yet" if C.get("pending") else "did not run") if C and C.get("failed") else found,
                        need_lines(ws, history, said_scope, queues, qdata, failed=queues_failed and queues is not None)
-                       + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
+                       + kept_by_you(allowed, said_scope) + debt_line(history) + override_note(ws, wall_place(queues)) + (listed_kept if listed else body),
                        chip=trend_chip(trend_word(history, now.date())))
     queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names, now.date().isoformat(), work_places) if fq else ""
 
@@ -8356,7 +8351,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             '<div id="tip" role="tooltip"></div><div id="toast" role="status"></div><div id="work" role="status" hidden></div>%s%s</body></html>' % (
                 E(NAME), favicon(), CSS + DEBT_CSS + (queue_mod().QUEUE_CSS if queue_view else "") + SETTINGS_CSS + BAR_CSS + TVIEW_CSS + TADD_CSS + TODO_CSS + MANAGE_CSS + FIND_CSS + WORK_CSS + HOME_CSS + YOURWORK_CSS + WAITING_CSS + (fs_scale(questions_mod().CX_CSS) if allowed else "") + MEMORY_CSS + guide_mod().GUIDE_CSS + zone_css()
                 + (NOTE_CSS if show_graph else "") + LOOK_CSS,
-                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS, allowed) + queue_view,
+                now.isoformat(timespec="seconds"), E(",".join(launch)), ' data-cli="1"' if cli else "", header, main, settings(ws, launch, tuple(T), ZS, show_graph, link, GK, GS) + queue_view,
                 "".join("<script>%s</script>" % js for js in scripts if js), guide_pages))
 
 

@@ -47,8 +47,7 @@ class Card(unittest.TestCase):
         html = status.waiting_card([row("b", "2026-11-10T09:50:00Z", thread="Birch Entry"),
                                     row("a", "2026-11-10T09:00:00Z", waits="an approval for Bash")], NOW)
         self.assertEqual(["a", "b"], re.findall(r'class="wrow" data-id="([^"]*)"', html))
-        self.assertIn("Waiting on you now", html)
-        self.assertIn("2 sessions", html)
+        self.assertIn("<h2>Two things need you.</h2>", html)                   # the heading is the lead sentence (#595)
         self.assertIn("an approval for Bash", html)
         self.assertIn("1 h", html)
         self.assertIn("10 min", html)
@@ -61,16 +60,14 @@ class Card(unittest.TestCase):
         self.assertIn("Claude&#x27;s desktop app, in Pricing", html)
         self.assertIn("Codex, in Freight", html)
 
-    def test_with_no_session_waiting_the_card_is_built_out_of_sight_and_says_nothing(self):
+    def test_with_no_session_waiting_the_card_is_built_calm_and_says_so_in_its_heading(self):
         html = status.waiting_card([], NOW)
-        self.assertIn('class="card nowait" id="waiting-now"', html)
+        self.assertIn('class="card calm" id="waiting-now"', html)
+        self.assertIn("<h2>Nothing needs you right now.</h2>", html)             # the heading says it; the body is folded away
         self.assertNotIn("No session is waiting on you.", html)
         self.assertIn('aria-live="polite"', html)                              # the region stays, so a new row is announced
-        self.assertNotIn("nowait", status.waiting_card([row("a", "2026-11-10T09:00:00Z")], NOW))
-        rule = re.search(r"#waiting-now\.nowait\{[^}]*\}", status.WAITING_CSS).group(0)
-        self.assertNotIn("display:none", rule)                                 # the live region stays in the accessibility tree
-        self.assertNotIn("visibility:hidden", rule)
-        self.assertIn("clip", rule)
+        self.assertNotIn("calm", status.waiting_card([row("a", "2026-11-10T09:00:00Z")], NOW))
+        self.assertIn("#waiting-now.calm>.body{display:none}", status.WAITING_CSS)
 
     def test_a_name_from_a_transcript_cannot_break_the_markup(self):
         html = status.waiting_card([row("a", "2026-11-10T09:00:00Z", thread='<img src=x onerror="1">')], NOW)
@@ -127,7 +124,8 @@ class El {
   querySelectorAll() { return []; }
 }
 const box = new El("div");
-const card = { classList: { on: null, toggle(c, on) { card.classList.on = on; } } };
+const h2 = new El("h2");
+const card = { dataset: { n: "0" }, querySelector: (q) => (q === "h2" ? h2 : null), classList: { on: null, toggle(c, on) { card.classList.on = on; } } };
 const sent = [];
 const ctx = { window: { webkit: { messageHandlers: { garrick: { postMessage: (m) => sent.push(m) } } } }, setInterval: () => 0, Date,
   document: { getElementById: (id) => (id === "wrows" ? box : id === "waiting-now" ? card : null), createElement: (t) => new El(t), querySelector: () => null } };
@@ -137,7 +135,7 @@ ctx.window.GarrickWaiting(data);
 const rows = box.children.map((r) => ({ id: r.dataset.id, text: r.textContent, go: r.children.filter((c) => c.dataset && c.dataset.wgo).map((c) => c.dataset.wgo) }));
 const target = { closest: () => ({ dataset: { wgo: "c" } }) };
 box.listeners.click({ target });
-process.stdout.write(JSON.stringify({ rows, sent, out: card.classList.on }));
+process.stdout.write(JSON.stringify({ rows, sent, calm: card.classList.on, lead: h2.textContent }));
 """
 
 
@@ -161,8 +159,11 @@ class CardScript(unittest.TestCase):
         self.assertIn("<b>x</b>", out["rows"][0]["text"])                    # shown as text, never read as markup
         empty = self.run_js([])
         self.assertEqual([], empty["rows"])                                  # no line for an empty minute
-        self.assertTrue(empty["out"])                                        # the card goes out of sight with the last row
-        self.assertFalse(self.run_js([row("a", "2026-11-10T09:00:00Z")])["out"])     # and shows with the first
+        self.assertTrue(empty["calm"])                                       # the card goes calm with the last row
+        self.assertEqual("Nothing needs you right now.", empty["lead"])
+        one = self.run_js([row("a", "2026-11-10T09:00:00Z")])
+        self.assertFalse(one["calm"])                                        # and leads with the first
+        self.assertEqual("One thing needs you.", one["lead"])
 
 
 if __name__ == "__main__":

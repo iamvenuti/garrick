@@ -361,7 +361,7 @@ class TestAKeptRequestSurvivesAPageLoadWithNoHost(CardCase):
         kept = self.run_steps("away-click-only")                 # Hand it over pressed, the handoff never reported as done
         self.assertEqual(["work in the answers in Work"], kept["after"])
         self.assertIsNotNone(kept["store"])
-        self.assertIn("window.GarrickHanded=function(p){if(kept()[p])drop(p)}", fq.QUEUE_JS)
+        self.assertIn("window.GarrickHanded=function(p){if(keptReqs()[p])drop(p)}", fq.QUEUE_JS)
         self.assertNotIn("setTimeout(function(){drop(gp)},0)", fq.QUEUE_JS)
 
     def test_it_goes_to_the_dialogs_folder_never_a_stored_one(self):

@@ -170,6 +170,8 @@ class Receiver:
         except ApiError as e:
             if e.code == 409:
                 return "Telegram says another program is already reading this bot's messages."
+            if getattr(e, "certificate", False):
+                return self.bot.scrub(str(e))
             return "The bot could not be reached to check for another reader: %s" % self.bot.scrub(str(e))
         ids1, ids2 = [u["update_id"] for u in first], [u["update_id"] for u in second]
         if ids1 and (not ids2 or min(ids2) > min(ids1)):
@@ -285,7 +287,13 @@ class Receiver:
     def ask_subject(self, msg: dict, decision: dict) -> None:
         """One short question before any project content is read or changed. The question's message id leads back to a
         record that holds the message it is about, so an answer is read together with it."""
-        ex = self.m["exchanges"].new(None, None, None, "", self.now(), pending_subject={"text": decision["text"]})
+        if decision.get("kind") in ("which-subject", "nothing"):      # a question to say, not one to wait on: none is added
+            self.set_message(msg["id"], state="waiting")
+            return self.say(decision["question"], None, msg["message_id"])
+        if decision.get("answer_to"):                       # asked again: the old question is settled, never counted twice
+            self.m["exchanges"].close(decision["answer_to"], "answered", self.now())
+        ex = self.m["exchanges"].new(None, None, None, "", self.now(),
+                                     pending_subject={"text": decision["text"], "offer": decision.get("offer") or []})
         self.m["exchanges"].link(ex["id"], msg["message_id"], self.now())
         sent = self.say(decision["question"], ex, msg["message_id"])
         self.set_message(msg["id"], state="waiting", exchange=ex["id"])
@@ -375,6 +383,9 @@ class Receiver:
             fresh = not ex.get("session")
             context = ex_mod.resume_context(ex) if fresh and (ex.get("recent") or ex.get("pending")) else ""
             text = "\n\n".join(r["text"] for r in batch)
+            if ex.get("project") and not ex.get("thread") and fresh:      # a project alone: answered from its hub and threads
+                text = ("This is about the project %s. Answer from its hub note's Resume block and its threads' Next actions."
+                        "\n\n%s" % (ex["project"], text))
             self.cap = self.cap or ch.capability(self.ws)
             got = eng.run(self.ws, "telegram", text, ex["zone"], {"id": eid, "session": ex.get("session")}, self.runner, self.cap,
                           fresh=fresh, context=context)

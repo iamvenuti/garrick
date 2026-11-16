@@ -163,7 +163,7 @@ class TestPlainWording(unittest.TestCase):
                           ["Move older entries to history", "Show me what would move", "Not now"]),
             "resume-long": ("The resume point of Pricing is getting long: about 500 words.", ["Shorten it", "Not now"]),
             "todo-long": ("3 lines in the Work to-do list are longer than an action should be.", ["Shorten the line", "Not now"]),
-            "meeting-long": ("A meeting note is longer than usual: about 600 words.", ["Shorten it", "Let me open it", "Not now"]),
+            "meeting-long": ("The meeting note “Call”, 12 Oct, is longer than usual: about 600 words.", ["Shorten it", "Let me open it", "Not now"]),
             "hooks-blocked": ("The Work zone does not check the walls before a commit.", ["Add the wall check to my hook"]),
             "wall": ("“261027 - Sales deck” in Work points into private material from Personal.", ["Show me both texts", "Take it out", "The words are mine, keep them"]),
         }
@@ -209,8 +209,9 @@ class TestPlainWording(unittest.TestCase):
         self.assertEqual([("add-check", "handoff")], ids["hooks-blocked"])                    # no Not now: hidden, the walls go unchecked
         # no Not now; the look first, then Take it out, then the page's own allowance (#548, #550)
         self.assertEqual([("show-both", "look"), ("take-out", "handoff"), ("keep", "allow")], ids["wall"])
-        self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later",), "todo-long": ("later",),
-                          "meeting-long": ("later",), "hooks-blocked": (), "fix-failed": ("later",), "answers-held": ("later",), "wall": (),
+        self.assertEqual({"note-long": ("move-older", "preview", "later"), "resume-long": ("later", "shorten", "undo-bounded"), "todo-long": ("later",),
+                          "meeting-long": ("later", "shorten", "undo-bounded"), "hooks-blocked": (), "fix-failed": ("later", "fix-now", "undo-bounded"),
+                          "answers-held": ("later",), "wall": ("take-out", "undo-bounded"),
                           "verdict": ("later",), "decision-review": ("later",), "other": ("later",)}, fq.VERB_ANSWERS)      # the wiki's kinds are put off and nothing else (#542)
         for kind, answers in fq.ANSWERS.items():
             if kind != "wall":                                                               # a wall recommends nothing
@@ -946,14 +947,15 @@ class TestFindingVerb(ActionCase):
         ops = pa.ops_lib(self.root)
         self.assertIn("finding", pa.VERBS)
         self.assertIn("finding", ops.DECLARED)
-        self.assertEqual(("kind", "path", "answer"), ops.DECLARED["finding"].fields)
+        self.assertEqual(("kind", "path", "answer", "commit", "repo"), ops.DECLARED["finding"].fields)      # commit and repo ride with Undo (#592)
         self.assertIsNone(ops.validate("finding", {"verb": "finding", "kind": "note-long", "path": self.rel, "answer": "preview"}))
         self.assertIsNotNone(ops.validate("finding", {"verb": "finding", "kind": "note-long", "path": self.rel, "answer": "preview", "extra": 1}))
 
     def test_an_unknown_kind_or_answer_is_refused_and_nothing_runs(self):
         for req in ({"kind": "nonsense", "answer": "preview"}, {"kind": "note-long", "answer": "nonsense"},
-                    {"kind": "wall", "answer": "later"}, {"kind": "wall", "answer": "take-out"}, {"kind": "hooks-missing", "answer": "later"},
-                    {"kind": "note-long", "answer": "shorten"}, {"kind": "resume-long", "answer": "shorten"},
+                    {"kind": "wall", "answer": "later"}, {"kind": "hooks-missing", "answer": "later"},
+                    {"kind": "note-long", "answer": "shorten"}, {"kind": "todo-long", "answer": "shorten"},
+                    {"kind": "note-long", "answer": "undo-bounded"}, {"kind": "hooks-blocked", "answer": "undo-bounded"},
                     {"kind": "meeting-long", "answer": "open"}, {"kind": 5, "answer": "later"}, {"kind": "note-long", "answer": ["later"]}):
             with mock.patch.object(pa, "finding_run") as run:
                 got = self.ask(path=self.rel, **req)
@@ -1049,6 +1051,86 @@ class TestFindingVerb(ActionCase):
                     self.assertTrue(a["phrase"])
         self.assertEqual(6, sent)
         self.assertFalse(self.ask(kind="note-long", answer="bogus", path=self.rel)["ok"])
+
+
+    # ---- #592: a bounded edit through the engine, and its Undo -----------------------------------------------------
+
+    def engine(self):
+        return pa.engine_module()
+
+    def test_a_bounded_answer_asks_the_engine_for_the_finding_file_in_its_own_zone_and_replies_with_an_undo(self):
+        eng = self.engine()
+        thread = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        sent = {"ok": True, "say": "Made the change and committed it.", "commit": "a" * 40, "files": [thread], "repo": "Zones/Work"}
+        with mock.patch.object(eng, "run_bounded", return_value=sent) as run:
+            got = self.ask(kind="resume-long", answer="shorten", path=thread)
+        self.assertTrue(got["ok"], got)
+        args = run.call_args[0]
+        self.assertEqual(("Work", [thread]), (args[1], args[2]))
+        self.assertIn(thread, args[3])
+        self.assertNotIn("check", args[3].lower())                                      # the request never repeats the check's own text
+        self.assertEqual(("a" * 40, "Zones/Work"), (got["commit"], got["repo"]))
+        self.assertIsNone(pa.ops_lib(self.root).validate("finding", got["undo"]))     # the Undo the page sends is a valid request
+        self.assertEqual({"verb": "finding", "kind": "resume-long", "path": thread, "answer": "undo-bounded", "commit": "a" * 40,
+                          "repo": "Zones/Work"}, got["undo"])
+
+    def test_a_meeting_page_is_bound_to_its_wiki_and_the_reply_names_the_page(self):
+        wiki = self.root / "Wikis" / "Meetings" / "wiki"
+        write(wiki / "261012 - Call.md", "---\ntitle: Acme pricing review\ndate: 2026-03-03\n---\n" + "word " * 120 + "\n")
+        rel = "Wikis/Meetings/wiki/261012 - Call.md"
+        with mock.patch.object(self.engine(), "run_bounded", return_value={"ok": True, "commit": "b" * 40, "files": [rel], "repo": "Wikis/Meetings"}) as run:
+            got = self.ask(kind="meeting-long", answer="shorten", path=rel)
+        self.assertEqual("Meetings", run.call_args[0][1])
+        self.assertEqual("Shortened “Acme pricing review” to about 100 words.", got["say"])
+
+    def test_an_unavailable_engine_is_a_reply_not_a_refusal_so_the_page_opens_the_assistant(self):
+        thread = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        with mock.patch.object(self.engine(), "run_bounded", return_value={"ok": False, "unavailable": True, "say": "Not available."}):
+            got = self.ask(kind="resume-long", answer="shorten", path=thread)
+        self.assertEqual((True, True), (got["ok"], got["unavailable"]))
+        self.assertNotIn("commit", got)
+
+    def test_a_failed_bounded_edit_is_a_refusal_with_the_sentence(self):
+        thread = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        with mock.patch.object(self.engine(), "run_bounded", return_value={"ok": False, "say": "The commit was refused, so no change was kept."}):
+            got = self.ask(kind="resume-long", answer="shorten", path=thread)
+        self.assertEqual((False, "The commit was refused, so no change was kept."), (got["ok"], got["say"]))
+
+    def test_the_whole_way_with_a_stub_assistant_shortens_commits_and_undoes(self):
+        eng = self.engine()
+        thread = self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
+        rel = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        before = thread.read_text()
+        cap = eng.channels.evaluate(self.root, "--resume --allowedTools --strict-mcp-config Bash(git *)", True)
+
+        def assistant(cmd, tier, cwd, env):
+            thread.write_text(before.replace("Drafting.", "Short."))
+            return 0, {"text": "done", "session_id": "s", "usage": {}, "cost_usd": 0}
+        with mock.patch.dict(os.environ, {"GARRICK_HARNESS": "claude"}), mock.patch.object(eng.channels, "capability", return_value=cap), \
+                mock.patch.object(eng, "default_runner", assistant):
+            got = self.ask(kind="resume-long", answer="shorten", path=rel)
+            self.assertTrue(got["ok"], got)
+            self.assertIn("Short.", thread.read_text())
+            self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+            self.assertRegex(git(self.work, "log", "-1", "--format=%B"), r"Garrick-Bounded: [0-9a-f]{8}")
+            undone = self.ask(**{k: v for k, v in got["undo"].items() if k != "verb"})
+        self.assertTrue(undone["ok"], undone)
+        self.assertEqual(before, thread.read_text())
+
+    def test_an_undo_with_a_bad_commit_or_repo_is_refused_before_anything_runs(self):
+        thread = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        for repo, commit in (("Zones/Work", "nonsense"), ("../x", "a" * 40), ("Zones/Work/Acme Review", "a" * 40), (None, "a" * 40), ("Zones/Work", None)):
+            got = self.ask(kind="resume-long", answer="undo-bounded", path=thread, repo=repo, commit=commit)
+            self.assertFalse(got["ok"], (repo, commit))
+
+    def test_every_bounded_request_is_valid_and_names_no_other_file(self):
+        ops = pa.ops_lib(self.root)
+        for kind, ids in fq.BOUNDED.items():
+            for answer in ids:
+                text = fq.bounded_request(kind, answer, "Zones/Work/Acme Review/Acme Review.md")
+                self.assertIn("Zones/Work/Acme Review/Acme Review.md", text)
+                self.assertNotIn("`", text)
+                self.assertIsNone(ops.validate("finding", {"verb": "finding", "kind": kind, "path": "x", "answer": answer}))
 
 
 def old_days(n):
@@ -1187,6 +1269,167 @@ class TestLongNoteFromItsPlan(QueueCase):
             if a["action"] == "later":
                 self.assertIsNone(ops.validate("finding", a["req"]))
         self.assertIn("split", fq.ANSWERS_NO_MOVE["note-long"][0]["id"])
+
+
+class TestEveryQuestionNamesItsSubject(unittest.TestCase):
+    """#592: a plain question says which page, which note or which zone it is about, and Details opens with it."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.ws = Path(self._tmp.name)
+        self.addCleanup(self._tmp.cleanup)
+
+    def meeting(self, name, title=None, date=None, words=500):
+        head = "---\n%s%stype: meeting\n---\n" % ("title: %s\n" % title if title else "", "date: %s\n" % date if date else "")
+        write(self.ws / "Wikis" / "Meetings" / "wiki" / name, head + "word " * words + "\n")
+        return "Wikis/Meetings/wiki/" + name
+
+    def long_meeting(self, path, words=550):
+        return item("judgment", "meetings", path, "%(p)s: its body is " + str(words) + " words, over the 450 of `meeting-max-words`; "
+                    "a page is one line on who was there, `## Key points` and `## Actions`, about 350 words")
+
+    def test_two_long_meeting_pages_give_two_sentences_with_title_and_date_and_no_path(self):
+        a = self.meeting("261012 - a.md", "Acme pricing review", "2026-03-03", 550)
+        b = self.meeting("261013 - b.md", "Birch kickoff", "2026-04-21", 600)
+        qa = fq.question(self.long_meeting(a), "Wikis/Meetings", ws=self.ws)
+        qb = fq.question(self.long_meeting(b, 600), "Wikis/Meetings", ws=self.ws)
+        self.assertEqual("The meeting note “Acme pricing review”, 3 Mar, is longer than usual: about 600 words.", qa["sentence"])
+        self.assertIn("“Birch kickoff”, 21 Apr,", qb["sentence"])
+        self.assertNotEqual(qa["sentence"], qb["sentence"])
+        for q in (qa, qb):
+            self.assertNotIn("/", q["sentence"])
+            self.assertNotIn(".md", q["sentence"])
+
+    def test_the_title_falls_back_to_the_files_name_and_its_day(self):
+        path = self.meeting("261012 - Budget call.md")
+        q = fq.question(self.long_meeting(path), "Wikis/Meetings", ws=self.ws)
+        self.assertTrue(q["sentence"].startswith("The meeting note “Budget call”, 12 Oct, is longer than usual"), q["sentence"])
+        q = fq.question(self.long_meeting("Wikis/Meetings/wiki/261012 - Budget call.md"), "Wikis/Meetings")                 # no workspace at all
+        self.assertTrue(q["sentence"].startswith("The meeting note “Budget call”, 12 Oct,"), q["sentence"])
+
+    def test_details_opens_with_the_title_and_the_wiki_and_says_the_limit_in_plain_words(self):
+        path = self.meeting("261012 - a.md", "Acme pricing review", "2026-03-03", 521)
+        it = self.long_meeting(path, 521)
+        q = fq.question(it, "Wikis/Meetings", ws=self.ws)
+        self.assertEqual("“Acme pricing review”, 3 Mar, in the Meetings wiki. 521 words; the limit is 450, and a meeting page aims at about 350.",
+                         q["details"])
+        for kind, it2 in KINDS.items():
+            if kind in ("note-long", "resume-long", "todo-long", "meeting-long"):
+                d = fq.question(it2, "Zones/Work")["details"]
+                for bad in ("`", "-max-", "##", "**", "history.py"):
+                    self.assertNotIn(bad, d.split("\n")[0], (kind, d))
+
+    def test_every_plain_kind_names_its_subject_so_two_files_never_share_a_sentence(self):
+        pairs = {
+            "wall": ("Zones/Work/A/Deliverables/261027 - Deck one.md", "Zones/Work/A/Deliverables/261027 - Deck two.md", WALL_LINE),
+            "note-long": ("Zones/Work/Acme Review/Acme Review.md", "Zones/Work/Birch Entry/Birch Entry.md", NOTE_LINE),
+            "resume-long": ("Zones/Work/Acme Review/Threads/Pricing/Pricing.md", "Zones/Work/Acme Review/Threads/Terms/Terms.md", RESUME_LINE),
+            "todo-long": ("Zones/Work/Todo.md", "Zones/Personal/Todo.md", TODO_LINE),
+            "meeting-long": ("Wikis/Meetings/wiki/261012 - One.md", "Wikis/Meetings/wiki/261013 - Two.md", MEETING_LINE),
+            "hooks-blocked": ("Zones/Work", "Zones/Personal", HOOKS_LINE),
+            "fix-failed": ("Zones/Work/Acme Review/One.md", "Zones/Work/Acme Review/Two.md", "%(p)s: fixed (held: refused by the wall check)"),
+        }
+        self.assertEqual(set(fq.PLAIN_KINDS), set(pairs), "a kind with plain wording needs a pair here")
+        for plain, (one, two, line) in pairs.items():
+            kind = {"wall": "wall", "hooks-blocked": "judgment", "fix-failed": "mechanical"}.get(plain, "judgment")
+            check = {"note-long": "projects", "resume-long": "resume", "todo-long": "todo", "meeting-long": "meetings",
+                     "hooks-blocked": "zones", "wall": "", "fix-failed": "x"}[plain]
+            sentences = []
+            for path in (one, two):
+                it = item(kind, check, path, line, **({"listed": True, "message": "%s: repeats eight or more words from Personal: '%s'" % (path, REPEATED)} if plain == "wall" else {}))
+                if plain == "hooks-blocked":
+                    it = item("judgment", "zones", path, HOOKS_LINE)
+                q = fq.question(it, "Zones/Work")
+                sentences.append(q["sentence"])
+                self.assertTrue(q["subject"], plain)
+            self.assertNotEqual(sentences[0], sentences[1], plain)
+
+    def test_the_question_carries_its_subject_and_the_files_hash_for_the_page(self):
+        path = self.meeting("261012 - a.md", "Acme pricing review", "2026-03-03", 521)
+        q = fq.question(self.long_meeting(path), "Wikis/Meetings", ws=self.ws)
+        markup = fq.question_html(q)
+        self.assertIn('data-subject="Acme pricing review"', markup)
+        self.assertRegex(markup, r'data-fh="[0-9a-f]{12}"')
+        write(self.ws / path, "changed\n")
+        self.assertNotEqual(q["fh"], fq.question(self.long_meeting(path), "Wikis/Meetings", ws=self.ws)["fh"])
+
+    def test_a_path_that_leads_out_of_the_workspace_reads_nothing(self):
+        write(self.ws.parent / "outside.md", "---\ntitle: Secret\n---\n")
+        self.addCleanup(lambda: (self.ws.parent / "outside.md").unlink())
+        self.assertEqual({}, fq.front(self.ws, "../outside.md"))
+        self.assertEqual("", fq.file_hash(self.ws, "../outside.md"))
+
+
+class TestHandoffMemoryAndBoundedAnswers(unittest.TestCase):
+    """#592: a handed-off question is remembered until its file changes or a day passes; a bounded answer asks the engine first."""
+
+    def test_the_handed_line_has_a_place_and_says_who_it_was_handed_to(self):
+        markup = fq.dialog("/w", {"Zones/Work": [fq.question(KINDS["resume-long"], "Zones/Work")]}, {"Zones/Work": "Work"})
+        self.assertRegex(markup, r'<div class="qlast hint" role="status" hidden></div>')
+        self.assertLess(markup.index('class="qlast'), markup.index("data-q "))
+        self.assertIn("Handed to your assistant: \\u201c", fq.QUEUE_JS)
+
+    def test_the_memory_is_keyed_by_the_finding_and_its_files_hash_and_ends_after_a_day(self):
+        js = fq.QUEUE_JS
+        part = js[js.index("var HAND="):js.index("function showLast(")]
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no node")
+        script = ("var store={};var st={get:function(k){return k in store?store[k]:null},set:function(k,v){store[k]=v},del:function(k){delete store[k]}};"
+                  "eval(process.argv[1]);var now=Date.now();var real=Date.now;"
+                  "function q(gk,fh){return{dataset:{gk:gk,fh:fh}}}"
+                  "var out=[];out.push(isHanded(q('a','1')));remember(q('a','1'));out.push(isHanded(q('a','1')));"
+                  "out.push(isHanded(q('a','2')));out.push(isHanded(q('b','1')));"
+                  "remember(q('c',''));out.push(isHanded(q('c','')));"
+                  "Date.now=function(){return now+864e5+1000};out.push(isHanded(q('a','1')));console.log(out.join(','))")
+        got = subprocess.run([node, "-e", script, part], capture_output=True, text=True, timeout=30)
+        self.assertEqual("false,true,false,false,false,false", got.stdout.strip(), got.stderr)
+
+    def test_a_handed_question_leaves_the_queue_and_the_progress_still_counts_it(self):
+        js = fq.QUEUE_JS
+        self.assertIn("!gone[q.dataset.gk]&&!skip[q.dataset.gk]&&!isHanded(q)", js)
+        self.assertIn("k=n-left.length+1", js)
+        fin = js[js.index("function finish("):js.index("function handoff(")]
+        self.assertIn("remember(q)", fin)
+        self.assertIn("clearLast()", fin)                                           # the line stays until the next answer
+        self.assertIn("HAND='garrick-queue-handed'", js)
+        self.assertNotIn("st.del(HAND)", js[js.index("[data-qclose]"):js.index("[data-qclose]") + 80])      # a close does not clear it
+
+    def test_the_second_kept_function_no_longer_hides_the_first(self):
+        js = fq.QUEUE_JS
+        self.assertEqual(1, js.count("function kept("))
+        self.assertIn("function keptReqs(", js)
+
+    def test_the_bounded_answers_carry_a_request_and_keep_the_phrase_for_a_browser(self):
+        for plain, ids in fq.BOUNDED.items():
+            it = KINDS[plain] if plain in KINDS else item("mechanical", "x", "Zones/Work/Acme Review/One.md", "%(p)s: fixed (held: refused by the wall check)")
+            q = fq.question(it, "Zones/Work")
+            for a in q["answers"]:
+                if a["id"] in ids:
+                    self.assertEqual({"verb": "finding", "kind": plain, "path": q["path"], "answer": a["id"]}, a["req"], plain)
+                    self.assertTrue(a["phrase"], plain)
+                    data = json.loads(htmllib.unescape(re.search(r'data-id="%s" data-fa="([^"]+)"' % a["id"], fq.question_html(q)).group(1)))
+                    self.assertEqual((a["req"], a["phrase"]), (data["req"], data["phrase"]))
+        self.assertTrue(set(fq.BOUNDED) <= set(fq.PLAIN_KINDS))
+        for plain in ("todo-long", "hooks-blocked", "note-long"):
+            self.assertNotIn(plain, fq.BOUNDED)                                    # two files, a hook of the user's, or a move with its own verb
+
+    def test_the_script_runs_a_bounded_answer_through_the_engine_and_falls_back_to_a_tab_when_it_cannot(self):
+        js = fq.QUEUE_JS
+        click = js[js.index("if(d.a==='handoff'){"):][:330]
+        self.assertIn("d.req&&boundedOK()", click)
+        self.assertIn("host.postMessage({act:d.req})", click)
+        self.assertIn("handoff(d.phrase);finish(q,'handed')", click)               # a browser, or Ask switched off
+        self.assertIn("function boundedOK(){var a=window.GarrickApp||{};return!!host&&a.ask!==false}", js)
+        self.assertIn("res.unavailable){handoff(p.phrase);finish(el,'handed')}", js)  # the engine said it is not there: a visible assistant
+        self.assertIn("setLast(res.say,{undo:res.undo||null,show:q.path})", js)       # the result, with Undo and Show me
+        self.assertIn("data-qundo", js)
+        self.assertIn("data-qshow", js)
+        self.assertIn("answer==='undo-bounded'", js)
+        node = shutil.which("node")
+        if node:
+            done = subprocess.run([node, "-e", "new Function(require('fs').readFileSync(0,'utf8'))"], input=js, capture_output=True, text=True)
+            self.assertEqual(0, done.returncode, done.stderr)
 
 
 class TestRefusedAnswerOnTheQueue(unittest.TestCase):

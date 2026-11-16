@@ -901,6 +901,7 @@ SETTING_KINDS = {
     "todo-expire-days": (int, dict),     # days an untriaged Todo line waits, or {zone: days}: the todo skill's
     "todo-inbox-order": (str, dict),     # "first-seen" or "thread", or {zone: either}: the todo skill's
     "todo-chase-days": (int, dict),      # days ahead a swept Waiting on line's ⏳ is set, 0 for none, or {zone: days}
+    "todo-thread-cap": (int, dict),      # open lines a thread should hold at most, 0 for none, or {zone: n}: Distil's
     "memory": (str, list),   # the folder, or folders, where the assistant keeps a memory of its own
     "nurture-weights": dict,             # finding kind -> its weight in the context debt: nurture.py's
     "nurture-threshold": (int, float),   # the context debt over which the morning digest says so
@@ -2896,6 +2897,10 @@ TODO_LONG = 200  # characters of a line as Obsidian shows it, past which it is a
 TODO_FIELD_ANY_RE = re.compile(r"\s*(?:[🔺⏫🔼🔽⏬]\uFE0F?|(?:📅|📆|🗓|⏳|⌛|🛫|➕|✅|❌)\uFE0F? *\d{4}-\d{2}-\d{2})")
 TODO_WIKILINK_RE = re.compile(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]")
 TODO_MDLINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+# Distil (#591): open lines a thread should hold at most (`todo-thread-cap`, `0` for none), and the clause a
+# Waiting on line carries to name the line of the user's it blocks.
+TODO_THREAD_CAP = 5
+TODO_BLOCKS_RE = re.compile(r"\s+—\s+blocks:\s*(.+?)\s*(?:·|#waiting|[⏳📅]|$)")
 
 
 def tasks_description(line: str) -> str:
@@ -2957,6 +2962,59 @@ def system_threads(ws: Workspace) -> set:
         if in_system(ws, project):
             out.add(project.name.lower())
             out.update(t.name.lower() for t in visible_dirs(project / "Threads") if (t / (t.name + ".md")).is_file())
+    return out
+
+
+def todo_thread_cap(ws: Workspace, zone: Path) -> int:
+    """The open lines one thread should hold in this zone: `todo-thread-cap`, a number or one per zone;
+    TODO_THREAD_CAP otherwise, 0 for none."""
+    value = ws.settings.get("todo-thread-cap")
+    if isinstance(value, dict):
+        value = value.get(zone.name)
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else TODO_THREAD_CAP
+
+
+def todo_thread_findings(ws: Workspace, zone: Path, text: str, r: str) -> List[Finding]:
+    """Two warnings on a zone's open lines, by thread: a thread over its soft cap, and a Waiting on line that
+    names no open line of the user's in the same thread. Warnings only: nothing is dropped or moved."""
+    mine: Dict[str, List[str]] = {}
+    theirs: Dict[str, List[str]] = {}
+    section = ""
+    for line in text.splitlines():
+        if line.startswith("## "):
+            section = line[3:].strip().lower()
+            continue
+        m = TODO_LABEL_RE.match(line)
+        if not m or m.group(1).strip().startswith("<") or TODO_EXAMPLE_RE.search(line):
+            continue
+        name = m.group(1).strip().rsplit("/", 1)[-1]
+        waiting = "#waiting" in line or section == "waiting on"
+        (theirs if waiting else mine).setdefault(name, []).append(line)
+    out = []
+    cap = todo_thread_cap(ws, zone)
+    over = {n: len(mine.get(n, [])) + len(theirs.get(n, [])) for n in set(mine) | set(theirs)}
+    over = {n: c for n, c in over.items() if cap and c > cap}
+    if over:
+        out.append(Finding(WARNING, "todo", r,
+                           "%s hold%s more than %d open lines (%s); a thread owes a few commitments, so merge the "
+                           "steps of one deliverable into one line" % (
+                               ", ".join("[[%s]]" % n for n in sorted(over)), "s" if len(over) == 1 else "", cap,
+                               ", ".join("%d" % over[n] for n in sorted(over))),
+                           "A thread in the %s list holds more open lines than its cap" % zone.name))
+    loose = []
+    for name, lines in sorted(theirs.items()):
+        own = [todo_action(l).casefold() for l in mine.get(name, [])]
+        for line in lines:
+            named = TODO_BLOCKS_RE.search(line)
+            if not own or (named and not any(named.group(1).casefold() in o for o in own)):
+                loose.append(name)
+                break
+    if loose:
+        out.append(Finding(WARNING, "todo", r,
+                           "a Waiting on line in %s names no open line of yours in its thread; it waits only when "
+                           "it blocks one of your lines, and the clause ` — blocks: <that line's words>` says which"
+                           % ", ".join("[[%s]]" % n for n in loose),
+                           "Waiting on lines in the %s list block nothing of yours" % zone.name))
     return out
 
 
@@ -3035,6 +3093,7 @@ def check_todo(ws: Workspace) -> List[Finding]:
                                    "its ✅ date" % (len(records), " was" if len(records) == 1 else "s were",
                                                     " (%s)" % ", ".join("[[%s]]" % t for t in threads) if threads else ""),
                                    "The %s list holds records of work done, not actions" % zone.name))
+        out.extend(todo_thread_findings(ws, zone, text, r))
         if (zone / ".git").exists():
             then = _git(["log", "-1", "--before=7.days", "--format=%H", "--", "Todo.md"], zone)
             old = _git(["show", "%s:Todo.md" % then.strip()], zone) if then and then.strip() else None

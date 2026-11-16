@@ -168,8 +168,19 @@ One meeting at a time, even when several files are waiting.
    (`<!-- garrick:index -->`); anything else in `index.md`, such as a table
    kept by hand, stays as it is.
 8. **Actions the user owes go to that zone's `Todo.md`**, not the meeting
-   page. Re-read it right before appending (another session may be writing
-   to it too), then append under `## Inbox`:
+   page. Re-read it right before editing (another session may be writing
+   to it too), then **run Distil** (the `todo` skill's *Distil*) for the
+   thread in place of an append: what the meeting settled is ticked, what it
+   changed is reworded in the line already there, a new commitment is added,
+   and a line it drops moves to the expired archive with this page as its
+   source. One line is one commitment: the steps of a deliverable are one
+   line, a task of a few minutes is a line only when someone waits on it and
+   a date is set, and a `Waiting on` line is written only when it blocks a
+   line of the user's. A line the user moved to another section is changed
+   only on their yes in a session they are in; in a run with nobody to ask,
+   such as the nightly intake, it is proposed to `.todo-proposals.json` and
+   left as it is. Say the counts: "Distilled Acme, pricing: one added, two
+   merged, one retired." A new line is written under `## Inbox`:
    ```markdown
    - [ ] [[<Thread>]]: <action> · [<short title>](../../Wikis/Meetings/wiki/sources/<slug>.md) 📅 <YYYY-MM-DD>
    ```
@@ -192,7 +203,8 @@ One meeting at a time, even when several files are waiting.
    two projects have a thread of the same name, give its path,
    `[[<Project>/Threads/<Thread>/<Thread>|<Thread>]]`. Otherwise open the
    line with the party or person the action is for, `<Party>: `, and never
-   guess a thread. Touch no other line.
+   guess a thread: with no thread Distil only adds that line and changes
+   no other. Touch no line of another thread.
    **The example line goes with the first real action.** A list nobody has
    written to yet may hold one, in `<angle brackets>`, to show the shape; delete
    it in the same edit that writes the first real line. It is a task like any
@@ -205,9 +217,10 @@ One meeting at a time, even when several files are waiting.
    git -C Wikis add -- "Meetings/raw/<slug>.<ext>" "Meetings/wiki/sources/<slug>.md" \
      "Meetings/wiki/people/<person-slug>.md" "Meetings/wiki/index.md" "Meetings/wiki/log.md"
    git -C Wikis commit -m "Meetings: ingest <slug>, <short title>"
-   git -C "Zones/<Zone>" add -- Todo.md
+   git -C "Zones/<Zone>" add -- Todo.md archive/
    git -C "Zones/<Zone>" commit -m "<Zone>: actions from <short title>"
    ```
+   `archive/` is staged only when Distil retired a line.
    A question file step 6 wrote goes in the same Wikis commit:
    `"Meetings/questions/<file>"`. Never push, and never add anything you did
    not touch this step.

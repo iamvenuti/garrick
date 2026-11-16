@@ -208,7 +208,7 @@ The check covers:
 - deliverables without a date prefix, in a project's `Deliverables/`, a thread's own, or their `archive/` (build intermediates, scripts and a `README.md` are left alone);
 - a deliverable of an anonymous project that names another party of its zone, one of their people, or a name its hub keeps out, Word, Excel and PowerPoint files included (a warning);
 - a link or a path in a live Resume here block, a thread's or a hub's, that leads nowhere (a file in code checked out inside the project counts as there, and a path under `System/generated/` is not checked), or a block still holding the template's prompts, or files added to a project more than two weeks after its resume point was last updated (warnings; parked threads are skipped);
-- in a zone's `Todo.md`, an action whose thread link leads nowhere, a date with text after it, the example action the list was started with still there under real ones, an Inbox that grew by more than twenty in a week, a ticked line the zone's history never held open, which is a record of work done or an outcome written onto the tick, or a line longer than 200 characters as Obsidian shows it (warnings; a zone with no history of its list is not asked about ticks);
+- in a zone's `Todo.md`, an action whose thread link leads nowhere, a date with text after it, the example action the list was started with still there under real ones, an Inbox that grew by more than twenty in a week, a ticked line the zone's history never held open, which is a record of work done or an outcome written onto the tick, a line longer than 200 characters as Obsidian shows it, a thread with more open lines than its cap (`todo-thread-cap`, five), or a Waiting on line that names no open line of yours in its thread (warnings; a zone with no history of its list is not asked about ticks);
 - a link from one zone into another (an error), a note that writes the full path of a cloud-synced folder, and a link to a page name both wikis hold that does not say which (warnings);
 - a page in `System/generated/` that is committed (an error), or a root `.gitignore` that does not name that folder (a warning);
 - meeting and mail pages missing a zone, or naming two walled zones together (a warning), or with a date not written YYYY-MM-DD;
@@ -252,6 +252,7 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
   "todo-expire-days": {"Work": 14, "Personal": 30},
   "todo-inbox-order": "thread",
   "todo-chase-days": 0,
+  "todo-thread-cap": 5,
   "memory": "~/.claude/projects/-Users-sam-Garrick/memory",
   "nurture-weights": {"judgment": 2},
   "nurture-threshold": 60
@@ -269,6 +270,7 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 - `as-shipped`: the files Garrick ships that you never change here, by the start of their path; `System/tools/` otherwise. A change to one belongs in Garrick, or the next update leaves its version beside yours.
 - `todo-expire-days`: the days an untriaged line waits in a zone's `Todo.md` before the `todo` skill moves it to the expired archive; 14 otherwise. A number, or one per zone.
 - `todo-chase-days`: how many days ahead the `todo` skill's sweep sets `⏳`, the day to chase, on a Waiting on line whose source gives none; 7 otherwise. `0` writes none: the line stays untriaged until you date it, and expires after the zone's days if you never do. A number, or one per zone.
+- `todo-thread-cap`: how many open lines one thread should hold in a zone's `Todo.md`; 5 otherwise, `0` for no cap. A soft cap: Distil merges before it adds above it, and `check.py` warns about a thread over it, but no line is ever dropped. A number, or one per zone.
 - `todo-inbox-order`: how the `todo` skill orders the Inbox. `first-seen` keeps each thread's lines together where the thread first appears; `thread` sorts them by the thread's name, as a Tasks query sorted by description shows them. A word, or one per zone.
 
 

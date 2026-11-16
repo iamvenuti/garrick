@@ -248,9 +248,16 @@ focus, as under *No name given*). Then:
    moves one by hand: step 12 hands the old ones to `history.py`, which moves
    them whole.
 8. **Actions go to the zone's `Todo.md`**, not the note. Re-read it right
-   before editing. Append new actions for this thread under `## Inbox` as
+   before editing. **Run Distil** (the `todo` skill's *Distil*) for this thread
+   in place of appending: its four questions (what is done, what changed, what
+   is new, what no longer holds) change this thread's open lines, one line per
+   commitment, and a new one is written as
    `- [ ] [[<Thread>]]: <action> 📅 <YYYY-MM-DD>`, in the format the list's
-   header gives, the dates last. Open the line with this thread's link, or
+   header gives, the dates last. A line the user moved to another section is
+   changed only on their yes, shown as before and after; with nobody to ask it
+   is proposed and left as it is. Say its counts in the reply ("Distilled Acme,
+   pricing: one added, two merged, one retired."). Distil edits `Todo.md` and
+   `archive/` and leaves the commit to step 12, as the append did. Open the line with this thread's link, or
    its path, `[[<Project>/Threads/<Thread>/<Thread>|<Thread>]]`, when another
    project has a thread of the same name: that is how a later wrap or finish
    finds its lines. A project in `System/` has no list of its own: its
@@ -261,7 +268,9 @@ focus, as under *No name given*). Then:
    it in the same edit that writes the first real line. It is a task like any
    other, so anything that counts open actions counts it.
    Tick the lines this session finished, whether they name this thread or
-   only a party or person. Touch no line that names another thread.
+   only a party or person. Touch no line that names another thread. When
+   the session names no thread plainly, Distil writes as the append did,
+   `<Party>: ` first, and changes no other line.
    **Where `System/status/page_action.py` exists, tick through it, before
    appending anything** (*Running an action*): `python3 System/status/page_action.py
    todo-done --zone <Zone> --line "<the line's text, or enough of it to be the

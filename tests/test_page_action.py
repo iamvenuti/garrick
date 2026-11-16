@@ -402,6 +402,88 @@ class TestAdd(ActionCase):
         self.assertEqual("start", git(self.work, "log", "-1", "--format=%s").strip())
 
 
+class TestDistilVerbs(ActionCase):
+    """#591: todo-edit rewords an open line and todo-retire moves it, still open, to the expired archive: one commit,
+    the same line matching and refusals as todo-done."""
+
+    def setUp(self):
+        super().setUp()
+        skill = self.root / "System" / "skills" / "todo"
+        skill.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "template" / "System" / "skills" / "todo" / "todo.py", skill / "todo.py")
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n"
+              "- [ ] [[Pricing]]: Send the revised terms · [Call with Dana](../../Wikis/Meetings/wiki/sources/dana.md) 📅 2026-10-09\n"
+              "- [ ] Acme Corp: Invoice for September\n- [ ] [[Pricing]]: Book the room\n\n## Done\n")
+        git(self.work, "commit", "-qam", "lines")
+
+    def test_edit_rewords_and_keeps_what_the_line_carries(self):
+        say = self.act(verb="todo-edit", zone="Work", file="Todo.md", key=self.key("Send the revised"),
+                       text="Send the revised terms and the volume floor")
+        self.assertEqual("Reworded: Send the revised terms and the volume floor", say)
+        self.assertIn("- [ ] [[Pricing]]: Send the revised terms and the volume floor · [Call with Dana]"
+                      "(../../Wikis/Meetings/wiki/sources/dana.md) 📅 2026-10-09\n", (self.work / "Todo.md").read_text())
+        self.assertEqual(("Work: reworded, Send the revised terms and the volume floor", ""), self.last_commit())
+
+    def test_edit_gains_a_source_and_keeps_the_old_one(self):
+        self.act(verb="todo-edit", zone="Work", file="Todo.md", key=self.key("Invoice"),
+                 text="Acme Corp: Invoice for September and October (also in [Review](../../Wikis/Meetings/wiki/sources/review.md))")
+        self.assertIn("- [ ] Acme Corp: Invoice for September and October (also in [Review](../../Wikis/Meetings/wiki/sources/review.md))\n",
+                      (self.work / "Todo.md").read_text())
+
+    def test_edit_refusals_change_nothing(self):
+        before = (self.work / "Todo.md").read_bytes()
+        head = git(self.work, "rev-parse", "HEAD")
+        key = self.key("Invoice")
+        for req in ({"key": key, "text": ""}, {"key": key, "text": "Acme Corp: Invoice for September"},
+                    {"key": self.key("Send the revised"), "text": "Book the room"},          # another open line says it
+                    {"key": "0" * 16, "text": "x"}, {"key": key, "text": "x" * 1001}, {"key": key, "text": "two\nlines"}):
+            with self.assertRaises(pa.Refused, msg=req):
+                self.act(verb="todo-edit", zone="Work", file="Todo.md", **req)
+        with self.assertRaises(pa.Refused):                   # a file outside the zone
+            self.act(verb="todo-edit", zone="Work", file="../Personal/Todo.md", key=key, text="x")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))
+
+    def test_retire_moves_the_line_open_to_the_archive_with_its_source(self):
+        say = self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"),
+                       reason="[Review call](../../Wikis/Meetings/wiki/sources/review.md)")
+        self.assertEqual("Retired: Acme Corp: Invoice for September", say)
+        self.assertNotIn("Invoice", (self.work / "Todo.md").read_text())
+        archive = (self.work / "archive" / "Todo-expired-2026.md").read_text()
+        self.assertIn("- [ ] Acme Corp: Invoice for September · superseded by [Review call](../../../Wikis/Meetings/wiki/sources/review.md)\n", archive)
+        self.assertEqual(("Work: retired, Acme Corp: Invoice for September", ""), self.last_commit())
+        self.assertIn("archive/Todo-expired-2026.md", git(self.work, "show", "--stat", "--format=", "HEAD"))
+
+    def test_retire_never_deletes_and_refuses_a_line_that_is_not_there(self):
+        before = (self.work / "Todo.md").read_bytes()
+        with self.assertRaises(pa.Refused):
+            self.act(verb="todo-retire", zone="Work", file="Todo.md", key="0" * 16, reason="[x](y.md)")
+        with self.assertRaises(pa.Refused):
+            self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"), reason="")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertFalse((self.work / "archive" / "Todo-expired-2026.md").exists())
+
+    def test_a_refused_commit_puts_both_files_back(self):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\necho 'Commit refused: wall. Take it out, commit again' >&2\nexit 1\n")
+        before = (self.work / "Todo.md").read_bytes()
+        with self.assertRaises(pa.Refused):
+            self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"), reason="[a](b.md)")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertFalse((self.work / "archive" / "Todo-expired-2026.md").exists())
+
+    def test_the_session_form_resolves_a_line_in_words(self):
+        for verb, extra in (("todo-edit", ["--text", "Invoice for September and the credit note"]),
+                            ("todo-retire", ["--reason", "[Review](r.md)"])):
+            ns = pa.command_parser().parse_args([verb, "--zone", "Work", "--line", "Invoice for September"] + extra)
+            req = pa.session_request(self.root, ns)
+            self.assertEqual(self.key("Invoice"), req["key"])
+            self.assertEqual("Todo.md", req["file"])
+        ns = pa.command_parser().parse_args(["todo-edit", "--zone", "Work", "--line", "nothing like it", "--text", "x"])
+        with self.assertRaises(pa.Refused):
+            pa.session_request(self.root, ns)
+
+
 class TestPark(ActionCase):
     def test_park_and_wake_as_the_skill_does(self):
         rel = "Acme Review/Threads/Pricing/Pricing.md"

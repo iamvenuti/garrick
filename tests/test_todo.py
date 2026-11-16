@@ -600,7 +600,7 @@ class DistilTest(unittest.TestCase):
     def test_a_dry_run_writes_nothing(self):
         before = self.text()
         out = self.run_plan({"changed": [{"line": "Send Dana the price sheet", "text": "Send Dana the sheet"}],
-                             "retired": [{"line": "Ask Dana"}], "new": [{"text": "x y"}]}, dry=True)
+                             "retired": [{"line": "Ask Dana whether"}], "new": [{"text": "x y"}]}, dry=True)
         self.assertEqual(1, out["counts"]["reworded"])
         self.assertEqual(before, self.text())
         self.assertFalse((self.zone / "archive").exists())
@@ -614,10 +614,52 @@ class DistilTest(unittest.TestCase):
         self.assertEqual(3, len(out["notes"]))
         self.assertEqual("Distilled Pricing: nothing to change.", out["say"])
 
-    def test_a_tick_may_reach_a_line_with_only_a_party_but_not_another_threads(self):
-        out = self.run_plan({"done": ["Confirm the volumes"]})
+    def test_a_thread_plan_never_reaches_a_line_with_no_thread(self):
+        before = self.text()
+        out = self.run_plan({"done": ["Confirm the volumes"]}, yes=True)
+        self.assertEqual(0, out["counts"]["ticked"])
+        self.assertEqual(before, self.text())
+
+    def test_a_party_plan_ticks_its_own_line_only_when_attended_with_a_yes(self):
+        plan = {"party": "Dana", "done": ["Confirm the volumes"]}
+        before = self.text()
+        out = todo.distil(self.root, self.zone, plan, self.TODAY)               # in the Inbox, but no yes
+        self.assertEqual((0, 1), (out["counts"]["ticked"], out["counts"]["proposed"]))
+        self.assertEqual(before, self.text())
+        os.environ["GARRICK_BACKGROUND"] = "1"
+        try:
+            out = todo.distil(self.root, self.zone, plan, self.TODAY, yes=True)   # S5: a background run is headless
+        finally:
+            os.environ.pop("GARRICK_BACKGROUND")
+        self.assertEqual((0, 1), (out["counts"]["ticked"], out["counts"]["proposed"]))
+        self.assertEqual(before, self.text())
+        out = todo.distil(self.root, self.zone, plan, self.TODAY, yes=True)
         self.assertEqual(1, out["counts"]["ticked"])
         self.assertIn("- [x] Dana: Confirm the volumes ✅ 2026-11-16\n", self.text())
+
+    def test_a_party_plan_does_not_tick_another_partys_line(self):
+        out = todo.distil(self.root, self.zone, {"party": "Theo", "done": ["Confirm the volumes"]}, self.TODAY, yes=True)
+        self.assertEqual(0, out["counts"]["ticked"])
+
+    def test_threads_of_one_name_in_two_projects_share_nothing(self):
+        write(self.zone / "Todo.md", DISTIL_LIST.replace("## Done", "- [ ] [[Birch/Threads/Pricing/Pricing|Pricing]]: Send Theo the volume tiers\n\n## Done"))
+        before = self.text()
+        plan = {"thread": "Acme/Threads/Pricing/Pricing|Pricing", "source": SRC}
+        out = todo.distil(self.root, self.zone, dict(plan, done=["Send Theo the volume tiers"],
+                          changed=[{"line": "Send Theo the volume tiers", "text": "Send Theo the tiers"}],
+                          retired=[{"line": "Send Theo the volume tiers"}]), self.TODAY, yes=True)
+        self.assertEqual(before, self.text())
+        self.assertEqual(3, len(out["notes"]))
+
+    def test_a_short_phrase_is_refused_but_the_whole_line_is_taken(self):
+        before = self.text()
+        out = self.run_plan({"retired": [{"line": "Dana"}], "done": ["Send"]})
+        self.assertEqual(before, self.text())
+        self.assertTrue(all("too short" in n for n in out["notes"]) and len(out["notes"]) == 2)
+        out = self.run_plan({"done": ["Send Dana the price"]})                  # 12 or more, and unique
+        self.assertEqual(1, out["counts"]["ticked"])
+        write(self.zone / "Todo.md", "# Work\n\n## Inbox\n\n- [ ] [[Pricing]]: Ask Dana\n\n## Done\n")
+        self.assertEqual(1, self.run_plan({"done": ["Ask Dana"]})["counts"]["ticked"])   # the whole line text
 
     def test_with_no_thread_it_adds_under_the_party_and_changes_nothing_else(self):
         before = self.text()

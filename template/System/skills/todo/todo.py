@@ -500,13 +500,15 @@ def words(line: str) -> str:
 
 
 def thread_of(line: str) -> str:
-    """The name a line's thread link gives, case-folded, or "" for a line that opens with none."""
+    """The full link target a line opens with, case-folded (`acme/threads/pricing/pricing`, or `pricing` where
+    the link is short), or "" for a line that opens with none. Two projects' threads of one name never share it."""
     m = TASK_LINK.match(line)
-    if not m:
-        return ""
-    link = m.group(1)
-    full = re.match(r"^- \[[ x]\] \[\[([^\]]+)\]\]", line).group(1)
-    return (full.split("|", 1)[1] if "|" in full else link.split("#", 1)[0].rsplit("/", 1)[-1]).strip().casefold()
+    return m.group(1).strip().casefold() if m else ""
+
+
+def target_of(label: str) -> str:
+    """The same target, from the link label a plan gives (`Pricing`, `[[Acme/Threads/Pricing/Pricing|Pricing]]`)."""
+    return label.strip().strip("[]").split("|", 1)[0].split("#", 1)[0].strip().casefold()
 
 
 def spoken(n: int) -> str:
@@ -575,10 +577,16 @@ def proposal_text(p: dict) -> str:
     return "- [%s] %s%s" % (p.get("id", ""), "(gone) " if p.get("stale") else "", proposal_said(p))
 
 
+MIN_MATCH = 12
+
+
 def find_line(lines: List[str], said: str, pool: List[int]) -> Tuple[Optional[int], str]:
-    """The one line of `pool` the words say: (its index, "") or (None, why)."""
+    """The one line of `pool` the words say: (its index, "") or (None, why). The whole line text, or a unique
+    part of it at least MIN_MATCH characters long; anything shorter is refused, never guessed."""
     want = words("- [ ] " + said) if not said.startswith("- [") else words(said)
     exact = [i for i in pool if words(lines[i]) == want]
+    if not exact and len(want) < MIN_MATCH:
+        return None, "too short to match safely: give %d characters or the whole line" % MIN_MATCH
     found = exact or [i for i in pool if want and want in words(lines[i])]
     if not found:
         return None, "no open line of the thread says that"
@@ -602,10 +610,10 @@ def distil(root: Path, zone: Path, plan: dict, today: datetime.date, yes: bool =
     label = None
     if thread:
         label = thread.strip().strip("[]")
-        mine = (label.split("|", 1)[1] if "|" in label else label.split("#", 1)[0].rsplit("/", 1)[-1]).strip().casefold()
+        mine = target_of(label)
     else:
         mine = ""
-    headless = os.environ.get("GARRICK_HEADLESS") == "1"
+    headless = os.environ.get("GARRICK_HEADLESS") == "1" or os.environ.get("GARRICK_BACKGROUND") == "1"
     may_change = yes and not headless
     lines = read(zone)
     where = sections(lines)
@@ -629,18 +637,23 @@ def distil(root: Path, zone: Path, plan: dict, today: datetime.date, yes: bool =
     def direct(i: int) -> bool:
         return i in inbox or may_change
 
-    def own_or_free(l: str) -> bool:
-        return thread_of(l) == mine if mine else not thread_of(l)
+    said_party = party.strip().casefold() if party and not thread else ""
+
+    def tickable() -> List[int]:
+        """A thread's plan reaches its own open lines; a party's plan, the open lines with no thread link that
+        open with that party's name."""
+        if mine:
+            return pool()
+        return [i for i, l in enumerate(lines) if l.startswith("- [ ] ") and i not in gone and said_party
+                and not thread_of(l) and l[6:].casefold().startswith(said_party + ":")]
 
     for said in plan.get("done") or []:                  # 1. what is now done
         if not isinstance(said, str):
             continue
-        cand = [i for i, l in enumerate(lines) if l.startswith("- [ ] ") and i not in gone and
-                (own_or_free(l) or not thread_of(l))]
-        i, why = find_line(lines, said, cand)
+        i, why = find_line(lines, said, tickable())
         if i is None:
             notes.append("done: %s: %s" % (said[:40], why))
-        elif not direct(i):
+        elif not (direct(i) if mine else may_change):
             propose("done", i)
         else:
             lines[i] = "- [x] " + lines[i][6:].rstrip() + " ✅ " + today.isoformat()

@@ -281,8 +281,9 @@ paths, round numbers.
   take. Never add a line for work that is already done. Tick a line as it
   was written, `[x]` and its `✅` date and nothing more; the outcome goes in
   the thread note's dated entry, not on the line. `check.py` warns about a
-  ticked line the zone's history never held open, and about a line longer
-  than 200 characters.
+  ticked line the zone's history never held open, about a line longer than
+  200 characters, about a thread over its cap, and about a `Waiting on` line
+  that names no open line of the user's in its thread.
 - **It never deletes a line**, but for the example line a new list is started
   with, which step 6 takes out with the first real action. Expired and done
   lines go to `archive/`, where they can be read and pasted back.

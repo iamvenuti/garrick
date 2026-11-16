@@ -101,6 +101,14 @@ zone's repository, as the skills would:
                 the repository's own hook, and applies; {"held": "rest"} applies
                 and skips them. The paths come from a plan made on that request,
                 never from the request
+    commit-files  the *Commit them* button of the Overview's row for a repository with changes not committed (#595):
+                {"zone", "files"}, the files the row lists, as paths from the workspace root; or {"undo", "repo"}, which
+                reverts the commit that button made. Only the app's bridge (`via: page`). It runs the engine's bounded
+                commit (engine.run_bounded: at Act, no send, share or delete, those files only, through the zone's own
+                hook) after checking the request again: one zone, every file one the repository shows as changed now,
+                none a link, none changed more than 30 days ago, no more than COMMIT_MOST of them. With an engine that has no
+                bounded commit, or one that is not available (Ask off, a failed capability check), nothing is written
+                and the reply says so
     walls-unallow  takes an allowance away (allow once): {"path", "id"}, the file
                 from the workspace root and the refusal's id. The ledger
                 System/walls-allowed.json loses the entry and the refusal comes
@@ -322,7 +330,8 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "walls-unallow", "walls-look", "walls-allow", "finding", "note-add")
+         "walls-unallow", "walls-look", "walls-allow", "finding", "note-add",
+         "commit-files")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -5252,6 +5261,105 @@ def finding_move(ws: Path, rel: str) -> str:
     return "Moved %d older entr%s of %s to history" % (done["entries_moved"], "y" if done["entries_moved"] == 1 else "ies", note.stem)
 
 
+COMMIT_MOST = 50                    # the most files one commit from the page may name (status.py's COMMIT_MOST)
+COMMIT_AGE_DAYS = 30                # a change older than this is not committed from the page (status.py's COMMIT_AGE)
+_ENGINE = None
+
+
+def engine_lib():
+    """engine.py, beside this file: the one engine of Ask and the Telegram channel, which holds the bounded commit.
+    None where it does not load."""
+    global _ENGINE
+    if _ENGINE is None:
+        try:
+            spec = importlib.util.spec_from_file_location("garrick_page_engine", str(HERE / "engine.py"))
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            _ENGINE = mod
+        except Exception:
+            return None
+    return _ENGINE
+
+
+def changed_now(folder: Path) -> tuple:
+    """The files `git status` shows as changed in `folder`, as paths from it, and the ones in conflict. Refuses when git
+    does not answer."""
+    code, out = git(folder, "status", "--porcelain", "-z", "--untracked-files=all")
+    if code != 0:
+        raise Refused("git did not answer, so nothing was committed")
+    found, conflicted, items, i = [], set(), out.split("\0"), 0
+    while i < len(items):
+        item = items[i]
+        i += 1
+        if len(item) < 4:
+            continue
+        xy, path = item[:2], item[3:]
+        if xy[0] in "RC" or xy[1] in "RC":
+            i += 1                     # the old name of a rename follows its new one
+        if "U" in xy or xy in ("AA", "DD"):
+            conflicted.add(path)
+        found.append(path)
+    return found, conflicted
+
+
+def commit_files(ws: Path, req: dict, now=None) -> object:
+    """*Commit them* on the Overview (#595): the listed files of one zone's repository, committed by the engine's
+    bounded commit, or that commit taken back. Everything the request names is checked again here, against the
+    repository as it is now: a file the row did not list, a link, a conflict, a change older than COMMIT_AGE_DAYS and
+    a list longer than COMMIT_MOST each refuse it whole, and nothing is written. Without a bounded commit in the
+    engine, or with the engine unavailable, nothing is written either."""
+    eng = engine_lib()
+    if req.get("undo") is not None:
+        undo = getattr(eng, "undo_bounded", None) if eng is not None else None
+        sha, repo = req.get("undo"), req.get("repo")
+        if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{7,40}", sha) and isinstance(repo, str)
+                and re.fullmatch(r"Zones/[^/\\.][^/\\]*", repo) and not repo.startswith("Zones/_")):
+            raise Refused("that is not a commit this page made")
+        zone_dir(ws, repo.split("/", 1)[1])
+        if not callable(undo):
+            raise Refused("this Garrick cannot take that commit back from the page, so nothing was changed")
+        out = undo(ws, repo, sha)
+        if not isinstance(out, dict) or not out.get("ok"):
+            raise Refused((out or {}).get("say") or "the commit was not taken back")
+        return {"say": out.get("say") or "Undone."}
+    files = req.get("files")
+    if not (isinstance(files, list) and files and len(files) <= COMMIT_MOST and all(isinstance(f, str) and f for f in files)
+            and len(set(files)) == len(files)):
+        raise Refused("name the files to commit: at least one and no more than %d" % COMMIT_MOST)
+    zone = zone_dir(ws, req.get("zone"))
+    run = getattr(eng, "run_bounded", None) if eng is not None else None
+    if not callable(run):
+        raise Refused("this Garrick cannot make that commit from the page, so nothing was committed")
+    prefix = zone.relative_to(Path(ws).resolve()).as_posix() + "/"
+    changed, conflicted = changed_now(zone)
+    limit = time.time() - COMMIT_AGE_DAYS * 86400
+    for f in files:
+        pure = Path(f)
+        if pure.is_absolute() or ".." in pure.parts or "\n" in f or "\0" in f or not f.startswith(prefix):
+            raise Refused("%s is not a file of %s, so nothing was committed" % (f, zone.name))
+        inside = f[len(prefix):]
+        if inside not in changed:
+            raise Refused("%s is not a changed file of %s now, so nothing was committed" % (f, zone.name))
+        if inside in conflicted:
+            raise Refused("%s is in conflict, so nothing was committed" % f)
+        target = zone / inside
+        if target.is_symlink():
+            raise Refused("%s is a link, so nothing was committed" % f)
+        try:
+            if target.stat().st_mtime < limit:
+                raise Refused("%s changed more than %d days ago and may belong in .gitignore, so nothing was committed" % (f, COMMIT_AGE_DAYS))
+        except OSError:
+            pass                        # a deleted file has no date; its deletion is the change
+    out = run(ws, zone.name, list(files), "", "")
+    if not isinstance(out, dict) or out.get("unavailable"):
+        raise Refused((out or {}).get("say") or "the assistant is not available for this, so nothing was committed")
+    if not out.get("ok"):
+        raise Refused(out.get("say") or "nothing was committed")
+    return {"say": out.get("say") or "Committed %d file%s in %s." % (len(files), "" if len(files) == 1 else "s", zone.name),
+            "bounded": {"commit": str(out.get("commit") or ""), "repo": str(out.get("repo") or "Zones/" + zone.name),
+                        "files": [str(x) for x in (out.get("files") or files)]}}
+
+
 def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
     table, so an unknown one is refused by name and nothing runs."""
@@ -5326,6 +5434,8 @@ def act(ws: Path, req, today=None, now=None):
         return fix_finding(ws, req)
     if req["verb"] == "finding":
         return answer_finding(ws, req, today or dt.date.today())
+    if req["verb"] == "commit-files":
+        return commit_files(ws, req, now)
     if req["verb"] == "discover":
         return discover_folder(ws, req)
     if req["verb"] == "suggestion":
@@ -5357,7 +5467,8 @@ PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "p
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
-PAGE_ONLY = ("walls-look", "walls-allow")
+PAGE_ONLY = ("walls-look", "walls-allow",
+             "commit-files")
 
 
 def builds_page(req) -> bool:

@@ -304,6 +304,9 @@ DECLARED: Dict[str, Op] = {
     # source for one. `read` asks for what is in the note and writes nothing.
     "checkpoint": _op(("zone", "project", "thread", "base", "prev", "items", "drop", "read"),
                       ("project", "thread"), "zone", False, "safe", "checkpoint"),
+    # *Commit them* on the Overview's row for changes not committed (#595): the listed files of one zone, committed by
+    # the engine's bounded commit, or that commit taken back (`undo` with its `repo`). Only the app's bridge.
+    "commit-files": _op(("zone", "files", "undo", "repo"), ("zone", "files", "undo"), "zone", True),
     # The one verb that only reads: the open set of records, for a page that
     # was reloaded. It carries nothing but its own name.
     "operations": _op((), (), "none", retry="safe"),

@@ -380,10 +380,8 @@ class TestSpend(StatusCase):
         self.assertIn('<td class="r">5.5</td>', self.calls(html))
         self.assertIn('<span class="ink2">Per call</span><span class="num">$2 max</span>', self.calls(html))   # a figure, not a sentence (#232)
         self.assertNotIn("Each Claude call stops at", html)
-        self.assertIn("$2 max per call", html)
         with self.plists(GARRICK_MAX_CALL_USD="0"):
             html = self.page()
-            self.assertIn("no per-call budget", html)
             self.assertIn('<span class="ink2">Per call</span><span class="num">no cap</span>', self.calls(html))
 
     def test_a_call_stopped_at_its_budget_needs_attention(self):
@@ -1080,7 +1078,7 @@ class TestCheckReuse(StatusCase):
         self.assertIn("As the check found it 4 min ago", page)
         self.assertNotIn(">a.md</a>: x</span>", page)                  # the list of findings is no longer on the page (#541)
 
-    def test_needs_attention_and_the_checks_tile_say_the_counts_are_kept(self):
+    def test_needs_attention_says_the_counts_are_kept(self):
         """#298: the counts a kept result gives say how old they are wherever
         they show, Needs attention and the Context tile as the Context card,
         in its words; a build that ran the check says nothing of the kind."""
@@ -1093,21 +1091,14 @@ class TestCheckReuse(StatusCase):
         def attention(page):
             return [t[2] for t in trouble(page)]
 
-        def tile(page):
-            m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Context</div><div class="val">(.*?)</div>'
-                          r'<div class="sub">(.*?)</div></a>', page)
-            self.assertIsNotNone(m, "no Context tile")
-            return m.groups()
-
         ran = self.build()
         self.assertIn("The check found 1 error", attention(ran))
         self.assertIn("The check found 2 warnings", attention(ran))
-        self.assertEqual(("1<small>error</small>2<small>warnings</small>", ""), tile(ran))
         page = self.build(reuse=600, now=self.now + dt.timedelta(minutes=4))
         self.assertIn("As the check found it 4 min ago;", page)                          # the Checks card's words
         self.assertIn("The check found 1 error (as the check found it 4 min ago)", attention(page))
         self.assertIn("The check found 2 warnings (as the check found it 4 min ago)", attention(page))
-        self.assertEqual(("1<small>error</small>2<small>warnings</small>", "As the check found it 4 min ago"), tile(page))
+        self.assertNotIn('class="tile go"', page)                                         # the Context tile is gone (#595)
 
     def test_a_result_of_any_age_is_shown_and_the_check_never_runs(self):
         """#382: a rebuild a tool asks for never waits on the check, whatever
@@ -1816,7 +1807,7 @@ class TestParkLandsAtOnce(StatusCase):
         self.assertEqual({"n": "Birch Entry", "s": 1, "pending": 1}, work["parked"]["units"][0])   # greyed until the rebuild
         self.assertTrue(work["meta"].startswith("2 live"))
         self.assertTrue(out["gsum"].startswith("2 live · 1 parked"))
-        self.assertEqual("2", out["tile"])
+        self.assertIsNone(out["tile"])                                                          # the Live threads tile is gone (#595)
         back = self.run_js((self.BIRCH, self.OK), (dict(self.BIRCH, verb="wake"), self.OK))["zones"]["zone-work"]
         self.assertEqual(["Acme Review", "Birch Entry"], [u["n"] for u in back["live"]])        # by name, as the build lists them
         self.assertIsNone(back["parked"])                                                     # an empty fold goes
@@ -3020,6 +3011,15 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         out = self.run_js({"v": 2, "c": {"top": [], "left": ["inboxes"], "right": [], "bottom": ["threads"]}, "h": []})
         self.assertEqual([], out["slots"]["left"])                      # the Inboxes (#593) and Todo (#594) cards are gone
         self.assertEqual(["graph", "threads"], out["slots"]["bottom"])
+
+    def test_a_layout_naming_the_tile_row_or_the_lead_loads_without_an_error_and_writes_nothing(self):
+        # #595: the figures row and the lead are gone; a window that saved a layout naming them keeps its other cards where they were
+        saved = {"v": 2, "c": {"top": ["lead", "top", "summary", "waiting-now", "threads"], "left": [], "right": [], "bottom": ["graph"]},
+                 "h": ["lead", "top", "inboxes", "todo"]}
+        out = self.run_js(saved)
+        self.assertEqual(["waiting-now", "threads"], [c for c in out["slots"]["top"] if c in ("waiting-now", "threads", "lead", "top", "summary")])
+        self.assertEqual([], out["hidden"])
+        self.assertEqual(saved, json.loads(out["saved"]))                 # nothing is written back until the layout is changed
 
     def test_a_layout_naming_a_card_that_is_gone_is_read_without_harm(self):
         out = self.run_js({"v": 2, "c": {"top": ["ghost", "threads"]}, "h": ["ghost"]})

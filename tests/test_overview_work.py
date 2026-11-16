@@ -234,7 +234,7 @@ class OverviewWork(unittest.TestCase):
     def test_a_ticks_scripts_reach_the_list_and_the_chip_on_a_work_row(self):
         html = self.page()
         self.assertIn("document.querySelectorAll('.tview,.yrows').forEach(function(v){v.addEventListener('click'", html)
-        self.assertIn("var places=[todo].concat([].slice.call(document.querySelectorAll('.tview,.yrows')));", html)
+        self.assertIn("var places=[todo].concat([].slice.call(document.querySelectorAll('.tview,.yrows,.wlate')));", html)   # and the late lines of Waiting on you now (#595)
 
     def test_a_rows_list_holds_only_its_own_threads_lines_when_two_walled_zones_share_a_thread_name(self):
         """The wall: Personal has a thread called Pricing too. Its lines never reach the Work row's list, and the

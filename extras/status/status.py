@@ -2537,7 +2537,7 @@ if(window.GarrickAct&&GarrickAct(q,said))return;host.postMessage({act:q});say(sa
 /* a zone still busy with another request (WORK_JS) says so, and the row stays as it is */
 function held(verb,r){return!!(window.GarrickHeld&&GarrickHeld({verb:verb,zone:r.dataset.z}))}
 /* where a line is drawn: the Todo tab, and the list a thread's todo chip opens on the Threads card (#179) and on a Your work row (#523), which tick and date the same way */
-var places=[todo].concat([].slice.call(document.querySelectorAll('.tview,.yrows')));
+var places=[todo].concat([].slice.call(document.querySelectorAll('.tview,.yrows,.wlate')));
 function twins(r){return[].filter.call(document.querySelectorAll('.trow'),function(x){return x===r||x.dataset.z===r.dataset.z&&x.dataset.f===r.dataset.f&&x.dataset.k===r.dataset.k})}
 /* a tick is queued with the ticks around it (WORK_JS's GarrickTick, #107), even while the zone is busy; without it, sent at once as before.
    Every place the line is drawn is struck through with it */
@@ -5795,14 +5795,7 @@ a{color:inherit;text-decoration:none}a:hover{text-decoration:underline;text-unde
 .switch input:checked{background:var(--accent)}.switch input:checked::after{left:14px}
 main{padding:22px 30px 80px;min-width:0}
 .stale{display:none;margin:0 0 16px;padding:10px 14px;border-radius:10px;background:var(--surface);border:1px solid var(--critical);font-weight:600}
-.top{display:grid;grid-template-columns:minmax(220px,1.1fr) repeat(var(--tiles,4),minmax(140px,1fr));gap:14px;margin-bottom:18px}
 a.go{color:inherit;text-decoration:none;cursor:pointer;display:block}a.go:hover{border-color:var(--base)}
-.hero,.tile{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;box-shadow:var(--shadow);min-width:0}
-.hero{display:flex;flex-direction:column;justify-content:space-between}
-.hero .fig{font:600 var(--fs-h1)/1 var(--sans);font-variant-numeric:tabular-nums;letter-spacing:-.01em;display:flex;align-items:center;gap:12px}.hero .fig svg{width:28px;height:28px}
-.hero .lbl,.tile .lbl{color:var(--ink2);font-size:var(--fs-meta)}.hero .lbl{font-size:var(--fs-sub);margin-top:6px}
-.tile .val{font-size:var(--fs-h2);font-weight:620;letter-spacing:-.02em;margin:4px 0 8px;display:flex;align-items:baseline;gap:8px}
-.tile .val small{font-size:var(--fs-meta);font-weight:500;color:var(--muted)}.tile .sub{font-size:var(--fs-meta);color:var(--muted);margin-top:6px}
 .meter{height:6px;border-radius:3px;background:var(--track);overflow:hidden}.meter i{display:block;height:100%;border-radius:3px;background:var(--accent)}
 .meter.warning i{background:var(--warning)}.meter.critical i{background:var(--critical)}
 .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;align-items:start}
@@ -5948,7 +5941,7 @@ body:not(.dragging) .grid:not(:has(.stack.right>.card:not([hidden]):not(.nowait)
 .cols em{position:absolute;top:-16px;font-style:normal;font-size:var(--fs-meta);color:var(--ink2)}
 .ticks{display:flex;gap:2px;font-size:var(--fs-meta);color:var(--muted);margin-top:4px}.ticks span{flex:1;text-align:center}
 .act.armed{background:var(--critical);border-color:var(--critical);color:var(--accent-ink)}
-@media (max-width:1180px){.top{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{grid-column:span 2}.stack,.stack.left{grid-column:span 12}}
+@media (max-width:1180px){.stack,.stack.left{grid-column:span 12}}
 @media (max-width:820px){main{padding:16px}
 .jobs .row{grid-template-columns:18px minmax(0,1fr) auto}.jobs .row>:nth-child(4){display:none}.jobs .row .strip{grid-column:2/-1;grid-row:2}.tiles{grid-template-columns:1fr}
 .gwrap{height:440px}.gpop{left:10px;right:10px;top:auto;bottom:10px;width:auto;max-height:55%}}
@@ -6484,7 +6477,7 @@ put(r.line+at(r));done();return}
 if(q&&q.verb==='release-update'){var u=out&&out.release;if(!(out&&out.ok&&u)){put((out&&out.say)||'The update could not start. Nothing was changed.');done();return}
 put(u.line);show(u);done();return}
 if(prev)return prev(q,out)};
-window.GarrickRelease={changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};
+window.GarrickRelease={update:function(){if(!busy)go()},changed:function(){return changed},request:function(){return{on:!!on.checked,every:parseInt(every.value,10)===7?7:1}},saved:function(){changed=false}};
 })();
 """
 # ---- end of Settings › About Garrick: Check for updates ------------------------------
@@ -6790,8 +6783,8 @@ meta.textContent=l+' live'+(a?' · '+a+' late':'')+(d?' · '+d[1]+' done':'')}
 if(f){if(p)f.querySelector(':scope>summary .n').textContent=p;else f.remove()}
 var none=z.querySelector(':scope>p.muted'),units=z.querySelectorAll(':scope>.tunit').length;
 if(units&&none)none.remove();if(!units&&!none){none=document.createElement('p');none.className='muted';none.textContent='No live threads.';z.insertBefore(none,fold(z,false))}});
-var g=document.querySelector('.tview .gsum'),v=document.querySelector('a.tile[href="#threads"] .val');
-if(g)g.textContent=g.textContent.replace(/^\d+ live · \d+ parked/,live+' live · '+held+' parked');if(v)v.textContent=live}
+var g=document.querySelector('.tview .gsum');
+if(g)g.textContent=g.textContent.replace(/^\d+ live · \d+ parked/,live+' live · '+held+' parked')}
 function moved(q){if(!q||(q.verb!=='park'&&q.verb!=='wake'))return false;var park=q.verb==='park',byName=q.file==null,row=null,c=null;
 [].forEach.call(document.querySelectorAll('.tview .thread[data-card]'),function(r){if(row||inFold(r)===park)return;var k=cardOf(r);if(!k)return;
 if(byName?k.h&&k.pp&&k.pp[0]===q.zone&&k.pp[1]===q.project:!k.h&&k.pa&&k.pa[0]===q.zone&&k.pa[1]===q.file){row=r;c=k}});
@@ -7424,30 +7417,39 @@ def attn_need(level: str, line: str, href, **over) -> dict:
     return need
 
 
-def late_need(z: dict, today: dt.date) -> dict:
+LATE_LINES = 8        # the late lines one row shows; the rest are on the list its link opens
+
+
+def late_need(z: dict, today: dt.date, actions: bool = False) -> dict:
     """One zone's late actions, as one thing that waits: its count, and since when the oldest has been late. It
-    belongs to that zone only; nothing here adds one zone to another."""
+    belongs to that zone only; nothing here adds one zone to another. With `actions`, the late lines themselves, each
+    with its tick and its date (#595), the oldest first, at most LATE_LINES of them."""
     oldest = None
     for _, rows in z["groups"]:
         for r in rows:
             if r["late"] and r["when"] is not None and (oldest is None or r["when"] < oldest["when"]):
                 oldest = r
     n = z["late"]
+    shown = sorted((r for _, rows in z["groups"] for r in rows if r["late"]),
+                   key=lambda r: (r["when"] or dt.date.max, r["alpha"]))[:LATE_LINES] if actions else []
     return {"kind": "late", "group": "todo", "level": "late", "zone": z["zone"], "count": n,
+            "lines": "".join(todo_row(r, today, True, said_late=True) for r in shown),
             "text": "%d late action%s" % (n, "" if n == 1 else "s"),
             "late": late_said(oldest, today).replace("was due", "oldest was due").replace("to chase", "oldest to chase") if oldest else "",
             "href": "#todolist", "tz": z["zone"], "label": "Open the list", "go": "Open the late actions"}
 
 
-def needs_you(attn: List[tuple], lists: List[dict], today: dt.date, detail: Optional[Dict[str, dict]] = None) -> List[dict]:
+def needs_you(attn: List[tuple], lists: List[dict], today: dt.date, detail: Optional[Dict[str, dict]] = None,
+              actions: bool = False) -> List[dict]:
     """What waits on the user, apart from the sessions that wait for an answer (the card draws those live):
     what failed first, then each zone's late actions, then the warnings. The lead sentence counts these and the
     sessions; the card lists them, in the same order, so the two always agree. `detail` is what the build knows
     of a line beyond its text (job_need, the inbox count, a repository's files), keyed by that text."""
     detail = detail or {}
     out = [attn_need(k, t, h, **detail.get(t, {})) for k, t, h in attn if k == "critical"]
-    out += [late_need(z, today) for z in lists if z["late"]]
-    out += [attn_need(k, t, h, **detail.get(t, {})) for k, t, h in attn if k != "critical"]
+    out += [late_need(z, today, actions) for z in lists if z["late"]]
+    # The Context queue owns the check's warnings, one finding at a time (#595): they are no row here. An error stays.
+    out += [attn_need(k, t, h, **detail.get(t, {})) for k, t, h in attn if k != "critical" and detail.get(t, {}).get("kind") != "warnings"]
     return out
 
 
@@ -7456,16 +7458,53 @@ def day_name(d: dt.date) -> str:
     return "%s %d %s" % (d.strftime("%a"), d.day, d.strftime("%b"))
 
 
+UPDATE_JOBS = ("gr-update",)
+TRY_AGAIN = ('<button class="act apponly" type="button" data-try-update="1" title="Run the update again; if files have changes not committed it asks first">Try again</button>')
+
+
+COMMIT_AGE = dt.timedelta(days=30)     # changes older than this are never committed from the page (#595)
+COMMIT_MOST = 50                       # the most files one commit from the page may name
+
+
+def bounded_ready(ws: Optional[Path] = None) -> bool:
+    """Whether the engine beside this file has the bounded commit page_action.py's `commit-files` calls (#592). A cheap
+    look at its text, with nothing imported: without it the row keeps its link as its only button."""
+    try:
+        text = Path(__file__).with_name("engine.py").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return "def run_bounded(" in text and "def undo_bounded(" in text
+
+
+def commit_row(ws: Path, r: dict, now: dt.datetime) -> dict:
+    """What the row of a repository with changes not committed adds (#595). A zone's repository, whose files are all
+    changed, not in conflict, no more than COMMIT_MOST of them and none of them changed longer ago than COMMIT_AGE, gets
+    *Commit them*, which names the files and the zone and nothing else. A change older than that says the files may
+    belong in .gitignore and offers *Show me* first. Any other repository (the workspace's, the wikis') keeps its link."""
+    folder = Path(r["folder"])
+    if not (folder.parent.name == "Zones" and folder.parent.parent == ws):
+        return {}
+    since = r.get("since")
+    if since and now - since > COMMIT_AGE:
+        return {"label": "Show me", "text": "%d file%s not committed; they may belong in .gitignore" % (r["dirty"], "" if r["dirty"] == 1 else "s")}
+    files = [path for path, kinds in r["changes"]]
+    if not files or len(files) > COMMIT_MOST or any("conflicted" in kinds for _, kinds in r["changes"]) or not bounded_ready(ws):
+        return {}
+    return {"act": ('<button class="act apponly" type="button" data-commit="%s" data-files="%s" title="Commit these files in %s, through its wall check">'
+                    'Commit them</button>' % (E(r["name"]), E(json.dumps(files)), E(r["name"])))}
+
+
 def job_need(j: dict) -> dict:
     """A failed job, in plain words (#559): its title, why in a few words, and the day it began to fail. The button
     goes to the log. A job that did not run on time says so and since when it last ran."""
     since = "since %s" % day_name(j["since"]) if j.get("since") else ""
+    again = TRY_AGAIN if j.get("garrick") and str(j.get("name")) in UPDATE_JOBS else ""     # Garrick's own update job, and nothing else (#595)
     if str(j["status"]).startswith("late"):
         return {"kind": "job", "text": "%s did not run on time" % j["title"],
                 "late": "last ran %s" % day_name(j["when"].date()) if j.get("when") else "", "label": "See the log"}
     why = step_reason(j.get("steps")) if "failed in the run under way" in str(j["status"]) else ""
     why = why or j.get("reason") or ("it exited with code %d" % j["code"] if isinstance(j.get("code"), int) and j["code"] > 0 else "it did not finish")
-    return {"kind": "job", "text": "%s failed: %s" % (j["title"], why), "late": since, "label": "See the log"}
+    return dict({"kind": "job", "text": "%s failed: %s" % (j["title"], why), "late": since, "label": "See the log"}, **({"act": again} if again else {}))
 
 
 def need_row(n: dict) -> str:
@@ -7477,10 +7516,11 @@ def need_row(n: dict) -> str:
     late = '<span class="wfor">%s</span>' % E(n["late"]) if n["late"] else ""
     go = '<a class="act" href="%s"%s%s>%s</a>' % (E(n["href"]), ' data-tz-go="%s"' % E(n["tz"]) if n["tz"] else "",
                                                   ' target="_blank" rel="noopener"' if n.get("blank") else "", E(n["label"]))
-    if n.get("act"):
-        # The main button does the work; the link to where the item lives is secondary (#595).
-        go = '<span class="wacts">%s%s</span>' % (n["act"], go.replace('class="act"', 'class="alt"', 1))
-    return '<div class="wrow wneed"><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s</div>' % (cls, icon, E(n["text"]), where, late, go)
+    if n.get("act") or n.get("lines"):
+        # The main button does the work, or the late lines themselves do; the link to where the item lives is secondary (#595).
+        go = '<span class="wacts">%s%s</span>' % (n.get("act", ""), go.replace('class="act"', 'class="alt"', 1))
+    lines = '<div class="wlate">%s</div>' % n["lines"] if n.get("lines") else ""
+    return '<div class="wrow wneed"><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s%s</div>' % (cls, icon, E(n["text"]), where, late, go, lines)
 
 
 def need_groups(needs: List[dict]) -> str:
@@ -7499,46 +7539,6 @@ def need_groups(needs: List[dict]) -> str:
                  if broken else
                  '<section class="wgroup" data-g="todo" aria-label="To do"><h3 class="wgh">To do <span class="wgn">%d</span></h3>%s</section>' % (len(todo), rows))
     return html
-
-
-# The kinds a lead line counts, in a fixed order: (kind, singular, plural). Each is a figure of its own.
-LEAD_KINDS = (("job", "%d job failed", "%d jobs failed"), ("errors", "%d error", "%d errors"),
-              ("problem", "%d problem", "%d problems"), ("late", "%d late action", "%d late actions"),
-              ("inbox", "%d in the inboxes", "%d in the inboxes"), ("files", "%d file not committed", "%d files not committed"),
-              ("warnings", "%d warning", "%d warnings"), ("other", "%d other thing to look at", "%d other things to look at"))
-
-
-def lead_counts(items: List[dict]) -> List[str]:
-    """The lead line's parts: counts by kind, in the fixed order of LEAD_KINDS, each kind once."""
-    total: Dict[str, int] = {}
-    for i in items:
-        k = i.get("kind") if i.get("kind") in dict((x[0], 1) for x in LEAD_KINDS) else ("other" if i.get("level") != "critical" else "problem")
-        total[k] = total.get(k, 0) + int(i.get("count") or 1)
-    return [(one if total[k] == 1 else many) % total[k] for k, one, many in LEAD_KINDS if total.get(k)]
-
-
-def lead_block(items: List[dict], sessions: int) -> str:
-    """The Overview's lead: one sentence, one line of counts by kind, and one primary button to the first thing.
-    The card below lists the rows; this line never repeats them. WAITING_JS redraws it when the sessions that
-    wait change, from the same figures (data-n is what the build counted)."""
-    n = len(items) + sessions
-    static = lead_counts(items)
-    reasons = list(static)
-    if sessions:
-        reasons.append("%d session%s waiting for you" % (sessions, " is" if sessions == 1 else "s are"))
-    why = " · ".join(reasons)
-    first = items[0] if items else None
-    href, label, tz = (first["href"], first["go"], first["tz"]) if first else ("#waiting-now", "See who is waiting", "")
-    go = ('<a class="btn primary" id="lead-go" href="%s"%s%s>%s%s</a>'
-          % (E(href), ' data-tz-go="%s"' % E(tz) if tz else "", ' target="_blank" rel="noopener"' if first and first.get("blank") else "",
-             E(label), ARROW)) if n else '<a class="btn primary" id="lead-go" href="#" hidden></a>'
-    return ('<div class="lead" id="lead" role="region" aria-labelledby="lead-h" data-n="%d" data-why="%s" data-first="%d"><div><h2 id="lead-h">%s</h2>'
-            '<p id="lead-why">%s</p></div>%s</div>'
-            % (len(items), E(" · ".join(static)), 1 if first else 0, E(lead_said(n)), E(why), go))
-
-
-ARROW = ('<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" '
-         'stroke-linejoin="round" width="16" height="16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>')
 
 
 LATE_ICON = ('<svg class="bi" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" '
@@ -7729,12 +7729,13 @@ def waiting_card(rows: List[dict], now: dt.datetime, needs: Optional[List[dict]]
     rows = sorted(rows, key=lambda r: (r.get("since") or "", r["id"]))
     needs = needs or []
     total = len(rows) + len(needs)
-    meta = ("%d item%s" if needs else "%d session%s") % (total, "" if total == 1 else "s") if total else ""
-    html = card("waiting-now", "Waiting on you now", meta,
+    # The card's heading is the sentence that says how many things wait (#595); with nothing waiting the card is that one line.
+    html = card("waiting-now", lead_said(total), "",
                 '<div class="wneeds" id="wneeds">%s</div><div class="wrows" id="wrows" aria-live="polite">%s</div>'
                 % (need_groups(needs), "".join(waiting_row(r, now) for r in rows)))
-    # Built out of sight (the class, since a card's own Hide uses `hidden`) when nothing waits (#510); GarrickWaiting shows it with the first row and hides it with the last.
-    return html if total else html.replace('<details class="card" id="waiting-now"', '<details class="card nowait" id="waiting-now"', 1)
+    # data-n is what the build counted; GarrickWaiting adds the sessions that wait now and says the sentence again.
+    html = html.replace('<details class="card" id="waiting-now"', '<details class="card%s" id="waiting-now" data-n="%d"' % ("" if total else " calm", len(needs)), 1)
+    return html
 
 
 WAITING_CSS = r"""
@@ -7742,15 +7743,20 @@ WAITING_CSS = r"""
 .wrow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:7px 0;border-bottom:1px solid var(--line)}
 .wrow:last-child{border-bottom:0}.wname{font-weight:600}.wwhat,.wfor,.wwhere{color:var(--ink2);font-size:var(--fs-meta)}
 .wrow .act{margin-left:auto}
-/* out of sight but in the accessibility tree, so its aria-live region announces the first row (#510) */
-#waiting-now.nowait{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+/* nothing waits: the card is its one line, the sentence (#595); its aria-live region stays in the tree, for the first row */
+#waiting-now.calm>.body{display:none}#waiting-now.calm>summary .chev{visibility:hidden}
+#waiting-now>summary h2{font:700 var(--fs-h2)/1.25 var(--sans);letter-spacing:-.01em}
+.wacts{margin-left:auto;display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 10px}.wacts .act{margin-left:0}
+.wacts .alt{color:var(--ink2);font-size:var(--fs-meta);text-decoration:underline;text-underline-offset:2px;padding:4px 2px}
+.wlate{flex:1 0 100%;padding:0 0 4px 50px}.wlate .trow{grid-template-columns:22px minmax(0,1fr) auto}
+.wnote{flex:1 0 100%;padding:0 0 2px 50px;color:var(--ink2);font-size:var(--fs-meta)}.wnote .act{margin-left:8px;font-size:var(--fs-meta);padding:2px 10px}
+.nohost .wacts .act,.nohost .wlate{display:none}.nohost .wacts .alt{color:var(--ink);border:1px solid var(--line2);border-radius:8px;padding:6px 12px;text-decoration:none;font-size:var(--fs-sub)}
 """
 
 WAITING_JS = r"""
 (function(){var ex=document.getElementById('explore-go');if(ex)ex.addEventListener('click',function(){var g=document.getElementById('graph');if(!g)return;g.hidden=false;g.open=true;g.scrollIntoView({block:'start'})});
 var box=document.getElementById('wrows');if(!box)return;var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;
 var ICON='<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.2 1.4"/></svg>',
-ARROW='<svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M3 8h10M9 4l4 4-4 4"/></svg>',
 NUM=['Nothing','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten'];
 function since(s){var t=Date.parse(s);if(!t)return'';var m=Math.max(0,Math.floor((Date.now()-t)/60000));return m<1?'less than a minute':m<60?m+' min':m<2880?Math.round(m/60)+' h':Math.round(m/1440)+' days'}
 function span(c,t){var e=document.createElement('span');e.className=c;e.textContent=t;return e}
@@ -7761,22 +7767,49 @@ var f=span('wfor',since(r.since));f.dataset.since=r.since||'';d.appendChild(f);
 if(r.where==='cmux'){var b=document.createElement('button');b.type='button';b.className='act apponly';b.dataset.wgo=r.id;b.textContent='Go to it';d.appendChild(b)}
 else d.appendChild(span('wwhere',(r.where==='desktop'?"Claude's desktop app":app)+', in '+((r.folder||'').split('/').pop()||'a folder')));
 return d}
-/* the lead sentence says what the card lists: what the build counted, and the sessions now */
-function lead(sess){var L=document.getElementById('lead');if(!L)return;var st=+L.dataset.n||0,t=st+sess,h=document.getElementById('lead-h'),w=document.getElementById('lead-why'),g=document.getElementById('lead-go');
-h.textContent=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';
-var why=L.dataset.why?L.dataset.why.split(' · '):[];if(sess)why.push(sess+(sess===1?' session is':' sessions are')+' waiting for you');
-w.textContent=why.join(' · ');
-if(g){g.hidden=t<1;if(L.dataset.first!=='1'&&sess){g.setAttribute('href','#waiting-now');g.removeAttribute('data-tz-go');g.innerHTML='See who is waiting'+ARROW}}}
+/* the card's heading says what it lists: what the build counted, and the sessions now (#595) */
+function lead(sess){var c=document.getElementById('waiting-now');if(!c)return;var st=+c.dataset.n||0,t=st+sess,h=c.querySelector('h2');
+if(h)h.textContent=t<1?'Nothing needs you right now.':t===1?'One thing needs you.':(t<NUM.length?NUM[t]:t)+' things need you.';c.classList.toggle('calm',t<1)}
 function show(rows){rows=(rows||[]).filter(function(r){return r&&r.state==='waiting'}).sort(function(a,b){return(a.since||'')<(b.since||'')?-1:1});
 box.textContent='';
 rows.forEach(function(r){box.appendChild(row(r))});
-var nd=document.getElementById('wneeds'),fixed=nd?nd.querySelectorAll('.wneed').length:0,total=rows.length+fixed;
-var card=document.getElementById('waiting-now');if(card)card.classList.toggle('nowait',!total);
-var m=document.querySelector('#waiting-now .meta');if(m)m.textContent=total?total+(fixed?(total===1?' item':' items'):(total===1?' session':' sessions')):'';
 lead(rows.length)}
 box.addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-wgo]');if(b&&host)host.postMessage({waitingGo:b.dataset.wgo})});
 setInterval(function(){box.querySelectorAll('.wfor').forEach(function(f){var t=since(f.dataset.since);if(t)f.textContent=t})},30000);
 window.GarrickWaiting=function(data){show(data&&data.sessions?data.sessions:data)};
+})();
+"""
+
+
+# ---- Waiting on you now › the rows that act (#595) -------------------------------------
+# *Commit them* sends `commit-files` with the zone and the files the row lists, and page_action.py checks both again before
+# the engine commits those files and no others, through the zone's own hook. The reply is one line with *Undo* (the same
+# verb, `undo` and `repo`) and *Show me*, which is the row's link to the Repositories card. *Try again* opens Settings on the
+# update and runs it as its own button does, so the question about files with changes not committed is the same one.
+# Both are for the app: a browser keeps each row's link. The text is drawn with textContent.
+COMMIT_JS = r"""
+(function(){var host=window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.garrick;if(!host)return;
+function mk(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e}
+function rowOf(zone){var r=null;[].forEach.call(document.querySelectorAll('#wneeds [data-commit]'),function(b){if(b.dataset.commit===zone)r=b.closest('.wneed')});return r}
+function line(row,text,undo,repo){var old=row.querySelector('.wnote');if(old)old.remove();var n=mk('div','wnote',text);
+if(undo){var u=mk('button','act','Undo');u.type='button';u.dataset.undoCommit=undo;u.dataset.repo=repo;n.appendChild(u)}
+var go=row.querySelector('.wacts .alt');if(go){var s=go.cloneNode(true);s.textContent='Show me';n.appendChild(document.createTextNode(' '));n.appendChild(s)}
+row.appendChild(n)}
+document.addEventListener('click',function(e){var t=e.target.closest&&e.target.closest('[data-try-update]');
+if(t){e.preventDefault();var o=document.getElementById('open-settings');if(o)o.click();
+setTimeout(function(){var sec=document.getElementById('release-settings');if(sec)sec.scrollIntoView({block:'center'});var r=window.GarrickRelease;if(r&&r.update)r.update()},60);return}
+var c=e.target.closest&&e.target.closest('[data-commit]');
+if(c){e.preventDefault();var files=[];try{files=JSON.parse(c.dataset.files||'[]')}catch(x){}if(!files.length)return;c.disabled=true;
+var row=c.closest('.wneed');if(row)line(row,'Committing…');host.postMessage({act:{verb:'commit-files',zone:c.dataset.commit,files:files}});return}
+var u=e.target.closest&&e.target.closest('[data-undo-commit]');
+if(u){e.preventDefault();u.disabled=true;host.postMessage({act:{verb:'commit-files',undo:u.dataset.undoCommit,repo:u.dataset.repo}})}});
+var prev=window.GarrickActed;window.GarrickActed=function(q,out){
+if(q&&q.verb==='commit-files'){var b=out&&out.bounded,say=(out&&out.say)||(out&&out.ok?'Done.':'Nothing was committed.');
+if(q.undo){var rr=document.querySelector('#wneeds .wnote button[data-undo-commit="'+q.undo+'"]'),n=rr&&rr.closest('.wneed');if(n)line(n,say);return}
+var row=rowOf(q.zone);if(!row)return;
+if(out&&out.ok&&b){line(row,say,b.commit,b.repo);var m=row.querySelector('[data-commit]');if(m)m.hidden=true}
+else{line(row,say);var again=row.querySelector('[data-commit]');if(again)again.disabled=false}return}
+if(prev)return prev(q,out)};
 })();
 """
 
@@ -7803,8 +7836,7 @@ def fs_scale(css: str) -> str:
 # Last in the page's CSS, so each rule here settles what the blocks before it say at the same weight.
 LOOK_CSS = r"""
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.hero .fig,.tile .val{font-family:var(--sans);font-weight:600;font-variant-numeric:tabular-nums}
-.hero .lbl,.tile .lbl,.tile .sub,.hint,.head .meta,.name small,.thread .t small,.tmeta,th,.legend{font-size:var(--fs-meta)}
+.hint,.head .meta,.name small,.thread .t small,.tmeta,th,.legend{font-size:var(--fs-meta)}
 button.act,a.act,.tabs button,.seg button,.cog,.gbar button,.gbar .gfind,.gzsel,.switch,.zbtn,.moveto button{min-height:40px}
 button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .appicons .act[data-k]{width:40px;height:40px}
@@ -7823,9 +7855,6 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 @media (max-width:820px){.jobs .row{grid-template-columns:18px minmax(0,1fr) auto}}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 /* the Overview's lead: one sentence, its reasons, one button */
-.lead{display:flex;align-items:flex-end;justify-content:space-between;gap:16px 24px;flex-wrap:wrap;margin:0 0 24px}
-.lead h2{margin:0;font:700 var(--fs-h1)/1.2 var(--sans);letter-spacing:-.02em;max-width:30ch;text-wrap:balance}
-.lead p{margin:6px 0 0;color:var(--ink2);font-size:var(--fs-body);max-width:70ch}.lead p:empty{display:none}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border-radius:8px;border:1px solid var(--line2);background:var(--raise);color:var(--ink);font:600 var(--fs-sub)/1 var(--sans);cursor:pointer;text-decoration:none;white-space:nowrap}
 .btn:hover{border-color:var(--ink2);text-decoration:none}.btn svg{flex:none}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}.btn.primary:hover{filter:brightness(1.08)}
@@ -7834,8 +7863,6 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .wico{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--wash);color:var(--accent)}.wico svg{width:18px;height:18px}
 .wico.crit{background:var(--critical-wash);color:var(--critical)}.wico.warn{background:var(--warning-wash);color:var(--warning)}
 .wrow .act{margin-left:auto}.wname{overflow-wrap:anywhere}.wico{flex:none}
-.wacts{margin-left:auto;display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 10px}.wacts .act{margin-left:0}
-.wacts .alt{color:var(--ink2);font-size:var(--fs-meta);text-decoration:underline;text-underline-offset:2px;background:none;border:0;padding:4px 2px}
 /* the two groups of what waits (#559): Broken, then To do, which starts folded when something is broken */
 .wgroup{margin:0 0 6px}.wgh{display:flex;align-items:baseline;gap:8px;margin:10px 0 2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted);cursor:default;list-style:none}
 details.wgroup>summary.wgh{cursor:pointer}details.wgroup>summary.wgh::-webkit-details-marker{display:none}
@@ -7886,7 +7913,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     agent = load_agent(ws)
     folder = folder or jobs_dir(agent)
     link = Links(ws)
-    T, TD, IB, C, R, W = (threads(ws), todo(ws), inboxes(ws), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
+    T, IB, C, R, W = (threads(ws), inboxes(ws), check(ws, check_file(page_at) if page_at else None, reuse_check, now),
                            repos(ws), wikis(ws))
     sched = launchd_jobs()       # only plists that run job.py: the jobs extra's, run or not
     J, L = jobs(folder, now, sched), ledger(agent, folder, now, sched)
@@ -7968,6 +7995,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
             detail[line] = {"kind": "files", "count": r["dirty"], "zone": r["name"], "tz": "", "label": "See the changes",
                             "text": "%d file%s not committed" % (r["dirty"], "" if r["dirty"] == 1 else "s"),
                             "late": "oldest changed %s" % age(r["since"], now)}
+            detail[line].update(commit_row(ws, r, now))
     notice = release_notice(ws)
     if notice:
         attn.append(("warning", notice[0], notice[1]))
@@ -7988,9 +8016,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     live = sum(len(z["rows"]) for z in T.values())
     parked_n = sum(len(z["parked"]) for z in T.values())
     names = short_names(T)
-    aging = sum(1 for z in T.values() for r in z["rows"] if r["updated"] and (now.date() - r["updated"]).days > 14)
-    week = sum(1 for z in T.values() for r in z["rows"] if r["updated"] and (now.date() - r["updated"]).days <= 7)
-    open_actions = sum(sum(t["counts"].values()) for t in TD.values())
 
     flags_on = preview_flags(ws)
     acting = True       # the buttons that act; only a host that carries them out (the app) shows them
@@ -8020,29 +8045,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                 % (E(rebuild_command(ws, show_graph, out, flags)), REBUILD,
                    ('<button class="cog" type="button" id="explore-go" aria-label="Explore the graph" title="Explore the graph">%s</button>' % GRAPH_ICON)
                    if show_graph else "", GEAR, THEME_SEG))
-
-    # ---- hero and tiles
-    if attn:
-        hero = '<a class="hero go" id="summary" href="#%s"><div class="fig">%s%d</div><div class="lbl">%s attention</div></a>' % (
-            troubled[0][1], ICON[worst], len(attn), "thing needs" if len(attn) == 1 else "things need")
-    else:
-        hero = '<div class="hero" id="summary"><div class="fig" style="font-size:var(--fs-h1)">%sAll clear</div><div class="lbl">Nothing failing, waiting or broken.</div></div>' % ICON["good"]
-    # Each tile leads to the card that explains it, in whichever tab that card sits.
-    tiles = [("Live threads", "%d" % live, "%d touched this week, %d untouched for 14+ days" % (week, aging), "threads")]
-    if lists:
-        tiles.append(("Todo", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
-                      "todolist"))
-    tiles += [("Context", ("%d<small>%s</small>%d<small>%s</small>" % (C.get("errors", 0), noun(C.get("errors", 0), "error"),
-                                                                       C.get("warnings", 0), noun(C.get("warnings", 0), "warning")))
-               if C and not C.get("failed") else "—", check_age if C else "check.py not found", "checks")]
-    if L:
-        cap = L["caps"]["calls_day"]
-        tiles[-1] = ("Assistant calls, 24 h", "%d<small>%s</small>" % (L["day"], "of %g" % cap if cap else "no cap"),
-                    "$%.2f at list price · %s" % (L["cost_day"], "$%g max per call" % L["budget"] if L["budget"] else "no per-call budget"),
-                    "calls")
-    top = '<div class="top" style="--tiles:%d">%s%s</div>' % (len(tiles), hero, "".join(
-        '<a class="tile go" href="#%s"><div class="lbl">%s</div><div class="val">%s</div><div class="sub">%s</div></a>' % (h, E(a), b, E(c))
-        for a, b, c, h in tiles))
 
     # ---- threads, one column per zone: a row per project, its threads folding
     # under it; a project with no thread notes is a thread row of its own. With
@@ -8418,19 +8420,19 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # dragged, moved or hidden a card keeps every card it placed exactly where
     # it placed it (LAYOUT_JS), and Reset view is what adopts this order.
     anything = any(z["rows"] or z["parked"] or z["done"] for z in T.values())
-    needs = needs_you(attn, lists, now.date(), detail)          # what waits on the user, from what the page knows; the lead counts it (#551)
+    needs = needs_you(attn, lists, now.date(), detail, acting)  # what waits on the user, from what the page knows; the card's sentence counts it (#551, #595)
     lead = waiting_card(waiting_now or [], now, needs) + ((work_list_card(HW, now.date(), acting, lambda r: thread_card(
                                                         r, names, link, (now.date() - r["updated"]).days if r["updated"] else None,
                                                         cmux, acting, S, now.date(), DK)) if HW else "") + threads_card
                                                     if anything else start_card() + threads_card)
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT + lead_block(needs, len(waiting_now or [])), lead, "",
+                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT, lead, "",
                           "", graph_card))
     # Every tab with content has a left and a right slot below its own content (#443).
-    status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
+    status_tab = section("status", True, '<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'
-                         % (top, "".join(machinery[0::2]), "".join(machinery[1::2])))
+                         % ("".join(machinery[0::2]), "".join(machinery[1::2])))
     # The Todo tab's badge is the late actions of the zone the list shows, never a sum across zones (the list's own script keeps it
     # in step as the zone changes): the first one shown is Work when there is one, else the first.
     late_by = {z["zone"]: z["late"] for z in lists}
@@ -8485,7 +8487,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     # own before the graph's, whose cards offer it. The Guide's pages come last of
     # all, after every script, so reading past them never holds up the tabs that show the work.
     scripts = [RELOAD_JS + PANEL_JS + LAYOUT_JS + JS + PARK_JS + RENAME_JS + TVIEW_JS + TCHIP_JS + TADD_JS + TODO_JS + MENU_SETTINGS_JS + HOME_JS + YOURWORK_JS + JOBS_JS,
-               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
+               MANAGE_JS, FIND_JS, WORK_JS, WAITING_JS, COMMIT_JS, NOTIFY_JS, MEMORY_JS, CHANNELS_JS, RELEASE_JS, MENU_JS, CHECKS_JS, queue_mod().QUEUE_JS if queue_view else "", CONTEXT_JS if qdata or 'id="nzone"' in checks_card else "", questions_mod().CX_JS if allowed else "", guide_mod().GUIDE_JS,
                NOTE_JS if show_graph else "", GRAPH_JS + FOLLOW_JS if show_graph else ""]
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             '<title>%s</title>%s<style>%s</style></head><body data-built="%s" data-launchers="%s"%s><div class="app">%s%s</div>%s'

@@ -331,6 +331,88 @@ def undo(zone_dir, rel, k):
     return parse(lines[i])["text"]
 
 
+# A source a line carries after its words: `· [title](link)`.
+SOURCE = re.compile(r"\s*·\s*\[[^\]]*\]\([^)\s]*\)")
+
+
+def _shown(line):
+    """A line's words without its thread, sources, tags and fields."""
+    return re.sub(r"\s+", " ", ALSO.sub("", SOURCE.sub("", parse(line)["text"]))).strip()
+
+
+def _same(line):
+    """The thread and the words of an open line, read as it would be heard, whatever sources it carries."""
+    m = LABEL.match(line[6:])
+    return ((m.group(1) if m else "") + "|" + _shown(line)).rstrip(".!").casefold()
+
+
+def reword(zone_dir, rel, k, text):
+    """Give an open line new words and keep the rest of it: its thread link,
+    its tags, its sources (`· [title](…)` and `(also in …)`) and its fields.
+    Where the new text carries a source, a date or a tag of its own, the new
+    text wins and the old one of that kind is left off. The line stays where it
+    is, open. A line another open line already says is refused, as add() does.
+    `text` is the whole description after the thread link: a party opening a line
+    (`Acme Corp: `) is part of it. Returns (the old words, the new words, the
+    line's new key), the words without sources or fields."""
+    path = os.path.join(zone_dir, rel)
+    lines = _load(path)
+    i = _find(lines, k)
+    old = lines[i].rstrip()
+    new_text = re.sub(r"\s+", " ", text or "").strip()
+    new_text = re.sub(r"^-\s*\[[ xX]\]\s*", "", new_text)
+    if not new_text:
+        raise ValueError("there is no text")
+    body = old[6:]
+    m = LABEL.match(body) or UNSURE.match(body)
+    prefix = body[:m.end()] if m else ""
+    rest = body[len(prefix):]
+    carried = LABEL.match(new_text)
+    if carried:                                         # the thread stays the line's own
+        new_text = new_text[carried.end():]
+    sources = [x.group(0).strip() for x in SOURCE.finditer(rest)]
+    also = [x.group(0).strip() for x in ALSO.finditer(rest)]
+    tags = TAG.findall(rest)
+    dates = [x.group(1) for x in DATE.finditer(rest)]
+    prio = [x.group(1) for x in PRIORITY.finditer(rest)]
+    keep = []
+    if not SOURCE.search(new_text):
+        keep += sources
+    elif sources:                                       # the old sources stay, the new text's own first
+        keep += [x for x in sources if x not in new_text]
+    if not ALSO.search(new_text):
+        keep += also
+    keep += [t for t in tags if t not in new_text]
+    fields = ([] if PRIORITY.search(new_text) else prio) + ([] if DATE.search(new_text) else dates)
+    new = "- [ ] " + prefix + " ".join([new_text] + keep + fields)
+    new = fields_last(re.sub(r"\s+$", "", new))
+    if new == old:
+        raise ValueError("the line already says that")
+    mine = _same(new)
+    if any(j != i and l.startswith("- [ ] ") and _same(l) == mine for j, l in enumerate(lines)):
+        raise ValueError("that line is already in the list")
+    lines[i] = new
+    _save(path, lines)
+    _rekey(zone_dir, k, key(new))
+    return _shown(old), _shown(new), key(new)
+
+
+def take(zone_dir, rel, k):
+    """Take an open line out of the note, with the indented lines under it, and
+    return them as written (the caller puts them somewhere): the line is not
+    deleted, it moves. Returns (the lines, the line's words)."""
+    path = os.path.join(zone_dir, rel)
+    lines = _load(path)
+    i = _find(lines, k)
+    j = i + 1
+    while j < len(lines) and lines[j][:1] in (" ", "\t") and lines[j].strip():
+        j += 1
+    moved = lines[i:j]
+    del lines[i:j]
+    _save(path, lines)
+    return moved, parse(moved[0])["text"]
+
+
 def _section_bounds(lines, name):
     start = next((i for i, l in enumerate(lines) if l.strip() == f"## {name}"), None)
     if start is None:

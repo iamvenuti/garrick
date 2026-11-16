@@ -30,6 +30,11 @@ zone's repository, as the skills would:
                 {"zone", "text", "target": "-", "Project" or "Project/Thread",
                 "date": an ISO date or "-"}; the Inbox, or with a date where a
                 dated line goes; a line already there is refused
+    todo-edit   reword an open line, keeping its thread, tags, sources and dates:
+                {"zone", "file", "key", "text"}; one commit, "Work: reworded, ..."
+    todo-retire move an open line, still open, to the zone's expired archive with
+                the source that replaced it: {"zone", "file", "key", "reason"};
+                one commit covers Todo.md and the archive; nothing is deleted
     park        a thread note's status to parked, with a dated entry:
                 {"zone", "file"}, or by name {"zone", "project", "thread"?};
                 with no thread, the project's hub, and all of it is parked.
@@ -322,7 +327,9 @@ VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
          "work-file", "memory-preview", "note-read", "note-open", "release-check", "release-update",
-         "walls-unallow", "walls-look", "walls-allow", "finding", "note-add")
+         "walls-unallow", "walls-look", "walls-allow", "finding", "note-add",
+         "todo-edit",
+         "todo-retire")
 SKIP = {"archive", "_template", ".git", ".obsidian", ".trash"}
 # The ways to open a thread Settings lists: the note's own link, Explore's Preview (#219),
 # which is switched on and off with them but opens nothing, then status.py's LAUNCHERS.
@@ -866,6 +873,80 @@ def todo(ws: Path, req: dict) -> str:
     if already:
         return "Saved %d, %d already %s" % (len(said), len(already), "done" if req["verb"] == "todo-done" else "open")
     return said[0] if len(said) == 1 else "Saved %d" % len(said)
+
+
+TODO_REASON_MAX = 400
+_TODO_SKILL = {}
+
+
+def todo_skill(ws: Path):
+    """The todo skill's script: the one place a line is written to the expired archive."""
+    path = ws / "System" / "skills" / "todo" / "todo.py"
+    if path not in _TODO_SKILL:
+        if not path.is_file():
+            raise Refused("the todo skill is not installed here, so a line cannot be moved to the archive")
+        spec = importlib.util.spec_from_file_location("garrick_page_todo", str(path))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _TODO_SKILL[path] = mod
+    return _TODO_SKILL[path]
+
+
+def todo_change(ws: Path, req: dict, today: dt.date) -> str:
+    """todo-edit and todo-retire: one open line of one zone, by key, under the zone's lock, in one commit with the
+    wall check, as todo-done is. Edit gives the line new words and keeps what else it carries. Retire moves the line,
+    still open, to archive/Todo-expired-<year>.md with `superseded by <source>` at the end, and never deletes it."""
+    tl = todo_lines()
+    zone = zone_dir(ws, req.get("zone"))
+    note = live_note(zone, req.get("file"))
+    keys = task_keys(req)
+    rel = note.relative_to(zone).as_posix()
+    retire = req["verb"] == "todo-retire"
+    text = req.get("reason" if retire else "text")
+    if not isinstance(text, str) or not text.strip() or len(text) > (TODO_REASON_MAX if retire else 1000) or "\n" in text:
+        raise Refused("not a source for the line to be retired under" if retire else "not a line to write")
+    if retire and rel != "Todo.md":
+        raise Refused("only a line of the zone's Todo.md is retired")
+    with zone_lock(zone):
+        before = note.read_bytes()
+        found = live_key(tl, zone, rel, keys[0], req["verb"])
+        why = stale_why(ws, req["verb"], req, found)
+        if why:
+            raise Refused(why)
+        if not found:
+            raise Refused("that line has changed since the page was built; it rebuilds now, try again")
+        if not retire:
+            try:
+                old, new, _ = tl.reword(str(zone), rel, keys[0], text)
+            except ValueError as e:
+                raise Refused(str(e))
+            except tl.NotFound:
+                note.write_bytes(before)
+                raise Refused("that line has changed since the page was built")
+            commit(zone, note, before, ("%s: reworded, %s" % (zone.name, new))[:200], wall=wall_refusal(ws))
+            return "Reworded: " + said_text(new)
+        skill = todo_skill(ws)
+        reason = " ".join(text.split())
+        if not reason.lower().startswith("superseded by"):
+            reason = "superseded by " + reason
+        name = "Todo-expired-%d.md" % today.year
+        archive = zone / "archive" / name
+        archived = archive.read_bytes() if archive.is_file() else None
+        try:
+            moved, said = tl.take(str(zone), rel, keys[0])
+        except tl.NotFound:
+            note.write_bytes(before)
+            raise Refused("that line has changed since the page was built")
+        moved[0] = moved[0].rstrip() + " · " + reason
+        try:
+            skill.keep_out(zone, name, "%s: actions nobody triaged, %d" % (zone.name, today.year),
+                           ["<!-- %s retired -->" % today.isoformat()] + moved)
+        except OSError:
+            note.write_bytes(before)
+            raise Refused("the archive could not be written, so nothing changed")
+        commit_all(zone, [(note, before), (archive, archived)],
+                   ("%s: retired, %s" % (zone.name, said))[:200], wall=wall_refusal(ws))
+    return "Retired: " + said_text(said)
 
 
 def wall_refusal(ws: Path) -> Optional[str]:
@@ -5308,6 +5389,8 @@ def act(ws: Path, req, today=None, now=None):
         return park(ws, req, today or dt.date.today())
     if req["verb"] == "todo-add":
         return todo_add(ws, req)
+    if req["verb"] in ("todo-edit", "todo-retire"):
+        return todo_change(ws, req, today or dt.date.today())
     if req["verb"] == "note-add":
         return note_add(ws, req)
     if req["verb"] == "answer":
@@ -5353,7 +5436,9 @@ def act(ws: Path, req, today=None, now=None):
 # ask box or a session changes that the page shows. Every other verb leaves the
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
-               "rename", "move", "delete", "undo")
+               "rename", "move", "delete", "undo",
+               "todo-edit",
+               "todo-retire")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
 CALLERS = ("page", "ask", "session")
 # Verbs only the app's bridge may send (`via: page`): a wall question's look, and the allowance that follows it (#548, #550).
@@ -5478,6 +5563,8 @@ CLI_FIELDS = {
     "question-work": ("wiki", "file"), "question-done": ("wiki", "file"),
     "todo-done": ("zone", "line", "file"), "todo-undo": ("zone", "line", "file"),
     "todo-date": ("zone", "line", "file", "date"),
+    "todo-edit": ("zone", "line", "file", "text"),
+    "todo-retire": ("zone", "line", "file", "reason"),
 }
 
 
@@ -5516,7 +5603,7 @@ def session_request(ws: Path, args) -> dict:
     elif not given.get("zone"):
         raise Refused("no zone given: say which, with --zone")
     req = dict({"verb": args.verb}, **{k: v for k, v in given.items() if v is not None})
-    if args.verb in ("todo-done", "todo-undo", "todo-date"):
+    if args.verb in ("todo-done", "todo-undo", "todo-date", "todo-edit", "todo-retire"):
         req = session_line(ws, req)
     return req
 
@@ -5530,7 +5617,7 @@ def command_parser() -> argparse.ArgumentParser:
                                                   "with a verb, page with JSON)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
-                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages"):
+                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason"):
         ap.add_argument("--" + name)
     return ap
 

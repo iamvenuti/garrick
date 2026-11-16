@@ -190,6 +190,10 @@ DECLARED: Dict[str, Op] = {
     # The line it adds has no key yet: a line already in the note is refused
     # by the handler, which is that verb's own check.
     "todo-add": _op(("zone", "text", "target", "date", "confirm"), ("text", "target", "date"), "zone", True, "safe"),
+    # Distil (#591): reword an open line, or move it to the expired archive with its source. By key, as a tick is, so a
+    # line that has moved is refused. Neither keeps a journal record, like note-add: a session sends them, never a button.
+    "todo-edit": _op(("zone", "file", "key", "text", "confirm"), ("file", "key", "text"), "zone", True, "safe", "line"),
+    "todo-retire": _op(("zone", "file", "key", "reason", "confirm"), ("file", "key", "reason"), "zone", True, "safe", "line"),
     # A note to yourself (#569): the text goes into a dated file under the thread or project it is about, its actions
     # into that zone's Todo.md, one commit. The place is a `destination`, as the owner would say it, or the `zone`,
     # `project` and `thread` the ask box has checked; the handler refuses one that does not settle to one folder.

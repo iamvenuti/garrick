@@ -5,7 +5,7 @@
   long-polls your private bot all day, and starts again if it stops. Idle, it
   makes no assistant call. The status page shows whether it is running and when
   it last heard from you.
-  Run setup first (python3 extras/fetch/telegram_receiver.py setup), which pairs
+  Run setup first (/usr/bin/python3 extras/fetch/telegram_receiver.py setup), which pairs
   your private chat and checks that no other program reads the same bot. The
   bot's token is in the macOS Keychain, never in this file.
   Copy this file to ~/Library/LaunchAgents/ and edit the copy.

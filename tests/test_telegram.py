@@ -672,6 +672,58 @@ class TestBesideTheDesk(TelegramCase):
         self.assertEqual(1, len(list((self.root / "Inbox").glob("telegram-*.md"))))
 
 
+class TestCertificateFailure(TelegramCase):
+    """#589: a certificate failure names its cause and its fix; any other network failure gives its reason."""
+
+    def fail_with(self, error):
+        with mock.patch.object(self.mods["telegram_delivery"].urllib.request, "urlopen", side_effect=error):
+            with self.assertRaises(self.mods["telegram_delivery"].ApiError) as got:
+                self.rx.bot.call("getWebhookInfo")
+        return got.exception
+
+    def cert(self):
+        import ssl
+        return ssl.SSLCertVerificationError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed for 123:SECRET")
+
+    def test_a_certificate_failure_inside_a_urlerror_gives_the_one_line(self):
+        import urllib.error
+        e = self.fail_with(urllib.error.URLError(self.cert()))
+        self.assertEqual(self.mods["telegram_delivery"].CERTIFICATE_LINE, str(e))
+        self.assertIn("/usr/bin/python3", str(e))
+        self.assertNotIn("SECRET", str(e))
+
+    def test_a_certificate_failure_raised_alone_or_in_a_chain_gives_the_same_line(self):
+        self.assertEqual(self.mods["telegram_delivery"].CERTIFICATE_LINE, str(self.fail_with(self.cert())))
+        try:
+            try:
+                raise self.cert()
+            except Exception as inner:
+                raise OSError("wrapped") from inner
+        except OSError as chained:
+            self.assertEqual(self.mods["telegram_delivery"].CERTIFICATE_LINE, str(self.fail_with(chained)))
+
+    def test_another_urlerror_gives_its_reason_and_no_token(self):
+        import urllib.error
+        e = self.fail_with(urllib.error.URLError("Name or service not known 123:SECRET"))
+        self.assertIn("Name or service not known", str(e))
+        self.assertNotIn("SECRET", str(e))
+        self.assertNotIn("certificate", str(e).lower())
+
+    def test_setup_says_the_certificate_line_not_a_network_problem(self):
+        import urllib.error
+        with mock.patch.object(self.mods["telegram_delivery"].urllib.request, "urlopen",
+                               side_effect=urllib.error.URLError(self.cert())):
+            said = self.rx.consumers()
+        self.assertEqual(self.mods["telegram_delivery"].CERTIFICATE_LINE, said)
+
+    def test_the_docs_and_the_plist_name_the_same_python(self):
+        import plistlib
+        plist = plistlib.loads((REPO / "extras" / "jobs" / "launchd" / "garrick.gr-telegram.plist").read_bytes())
+        python = plist["ProgramArguments"][0]
+        doc = (REPO / "docs" / "extras" / "telegram.md").read_text()
+        self.assertIn("%s extras/fetch/telegram_receiver.py setup" % python, doc)
+
+
 class TestOneReceiver(TelegramCase):
     def test_a_webhook_is_another_consumer(self):
         self.api.webhook = "https://example.com/hook"

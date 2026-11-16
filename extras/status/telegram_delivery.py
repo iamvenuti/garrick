@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import subprocess
 import sys
 import time
@@ -49,9 +50,28 @@ class Refused(Exception):
 class ApiError(Exception):
     """The Bot API said no, or could not be reached. Never carries the token."""
 
-    def __init__(self, message: str, code: Optional[int] = None):
+    def __init__(self, message: str, code: Optional[int] = None, certificate: bool = False):
         super().__init__(message)
         self.code = code
+        self.certificate = certificate
+
+
+CERTIFICATE_LINE = ("This Python cannot verify Telegram's certificate. Run setup with /usr/bin/python3, which uses the macOS "
+                    "Keychain.")
+
+
+def is_certificate_failure(error: BaseException) -> bool:
+    """True when `error`, its URLError reason or anything in its cause chain is a failed certificate check."""
+    seen, todo = set(), [error]
+    while todo:
+        e = todo.pop()
+        if not isinstance(e, BaseException) or id(e) in seen:
+            continue
+        seen.add(id(e))
+        if isinstance(e, ssl.SSLCertVerificationError):
+            return True
+        todo += [getattr(e, "reason", None), e.__cause__, e.__context__]
+    return False
 
 
 def keychain_token(service: str = KEYCHAIN[0], account: str = KEYCHAIN[1]) -> Optional[str]:
@@ -86,7 +106,11 @@ class Bot:
         except urllib.error.HTTPError as e:
             raise ApiError("the Bot API answered %d to %s" % (e.code, method), e.code) from None
         except (urllib.error.URLError, OSError, ValueError) as e:
-            raise ApiError("the Bot API could not be reached for %s (%s)" % (method, type(e).__name__)) from None
+            if is_certificate_failure(e):
+                raise ApiError(CERTIFICATE_LINE, certificate=True) from None
+            why = getattr(e, "reason", None) or e
+            why = self.scrub(why) or type(e).__name__
+            raise ApiError("the Bot API could not be reached for %s (%s)" % (method, why)) from None
         if not isinstance(body, dict) or not body.get("ok"):
             code = body.get("error_code") if isinstance(body, dict) else None
             raise ApiError("the Bot API refused %s" % method, code)

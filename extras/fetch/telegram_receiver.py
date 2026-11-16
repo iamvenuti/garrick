@@ -170,6 +170,8 @@ class Receiver:
         except ApiError as e:
             if e.code == 409:
                 return "Telegram says another program is already reading this bot's messages."
+            if getattr(e, "certificate", False):
+                return self.bot.scrub(str(e))
             return "The bot could not be reached to check for another reader: %s" % self.bot.scrub(str(e))
         ids1, ids2 = [u["update_id"] for u in first], [u["update_id"] for u in second]
         if ids1 and (not ids2 or min(ids2) > min(ids1)):

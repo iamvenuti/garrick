@@ -2586,7 +2586,13 @@ g.open=true;var rows=g.querySelector('.trows'),empty=rows.querySelector('.tempty
 var name=target!=='-'?target.split('/').pop():'',r=document.createElement('div');r.className='trow pending';
 r.innerHTML='<span class="tick" aria-hidden="true"></span><div class="tmain"><div class="ttext">'+(name?'<span class="thr">'+esc(name)+'</span>':'')+esc(text)
 +'</div><div class="tmeta"><span>'+note+'</span></div></div><span class="tdate'+(date==='-'?' none':'')+'">'+esc(chip)+'</span>';
-rows.insertBefore(r,rows.firstChild);var c=g.querySelector('summary .n');if(c)c.textContent=String((+c.textContent||0)+1);r.scrollIntoView({block:'nearest'})};
+rows.insertBefore(r,rows.firstChild);var c=g.querySelector('summary .n');if(c)c.textContent=String((+c.textContent||0)+1);r.scrollIntoView({block:'nearest'});
+/* the Threaded view shows it too, under No thread until the rebuild places it */
+var tt=pane.querySelector('.tthr');if(!tt)return;var ng=[].slice.call(tt.querySelectorAll('details.tgroup.tthread')).filter(function(x){return named(x)==='No thread'})[0];
+if(!ng){ng=document.createElement('details');ng.className='tgroup tthread';ng.innerHTML='<summary><span class="tname">No thread</span><span class="n">0</span></summary><div class="trows"></div>';
+var dg=tt.querySelector('.donegroup');tt.insertBefore(ng,dg||null)}
+ng.open=true;var nr=ng.querySelector('.trows'),ne=nr.querySelector('.tempty');if(ne)ne.remove();nr.insertBefore(r.cloneNode(true),nr.firstChild);
+var nc=ng.querySelector('summary .n');if(nc)nc.textContent=String((+nc.textContent||0)+1)};
 })();
 """
 
@@ -7488,10 +7494,12 @@ def commit_row(ws: Path, r: dict, now: dt.datetime) -> dict:
     if since and now - since > COMMIT_AGE:
         return {"label": "Show me", "text": "%d file%s not committed; they may belong in .gitignore" % (r["dirty"], "" if r["dirty"] == 1 else "s")}
     files = [path for path, kinds in r["changes"]]
+    where = folder.relative_to(ws).as_posix()        # `commit-files` takes workspace-relative paths, the zone's folder first
+    named = ["%s/%s" % (where, f) for f in files]
     if not files or len(files) > COMMIT_MOST or any("conflicted" in kinds for _, kinds in r["changes"]) or not bounded_ready(ws):
         return {}
     return {"act": ('<button class="act apponly" type="button" data-commit="%s" data-files="%s" title="Commit these files in %s, through its wall check">'
-                    'Commit them</button>' % (E(r["name"]), E(json.dumps(files)), E(r["name"])))}
+                    'Commit them</button>' % (E(r["name"]), E(json.dumps(named)), E(r["name"])))}
 
 
 def job_need(j: dict) -> dict:

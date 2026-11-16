@@ -27,7 +27,9 @@ closed by "done" or a switch); with none open, the bot asks "Which thread?". A l
 engine reads it (channels.plan).
 
 A reply to a question the bot asked (a pending subject) is read together with the message it answers, as Ask reads an
-answer to its own question. A message that could answer two pending questions at once is asked about, not guessed.
+answer to its own question. A message typed on its own is taken as that answer only within ten minutes of the question,
+and only when it is a bare yes or ok, or names a place the question offered, or alone settles to no place; a message that
+settles to a place of its own is a new request. A message that could answer two pending questions at once is asked about, not guessed.
 
 Standard library only, Python 3.9 or later.
 """
@@ -53,7 +55,7 @@ DONE = re.compile(r"^\s*(?:i['’]?m\s+)?(?:done|that['’]?s\s+all|all\s+done)\
 YES = re.compile(r"^\s*yes\s*[.!]?\s*\Z", re.I)
 OK = re.compile(r"^\s*(?:yes|yep|yeah|ok|okay|sure)\s*[.!]?\s*\Z", re.I)    # an answer to a question that offers one place
 ANSWER_WORDS = 6                # a message of more words, or one that asks something, is a new request, not an answer
-SUBJECT_WINDOW = 2 * 3600       # a question about the subject stays open this long, the exchanges' own session limit
+SUBJECT_WINDOW = 10 * 60        # a question about the subject takes a typed message as its answer this long; a reply has no limit
 NO = re.compile(r"^\s*(?:no|cancel|stop)\s*[.!]?\s*\Z", re.I)         # a no to a held action: these words alone, nothing after
 WHICH = "Which thread?"
 
@@ -94,6 +96,19 @@ def is_answer(text: str) -> bool:
     return len(text.split()) <= ANSWER_WORDS and "?" not in text
 
 
+def answers_question(intake, root: Path, ex: dict, text: str) -> bool:
+    """Whether a message typed on its own answers the one question waiting. A bare yes or ok does. Otherwise the message is
+    settled alone: when it settles to no place (`ask`, `none`, `refused`) it is read as the answer; when it settles to a
+    place, it is the answer only if that place is one the question offered, and any other place is a new request."""
+    if OK.match(text or ""):
+        return True
+    kind, payload = settle(intake, root, strip_deep(text))
+    if kind != "place":
+        return True
+    mine = (payload["zone"], payload["project"], payload["thread"])
+    return any((o.get("zone"), o.get("project"), o.get("thread")) == mine for o in ex["pending_subject"].get("offer") or [])
+
+
 def route(intake, root: Path, message: dict, held_by_message, now: Optional[float] = None, cancelled_by_message=None) -> dict:
     """The decision for one message: {"text", "reply_to" (the message id replied to or None)}. `held_by_message(id)` is
     hold.by_message. Reads the exchange record; changes nothing."""
@@ -125,8 +140,8 @@ def route(intake, root: Path, message: dict, held_by_message, now: Optional[floa
         return {"do": "note", "destination": note["destination"], "text": note["text"]}
     if reply_to is None and is_answer(text):
         waiting_subject = pending_subjects(now)
-        if len(waiting_subject) == 1:        # the bot has just asked about a subject: the next short message is the answer
-            return subject_answer(intake, root, waiting_subject[0], text)
+        if len(waiting_subject) == 1 and answers_question(intake, root, waiting_subject[0], text):
+            return subject_answer(intake, root, waiting_subject[0], text)      # the bot has just asked: this is the answer
         if len(waiting_subject) > 1:
             names = [(e["pending_subject"]["text"] or "")[:40] for e in waiting_subject[:3]]
             return {"do": "ask", "kind": "which-subject", "text": text,

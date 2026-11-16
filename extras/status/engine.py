@@ -362,14 +362,14 @@ def _moved(before: Dict[str, Optional[bytes]], after: Dict[str, Optional[bytes]]
 
 
 def _put_back(git, repo: Path, before: Dict[str, Optional[bytes]], after: Dict[str, Optional[bytes]], named) -> List[str]:
-    """After a failed run: the named files are as they were (a tracked one is restored from HEAD, a new one is removed), and
-    so is a path the run created (one that was not changed before and is in no commit). Nothing else is touched: a path
-    that was already changed before the run and moved during it, or a tracked file that was clean, is left as it is,
-    because the run did not name it and may not be the one who changed it. Returns those paths."""
+    """After a failed run: the named files are as they were (a tracked one is restored from HEAD, a new one is removed).
+    Nothing else is touched: a new file, a path that was already changed before the run and moved during it, or a tracked
+    file that was clean is left as it is, because the run did not name it and may not be the one who changed it (the
+    guard keeps the run itself to the named files). Returns those paths."""
     left = []
     for rel in _moved(before, after):
         tracked = git(repo, "ls-files", "--error-unmatch", "--", rel)[0] == 0
-        if rel in named or (rel not in before and not tracked):
+        if rel in named:
             if rel in before:
                 continue                # a named file that was changed before the run is never put back from here
             if tracked:

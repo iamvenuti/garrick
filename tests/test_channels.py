@@ -602,17 +602,17 @@ class TestBoundedRun(EngineCase):
         self.assertEqual((before, text), (self.head(), self.file.read_text()))
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())
 
-    def test_a_change_outside_the_file_is_put_back_and_fails(self):
+    def test_a_change_outside_the_file_fails_and_only_the_named_file_is_put_back(self):
         other = self.work / "Acme Review" / "Stray.md"
         todo = self.work / "Todo.md"
         was = todo.read_text()
         run = self.edit(extra={other: "stray\n"})
         got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
         self.assertFalse(got["ok"])
-        self.assertFalse(other.exists())
+        self.assertTrue(other.exists())                  # not named: never deleted (N2); the guard stops a real run writing it
         self.assertNotIn("Shorter.", self.file.read_text())
         self.assertEqual(was, todo.read_text())
-        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+        self.assertEqual("?? \"Acme Review/Stray.md\"", git(self.work, "status", "--porcelain").strip())   # only the stray is left
 
     def test_an_assistant_that_commits_on_its_own_is_a_failure(self):
         def act(cmd, env):
@@ -824,6 +824,14 @@ class TestBoundedRunFixes(EngineCase):
         self.assertIn("from the run", todo.read_text())
         self.assertNotIn("Shorter.", self.file.read_text())
 
+    def test_a_new_file_someone_else_makes_during_a_failed_run_is_kept(self):
+        theirs = self.work / "Inbox note.md"
+        run = self.edit(also=lambda: theirs.write_text("made by another session\n"))
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertTrue(theirs.exists())                                                 # never deleted
+        self.assertNotIn("Shorter.", self.file.read_text())
+
     # C7
     def test_a_refused_commit_keeps_what_was_staged_before(self):
         self.file.write_text(self.file.read_text() + "made by hand\n")
@@ -858,7 +866,7 @@ class TestBoundedRunFixes(EngineCase):
         got = self.engine.run_bounded(self.root, "Meetings", [rel], "Shorten it", "m", self.runner("ok", act=act), self.cap_ok)
         self.assertFalse(got["ok"])
         self.assertEqual(before, self.head(top))
-        self.assertFalse(stray.exists())                                            # created by the run: put back
+        self.assertTrue(stray.exists())                                             # not named: left as it is (N2); the guard stops a real run writing it
         self.assertIn("long", (self.root / rel).read_text())
 
     def test_a_wiki_with_no_repository_at_all_is_unavailable_and_touches_nothing(self):

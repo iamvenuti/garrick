@@ -869,6 +869,14 @@ class TestSubjectQuestions(TelegramCase):
         self.assertNotIn("what's next?", self.calls[0]["prompt"])
         self.assertTrue(self.texts()[-1].startswith("Birch Terms, Draft: "))
 
+    def test_a_place_typed_to_a_plain_which_thread_answers_it(self):
+        ex = self.mods["exchanges"].new(None, None, None, "", self.clock(), pending_subject={"text": "what's next?", "offer": []})
+        self.mods["exchanges"].link(ex["id"], 1, self.clock())
+        self.api.say("Acme OEM, Pricing")                       # the question offered no places: the place typed is the answer
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertIn("what's next?", self.calls[0]["prompt"])
+
     def test_a_message_that_settles_to_no_place_is_still_the_answer_inside_the_window(self):
         self.api.say("Acme: what's next?")
         self.pump()

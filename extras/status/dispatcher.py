@@ -99,11 +99,15 @@ def is_answer(text: str) -> bool:
 def answers_question(intake, root: Path, ex: dict, text: str) -> bool:
     """Whether a message typed on its own answers the one question waiting. A bare yes or ok does. Otherwise the message is
     settled alone: when it settles to no place (`ask`, `none`, `refused`) it is read as the answer; when it settles to a
-    place, it is the answer only if that place is one the question offered, and any other place is a new request."""
+    place, it is the answer when the question offered no places (a plain \"Which thread?\") or offered that one, and any
+    other place is a new request."""
     if OK.match(text or ""):
         return True
     kind, payload = settle(intake, root, strip_deep(text))
     if kind != "place":
+        return True
+    offer = ex["pending_subject"].get("offer") or []
+    if not offer:                                  # a plain "Which thread?": the place typed is the answer
         return True
     mine = (payload["zone"], payload["project"], payload["thread"])
     return any((o.get("zone"), o.get("project"), o.get("thread")) == mine for o in ex["pending_subject"].get("offer") or [])

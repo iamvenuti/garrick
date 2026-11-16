@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import html as htmllib
 import json
+import os
 import shutil
 import subprocess
 import re
@@ -202,9 +204,6 @@ class Page(unittest.TestCase):
         self.assertEqual("font-size:var(--fs-h3)", status.fs_scale("font-size:16px"))        # a tie goes to the larger
         self.assertNotIn("px", status.fs_scale(status.questions_mod().CX_CSS).split("font-size:")[1].split(";")[0])
 
-    def test_the_big_number_is_the_h1_token(self):
-        self.assertIn("font:600 var(--fs-h1)/1 var(--sans)", status.CSS)
-
     def test_other_modules_css_has_none_under_13_either(self):
         for name in ("finding_queue.py", "guide.py", "questions_panel.py", "your_work.py"):
             text = (HERE / name).read_text(encoding="utf-8")
@@ -271,10 +270,11 @@ class Page(unittest.TestCase):
         self.assertEqual(1, len(re.findall(r"\.gd-page code\{[^}]*monospace", css)))
         self.assertNotRegex(re.sub(r"sans-serif", "", css), r"(?i)\bserif\b|Georgia|Baskerville")   # no serif
 
-    def test_big_numbers_are_the_sans_at_600_with_tabular_figures(self):
+    def test_the_figures_row_has_left_no_css_behind(self):
         css = self.css()
         self.assertNotIn("--display", css)
-        self.assertIn(".hero .fig,.tile .val{font-family:var(--sans);font-weight:600;font-variant-numeric:tabular-nums}", css)
+        for gone in (".hero", ".tile .val", ".top{", ".lead{", ".lead h2"):
+            self.assertNotIn(gone, css, gone)                                  # #595
 
     def test_every_control_has_a_visible_focus_ring_and_a_40px_target(self):
         look = status.LOOK_CSS
@@ -307,10 +307,10 @@ class Words(unittest.TestCase):
 
     def test_a_row_with_a_state_has_its_word_beside_it(self):
         html = page_html()
-        rows = re.findall(r'<a class="item"[^>]*>.*?</a>', html, re.S)
-        self.assertTrue(rows)
-        for row in rows:
-            self.assertRegex(row, r'class="st [a-z]+"><svg[^>]*>.*?</svg>(Fine|Look soon|Late|Act now|Waiting)</span>')
+        pills = re.findall(r'<span class="st [a-z]+">.*?</span>', html, re.S)
+        self.assertTrue(pills)
+        for pill in pills:
+            self.assertRegex(pill, r'class="st [a-z]+"><svg[^>]*>.*?</svg>(Fine|Look soon|Late|Act now|Waiting)</span>')
 
     def test_a_dot_is_never_the_only_sign_of_a_state_in_the_built_markup(self):
         # what the script draws later has its own title; every dot the build writes has words beside it or is a pill
@@ -330,7 +330,7 @@ def zone(name, rows):
 
 
 class Lead(unittest.TestCase):
-    """The Overview opens on one sentence that says how many things wait, and it agrees with the card (#551)."""
+    """The sentence that says how many things wait is the heading of Waiting on you now, and it agrees with the card (#551, #595)."""
 
     def test_the_sentence_in_three_cases(self):
         self.assertEqual("Three things need you.", status.lead_said(3))      # several waiting
@@ -338,68 +338,39 @@ class Lead(unittest.TestCase):
         self.assertEqual("Nothing needs you right now.", status.lead_said(0))  # none
         self.assertEqual("Twelve things need you.".replace("Twelve", "12"), status.lead_said(12))
 
-    def test_several_waiting_gives_counts_by_kind_and_leads_to_the_first(self):
-        items = [status.attn_need("critical", "The check did not run", "#checks", label="See the check"),
-                 status.late_need(zone("Work", [todo_row("a", dt.date(2026, 11, 2), True), todo_row("b", dt.date(2026, 11, 5), True)]), TODAY),
-                 status.attn_need("warning", "3 items waiting in the inboxes", "#inboxes", kind="inbox", count=3, label="Open the inbox")]
-        html = status.lead_block(items, 0)
-        self.assertIn("Three things need you.", html)
-        self.assertIn("1 problem · 2 late actions · 3 in the inboxes", html)
-        self.assertNotIn("The check did not run ·", html)                    # counts only: the card lists the rows
-        self.assertRegex(html, r'<a class="btn primary" id="lead-go" href="#checks">See the check')
-        self.assertNotIn(" hidden", html.split('<a class="btn')[1])
+    def test_there_is_no_lead_block_and_no_line_of_counts(self):
+        for gone in ("lead_block", "lead_counts", "LEAD_KINDS"):
+            self.assertFalse(hasattr(status, gone), gone)
+        html = page_html()
+        for gone in ('id="lead"', 'id="lead-h"', 'id="lead-why"', 'id="lead-go"', 'class="lead"'):
+            self.assertNotIn(gone, html, gone)
 
-    def test_the_lead_line_is_one_line_in_a_fixed_order(self):
-        items = [status.attn_need("warning", "w", "#checks", kind="warnings", count=20),
-                 status.attn_need("warning", "f", "#repos", kind="files", count=12),
-                 status.attn_need("warning", "i", "#inboxes", kind="inbox", count=2),
-                 status.late_need(zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)] * 5), TODAY),
-                 status.attn_need("critical", "j1", "#jobs", kind="job"), status.attn_need("critical", "j2", "#jobs", kind="job")]
-        html = status.lead_block(items, 0)
-        self.assertIn("2 jobs failed · 5 late actions · 2 in the inboxes · 12 files not committed · 20 warnings", html)
-
-    def test_one_waiting(self):
-        html = status.lead_block([status.late_need(zone("Home", [todo_row("a", dt.date(2026, 11, 8), True)]), TODAY)], 0)
-        self.assertIn("One thing needs you.", html)
-        self.assertIn("1 late action", html)
-        self.assertNotIn("in Home", html)
-        self.assertIn('href="#todolist" data-tz-go="Home"', html)
-
-    def test_none_waiting_says_so_and_has_no_button(self):
-        html = status.lead_block([], 0)
-        self.assertIn("Nothing needs you right now.", html)
-        self.assertRegex(html, r'<a class="btn primary" id="lead-go" href="#" hidden></a>')
-
-    def test_a_waiting_session_counts_and_leads_to_the_card_when_nothing_else_waits(self):
-        html = status.lead_block([], 2)
-        self.assertIn("Two things need you.", html)
-        self.assertIn("2 sessions are waiting for you", html)
-        self.assertIn('href="#waiting-now"', html)
-
-    def test_no_count_is_cut_with_and_more(self):
-        items = [status.attn_need("warning", "reason %d" % i, "#jobs", kind=k, count=2) for i, k in enumerate(("warnings", "files", "inbox", "other"))]
-        html = status.lead_block(items, 0)
-        self.assertNotIn("more", html)
-        self.assertIn("2 in the inboxes · 2 files not committed · 2 warnings · 2 other things to look at", html)
-
-    def test_the_card_lists_what_waits_with_a_button_and_stays_hidden_only_when_nothing_does(self):
+    def test_the_card_lists_what_waits_and_is_one_line_when_nothing_does(self):
         needs = [status.attn_need("critical", "A job failed", "#jobs"),
                  status.late_need(zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)]), TODAY)]
         now = dt.datetime(2026, 11, 9, 9, 0, tzinfo=dt.timezone.utc)
         html = status.waiting_card([], now, needs)
         self.assertNotIn("nowait", html)
-        self.assertIn("2 items", html)
+        self.assertNotIn(" calm", html)
+        self.assertIn("<h2>Two things need you.</h2>", html)                 # the sentence is the heading (#595)
+        self.assertIn('id="waiting-now" data-n="2"', html)
         self.assertEqual(2, html.count('class="wrow wneed"'))
         self.assertIn('<a class="act" href="#jobs">See the details</a>', html)
         self.assertIn('data-tz-go="Work">Open the list</a>', html)
         self.assertIn("oldest was due Mon 2 Nov", html)
-        self.assertIn("nowait", status.waiting_card([], now, []))
-        self.assertIn("nowait", status.waiting_card([], now))
+        for empty in (status.waiting_card([], now, []), status.waiting_card([], now)):
+            self.assertIn("<h2>Nothing needs you right now.</h2>", empty)
+            self.assertIn('class="card calm" id="waiting-now"', empty)      # one line: its body is not shown
+            self.assertNotIn('class="wrow wneed"', empty)
+        self.assertIn("#waiting-now.calm>.body{display:none}", status.WAITING_CSS)
 
-    def test_the_script_redraws_the_lead_from_the_same_figures(self):
+    def test_the_script_says_the_sentence_again_for_the_sessions_now(self):
         js = status.WAITING_JS
-        for needle in ("function lead(sess)", "Nothing needs you right now.", "One thing needs you.", "explore-go"):
+        for needle in ("function lead(sess)", "Nothing needs you right now.", "One thing needs you.", "explore-go",
+                       "document.getElementById('waiting-now')", "c.classList.toggle('calm',t<1)"):
             self.assertIn(needle, js)
+        for gone in ("lead-go", "lead-why", "nowait"):
+            self.assertNotIn(gone, js)
         self.assertNotIn("tabn-overview", js)                                # the Overview tab carries no badge (#560)
 
     def test_each_zones_late_actions_stay_that_zones_own(self):
@@ -414,7 +385,16 @@ class Lead(unittest.TestCase):
         items = status.needs_you(attn, [zone("Work", [todo_row("a", dt.date(2026, 11, 2), True)])], TODAY)
         self.assertEqual(["c", "1 late action", "w"], [i["text"] for i in items])
 
-    def test_the_page_lead_and_the_card_count_the_same_things(self):
+    def test_the_check_s_warnings_are_no_row_and_its_error_stays_under_broken(self):
+        attn = [("critical", "The check found 2 errors", "#checks"), ("warning", "The check found 27 warnings", "#checks")]
+        detail = {"The check found 2 errors": {"kind": "errors", "count": 2, "label": "See the errors"},
+                  "The check found 27 warnings": {"kind": "warnings", "count": 27, "label": "See the warnings"}}
+        items = status.needs_you(attn, [], TODAY, detail)
+        self.assertEqual(["The check found 2 errors"], [i["text"] for i in items])
+        self.assertEqual(["broken"], [i["group"] for i in items])
+        self.assertIn("<h2>One thing needs you.</h2>", status.waiting_card([], dt.datetime(2026, 11, 9, 9, 0), items))
+
+    def test_the_page_heading_and_the_card_count_the_same_things(self):
         sessions = [{"id": "s%d" % i, "agent": "claude", "folder": "/x/Pricing", "thread": "Pricing", "state": "waiting",
                      "waiting_for": "an answer", "since": "2026-11-09T08:00:00Z", "where": "cmux"} for i in range(2)]
         with tempfile.TemporaryDirectory() as tmp:
@@ -429,12 +409,13 @@ class Lead(unittest.TestCase):
                 two = status.build(root, now=dt.datetime(2026, 11, 9, 9, 0), folder=base / "jobs", waiting_now=sessions)
         for html, n_sessions in ((none, 0), (two, 2)):
             fixed = len(re.findall(r'<div class="wrow wneed">', html))
-            said = re.search(r'<h2 id="lead-h">([^<]*)</h2>', html).group(1)
+            said = re.search(r'id="waiting-now"[^>]*><summary class="head">.*?<h2>([^<]*)</h2>', html, re.S).group(1)
             self.assertEqual(status.lead_said(fixed + n_sessions), said)
             self.assertEqual(n_sessions, len(re.findall(r'<div class="wrow" data-id=', html)))
             self.assertIn('data-n="%d"' % fixed, html)
             self.assertNotIn("tabn-overview", html)
-        self.assertGreater(len(re.findall(r'<div class="wrow wneed">', none)) + 2, 0)
+        self.assertIn('class="card calm" id="waiting-now"', none)
+        self.assertNotIn(" calm", two[two.index('id="waiting-now"') - 30:two.index('id="waiting-now"')])
 
 
 class Overview(unittest.TestCase):
@@ -508,12 +489,6 @@ class PlainRows(unittest.TestCase):
         self.assertNotIn(">Open it<", html.split('id="wneeds"')[1].split('id="wrows"')[0])
         self.assertNotIn('"label": "Open it"', html)
 
-    def test_the_lead_line_holds_counts_only(self):
-        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}})
-        why = re.search(r'<p id="lead-why">([^<]*)</p>', html).group(1)
-        self.assertTrue(why.startswith("1 job failed"), why)
-        self.assertNotIn("Nightly", why)
-
     def test_broken_is_listed_before_to_do_and_to_do_starts_folded_with_its_count(self):
         def todo(root):
             (root / "Zones" / "Work" / "Todo.md").write_text("# Work: open actions\n\n## Inbox\n\n- [ ] Send it 📅 2026-11-02\n\n## Done\n", encoding="utf-8")
@@ -546,6 +521,147 @@ class PlainRows(unittest.TestCase):
         self.assertEqual("Recall timed out", status.step_reason([{"step": "recall", "exit": 124}]))
         self.assertEqual("Effort failed", status.step_reason([{"step": "effort", "exit": 1}, {"step": "recall", "exit": 124}]))
         self.assertEqual("", status.step_reason([{"step": "effort", "exit": 0}]))
+
+
+def dirty_zone(root, days_old, files=("Notes.md",)):
+    """Work as a repository with uncommitted files, each last changed `days_old` days before the page's clock (2026-11-14)."""
+    zone_dir = root / "Zones" / "Work"
+    subprocess.run(["git", "init", "-q", str(zone_dir)], check=True)
+    when = dt.datetime(2026, 11, 14, 9, 0) - dt.timedelta(days=days_old)
+    for name in files:
+        (zone_dir / name).parent.mkdir(parents=True, exist_ok=True)
+        (zone_dir / name).write_text("# note\n", encoding="utf-8")
+        os.utime(zone_dir / name, (when.timestamp(), when.timestamp()))
+
+
+class WaitingActs(unittest.TestCase):
+    """Waiting on you now is the one place for what needs you, and a row acts where it is (#595)."""
+
+    NOW = dt.datetime(2026, 11, 14, 9, 0)
+
+    def card(self, html):
+        start = html.index('id="waiting-now"')
+        return html[start:html.index("</details>", start)]
+
+    def need_rows(self, html):
+        return re.findall(r'<div class="wrow wneed">.*?(?=<div class="wrow wneed">|</div></section>|</details>)', self.card(html), re.S)
+
+    def test_the_status_tab_has_no_hero_and_no_tiles_and_keeps_its_badge(self):
+        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}})
+        for gone in ('class="top"', 'id="summary"', 'class="hero', 'class="tile go"', "All clear", "things need attention</div>"):
+            self.assertNotIn(gone, html, gone)
+        self.assertRegex(html, r'data-tab="status">Status<span class="n crit"')           # the tab's badge is as it was
+        status_tab = html[html.index('id="tab-status"'):]
+        self.assertTrue(status_tab.startswith('id="tab-status" hidden><div class="onlybar">'), status_tab[:80])
+        self.assertIn('id="jobs"', status_tab)                                          # and each card still shows its own trouble
+
+    def test_the_card_is_first_on_the_overview_and_opens_on_the_sentence(self):
+        html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}})
+        overview = html[html.index('id="tab-overview"'):html.index('id="tab-status"')]
+        self.assertLess(overview.index('id="waiting-now"'), overview.index('id="your-work"'))
+        self.assertLess(overview.index('id="waiting-now"'), overview.index('id="threads"'))
+        self.assertNotIn('class="lead', overview)
+        self.assertRegex(overview[overview.index('id="waiting-now"'):], r"<h2>One thing needs you\.</h2>")
+
+    def test_a_row_with_an_action_has_it_as_the_main_button_and_its_link_secondary(self):
+        need = status.attn_need("warning", "x", "#repos", label="See the changes", act='<button class="act" type="button">Do it</button>')
+        html = status.need_row(need)
+        self.assertIn('<span class="wacts"><button class="act" type="button">Do it</button><a class="alt" href="#repos">See the changes</a></span>', html)
+        plain = status.need_row(status.attn_need("warning", "x", "#repos", label="See the changes"))
+        self.assertIn('<a class="act" href="#repos">See the changes</a>', plain)         # a row with no action keeps its link as its button
+        self.assertNotIn("wacts", plain)
+
+    def test_late_actions_are_the_late_lines_with_a_tick_and_a_date(self):
+        html = build_with_beats({}, late_todo)
+        row = self.need_rows(html)[0]
+        self.assertIn("1 late action", row)
+        late = row[row.index('<div class="wlate">'):]
+        self.assertIn('<button class="tick"', late)
+        self.assertIn('<button class="tdate late"', late)
+        self.assertIn("Send it", late)
+        self.assertRegex(row, r'<a class="alt" href="#todolist" data-tz-go="Work">Open the list</a>')       # the link is secondary
+        self.assertIn(".querySelectorAll('.tview,.yrows,.wlate')", status.TODO_JS)         # the tick and the date menu work there too
+
+    def test_no_check_warnings_row_and_the_check_error_stays(self):
+        warn = {"warnings": 27, "errors": 0}
+        err = {"warnings": 27, "errors": 2}
+        for result, rows in ((warn, 0), (err, 1)):
+            with mock.patch.object(status, "check", return_value=dict(result, groups=[], pending=False, failed=False)):
+                html = build_with_beats({})
+            texts = [r for r in self.need_rows(html) if "The check found" in r]
+            self.assertEqual(rows, len(texts), result)
+            self.assertNotIn("warnings</span>", "".join(texts))
+        self.assertIn("The check found 2 errors", self.card(html))
+        self.assertIn('data-g="broken"', self.card(html))
+
+    def test_files_not_committed_offers_commit_them_for_a_young_zone_repository(self):
+        with mock.patch.object(status, "bounded_ready", return_value=True):
+            html = build_with_beats({}, lambda root: dirty_zone(root, 4, ("Notes.md", "Acme/Draft.md")))
+        row = next(r for r in self.need_rows(html) if "not committed" in r)
+        self.assertRegex(row, r"\d+ files not committed")
+        self.assertIn("oldest changed 4 days ago", row)
+        m = re.search(r'<button class="act apponly" type="button" data-commit="Work" data-files="([^"]*)"[^>]*>Commit them</button>', row)
+        self.assertTrue(m, row)
+        listed = json.loads(htmllib.unescape(m.group(1)))
+        self.assertTrue({"Acme/Draft.md", "Notes.md"} <= set(listed), listed)
+        self.assertIn('<a class="alt" href="#repos">See the changes</a>', row)           # the link is secondary
+
+    def test_commit_them_is_not_offered_for_old_changes_and_the_row_says_where_they_may_belong(self):
+        with mock.patch.object(status, "bounded_ready", return_value=True):
+            html = build_with_beats({}, lambda root: dirty_zone(root, 45))
+        row = next(r for r in self.need_rows(html) if "not committed" in r)
+        self.assertNotIn("Commit them", row)
+        self.assertIn("they may belong in .gitignore", row)
+        self.assertIn('<a class="act" href="#repos">Show me</a>', row)                   # Show me first, as the only button
+
+    def test_without_a_bounded_run_the_row_keeps_its_link_alone(self):
+        self.assertFalse(status.bounded_ready(Path("/nowhere")))                           # engine.py of this tree has no bounded run yet, or has it
+        with mock.patch.object(status, "bounded_ready", return_value=False):
+            html = build_with_beats({}, lambda root: dirty_zone(root, 4))
+        row = next(r for r in self.need_rows(html) if "not committed" in r)
+        self.assertNotIn("Commit them", row)
+        self.assertIn('<a class="act" href="#repos">See the changes</a>', row)
+
+    def test_commit_row_is_for_one_zone_only(self):
+        ws = Path("/w")
+        base = {"name": "Work", "folder": ws / "Zones" / "Work", "dirty": 1, "changes": [("a.md", ("unstaged",))],
+                "since": self.NOW - dt.timedelta(days=3)}
+        with mock.patch.object(status, "bounded_ready", return_value=True):
+            self.assertIn("data-commit=\"Work\"", status.commit_row(ws, base, self.NOW)["act"])
+            for other in (dict(base, name="Workspace", folder=ws), dict(base, name="Wikis", folder=ws / "Wikis"),
+                          dict(base, name="Meetings", folder=ws / "Wikis" / "Meetings"),
+                          dict(base, changes=[("a.md", ("conflicted",))]),
+                          dict(base, changes=[("f%d.md" % i, ("unstaged",)) for i in range(status.COMMIT_MOST + 1)], dirty=status.COMMIT_MOST + 1)):
+                self.assertEqual({}, status.commit_row(ws, other, self.NOW))
+        with mock.patch.object(status, "bounded_ready", return_value=False):
+            self.assertEqual({}, status.commit_row(ws, base, self.NOW))
+
+    def test_try_again_is_for_garricks_own_update_job_only(self):
+        job = {"title": "Garrick update", "status": "failed", "code": 1, "reason": "no network", "name": "gr-update", "garrick": True}
+        need = status.job_need(job)
+        self.assertIn('data-try-update="1"', need["act"])
+        self.assertIn(">Try again<", need["act"])
+        self.assertEqual("See the log", need["label"])                                    # the log is the secondary link
+        for other in (dict(job, garrick=False), dict(job, name="gr-nightly"), dict(job, name="update-wiki", garrick=False)):
+            self.assertNotIn("act", status.job_need(other))
+
+    def test_the_buttons_that_act_are_for_the_app_and_a_browser_keeps_each_link(self):
+        for needle in (".nohost .wacts .act,.nohost .wlate{display:none}", ".nohost .wacts .alt{"):
+            self.assertIn(needle, status.WAITING_CSS)
+        js = status.COMMIT_JS
+        self.assertIn("if(!host)return;", js)
+        self.assertIn("verb:'commit-files',zone:c.dataset.commit,files:files", js)
+        self.assertIn("verb:'commit-files',undo:u.dataset.undoCommit,repo:u.dataset.repo", js)
+        self.assertIn("var r=window.GarrickRelease;if(r&&r.update)r.update()", js)         # Try again runs the update's own code
+        self.assertIn("update:function(){if(!busy)go()}", status.RELEASE_JS)
+        self.assertNotIn("innerHTML", js)                                                  # drawn with textContent only
+
+    def test_the_page_loads_with_no_app_host_and_every_row_keeps_a_link(self):
+        with mock.patch.object(status, "bounded_ready", return_value=True):
+            html = build_with_beats({"gr-nightly": {"title": "Nightly check", "reason": "Recall timed out"}},
+                                    lambda root: (late_todo(root), dirty_zone(root, 4)))
+        for row in self.need_rows(html):
+            self.assertRegex(row, r'<a class="(act|alt)" href="[^"]+"', row)
 
 
 class Badges(unittest.TestCase):
@@ -827,10 +943,12 @@ class LookItems(unittest.TestCase):
                 (tools / "check.py").write_text("import json\nprint(json.dumps(%r))\n" % {"errors": errors, "warnings": warnings, "findings": found})
             return build_with_beats({}, extra)
         one = check(1, 1)
-        self.assertIn("1<small>error</small>1<small>warning</small>", one)
+        wait = lambda page: page[page.index('id="waiting-now"'):page.index('id="wrows"')]
+        self.assertIn("The check found 1 error", wait(one))                  # the row that stays under Broken (#595); the tile is gone
         self.assertNotRegex(one, r"\b1 (errors|warnings)\b")
         two = check(2, 3)
-        self.assertIn("2<small>errors</small>3<small>warnings</small>", two)
+        self.assertIn("The check found 2 errors", wait(two))
+        self.assertNotIn("warning", wait(two))                               # the warnings are the Context queue's, no row
 
     def test_the_todo_badge_counts_the_zone_shown_and_the_script_follows_the_zone(self):
         html = build_with_beats({}, two_zones_one_late_each)

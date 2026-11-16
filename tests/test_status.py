@@ -313,7 +313,7 @@ class TestGraph(StatusCase):
         note.write_text(thread_note("Acme Review", "Pricing").replace("title: Pricing", "title: <!--<script>&</script>"))
         html = self.page()
         self.assertNotIn("<!--", html)
-        self.assertEqual(22, html.count("</script>"))         # the Waiting on you now card's script, the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
+        self.assertEqual(23, html.count("</script>"))         # the Waiting on you now card's script, the Context card's script, the graph's data, the menu's data, the state the page waits for, the dialogs' data, what the search box looks through, the zone icons Settings offers, the page's, the dialogs', the search box's, the running actions', the notifications', the trouble list's, Memory's, Channels', About Garrick's check for updates, the menu's, the Checks card's, the Guide's, Preview's, the graph's
         self.assertEqual(html.count("<script"), html.count("</script>"))
         self.assertIn("<!--<script>&</script>", {n["n"] for n in graph_data(html)["nodes"]})
         self.assertTrue(html.rstrip().endswith("</script></body></html>"))
@@ -509,13 +509,16 @@ class TestTabs(StatusCase):
         self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="todo">Todo', html)    # no badge on the Overview (#560)
         self.assertRegex(html, r'</button><button type="button" role="tab" data-tab="status">Status(?:<span class="n (?:crit|warn)"|</button>)')
         overview, machinery = self.section(html, "overview"), self.section(html, "status")
-        for card_id in ("graph", "threads", "todo", "inboxes"):
+        for card_id in ("graph", "threads"):
             self.assertIn('id="%s"' % card_id, overview, card_id)
+        self.assertNotIn('id="todo"', html)                                     # no Todo card (#594)
+        self.assertNotIn('id="inboxes"', html)                                  # no Inboxes card (#593)
         for card_id in ("jobs", "repos", "wikis"):
             self.assertIn('id="%s"' % card_id, machinery, card_id)
         self.assertIn('id="checks"', self.section(html, "questions") if 'id="tab-questions"' in html else machinery)   # under the findings (#443)
         self.assertNotIn('class="top"', overview)                               # the overview is the work alone
-        self.assertLess(machinery.index('class="top"'), machinery.index('class="onlybar"'))   # the figures lead Status
+        self.assertNotIn('class="top"', machinery)                              # no figures row on Status (#595)
+        self.assertTrue(machinery.startswith('id="tab-status" hidden><div class="onlybar">'))
         self.assertIn('id="tab-status" hidden', html)
 
     def test_a_card_moves_between_tabs_and_reset_puts_it_back(self):
@@ -543,25 +546,23 @@ class TestTabs(StatusCase):
             self.assertIn('id="checks"', self.section(html, "questions"))
             self.assertNotIn('id="checks"', self.section(html, "status"))
 
-    def test_the_figures_lead_to_the_cards(self):
+    def test_the_status_tab_has_no_figures_row(self):
+        # #595: the hero and the tiles repeated the Overview's sentence and the cards under them; the badge and each card's own trouble stay
         self.job(0)
         html = self.page()
         machinery = self.section(html, "status")
-        targets = re.findall(r'<a class="(?:hero|tile) go"[^>]*href="#([a-z]+)"', machinery)
-        self.assertIn("threads", targets)
-        self.assertIn("inboxes", targets)
-        for t in targets:
-            self.assertIn('id="%s"' % t, html, t)                               # every tile leads to a card that exists
-        self.assertIn("if(!a.closest('nav')){e.preventDefault();", status.JS)      # and opens it, folded or not
+        self.assertEqual([], re.findall(r'<a class="(?:hero|tile) go"', html))
+        self.assertNotIn('id="summary"', html)
+        self.assertNotIn('class="top"', machinery)
+        self.assertNotIn("things need attention</div>", html)
+        self.assertIn("if(!a.closest('nav')){e.preventDefault();", status.JS)      # a link to a card still opens it, folded or not
 
-    def test_each_tile_is_named_as_the_card_it_opens(self):
+    def test_each_card_is_named_by_its_title(self):
         # #233: Waiting to be filed, Check and Open actions named other things than the cards they open.
         html = self.page()
-        tiles = dict(re.findall(r'<a class="tile go" href="#([a-z]+)"><div class="lbl">([^<]*)</div>', html))
-        self.assertEqual({"inboxes": "Inboxes", "checks": "Context", "todolist": "Todo"},
-                         {k: v for k, v in tiles.items() if k != "threads"})
-        for title in ("Inboxes", "Context", "Todo"):
-            self.assertIn("<h2>%s</h2>" % title, html)                     # the Todo card on the Overview, as the tab and the file
+        self.assertNotIn("<h2>Inboxes</h2>", html)                          # #593
+        self.assertNotIn("<h2>Todo</h2>", html)                             # #594
+        self.assertIn("<h2>Context</h2>", html)
         self.assertIn('data-tab="todo">Todo<', html)
         for gone in ("Waiting to be filed", "Open actions", '<div class="lbl">Check</div>'):
             self.assertNotIn(gone, html)
@@ -997,7 +998,7 @@ class TestLayout(StatusCase):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
         html = self.page()
         self.assertNotIn('id="attention"', html)
-        self.assertEqual("inboxes", [t for t in trouble(html) if "waiting" in t[2]][0][1])      # the list stays, as data (#443)
+        self.assertEqual("waiting-now", [t for t in trouble(html) if "waiting" in t[2]][0][1])  # the list stays, as data (#443); its row is on the Waiting card (#593)
 
 
 def overview(html):
@@ -1042,10 +1043,10 @@ class TestOpensOnTheWork(StatusCase):
         self.actions("[[Pricing]]: send the floor 📅 %s" % self.now.date())
         html = self.page()
         tab = overview(html)
-        self.assertEqual(["threads", "todo", "inboxes", "graph"], card_order(tab))
-        self.assertIn('<div class="slot full" data-slot="top"><details class="card nowait" id="waiting-now" open>', tab)   # #474: the sessions waiting on you first
+        self.assertEqual(["threads", "graph"], card_order(tab))
+        self.assertIn('<div class="slot full" data-slot="top"><details class="card calm" id="waiting-now" data-n="0" open>', tab)   # #474: the sessions waiting on you first; one line when nothing waits (#595)
         self.assertLess(tab.index('id="waiting-now"'), tab.index('<details class="card" id="threads" open>'))
-        self.assertIn('<div class="slot stack left" data-slot="left"><details class="card" id="todo"', tab)
+        self.assertIn('<div class="slot stack left" data-slot="left"></div>', tab)       # the Todo card is gone (#594)
         for gone in ("recent", "due", "thought", "waiting"):
             self.assertNotIn('id="%s"' % gone, html, gone)
         for gone in ("Recent work", "Due and overdue", "<textarea"):
@@ -1057,7 +1058,7 @@ class TestOpensOnTheWork(StatusCase):
         for cid in ("jobs", "checks", "repos", "wikis"):                           # the machinery stays off the Overview
             self.assertNotIn('id="%s"' % cid, tab, cid)
         self.assertIn('id="repos"', machinery)
-        self.assertLess(machinery.index('class="top"'), machinery.index('class="onlybar"'))
+        self.assertNotIn('class="top"', machinery)                              # no figures row on Status (#595)
 
     def test_parked_and_finished_work_stays_out(self):
         note = self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Pricing.md"
@@ -1288,7 +1289,7 @@ class TestOpensOnTheWork(StatusCase):
         shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry")
         html = self.page()
         tab = overview(html)
-        self.assertEqual(["start", "threads", "todo", "inboxes", "graph"], card_order(tab))
+        self.assertEqual(["start", "threads", "graph"], card_order(tab))
         start = self.rows(html, "start")
         self.assertIn("help me prepare my next supplier call", start)              # the skill's own request
         self.assertIn("Your next step is that one request", start)               # the user's step, in plain words
@@ -2235,21 +2236,34 @@ class TestPanels(StatusCase):
     def test_inbox_waiting(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
         html = self.page()
-        self.assertIn("1 waiting", html)
         self.assertIn("1 item waiting in the inboxes", html)
+        self.assertNotIn("1 waiting", html)                                 # no tile saying so (#593)
 
-    def inboxes(self, html):
-        start = html.index('id="inboxes"')
-        return html[start:html.index("</details>", start)]
+    def inbox_rows(self, html):
+        return re.findall(r'<div class="wrow wneed">(?:(?!</div>).)*?in the inboxes.*?</div>', html, re.S)
 
-    def test_process_the_inbox_is_a_button_while_anything_waits(self):
-        self.assertNotIn("data-request", self.inboxes(self.page()))                 # every inbox empty: no button
+    def test_every_inbox_empty_says_nothing_about_inboxes(self):
+        html = self.page()
+        self.assertNotIn('id="inboxes"', html)
+        self.assertEqual([], self.inbox_rows(html))
+        self.assertNotIn("Process the Inbox", overview(html))
+        self.assertNotIn("in the inboxes", html)
+
+    def test_items_in_two_zones_are_one_row_with_process_the_inbox(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
-        card = self.inboxes(self.page())
-        self.assertIn('<h2>Inboxes</h2><span class="meta"></span>', card)          # no "say …" in the caption (#234)
-        self.assertIn('<div class="gacts"><button class="act" type="button" data-request="process the inbox" data-folder="%s"' % self.root, card)
-        self.assertIn(">Process the Inbox</button>", card)
-        self.assertNotIn('say "process the inbox"', self.page())
+        write(self.root / "Wikis" / "Meetings" / "raw" / "inbox" / "call.txt", "A: hello\n")
+        html = self.page()
+        self.assertNotIn('id="inboxes"', html)
+        rows = self.inbox_rows(html)
+        self.assertEqual(1, len(rows))
+        row = rows[0]
+        self.assertIn("2 items waiting in the inboxes", row)
+        self.assertIn('<span class="wwhat">Work, Meetings</span>', row)             # the zones, in the zone column
+        self.assertIn('data-request="process the inbox" data-folder="%s"' % self.root, row)
+        self.assertIn(">Process the Inbox</button>", row)
+        self.assertRegex(row, r'<a class="alt" href="file://[^"]*">Open the inbox</a>')   # the link is secondary
+        self.assertIn("<h2>One thing needs you.</h2>", html)                        # the items are one thing in the sentence, counted once (#595)
+        self.assertNotIn('id="lead"', html)
 
     def test_a_request_button_opens_the_menus_assistant_or_copies(self):
         js = status.JS
@@ -2262,7 +2276,7 @@ class TestPanels(StatusCase):
         write(self.root / "Zones" / "Work" / "Todo.md",
               "# Work\n\n## Inbox\n\n- [ ] <action> · <project or person> · <date>\n- [ ] Send the memo · Acme · 3 March\n\n## Done\n\n- [ ] stray\n")
         html = self.page()
-        self.assertIn('<span class="num">1</span>', html)
+        self.assertIn('Work<span class="n">2</span></button>', html)       # the tab's own count (#594): the memo and the stray line; the placeholder is skipped
 
     def test_no_check_tool_is_said_plainly(self):
         self.assertIn("check.py", self.page())
@@ -2431,7 +2445,6 @@ class TestJobs(StatusCase):
                          status={"StartCalendarInterval": {"Hour": 23}}), \
                 mock.patch.dict(os.environ, {"GARRICK_CAP_CALLS_DAY": "99"}):
             html = self.page()
-        self.assertIn("1<small>of 10</small>", html)         # the job's cap, not this shell's 99
         self.assertIn(">1 / 10<", html)
         self.assertIn(">1 / 12<", html)                      # a cap the plist leaves out is agent.py's default
         self.assertIn(">$0.50, no cap<", html)               # 0 removes a cap
@@ -2442,7 +2455,6 @@ class TestJobs(StatusCase):
         self.ledger({"job": "brief", "cost_usd": 0.5, "exit": 0})
         with self.plists(), mock.patch.dict(os.environ, {"GARRICK_CAP_CALLS_DAY": "0"}):
             html = self.page()
-        self.assertIn("1<small>no cap</small>", html)
         self.assertIn(">1, no cap<", html)
         self.assertIn('data-tip="Caps from the GARRICK_CAP_* settings the page was built with', html)
 
@@ -2792,7 +2804,7 @@ class TestNameAndMark(StatusCase):
     def test_one_sans_for_the_numbers_and_the_headings_alike(self):
         # The page has one family: the system's sans, from --sans. No serif display face and no font file (#560).
         self.assertNotIn("--display", status.CSS)
-        self.assertIn("var(--sans)", re.search(r"\.hero \.fig\{[^}]*", status.CSS).group(0))
+        self.assertNotIn(".hero", status.CSS)                                  # the figures row is gone (#595)
         for rule in (r"\.bar h1\{[^}]*", r"\.head h2\{[^}]*"):
             self.assertIn("var(--sans)", re.search(rule, status.CSS + status.BAR_CSS).group(0))
         self.assertIn('body{margin:0;background:var(--page);color:var(--ink);font:var(--fs-body)/1.55 var(--sans)', status.CSS)
@@ -3062,25 +3074,25 @@ class TestFrontmatter(StatusCase):
 
 
 class TestOpenActions(StatusCase):
-    def test_each_zone_line_opens_its_todo(self):
+    def test_the_overview_has_no_todo_card_and_the_tab_counts_each_zone(self):
+        # #594: the card repeated the tab with less in it; the zone buttons carry each zone's open count
+        write(self.root / "Zones" / "Personal" / "Todo.md", "# Personal: open actions\n\n## Inbox\n\n## Done\n")
+        write(self.root / "Zones" / "Work" / "Todo.md", "# Work: open actions\n\n## Inbox\n\n- [ ] Call Dana\n\n## Done\n")
         html = self.page()
-        start = html.index('id="todo"')
-        block = html[start:html.index("</details>", start)]
-        self.assertIn('<a class="act" href="#todolist" data-tz-go="Work" title="Open Work&#39;s list on the Todo tab">Open</a>', block)
-        for zone in re.findall(r'<div class="zt">(.*?)</div>', block):
-            self.assertEqual(1, zone.count("href="), zone)                            # one way to the list (#235)
-            self.assertNotIn("changed ", zone)
-        self.assertNotIn("Open Todo.md", html)                                 # the tab adds, ticks and re-dates; the file is one sentence away (#560)
+        self.assertNotIn('id="todo"', html)
+        self.assertNotIn('<div class="zt">', html)
+        self.assertNotIn("Open Todo.md", html)
+        buttons = dict(re.findall(r'<button type="button" data-tz="([^"]*)"[^>]*>(.*?)</button>', html))
+        self.assertRegex(buttons["Work"], r'Work<span class="n">\d+</span>$')
+        self.assertNotIn('class="n"', buttons["Personal"])                       # nothing open: no count
 
     def test_no_todo_no_open_actions(self):
-        self.assertIn('class="top" style="--tiles:4"', self.page())
         for todo in (self.root / "Zones").glob("*/Todo.md"):
             todo.unlink()
         html = self.page()
         self.assertNotIn('id="todo"', html)
         self.assertNotIn("<h2>Todo</h2>", html)                    # no card, no tile, no sidebar line
         self.assertNotIn('<div class="lbl">Todo</div>', html)
-        self.assertIn('class="top" style="--tiles:3"', html)     # the tiles still fill their row
 
 
 class TestWhatThisMachineHas(StatusCase):
@@ -3469,8 +3481,8 @@ class TestLinksOpenAsChosen(StatusCase):
         write(self.root / "Wikis" / "Meetings" / "wiki" / "log.md",
               "# Log\n\n- 2026-03-10: [[wiki/sources/260310-acme-kickoff|Acme kick-off]] · Work · acme\n")
         html = self.page()
-        inbox = html[html.index('id="inboxes"'):]
-        inbox = inbox[:inbox.index("</details>")]
+        inbox = html[html.index("1 item waiting in the inboxes"):]      # the row of Waiting on you now (#593)
+        inbox = inbox[:inbox.index("</div>")]
         self.assertIn('href="%s"' % (self.root / "Zones" / "Work" / "Inbox").as_uri(), inbox)    # the folder: Finder opens it
         wikis = html[html.index('id="wikis"'):]
         wikis = wikis[:wikis.index("</details>")]

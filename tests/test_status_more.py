@@ -40,6 +40,24 @@ def flags(root, **on):
     write(root / "System" / "garrick-flags.json", json.dumps(on))
 
 
+def without_threaded(tab):
+    """`tab` without the Threaded view's markup (the `tthr` div of each zone, found by counting divs), leaving the Flat view."""
+    out, at = "", 0
+    for m in re.finditer(r'<div class="tthr">', tab):
+        if m.start() < at:
+            continue
+        out += tab[at:m.start()]
+        depth, i = 0, m.start()
+        for t in re.finditer(r"<(/?)div\b", tab[m.start():]):
+            depth += -1 if t.group(1) else 1
+            if depth == 0:
+                i = m.start() + t.end()
+                i = tab.index(">", i) + 1
+                break
+        at = i
+    return out + tab[at:]
+
+
 class TestTodoTab(StatusCase):
     def setUp(self):
         super().setUp()
@@ -52,9 +70,10 @@ class TestTodoTab(StatusCase):
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Notes.md", "- [ ] Check the clause\n")
 
     def tab(self):
+        """The Flat view of the Todo tab, as it was drawn before #596: the Threaded view's markup cut out."""
         html = self.page()
         start = html.index('id="todolist"')
-        return html, html[start:html.index("</section>", start)]
+        return html, without_threaded(html[start:html.index("</section>", start)])
 
     def test_the_toolbar_and_done_today_hold_no_how_to(self):
         _, tab = self.tab()
@@ -82,6 +101,71 @@ class TestTodoTab(StatusCase):
         self.assertIn("highest priority", work)
         self.assertIn("in the thread note", work)
         self.assertIn('<a class="thr" href="', work)                                           # the thread opens its note
+
+    def threaded(self, zone="Work"):
+        """One zone's Threaded view, as markup (#596)."""
+        html = self.page()
+        pane = html[html.index('<div class="tz" data-zone="%s"' % zone):]
+        start = pane.index('<div class="tthr">')
+        return re.sub(r"<svg.*?</svg>", "", pane[start:pane.index("</section>")])
+
+    def test_the_bar_has_a_flat_and_threaded_selector_and_flat_is_the_default(self):
+        html, tab = self.tab()
+        bar = tab[tab.index('<div class="tbar">'):tab.index('<div class="tz"')]
+        self.assertIn('<div class="seg vseg" role="group" aria-label="View"><button type="button" data-tv="flat"', bar)
+        self.assertRegex(bar, r'data-tv="threaded"[^>]*>Threaded</button>')
+        self.assertLess(bar.index('aria-label="Zone"'), bar.index('aria-label="View"'))
+        self.assertLess(bar.index('aria-label="View"'), bar.index('aria-label="Sort"'))
+        self.assertNotRegex(html, r'<div id="todolist" class="todotab[^"]*"[^>]*data-view')   # nothing built says Threaded: Flat is the default
+        self.assertIn('.todotab[data-view="threaded"] .tflat{display:none}', status.TODO_CSS)
+        self.assertIn('.todotab:not([data-view="threaded"]) .tthr', status.TODO_CSS)
+        self.assertIn("view(st.get('garrick-todo-view'))", status.TODO_JS)      # the choice is read back with Show and Sort...
+        self.assertIn("st.set('garrick-todo-view',v)", status.TODO_JS)          # ...and kept with them, through the try/catch store
+
+    def test_threaded_shows_every_open_line_once_under_its_project_and_thread(self):
+        todo = self.root / "Zones" / "Work" / "Todo.md"
+        todo.write_text(todo.read_text().replace("- [ ] Book the room\n", "- [ ] Book the room\n- [ ] [[Acme Review]]: Plan the review\n"))
+        _, flat = self.tab()
+        view = self.threaded()
+        keys = lambda text: sorted(re.findall(r'<div class="trow(?! done)[^"]*" data-z="Work" data-f="[^"]*" data-k="([^"]*)"', text))
+        self.assertEqual(keys(flat), keys(view))                              # the same open lines, once each
+        acme = view[view.index('<span class="tname">Acme Review</span>'):view.index('<span class="tname">Birch Entry</span>')]
+        self.assertIn('<span class="n">3</span><span class="tlate">1 late</span></summary>', acme)       # open and late counts in the header
+        self.assertLess(acme.index("Plan the review"), acme.index('class="tgroup tthread"'))              # the project's own lines come first
+        thread = acme[acme.index('class="tgroup tthread"'):]
+        self.assertRegex(thread, r'<summary><a class="thr" href="[^"]*Pricing\.md"[^>]*>Pricing</a><span class="n">2</span>')   # the name links to its note
+        self.assertIn("Send the revised terms", thread)
+        self.assertIn("Check the clause", thread)
+        self.assertNotIn("Plan the review", thread)
+
+    def test_threaded_puts_unplaced_lines_under_no_thread_and_done_today_last(self):
+        view = self.threaded()
+        none = view[view.index('<span class="tname">No thread</span>'):]
+        self.assertIn("Book the room", none)
+        self.assertIn("Numbers from Birch", none)                              # a line with no label is not dropped
+        self.assertNotIn("Send the revised terms", none[:none.index("Done today")])
+        self.assertLess(view.index("No thread"), view.index("Done today"))
+        self.assertIn("Sent the brief", view[view.index("Done today"):])          # Done today is the last group
+        self.assertNotIn("An old one", view)
+
+    def test_threaded_lines_carry_a_section_tag_and_keep_their_controls(self):
+        view = self.threaded()
+        book = view[view.index('book the room"'):]
+        book = book.split('<div class="trow', 1)[0]
+        self.assertIn('<span class="tsec">Inbox</span>', book)
+        self.assertIn('class="tick"', book)
+        self.assertIn('class="tdate none"', book)
+        numbers = view[view.index('numbers from birch"'):]
+        self.assertIn('<span class="tsec">Waiting on</span>', numbers[:numbers.index("</div></div>")])
+        sizing = view[view.index('draft the sizing"'):]
+        self.assertNotIn('class="tsec"', sizing[:sizing.index("</div></div>")])      # a line in This week has no tag
+        self.assertNotIn('class="tsec"', self.tab()[1])                            # and Flat draws none, as it always did
+
+    def test_show_and_sort_reach_both_views(self):
+        self.assertIn(".todotab[data-tf=\"late\"] .trow:not(.late)", status.TODO_CSS)          # a rule on every row, in either view
+        self.assertIn("todo.querySelectorAll('.tgroup').forEach", status.TODO_JS)            # a group with nothing left is hidden, nested or not
+        self.assertIn("todo.querySelectorAll('.trows').forEach", status.TODO_JS)             # Sort orders the rows of every group
+        self.assertIn(".tgroup.empty{display:none}", status.TODO_CSS)
 
     def test_a_system_project_thread_opens_its_note(self):
         setup = self.root / "System" / "Workspace Setup"
@@ -296,10 +380,8 @@ class TestSpend(StatusCase):
         self.assertIn('<td class="r">5.5</td>', self.calls(html))
         self.assertIn('<span class="ink2">Per call</span><span class="num">$2 max</span>', self.calls(html))   # a figure, not a sentence (#232)
         self.assertNotIn("Each Claude call stops at", html)
-        self.assertIn("$2 max per call", html)
         with self.plists(GARRICK_MAX_CALL_USD="0"):
             html = self.page()
-            self.assertIn("no per-call budget", html)
             self.assertIn('<span class="ink2">Per call</span><span class="num">no cap</span>', self.calls(html))
 
     def test_a_call_stopped_at_its_budget_needs_attention(self):
@@ -996,7 +1078,7 @@ class TestCheckReuse(StatusCase):
         self.assertIn("As the check found it 4 min ago", page)
         self.assertNotIn(">a.md</a>: x</span>", page)                  # the list of findings is no longer on the page (#541)
 
-    def test_needs_attention_and_the_checks_tile_say_the_counts_are_kept(self):
+    def test_needs_attention_says_the_counts_are_kept(self):
         """#298: the counts a kept result gives say how old they are wherever
         they show, Needs attention and the Context tile as the Context card,
         in its words; a build that ran the check says nothing of the kind."""
@@ -1009,21 +1091,14 @@ class TestCheckReuse(StatusCase):
         def attention(page):
             return [t[2] for t in trouble(page)]
 
-        def tile(page):
-            m = re.search(r'<a class="tile go" href="#checks"><div class="lbl">Context</div><div class="val">(.*?)</div>'
-                          r'<div class="sub">(.*?)</div></a>', page)
-            self.assertIsNotNone(m, "no Context tile")
-            return m.groups()
-
         ran = self.build()
         self.assertIn("The check found 1 error", attention(ran))
         self.assertIn("The check found 2 warnings", attention(ran))
-        self.assertEqual(("1<small>error</small>2<small>warnings</small>", ""), tile(ran))
         page = self.build(reuse=600, now=self.now + dt.timedelta(minutes=4))
         self.assertIn("As the check found it 4 min ago;", page)                          # the Checks card's words
         self.assertIn("The check found 1 error (as the check found it 4 min ago)", attention(page))
         self.assertIn("The check found 2 warnings (as the check found it 4 min ago)", attention(page))
-        self.assertEqual(("1<small>error</small>2<small>warnings</small>", "As the check found it 4 min ago"), tile(page))
+        self.assertNotIn('class="tile go"', page)                                         # the Context tile is gone (#595)
 
     def test_a_result_of_any_age_is_shown_and_the_check_never_runs(self):
         """#382: a rebuild a tool asks for never waits on the check, whatever
@@ -1168,8 +1243,6 @@ class TestZoneColours(StatusCase):
         self.assertIn('data-tz="Work" class="zc zc-teal">%sWork<span class="n">' % icon, html)   # the Todo tab
         self.assertIn('<option value="Work" class="zc zc-teal">Work</option>', html)       # the graph's place
         self.assertIn('<span class="gzi zc zc-teal" data-z="Work" hidden>%s</span>' % icon, html)
-        self.assertIn('<div class="zt"><b class="zc zc-teal">%sWork</b>' % icon, html)       # Todo
-        self.assertIn('<div class="name zc zc-teal">%sWork<small>' % icon, html)          # Inboxes
         self.assertIn("<h3>Personal</h3>", html)                                           # a zone with neither, as before
 
     def test_a_light_and_a_dark_ink_for_every_colour(self):
@@ -1734,7 +1807,7 @@ class TestParkLandsAtOnce(StatusCase):
         self.assertEqual({"n": "Birch Entry", "s": 1, "pending": 1}, work["parked"]["units"][0])   # greyed until the rebuild
         self.assertTrue(work["meta"].startswith("2 live"))
         self.assertTrue(out["gsum"].startswith("2 live · 1 parked"))
-        self.assertEqual("2", out["tile"])
+        self.assertIsNone(out["tile"])                                                          # the Live threads tile is gone (#595)
         back = self.run_js((self.BIRCH, self.OK), (dict(self.BIRCH, verb="wake"), self.OK))["zones"]["zone-work"]
         self.assertEqual(["Acme Review", "Birch Entry"], [u["n"] for u in back["live"]])        # by name, as the build lists them
         self.assertIsNone(back["parked"])                                                     # an empty fold goes
@@ -2903,8 +2976,8 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
     def test_a_window_with_nothing_saved_takes_the_new_order(self):
         out = self.run_js(None)
         self.assertEqual(["waiting-now", "your-work", "threads"], out["slots"]["top"])          # #143: Threads leads, after the sessions waiting on you (#474)
-        self.assertEqual(["todo"], out["slots"]["left"])
-        self.assertEqual(["inboxes"], out["slots"]["right"])                            # the summary column is gone (#559)
+        self.assertEqual([], out["slots"]["left"])                                      # the Todo card is gone (#594)
+        self.assertEqual([], out["slots"]["right"])                                     # the summary column is gone (#559), and the Inboxes card with it (#593)
         self.assertEqual(["graph"], out["slots"]["bottom"])
         self.assertEqual([], out["hidden"])
         self.assertIsNone(out["saved"])                     # and nothing is written until something is moved
@@ -2912,7 +2985,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
     def test_a_saved_layout_loses_only_the_cards_that_are_gone(self):
         out = self.run_js(self.BEFORE_143)
         self.assertEqual(["waiting-now", "your-work"], out["slots"]["top"])          # Recent work and Due and overdue go; the card they never named stays
-        self.assertEqual(["inboxes", "todo"], out["slots"]["left"])     # A thought goes; Inboxes stays where it was dragged
+        self.assertEqual([], out["slots"]["left"])                      # A thought goes; the Inboxes (#593) and Todo (#594) cards are skipped
         self.assertEqual([], out["slots"]["right"])                     # Waiting on you goes, hidden or not
         self.assertEqual(["threads", "graph"], out["slots"]["bottom"])  # Threads stays where this window put it
         self.assertEqual(["checks", "repos"], out["slots"]["status-left"])
@@ -2928,7 +3001,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         moved["c"]["status-bottom"] = ["wikis"]
         moved["h"] = ["wikis"]
         out = self.run_js(moved)
-        self.assertEqual(["inboxes", "todo"], out["slots"]["left"])    # Inboxes stays where it was dragged
+        self.assertEqual([], out["slots"]["left"])                     # the Inboxes (#593) and Todo (#594) cards are gone: skipped
         self.assertEqual([], out["slots"]["right"])          # the card the layout kept in no slot has gone
         self.assertEqual(["wikis"], out["slots"]["status-bottom"])
         self.assertEqual(["wikis"], out["hidden"])          # still hidden, and still where it was put
@@ -2936,8 +3009,17 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
 
     def test_a_card_the_layout_never_named_keeps_the_place_the_build_gave_it(self):
         out = self.run_js({"v": 2, "c": {"top": [], "left": ["inboxes"], "right": [], "bottom": ["threads"]}, "h": []})
-        self.assertEqual(["todo", "inboxes"], out["slots"]["left"])     # Todo, unnamed, ahead of what was put back
+        self.assertEqual([], out["slots"]["left"])                      # the Inboxes (#593) and Todo (#594) cards are gone
         self.assertEqual(["graph", "threads"], out["slots"]["bottom"])
+
+    def test_a_layout_naming_the_tile_row_or_the_lead_loads_without_an_error_and_writes_nothing(self):
+        # #595: the figures row and the lead are gone; a window that saved a layout naming them keeps its other cards where they were
+        saved = {"v": 2, "c": {"top": ["lead", "top", "summary", "waiting-now", "threads"], "left": [], "right": [], "bottom": ["graph"]},
+                 "h": ["lead", "top", "inboxes", "todo"]}
+        out = self.run_js(saved)
+        self.assertEqual(["waiting-now", "threads"], [c for c in out["slots"]["top"] if c in ("waiting-now", "threads", "lead", "top", "summary")])
+        self.assertEqual([], out["hidden"])
+        self.assertEqual(saved, json.loads(out["saved"]))                 # nothing is written back until the layout is changed
 
     def test_a_layout_naming_a_card_that_is_gone_is_read_without_harm(self):
         out = self.run_js({"v": 2, "c": {"top": ["ghost", "threads"]}, "h": ["ghost"]})

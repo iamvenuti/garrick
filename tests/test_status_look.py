@@ -307,10 +307,10 @@ class Words(unittest.TestCase):
 
     def test_a_row_with_a_state_has_its_word_beside_it(self):
         html = page_html()
-        rows = re.findall(r'<a class="item"[^>]*>.*?</a>', html, re.S)
-        self.assertTrue(rows)
-        for row in rows:
-            self.assertRegex(row, r'class="st [a-z]+"><svg[^>]*>.*?</svg>(Fine|Look soon|Late|Act now|Waiting)</span>')
+        pills = re.findall(r'<span class="st [a-z]+">.*?</span>', html, re.S)
+        self.assertTrue(pills)
+        for pill in pills:
+            self.assertRegex(pill, r'class="st [a-z]+"><svg[^>]*>.*?</svg>(Fine|Look soon|Late|Act now|Waiting)</span>')
 
     def test_a_dot_is_never_the_only_sign_of_a_state_in_the_built_markup(self):
         # what the script draws later has its own title; every dot the build writes has words beside it or is a pill

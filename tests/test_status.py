@@ -509,8 +509,9 @@ class TestTabs(StatusCase):
         self.assertIn('data-tab="overview">Overview</button><button type="button" role="tab" data-tab="todo">Todo', html)    # no badge on the Overview (#560)
         self.assertRegex(html, r'</button><button type="button" role="tab" data-tab="status">Status(?:<span class="n (?:crit|warn)"|</button>)')
         overview, machinery = self.section(html, "overview"), self.section(html, "status")
-        for card_id in ("graph", "threads", "todo", "inboxes"):
+        for card_id in ("graph", "threads", "todo"):
             self.assertIn('id="%s"' % card_id, overview, card_id)
+        self.assertNotIn('id="inboxes"', html)                                  # no Inboxes card (#593)
         for card_id in ("jobs", "repos", "wikis"):
             self.assertIn('id="%s"' % card_id, machinery, card_id)
         self.assertIn('id="checks"', self.section(html, "questions") if 'id="tab-questions"' in html else machinery)   # under the findings (#443)
@@ -549,7 +550,7 @@ class TestTabs(StatusCase):
         machinery = self.section(html, "status")
         targets = re.findall(r'<a class="(?:hero|tile) go"[^>]*href="#([a-z]+)"', machinery)
         self.assertIn("threads", targets)
-        self.assertIn("inboxes", targets)
+        self.assertNotIn("inboxes", targets)                                    # the card is gone (#593)
         for t in targets:
             self.assertIn('id="%s"' % t, html, t)                               # every tile leads to a card that exists
         self.assertIn("if(!a.closest('nav')){e.preventDefault();", status.JS)      # and opens it, folded or not
@@ -558,9 +559,10 @@ class TestTabs(StatusCase):
         # #233: Waiting to be filed, Check and Open actions named other things than the cards they open.
         html = self.page()
         tiles = dict(re.findall(r'<a class="tile go" href="#([a-z]+)"><div class="lbl">([^<]*)</div>', html))
-        self.assertEqual({"inboxes": "Inboxes", "checks": "Context", "todolist": "Todo"},
+        self.assertEqual({"checks": "Context", "todolist": "Todo"},
                          {k: v for k, v in tiles.items() if k != "threads"})
-        for title in ("Inboxes", "Context", "Todo"):
+        self.assertNotIn("<h2>Inboxes</h2>", html)                          # #593
+        for title in ("Context", "Todo"):
             self.assertIn("<h2>%s</h2>" % title, html)                     # the Todo card on the Overview, as the tab and the file
         self.assertIn('data-tab="todo">Todo<', html)
         for gone in ("Waiting to be filed", "Open actions", '<div class="lbl">Check</div>'):
@@ -997,7 +999,7 @@ class TestLayout(StatusCase):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
         html = self.page()
         self.assertNotIn('id="attention"', html)
-        self.assertEqual("inboxes", [t for t in trouble(html) if "waiting" in t[2]][0][1])      # the list stays, as data (#443)
+        self.assertEqual("waiting-now", [t for t in trouble(html) if "waiting" in t[2]][0][1])  # the list stays, as data (#443); its row is on the Waiting card (#593)
 
 
 def overview(html):
@@ -1042,7 +1044,7 @@ class TestOpensOnTheWork(StatusCase):
         self.actions("[[Pricing]]: send the floor 📅 %s" % self.now.date())
         html = self.page()
         tab = overview(html)
-        self.assertEqual(["threads", "todo", "inboxes", "graph"], card_order(tab))
+        self.assertEqual(["threads", "todo", "graph"], card_order(tab))
         self.assertIn('<div class="slot full" data-slot="top"><details class="card nowait" id="waiting-now" open>', tab)   # #474: the sessions waiting on you first
         self.assertLess(tab.index('id="waiting-now"'), tab.index('<details class="card" id="threads" open>'))
         self.assertIn('<div class="slot stack left" data-slot="left"><details class="card" id="todo"', tab)
@@ -1288,7 +1290,7 @@ class TestOpensOnTheWork(StatusCase):
         shutil.rmtree(self.root / "Zones" / "Work" / "Birch Entry")
         html = self.page()
         tab = overview(html)
-        self.assertEqual(["start", "threads", "todo", "inboxes", "graph"], card_order(tab))
+        self.assertEqual(["start", "threads", "todo", "graph"], card_order(tab))
         start = self.rows(html, "start")
         self.assertIn("help me prepare my next supplier call", start)              # the skill's own request
         self.assertIn("Your next step is that one request", start)               # the user's step, in plain words
@@ -2235,21 +2237,34 @@ class TestPanels(StatusCase):
     def test_inbox_waiting(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
         html = self.page()
-        self.assertIn("1 waiting", html)
         self.assertIn("1 item waiting in the inboxes", html)
+        self.assertNotIn("1 waiting", html)                                 # no tile saying so (#593)
 
-    def inboxes(self, html):
-        start = html.index('id="inboxes"')
-        return html[start:html.index("</details>", start)]
+    def inbox_rows(self, html):
+        return re.findall(r'<div class="wrow wneed">(?:(?!</div>).)*?in the inboxes.*?</div>', html, re.S)
 
-    def test_process_the_inbox_is_a_button_while_anything_waits(self):
-        self.assertNotIn("data-request", self.inboxes(self.page()))                 # every inbox empty: no button
+    def test_every_inbox_empty_says_nothing_about_inboxes(self):
+        html = self.page()
+        self.assertNotIn('id="inboxes"', html)
+        self.assertEqual([], self.inbox_rows(html))
+        self.assertNotIn("Process the Inbox", overview(html))
+        self.assertNotIn("in the inboxes", html)
+
+    def test_items_in_two_zones_are_one_row_with_process_the_inbox(self):
         write(self.root / "Zones" / "Work" / "Inbox" / "Quote.eml", "Subject: quote\n\nhello\n")
-        card = self.inboxes(self.page())
-        self.assertIn('<h2>Inboxes</h2><span class="meta"></span>', card)          # no "say …" in the caption (#234)
-        self.assertIn('<div class="gacts"><button class="act" type="button" data-request="process the inbox" data-folder="%s"' % self.root, card)
-        self.assertIn(">Process the Inbox</button>", card)
-        self.assertNotIn('say "process the inbox"', self.page())
+        write(self.root / "Wikis" / "Meetings" / "raw" / "inbox" / "call.txt", "A: hello\n")
+        html = self.page()
+        self.assertNotIn('id="inboxes"', html)
+        rows = self.inbox_rows(html)
+        self.assertEqual(1, len(rows))
+        row = rows[0]
+        self.assertIn("2 items waiting in the inboxes", row)
+        self.assertIn('<span class="wwhat">Work, Meetings</span>', row)             # the zones, in the zone column
+        self.assertIn('data-request="process the inbox" data-folder="%s"' % self.root, row)
+        self.assertIn(">Process the Inbox</button>", row)
+        self.assertRegex(row, r'<a class="alt" href="file://[^"]*">Open the inbox</a>')   # the link is secondary
+        lead = re.search(r'id="lead-why">([^<]*)<', html).group(1)
+        self.assertEqual(1, lead.count("2 in the inboxes"))                         # the lead counts the items once
 
     def test_a_request_button_opens_the_menus_assistant_or_copies(self):
         js = status.JS
@@ -3073,14 +3088,14 @@ class TestOpenActions(StatusCase):
         self.assertNotIn("Open Todo.md", html)                                 # the tab adds, ticks and re-dates; the file is one sentence away (#560)
 
     def test_no_todo_no_open_actions(self):
-        self.assertIn('class="top" style="--tiles:4"', self.page())
+        self.assertIn('class="top" style="--tiles:3"', self.page())     # Live threads, Todo, Context
         for todo in (self.root / "Zones").glob("*/Todo.md"):
             todo.unlink()
         html = self.page()
         self.assertNotIn('id="todo"', html)
         self.assertNotIn("<h2>Todo</h2>", html)                    # no card, no tile, no sidebar line
         self.assertNotIn('<div class="lbl">Todo</div>', html)
-        self.assertIn('class="top" style="--tiles:3"', html)     # the tiles still fill their row
+        self.assertIn('class="top" style="--tiles:2"', html)     # the tiles still fill their row
 
 
 class TestWhatThisMachineHas(StatusCase):
@@ -3469,8 +3484,8 @@ class TestLinksOpenAsChosen(StatusCase):
         write(self.root / "Wikis" / "Meetings" / "wiki" / "log.md",
               "# Log\n\n- 2026-03-10: [[wiki/sources/260310-acme-kickoff|Acme kick-off]] · Work · acme\n")
         html = self.page()
-        inbox = html[html.index('id="inboxes"'):]
-        inbox = inbox[:inbox.index("</details>")]
+        inbox = html[html.index("1 item waiting in the inboxes"):]      # the row of Waiting on you now (#593)
+        inbox = inbox[:inbox.index("</div>")]
         self.assertIn('href="%s"' % (self.root / "Zones" / "Work" / "Inbox").as_uri(), inbox)    # the folder: Finder opens it
         wikis = html[html.index('id="wikis"'):]
         wikis = wikis[:wikis.index("</details>")]

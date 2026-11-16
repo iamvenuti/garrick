@@ -7401,6 +7401,9 @@ def need_row(n: dict) -> str:
     late = '<span class="wfor">%s</span>' % E(n["late"]) if n["late"] else ""
     go = '<a class="act" href="%s"%s%s>%s</a>' % (E(n["href"]), ' data-tz-go="%s"' % E(n["tz"]) if n["tz"] else "",
                                                   ' target="_blank" rel="noopener"' if n.get("blank") else "", E(n["label"]))
+    if n.get("act"):
+        # The main button does the work; the link to where the item lives is secondary (#595).
+        go = '<span class="wacts">%s%s</span>' % (n["act"], go.replace('class="act"', 'class="alt"', 1))
     return '<div class="wrow wneed"><span class="wico %s">%s</span><span class="wname">%s</span>%s%s%s</div>' % (cls, icon, E(n["text"]), where, late, go)
 
 
@@ -7755,6 +7758,8 @@ button.act,a.act{display:inline-flex;align-items:center;justify-content:center}
 .wico{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;background:var(--wash);color:var(--accent)}.wico svg{width:18px;height:18px}
 .wico.crit{background:var(--critical-wash);color:var(--critical)}.wico.warn{background:var(--warning-wash);color:var(--warning)}
 .wrow .act{margin-left:auto}.wname{overflow-wrap:anywhere}.wico{flex:none}
+.wacts{margin-left:auto;display:inline-flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:6px 10px}.wacts .act{margin-left:0}
+.wacts .alt{color:var(--ink2);font-size:var(--fs-meta);text-decoration:underline;text-underline-offset:2px;background:none;border:0;padding:4px 2px}
 /* the two groups of what waits (#559): Broken, then To do, which starts folded when something is broken */
 .wgroup{margin:0 0 6px}.wgh{display:flex;align-items:baseline;gap:8px;margin:10px 0 2px;font-size:var(--fs-meta);font-weight:600;color:var(--muted);cursor:default;list-style:none}
 details.wgroup>summary.wgh{cursor:pointer}details.wgroup>summary.wgh::-webkit-details-marker{display:none}
@@ -7863,9 +7868,13 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                 attn.append(("critical", "%s tried a tool the deny list forbids: %s" % (job, ", ".join(hit)), "#calls"))
     waiting = sum(n for _, _, n in IB)
     if waiting:
+        # One row in Waiting on you now (#593): the zones whose inbox holds items in its zone column, Process the Inbox as
+        # its button, a link to the first of those inboxes beside it. The count is the whole-workspace figure the lead shows.
         said_inbox = "%d item%s waiting in the inboxes" % (waiting, "" if waiting == 1 else "s")
-        attn.append(("warning", said_inbox, "#inboxes"))
-        detail[said_inbox] = {"kind": "inbox", "count": waiting, "label": "Open the inbox"}
+        full = [(name, f) for name, f, n in IB if n]
+        attn.append(("warning", said_inbox, link(full[0][1])))
+        detail[said_inbox] = {"kind": "inbox", "count": waiting, "label": "Open the inbox", "zone": ", ".join(name for name, _ in full),
+                              "act": request_button("Process the Inbox", "process the inbox", ws)}
     if C and C.get("warnings"):
         said_warn = "The check found %d warning%s%s" % (C["warnings"], "" if C["warnings"] == 1 else "s", of_kept)
         attn.append(("warning", said_warn, "#checks"))
@@ -7898,7 +7907,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     worst = "critical" if any(a[0] == "critical" for a in attn) else "warning" if attn else "good"
     # Where each trouble shows (#443): on its own card, so a tab carries a dot for the cards it holds. A newer Garrick
     # and a drifted shared file show at the head of the Repositories card; a thread's row, on its own.
-    troubled = [(k, "repos" if isinstance(h, dict) or h.startswith("https://") else h.lstrip("#"), t) for k, t, h in attn]
+    troubled = [(k, "repos" if isinstance(h, dict) or h.startswith("https://") else "waiting-now" if h.startswith("file:") else h.lstrip("#"), t) for k, t, h in attn]
 
     live = sum(len(z["rows"]) for z in T.values())
     parked_n = sum(len(z["parked"]) for z in T.values())
@@ -7947,8 +7956,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     if TD:
         tiles.append(("Todo", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
                       "todolist" if lists else "todo"))
-    tiles += [("Inboxes", "%d" % waiting, "", "inboxes"),
-              ("Context", ("%d<small>%s</small>%d<small>%s</small>" % (C.get("errors", 0), noun(C.get("errors", 0), "error"),
+    tiles += [("Context", ("%d<small>%s</small>%d<small>%s</small>" % (C.get("errors", 0), noun(C.get("errors", 0), "error"),
                                                                        C.get("warnings", 0), noun(C.get("warnings", 0), "warning")))
                if C and not C.get("failed") else "—", check_age if C else "check.py not found", "checks")]
     if L:
@@ -8178,11 +8186,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         for sec, n in t["counts"].items():
             tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
     todo_card = card("todo", "Todo", "", tb) if TD else ""
-    ib = "".join('<a class="item" data-ok="%d" href="%s"><div class="name%s">%s<small>%s</small></div>%s</a>' % (
-        0 if n else 1, E(link(f)), zone_class(name, ZS), zone_name(name, ZS),
-        "%d waiting" % n if n else "empty", pill("wait" if n else "good")) for name, f, n in IB)
-    waits = ('<div class="gacts">%s</div>' % request_button("Process the Inbox", "process the inbox", ws)) if any(n for _, _, n in IB) else ""
-    inbox_card = card("inboxes", "Inboxes", "", '<div class="tiles">%s</div>%s' % (ib, waits))
 
     # ---- jobs and calls, only when the jobs extra is in use
     jobs_card = calls_card = ""
@@ -8361,7 +8364,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
                        '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT + lead_block(needs, len(waiting_now or [])), lead, todo_card,
-                          inbox_card, graph_card))
+                          "", graph_card))
     # Every tab with content has a left and a right slot below its own content (#443).
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'
                          '<div class="slot stack right" data-slot="status-right">%s</div><div class="slot full" data-slot="status-bottom"></div></div>'

@@ -1169,7 +1169,6 @@ class TestZoneColours(StatusCase):
         self.assertIn('<option value="Work" class="zc zc-teal">Work</option>', html)       # the graph's place
         self.assertIn('<span class="gzi zc zc-teal" data-z="Work" hidden>%s</span>' % icon, html)
         self.assertIn('<div class="zt"><b class="zc zc-teal">%sWork</b>' % icon, html)       # Todo
-        self.assertIn('<div class="name zc zc-teal">%sWork<small>' % icon, html)          # Inboxes
         self.assertIn("<h3>Personal</h3>", html)                                           # a zone with neither, as before
 
     def test_a_light_and_a_dark_ink_for_every_colour(self):
@@ -2904,7 +2903,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         out = self.run_js(None)
         self.assertEqual(["waiting-now", "your-work", "threads"], out["slots"]["top"])          # #143: Threads leads, after the sessions waiting on you (#474)
         self.assertEqual(["todo"], out["slots"]["left"])
-        self.assertEqual(["inboxes"], out["slots"]["right"])                            # the summary column is gone (#559)
+        self.assertEqual([], out["slots"]["right"])                                     # the summary column is gone (#559), and the Inboxes card with it (#593)
         self.assertEqual(["graph"], out["slots"]["bottom"])
         self.assertEqual([], out["hidden"])
         self.assertIsNone(out["saved"])                     # and nothing is written until something is moved
@@ -2912,7 +2911,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
     def test_a_saved_layout_loses_only_the_cards_that_are_gone(self):
         out = self.run_js(self.BEFORE_143)
         self.assertEqual(["waiting-now", "your-work"], out["slots"]["top"])          # Recent work and Due and overdue go; the card they never named stays
-        self.assertEqual(["inboxes", "todo"], out["slots"]["left"])     # A thought goes; Inboxes stays where it was dragged
+        self.assertEqual(["todo"], out["slots"]["left"])                # A thought goes, and the Inboxes card (#593) is skipped
         self.assertEqual([], out["slots"]["right"])                     # Waiting on you goes, hidden or not
         self.assertEqual(["threads", "graph"], out["slots"]["bottom"])  # Threads stays where this window put it
         self.assertEqual(["checks", "repos"], out["slots"]["status-left"])
@@ -2928,7 +2927,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
         moved["c"]["status-bottom"] = ["wikis"]
         moved["h"] = ["wikis"]
         out = self.run_js(moved)
-        self.assertEqual(["inboxes", "todo"], out["slots"]["left"])    # Inboxes stays where it was dragged
+        self.assertEqual(["todo"], out["slots"]["left"])               # the Inboxes card is gone (#593): skipped, the rest kept
         self.assertEqual([], out["slots"]["right"])          # the card the layout kept in no slot has gone
         self.assertEqual(["wikis"], out["slots"]["status-bottom"])
         self.assertEqual(["wikis"], out["hidden"])          # still hidden, and still where it was put
@@ -2936,7 +2935,7 @@ class TestASavedLayoutSurvivesANewDefault(StatusCase):
 
     def test_a_card_the_layout_never_named_keeps_the_place_the_build_gave_it(self):
         out = self.run_js({"v": 2, "c": {"top": [], "left": ["inboxes"], "right": [], "bottom": ["threads"]}, "h": []})
-        self.assertEqual(["todo", "inboxes"], out["slots"]["left"])     # Todo, unnamed, ahead of what was put back
+        self.assertEqual(["todo"], out["slots"]["left"])                # Todo, unnamed, kept; the Inboxes card is gone (#593)
         self.assertEqual(["graph", "threads"], out["slots"]["bottom"])
 
     def test_a_layout_naming_a_card_that_is_gone_is_read_without_harm(self):

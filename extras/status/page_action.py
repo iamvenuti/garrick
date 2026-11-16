@@ -5267,6 +5267,10 @@ def engine_module():
     return _ENGINE
 
 
+BOUNDED_COMMIT = {("wall", "take-out"): "Take private material out of a page", ("resume-long", "shorten"): "Shorten a resume point",
+                  ("meeting-long", "shorten"): "Shorten a meeting page", ("fix-failed", "fix-now"): "Make a small fix to a page"}
+
+
 def finding_bounded(ws: Path, req: dict, kind: str, answer: str, rel: str) -> object:
     """A handoff answer that is one bounded edit of the finding's own file (finding_queue.BOUNDED), run by the engine in the
     background, in that file's zone or wiki, committed through its wall check. With the engine unavailable the reply says so
@@ -5275,7 +5279,8 @@ def finding_bounded(ws: Path, req: dict, kind: str, answer: str, rel: str) -> ob
     parts = rel.split("/")
     if len(parts) < 3 or parts[0] not in ("Zones", "Wikis") or not rel.endswith(".md"):
         raise Refused("only a page of a zone or a wiki can be changed here")
-    got = engine_module().run_bounded(ws, parts[1], [rel], fq.bounded_request(kind, answer, rel))
+    said = BOUNDED_COMMIT.get((kind, answer), "Change a page")      # one fixed sentence: never the path or the page's name
+    got = engine_module().run_bounded(ws, parts[1], [rel], fq.bounded_request(kind, answer, rel), said)
     if got.get("unavailable"):
         return {"say": got["say"], "unavailable": True}
     if not got.get("ok"):
@@ -5298,7 +5303,10 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
         raise Refused("not an answer Garrick offers for this finding")
     rel, _ = finding_path(ws, req)
     if answer == fq.UNDO:
-        done = engine_module().undo_bounded(ws, req.get("repo"), req.get("commit"))
+        own = rel.split("/")
+        if len(own) < 3 or req.get("repo") != "%s/%s" % (own[0], own[1]):      # the finding's own zone or wiki, and no other
+            raise Refused("that change is not one of this page, so it is not undone from here")
+        done = engine_module().undo_bounded(ws, req.get("repo"), req.get("commit"), rel)
         if not done.get("ok"):
             raise Refused(done.get("say") or "That could not be undone.")
         return {"say": "Undone: the page is as it was."}

@@ -2189,6 +2189,25 @@ class TestCommitFiles(ActionCase):
         self.assertEqual("", git(self.work, "diff", "--cached", "--name-only").strip())      # nothing staged or committed
         return str(caught.exception)
 
+    def test_the_files_a_built_row_carries_are_accepted_by_the_verb(self):
+        """The button's own `data-files`, not hand-written paths: the row and the verb must speak the same paths."""
+        import html as htmllib
+        spec = importlib.util.spec_from_file_location("garrick_status_for_row", REPO / "extras" / "status" / "status.py")
+        status = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(status)
+        changed, _ = pa.changed_now(self.work)
+        r = {"folder": str(self.work), "name": "Work", "dirty": len(changed), "since": None,
+             "changes": [(f, {"untracked"}) for f in sorted(changed)]}
+        with mock.patch.object(status, "bounded_ready", return_value=True):
+            row = status.commit_row(self.root, r, dt.datetime.now())
+        m = re.search(r'data-files="([^"]*)"', row.get("act", ""))
+        self.assertTrue(m, row)
+        files = json.loads(htmllib.unescape(m.group(1)))
+        self.assertTrue(files and all(f.startswith("Zones/Work/") for f in files), files)
+        out = self.commit(files)
+        self.assertEqual([(self.root, "Work", files, "", "")], self.engine.calls)
+        self.assertIn("bounded", out)
+
     def test_it_is_a_page_only_verb(self):
         self.assertIn("commit-files", pa.VERBS)
         self.assertIn("commit-files", pa.PAGE_ONLY)

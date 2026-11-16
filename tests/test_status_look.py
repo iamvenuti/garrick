@@ -603,7 +603,7 @@ class WaitingActs(unittest.TestCase):
         m = re.search(r'<button class="act apponly" type="button" data-commit="Work" data-files="([^"]*)"[^>]*>Commit them</button>', row)
         self.assertTrue(m, row)
         listed = json.loads(htmllib.unescape(m.group(1)))
-        self.assertTrue({"Acme/Draft.md", "Notes.md"} <= set(listed), listed)
+        self.assertTrue({"Zones/Work/Acme/Draft.md", "Zones/Work/Notes.md"} <= set(listed), listed)      # workspace-relative, as `commit-files` takes them
         self.assertIn('<a class="alt" href="#repos">See the changes</a>', row)           # the link is secondary
 
     def test_commit_them_is_not_offered_for_old_changes_and_the_row_says_where_they_may_belong(self):

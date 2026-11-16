@@ -223,6 +223,9 @@ class TestTodoTab(StatusCase):
         self.assertIn("r.classList.add('pending')", status.TODO_JS)             # its key changes: no second click before the rebuild
         self.assertIn("window.TodoPending=function(z,target,date,text)", status.TODO_JS)
         self.assertIn("if(window.TodoPending)TodoPending(z,target,date,text)", status.JS)
+        pending = status.TODO_JS[status.TODO_JS.index("window.TodoPending="):]
+        self.assertIn("details.tgroup.tthread", pending)                          # the Threaded view shows the line too, under No thread
+        self.assertIn("nr.insertBefore(r.cloneNode(true)", pending)
         _, tab = self.tab()
         self.assertIn('<button class="tdate late" type="button"', tab)
         self.assertIn("＋ date", tab)

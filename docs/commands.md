@@ -252,6 +252,7 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
   "todo-expire-days": {"Work": 14, "Personal": 30},
   "todo-inbox-order": "thread",
   "todo-chase-days": 0,
+  "todo-thread-cap": 5,
   "memory": "~/.claude/projects/-Users-sam-Garrick/memory",
   "nurture-weights": {"judgment": 2},
   "nurture-threshold": 60
@@ -269,6 +270,7 @@ A project about the workspace itself can live in `System/<Project>/`, with `type
 - `as-shipped`: the files Garrick ships that you never change here, by the start of their path; `System/tools/` otherwise. A change to one belongs in Garrick, or the next update leaves its version beside yours.
 - `todo-expire-days`: the days an untriaged line waits in a zone's `Todo.md` before the `todo` skill moves it to the expired archive; 14 otherwise. A number, or one per zone.
 - `todo-chase-days`: how many days ahead the `todo` skill's sweep sets `⏳`, the day to chase, on a Waiting on line whose source gives none; 7 otherwise. `0` writes none: the line stays untriaged until you date it, and expires after the zone's days if you never do. A number, or one per zone.
+- `todo-thread-cap`: how many open lines one thread should hold in a zone's `Todo.md`; 5 otherwise, `0` for no cap. A soft cap: Distil merges before it adds above it, but no line is ever dropped. A number, or one per zone.
 - `todo-inbox-order`: how the `todo` skill orders the Inbox. `first-seen` keeps each thread's lines together where the thread first appears; `thread` sorts them by the thread's name, as a Tasks query sorted by description shows them. A word, or one per zone.
 
 

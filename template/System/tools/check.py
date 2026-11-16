@@ -901,6 +901,7 @@ SETTING_KINDS = {
     "todo-expire-days": (int, dict),     # days an untriaged Todo line waits, or {zone: days}: the todo skill's
     "todo-inbox-order": (str, dict),     # "first-seen" or "thread", or {zone: either}: the todo skill's
     "todo-chase-days": (int, dict),      # days ahead a swept Waiting on line's ⏳ is set, 0 for none, or {zone: days}
+    "todo-thread-cap": (int, dict),      # open lines a thread should hold at most, 0 for none, or {zone: n}: Distil's
     "memory": (str, list),   # the folder, or folders, where the assistant keeps a memory of its own
     "nurture-weights": dict,             # finding kind -> its weight in the context debt: nurture.py's
     "nurture-threshold": (int, float),   # the context debt over which the morning digest says so

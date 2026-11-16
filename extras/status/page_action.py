@@ -5252,6 +5252,38 @@ def finding_move(ws: Path, rel: str) -> str:
     return "Moved %d older entr%s of %s to history" % (done["entries_moved"], "y" if done["entries_moved"] == 1 else "ies", note.stem)
 
 
+_ENGINE = None
+
+
+def engine_module():
+    """engine.py, beside this file: the one place a bounded edit is run and committed (#592)."""
+    global _ENGINE
+    if _ENGINE is None:
+        sys.path.insert(0, str(HERE))
+        spec = importlib.util.spec_from_file_location("garrick_page_engine", str(HERE / "engine.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _ENGINE = mod
+    return _ENGINE
+
+
+def finding_bounded(ws: Path, req: dict, kind: str, answer: str, rel: str) -> object:
+    """A handoff answer that is one bounded edit of the finding's own file (finding_queue.BOUNDED), run by the engine in the
+    background, in that file's zone or wiki, committed through its wall check. With the engine unavailable the reply says so
+    (`unavailable`) and the page opens a visible assistant instead, as before. A refusal is the reply's sentence."""
+    fq = finding_queue()
+    parts = rel.split("/")
+    if len(parts) < 3 or parts[0] not in ("Zones", "Wikis") or not rel.endswith(".md"):
+        raise Refused("only a page of a zone or a wiki can be changed here")
+    got = engine_module().run_bounded(ws, parts[1], [rel], fq.bounded_request(kind, answer, rel))
+    if got.get("unavailable"):
+        return {"say": got["say"], "unavailable": True}
+    if not got.get("ok"):
+        raise Refused(got.get("say") or "That did not work.")
+    return {"say": fq.bounded_said(kind, ws, rel), "commit": got["commit"], "files": got["files"], "repo": got["repo"],
+            "undo": {"verb": "finding", "kind": kind, "path": rel, "answer": fq.UNDO, "commit": got["commit"], "repo": got["repo"]}}
+
+
 def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     """One answer to a finding on the queue (#535). The kind and the answer are checked against finding_queue.py's
     table, so an unknown one is refused by name and nothing runs."""
@@ -5265,6 +5297,13 @@ def answer_finding(ws: Path, req: dict, today: dt.date) -> object:
     if not isinstance(answer, str) or answer not in fq.VERB_ANSWERS[kind]:
         raise Refused("not an answer Garrick offers for this finding")
     rel, _ = finding_path(ws, req)
+    if answer == fq.UNDO:
+        done = engine_module().undo_bounded(ws, req.get("repo"), req.get("commit"))
+        if not done.get("ok"):
+            raise Refused(done.get("say") or "That could not be undone.")
+        return {"say": "Undone: the page is as it was."}
+    if answer in fq.BOUNDED.get(kind, ()):
+        return finding_bounded(ws, req, kind, answer, rel)
     if answer == "later":
         until = fq.later_put(ws, fq.later_key(kind, rel, which), today)
         return "Put off until %s" % dt.date.fromisoformat(until).strftime("%a %d %b")

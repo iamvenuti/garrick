@@ -1529,8 +1529,10 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
                 % (z["open"], "bad" if z["late"] else "", z["late"], z["undated"]))
         panes += '<div class="tz" data-zone="%s"><div class="tsum">%s<span class="tsum-acts">%s</span></div>%s</div>' % (
             E(z["zone"]), summ, add, body)
-    zones = "".join('<button type="button" data-tz="%s"%s>%s<span class="n">%d</span></button>'
-                    % (E(z["zone"]), zone_attr(z["zone"], styles), zone_name(z["zone"], styles), z["open"])
+    # each zone's open count beside its name (#594); a zone with nothing open shows none
+    zones = "".join('<button type="button" data-tz="%s"%s>%s%s</button>'
+                    % (E(z["zone"]), zone_attr(z["zone"], styles), zone_name(z["zone"], styles),
+                       '<span class="n">%d</span>' % z["open"] if z["open"] else "")
                     for z in lists)
     bar = ('<div class="tbar"><div class="seg zseg" role="group" aria-label="Zone"%s>%s</div>'
            '<div class="seg fseg" role="group" aria-label="Show"><button type="button" data-tf="all">All</button>'
@@ -7953,9 +7955,9 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
         hero = '<div class="hero" id="summary"><div class="fig" style="font-size:var(--fs-h1)">%sAll clear</div><div class="lbl">Nothing failing, waiting or broken.</div></div>' % ICON["good"]
     # Each tile leads to the card that explains it, in whichever tab that card sits.
     tiles = [("Live threads", "%d" % live, "%d touched this week, %d untouched for 14+ days" % (week, aging), "threads")]
-    if TD:
+    if lists:
         tiles.append(("Todo", "%d" % open_actions, "across %d zone%s" % (len(TD), "" if len(TD) == 1 else "s"),
-                      "todolist" if lists else "todo"))
+                      "todolist"))
     tiles += [("Context", ("%d<small>%s</small>%d<small>%s</small>" % (C.get("errors", 0), noun(C.get("errors", 0), "error"),
                                                                        C.get("warnings", 0), noun(C.get("warnings", 0), "warning")))
                if C and not C.get("failed") else "—", check_age if C else "check.py not found", "checks")]
@@ -8173,20 +8175,6 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                        chip=trend_chip(trend_word(history, now.date())))
     queue_view = fq.dialog(str(ws), {sc: qs for sc, qs in queues.items() if qs}, queue_names, now.date().isoformat(), work_places) if fq else ""
 
-    # ---- open actions and inboxes
-    tb = ""
-    for z, t in TD.items():
-        scale = max(list(t["counts"].values()) + [1]) * 1.08
-        # one way to the zone's list (#235): the Todo tab, which keeps Open Todo.md for the file
-        opener = ('<a class="act" href="#todolist" data-tz-go="%s" title="Open %s&#39;s list on the Todo tab">Open</a>' % (E(z), E(z))
-                  if lists else '<a class="act" href="%s" title="Open %s/Todo.md">Open</a>' % (E(link(t["file"])), E(z)))
-        tb += '<div class="zt"><b%s>%s</b>%s</div>' % (zone_attr(z, ZS), zone_name(z, ZS), opener)
-        if not t["counts"]:
-            tb += '<p class="muted" style="font-size:var(--fs-meta);margin:2px 0">Nothing open.</p>'
-        for sec, n in t["counts"].items():
-            tb += '<div class="bullet"><span class="ink2">%s</span><div class="bar"><i style="width:%.1f%%"></i></div><span class="num">%d</span></div>' % (E(sec), n / scale * 100, n)
-    todo_card = card("todo", "Todo", "", tb) if TD else ""
-
     # ---- jobs and calls, only when the jobs extra is in use
     jobs_card = calls_card = ""
     if J:
@@ -8363,7 +8351,7 @@ def build(ws: Path, now: Optional[dt.datetime] = None, folder: Optional[Path] = 
                                                     if anything else start_card() + threads_card)
     overview = section("overview", False, '%s<div class="grid"><div class="slot full" data-slot="top">%s</div>'
                        '<div class="slot stack left" data-slot="left">%s</div><div class="slot stack right" data-slot="right">%s</div>'
-                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT + lead_block(needs, len(waiting_now or [])), lead, todo_card,
+                       '<div class="slot full" data-slot="bottom">%s</div></div>' % (THOUGHT_LEFT + lead_block(needs, len(waiting_now or [])), lead, "",
                           "", graph_card))
     # Every tab with content has a left and a right slot below its own content (#443).
     status_tab = section("status", True, '%s<div class="onlybar"><label class="switch"><input type="checkbox" id="only"> Only what needs attention</label></div><div class="grid"><div class="slot stack left" data-slot="status-left">%s</div>'

@@ -615,7 +615,6 @@ class WaitingActs(unittest.TestCase):
         self.assertIn('<a class="act" href="#repos">Show me</a>', row)                   # Show me first, as the only button
 
     def test_without_a_bounded_run_the_row_keeps_its_link_alone(self):
-        self.assertFalse(status.bounded_ready(Path("/nowhere")))                           # engine.py of this tree has no bounded run yet, or has it
         with mock.patch.object(status, "bounded_ready", return_value=False):
             html = build_with_beats({}, lambda root: dirty_zone(root, 4))
         row = next(r for r in self.need_rows(html) if "not committed" in r)

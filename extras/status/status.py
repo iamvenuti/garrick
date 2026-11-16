@@ -813,6 +813,21 @@ def system_notes(ws: Path) -> Dict[str, Path]:
     return out
 
 
+def line_place(note: Path, zone: Path) -> Tuple[str, str]:
+    """The project and the thread a line belongs to, from the note it points at or sits in (#596): a thread's note,
+    or any file in its folder, gives both; a project's hub, or a file in the project and not in a thread, gives the
+    project alone. A note outside the zone's projects, or not placed, gives neither."""
+    try:
+        parts = Path(os.path.abspath(str(note))).relative_to(Path(os.path.abspath(str(zone)))).parts
+    except ValueError:
+        return "", ""
+    if len(parts) >= 4 and parts[1] == "Threads":
+        return parts[0], parts[2]
+    if len(parts) >= 2 and parts[0] not in ("Inbox", "archive") and not parts[0].startswith("."):
+        return parts[0], ""
+    return "", ""
+
+
 def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     """Preview: each zone's open actions, read from the notes, never written.
     Per zone: the lines of Todo.md grouped under its `## ` headings in their
@@ -846,7 +861,9 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
                 thread, note = t["thread"], notes.get(t["target"].lower()) or notes.get(t["target"].rsplit("/", 1)[-1].lower())
             else:
                 thread, note = None, None
+            project, tname = line_place(note, zone) if note and not t["unsure"] else ("", "")
             return dict(t, when=when, late=late, done=done, field=field if when else "", label=thread,
+                        project=project, tname=tname,
                         link=link.attrs(note) if note else "", zone=zone.name,
                         alpha=("%s\u0001%s" % (thread or ("\uffff" if t["unsure"] else ""), plain_text(t["text"]))).casefold())
 
@@ -876,7 +893,10 @@ def todo_list(ws: Path, link: "Links", today: dt.date) -> List[dict]:
     return out
 
 
-def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) -> str:
+SECTION_TAGS = ("Inbox", "Waiting on")       # what a line in the threaded view says of the section it sits in (#596)
+
+
+def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False, tag: bool = False) -> str:
     """One action. The row carries what a button sends back (its zone, file,
     the line's key) and what the filters and sorts read (late, undated, the
     date, the A-Z key); the buttons themselves are drawn only with actions.
@@ -894,6 +914,8 @@ def todo_row(r: dict, today: dt.date, actions: bool, said_late: bool = False) ->
     thr = ('<a class="thr" %s>%s</a>' % (r["link"], E(name)) if r["link"] and name
            else '<span class="thr%s">%s</span>' % (" unsure" if r["unsure"] and not r["label"] else "", E(name)) if name else "")
     meta = []
+    if tag and r["section"] in SECTION_TAGS and r["file"] == "Todo.md" and not r["done"]:
+        meta.append('<span class="tsec">%s</span>' % E(r["section"]))      # the section it sits in (#596); Soon has none
     if r["priority"] in ("🔺", "⏫"):
         meta.append('<span class="prio">%s priority</span>' % ("highest" if r["priority"] == "🔺" else "high"))
     if r["also"]:
@@ -1501,6 +1523,50 @@ def add_projects(T: Dict[str, dict]) -> Dict[str, List[dict]]:
     return out
 
 
+def threaded_body(z: dict, today: dt.date, actions: bool) -> str:
+    """One zone's open lines grouped under their project and thread (#596): a group per project, the project's own
+    lines first, then a group per thread; a line with no thread, or one that cannot be placed, under No thread;
+    Done today last. Each group's header says its open and late counts; a thread's name links to its note."""
+    rows = [r for _, group in z["groups"] for r in group]
+    slug = re.sub(r"[^a-z0-9]+", "-", z["zone"].lower()).strip("-")
+    projects: Dict[str, Dict[str, List[dict]]] = {}
+    loose: List[dict] = []
+    for r in rows:
+        if r.get("project"):
+            projects.setdefault(r["project"], {}).setdefault(r.get("tname") or "", []).append(r)
+        else:
+            loose.append(r)
+
+    def counts(rs):
+        late = sum(1 for r in rs if r["late"])
+        return '<span class="n">%d</span>%s' % (len(rs), '<span class="tlate">%d late</span>' % late if late else "")
+
+    def box(rs):
+        return '<div class="trows">%s</div>' % "".join(todo_row(r, today, actions, tag=True) for r in rs)
+
+    body = ""
+    for pname in sorted(projects, key=str.casefold):
+        threads = projects[pname]
+        own = threads.get("", [])
+        inner = box(own) if own else ""
+        for tname in sorted((t for t in threads if t), key=str.casefold):
+            rs = threads[tname]
+            href = next((r["link"] for r in rs if r.get("link")), "")
+            name = '<a class="thr" %s>%s</a>' % (href, E(tname)) if href else '<span class="tname">%s</span>' % E(tname)
+            inner += ('<details class="tgroup tthread" open><summary>%s%s%s</summary>%s</details>' % (CHEV, name, counts(rs), box(rs)))
+        everything = [r for rs in threads.values() for r in rs]
+        body += ('<details class="tgroup tproject" open><summary>%s<span class="tname">%s</span>%s</summary>%s</details>'
+                 % (CHEV, E(pname), counts(everything), inner))
+    if loose:
+        body += ('<details class="tgroup tthread" open><summary>%s<span class="tname">No thread</span>%s</summary>%s</details>'
+                 % (CHEV, counts(loose), box(loose)))
+    if z["done"]:
+        body += ('<details class="tgroup donegroup" id="tgt-%s-done-today" open><summary>%s<span class="tname">Done today</span>'
+                 '<span class="n">%d</span></summary><div class="trows">%s</div></details>'
+                 % (slug, CHEV, len(z["done"]), "".join(todo_row(r, today, actions) for r in z["done"])))
+    return body
+
+
 def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
                    projects: Optional[Dict[str, List[dict]]] = None, link: Optional["Links"] = None,
                    styles: Optional[Dict[str, dict]] = None) -> str:
@@ -1527,8 +1593,8 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
                % (E(z["zone"]), E(z["zone"]))) if actions and z["file"] else ""
         summ = ('<b>%d</b> open · <span class="%s"><b>%d</b> late</span> · <b>%d</b> without a date'
                 % (z["open"], "bad" if z["late"] else "", z["late"], z["undated"]))
-        panes += '<div class="tz" data-zone="%s"><div class="tsum">%s<span class="tsum-acts">%s</span></div>%s</div>' % (
-            E(z["zone"]), summ, add, body)
+        panes += ('<div class="tz" data-zone="%s"><div class="tsum">%s<span class="tsum-acts">%s</span></div>'
+                  '<div class="tflat">%s</div><div class="tthr">%s</div></div>' % (E(z["zone"]), summ, add, body, threaded_body(z, today, actions)))
     # each zone's open count beside its name (#594); a zone with nothing open shows none
     zones = "".join('<button type="button" data-tz="%s"%s>%s%s</button>'
                     % (E(z["zone"]), zone_attr(z["zone"], styles), zone_name(z["zone"], styles),
@@ -1537,6 +1603,8 @@ def todo_list_card(lists: List[dict], today: dt.date, actions: bool = False,
     bar = ('<div class="tbar"><div class="seg zseg" role="group" aria-label="Zone"%s>%s</div>'
            '<div class="seg fseg" role="group" aria-label="Show"><button type="button" data-tf="all">All</button>'
            '<button type="button" data-tf="late">Late</button><button type="button" data-tf="nodate">No date</button></div>'
+           '<div class="seg vseg" role="group" aria-label="View"><button type="button" data-tv="flat" title="One list, in the sections of Todo.md">Flat</button>'
+           '<button type="button" data-tv="threaded" title="Grouped under each project and thread">Threaded</button></div>'
            '<div class="seg sseg" role="group" aria-label="Sort"><button type="button" data-ts="alpha" title="By thread, then by the action">A–Z</button>'
            '<button type="button" data-ts="date" title="Dated lines first, soonest first; then the rest, A–Z">Due date</button></div></div>'
            % (" hidden" if len(lists) < 2 else "", zones))      # a box and a date chip explain themselves (#235)
@@ -2411,6 +2479,10 @@ button.tdate{cursor:pointer}button.tdate:hover{border-color:var(--base);color:va
 .tdate.today{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .trow.done .tdate{visibility:hidden}
 .tempty{color:var(--muted);font-size:var(--fs-meta);margin:2px 8px 10px}
+.todotab:not([data-view="threaded"]) .tthr,.todotab[data-view="threaded"] .tflat{display:none}
+.tproject>summary{font-size:var(--fs-h3)}.tthread{margin:0 8px 8px;box-shadow:none;border-color:var(--grid)}.tthread>summary{font-size:var(--fs-body);padding:9px 12px}
+.tproject>.trows{padding-bottom:8px}.tlate{color:var(--critical);font-size:var(--fs-meta);font-weight:560}
+.tsec{border:1px solid var(--line);border-radius:6px;padding:0 6px;color:var(--ink2)}
 .todotab[data-tf="late"] .trow:not(.late),.todotab[data-tf="nodate"] .trow:not(.undated){display:none}
 .todotab[data-tf="late"] .tempty,.todotab[data-tf="nodate"] .tempty,.tgroup.empty{display:none}
 .dmenu{position:fixed;z-index:11;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 6px 24px rgba(0,0,0,.16);padding:6px;width:236px}
@@ -2445,6 +2517,8 @@ window.TodoZone=zone;
 todo.querySelectorAll('[data-tz]').forEach(function(b){b.onclick=function(){zone(b.dataset.tz)}});
 function filt(f){todo.dataset.tf=f;todo.querySelectorAll('[data-tf]').forEach(function(b){b.classList.toggle('on',b.dataset.tf===f)});st.set('garrick-todo-filter',f);empties()}
 todo.querySelectorAll('[data-tf]').forEach(function(b){b.onclick=function(){filt(b.dataset.tf)}});
+function view(v){v=v==='threaded'?'threaded':'flat';todo.dataset.view=v;todo.querySelectorAll('[data-tv]').forEach(function(b){b.classList.toggle('on',b.dataset.tv===v)});st.set('garrick-todo-view',v)}
+todo.querySelectorAll('[data-tv]').forEach(function(b){b.onclick=function(){view(b.dataset.tv)}});
 function empties(){var f=todo.dataset.tf||'all',want=f==='late'?'.trow.late':f==='nodate'?'.trow.undated':null;
 todo.querySelectorAll('.tgroup').forEach(function(g){g.classList.toggle('empty',!!want&&!g.querySelector(want))})}
 /* A-Z by thread, then the action; Due date puts dated lines first, soonest first, then the rest A-Z */
@@ -2453,7 +2527,7 @@ todo.querySelectorAll('.trows').forEach(function(box){var rows=[].slice.call(box
 rows.sort(function(a,b){if(s==='date'){var x=a.dataset.d||'',y=b.dataset.d||'';if(x!==y){if(!x)return 1;if(!y)return -1;return x<y?-1:1}}
 return a.dataset.a<b.dataset.a?-1:a.dataset.a>b.dataset.a?1:0});rows.forEach(function(r){box.appendChild(r)})})}
 todo.querySelectorAll('[data-ts]').forEach(function(b){b.onclick=function(){sort(b.dataset.ts)}});
-sort(st.get('garrick-todo-sort')==='date'?'date':'alpha');zone(st.get('garrick-todo-zone'));
+sort(st.get('garrick-todo-sort')==='date'?'date':'alpha');view(st.get('garrick-todo-view'));zone(st.get('garrick-todo-zone'));
 var f0=st.get('garrick-todo-filter');filt(f0==='late'||f0==='nodate'?f0:'all');
 /* a zone's "Open" on the Overview opens the tab on that zone */
 document.addEventListener('click',function(e){var g=e.target.closest&&e.target.closest('[data-tz-go]');if(g)zone(g.dataset.tzGo)},true);
@@ -2506,7 +2580,7 @@ window.TodoPending=function(z,target,date,text){var pane=panes.filter(function(p
 var w=/(^|\s)#waiting/.test(text),sec='Inbox',chip=w?'＋ chase date':'＋ date';
 if(date!=='-'){var d=new Date(date+'T12:00:00'),n=Math.round((d-at(0))/864e5);sec=w?'Waiting on':n<=7?'This week':'Soon';chip=(w?'Chase ':'Due ')+(n===0?'today':n===1?'tomorrow':lab(d))}
 function named(x){var t=x.querySelector('summary .tname');return t?t.textContent:''}
-var groups=[].slice.call(pane.querySelectorAll('details.tgroup')),g=groups.filter(function(x){return named(x)===sec})[0];
+var groups=[].slice.call(pane.querySelectorAll('.tflat details.tgroup')),g=groups.filter(function(x){return named(x)===sec})[0];
 var note=g?'adding…':'adding to '+sec+'…';if(!g)g=groups.filter(function(x){return named(x)==='Inbox'})[0];if(!g)return;
 g.open=true;var rows=g.querySelector('.trows'),empty=rows.querySelector('.tempty');if(empty)empty.remove();
 var name=target!=='-'?target.split('/').pop():'',r=document.createElement('div');r.className='trow pending';

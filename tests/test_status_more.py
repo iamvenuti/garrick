@@ -40,6 +40,24 @@ def flags(root, **on):
     write(root / "System" / "garrick-flags.json", json.dumps(on))
 
 
+def without_threaded(tab):
+    """`tab` without the Threaded view's markup (the `tthr` div of each zone, found by counting divs), leaving the Flat view."""
+    out, at = "", 0
+    for m in re.finditer(r'<div class="tthr">', tab):
+        if m.start() < at:
+            continue
+        out += tab[at:m.start()]
+        depth, i = 0, m.start()
+        for t in re.finditer(r"<(/?)div\b", tab[m.start():]):
+            depth += -1 if t.group(1) else 1
+            if depth == 0:
+                i = m.start() + t.end()
+                i = tab.index(">", i) + 1
+                break
+        at = i
+    return out + tab[at:]
+
+
 class TestTodoTab(StatusCase):
     def setUp(self):
         super().setUp()
@@ -52,9 +70,10 @@ class TestTodoTab(StatusCase):
         write(self.root / "Zones" / "Work" / "Acme Review" / "Threads" / "Pricing" / "Notes.md", "- [ ] Check the clause\n")
 
     def tab(self):
+        """The Flat view of the Todo tab, as it was drawn before #596: the Threaded view's markup cut out."""
         html = self.page()
         start = html.index('id="todolist"')
-        return html, html[start:html.index("</section>", start)]
+        return html, without_threaded(html[start:html.index("</section>", start)])
 
     def test_the_toolbar_and_done_today_hold_no_how_to(self):
         _, tab = self.tab()
@@ -82,6 +101,71 @@ class TestTodoTab(StatusCase):
         self.assertIn("highest priority", work)
         self.assertIn("in the thread note", work)
         self.assertIn('<a class="thr" href="', work)                                           # the thread opens its note
+
+    def threaded(self, zone="Work"):
+        """One zone's Threaded view, as markup (#596)."""
+        html = self.page()
+        pane = html[html.index('<div class="tz" data-zone="%s"' % zone):]
+        start = pane.index('<div class="tthr">')
+        return re.sub(r"<svg.*?</svg>", "", pane[start:pane.index("</section>")])
+
+    def test_the_bar_has_a_flat_and_threaded_selector_and_flat_is_the_default(self):
+        html, tab = self.tab()
+        bar = tab[tab.index('<div class="tbar">'):tab.index('<div class="tz"')]
+        self.assertIn('<div class="seg vseg" role="group" aria-label="View"><button type="button" data-tv="flat"', bar)
+        self.assertRegex(bar, r'data-tv="threaded"[^>]*>Threaded</button>')
+        self.assertLess(bar.index('aria-label="Zone"'), bar.index('aria-label="View"'))
+        self.assertLess(bar.index('aria-label="View"'), bar.index('aria-label="Sort"'))
+        self.assertNotRegex(html, r'<div id="todolist" class="todotab[^"]*"[^>]*data-view')   # nothing built says Threaded: Flat is the default
+        self.assertIn('.todotab[data-view="threaded"] .tflat{display:none}', status.TODO_CSS)
+        self.assertIn('.todotab:not([data-view="threaded"]) .tthr', status.TODO_CSS)
+        self.assertIn("view(st.get('garrick-todo-view'))", status.TODO_JS)      # the choice is read back with Show and Sort...
+        self.assertIn("st.set('garrick-todo-view',v)", status.TODO_JS)          # ...and kept with them, through the try/catch store
+
+    def test_threaded_shows_every_open_line_once_under_its_project_and_thread(self):
+        todo = self.root / "Zones" / "Work" / "Todo.md"
+        todo.write_text(todo.read_text().replace("- [ ] Book the room\n", "- [ ] Book the room\n- [ ] [[Acme Review]]: Plan the review\n"))
+        _, flat = self.tab()
+        view = self.threaded()
+        keys = lambda text: sorted(re.findall(r'<div class="trow(?! done)[^"]*" data-z="Work" data-f="[^"]*" data-k="([^"]*)"', text))
+        self.assertEqual(keys(flat), keys(view))                              # the same open lines, once each
+        acme = view[view.index('<span class="tname">Acme Review</span>'):view.index('<span class="tname">Birch Entry</span>')]
+        self.assertIn('<span class="n">3</span><span class="tlate">1 late</span></summary>', acme)       # open and late counts in the header
+        self.assertLess(acme.index("Plan the review"), acme.index('class="tgroup tthread"'))              # the project's own lines come first
+        thread = acme[acme.index('class="tgroup tthread"'):]
+        self.assertRegex(thread, r'<summary><a class="thr" href="[^"]*Pricing\.md"[^>]*>Pricing</a><span class="n">2</span>')   # the name links to its note
+        self.assertIn("Send the revised terms", thread)
+        self.assertIn("Check the clause", thread)
+        self.assertNotIn("Plan the review", thread)
+
+    def test_threaded_puts_unplaced_lines_under_no_thread_and_done_today_last(self):
+        view = self.threaded()
+        none = view[view.index('<span class="tname">No thread</span>'):]
+        self.assertIn("Book the room", none)
+        self.assertIn("Numbers from Birch", none)                              # a line with no label is not dropped
+        self.assertNotIn("Send the revised terms", none[:none.index("Done today")])
+        self.assertLess(view.index("No thread"), view.index("Done today"))
+        self.assertIn("Sent the brief", view[view.index("Done today"):])          # Done today is the last group
+        self.assertNotIn("An old one", view)
+
+    def test_threaded_lines_carry_a_section_tag_and_keep_their_controls(self):
+        view = self.threaded()
+        book = view[view.index('book the room"'):]
+        book = book.split('<div class="trow', 1)[0]
+        self.assertIn('<span class="tsec">Inbox</span>', book)
+        self.assertIn('class="tick"', book)
+        self.assertIn('class="tdate none"', book)
+        numbers = view[view.index('numbers from birch"'):]
+        self.assertIn('<span class="tsec">Waiting on</span>', numbers[:numbers.index("</div></div>")])
+        sizing = view[view.index('draft the sizing"'):]
+        self.assertNotIn('class="tsec"', sizing[:sizing.index("</div></div>")])      # a line in This week has no tag
+        self.assertNotIn('class="tsec"', self.tab()[1])                            # and Flat draws none, as it always did
+
+    def test_show_and_sort_reach_both_views(self):
+        self.assertIn(".todotab[data-tf=\"late\"] .trow:not(.late)", status.TODO_CSS)          # a rule on every row, in either view
+        self.assertIn("todo.querySelectorAll('.tgroup').forEach", status.TODO_JS)            # a group with nothing left is hidden, nested or not
+        self.assertIn("todo.querySelectorAll('.trows').forEach", status.TODO_JS)             # Sort orders the rows of every group
+        self.assertIn(".tgroup.empty{display:none}", status.TODO_CSS)
 
     def test_a_system_project_thread_opens_its_note(self):
         setup = self.root / "System" / "Workspace Setup"

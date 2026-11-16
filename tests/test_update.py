@@ -1628,6 +1628,16 @@ class TestIgnoreFiles(Case):
         self.assertEqual(sha(want), self.stamp()["files"][self.ZONE])
         self.assertNotIn(self.ZONE, [x for k in update.KINDS for x in self.plan()["actions"][k]])
 
+    def test_an_installed_zone_gets_the_proposals_file_ignored_by_an_update(self):
+        """S10: .todo-proposals.json must never show as an uncommitted file of an existing zone."""
+        work = self.root / "Zones" / "Work"
+        self.as_if_older(self.ZONE, self.lib().ignore_block(".DS_Store\n"))
+        self.assertNotIn(".todo-proposals.json", (self.root / self.ZONE).read_text())
+        self.apply()
+        self.assertIn("\n.todo-proposals.json\n", (self.root / self.ZONE).read_text())
+        (work / ".todo-proposals.json").write_text("[]\n")
+        self.assertEqual("", self.git(work, "status", "--porcelain"))
+
     def test_a_file_without_markers_gets_the_block_with_nothing_lost(self):
         path = ".gitignore"
         older = ("# Zones and wikis are their own repositories.\nZones/\nWikis/\nSystem/generated/\n"

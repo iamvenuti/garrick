@@ -472,6 +472,38 @@ class TestDistilVerbs(ActionCase):
         self.assertEqual(before, (self.work / "Todo.md").read_bytes())
         self.assertFalse((self.work / "archive" / "Todo-expired-2026.md").exists())
 
+    def test_any_failure_after_the_line_is_taken_puts_the_list_back_and_writes_no_archive(self):
+        before = (self.work / "Todo.md").read_bytes()
+        archive = self.work / "archive" / "Todo-expired-2026.md"
+
+        class Broken:
+            def keep_out(self, zone, name, title, moved):
+                archive.parent.mkdir(exist_ok=True)
+                archive.write_text("half")
+                raise RuntimeError("not an OSError")
+        with mock.patch.object(pa, "todo_skill", return_value=Broken()):
+            with self.assertRaises(pa.Refused):
+                self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"), reason="[a](b.md)")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertFalse(archive.exists())
+
+    def test_a_run_with_nobody_there_changes_only_an_inbox_line(self):
+        write(self.work / "Todo.md", (self.work / "Todo.md").read_text().replace(
+            "## Done", "## This week\n\n- [ ] [[Pricing]]: Bring the royalty framework\n\n## Done"))
+        git(self.work, "commit", "-qam", "week")
+        before = (self.work / "Todo.md").read_bytes()
+        for var in ("GARRICK_HEADLESS", "GARRICK_BACKGROUND"):
+            with mock.patch.dict(os.environ, {var: "1"}):
+                with self.assertRaises(pa.Refused):
+                    self.act(verb="todo-edit", zone="Work", file="Todo.md", key=self.key("Bring the royalty"), text="Bring the royalty tiers")
+                with self.assertRaises(pa.Refused):
+                    self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Bring the royalty"), reason="[a](b.md)")
+                self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+                self.assertEqual("Retired: Acme Corp: Invoice for September", self.act(
+                    verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"), reason="[a](b.md)"))
+                git(self.work, "reset", "-q", "--hard", "HEAD~1")
+                before = (self.work / "Todo.md").read_bytes()
+
     def test_the_session_form_resolves_a_line_in_words(self):
         for verb, extra in (("todo-edit", ["--text", "Invoice for September and the credit note"]),
                             ("todo-retire", ["--reason", "[Review](r.md)"])):

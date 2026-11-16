@@ -924,6 +924,9 @@ def todo_change(ws: Path, req: dict, today: dt.date) -> str:
             raise Refused(why)
         if not found:
             raise Refused("that line has changed since the page was built; it rebuilds now, try again")
+        if (os.environ.get("GARRICK_HEADLESS") == "1" or os.environ.get("GARRICK_BACKGROUND") == "1") \
+                and not in_inbox(tl, note, found):
+            raise Refused("a run with nobody there changes only a line in the Inbox, so nothing was written")
         if not retire:
             try:
                 old, new, _ = tl.reword(str(zone), rel, keys[0], text)
@@ -946,16 +949,30 @@ def todo_change(ws: Path, req: dict, today: dt.date) -> str:
         except tl.NotFound:
             note.write_bytes(before)
             raise Refused("that line has changed since the page was built")
-        moved[0] = moved[0].rstrip() + " · " + reason
         try:
+            moved[0] = moved[0].rstrip() + " · " + reason
             skill.keep_out(zone, name, "%s: actions nobody triaged, %d" % (zone.name, today.year),
                            ["<!-- %s retired -->" % today.isoformat()] + moved)
-        except OSError:
+        except Exception:                           # whatever failed: the list as it was, and no archive entry
             note.write_bytes(before)
+            if archived is None:
+                archive.unlink(missing_ok=True)
+            else:
+                archive.write_bytes(archived)
             raise Refused("the archive could not be written, so nothing changed")
         commit_all(zone, [(note, before), (archive, archived)],
                    ("%s: retired, %s" % (zone.name, said))[:200], wall=wall_refusal(ws))
     return "Retired: " + said_text(said)
+
+
+def in_inbox(tl, note: Path, k: str) -> bool:
+    """Whether the open line with key `k` sits under `## Inbox` of the note."""
+    try:
+        lines = tl._load(str(note))
+        start, end = tl._section_bounds(lines, "Inbox")
+        return start is not None and start < tl._find(lines, k) < end
+    except (tl.NotFound, OSError):
+        return False
 
 
 def wall_refusal(ws: Path) -> Optional[str]:

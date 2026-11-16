@@ -226,8 +226,8 @@ questions, in this order.
    ```
    A dry run writes nothing. Inbox lines need no yes.
 4. **Apply.** Add `--yes` only when the user has said yes to the moved lines
-   shown; without it, or in a headless run (`GARRICK_HEADLESS=1`, with or
-   without `--yes`), a moved line is proposed and never changed:
+   shown; without it, or in a headless run (`GARRICK_HEADLESS=1` or
+   `GARRICK_BACKGROUND=1`, with or without `--yes`), a moved line is proposed and never changed:
    ```sh
    python3 System/skills/todo/todo.py distil --zone <Zone> --changes plan.json [--yes]
    ```
@@ -235,7 +235,10 @@ questions, in this order.
    whose commit already names both (the wrap's step 12, the meetings skill's
    step 9). It prints the spoken report and any line it could not place: a
    line that no open line of the thread says, or that two say, is skipped and
-   named, never guessed.
+   named, never guessed. It reaches only the open lines of that thread, matched
+   by the full link target; a line with no thread link is reached only by a
+   plan with `party`, and only with `--yes`. A phrase matches when it is the
+   whole line text or a unique part of at least 12 characters.
 5. **Report in the counts**, spoken as the script says it: "Distilled Acme,
    pricing: one added, two merged, one retired." When the thread is over its
    cap, say that you merged before adding.

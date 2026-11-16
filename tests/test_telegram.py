@@ -839,6 +839,54 @@ class TestSubjectQuestions(TelegramCase):
         self.assertIn("what's next?", self.calls[0]["prompt"])
         self.assertTrue(self.texts()[-1].startswith("Acme OEM, Pricing: "))
 
+    def test_a_typed_answer_to_a_stale_question_is_a_new_request(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.clock.advance(20 * 60)                               # past the ten minutes a typed answer may take
+        self.api.say("Acme OEM")
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertNotIn("what's next?", self.calls[0]["prompt"])
+
+    def test_a_bare_yes_to_a_stale_question_binds_nothing(self):
+        ex = self.mods["exchanges"].new(None, None, None, "", self.clock(), pending_subject={
+            "text": "what's next?", "offer": [{"zone": "Work", "project": "Acme OEM", "thread": "Pricing", "said": "Acme OEM, Pricing"}]})
+        self.mods["exchanges"].link(ex["id"], 1, self.clock())
+        self.clock.advance(20 * 60)
+        self.api.say("Yes")
+        self.pump()
+        self.assertEqual([], self.calls)
+
+    def test_a_message_that_settles_to_a_place_of_its_own_is_a_new_request(self):
+        birch = self.work / "Birch Terms"
+        write(birch / "Birch Terms.md", project_hub("Work", "Birch Terms", "acme", ["Draft"]))
+        write(birch / "Threads" / "Draft" / "Draft.md", thread_note("Birch Terms", "Draft", "acme"))
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.api.say("Birch Terms")                               # inside the window, but a place the question did not offer
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertNotIn("what's next?", self.calls[0]["prompt"])
+        self.assertTrue(self.texts()[-1].startswith("Birch Terms, Draft: "))
+
+    def test_a_message_that_settles_to_no_place_is_still_the_answer_inside_the_window(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.api.say("the OEM one")
+        self.pump()
+        self.assertEqual([], self.calls)                          # it did not settle: asked again, never guessed
+        self.assertEqual(2, len(self.texts()))
+
+    def test_a_parked_thread_is_not_a_live_one(self):
+        self.several_threads()
+        terms = self.work / "Acme OEM" / "Threads" / "Terms" / "Terms.md"
+        write(terms, thread_note("Acme OEM", "Terms", "acme", status="parked"))
+        place = self.mods["intake"].resolve_destination(self.root, "Acme OEM", "x", purpose="ask")
+        self.assertEqual(("Acme OEM", "Pricing"), (place["project"], place["thread"]))
+        write(terms, thread_note("Acme OEM", "Terms", "acme", status="active"))
+        place = self.mods["intake"].resolve_destination(self.root, "Acme OEM", "x", purpose="ask")
+        self.assertEqual(("Acme OEM", None), (place["project"], place["thread"]))
+
     def test_the_notes_wording_is_kept_for_a_note(self):
         with self.assertRaises(self.mods["intake"].Confirm) as c:
             self.mods["intake"].resolve_destination(self.root, "Acme Review", "x")

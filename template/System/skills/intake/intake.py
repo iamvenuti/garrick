@@ -1082,12 +1082,15 @@ def _extra_module(root: Path, name: str):
     return _MODS[key]
 
 
-def _live_threads(folder: Path) -> List[str]:
+def _live_threads(folder: Path, only_active: bool = False) -> List[str]:
+    """The thread folders of a project that have a note. With `only_active`, those whose status is `active`: parked and
+    done threads are not live, and a question that settles to the one live thread counts none of them."""
     out = []
     threads = folder / "Threads"
     if threads.is_dir():
         for t in sorted(p for p in threads.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
-            if (t / (t.name + ".md")).is_file():
+            note = t / (t.name + ".md")
+            if note.is_file() and (not only_active or str(parse_frontmatter(note).get("status") or "").strip().lower() == "active"):
                 out.append(t.name)
     return out
 
@@ -1189,8 +1192,9 @@ def resolve_destination(root: Path, spoken: str, about: str = "", purpose: str =
             raise Confirm("Which project is the note about: %s?" % _which(projects))
         project, thread = projects[0], None
         many = _live_threads(root / "Zones" / zone / project)
-        if asking and len(many) == 1:
-            thread = many[0]                     # one live thread: the question is about that thread
+        live = _live_threads(root / "Zones" / zone / project, True)
+        if asking and len(live) == 1:
+            thread = live[0]                     # one active thread: the question is about that thread
         elif many and not asking:
             raise Confirm("Which thread of %s is the note about: %s?" % (project, _which(many)))
     folder = root / "Zones" / zone / project

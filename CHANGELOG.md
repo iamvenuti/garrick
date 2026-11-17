@@ -4,6 +4,37 @@ What changed in each release. Dates are when the release was tagged. The format 
 
 ## [Unreleased]
 
+## [0.70.0] - 2026-11-17
+
+What needs you is now in one place, and you can act on it there. The Context queue does its small edits itself, with Undo. Telegram setup explains a certificate failure, and the bot understands an answer you type as a new message. The Todo tab can group actions by thread, and a wrap or a filed meeting now reworks a thread's actions instead of only adding to them.
+
+**Upgrading.**
+- The Overview no longer has the *Inboxes* and *Todo* cards, and the Status tab no longer has its row of figures. *Waiting on you now* is where you act.
+- A wrap or a filed meeting now tidies the thread's lines in `Todo.md` instead of only adding to them. A line you have already moved to another section is proposed, never changed, until you say yes.
+- The Context queue makes its small edits itself, commits them through the wall check, and offers *Undo*.
+
+### Fixed
+
+- **Telegram setup names a certificate failure** (#589). When the Python running setup cannot verify Telegram's certificate, setup says so and tells you to run it with `/usr/bin/python3`, which uses the macOS Keychain. Any other network failure gives its real reason. The setup docs use the same Python as the service.
+- **Telegram takes a typed answer as an answer** (#590). When the bot has asked one question, a short answer you type within ten minutes answers it whether or not you reply to it, and the bot then answers your first question. A message that names another place is a new request. A project name alone is enough; a thread name sent later narrows the conversation. The bot's questions no longer talk about a note, and *Which thread?* lists up to three places the name could mean.
+- The Context queue keeps its answers across a reload.
+
+### Added
+
+- **A threaded Todo view** (#596). A *Flat* / *Threaded* choice on the Todo tab. *Threaded* groups a zone's actions under their project and thread, with the lines that have no thread last, and tags each line with its section. *Show* and *Sort* work in both views, and the page remembers your choice.
+- **Distil** (#591). At a wrap and when a meeting is filed, the todo skill reworks one thread's open lines instead of only adding. It ticks what is done, rewords a line whose scope, date or person changed, adds only a new commitment, and moves a line that no longer holds to the expired archive, still open, with what replaced it. One line is one commitment, and Distil touches only the open lines of its own thread. When nobody is there to ask, a change to a line you moved goes to `.todo-proposals.json`, which is never committed, and the morning digest lists it under *Proposed changes*. Say "apply the todo proposals" to go through them.
+- `todo-edit` and `todo-retire` in the page executor, so a session can reword or retire a line with one commit and the wall check.
+- `todo-thread-cap` in `System/garrick-checks.json`: a soft cap of five open lines per thread, `0` for none. `check.py` warns about a thread over its cap, and about a *Waiting on* line that blocks no line of yours. Nothing is dropped.
+
+### Changed
+
+- **One place for what needs you** (#593, #594, #595). *Waiting on you now* is the first card on the Overview, and its heading is the sentence that says how many things wait. A row's main button does the work, and the link to where the item lives sits beside it. In the Mac app, *Commit them* commits a zone's changed files through the wall check, with *Undo*. It is not offered for changes over 30 days old, where the row says the files may belong in `.gitignore`. Late actions can be ticked or given a new date on the row, and *Process the Inbox* stays where it was. An inbox that holds items is one row there. Each zone button on the Todo tab shows how many actions are open.
+- **The Context queue names what it asks about** (#592). Every question names its subject, a meeting page by its title and date, and *Details* gives the limit in plain words. In the Mac app, *Shorten it*, *Take it out* and a held fix run in the background on that one page, are committed through the wall check, and show what was done with *Undo* and *Show me*. A visible assistant opens only when the background one is not available. After a handoff the queue says *Handed to your assistant* and does not ask again until the page changes or a day passes.
+
+### Removed
+
+- The *Inboxes* and *Todo* cards on the Overview, the lead block above *Waiting on you now*, the row of figures on the Status tab, and the row that counted the check's warnings. The Context queue asks about each warning, and a check error still shows as a row.
+
 ## [0.69.1] - 2026-11-15
 
 A patch of fixes. A file in an inbox can no longer pass itself off as your own note, and a `no` to a held action cancels it. Ask can act on the answer it just gave and reads long notes to the end. Settings and the Context card are easier to read.

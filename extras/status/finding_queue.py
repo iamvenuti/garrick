@@ -160,6 +160,13 @@ ACTIONS = ("handoff", "run", "preview", "open", "later", "words", "day", "reveal
 VERB_ANSWERS = {kind: tuple(a["id"] for a in answers if a["action"] in ("run", "preview", "later")) for kind, answers in ANSWERS.items()}
 # The wiki's own kinds (#542) are put off, and nothing else, through the same verb: the question's file stays as it is.
 ASKED_KINDS = ("wiki-question", "verdict", "decision-review", "answers-held")
+# The handoff answers that are one bounded edit of the finding's own file (#592): the engine runs them in the background, in the
+# file's zone or wiki, and commits through the wall check; a visible assistant opens only when it is not available. A to-do line moves
+# what came of it into the thread's notes, a second file, so it stays a handoff. *Undo* is the one more answer the verb takes.
+BOUNDED = {"wall": ("take-out",), "resume-long": ("shorten",), "meeting-long": ("shorten",), "fix-failed": ("fix-now",)}
+UNDO = "undo-bounded"
+for _kind, _ids in BOUNDED.items():
+    VERB_ANSWERS[_kind] = VERB_ANSWERS[_kind] + _ids + (UNDO,)
 VERB_ANSWERS.update({"verdict": ("later",), "decision-review": ("later",), "answers-held": ("later",), OTHER: ("later",)})
 
 NOTE_RE = re.compile(r"has (\d+) words, over the \d+ of `note-max-words`")
@@ -392,6 +399,107 @@ def stem(path: str) -> str:
     return re.sub(r"\.md$", "", path.rsplit("/", 1)[-1])
 
 
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+DATE_PREFIX = re.compile(r"^(\d{2})(\d{2})(\d{2})\s*-\s*(.+)$")
+
+
+def front(ws, path: str) -> dict:
+    """title: and date: from a page's frontmatter, "" for what it lacks. Reads the head of one file of the workspace, and
+    nothing when there is no workspace, no such file, or the path leads out of it."""
+    if ws is None or not path:
+        return {}
+    try:
+        full = (Path(str(ws)) / path).resolve()
+        if Path(str(ws)).resolve() not in full.parents or not full.is_file():
+            return {}
+        head = full.read_bytes()[:4096].decode("utf-8", "replace")
+    except OSError:
+        return {}
+    lines = head.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out = {}
+    for line in lines[1:]:
+        if line.strip() == "---":
+            break
+        m = re.match(r"^(title|date):\s*(.*?)\s*$", line)
+        if m:
+            out[m.group(1)] = m.group(2).strip("'\"")
+    return out
+
+
+def short_date(day: str, today: Optional[dt.date] = None) -> str:
+    """`3 Mar`, with the year when it is not this year's, from an ISO day; "" when it is none."""
+    try:
+        d = dt.date.fromisoformat(str(day)[:10])
+    except ValueError:
+        return ""
+    today = today or dt.date.today()
+    return "%d %s%s" % (d.day, MONTHS[d.month - 1], "" if d.year == today.year else " %d" % d.year)
+
+
+def meeting_subject(ws, path: str) -> Tuple[str, str]:
+    """(the meeting's title, its day as `3 Mar`) for a meeting page: the page's `title:` and `date:`, else its file's name,
+    less a leading YYMMDD, and that day."""
+    meta = front(ws, path)
+    name, day = stem(path), ""
+    m = DATE_PREFIX.match(name)
+    if m:
+        name, day = m.group(4), "20%s-%s-%s" % m.group(1, 2, 3)
+    return (meta.get("title") or name), short_date(meta.get("date") or day)
+
+
+def subject(plain: str, item: dict, ws=None) -> str:
+    """What a finding is about, as a name a sentence can quote: never a path."""
+    path = str(item["path"])
+    if plain == "meeting-long":
+        return meeting_subject(ws, path)[0]
+    if plain in ("note-long", "resume-long"):
+        return note_name(path)[0]
+    if plain == "todo-long":
+        return "%s to-do list" % place(path)
+    if plain == "hooks-blocked":
+        return place(path)
+    name, where = file_place(path)
+    return name or where
+
+
+def file_hash(ws, path: str) -> str:
+    """Twelve hex digits of the finding's file, so a page can tell that the file changed: "" for no file or no workspace."""
+    if ws is None or not path:
+        return ""
+    try:
+        full = (Path(str(ws)) / path).resolve()
+        if Path(str(ws)).resolve() not in full.parents or not full.is_file():
+            return ""
+        return hashlib.sha1(full.read_bytes()).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
+def plain_details(plain: str, item: dict, ws=None) -> str:
+    """The Details of a long page, in plain words: its name and place, then the figure and the limit. No setting name and no
+    Markdown. The check's own text goes under it only where the kind has no plain reading."""
+    path, text = str(item["path"]), str(item.get("message") or item.get("line") or "")
+    where = place(path)
+    if plain == "meeting-long":
+        title, day = meeting_subject(ws, path)
+        m, aim = re.search(r"body is (\d+) words, over the (\d+) of", text), re.search(r"about (\d+) words", text)
+        return "“%s”%s, in %s. %s words; the limit is %s%s." % (
+            title, ", " + day if day else "", where, m.group(1), m.group(2), ", and a meeting page aims at about %s" % aim.group(1) if aim else "")
+    if plain in ("note-long", "resume-long"):
+        m = (NOTE_RE if plain == "note-long" else RESUME_RE).search(text)
+        limit = re.search(r"over the (\d+) of", text)
+        name = note_name(path)[0]
+        what = "“%s”" % name if plain == "note-long" else "The resume point of “%s”" % name
+        return "%s, in %s. %s words%s." % (what, where, m.group(1), "; the limit is %s" % limit.group(1) if limit else "")
+    if plain == "todo-long":
+        m = re.search(r"(\d+) lines? (?:is|are) longer than (\d+) characters", text)
+        return "%s in the %s to-do list %s over %s characters." % (
+            "One line" if m.group(1) == "1" else "%s lines" % m.group(1), where, "is" if m.group(1) == "1" else "are", m.group(2))
+    return text
+
+
 def note_name(path: str) -> Tuple[str, bool]:
     """(the project's or the thread's name, whether it is a thread) for a hub or a thread note's path."""
     parts = path.split("/")
@@ -407,7 +515,7 @@ def wall_other(item: dict) -> str:
     return ""
 
 
-def said(plain: str, item: dict) -> Tuple[str, str]:
+def said(plain: str, item: dict, ws=None) -> Tuple[str, str]:
     """(the sentence, the line on why) for a plain kind, with the figures from the finding. No path, setting name or
     command in either."""
     path, text = str(item["path"]), str(item.get("message") or item.get("line") or "")
@@ -430,7 +538,8 @@ def said(plain: str, item: dict) -> Tuple[str, str]:
             "One line" if n == 1 else "%d lines" % n, place(path), "is" if n == 1 else "are"), WHY[plain])
     if plain == "meeting-long":
         n = int(MEETING_RE.search(text).group(1))
-        return ("A meeting note is longer than usual: %s words." % about(n), WHY[plain])
+        title, day = meeting_subject(ws, path)
+        return ("The meeting note “%s”%s is longer than usual: %s words." % (title, ", " + day + "," if day else "", about(n)), WHY[plain])
     if plain == "fix-failed":
         reason = held_reason(item)
         words = next((w for k, w in HELD_WORDS if k in reason), "Garrick could not make the change safely.")
@@ -493,6 +602,39 @@ def handoff_phrase(plain: str, answer: str, item: dict) -> str:
     raise KeyError(plain)
 
 
+def bounded_request(kind: str, answer: str, rel: str) -> str:
+    """The request a bounded answer hands the engine (page_action.py's `finding`): the file and the job, and never the check's
+    wording. The engine adds the bound itself: only this file, no commit, nothing sent, shared or deleted."""
+    if (kind, answer) == ("wall", "take-out"):
+        return ("Take out of %s the links and the repeated wording that point into private material of another zone, so the wall "
+                "check accepts the file. Keep the rest of the page as it is." % rel)
+    if (kind, answer) == ("resume-long", "shorten"):
+        return ("Shorten the Resume here block of %s so it fits its word limit. Keep what the next reader needs to take the work "
+                "up again." % rel)
+    if (kind, answer) == ("meeting-long", "shorten"):
+        return ("Shorten the meeting page %s to who was there, the key points and the actions. Leave the transcript as it is." % rel)
+    if (kind, answer) == ("fix-failed", "fix-now"):
+        return "Make the small fix that Nurture holds back for %s." % rel
+    raise KeyError((kind, answer))
+
+
+def bounded_said(kind: str, ws, rel: str) -> str:
+    """One plain sentence for a bounded edit that was made and committed."""
+    if kind == "meeting-long":
+        title, _ = meeting_subject(ws, rel)
+        try:
+            body = (Path(str(ws)) / rel).read_text(encoding="utf-8", errors="replace")
+            body = body.split("\n---\n", 1)[1] if body.startswith("---") and "\n---\n" in body else body
+            return "Shortened “%s” to %s words." % (title, about(len(body.split())))
+        except (OSError, IndexError):
+            return "Shortened “%s”." % title
+    if kind == "resume-long":
+        return "Shortened the resume point of %s." % note_name(rel)[0]
+    if kind == "wall":
+        return "Took the private material out of “%s”." % stem(rel)
+    return "Made the small fix to “%s”." % stem(rel)
+
+
 def free_prefix(plain: str, item: dict) -> str:
     """What goes before the user's own words when the free-text answer is sent: the kind, the path and the zones."""
     path = str(item["path"])
@@ -515,7 +657,7 @@ def other_files(item: dict) -> List[str]:
     return found[:1]
 
 
-def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
+def question(item: dict, scope: str, plan: Optional[dict] = None, ws=None) -> dict:
     """One finding as a question. `item` holds kind (Nurture's), path, line and check from the record, and message,
     the quick check's own text, where the card has it. `plan` is the note's plan for a long note (Planner.plan), None
     when none was asked for: the kind's own answers, as before."""
@@ -530,7 +672,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
         return unlisted_wall(item, scope)
     which = which_other(item) if plain not in PLAIN_KINDS else ""
     q = {"id": plain or "other", "scope": scope, "path": path, "key": later_key(plain or "other", path, which), "details": details,
-         "recommended": "", "other": wall_other(item) if plain == "wall" else ""}
+         "recommended": "", "other": wall_other(item) if plain == "wall" else "",
+         "subject": subject(plain, item, ws) if plain else (file_place(path)[0] or place(path)), "fh": file_hash(ws, path)}
     if plain not in PLAIN_KINDS:
         answers = []
         for a in ANSWERS_OTHER:
@@ -544,7 +687,9 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
         q.update(tag=str(item.get("title") or "Check finding"), sentence=other_sentence(path), why=OTHER_WHY, answers=answers,
                  free=free_prefix("", item), recommended=answers[0]["id"])
         return q
-    sentence, why = said(plain, item)
+    sentence, why = said(plain, item, ws)
+    if plain in ("meeting-long", "note-long", "resume-long", "todo-long"):
+        q["details"] = details = plain_details(plain, item, ws)
     table = ANSWERS[plain]
     if plain == "note-long" and plan is not None:
         if plan["moves"] > 0:
@@ -562,6 +707,8 @@ def question(item: dict, scope: str, plan: Optional[dict] = None) -> dict:
         a = dict(a)
         if a["action"] == "handoff":
             a["phrase"] = handoff_phrase(plain, a["id"], item)
+            if a["id"] in BOUNDED.get(plain, ()):       # a bounded edit in the finding's own zone (#592): the page asks the engine first
+                a["req"] = {"verb": "finding", "kind": plain, "path": path, "answer": a["id"]}
         elif a["action"] == "open":
             a["reqs"] = [{"verb": "note-open", "path": path}]
         elif a["action"] in ("look", "allow"):
@@ -635,7 +782,7 @@ def forecast_questions(items: List[dict], hidden: set, ws=None, planner=None) ->
         if plain not in PLAIN_KINDS and later_key(plain or OTHER, str(item["path"]), which_other(item)) in hidden:
             continue                # this finding was put off; an older key, made with no `which`, hid them all and still does
         plan = planner.plan(str(item["path"])) if planner is not None and plain == "note-long" else None
-        out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"]), plan))
+        out.setdefault(str(item["scope"]), []).append(question(item, str(item["scope"]), plan, ws))
     settle(out)
     return out
 
@@ -811,6 +958,8 @@ def question_html(q: dict) -> str:
         data = {"a": a["action"], "id": a["id"]}
         if a["action"] == "handoff":
             data["phrase"] = a["phrase"]
+            if a.get("req"):
+                data["req"] = a["req"]                      # a bounded edit: the app asks the engine, a browser hands the phrase over
         elif a["action"] == "open":
             data["reqs"] = a["reqs"]
         elif a["action"] != "reveal":
@@ -847,6 +996,10 @@ def question_html(q: dict) -> str:
     where = ' data-wiki="%s" data-file="%s"' % (E(q["wiki"]), E(q["file"])) if q.get("wiki") else ""
     if q.get("wallfile"):
         where += ' data-wallfile="%s"' % E(q["wallfile"])
+    if q.get("subject"):
+        where += ' data-subject="%s"' % E(q["subject"])
+    if q.get("fh"):
+        where += ' data-fh="%s"' % E(q["fh"])
     return ('<div class="q" data-q data-key="%s" data-kind="%s" data-path="%s" data-gk="%s"%s hidden><span class="tag%s">%s</span><p class="qs">%s</p>%s'
             '<div class="opts">%s</div><div class="qtexts" hidden></div>%s<p class="hint qsay" role="status"></p>'
             '<button class="act qskip" type="button" data-qskip hidden>Skip for now</button>'
@@ -864,7 +1017,7 @@ def dialog(root: str, queues: Dict[str, List[dict]], names: Dict[str, str], toda
     for scope, qs in queues.items():
         phrase = (places or {}).get(scope, "")
         body += ('<section class="qscope" data-scope="%s" data-name="%s"%s hidden><div class="prog"><span>%s</span><div class="bar"><i></i></div>'
-                 '<span class="qn"></span></div>%s</section>' % (E(scope), E(names.get(scope, scope)),
+                 '<span class="qn"></span></div><div class="qlast hint" role="status" hidden></div>%s</section>' % (E(scope), E(names.get(scope, scope)),
                                                                   ' data-work="%s"' % E("work in the answers in %s" % phrase) if phrase else "",
                                                                   E(names.get(scope, scope)), "".join(question_html(q) for q in qs)))
     body += ('<section class="qdone" hidden><div class="done"><b></b><span class="qsum"></span><div class="qnext">'
@@ -899,6 +1052,7 @@ dialog.queue{width:min(620px,calc(100vw - 32px))}
 .queue .qtexts{margin:10px 0 0}.queue .qtext{background:var(--raise);border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:0 0 8px;font-size:var(--fs-meta);overflow-wrap:anywhere}
 .queue .qtext small{display:block;color:var(--muted);margin-bottom:3px}.queue .qtext mark{background:var(--wash);color:var(--ink);font-weight:600;border-radius:3px}
 .qkept{margin:0 0 10px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;font-size:var(--fs-meta)}.qkept[hidden]{display:none}.qkept .qk{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:3px 0}.qkept .qk span{flex:1 1 220px}
+.queue .qlast{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:0 0 10px}.queue .qlast span{flex:1 1 220px}.queue .qlast[hidden]{display:none}
 .queue .opt[hidden],.queue .qskip[hidden],.queue .q[hidden],.queue .qscope[hidden],.queue .qdone[hidden]{display:none}
 """
 
@@ -914,7 +1068,28 @@ function fresh(){var t={};LINES.forEach(function(l){t[l[0]]=0});return t}
 var tally=fresh(),notes={},gone={},skip={},refused={},pend=null,cur=null,taken={};
 function all(){return[].slice.call(dlg.querySelectorAll('.qscope'))}
 function qs(s){return[].slice.call(s.querySelectorAll('[data-q]'))}
-function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.gk]&&!skip[q.dataset.gk]})}
+function pending(s){return qs(s).filter(function(q){return!gone[q.dataset.gk]&&!skip[q.dataset.gk]&&!isHanded(q)})}
+/* What was handed to the assistant, and the line that says so (#592). Kept in the session, apart from KEY, which a close clears: a
+   question handed over is not asked again until its file changes (the page's own hash of it) or a day passes, and the line stays
+   until the next answer, across a close and a reload. A bounded edit's result and its Undo are kept the same way. */
+var HAND='garrick-queue-handed',HDAY=864e5;
+function hand(){var o={};try{o=JSON.parse(st.get(HAND)||'{}')}catch(e){}if(!o||typeof o!=='object')o={};o.items=o.items&&typeof o.items==='object'?o.items:{};
+Object.keys(o.items).forEach(function(k){if(typeof o.items[k]!=='number'||Date.now()-o.items[k]>=HDAY)delete o.items[k]});
+if(o.last&&(typeof o.last!=='object'||Date.now()-(o.last.t||0)>=HDAY))delete o.last;return o}
+function putHand(o){if(Object.keys(o.items).length||o.last)st.set(HAND,JSON.stringify(o));else st.del(HAND)}
+function handKey(q){return q.dataset.fh?q.dataset.gk+'|'+q.dataset.fh:''}
+function isHanded(q){var k=handKey(q);return!!k&&!!hand().items[k]}
+function remember(q){var k=handKey(q);if(!k)return;var o=hand();o.items[k]=Date.now();putHand(o)}
+function showLast(){all().forEach(function(s){var b=s.querySelector('.qlast');if(b){b.textContent='';b.hidden=true}});
+var l=hand().last;if(!l||!cur||l.scope!==cur.dataset.scope)return;var b=cur.querySelector('.qlast');if(!b)return;
+var t=document.createElement('span');t.textContent=l.text;b.appendChild(t);
+if(l.undo){var u=document.createElement('button');u.type='button';u.className='act';u.setAttribute('data-qundo','1');u.textContent='Undo';b.appendChild(u)}
+if(l.show){var w=document.createElement('button');w.type='button';w.className='act';w.setAttribute('data-qshow','1');w.textContent='Show me';b.appendChild(w)}
+b.hidden=false}
+function setLast(text,extra){var o=hand();o.last=Object.assign({scope:cur&&cur.dataset.scope,text:text,t:Date.now()},extra||{});putHand(o);showLast()}
+function clearLast(){var o=hand();if(o.last){delete o.last;putHand(o)}showLast()}
+/* the engine runs a bounded edit in the background in the app, when Ask is not switched off; a browser has no bridge */
+function boundedOK(){var a=window.GarrickApp||{};return!!host&&a.ask!==false}
 /* what a reload keeps: the answers given, never a refusal, a disabled answer or a skip (Skip for now is the dialog's, not the disk's) */
 function kept(){var t={},n={};for(var k in tally)if(UNSAVED.indexOf(k)<0)t[k]=tally[k];for(var g in notes)if(!notes[g].bad)n[g]=notes[g];return{tally:t,notes:n}}
 function save(){if(cur){var k=kept();st.set(KEY,JSON.stringify({scope:cur.dataset.scope,gone:gone,tally:k.tally,notes:k.notes,pend:pend,taken:taken,t:Date.now()}))}}
@@ -956,7 +1131,7 @@ if(!res.a||!res.b){out(el,res.say||'Nothing to show for this one.',true);return}
 var box=el.querySelector('.qtexts');box.textContent='';box.appendChild(textBlock(res.a));box.appendChild(textBlock(res.b));box.hidden=false;
 seen[el.dataset.gk]={id:req.id,blob:res.blob};[].forEach.call(el.querySelectorAll('[data-needseen]'),function(b){b.hidden=false});out(el,'')}
 function allowed(req,res){var el=wallq(req.path);pend=null;if(!el)return;if(res&&res.ok){finish(el,'done');return}out(el,(res&&res.say)||'That did not work.',true)}
-function show(done0){if(!cur)return;clearTexts();var every=qs(cur),left=done0?[]:pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
+function show(done0){if(!cur)return;clearTexts();showLast();var every=qs(cur),left=done0?[]:pending(cur),n=every.length;every.forEach(function(q){q.hidden=true});
 var done=dlg.querySelector('.qdone');
 if(!left.length){cur.hidden=true;done.hidden=false;done.querySelector('b').textContent=cur.dataset.name+' is done.';
 done.querySelector('.qsum').textContent=sum();var nx=next(),b=done.querySelector('[data-qnext]');b.hidden=!nx;
@@ -984,16 +1159,19 @@ if(r.pend&&r.pend.key){var here=qs(s).some(function(q){return q.dataset.gk===r.p
 if(!here){gone[r.pend.key]=1;tally[r.pend.id==='later'?'later':'done']++}
 else notes[r.pend.key]={say:'It is still open. The change was not made, or was refused.',bad:true}}
 dlg.showModal();show()}
-function finish(q,kind){gone[q.dataset.gk]=1;tally[kind]++;pend=null;show()}
+function finish(q,kind){gone[q.dataset.gk]=1;tally[kind]++;pend=null;if(kind==='handed'){remember(q);setLast('Handed to your assistant: \u201c'+(q.dataset.subject||'this')+'\u201d.')}else clearLast();show()}
 function handoff(phrase){var b=document.createElement('button');b.type='button';b.setAttribute('data-request',phrase);
 b.setAttribute('data-folder',dlg.dataset.folder||'');b.hidden=true;dlg.appendChild(b);b.click();b.remove()}
 document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target:null;if(!t)return;
 var o=t.closest('[data-qopen]');if(o){e.preventDefault();open(o.dataset.qopen);return}
 if(t.closest('[data-qclose]')){st.del(KEY);if(dlg.open)dlg.close();return}
 var nx=t.closest('[data-qnext]');if(nx&&nx.dataset.qnext){tally=fresh();cur=all().filter(function(x){return x.dataset.scope===nx.dataset.qnext})[0];gone={};notes={};skip={};refused={};pend=null;show();return}
-var sk=t.closest('#queue [data-qskip]');if(sk){var sq=sk.closest('[data-q]');skip[sq.dataset.gk]=1;tally.skipped++;pend=null;show();return}
+var sk=t.closest('#queue [data-qskip]');if(sk){var sq=sk.closest('[data-q]');skip[sq.dataset.gk]=1;tally.skipped++;pend=null;clearLast();show();return}
+var un=t.closest('#queue [data-qundo]');if(un){var lu=hand().last;if(!lu||!lu.undo||!host)return;un.disabled=true;host.postMessage({act:lu.undo});return}
+var sh=t.closest('#queue [data-qshow]');if(sh){var ls=hand().last;if(ls&&ls.show&&host)host.postMessage({act:{verb:'note-open',path:ls.show}});return}
 var b=t.closest('#queue button[data-fa]');if(!b)return;var q=b.closest('[data-q]'),d;try{d=JSON.parse(b.dataset.fa)}catch(err){return}
-if(d.a==='handoff'){handoff(d.phrase);finish(q,'handed');return}
+if(d.a==='handoff'){if(d.req&&boundedOK()){out(q,'Working on it\u2026');pend={key:q.dataset.gk,id:d.id,phrase:d.phrase,bounded:1};save();host.postMessage({act:d.req});return}
+handoff(d.phrase);finish(q,'handed');return}
 if(d.a==='reveal'){var rw=q.querySelector('[data-ansrow]');if(rw){rw.hidden=false;var ri=rw.querySelector('input');if(ri)ri.focus()}return}
 if(!host)return;
 if(d.a==='look'){if(!q.dataset.lookid){out(q,'Garrick has not found the file yet.',true);return}out(q,'Reading both files…');host.postMessage({act:Object.assign({},d.req,{path:q.dataset.wallfile,id:q.dataset.lookid})});return}
@@ -1031,11 +1209,11 @@ function away(){return!host||!!(window.GarrickAssistant&&!GarrickAssistant())}
 /* A kept request is a phrase and the time it was kept, never a folder: it goes to the place the page is on when it is handed over, and a
    request kept for more than a day, or kept by an older page with a folder, is dropped */
 var DAY=864e5;
-function kept(){var o={},r={};try{o=JSON.parse(st.get(KEPT)||'{}')}catch(e){}if(!o||typeof o!=='object')return r;
+function keptReqs(){var o={},r={};try{o=JSON.parse(st.get(KEPT)||'{}')}catch(e){}if(!o||typeof o!=='object')return r;
 Object.keys(o).forEach(function(p){if(typeof o[p]==='number'&&Date.now()-o[p]<DAY)r[p]=o[p]});return r}
-function keep(p){var o=kept();o[p]=Date.now();st.set(KEPT,JSON.stringify(o))}
-function drop(p){var o=kept();delete o[p];if(Object.keys(o).length)st.set(KEPT,JSON.stringify(o));else st.del(KEPT);showKept()}
-function showKept(){var o=kept(),k=Object.keys(o),box=document.getElementById('qkept');
+function keep(p){var o=keptReqs();o[p]=Date.now();st.set(KEPT,JSON.stringify(o))}
+function drop(p){var o=keptReqs();delete o[p];if(Object.keys(o).length)st.set(KEPT,JSON.stringify(o));else st.del(KEPT);showKept()}
+function showKept(){var o=keptReqs(),k=Object.keys(o),box=document.getElementById('qkept');
 if(!box){if(!k.length)return;var c=document.getElementById('checks'),body=c&&c.querySelector('.body');if(!body)return;box=document.createElement('div');box.id='qkept';box.className='qkept';body.insertBefore(box,body.firstChild)}
 box.textContent='';box.hidden=!k.length;
 k.forEach(function(p){var row=document.createElement('div');row.className='qk';var t=document.createElement('span');t.textContent='Waiting to go to your assistant: \u201c'+p+'\u201d.';
@@ -1045,16 +1223,19 @@ row.appendChild(t);row.appendChild(h);row.appendChild(d);box.appendChild(row)})}
 document.addEventListener('click',function(e){var t=e.target&&e.target.closest?e.target:null;if(!t)return;
 var x=t.closest('[data-qkdrop]');if(x)drop(x.dataset.qkdrop)});
 /* the page's own request handler calls this once a request was opened in the assistant or copied: only then is a kept one done */
-window.GarrickHanded=function(p){if(kept()[p])drop(p)};
+window.GarrickHanded=function(p){if(keptReqs()[p])drop(p)};
 dlg.addEventListener('close',function(){workIn(false)});
 dlg.addEventListener('close',function(){clearTexts();placed={}});
 var prev=window.GarrickActed;window.GarrickActed=function(q,res){
 if(q&&q.verb==='walls-look'){looked(q,res);return}
 if(q&&q.verb==='walls-allow'){allowed(q,res);return}
+if(q&&q.verb==='finding'&&q.answer==='undo-bounded'){var o=hand();if(o.last){o.last.text=(res&&res.say)||(res&&res.ok?'Undone.':'That did not work.');o.last.undo=null;o.last.t=Date.now();putHand(o)}showLast();return}
 var ask=q&&/^question-/.test(q.verb||'');
 if(q&&(q.verb==='finding'||ask)&&cur){var p=pend,el=qs(cur).filter(function(x){return p&&p.key?x.dataset.gk===p.key:ask?x.dataset.wiki===q.wiki&&x.dataset.file===q.file:x.dataset.kind===q.kind&&x.dataset.path===q.path})[0];pend=null;
 if(el){if(res&&res.ok){if(q.verb==='question-answer'||q.verb==='question-decide')(taken[cur.dataset.scope]=taken[cur.dataset.scope]||{n:0,work:cur.dataset.work||''}).n++;if(q.answer==='preview'){notes[el.dataset.gk]={say:res.say,detail:res.detail||'',bad:false};out(el,res.say,false,res.detail);save();foc(el)}
-else if(q.answer==='later'||q.verb==='question-later')finish(el,'later');else finish(el,'done')}
+else if(q.answer==='later'||q.verb==='question-later')finish(el,'later');
+else if(p&&p.bounded&&res.unavailable){handoff(p.phrase);finish(el,'handed')}
+else{finish(el,'done');if(p&&p.bounded&&res.commit)setLast(res.say,{undo:res.undo||null,show:q.path})}}
 else{var say=(res&&res.say)||'That did not work.';delete notes[el.dataset.gk];
 refused[el.dataset.gk]={say:say,id:(p&&p.id)||q.answer,cant:/^nothing (can move|is old enough)/i.test(say)};refuse(el,refused[el.dataset.gk]);save();foc(el)}}}
 if(prev)return prev(q,res)};

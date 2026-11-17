@@ -190,6 +190,10 @@ DECLARED: Dict[str, Op] = {
     # The line it adds has no key yet: a line already in the note is refused
     # by the handler, which is that verb's own check.
     "todo-add": _op(("zone", "text", "target", "date", "confirm"), ("text", "target", "date"), "zone", True, "safe"),
+    # Distil (#591): reword an open line, or move it to the expired archive with its source. By key, as a tick is, so a
+    # line that has moved is refused. Neither keeps a journal record, like note-add: a session sends them, never a button.
+    "todo-edit": _op(("zone", "file", "key", "text", "confirm"), ("file", "key", "text"), "zone", True, "safe", "line"),
+    "todo-retire": _op(("zone", "file", "key", "reason", "confirm"), ("file", "key", "reason"), "zone", True, "safe", "line"),
     # A note to yourself (#569): the text goes into a dated file under the thread or project it is about, its actions
     # into that zone's Todo.md, one commit. The place is a `destination`, as the owner would say it, or the `zone`,
     # `project` and `thread` the ask box has checked; the handler refuses one that does not settle to one folder.
@@ -258,7 +262,10 @@ DECLARED: Dict[str, Op] = {
     "walls-allow": _op(("path", "id", "blob"), ("path", "id", "blob"), "workspace", True),
     # An answer to a finding on the Checks card's queue (#535): older entries moved to history and committed in the
     # note's zone, a preview of that, or Not now. Closed by finding_queue.py's table.
-    "finding": _op(("kind", "path", "answer"), ("kind", "path", "answer"), "workspace", True),
+    # `commit` and `repo` ride only with Undo, which reverts the one commit a bounded edit made (#592).
+    "finding": _op(("kind", "path", "answer",
+                    "commit",
+                    "repo"), ("kind", "path", "answer"), "workspace", True),
     # Continue commits the work's own record in its zone, then opens it in
     # Claude's desktop app; Ask something opens the app on the workspace.
     # `suggested` asks a first look's suggested request instead (#182).
@@ -304,6 +311,9 @@ DECLARED: Dict[str, Op] = {
     # source for one. `read` asks for what is in the note and writes nothing.
     "checkpoint": _op(("zone", "project", "thread", "base", "prev", "items", "drop", "read"),
                       ("project", "thread"), "zone", False, "safe", "checkpoint"),
+    # *Commit them* on the Overview's row for changes not committed (#595): the listed files of one zone, committed by
+    # the engine's bounded commit, or that commit taken back (`undo` with its `repo`). Only the app's bridge.
+    "commit-files": _op(("zone", "files", "undo", "repo"), ("zone", "files", "undo"), "zone", True),
     # The one verb that only reads: the open set of records, for a page that
     # was reloaded. It carries nothing but its own name.
     "operations": _op((), (), "none", retry="safe"),

@@ -23,6 +23,7 @@ sys.dont_write_bytecode = True
 
 from fixtures import write  # noqa: E402
 from test_notes import NoteCase, REPO, git  # noqa: E402
+from fixtures import project_hub, thread_note  # noqa: E402
 
 STATUS = REPO / "extras" / "status"
 PAIRED = 4242
@@ -670,6 +671,236 @@ class TestBesideTheDesk(TelegramCase):
         self.pump()
         self.assertEqual("an edit made at the desk, not committed\n", (self.work / "Acme Review" / "Threads" / "Pricing" / "Pricing.md").read_text())
         self.assertEqual(1, len(list((self.root / "Inbox").glob("telegram-*.md"))))
+
+
+class TestCertificateFailure(TelegramCase):
+    """#589: a certificate failure names its cause and its fix; any other network failure gives its reason."""
+
+    def fail_with(self, error):
+        with mock.patch.object(self.mods["telegram_delivery"].urllib.request, "urlopen", side_effect=error):
+            with self.assertRaises(self.mods["telegram_delivery"].ApiError) as got:
+                self.rx.bot.call("getWebhookInfo")
+        return got.exception
+
+    def cert(self):
+        import ssl
+        return ssl.SSLCertVerificationError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed for 123:SECRET")
+
+    def test_a_certificate_failure_inside_a_urlerror_gives_the_one_line(self):
+        import urllib.error
+        e = self.fail_with(urllib.error.URLError(self.cert()))
+        self.assertEqual(self.mods["telegram_delivery"].CERTIFICATE_LINE, str(e))
+        self.assertIn("/usr/bin/python3", str(e))
+        self.assertNotIn("SECRET", str(e))
+
+    def test_a_certificate_failure_raised_alone_or_in_a_chain_gives_the_same_line(self):
+        self.assertEqual(self.mods["telegram_delivery"].CERTIFICATE_LINE, str(self.fail_with(self.cert())))
+        try:
+            try:
+                raise self.cert()
+            except Exception as inner:
+                raise OSError("wrapped") from inner
+        except OSError as chained:
+            self.assertEqual(self.mods["telegram_delivery"].CERTIFICATE_LINE, str(self.fail_with(chained)))
+
+    def test_another_urlerror_gives_its_reason_and_no_token(self):
+        import urllib.error
+        e = self.fail_with(urllib.error.URLError("Name or service not known 123:SECRET"))
+        self.assertIn("Name or service not known", str(e))
+        self.assertNotIn("SECRET", str(e))
+        self.assertNotIn("certificate", str(e).lower())
+
+    def test_setup_says_the_certificate_line_not_a_network_problem(self):
+        import urllib.error
+        with mock.patch.object(self.mods["telegram_delivery"].urllib.request, "urlopen",
+                               side_effect=urllib.error.URLError(self.cert())):
+            said = self.rx.consumers()
+        self.assertEqual(self.mods["telegram_delivery"].CERTIFICATE_LINE, said)
+
+    def test_the_docs_and_the_plist_name_the_same_python(self):
+        import plistlib
+        plist = plistlib.loads((REPO / "extras" / "jobs" / "launchd" / "garrick.gr-telegram.plist").read_bytes())
+        python = plist["ProgramArguments"][0]
+        doc = (REPO / "docs" / "extras" / "telegram.md").read_text()
+        self.assertIn("%s extras/fetch/telegram_receiver.py setup" % python, doc)
+
+
+class TestSubjectQuestions(TelegramCase):
+    """#590: a project name is enough, a typed answer is an answer, and a question about the subject never says "note"."""
+
+    def setUp(self):
+        super().setUp()
+        oem = self.work / "Acme OEM"
+        write(oem / "Acme OEM.md", project_hub("Work", "Acme OEM", "acme", ["Pricing"]))
+        write(oem / "Threads" / "Pricing" / "Pricing.md", thread_note("Acme OEM", "Pricing", "acme"))
+
+    def several_threads(self):
+        oem = self.work / "Acme OEM"
+        write(oem / "Acme OEM.md", project_hub("Work", "Acme OEM", "acme", ["Pricing", "Terms"]))
+        write(oem / "Threads" / "Terms" / "Terms.md", thread_note("Acme OEM", "Terms", "acme"))
+
+    def never_a_note(self):
+        for t in self.texts():
+            if t != "Noted.":
+                self.assertNotRegex(t.lower(), r"\bnote\b")
+
+    def test_the_three_message_exchange_ends_with_the_answer_and_asks_nothing_after_step_two(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.assertEqual([], self.calls)
+        self.assertRegex(self.texts()[0], r"^Which thread do you mean: .*Acme OEM, Pricing")
+        self.api.say("Acme OEM")                                  # typed as a new message, not a reply
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertIn("what's next?", self.calls[0]["prompt"])      # the first question is the one answered
+        self.assertEqual(2, len(self.texts()))                    # the question, then the answer: no question after step 2
+        self.assertTrue(self.texts()[1].startswith("Acme OEM, Pricing: "))
+        self.never_a_note()
+
+    def test_a_question_that_lists_places_lists_at_most_three(self):
+        self.api.say("Acme: where are we?")
+        self.pump()
+        listed = self.texts()[0].split(":", 1)[1]
+        self.assertLessEqual(listed.count(", Pricing"), 3)
+        self.assertNotIn("note", self.texts()[0].lower())
+
+    def test_a_project_name_alone_is_answered_at_once_with_one_live_thread(self):
+        self.api.say("Acme OEM: what's next?")
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertEqual(["Acme OEM, Pricing: Fine."], self.texts())
+
+    def test_a_project_name_alone_is_answered_at_once_with_several_threads(self):
+        self.several_threads()
+        self.api.say("Acme OEM: what's next?")
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertEqual(["Acme OEM: Fine."], self.texts())
+        self.assertIn("Resume block", self.calls[0]["prompt"])
+
+    def test_a_later_message_naming_a_thread_narrows_with_no_question(self):
+        self.several_threads()
+        self.api.say("Acme OEM: what's next?")
+        self.pump()
+        self.api.say("Pricing: where are we?")
+        self.pump()
+        self.assertEqual(2, len(self.calls))
+        self.assertEqual(["Acme OEM: Fine.", "Acme OEM, Pricing: Fine."], self.texts())
+
+    def test_an_answer_sent_as_a_reply_behaves_as_before(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.api.say("Acme OEM", reply_to=self.api.sent[-1]["message_id"])
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertTrue(self.texts()[-1].startswith("Acme OEM, Pricing: "))
+
+    def test_note_and_done_are_never_read_as_answers(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.api.say("note: call Dana")
+        self.pump()
+        self.assertEqual("Noted.", self.texts()[-1])
+        self.api.say("done")
+        self.pump()
+        self.assertEqual("Nothing is open.", self.texts()[-1])
+        self.assertEqual([], self.calls)
+        self.api.say("Acme OEM")                                  # the first question is still waiting for its answer
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+
+    def test_two_questions_waiting_ask_which_and_add_none(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.api.say("Acme: and the terms?")
+        self.pump()
+        before = len(self.mods["exchanges"].load()["exchanges"])
+        self.api.say("Acme OEM")
+        self.pump()
+        self.assertEqual([], self.calls)
+        self.assertIn("Two questions are waiting", self.texts()[-1])
+        self.assertEqual(before, len(self.mods["exchanges"].load()["exchanges"]))
+
+    def test_a_long_message_is_a_new_request_not_an_answer(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.api.say("Acme OEM, pricing: where do we stand on the revised forecast?")
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertIn("revised forecast", self.calls[0]["prompt"])
+
+    def test_a_yes_to_a_question_that_offers_one_place_binds_to_it(self):
+        ex = self.mods["exchanges"].new(None, None, None, "", self.clock(), pending_subject={
+            "text": "what's next?", "offer": [{"zone": "Work", "project": "Acme OEM", "thread": "Pricing", "said": "Acme OEM, Pricing"}]})
+        self.mods["exchanges"].link(ex["id"], 1, self.clock())
+        self.api.say("Yes")
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertIn("what's next?", self.calls[0]["prompt"])
+        self.assertTrue(self.texts()[-1].startswith("Acme OEM, Pricing: "))
+
+    def test_a_typed_answer_to_a_stale_question_is_a_new_request(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.clock.advance(20 * 60)                               # past the ten minutes a typed answer may take
+        self.api.say("Acme OEM")
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertNotIn("what's next?", self.calls[0]["prompt"])
+
+    def test_a_bare_yes_to_a_stale_question_binds_nothing(self):
+        ex = self.mods["exchanges"].new(None, None, None, "", self.clock(), pending_subject={
+            "text": "what's next?", "offer": [{"zone": "Work", "project": "Acme OEM", "thread": "Pricing", "said": "Acme OEM, Pricing"}]})
+        self.mods["exchanges"].link(ex["id"], 1, self.clock())
+        self.clock.advance(20 * 60)
+        self.api.say("Yes")
+        self.pump()
+        self.assertEqual([], self.calls)
+
+    def test_a_message_that_settles_to_a_place_of_its_own_is_a_new_request(self):
+        birch = self.work / "Birch Terms"
+        write(birch / "Birch Terms.md", project_hub("Work", "Birch Terms", "acme", ["Draft"]))
+        write(birch / "Threads" / "Draft" / "Draft.md", thread_note("Birch Terms", "Draft", "acme"))
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.api.say("Birch Terms")                               # inside the window, but a place the question did not offer
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertNotIn("what's next?", self.calls[0]["prompt"])
+        self.assertTrue(self.texts()[-1].startswith("Birch Terms, Draft: "))
+
+    def test_a_place_typed_to_a_plain_which_thread_answers_it(self):
+        ex = self.mods["exchanges"].new(None, None, None, "", self.clock(), pending_subject={"text": "what's next?", "offer": []})
+        self.mods["exchanges"].link(ex["id"], 1, self.clock())
+        self.api.say("Acme OEM, Pricing")                       # the question offered no places: the place typed is the answer
+        self.pump()
+        self.assertEqual(1, len(self.calls))
+        self.assertIn("what's next?", self.calls[0]["prompt"])
+
+    def test_a_message_that_settles_to_no_place_is_still_the_answer_inside_the_window(self):
+        self.api.say("Acme: what's next?")
+        self.pump()
+        self.api.say("the OEM one")
+        self.pump()
+        self.assertEqual([], self.calls)                          # it did not settle: asked again, never guessed
+        self.assertEqual(2, len(self.texts()))
+
+    def test_a_parked_thread_is_not_a_live_one(self):
+        self.several_threads()
+        terms = self.work / "Acme OEM" / "Threads" / "Terms" / "Terms.md"
+        write(terms, thread_note("Acme OEM", "Terms", "acme", status="parked"))
+        place = self.mods["intake"].resolve_destination(self.root, "Acme OEM", "x", purpose="ask")
+        self.assertEqual(("Acme OEM", "Pricing"), (place["project"], place["thread"]))
+        write(terms, thread_note("Acme OEM", "Terms", "acme", status="active"))
+        place = self.mods["intake"].resolve_destination(self.root, "Acme OEM", "x", purpose="ask")
+        self.assertEqual(("Acme OEM", None), (place["project"], place["thread"]))
+
+    def test_the_notes_wording_is_kept_for_a_note(self):
+        with self.assertRaises(self.mods["intake"].Confirm) as c:
+            self.mods["intake"].resolve_destination(self.root, "Acme Review", "x")
+        self.assertEqual("Which thread of Acme Review is the note about: Pricing?", str(c.exception))
+        place = self.mods["intake"].resolve_destination(self.root, "Acme Review", "x", purpose="ask")
+        self.assertEqual(("Acme Review", "Pricing"), (place["project"], place["thread"]))
 
 
 class TestOneReceiver(TelegramCase):

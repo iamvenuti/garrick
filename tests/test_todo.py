@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import importlib.util
 import json
+import os
 import re
 import sys
 import tempfile
@@ -493,3 +494,237 @@ class CheckpointStaysOutTest(unittest.TestCase):
     def test_the_skill_says_the_block_is_not_read(self):
         skill = (REPO / "template" / "System" / "skills" / "todo" / "SKILL.md").read_text(encoding="utf-8")
         self.assertIn("Never\n     the `### Checkpoint` block beside it", skill)
+
+
+DISTIL_LIST = """# Work: open actions
+
+## Inbox
+
+- [ ] [[Pricing]]: Send Dana the price sheet · [Call one](../../Wikis/Meetings/wiki/sources/call-one.md) 📅 2026-10-20
+- [ ] [[Pricing]]: Ask Dana whether the Harbour team travels
+- [ ] [[Freight]]: Book the pallet slot
+- [ ] Dana: Confirm the volumes
+
+## This week
+
+- [ ] [[Pricing]]: Bring the royalty framework to the 20 November call 📅 2026-10-18
+
+## Waiting on
+
+- [ ] [[Pricing]]: Dana's volumes #waiting ⏳ 2026-10-16
+
+## Done
+"""
+SRC = "[Call two](../../Wikis/Meetings/wiki/sources/call-two.md)"
+
+
+class DistilTest(unittest.TestCase):
+    """#591: one thread's open lines, changed by the new material. Inbox lines at once; a line the user moved is
+    proposed, never changed, unless the user has said yes; a line of another thread is never touched."""
+    TODAY = dt.date(2026, 11, 16)
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name).resolve() / "Workspace"
+        build_workspace(self.root)
+        self.zone = self.root / "Zones" / "Work"
+        write(self.zone / "Todo.md", DISTIL_LIST)
+        self._env = os.environ.pop("GARRICK_HEADLESS", None)
+        self.addCleanup(lambda: os.environ.__setitem__("GARRICK_HEADLESS", self._env) if self._env else None)
+
+    def text(self):
+        return (self.zone / "Todo.md").read_text()
+
+    def run_plan(self, plan, **kw):
+        plan = dict({"thread": "Pricing", "source": SRC}, **plan)
+        return todo.distil(self.root, self.zone, plan, self.TODAY, **kw)
+
+    def test_inbox_lines_are_changed_at_once_and_say_what_was_done(self):
+        out = self.run_plan({"changed": [{"line": "Ask Dana whether the Harbour team travels",
+                                           "text": "Ask Dana whether the Harbour team travels, and the dates", "merge": True}],
+                             "new": [{"text": "Send Theo the term sheet", "date": "2026-11-20"}],
+                             "retired": [{"line": "Send Dana the price sheet"}]})
+        self.assertEqual({"ticked": 0, "reworded": 0, "added": 1, "merged": 1, "retired": 1, "proposed": 0}, out["counts"])
+        self.assertEqual("Distilled Pricing: one added, one merged, one retired.", out["say"])
+        text = self.text()
+        self.assertIn("- [ ] [[Pricing]]: Ask Dana whether the Harbour team travels, and the dates\n", text)
+        self.assertIn("- [ ] [[Pricing]]: Send Theo the term sheet · %s 📅 2026-11-20\n" % SRC, text)
+        self.assertNotIn("Send Dana the price sheet", text)
+
+    def test_a_retired_line_lands_in_the_archive_with_its_source_and_stays_open(self):
+        self.run_plan({"retired": [{"line": "Send Dana the price sheet"}]})
+        archive = (self.zone / "archive" / "Todo-expired-2026.md").read_text()
+        self.assertIn("<!-- 2026-11-16 retired -->", archive)
+        self.assertIn("- [ ] [[Pricing]]: Send Dana the price sheet · [Call one](../../../Wikis/Meetings/wiki/sources/call-one.md)"
+                      " 📅 2026-10-20 · superseded by %s\n" % SRC.replace("../../", "../../../"), archive)
+        self.assertNotIn("Expired today", todo.digest(self.zone, self.TODAY))      # a retirement is not an expiry
+
+    def test_a_retirement_with_no_source_is_refused_and_the_line_stays(self):
+        out = todo.distil(self.root, self.zone, {"thread": "Pricing", "retired": [{"line": "Send Dana the price sheet"}]}, self.TODAY)
+        self.assertEqual(0, out["counts"]["retired"])
+        self.assertIn("no source", out["notes"][0])
+        self.assertIn("Send Dana the price sheet", self.text())
+
+    def test_a_triaged_line_is_proposed_not_changed_when_nobody_is_there(self):
+        before = self.text()
+        out = self.run_plan({"changed": [{"line": "Bring the royalty framework", "text": "Bring the price list and the royalty framework"}],
+                             "retired": [{"line": "Dana's volumes"}]})
+        self.assertEqual(2, out["counts"]["proposed"])
+        self.assertEqual(before, self.text())                                    # the line stays as it is
+        found = json.loads((self.zone / ".todo-proposals.json").read_text())
+        self.assertEqual({"edit", "retire"}, {p["kind"] for p in found})
+        self.assertFalse((self.zone / "archive").exists())
+        self.assertIn("Proposed changes", todo.digest(self.zone, self.TODAY))
+        self.assertIn("reword to: Bring the price list and the royalty framework", todo.digest(self.zone, self.TODAY))
+
+    def test_a_headless_run_proposes_even_with_a_yes(self):
+        os.environ["GARRICK_HEADLESS"] = "1"
+        try:
+            out = self.run_plan({"changed": [{"line": "Bring the royalty framework", "text": "Bring the price list"}]}, yes=True)
+        finally:
+            os.environ.pop("GARRICK_HEADLESS")
+        self.assertEqual(1, out["counts"]["proposed"])
+        self.assertIn("Bring the royalty framework", self.text())
+
+    def test_an_attended_yes_changes_the_triaged_line(self):
+        out = self.run_plan({"changed": [{"line": "Bring the royalty framework",
+                                           "text": "Bring the price list and the royalty framework to the 20 November call"}],
+                             "retired": [{"line": "Dana's volumes"}]}, yes=True)
+        self.assertEqual(0, out["counts"]["proposed"])
+        self.assertIn("- [ ] [[Pricing]]: Bring the price list and the royalty framework to the 20 November call 📅 2026-10-18\n",
+                      self.text())
+        self.assertNotIn("Dana's volumes", self.text())
+        self.assertFalse((self.zone / ".todo-proposals.json").exists())
+
+    def test_a_dry_run_writes_nothing(self):
+        before = self.text()
+        out = self.run_plan({"changed": [{"line": "Send Dana the price sheet", "text": "Send Dana the sheet"}],
+                             "retired": [{"line": "Ask Dana whether"}], "new": [{"text": "x y"}]}, dry=True)
+        self.assertEqual(1, out["counts"]["reworded"])
+        self.assertEqual(before, self.text())
+        self.assertFalse((self.zone / "archive").exists())
+
+    def test_a_line_of_another_thread_is_never_touched(self):
+        before = self.text()
+        out = self.run_plan({"changed": [{"line": "Book the pallet slot", "text": "Book two slots"}],
+                             "retired": [{"line": "Book the pallet slot"}], "done": ["Book the pallet slot"]})
+        self.assertEqual(before, self.text())
+        self.assertFalse((self.zone / ".todo-proposals.json").exists())
+        self.assertEqual(3, len(out["notes"]))
+        self.assertEqual("Distilled Pricing: nothing to change.", out["say"])
+
+    def test_a_thread_plan_never_reaches_a_line_with_no_thread(self):
+        before = self.text()
+        out = self.run_plan({"done": ["Confirm the volumes"]}, yes=True)
+        self.assertEqual(0, out["counts"]["ticked"])
+        self.assertEqual(before, self.text())
+
+    def test_a_party_plan_ticks_its_own_line_only_when_attended_with_a_yes(self):
+        plan = {"party": "Dana", "done": ["Confirm the volumes"]}
+        before = self.text()
+        out = todo.distil(self.root, self.zone, plan, self.TODAY)               # in the Inbox, but no yes
+        self.assertEqual((0, 1), (out["counts"]["ticked"], out["counts"]["proposed"]))
+        self.assertEqual(before, self.text())
+        os.environ["GARRICK_BACKGROUND"] = "1"
+        try:
+            out = todo.distil(self.root, self.zone, plan, self.TODAY, yes=True)   # S5: a background run is headless
+        finally:
+            os.environ.pop("GARRICK_BACKGROUND")
+        self.assertEqual((0, 1), (out["counts"]["ticked"], out["counts"]["proposed"]))
+        self.assertEqual(before, self.text())
+        out = todo.distil(self.root, self.zone, plan, self.TODAY, yes=True)
+        self.assertEqual(1, out["counts"]["ticked"])
+        self.assertIn("- [x] Dana: Confirm the volumes ✅ 2026-11-16\n", self.text())
+
+    def test_a_party_plan_does_not_tick_another_partys_line(self):
+        out = todo.distil(self.root, self.zone, {"party": "Theo", "done": ["Confirm the volumes"]}, self.TODAY, yes=True)
+        self.assertEqual(0, out["counts"]["ticked"])
+
+    def test_threads_of_one_name_in_two_projects_share_nothing(self):
+        write(self.zone / "Todo.md", DISTIL_LIST.replace("## Done", "- [ ] [[Birch/Threads/Pricing/Pricing|Pricing]]: Send Theo the volume tiers\n\n## Done"))
+        before = self.text()
+        plan = {"thread": "Acme/Threads/Pricing/Pricing|Pricing", "source": SRC}
+        out = todo.distil(self.root, self.zone, dict(plan, done=["Send Theo the volume tiers"],
+                          changed=[{"line": "Send Theo the volume tiers", "text": "Send Theo the tiers"}],
+                          retired=[{"line": "Send Theo the volume tiers"}]), self.TODAY, yes=True)
+        self.assertEqual(before, self.text())
+        self.assertEqual(3, len(out["notes"]))
+
+    def test_a_short_phrase_is_refused_but_the_whole_line_is_taken(self):
+        before = self.text()
+        out = self.run_plan({"retired": [{"line": "Dana"}], "done": ["Send"]})
+        self.assertEqual(before, self.text())
+        self.assertTrue(all("too short" in n for n in out["notes"]) and len(out["notes"]) == 2)
+        out = self.run_plan({"done": ["Send Dana the price"]})                  # 12 or more, and unique
+        self.assertEqual(1, out["counts"]["ticked"])
+        write(self.zone / "Todo.md", "# Work\n\n## Inbox\n\n- [ ] [[Pricing]]: Ask Dana\n\n## Done\n")
+        self.assertEqual(1, self.run_plan({"done": ["Ask Dana"]})["counts"]["ticked"])   # the whole line text
+
+    def test_with_no_thread_it_adds_under_the_party_and_changes_nothing_else(self):
+        before = self.text()
+        out = todo.distil(self.root, self.zone, {"party": "Dana", "source": SRC,
+                                                  "new": [{"text": "Send the lane map"}],
+                                                  "changed": [{"line": "Confirm the volumes", "text": "x"}],
+                                                  "retired": [{"line": "Confirm the volumes"}]}, self.TODAY)
+        self.assertEqual("Distilled Dana: one added.", out["say"])
+        self.assertEqual(before.replace("- [ ] Dana: Confirm the volumes\n", "- [ ] Dana: Confirm the volumes\n- [ ] Dana: Send the lane map · %s\n" % SRC),
+                         self.text())
+
+    def test_a_waiting_line_must_name_an_open_line_of_the_user(self):
+        out = self.run_plan({"new": [{"text": "Dana sends the volume floor", "waiting": True, "date": "2026-11-24",
+                                       "blocks": "Bring the royalty framework"},
+                                      {"text": "Theo sends a logo", "waiting": True},
+                                      {"text": "Theo sends a deck", "waiting": True, "blocks": "something unrelated"}]})
+        self.assertEqual(1, out["counts"]["added"])
+        self.assertEqual(2, len(out["notes"]))
+        self.assertIn("Dana sends the volume floor — blocks: Bring the royalty framework · %s #waiting ⏳ 2026-11-24\n" % SRC, self.text())
+
+    def test_a_repeat_is_merged_into_the_line_and_never_added_twice(self):
+        out = self.run_plan({"new": [{"text": "Ask Dana whether the Harbour team travels"}]})
+        self.assertEqual({"added": 0, "merged": 1}, {k: out["counts"][k] for k in ("added", "merged")})
+        self.assertIn("travels (also in %s)\n" % SRC, self.text())
+        self.assertEqual(1, self.text().count("Harbour team travels"))
+
+    def test_the_cap_warns_and_drops_nothing(self):
+        write(self.root / "System" / "garrick-checks.json", json.dumps({"todo-thread-cap": 2}))
+        out = self.run_plan({"new": [{"text": "Send the lane map"}, {"text": "Send the tier sheet"}]})
+        self.assertEqual(2, out["counts"]["added"])
+        self.assertTrue([n for n in out["notes"] if "over the cap of 2" in n])
+        for kept in ("price sheet", "Harbour team", "royalty framework", "lane map", "tier sheet"):
+            self.assertIn(kept, self.text())
+        (self.root / "System" / "garrick-checks.json").unlink()
+        self.assertEqual(5, todo.thread_cap(self.root, "Work"))
+
+    def test_the_example_line_goes_with_the_first_real_one(self):
+        write(self.zone / "Todo.md", "# Work\n\n## Inbox\n\n- [ ] [[Thread]]: <action> 📅 <YYYY-MM-DD>\n\n## Done\n")
+        self.run_plan({"new": [{"text": "Send the lane map"}]})
+        self.assertEqual("# Work\n\n## Inbox\n\n- [ ] [[Pricing]]: Send the lane map · %s\n\n## Done\n" % SRC, self.text())
+
+    def test_proposals_are_listed_dropped_and_marked_when_their_line_has_gone(self):
+        self.run_plan({"retired": [{"line": "Dana's volumes"}]})
+        (proposal,) = todo.proposal_view(self.zone)
+        self.assertFalse(proposal["stale"])
+        write(self.zone / "Todo.md", self.text().replace("- [ ] [[Pricing]]: Dana's volumes #waiting ⏳ 2026-10-16\n", ""))
+        self.assertTrue(todo.proposal_view(self.zone)[0]["stale"])
+        self.assertNotIn("Proposed changes", todo.digest(self.zone, self.TODAY))
+        self.assertEqual(0, todo.main(["proposals", "--zone", "Work", "--root", str(self.root), "--drop", proposal["id"]]))
+        self.assertFalse((self.zone / ".todo-proposals.json").exists())
+
+    def test_the_command_line_reads_the_changes_from_a_file(self):
+        plan = self.root / "plan.json"
+        plan.write_text(json.dumps({"thread": "Pricing", "source": SRC, "new": [{"text": "Send the lane map"}]}))
+        self.assertEqual(0, todo.main(["distil", "--zone", "Work", "--root", str(self.root), "--changes", str(plan), "--today", "2026-11-16"]))
+        self.assertIn("Send the lane map", self.text())
+
+    def test_the_status_pages_reword_and_this_one_agree(self):
+        write(self.zone / "Todo.md", DISTIL_LIST + "")
+        cases = [("Send Dana the price sheet", "Send Dana the price sheet and the lane map"),
+                 ("Send Dana the price sheet", "Send Dana the price sheet 📅 2026-10-25"),
+                 ("Ask Dana whether the Harbour team travels", "Ask Dana (also in %s)" % SRC)]
+        for old, new in cases:
+            line = next(l for l in DISTIL_LIST.split("\n") if old in l)
+            write(self.zone / "Todo.md", DISTIL_LIST)
+            _, _, k = todo_lines.reword(str(self.zone), "Todo.md", todo_lines.key(line), new)
+            made = next(l for l in self.text().split("\n") if k == todo_lines.key(l))
+            self.assertEqual(made, todo.reword_line(line, new), (old, new))

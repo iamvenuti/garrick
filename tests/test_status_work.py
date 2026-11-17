@@ -653,12 +653,16 @@ class TestWorkOnThePage(StatusCase):
         unzoned |= {v for v in page_action.VERBS if v.startswith("question-")}
         # Taking an allowance away edits the workspace's own ledger under its own lock.
         unzoned |= {"walls-unallow"}
+        # *Commit them* (#595) commits through the engine's bounded run, which keeps its own hold on the repository.
+        unzoned |= {"commit-files"}
         # The wall question's look reads, and its allowance writes the same ledger (#548, #550): neither acts on one zone.
         unzoned |= {"walls-look", "walls-allow"}
         # An answer to a finding on the Checks card's queue (#535) is sent by finding_queue.py's script, and names a path.
         unzoned |= {"finding"}
         # A note to yourself (#569) is typed in the Ask box or sent by a fetcher; no button on the page sends it.
         unzoned |= {"note-add"}
+        # Distil (#591): a line reworded or retired by a session or the digest's apply, never from a button.
+        unzoned |= {"todo-edit", "todo-retire"}
         self.assertEqual(set(page_action.VERBS) - unzoned, set(status.ZONE_VERBS))
         self.assertIn('ZONED=["todo-done",', status.WORK_JS)
 

@@ -402,6 +402,120 @@ class TestAdd(ActionCase):
         self.assertEqual("start", git(self.work, "log", "-1", "--format=%s").strip())
 
 
+class TestDistilVerbs(ActionCase):
+    """#591: todo-edit rewords an open line and todo-retire moves it, still open, to the expired archive: one commit,
+    the same line matching and refusals as todo-done."""
+
+    def setUp(self):
+        super().setUp()
+        skill = self.root / "System" / "skills" / "todo"
+        skill.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(REPO / "template" / "System" / "skills" / "todo" / "todo.py", skill / "todo.py")
+        write(self.work / "Todo.md", "# Work: open actions\n\n## Inbox\n\n"
+              "- [ ] [[Pricing]]: Send the revised terms · [Call with Dana](../../Wikis/Meetings/wiki/sources/dana.md) 📅 2026-10-09\n"
+              "- [ ] Acme Corp: Invoice for September\n- [ ] [[Pricing]]: Book the room\n\n## Done\n")
+        git(self.work, "commit", "-qam", "lines")
+
+    def test_edit_rewords_and_keeps_what_the_line_carries(self):
+        say = self.act(verb="todo-edit", zone="Work", file="Todo.md", key=self.key("Send the revised"),
+                       text="Send the revised terms and the volume floor")
+        self.assertEqual("Reworded: Send the revised terms and the volume floor", say)
+        self.assertIn("- [ ] [[Pricing]]: Send the revised terms and the volume floor · [Call with Dana]"
+                      "(../../Wikis/Meetings/wiki/sources/dana.md) 📅 2026-10-09\n", (self.work / "Todo.md").read_text())
+        self.assertEqual(("Work: reworded, Send the revised terms and the volume floor", ""), self.last_commit())
+
+    def test_edit_gains_a_source_and_keeps_the_old_one(self):
+        self.act(verb="todo-edit", zone="Work", file="Todo.md", key=self.key("Invoice"),
+                 text="Acme Corp: Invoice for September and October (also in [Review](../../Wikis/Meetings/wiki/sources/review.md))")
+        self.assertIn("- [ ] Acme Corp: Invoice for September and October (also in [Review](../../Wikis/Meetings/wiki/sources/review.md))\n",
+                      (self.work / "Todo.md").read_text())
+
+    def test_edit_refusals_change_nothing(self):
+        before = (self.work / "Todo.md").read_bytes()
+        head = git(self.work, "rev-parse", "HEAD")
+        key = self.key("Invoice")
+        for req in ({"key": key, "text": ""}, {"key": key, "text": "Acme Corp: Invoice for September"},
+                    {"key": self.key("Send the revised"), "text": "Book the room"},          # another open line says it
+                    {"key": "0" * 16, "text": "x"}, {"key": key, "text": "x" * 1001}, {"key": key, "text": "two\nlines"}):
+            with self.assertRaises(pa.Refused, msg=req):
+                self.act(verb="todo-edit", zone="Work", file="Todo.md", **req)
+        with self.assertRaises(pa.Refused):                   # a file outside the zone
+            self.act(verb="todo-edit", zone="Work", file="../Personal/Todo.md", key=key, text="x")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertEqual(head, git(self.work, "rev-parse", "HEAD"))
+
+    def test_retire_moves_the_line_open_to_the_archive_with_its_source(self):
+        say = self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"),
+                       reason="[Review call](../../Wikis/Meetings/wiki/sources/review.md)")
+        self.assertEqual("Retired: Acme Corp: Invoice for September", say)
+        self.assertNotIn("Invoice", (self.work / "Todo.md").read_text())
+        archive = (self.work / "archive" / "Todo-expired-2026.md").read_text()
+        self.assertIn("- [ ] Acme Corp: Invoice for September · superseded by [Review call](../../../Wikis/Meetings/wiki/sources/review.md)\n", archive)
+        self.assertEqual(("Work: retired, Acme Corp: Invoice for September", ""), self.last_commit())
+        self.assertIn("archive/Todo-expired-2026.md", git(self.work, "show", "--stat", "--format=", "HEAD"))
+
+    def test_retire_never_deletes_and_refuses_a_line_that_is_not_there(self):
+        before = (self.work / "Todo.md").read_bytes()
+        with self.assertRaises(pa.Refused):
+            self.act(verb="todo-retire", zone="Work", file="Todo.md", key="0" * 16, reason="[x](y.md)")
+        with self.assertRaises(pa.Refused):
+            self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"), reason="")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertFalse((self.work / "archive" / "Todo-expired-2026.md").exists())
+
+    def test_a_refused_commit_puts_both_files_back(self):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\necho 'Commit refused: wall. Take it out, commit again' >&2\nexit 1\n")
+        before = (self.work / "Todo.md").read_bytes()
+        with self.assertRaises(pa.Refused):
+            self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"), reason="[a](b.md)")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertFalse((self.work / "archive" / "Todo-expired-2026.md").exists())
+
+    def test_any_failure_after_the_line_is_taken_puts_the_list_back_and_writes_no_archive(self):
+        before = (self.work / "Todo.md").read_bytes()
+        archive = self.work / "archive" / "Todo-expired-2026.md"
+
+        class Broken:
+            def keep_out(self, zone, name, title, moved):
+                archive.parent.mkdir(exist_ok=True)
+                archive.write_text("half")
+                raise RuntimeError("not an OSError")
+        with mock.patch.object(pa, "todo_skill", return_value=Broken()):
+            with self.assertRaises(pa.Refused):
+                self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"), reason="[a](b.md)")
+        self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+        self.assertFalse(archive.exists())
+
+    def test_a_run_with_nobody_there_changes_only_an_inbox_line(self):
+        write(self.work / "Todo.md", (self.work / "Todo.md").read_text().replace(
+            "## Done", "## This week\n\n- [ ] [[Pricing]]: Bring the royalty framework\n\n## Done"))
+        git(self.work, "commit", "-qam", "week")
+        before = (self.work / "Todo.md").read_bytes()
+        for var in ("GARRICK_HEADLESS", "GARRICK_BACKGROUND"):
+            with mock.patch.dict(os.environ, {var: "1"}):
+                with self.assertRaises(pa.Refused):
+                    self.act(verb="todo-edit", zone="Work", file="Todo.md", key=self.key("Bring the royalty"), text="Bring the royalty tiers")
+                with self.assertRaises(pa.Refused):
+                    self.act(verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Bring the royalty"), reason="[a](b.md)")
+                self.assertEqual(before, (self.work / "Todo.md").read_bytes())
+                self.assertEqual("Retired: Acme Corp: Invoice for September", self.act(
+                    verb="todo-retire", zone="Work", file="Todo.md", key=self.key("Invoice"), reason="[a](b.md)"))
+                git(self.work, "reset", "-q", "--hard", "HEAD~1")
+                before = (self.work / "Todo.md").read_bytes()
+
+    def test_the_session_form_resolves_a_line_in_words(self):
+        for verb, extra in (("todo-edit", ["--text", "Invoice for September and the credit note"]),
+                            ("todo-retire", ["--reason", "[Review](r.md)"])):
+            ns = pa.command_parser().parse_args([verb, "--zone", "Work", "--line", "Invoice for September"] + extra)
+            req = pa.session_request(self.root, ns)
+            self.assertEqual(self.key("Invoice"), req["key"])
+            self.assertEqual("Todo.md", req["file"])
+        ns = pa.command_parser().parse_args(["todo-edit", "--zone", "Work", "--line", "nothing like it", "--text", "x"])
+        with self.assertRaises(pa.Refused):
+            pa.session_request(self.root, ns)
+
+
 class TestPark(ActionCase):
     def test_park_and_wake_as_the_skill_does(self):
         rel = "Acme Review/Threads/Pricing/Pricing.md"
@@ -2069,6 +2183,156 @@ class TestNotePreview(ActionCase):
         self.assertEqual("", git(self.work, "status", "--porcelain").strip())       # nothing written
 
 
+class FakeEngine:
+    """What page_action.py's engine_lib() hands back in a test: the two entry points of the bounded run, recording how they were called."""
+
+    def __init__(self, result=None, undo=None):
+        self.calls, self.undone = [], []
+        self.result = result if result is not None else {"ok": True, "say": "Committed 1 file in Work.", "commit": "abc1234def", "files": [],
+                                                         "repo": "Zones/Work"}
+        self.undo_result = undo if undo is not None else {"ok": True, "say": "Taken back."}
+
+    def run_bounded(self, ws, zone, files, request, message="", runner=None, cap=None):
+        self.calls.append((Path(ws), zone, list(files), request, message))
+        return self.result
+
+    def undo_bounded(self, ws, repo, commit):
+        self.undone.append((Path(ws), repo, commit))
+        return self.undo_result
+
+
+class TestCommitFiles(ActionCase):
+    """*Commit them* on the Overview (#595): the verb checks again what the row listed, and the engine does the commit."""
+
+    def setUp(self):
+        super().setUp()
+        write(self.work / "Notes.md", "# Notes\n")
+        write(self.work / "Acme Review" / "Draft.md", "# Draft\n")
+        self.engine = FakeEngine()
+
+    def commit(self, files, engine="default", **more):
+        eng = self.engine if engine == "default" else engine
+        with mock.patch.object(pa, "engine_lib", return_value=eng):
+            return pa.act(self.root, dict({"verb": "commit-files", "zone": "Work", "files": files}, **more), today=TODAY)
+
+    def refused(self, files, engine="default", **more):
+        with self.assertRaises(pa.Refused) as caught:
+            self.commit(files, engine, **more)
+        self.assertEqual("", git(self.work, "diff", "--cached", "--name-only").strip())      # nothing staged or committed
+        return str(caught.exception)
+
+    def test_the_files_a_built_row_carries_are_accepted_by_the_verb(self):
+        """The button's own `data-files`, not hand-written paths: the row and the verb must speak the same paths."""
+        import html as htmllib
+        spec = importlib.util.spec_from_file_location("garrick_status_for_row", REPO / "extras" / "status" / "status.py")
+        status = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(status)
+        changed, _ = pa.changed_now(self.work)
+        r = {"folder": str(self.work), "name": "Work", "dirty": len(changed), "since": None,
+             "changes": [(f, {"untracked"}) for f in sorted(changed)]}
+        with mock.patch.object(status, "bounded_ready", return_value=True):
+            row = status.commit_row(self.root, r, dt.datetime.now())
+        m = re.search(r'data-files="([^"]*)"', row.get("act", ""))
+        self.assertTrue(m, row)
+        files = json.loads(htmllib.unescape(m.group(1)))
+        self.assertTrue(files and all(f.startswith("Zones/Work/") for f in files), files)
+        out = self.commit(files)
+        self.assertEqual([(self.root, "Work", files, "", "")], self.engine.calls)
+        self.assertIn("bounded", out)
+
+    def test_it_is_a_page_only_verb(self):
+        self.assertIn("commit-files", pa.VERBS)
+        self.assertIn("commit-files", pa.PAGE_ONLY)
+        with mock.patch.object(pa, "engine_lib", return_value=self.engine):
+            for via in ("ask", "session"):
+                reply = pa.perform(self.root, {"verb": "commit-files", "zone": "Work", "files": ["Zones/Work/Notes.md"]}, via=via)
+                self.assertFalse(reply[0]["ok"], via)
+        self.assertEqual([], self.engine.calls)
+
+    def test_it_hands_the_listed_files_of_one_zone_to_the_bounded_run_and_nothing_else(self):
+        out = self.commit(["Zones/Work/Notes.md", "Zones/Work/Acme Review/Draft.md"])
+        self.assertEqual([(self.root, "Work", ["Zones/Work/Notes.md", "Zones/Work/Acme Review/Draft.md"], "", "")], self.engine.calls)
+        self.assertEqual("Committed 1 file in Work.", out["say"])
+        self.assertEqual({"commit": "abc1234def", "repo": "Zones/Work", "files": ["Zones/Work/Notes.md", "Zones/Work/Acme Review/Draft.md"]},
+                         out["bounded"])
+
+    def test_a_file_outside_the_zone_or_not_in_the_repository_s_changes_is_refused_whole(self):
+        write(self.root / "Zones" / "Personal" / "Other.md", "x\n")
+        for bad in ("Zones/Personal/Other.md", "Zones/Work/../Personal/Other.md", "/etc/hosts", "Notes.md", "Zones/Work/Todo.md",
+                    "Zones/Work/Missing.md"):
+            self.refused(["Zones/Work/Notes.md", bad])
+        self.assertEqual([], self.engine.calls)
+
+    def test_a_zone_that_is_not_one_is_refused(self):
+        for bad in ("..", "Work/Acme Review", "Nowhere", ""):
+            with mock.patch.object(pa, "engine_lib", return_value=self.engine), self.assertRaises(pa.Refused):
+                pa.act(self.root, {"verb": "commit-files", "zone": bad, "files": ["Zones/Work/Notes.md"]}, today=TODAY)
+        self.assertEqual([], self.engine.calls)
+
+    def test_a_file_changed_more_than_30_days_ago_is_refused(self):
+        old = self.work / "Notes.md"
+        stamp = (dt.datetime.now() - dt.timedelta(days=40)).timestamp()
+        os.utime(old, (stamp, stamp))
+        self.assertIn("gitignore", self.refused(["Zones/Work/Notes.md"]))
+        self.assertIn("gitignore", self.refused(["Zones/Work/Acme Review/Draft.md", "Zones/Work/Notes.md"]))
+        self.assertEqual([], self.engine.calls)
+
+    def test_a_link_and_a_long_list_are_refused(self):
+        os.symlink(str(self.work / "Notes.md"), str(self.work / "Shortcut.md"))
+        self.assertIn("link", self.refused(["Zones/Work/Shortcut.md"]))
+        many = []
+        for i in range(pa.COMMIT_MOST + 1):
+            write(self.work / "Many" / ("%d.md" % i), "x\n")
+            many.append("Zones/Work/Many/%d.md" % i)
+        self.refused(many)
+        self.refused([])
+        self.refused(["Zones/Work/Notes.md", "Zones/Work/Notes.md"])
+        self.assertEqual([], self.engine.calls)
+
+    def test_a_file_in_conflict_is_refused(self):
+        git(self.work, "checkout", "-q", "-b", "other")
+        write(self.work / "Todo.md", "# other\n")
+        git(self.work, "commit", "-qam", "other")
+        git(self.work, "checkout", "-q", "-")
+        write(self.work / "Todo.md", "# mine\n")
+        git(self.work, "commit", "-qam", "mine")
+        subprocess.run(["git", "-C", str(self.work), "merge", "other"], capture_output=True, text=True)
+        with self.assertRaises(pa.Refused) as caught:
+            self.commit(["Zones/Work/Todo.md"])
+        self.assertIn("conflict", str(caught.exception))
+        self.assertEqual([], self.engine.calls)
+
+    def test_an_engine_without_the_bounded_run_or_unavailable_writes_nothing(self):
+        class Old:
+            pass
+        self.assertIn("cannot make that commit", self.refused(["Zones/Work/Notes.md"], engine=Old()))
+        self.assertIn("cannot make that commit", self.refused(["Zones/Work/Notes.md"], engine=None))
+        busy = FakeEngine({"ok": False, "unavailable": True, "say": "Ask is switched off, so nothing was committed."})
+        self.assertEqual("Ask is switched off, so nothing was committed.", self.refused(["Zones/Work/Notes.md"], engine=busy))
+        refused = FakeEngine({"ok": False, "say": "The wall check refused it. The files are as they were."})
+        self.assertIn("as they were", self.refused(["Zones/Work/Notes.md"], engine=refused))
+
+    def test_undo_reverts_only_a_commit_of_a_zone_repository_by_its_hash(self):
+        with mock.patch.object(pa, "engine_lib", return_value=self.engine):
+            out = pa.act(self.root, {"verb": "commit-files", "undo": "abc1234def", "repo": "Zones/Work"}, today=TODAY)
+            self.assertEqual("Taken back.", out["say"])
+            self.assertEqual([(self.root, "Zones/Work", "abc1234def")], self.engine.undone)
+            for bad in ({"undo": "HEAD", "repo": "Zones/Work"}, {"undo": "abc1234", "repo": "Zones/../System"}, {"undo": "abc1234", "repo": "."},
+                        {"undo": "abc1234", "repo": "Zones/Nowhere"}, {"undo": "abc1234", "repo": "Zones/Work/Acme Review"}):
+                with self.assertRaises(pa.Refused):
+                    pa.act(self.root, dict({"verb": "commit-files"}, **bad), today=TODAY)
+        refusing = FakeEngine(undo={"ok": False, "say": "A later commit touched those files, so nothing was changed."})
+        with mock.patch.object(pa, "engine_lib", return_value=refusing), self.assertRaises(pa.Refused) as caught:
+            pa.act(self.root, {"verb": "commit-files", "undo": "abc1234", "repo": "Zones/Work"}, today=TODAY)
+        self.assertIn("nothing was changed", str(caught.exception))
+
+    def test_an_undeclared_field_is_refused_by_name(self):
+        with self.assertRaises(pa.Refused) as caught:
+            self.commit(["Zones/Work/Notes.md"], message="mine")
+        self.assertIn("message", str(caught.exception))
+        self.assertEqual([], self.engine.calls)
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -2085,8 +2349,8 @@ class VerbsTest(unittest.TestCase):
         self.assertEqual(len(documented), len(set(documented)), documented)
         accepted = list(pa.VERBS) + list(pa.CMUX_VERBS)
         self.assertEqual(len(accepted), len(set(accepted)), accepted)
-        # The wall question's two verbs are the page's own buttons (#548, #550): no row names them, so that no document an
+        # The wall question's two verbs and *Commit them* are the page's own buttons (#548, #550, #595): no row names them, so that no document an
         # assistant reads offers one. The section says so in words.
-        self.assertEqual(("walls-look", "walls-allow"), pa.PAGE_ONLY)
+        self.assertEqual(("walls-look", "walls-allow", "commit-files"), pa.PAGE_ONLY)        # and *Commit them* (#595)
         self.assertEqual(sorted(v for v in accepted if v not in pa.PAGE_ONLY), sorted(documented))
         self.assertIn("page's own wall buttons", section)

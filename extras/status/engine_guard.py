@@ -119,8 +119,18 @@ def bash_ok(command) -> bool:
             and os.path.realpath(tokens[1]) == os.path.join(HERE, "engine_cmd.py"))
 
 
-def decide(event: dict, ws: str, zone: str):
-    """None to let the write run, or the hook's reply that refuses it."""
+def only_files(raw, root: str) -> list:
+    """The files a bounded run is bound to (GARRICK_ENGINE_ONLY: a JSON list of paths from the workspace), as real paths.
+    Raises when the value cannot be read, so the guard refuses."""
+    found = json.loads(raw)
+    if not isinstance(found, list) or not found or not all(isinstance(x, str) and x for x in found):
+        raise ValueError("no files")
+    return [os.path.realpath(os.path.join(root, x)) for x in found]
+
+
+def decide(event: dict, ws: str, zone: str, only=None):
+    """None to let the write run, or the hook's reply that refuses it. `only`, for a bounded run, is the list of real
+    paths of the files it may write: any other write is refused, wherever it would lead."""
     if event.get("tool_name") == "Bash":
         if bash_ok((event.get("tool_input") or {}).get("command")):
             return None
@@ -143,6 +153,10 @@ def decide(event: dict, ws: str, zone: str):
     if any(_ledger(path, root, blind) for path in targets(event)):
         return _deny("Refused: the notes ledger (System/notes-ledger.json) is written only by the channel that receives a note, "
                      "never by an exchange.")
+    if only is not None:
+        keep = {p.casefold() if blind else p for p in only}
+        if any((p.casefold() if blind else p) not in keep for p in targets(event)):
+            return _deny("Refused: this is one bounded change, and a write goes only in the file or files it names.")
     if not bad:
         return None
     reason = ("Refused: this exchange is bound to the %s zone. A write goes in that zone, a wiki's wiki/ folder or the "
@@ -162,7 +176,8 @@ def main() -> int:
         event = json.load(sys.stdin)
         if not ws or not zone or not isinstance(event, dict):
             raise ValueError("no binding")
-        reply = decide(event, ws, zone)
+        raw = os.environ.get("GARRICK_ENGINE_ONLY")
+        reply = decide(event, ws, zone, only_files(raw, os.path.realpath(ws)) if raw is not None else None)
     except BaseException:                      # fail closed, and with the exit code Claude blocks on
         reply = _deny("Refused: the engine's guard could not judge this write.")
     if reply:

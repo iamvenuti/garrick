@@ -27,7 +27,9 @@ closed by "done" or a switch); with none open, the bot asks "Which thread?". A l
 engine reads it (channels.plan).
 
 A reply to a question the bot asked (a pending subject) is read together with the message it answers, as Ask reads an
-answer to its own question. A message that could answer two pending questions at once is asked about, not guessed.
+answer to its own question. A message typed on its own is taken as that answer only within ten minutes of the question,
+and only when it is a bare yes or ok, or names a place the question offered, or alone settles to no place; a message that
+settles to a place of its own is a new request. A message that could answer two pending questions at once is asked about, not guessed.
 
 Standard library only, Python 3.9 or later.
 """
@@ -51,6 +53,9 @@ NOTE = re.compile(r"^\s*note\b\s*:?\s*(.*)\Z", re.I | re.S)
 NOTE_FOR = re.compile(r"^for\s+(.+?)\s*:\s*(.+)\Z", re.I | re.S)
 DONE = re.compile(r"^\s*(?:i['’]?m\s+)?(?:done|that['’]?s\s+all|all\s+done)\s*[.!]?\s*\Z", re.I)
 YES = re.compile(r"^\s*yes\s*[.!]?\s*\Z", re.I)
+OK = re.compile(r"^\s*(?:yes|yep|yeah|ok|okay|sure)\s*[.!]?\s*\Z", re.I)    # an answer to a question that offers one place
+ANSWER_WORDS = 6                # a message of more words, or one that asks something, is a new request, not an answer
+SUBJECT_WINDOW = 10 * 60        # a question about the subject takes a typed message as its answer this long; a reply has no limit
 NO = re.compile(r"^\s*(?:no|cancel|stop)\s*[.!]?\s*\Z", re.I)         # a no to a held action: these words alone, nothing after
 WHICH = "Which thread?"
 
@@ -65,15 +70,47 @@ def parse_note(text: str) -> Optional[dict]:
     return {"destination": f.group(1).strip(), "text": f.group(2).strip()} if f else {"destination": "", "text": rest}
 
 
-def settle(intake, root: Path, text: str):
-    """(kind, payload) for the place a message names: `place`, `ask` (the name is ambiguous), `none` or `refused`."""
+def settle(intake, root: Path, text: str, offer: Optional[list] = None):
+    """(kind, payload) for the place a message names: `place`, `ask` (the name is ambiguous), `none` or `refused`. The
+    words are settled as a question about a place, never a note's (`purpose="ask"`): a project alone is a place. When
+    `offer` is a list, the places an `ask` or `none` question lists are put in it."""
     try:
-        return "place", intake.resolve_destination(root, text, text)
+        return "place", intake.resolve_destination(root, text, text, purpose="ask")
     except intake.Confirm as e:
         q = str(e)
-        return ("none" if q.startswith("Where does the note about") else "ask"), q
+        if offer is not None:
+            offer.extend(getattr(e, "offer", None) or [])
+        return ("none" if isinstance(e, getattr(intake, "NoPlace", ())) and not getattr(e, "offer", None) else "ask"), q
     except intake.Refusal as e:
         return "refused", str(e)
+
+
+def pending_subjects(now: float) -> list:
+    """The questions about a subject that the bot asked and nobody has answered, inside the open window."""
+    return [e for e in exchanges.load()["exchanges"].values()
+            if e.get("pending_subject") and not e.get("closed") and now - e.get("touched", 0) <= SUBJECT_WINDOW]
+
+
+def is_answer(text: str) -> bool:
+    """Whether a message typed as a new message may be the answer to a question: short, and itself no question."""
+    return len(text.split()) <= ANSWER_WORDS and "?" not in text
+
+
+def answers_question(intake, root: Path, ex: dict, text: str) -> bool:
+    """Whether a message typed on its own answers the one question waiting. A bare yes or ok does. Otherwise the message is
+    settled alone: when it settles to no place (`ask`, `none`, `refused`) it is read as the answer; when it settles to a
+    place, it is the answer when the question offered no places (a plain \"Which thread?\") or offered that one, and any
+    other place is a new request."""
+    if OK.match(text or ""):
+        return True
+    kind, payload = settle(intake, root, strip_deep(text))
+    if kind != "place":
+        return True
+    offer = ex["pending_subject"].get("offer") or []
+    if not offer:                                  # a plain "Which thread?": the place typed is the answer
+        return True
+    mine = (payload["zone"], payload["project"], payload["thread"])
+    return any((o.get("zone"), o.get("project"), o.get("thread")) == mine for o in ex["pending_subject"].get("offer") or [])
 
 
 def route(intake, root: Path, message: dict, held_by_message, now: Optional[float] = None, cancelled_by_message=None) -> dict:
@@ -105,14 +142,28 @@ def route(intake, root: Path, message: dict, held_by_message, now: Optional[floa
     note = parse_note(text) if reply_to is None else None
     if note is not None:
         return {"do": "note", "destination": note["destination"], "text": note["text"]}
-    kind, payload = settle(intake, root, strip_deep(text))
+    if reply_to is None and is_answer(text):
+        waiting_subject = pending_subjects(now)
+        if len(waiting_subject) == 1 and answers_question(intake, root, waiting_subject[0], text):
+            return subject_answer(intake, root, waiting_subject[0], text)      # the bot has just asked: this is the answer
+        if len(waiting_subject) > 1:
+            names = [(e["pending_subject"]["text"] or "")[:40] for e in waiting_subject[:3]]
+            return {"do": "ask", "kind": "which-subject", "text": text,
+                    "question": "Two questions are waiting: which are you answering, %s? Reply to the one you mean." % " or ".join(
+                        '"%s"' % n for n in names)}
+    offer: list = []
+    kind, payload = settle(intake, root, strip_deep(text), offer)
+    if kind in ("ask", "none", "refused"):
+        inside = open_project(intake, root, text, now)          # "Pricing: ..." inside a project-bound exchange
+        if inside is not None:
+            kind, payload = "place", inside
     if kind == "place":
         ex = exchanges.open_session(now)
         if ex is not None and (ex["zone"], ex["project"], ex["thread"]) == (payload["zone"], payload["project"], payload["thread"]):
             return {"do": "continue", "exchange": ex, "text": text}
         return {"do": "bind", "place": payload, "text": text}
     if kind in ("ask", "refused"):
-        return {"do": "ask", "kind": "subject", "question": payload, "text": text}
+        return {"do": "ask", "kind": "subject", "question": payload, "text": text, "offer": offer}
     waiting = [e for e in exchanges.pending_for() if not e.get("pending_subject")]
     if len(waiting) > 1:                    # one message that could answer two questions: asked, never guessed
         names = [e["said"] for e in waiting[:3]]
@@ -121,18 +172,35 @@ def route(intake, root: Path, message: dict, held_by_message, now: Optional[floa
     ex = exchanges.open_session(now)
     if ex is not None:
         return {"do": "continue", "exchange": ex, "text": text}
-    return {"do": "ask", "kind": "subject", "question": WHICH, "text": text}
+    return {"do": "ask", "kind": "subject", "question": WHICH, "text": text, "offer": []}
+
+
+def open_project(intake, root: Path, text: str, now: float) -> Optional[dict]:
+    """The place a message names inside the project the open exchange is bound to, when that exchange is bound to a
+    project alone and the message names one of its threads: the conversation narrows, no question is asked."""
+    ex = exchanges.open_session(now)
+    if ex is None or not ex.get("project") or ex.get("thread"):
+        return None
+    kind, payload = settle(intake, root, "%s, %s" % (ex["project"], strip_deep(text)))
+    if kind == "place" and (payload["zone"], payload["project"]) == (ex["zone"], ex["project"]) and payload["thread"]:
+        return payload
+    return None
 
 
 def subject_answer(intake, root: Path, ex: dict, answer: str) -> dict:
     """The owner answered the bot's question about the subject: read together with the message it answers. When it
-    settles to one place it binds; when it does not, the question is asked again, never guessed."""
+    settles to one place it binds; when it does not, the question is asked again, never guessed. A yes or an ok to a
+    question that offered one place binds to that place."""
     first = ex["pending_subject"]["text"]
-    kind, payload = settle(intake, root, strip_deep(first) + "\n" + answer)
+    offered = ex["pending_subject"].get("offer") or []
+    if OK.match(answer or "") and len(offered) == 1:
+        return {"do": "bind", "place": dict(offered[0]), "text": first, "answer_to": ex["id"]}
+    offer: list = []
+    kind, payload = settle(intake, root, strip_deep(first) + "\n" + answer, offer)
     if kind == "place":
         return {"do": "bind", "place": payload, "text": first, "answer_to": ex["id"]}
     return {"do": "ask", "kind": "subject", "question": payload if kind in ("ask", "refused") else WHICH, "text": first,
-            "answer_to": ex["id"]}
+            "answer_to": ex["id"], "offer": offer}
 
 
 def strip_deep(text: str) -> str:

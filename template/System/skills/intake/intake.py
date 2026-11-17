@@ -1082,12 +1082,15 @@ def _extra_module(root: Path, name: str):
     return _MODS[key]
 
 
-def _live_threads(folder: Path) -> List[str]:
+def _live_threads(folder: Path, only_active: bool = False) -> List[str]:
+    """The thread folders of a project that have a note. With `only_active`, those whose status is `active`: parked and
+    done threads are not live, and a question that settles to the one live thread counts none of them."""
     out = []
     threads = folder / "Threads"
     if threads.is_dir():
         for t in sorted(p for p in threads.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))):
-            if (t / (t.name + ".md")).is_file():
+            note = t / (t.name + ".md")
+            if note.is_file() and (not only_active or str(parse_frontmatter(note).get("status") or "").strip().lower() == "active"):
                 out.append(t.name)
     return out
 
@@ -1100,23 +1103,56 @@ def _which(options: List[str]) -> str:
     return ", ".join(options[:-1]) + " or " + options[-1] if len(options) > 1 else options[0]
 
 
-def resolve_destination(root: Path, spoken: str, about: str = "") -> dict:
+class NoPlace(Confirm):
+    """A purpose="ask" question for a name that settled to no place. `offer` is the places it lists, when it lists any."""
+
+    def __init__(self, text: str, offer: Optional[List[dict]] = None):
+        super().__init__(text)
+        self.offer = offer or []
+
+
+def _party_candidates(root: Path, scope, lib_, names: dict, found) -> List[dict]:
+    """The places a party's name could mean: the live threads of the projects that carry the party's tag, in the
+    party's own zone only, three at most, as places the dispatcher can bind to."""
+    out = []
+    tags = set().union(*(e.parties for e in found.entries if e.kind == "party")) if found.entries else set()
+    zones = {e.zone for e in found.entries if e.kind == "party" and e.zone}
+    for zone, projects in names.items():
+        if zone not in zones:
+            continue
+        for project, rec in projects.items():
+            if not (scope.place_parties(root, zone, project, None, lib_) & tags):
+                continue
+            for thread in (sorted(rec["threads"]) or [None]):
+                out.append({"zone": zone, "project": project, "thread": thread, "said": _said(project, thread)})
+    return out[:3]
+
+
+def resolve_destination(root: Path, spoken: str, about: str = "", purpose: str = "note") -> dict:
     """Where a note goes, from the words it was given: {"zone", "project", "thread" (or None), "folder", "said"}.
 
     The words are settled as Ask settles any name, by ask_scope.mentions(): the Parties, People and Aliases of
     context.md, a project's or a thread's name and its spoken form. Nothing is guessed. A name that fits two
     places, or none, comes back as a question (Confirm) and nothing is filed; a destination in two zones is
-    refused, as a note is about one place; a project that holds several threads asks which thread."""
-    ask_q = "Where does the note about %s go?" % (first_words(about) or "this")
+    refused, as a note is about one place; a project that holds several threads asks which thread.
+
+    `purpose="ask"` is for a question about a place, not a note (the Telegram channel's dispatcher): the questions
+    are worded without "note", a name that settled to nothing but a party lists the party's places, and a project
+    alone is enough: with one live thread it settles to that thread, with several to the project (thread None)."""
+    asking = purpose == "ask"
+    if asking:
+        ask_q = "Which thread?"
+    else:
+        ask_q = "Where does the note about %s go?" % (first_words(about) or "this")
     spoken = " ".join((spoken or "").split())
     if not spoken:
-        raise Confirm(ask_q)
+        raise (NoPlace(ask_q) if asking else Confirm(ask_q))
     ask, scope = _extra_module(root, "ask.py"), _extra_module(root, "ask_scope.py")
     if ask is None or scope is None:
         raise Confirm("%s A spoken name can be settled only with the status extra installed." % ask_q)
     lib_ = scope.lib(root)
     if lib_ is None:
-        raise Confirm(ask_q)
+        raise (NoPlace(ask_q) if asking else Confirm(ask_q))
     names = ask.scan(root)
     ctx = load_context(root)
     found = scope.mentions(root, spoken, names, ctx, lib_)
@@ -1124,8 +1160,15 @@ def resolve_destination(root: Path, spoken: str, about: str = "") -> dict:
         raise Confirm(found.question)
     places = found.places
     if not places:
+        if asking:
+            offer = _party_candidates(root, scope, lib_, names, found)
+            if offer:
+                raise NoPlace("Which thread do you mean: %s?" % _which([o["said"] for o in offer]), offer)
+            raise NoPlace(ask_q)
         raise Confirm(ask_q)
     zones = sorted({z for z, _, _ in places})
+    if len(zones) > 1 and asking:
+        raise Refusal("That names places in two zones, %s. Say one." % " and ".join(zones))
     if len(zones) > 1:
         raise Refusal("The destination names places in two zones, %s. A note is about one place: say one, and "
                       "nothing was filed." % " and ".join(zones))
@@ -1133,22 +1176,33 @@ def resolve_destination(root: Path, spoken: str, about: str = "") -> dict:
     threads = sorted({(p, t) for _, p, t in places if t})
     projects = sorted({p for _, p, t in places if not t})
     if len(threads) > 1:
+        if asking:
+            raise Confirm("Which thread do you mean: %s?" % _which([_said(p, t) for p, t in threads]))
         raise Confirm("Which thread is the note about: %s?" % _which([_said(p, t) for p, t in threads]))
     if threads:
         project, thread = threads[0]
         if any(p != project for p in projects):
+            if asking:
+                raise Confirm("Which one do you mean: %s?" % _which([_said(p, None) for p in sorted(set(projects) | {project})]))
             raise Confirm("Which place is the note about: %s?" % _which([_said(p, None) for p in sorted(set(projects) | {project})]))
     else:
         if len(projects) > 1:
+            if asking:
+                raise Confirm("Which project do you mean: %s?" % _which(projects))
             raise Confirm("Which project is the note about: %s?" % _which(projects))
         project, thread = projects[0], None
         many = _live_threads(root / "Zones" / zone / project)
-        if many:
+        live = _live_threads(root / "Zones" / zone / project, True)
+        if asking and len(live) == 1:
+            thread = live[0]                     # one active thread: the question is about that thread
+        elif many and not asking:
             raise Confirm("Which thread of %s is the note about: %s?" % (project, _which(many)))
     folder = root / "Zones" / zone / project
     if thread:
         folder = folder / "Threads" / thread
     if not (folder / (folder.name + ".md")).is_file():
+        if asking:
+            raise Refusal("%s has nothing to read yet." % _said(project, thread))
         raise Refusal("%s has no note of its own, so there is nowhere to put a note." % _said(project, thread))
     return {"zone": zone, "project": project, "thread": thread, "folder": folder, "said": _said(project, thread)}
 

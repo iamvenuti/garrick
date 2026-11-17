@@ -547,6 +547,439 @@ class TestActDoesTheWork(EngineCase):
         self.assertEqual((False, "Not run: the hourly limit of 60 calls is reached."), (got["ok"], got["say"]))
 
 
+class TestBoundedRun(EngineCase):
+    """#592: one bounded edit, or one commit, in one zone or one wiki, through the repository's own hook."""
+
+    def setUp(self):
+        super().setUp()
+        self.rel = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        self.file = self.root / self.rel
+        self.hook = self.work / ".git" / "hooks" / "pre-commit"
+
+    def edit(self, text="Shorter.\n", extra=None):
+        def act(cmd, env):
+            self.file.write_text(self.file.read_text() + text)
+            for path, body in (extra or {}).items():
+                write(path, body)
+        return self.runner("Done.", act=act)
+
+    def head(self):
+        return git(self.work, "rev-parse", "HEAD").strip()
+
+    def test_an_edit_is_committed_with_the_trailer_through_the_hook(self):
+        self.hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\ntouch \"$(git rev-parse --git-dir)/hook-ran\"\n")
+        before = self.head()
+        run = self.edit()
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "Work: shorten the resume point", run, self.cap_ok)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(("Zones/Work", [self.rel]), (got["repo"], got["files"]))
+        self.assertEqual(got["commit"], self.head())
+        self.assertNotEqual(before, self.head())
+        body = git(self.work, "log", "-1", "--format=%B")
+        self.assertTrue(body.startswith("Work: shorten the resume point"))
+        self.assertRegex(body, r"Garrick-Bounded: [0-9a-f]{8}")
+        self.assertTrue((self.work / ".git" / "hook-ran").exists())                       # the hook ran: never --no-verify
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+    def test_the_session_has_no_git_add_or_commit_and_runs_at_act_on_the_ask_tier(self):
+        run = self.edit()
+        self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        cmd = run.seen[0]["cmd"]
+        allowed = " ".join(cmd[cmd.index("--allowedTools"):])
+        self.assertNotIn(" git add", allowed)
+        self.assertNotIn(" git commit", allowed)
+        self.assertIn(" git diff", allowed)
+        self.assertIn("Edit", allowed)
+        self.assertEqual("sonnet", run.seen[0]["tier"])
+        self.assertIn("<autonomy>act</autonomy>", cmd[cmd.index("-p") + 1])
+
+    def test_a_refused_commit_leaves_no_edit(self):
+        self.hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\necho refused >&2\nexit 1\n")
+        before, text = self.head(), self.file.read_text()
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.edit(), self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertIn("refused", got["say"])
+        self.assertEqual((before, text), (self.head(), self.file.read_text()))
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+    def test_a_change_outside_the_file_fails_and_only_the_named_file_is_put_back(self):
+        other = self.work / "Acme Review" / "Stray.md"
+        todo = self.work / "Todo.md"
+        was = todo.read_text()
+        run = self.edit(extra={other: "stray\n"})
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertTrue(other.exists())                  # not named: never deleted (N2); the guard stops a real run writing it
+        self.assertNotIn("Shorter.", self.file.read_text())
+        self.assertEqual(was, todo.read_text())
+        self.assertEqual("?? \"Acme Review/Stray.md\"", git(self.work, "status", "--porcelain").strip())   # only the stray is left
+
+    def test_an_assistant_that_commits_on_its_own_is_a_failure(self):
+        def act(cmd, env):
+            self.file.write_text(self.file.read_text() + "x\n")
+            git(self.work, "commit", "-qam", "its own")
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.runner("Done.", act=act), self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertIn("commit of its own", got["say"])
+
+    def test_every_path_is_checked_before_anything_runs(self):
+        run = self.runner()
+        wiki = self.root / "Wikis" / "Meetings"
+        write(wiki / "raw" / "a.md", "raw\n")
+        git(self.root / "Wikis" / "Meetings", "init", "-q")
+        bad = [("Work", ["Zones/Personal/Home Move/Home Move.md"]), ("Work", ["../Personal/x.md"]), ("Work", ["/etc/passwd"]),
+               ("Work", ["Zones/Work/Missing.md"]), ("Work", ["Zones/Work/.git/config"]), ("Work", []), ("Work", [None]),
+               ("Nowhere", [self.rel]), ("Work/x", [self.rel]), ("..", [self.rel]), ("Meetings", ["Wikis/Meetings/raw/a.md"]),
+               ("Meetings", [self.rel]), ("Work", ["Wikis/Meetings/raw/a.md"])]
+        for zone, files in bad:
+            got = self.engine.run_bounded(self.root, zone, files, "Shorten it", "m", run, self.cap_ok)
+            self.assertFalse(got["ok"], (zone, files))
+            self.assertNotIn("unavailable", got)
+        self.assertEqual([], run.seen)                                                      # nothing ran for any of them
+
+    def test_a_symlink_out_of_the_zone_is_refused(self):
+        link = self.work / "Acme Review" / "out.md"
+        link.symlink_to(self.personal / "Home Move" / "Home Move.md")
+        run = self.runner()
+        got = self.engine.run_bounded(self.root, "Work", ["Zones/Work/Acme Review/out.md"], "Shorten it", "m", run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertEqual([], run.seen)
+
+    def test_a_file_with_unsaved_changes_is_refused(self):
+        self.file.write_text(self.file.read_text() + "mine\n")
+        run = self.edit()
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertEqual([], run.seen)
+        self.assertIn("mine", self.file.read_text())
+
+    def test_an_unavailable_engine_touches_nothing(self):
+        run = self.edit()
+        bad = dict(self.cap_ok, ok=False, failed=["resume"], said=["x"])
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, bad)
+        self.assertEqual((False, True), (got["ok"], got.get("unavailable")))
+        self.assertEqual([], run.seen)
+        self.settings(ask={"autonomy": "read"})
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        self.assertTrue(got.get("unavailable"))
+        self.assertEqual([], run.seen)
+        with mock.patch.dict(os.environ, {"GARRICK_HARNESS": "codex"}):
+            self.settings(ask={"autonomy": "act"})
+            self.assertTrue(self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok).get("unavailable"))
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+    def test_a_held_send_is_cancelled_and_the_edit_is_not_kept(self):
+        def act(cmd, env):
+            self.file.write_text(self.file.read_text() + "x\n")
+            self.hold.add("ask", "Work", env["GARRICK_ENGINE_EXCHANGE"], "Send it", "dana@example.com",
+                          {"tool": "mcp__mail__send_message", "args": {"to": "dana@example.com"}})
+        before = self.head()
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.runner("Done.", act=act), self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertEqual(before, self.head())
+        self.assertNotIn("x\n", self.file.read_text())
+        self.assertEqual([], self.hold.pending())
+
+    def test_a_commit_only_request_commits_just_the_files_named_and_the_assistant_writes_the_message(self):
+        other = self.work / "Todo.md"
+        other.write_text(other.read_text() + "- [ ] stray\n")
+        self.file.write_text(self.file.read_text() + "made by hand\n")
+        run = self.runner("Work: add a line to the Pricing resume point")
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "", "", run, self.cap_ok)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual("Work: add a line to the Pricing resume point", git(self.work, "log", "-1", "--format=%s").strip())
+        self.assertEqual(" M Todo.md", git(self.work, "status", "--porcelain").rstrip())     # the other file is not in it
+        self.assertIn("<autonomy>read</autonomy>", run.seen[0]["cmd"][run.seen[0]["cmd"].index("-p") + 1])
+
+    def test_a_wiki_page_is_bounded_to_its_wiki(self):
+        wiki = self.root / "Wikis" / "Meetings"
+        write(wiki / "wiki" / "261012 - Call.md", "---\ntitle: Call\n---\nlong\n")
+        git(wiki, "init", "-q")
+        for cfg in (("user.name", "Sam Rivera"), ("user.email", "sam@example.com"), ("gc.auto", "0"), ("maintenance.auto", "false")):
+            git(wiki, "config", *cfg)
+        git(wiki, "add", "-A")
+        git(wiki, "commit", "-q", "-m", "start")
+        rel = "Wikis/Meetings/wiki/261012 - Call.md"
+
+        def act(cmd, env):
+            (self.root / rel).write_text("---\ntitle: Call\n---\nshort\n")
+        got = self.engine.run_bounded(self.root, "Meetings", [rel], "Shorten it", "Meetings: shorten the call", self.runner("ok", act=act), self.cap_ok)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual("Wikis/Meetings", got["repo"])
+        self.assertEqual("Meetings: shorten the call", git(wiki, "log", "-1", "--format=%s").strip())
+
+    def test_undo_reverts_only_a_bounded_commit_nobody_touched_since(self):
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.edit("one more\n"), self.cap_ok)
+        self.assertTrue(got["ok"], got)
+        undone = self.engine.undo_bounded(self.root, got["repo"], got["commit"])
+        self.assertTrue(undone["ok"], undone)
+        self.assertNotIn("one more", self.file.read_text())
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+        self.assertTrue(git(self.work, "log", "-1", "--format=%s").startswith("Undo:"))
+
+    def test_undo_refuses_when_a_later_commit_touched_the_file(self):
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.edit("one more\n"), self.cap_ok)
+        self.file.write_text(self.file.read_text() + "later\n")
+        git(self.work, "commit", "-qam", "later edit")
+        head = self.head()
+        undone = self.engine.undo_bounded(self.root, got["repo"], got["commit"])
+        self.assertFalse(undone["ok"])
+        self.assertEqual(head, self.head())
+        self.assertIn("one more", self.file.read_text())
+
+    def test_undo_refuses_a_commit_that_run_bounded_did_not_make(self):
+        self.file.write_text(self.file.read_text() + "by hand\n")
+        git(self.work, "commit", "-qam", "by hand")
+        head = self.head()
+        undone = self.engine.undo_bounded(self.root, "Zones/Work", head)
+        self.assertFalse(undone["ok"])
+        self.assertEqual(head, self.head())
+        for repo, commit in (("Zones/Work", "zzz"), ("Zones", head), ("Zones/Nowhere", head), ("Wikis/Work", head), ("../x", head), (None, head)):
+            self.assertFalse(self.engine.undo_bounded(self.root, repo, commit)["ok"])
+
+    def test_undo_refused_by_the_hook_changes_nothing(self):
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.edit("one more\n"), self.cap_ok)
+        self.hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\nexit 1\n")
+        head = self.head()
+        undone = self.engine.undo_bounded(self.root, got["repo"], got["commit"])
+        self.assertFalse(undone["ok"])
+        self.assertEqual(head, self.head())
+        self.assertIn("one more", self.file.read_text())
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+
+
+class TestBoundedRunFixes(EngineCase):
+    """0.70.0's fix round: what a bounded run may change, restore and commit."""
+
+    def setUp(self):
+        super().setUp()
+        self.rel = "Zones/Work/Acme Review/Threads/Pricing/Pricing.md"
+        self.file = self.root / self.rel
+        self.hook = self.work / ".git" / "hooks" / "pre-commit"
+
+    def edit(self, text="Shorter.\n", also=None):
+        def act(cmd, env):
+            self.file.write_text(self.file.read_text() + text)
+            if also:
+                also()
+        return self.runner("Done.", act=act)
+
+    def head(self, repo=None):
+        return git(repo or self.work, "rev-parse", "HEAD").strip()
+
+    def made(self, text="one more\n"):
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", self.edit(text), self.cap_ok)
+        self.assertTrue(got["ok"], got)
+        return got
+
+    def wiki(self, own=True):
+        wiki = self.root / "Wikis" / "Meetings"
+        write(wiki / "wiki" / "261012 - Call.md", "---\ntitle: Call\n---\nlong\n")
+        other = self.root / "Wikis" / "Knowledge"
+        write(other / "wiki" / "Vendor.md", "---\ntitle: Vendor\n---\nfacts\n")
+        top = wiki if own else self.root / "Wikis"
+        git(top, "init", "-q")
+        for cfg in (("user.name", "Sam Rivera"), ("user.email", "sam@example.com"), ("gc.auto", "0"), ("maintenance.auto", "false")):
+            git(top, "config", *cfg)
+        git(top, "add", "-A")
+        git(top, "commit", "-q", "-m", "start")
+        return top, "Wikis/Meetings/wiki/261012 - Call.md"
+
+    # S1
+    def test_undo_refuses_when_something_else_is_staged_and_changes_nothing(self):
+        got = self.made()
+        write(self.work / "Acme Review" / "Other.md", "mine\n")
+        git(self.work, "add", "Acme Review/Other.md")
+        head = self.head()
+        undone = self.engine.undo_bounded(self.root, got["repo"], got["commit"])
+        self.assertFalse(undone["ok"])
+        self.assertEqual(head, self.head())
+        self.assertRegex(git(self.work, "status", "--porcelain").rstrip(), r'^A  "?Acme Review/Other.md"?$')
+        self.assertIn("one more", self.file.read_text())
+
+    def test_the_undo_commit_holds_the_reverted_files_only(self):
+        got = self.made()
+        undone = self.engine.undo_bounded(self.root, got["repo"], got["commit"])
+        self.assertTrue(undone["ok"], undone)
+        self.assertEqual("Acme Review/Threads/Pricing/Pricing.md", git(self.work, "show", "--name-only", "--format=", "HEAD").strip())
+
+    # S2
+    def test_a_file_that_was_dirty_before_and_changed_during_the_run_is_left_as_it_is(self):
+        mine = self.work / "Todo.md"
+        mine.write_text(mine.read_text() + "- [ ] mine\n")
+        was = mine.read_text()
+        run = self.edit(also=lambda: mine.write_text(was + "- [ ] changed while it ran\n"))
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertIn("not given", got["say"])
+        self.assertIn("changed while it ran", mine.read_text())                         # never reverted
+        self.assertNotIn("Shorter.", self.file.read_text())                              # the named file is put back
+
+    def test_a_tracked_clean_file_the_run_changed_is_left_and_reported_not_reverted(self):
+        todo = self.work / "Todo.md"
+        run = self.edit(also=lambda: todo.write_text(todo.read_text() + "- [ ] from the run\n"))
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertIn("not given", got["say"])
+        self.assertIn("from the run", todo.read_text())
+        self.assertNotIn("Shorter.", self.file.read_text())
+
+    def test_a_new_file_someone_else_makes_during_a_failed_run_is_kept(self):
+        theirs = self.work / "Inbox note.md"
+        run = self.edit(also=lambda: theirs.write_text("made by another session\n"))
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertTrue(theirs.exists())                                                 # never deleted
+        self.assertNotIn("Shorter.", self.file.read_text())
+
+    # C7
+    def test_a_refused_commit_keeps_what_was_staged_before(self):
+        self.file.write_text(self.file.read_text() + "made by hand\n")
+        git(self.work, "add", str(self.file))
+        self.hook.write_text("#!/bin/sh\n# Garrick wall check (a stand-in)\nexit 1\n")
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "", "m", self.runner(), self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertRegex(git(self.work, "status", "--porcelain").rstrip(), r'^M  "?Acme Review/Threads/Pricing/Pricing.md"?$')
+
+    # C3
+    def test_a_wiki_without_a_repository_of_its_own_uses_the_one_of_wikis(self):
+        top, rel = self.wiki(own=False)
+
+        def act(cmd, env):
+            (self.root / rel).write_text("---\ntitle: Call\n---\nshort\n")
+        got = self.engine.run_bounded(self.root, "Meetings", [rel], "Shorten it", "Meetings: shorten the call", self.runner("ok", act=act), self.cap_ok)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual("Wikis/Meetings", got["repo"])
+        self.assertEqual("Meetings: shorten the call", git(top, "log", "-1", "--format=%s").strip())
+        undone = self.engine.undo_bounded(self.root, got["repo"], got["commit"], rel)
+        self.assertTrue(undone["ok"], undone)
+        self.assertIn("long", (self.root / rel).read_text())
+
+    def test_a_change_in_the_other_wiki_of_the_shared_repository_fails_the_run(self):
+        top, rel = self.wiki(own=False)
+        stray = self.root / "Wikis" / "Knowledge" / "wiki" / "Stray.md"
+
+        def act(cmd, env):
+            (self.root / rel).write_text("---\ntitle: Call\n---\nshort\n")
+            stray.write_text("stray\n")
+        before = self.head(top)
+        got = self.engine.run_bounded(self.root, "Meetings", [rel], "Shorten it", "m", self.runner("ok", act=act), self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertEqual(before, self.head(top))
+        self.assertTrue(stray.exists())                                             # not named: left as it is (N2); the guard stops a real run writing it
+        self.assertIn("long", (self.root / rel).read_text())
+
+    def test_a_wiki_with_no_repository_at_all_is_unavailable_and_touches_nothing(self):
+        write(self.root / "Wikis" / "Meetings" / "wiki" / "261012 - Call.md", "long\n")
+        run = self.runner()
+        got = self.engine.run_bounded(self.root, "Meetings", ["Wikis/Meetings/wiki/261012 - Call.md"], "Shorten it", "m", run, self.cap_ok)
+        self.assertEqual((False, True), (got["ok"], got.get("unavailable")))
+        self.assertEqual([], run.seen)
+
+    # W3
+    def test_the_guard_is_bound_to_the_files_of_the_run(self):
+        run = self.edit()
+        self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        env = run.seen[0]["env"]
+        self.assertEqual([self.rel], json.loads(env["GARRICK_ENGINE_ONLY"]))
+        plain = self.runner()
+        self.engine.run(self.root, "ask", "hello", "Work", {"id": "x1"}, plain, self.cap_ok)
+        self.assertNotIn("GARRICK_ENGINE_ONLY", plain.seen[0]["env"])
+
+    def test_the_guard_refuses_any_write_but_the_named_files(self):
+        only = self.guard.only_files(json.dumps([self.rel]), str(self.root))
+        for path in ("Zones/Work/Acme Review/Other.md", "Wikis/Knowledge/wiki/Vendor.md", "Inbox/x.md", "Zones/Work/Todo.md"):
+            event = {"tool_name": "Write", "tool_input": {"file_path": str(self.root / path)}, "cwd": str(self.root)}
+            self.assertIsNotNone(self.guard.decide(event, str(self.root), "Work", only), path)
+            self.assertIsNone(self.guard.decide(event, str(self.root), "Work") if path.startswith("Zones/Work") else None)
+        event = {"tool_name": "Edit", "tool_input": {"file_path": str(self.file)}, "cwd": str(self.root)}
+        self.assertIsNone(self.guard.decide(event, str(self.root), "Work", only))
+        for bad in ("", "nope", "[]", "{}", '[1]'):
+            with self.assertRaises(Exception):
+                self.guard.only_files(bad, str(self.root))
+
+    def test_a_change_in_another_zone_after_the_run_fails_it(self):
+        stray = self.personal / "Home Move" / "Stray.md"
+        git(self.personal, "init", "-q")
+        run = self.edit(also=lambda: stray.write_text("stray\n"))
+        before = self.head()
+        got = self.engine.run_bounded(self.root, "Work", [self.rel], "Shorten it", "m", run, self.cap_ok)
+        self.assertFalse(got["ok"])
+        self.assertEqual(before, self.head())
+        self.assertNotIn("Shorter.", self.file.read_text())
+
+    # W2 and C2
+    def test_a_commit_only_call_takes_fifty_files_and_an_edit_takes_eight(self):
+        files = []
+        for n in range(12):
+            path = self.work / "Acme Review" / ("Bulk%02d.md" % n)
+            write(path, "x\n")
+            files.append("Zones/Work/Acme Review/Bulk%02d.md" % n)
+        run = self.runner("Work: add the bulk pages")
+        got = self.engine.run_bounded(self.root, "Work", files, "", "", run, self.cap_ok)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual(12, len(got["files"]))
+        many = ["Zones/Work/Acme Review/Bulk%02d.md" % n for n in range(9)]
+        self.assertFalse(self.engine.run_bounded(self.root, "Work", many, "Shorten it", "m", self.runner(), self.cap_ok)["ok"])
+        self.assertFalse(self.engine.run_bounded(self.root, "Work", many * 6, "", "m", self.runner(), self.cap_ok)["ok"])
+
+    def test_a_deleted_file_is_committed_when_git_shows_it_changed(self):
+        gone = self.work / "Acme Review" / "Gone.md"
+        write(gone, "x\n")
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "-q", "-m", "add gone")
+        gone.unlink()
+        rel = "Zones/Work/Acme Review/Gone.md"
+        got = self.engine.run_bounded(self.root, "Work", [rel], "", "Work: remove the page", self.runner(), self.cap_ok)
+        self.assertTrue(got["ok"], got)
+        self.assertEqual("", git(self.work, "status", "--porcelain").strip())
+        # a file that is neither there nor changed is refused, and so is one outside the folder
+        self.assertFalse(self.engine.run_bounded(self.root, "Work", ["Zones/Work/Acme Review/Never.md"], "", "m", self.runner(), self.cap_ok)["ok"])
+        self.assertFalse(self.engine.run_bounded(self.root, "Work", ["Zones/Personal/Gone.md"], "", "m", self.runner(), self.cap_ok)["ok"])
+        self.assertFalse(self.engine.run_bounded(self.root, "Work", ["Zones/Work/../Personal/Gone.md"], "", "m", self.runner(), self.cap_ok)["ok"])
+
+    # S6
+    def test_a_finding_undo_acts_only_on_a_commit_of_its_own_page(self):
+        got = self.made()
+        other = "Zones/Work/Acme Review/Acme Review.md"
+        req = {"verb": "finding", "kind": "resume-long", "answer": "undo-bounded", "path": other, "commit": got["commit"], "repo": got["repo"]}
+        with self.assertRaises(self.pa.Refused):
+            self.pa.answer_finding(self.root, req, None)
+        self.assertIn("one more", self.file.read_text())
+        req = dict(req, path=self.rel, repo="Zones/Personal")
+        with self.assertRaises(self.pa.Refused):
+            self.pa.answer_finding(self.root, req, None)
+        self.assertIn("one more", self.file.read_text())
+        done = self.pa.answer_finding(self.root, dict(req, repo=got["repo"]), None)
+        self.assertIn("Undone", done["say"])
+        self.assertNotIn("one more", self.file.read_text())
+
+    # S7
+    def test_a_trailer_line_in_the_middle_of_a_message_is_not_the_trailer(self):
+        self.file.write_text(self.file.read_text() + "by hand\n")
+        git(self.work, "commit", "-qam", "by hand\n\nGarrick-Bounded: abcd1234\n\nand then more words")
+        head = self.head()
+        self.assertFalse(self.engine.undo_bounded(self.root, "Zones/Work", head)["ok"])
+        self.assertEqual(head, self.head())
+        got = self.made("again\n")
+        self.assertTrue(self.engine.undo_bounded(self.root, got["repo"], got["commit"])["ok"])
+
+    # C6
+    def test_the_commit_subject_of_a_finding_is_a_fixed_sentence_with_no_path(self):
+        seen = {}
+
+        class Stub:
+            @staticmethod
+            def run_bounded(ws, zone, files, request, message="", *a, **k):
+                seen.update(message=message)
+                return {"ok": False, "say": "no"}
+        with mock.patch.object(self.pa, "engine_module", lambda: Stub):
+            for kind, answer in (("wall", "take-out"), ("resume-long", "shorten"), ("meeting-long", "shorten"), ("fix-failed", "fix-now")):
+                with self.assertRaises(self.pa.Refused):
+                    self.pa.finding_bounded(self.root, {}, kind, answer, self.rel)
+                self.assertTrue(seen["message"] and "/" not in seen["message"] and "Pricing" not in seen["message"], seen)
+
+
 class TestASendIsHeld(EngineCase):
     def asking(self, cmd, env):
         """The assistant, told by a record to forward something: the only way out it has is hold."""

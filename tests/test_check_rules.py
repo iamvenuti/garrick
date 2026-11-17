@@ -578,6 +578,28 @@ class TestTodo(CheckCase):
         commit_all(self.work, "today")
         self.assertFinds("todo", "warning", "grew by 24")
 
+    def test_a_thread_over_its_cap_warns_and_the_cap_can_move(self):
+        """#591: five open lines a thread, a soft cap: a warning, never a refusal."""
+        self.todo(*["- [ ] [[Pricing]]: step %d" % i for i in range(5)])
+        self.assertClean("todo")
+        self.todo(*["- [ ] [[Pricing]]: step %d" % i for i in range(6)])
+        self.assertFinds("todo", "warning", "[[Pricing]] holds more than 5 open lines")
+        settings(self.root, {"todo-thread-cap": 0})                   # none
+        self.assertClean("todo")
+        settings(self.root, {"todo-thread-cap": {"Work": 2}})        # or one per zone
+        self.assertFinds("todo", "warning", "more than 2 open lines")
+
+    def test_a_waiting_line_names_an_open_line_of_the_user(self):
+        self.todo("- [ ] [[Pricing]]: send Dana the price sheet",
+                  "- [ ] [[Pricing]]: Dana's volume floor — blocks: send Dana the price sheet #waiting ⏳ 2026-03-22",
+                  "- [ ] [[Pricing]]: Theo's logo #waiting")        # an older line with no clause: fine while the thread has an own line
+        self.assertClean("todo")
+        self.todo("- [ ] [[Pricing]]: Dana's volume floor — blocks: send the lane map #waiting ⏳ 2026-03-22",
+                  "- [ ] [[Pricing]]: send Dana the price sheet")
+        self.assertFinds("todo", "warning", "names no open line of yours in its thread")
+        self.todo("- [ ] [[Pricing]]: Theo's logo #waiting ⏳ 2026-03-22")      # nothing of the user's in the thread at all
+        self.assertFinds("todo", "warning", "names no open line of yours")
+
     def test_a_line_that_reads_as_a_log_entry(self):
         """A line names one action. Counted as Obsidian shows it, so a thread's
         full path and the sources a sweep folded onto it do not count."""

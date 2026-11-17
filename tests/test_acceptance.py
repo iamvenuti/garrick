@@ -76,6 +76,35 @@ class AskSetTest(unittest.TestCase):
         self.assertEqual(acme["none"], birch["any"])
 
 
+class FixtureDatesTest(unittest.TestCase):
+    """The fixtures name the demo's records by date; a demo built in another week moves them (the demo's `weeks_for`)."""
+
+    def test_the_fixtures_own_week_moves_nothing_and_each_later_week_moves_seven_days(self):
+        import datetime as dt
+        for day, days in ((dt.date(2026, 11, 9), 0), (dt.date(2026, 11, 15), 0), (dt.date(2026, 11, 16), 7),
+                          (dt.date(2026, 11, 22), 7), (dt.date(2026, 11, 23), 14), (dt.date(2026, 11, 8), -7)):
+            self.assertEqual(dt.timedelta(days=days), acceptance.fixture_shift(day), day)
+
+    def test_every_date_in_a_fixture_moves_and_nothing_else_does(self):
+        import datetime as dt
+        week = dt.timedelta(days=7)
+        self.assertEqual("261110-cobalt-renewal-for-acme", acceptance.moved("261103-cobalt-renewal-for-acme", week))
+        self.assertEqual({"first": "261231-x", "any": ["270107", "Acme 4200 pallets"]},
+                         acceptance.moved({"first": "261224-x", "any": ["261231", "Acme 4200 pallets"]}, week))
+        self.assertEqual("261027-a", acceptance.moved("261027-a", dt.timedelta(0)))
+
+    def test_the_set_and_the_side_names_follow_the_demo_built_today(self):
+        import datetime as dt
+        sys.path.insert(0, str(REPO / "examples" / "demo"))
+        try:
+            import build as demo
+        finally:
+            sys.path.pop(0)
+        today = dt.date.today()
+        shift = acceptance.fixture_shift(today)
+        self.assertEqual(demo.LAST_DAY + dt.timedelta(days=7 * demo.weeks_for(today)) - shift, acceptance.FIXTURE_LAST_DAY)
+
+
 class JudgeTest(unittest.TestCase):
     def setUp(self):
         with tempfile.TemporaryDirectory() as tmp:

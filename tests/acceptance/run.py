@@ -64,6 +64,34 @@ STEPS = ("install", "demo", "file", "brief", "wrap", "restart", "resume", "corre
 # The demo's thread this run wraps, the call it files, and the fact it corrects.
 ZONE, PROJECT, THREAD = "Birch", "Birch Entry", "Launch Plan"
 SIDE_ACME, SIDE_BIRCH = "261027-cobalt-renewal-for-acme", "261103-cobalt-northern-lane-for-birch"
+_SIDE_ACME, _SIDE_BIRCH = SIDE_ACME, SIDE_BIRCH
+# The demo moves its month forward by whole weeks so that its last day is the build day or one of the six before
+# (examples/demo/build.py, `weeks_for`). The names above and the dates in ask_set.json are as a build in the week of
+# 9 to 15 November 2026 writes them; `moved()` takes them to the week the run builds in.
+DEMO_LAST_DAY, FIXTURE_LAST_DAY = datetime.date(2026, 9, 28), datetime.date(2026, 11, 9)
+FIXTURE_DATE = re.compile(r"(?<!\d)(2[6-9][01]\d[0-3]\d)(?!\d)")
+
+
+def fixture_shift(today):
+    """How far the fixtures' dates move for a demo built on `today`: whole weeks, zero in their own week."""
+    weeks = (today - DEMO_LAST_DAY).days // 7
+    return DEMO_LAST_DAY + datetime.timedelta(days=7 * weeks) - FIXTURE_LAST_DAY
+
+
+def moved(value, shift):
+    """`value` (a string, or lists and dicts of them) with every YYMMDD date moved by `shift`."""
+    if isinstance(value, str):
+        if not shift:
+            return value
+        def one(m):
+            day = datetime.datetime.strptime(m.group(1), "%y%m%d").date() + shift
+            return day.strftime("%y%m%d")
+        return FIXTURE_DATE.sub(one, value)
+    if isinstance(value, list):
+        return [moved(v, shift) for v in value]
+    if isinstance(value, dict):
+        return {k: moved(v, shift) for k, v in value.items()}
+    return value
 OLD_FACT, NEW_FACT = "twelve hundred pallets", "fourteen hundred pallets"
 NEXT_ACTION = "Send Ruth the distributor questions before her first call; Sam's."
 HOST_JOB = "zz-host-nightly"
@@ -115,6 +143,9 @@ class Run:
         self.home.mkdir(exist_ok=True)
         self.jobs.mkdir(exist_ok=True)
         self.today = datetime.date.today()
+        global SIDE_ACME, SIDE_BIRCH
+        self.shift = fixture_shift(self.today)
+        SIDE_ACME, SIDE_BIRCH = moved(_SIDE_ACME, self.shift), moved(_SIDE_BIRCH, self.shift)
         self.env = self.make_env()
         self.cand = None            # the unpacked candidate: the folder that holds install.py
         self.commit = ""
@@ -569,7 +600,7 @@ class Run:
         return bad
 
     def run_ask_set(self, root):
-        qs = json.loads(ASK_SET.read_text(encoding="utf-8"))["questions"]
+        qs = moved(json.loads(ASK_SET.read_text(encoding="utf-8"))["questions"], self.shift)
         rows = []
         for q in qs:
             try:

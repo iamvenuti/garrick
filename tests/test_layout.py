@@ -169,6 +169,195 @@ class TestMakingAThread(LayoutCase):
 OUTCOME = "\n## State of play\n\n### Outcome\n\nDelivered and accepted.\n"
 
 
+class TestLayout(LayoutCase):
+    """scaffold.py layout: a thread's papers, or a project made a heading, files carried with their ledger rows and links."""
+
+    DECK = "260101 - Pricing deck.pptx"
+    SHEET = "260102 - Freight sheet.xlsx"
+    BRIEF = "brief.txt"
+    MISC = "260103 - Misc.docx"
+
+    def setUp(self):
+        super().setUp()
+        self.make("project", "--zone", "Work", "--name", "Acme")
+        for t in ("Pricing", "Freight"):
+            self.make("thread", "--zone", "Work", "--project", "Acme", "--name", t)
+        a = self.work / "Acme"
+        (a / "Deliverables" / self.DECK).write_bytes(b"deck")
+        (a / "Deliverables" / self.SHEET).write_bytes(b"sheet")
+        (a / "Deliverables" / self.MISC).write_bytes(b"misc")
+        (a / "Sources" / self.BRIEF).write_text("brief")
+        pricing = a / "Threads" / "Pricing" / "Pricing.md"
+        freight = a / "Threads" / "Freight" / "Freight.md"
+        pricing.write_text(pricing.read_text() + "\nThe deck is [the deck](../../Deliverables/%s) and %s is the brief.\n"
+                           % (self.DECK.replace(" ", "%20"), self.BRIEF))
+        freight.write_text(freight.read_text() + "\nThe sheet is %s. The brief is %s.\n" % (self.SHEET, self.BRIEF))
+        (a / "Deliverables" / "published.md").write_text(
+            "# Published\n\n## What left\n\n| Date | File | Destination | Recipients | Authoritative |\n|---|---|---|---|---|\n"
+            "| 2026-03-01 | `%s` | `acme/Decks/` | Dana | here |\n"
+            "| 2026-03-02 | `%s` | `acme/Sheets/` | Dana | share, Dana edits it there |\n" % (self.DECK, self.SHEET))
+        self.commit("Acme set up")
+
+    def git(self, *args):
+        import subprocess
+        return subprocess.run(["git", *args], cwd=str(self.work), capture_output=True, text=True, env=self.env)
+
+    def commit(self, message):
+        self.git("add", "-A")
+        r = self.git("commit", "-q", "-m", message)
+        self.assertEqual(0, r.returncode, r.stderr + r.stdout)
+
+    def commits(self):
+        return int(self.git("rev-list", "--count", "HEAD").stdout)
+
+    def snapshot(self):
+        return {str(p.relative_to(self.work)): p.read_bytes() for p in (self.work / "Acme").rglob("*") if p.is_file()}
+
+    def layout(self, *args):
+        return self.scaffold("layout", "--zone", "Work", "--project", "Acme", *args)
+
+    def test_check_writes_nothing(self):
+        before, count = self.snapshot(), self.commits()
+        r = self.layout("--thread", "Pricing", "--papers", "own", "--check")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn(self.DECK, r.stdout)
+        self.assertIn("Nothing was changed.", r.stdout)
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertEqual(count, self.commits())
+
+    def test_a_thread_takes_only_the_files_its_own_note_names(self):
+        count = self.commits()
+        r = self.layout("--thread", "Pricing", "--papers", "own")
+        self.assertEqual(0, r.returncode, r.stderr)
+        a = self.work / "Acme"
+        self.assertTrue((a / "Threads" / "Pricing" / "Deliverables" / self.DECK).is_file())
+        self.assertFalse((a / "Deliverables" / self.DECK).exists())
+        self.assertTrue((a / "Deliverables" / self.SHEET).is_file())            # Freight's, not Pricing's
+        self.assertTrue((a / "Deliverables" / self.MISC).is_file())             # no thread names it
+        self.assertTrue((a / "Sources" / self.BRIEF).is_file())                 # two threads name it
+        self.assertIn(self.MISC, r.stdout)
+        self.assertIn(self.BRIEF, r.stdout)
+        self.assertEqual(count + 1, self.commits())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        # the commit stays inside the project
+        names = [n for n in self.git("show", "--name-only", "--format=", "HEAD").stdout.split("\n") if n]
+        self.assertTrue(names and all(n.startswith("Acme/") for n in names), names)
+
+    def test_the_ledger_row_follows_its_file_and_its_destination_stays(self):
+        self.layout("--thread", "Pricing", "--papers", "own")
+        a = self.work / "Acme"
+        project_rows = (a / "Deliverables" / "published.md").read_text()
+        thread_rows = (a / "Threads" / "Pricing" / "Deliverables" / "published.md").read_text()
+        self.assertNotIn(self.DECK, project_rows)
+        self.assertIn(self.SHEET, project_rows)
+        self.assertIn("| 2026-03-01 | `%s` | `acme/Decks/` | Dana | here |" % self.DECK, thread_rows)
+        self.assertIn("## What left", thread_rows)
+
+    def test_the_links_follow(self):
+        self.layout("--thread", "Pricing", "--papers", "own")
+        text = (self.work / "Acme" / "Threads" / "Pricing" / "Pricing.md").read_text()
+        self.assertIn("(Deliverables/%s)" % self.DECK.replace(" ", "%20"), text)
+        self.assertNotIn("../../Deliverables", text)
+
+    def test_a_thread_can_go_back_to_the_projects_papers(self):
+        self.layout("--thread", "Pricing", "--papers", "own")
+        r = self.layout("--thread", "Pricing", "--papers", "project")
+        self.assertEqual(0, r.returncode, r.stderr)
+        a = self.work / "Acme"
+        self.assertTrue((a / "Deliverables" / self.DECK).is_file())
+        self.assertFalse((a / "Threads" / "Pricing" / "Deliverables").exists())
+        self.assertFalse((a / "Threads" / "Pricing" / "Sources").exists())
+        self.assertIn(self.DECK, (a / "Deliverables" / "published.md").read_text())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+
+    def test_a_refused_commit_leaves_every_file_and_row_where_it_was(self):
+        hook = self.work / ".git" / "hooks" / "pre-commit"
+        hook.write_text(hook.read_text().replace("exec python3", "echo 'refused by the fixture hook' >&2\nexit 1\nexec python3"))
+        before, count = self.snapshot(), self.commits()
+        r = self.layout("--thread", "Pricing", "--papers", "own")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("every file and ledger row is where it was", r.stderr)
+        self.assertEqual(before, self.snapshot())
+        self.assertEqual("", self.git("status", "--porcelain").stdout)
+        self.assertEqual(count, self.commits())
+
+    def test_a_project_becomes_a_heading_and_each_file_goes_to_its_one_thread(self):
+        r = self.layout("--heading")
+        self.assertEqual(0, r.returncode, r.stderr)
+        a = self.work / "Acme"
+        self.assertIn("layout: thread-first", (a / "Acme.md").read_text())
+        self.assertTrue((a / "Threads" / "Pricing" / "Deliverables" / self.DECK).is_file())
+        self.assertTrue((a / "Threads" / "Freight" / "Deliverables" / self.SHEET).is_file())
+        self.assertTrue((a / "Deliverables" / self.MISC).is_file())             # left for the owner
+        self.assertTrue((a / "Sources" / self.BRIEF).is_file())
+        for t in ("Pricing", "Freight"):
+            self.assertTrue((a / "Threads" / t / "Sources").is_dir())
+        self.assertIn(self.MISC, r.stdout)
+        self.assertIn("Resume here", r.stdout)
+        self.assertIn(self.SHEET, (a / "Threads" / "Freight" / "Deliverables" / "published.md").read_text())
+
+    def test_a_heading_is_not_made_a_heading_twice(self):
+        self.layout("--heading")
+        r = self.layout("--heading")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("already", r.stderr)
+
+    def test_a_dirty_project_is_refused(self):
+        (self.work / "Acme" / "Sources" / "late.txt").write_text("late")
+        r = self.layout("--thread", "Pricing", "--papers", "own")
+        self.assertEqual(1, r.returncode)
+        self.assertFalse((self.work / "Acme" / "Threads" / "Pricing" / "Deliverables").exists())
+
+    def test_nothing_runs_on_its_own_and_it_asks_for_a_choice(self):
+        r = self.layout()
+        self.assertEqual(1, r.returncode)
+        r = self.layout("--heading", "--thread", "Pricing")
+        self.assertEqual(1, r.returncode)
+
+    def test_nothing_in_another_zone_is_read_or_written(self):
+        # A walled zone with a project of the same name, a note that names the same file, and a ledger row for it.
+        other = self.root / "Zones" / "Personal"
+        for rel, text in (("Acme/Acme.md", "---\ntitle: Acme\ntype: project\nzone: Personal\nstatus: active\ncreated: 2026-11-20\n"
+                                           "updated: 2026-11-20\n---\n\n# Acme\n\nSee %s.\n" % self.DECK),
+                          ("Acme/Deliverables/%s" % self.DECK, "personal deck")):
+            path = other / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        import subprocess
+        subprocess.run(["git", "add", "-A"], cwd=str(other), env=self.env, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "Acme in Personal"], cwd=str(other), env=self.env, check=True)
+        before = {str(p.relative_to(other)): p.read_bytes() for p in (other / "Acme").rglob("*") if p.is_file()}
+        count = subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=str(other), env=self.env, capture_output=True,
+                               text=True).stdout
+        r = self.layout("--thread", "Pricing", "--papers", "own")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(before, {str(p.relative_to(other)): p.read_bytes() for p in (other / "Acme").rglob("*") if p.is_file()})
+        self.assertEqual(count, subprocess.run(["git", "rev-list", "--count", "HEAD"], cwd=str(other), env=self.env,
+                                               capture_output=True, text=True).stdout)
+        self.assertNotIn("Personal", r.stdout)
+
+    def test_the_page_verb_plans_and_does(self):
+        import os
+        os.environ["GARRICK_JOBS_DIR"] = str(self.base / "jobs")
+        said = pa.act(self.root, {"verb": "layout", "zone": "Work", "project": "Acme", "thread": "Pricing", "papers": "own",
+                                  "check": True})
+        self.assertIn(self.DECK, said)
+        self.assertFalse((self.work / "Acme" / "Threads" / "Pricing" / "Deliverables").exists())
+        said = pa.act(self.root, {"verb": "layout", "zone": "Work", "project": "Acme", "thread": "Pricing", "papers": "own"})
+        self.assertIn("moved", said)
+        self.assertTrue((self.work / "Acme" / "Threads" / "Pricing" / "Deliverables" / self.DECK).is_file())
+        with self.assertRaises(pa.Refused):
+            pa.act(self.root, {"verb": "layout", "zone": "Work", "project": "Acme", "thread": "Pricing", "papers": "both"})
+
+    def test_undo_takes_the_change_back(self):
+        self.layout("--thread", "Pricing", "--papers", "own")
+        head = self.git("rev-parse", "--short", "HEAD").stdout.strip()
+        r = self.scaffold("undo", "--zone", "Work", "--commit", head)
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertTrue((self.work / "Acme" / "Deliverables" / self.DECK).is_file())
+
+
 class TestThePage(LayoutCase):
     """The page's verbs and dialogs (page_action.py, status.py)."""
 

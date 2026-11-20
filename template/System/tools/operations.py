@@ -220,6 +220,8 @@ DECLARED: Dict[str, Op] = {
     # A thread to another project of its zone (#354): `thread` is required by the handler, `to` is the project.
     "move": _op(("zone", "project", "thread", "to"), ("project", "thread", "to"), "zone", True),
     "delete": _op(("zone", "project", "thread", "confirm"), ("project", "thread"), "zone", True),
+    # Where a thread keeps its papers, or a project made a heading (#604): `check` asks for the plan and writes nothing.
+    "layout": _op(("zone", "project", "thread", "papers", "heading", "check"), ("project", "thread", "papers", "heading"), "zone", True),
     "undo": _op(("zone", "commit"), ("commit",), "zone", True),
     # The settings file is in the workspace's own repository, committed with it.
     # desk-agent is the cmux extra's own setting, which its desk writes in System/desk.json.

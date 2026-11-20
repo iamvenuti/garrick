@@ -336,6 +336,7 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo",
+         "layout",
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
@@ -2249,6 +2250,14 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         return scaffold(ws, "undo", "--zone", z, "--commit", commit)
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
+    if verb == "layout":
+        # Where a thread keeps its papers, or a project made a heading (scaffold.py layout): the plan, with `check`,
+        # or the change, in one commit through the zone's wall check. Only what exactly one thread note names moves.
+        papers, heading = papers_of(req), wants_heading(req)
+        want_plan = check or req.get("check") is True
+        said = scaffold(ws, "layout", *which, *(["--papers", papers] if papers else []), *(["--heading"] if heading else []),
+                        *(["--check"] if want_plan else []))
+        return said_all(said)
     if verb == "move":
         project, to = field(req, "project"), field(req, "to")
         if not thread:
@@ -5628,7 +5637,7 @@ def act(ws: Path, req, today=None, now=None):
         return files_progress(ws, req)
     if req["verb"] == "work-file":
         return work_file(ws, req, today or dt.date.today())
-    if req["verb"] in ("new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo"):
+    if req["verb"] in ("new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo", "layout"):
         return manage(ws, req)
     return todo(ws, req)
 
@@ -5638,6 +5647,7 @@ def act(ws: Path, req, today=None, now=None):
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "rename", "move", "delete", "undo",
+               "layout",
                "todo-edit",
                "todo-retire")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
@@ -5761,6 +5771,7 @@ CLI_FIELDS = {
                    ),
     "rename": ("zone", "project", "thread", "to"), "move": ("zone", "project", "thread", "to"),
     "delete": ("zone", "project", "thread", "confirm"),
+    "layout": ("zone", "project", "thread", "papers", "heading"),
     "undo": ("zone", "commit"),
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),

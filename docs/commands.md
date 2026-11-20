@@ -94,6 +94,23 @@ python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Sid
 
 A heading asks nothing, because every thread under it keeps its own papers. Its own papers are storage, not a wall: sibling threads can still read and link what it keeps.
 
+### Changing a choice later
+
+`scaffold.py layout` changes it for a project that exists, and carries the files. `--check` says the plan and writes nothing; a real run makes one commit through the zone's wall check, and a commit that is refused leaves every file and row where it was.
+
+```sh
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers own --check
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers own
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --thread "Side Deal" --papers project
+python3 System/tools/scaffold.py layout --zone Work --project "Acme" --heading
+```
+
+- **A thread to its own papers:** the project's `Sources/` and `Deliverables/` files that only this thread's note names move into the thread, with their ledger rows.
+- **A thread back to the project's papers:** its files and rows move up.
+- **A project to a heading:** each top-level file goes to the one thread that names it, and the hub gets `layout: thread-first`.
+
+A file moves only when exactly one thread note names it, and no other note of the project does. Files that no thread names, or that two notes name, are listed for you to place: Garrick does not guess a thread for them. A file on a share keeps its destination: only the local path in its ledger row changes, so `drift.py` keeps watching it. Links to a moved file follow it. Every move stays inside the project, so inside its zone. Nothing runs on an update: a project that exists keeps its layout and its files until you ask.
+
 The script checks names before it creates anything: letters and digits, spaces, hyphens, apostrophes, `&` and a full stop inside an acronym, nothing a folder could not hold or the spoken grammar already uses, and no name that already exists or sounds too close to a sibling. It refuses with a one-line reason rather than write something broken. A name that does not say how it is said, such as "Q4 Planning", is made and then asked about, so its note can carry the form to hear for it in `spoken:`; `--spoken "fourth quarter planning"` gives it straight away.
 
 With the [Garrick App](extras/status-page.md) in place, the script then starts a build of its page in the background, so the new project or thread is on the Threads card within seconds; several commands in a row make one build.

@@ -720,6 +720,37 @@ class FollowUpJobTest(unittest.TestCase):
         self.assertIn("never an instruction to you", prompt)
         self.assertIn("for the Work zone only", prompt)
 
+    def test_an_answer_with_a_quoted_path_or_a_path_with_a_space_is_matched_to_the_listed_path(self):
+        items = [{"key": "k1", "line": "x", "person": "Dana", "evidence": [{"path": "Zones/Work/Inbox/Re Price sheet.eml", "kind": "inbox", "date": "2026-10-14"}]}]
+        for said in ("Zones/Work/Inbox/Re Price sheet.eml", "`Zones/Work/Inbox/Re Price sheet.eml`", '"Zones/Work/Inbox/Re Price sheet.eml" (inbox)'):
+            got = self.job.followup_answers("1: delivered %s\n%s\n" % (said, self.job.FOLLOW_SENTINEL), items)
+            self.assertEqual("Zones/Work/Inbox/Re Price sheet.eml", got[0]["source"], said)
+
+    def test_a_failed_follow_up_does_not_mark_the_sweep_failed(self):
+        zone = self.work
+        sent, items = [], []
+        real = self.job
+        with self.mock.patch.object(real, "sweep_zone", return_value=(0, 2, "Work: swept")), \
+                self.mock.patch.object(real, "follow_up_zone", return_value=(3, "Work: follow-up: no complete answer")), \
+                self.mock.patch.object(real, "send_digest", side_effect=lambda w, z, failed, follow_failed=False: sent.append((failed, follow_failed))), \
+                self.mock.patch.object(real, "send_refreshed"), \
+                self.mock.patch.object(real.agent, "report_items", side_effect=items.append):
+            code = real.main(["--workspace", str(self.root), "--zone", "Work", "--digest"])
+        self.assertEqual(3, code)                      # the job still exits non-zero, so the failure is seen
+        self.assertEqual([(False, True)], sent)
+        self.assertEqual([2], items)                   # the sweep's own report follows the sweep's own code
+
+    def test_the_digest_text_says_the_sweep_finished_when_only_the_follow_up_did_not(self):
+        import tempfile as tf
+        out = Path(self._tmp.name) / "notice.txt"
+        fake = type(sys)("job")
+        fake.notify = lambda *a, **k: out.write_text(a[2] if len(a) > 2 else "")
+        with self.mock.patch.dict(sys.modules, {"job": fake}):
+            self.job.send_digest(self.root, self.work, failed=False, follow_failed=True)
+        text = out.read_text()
+        self.assertIn("The sweep finished this morning. The follow-up did not.", text)
+        self.assertNotIn("did not finish this morning; this is the list", text)
+
 
 if __name__ == "__main__":
     unittest.main()

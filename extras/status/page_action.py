@@ -5545,7 +5545,10 @@ def chase(ws: Path, req: dict) -> object:
     found = found if isinstance(found, dict) else {}
     person = " ".join(str(found.get("person") or "").split())[:80]
     line = " ".join(plain_line(task["text"]).split())[:300]
-    source = " ".join(("%s, %s" % (found.get("title"), found.get("date"))).split())[:160] if found.get("title") else ""
+    reply_day = " ".join(str(found.get("date") or "").split())[:10]
+    # The source's own words (a mail subject, a page title) are inbound text: they never reach the drafting prompt.
+    kind = "a meeting page" if str(found.get("source") or "").startswith("Wikis/") else "a mail"
+    source = ("%s, dated %s" % (kind, reply_day) if reply_day else kind) if found.get("title") else ""
     ask_for = "chase %s about: %s" % (person or "them", line)
     eng = engine_lib()
     chan = getattr(eng, "channels", None) if eng is not None else None
@@ -5567,7 +5570,7 @@ def chase(ws: Path, req: dict) -> object:
     prompt = ("Write the short message the user would send to %s to ask for what this line says is owed, in plain words, "
               "polite, no more than five sentences, with no subject line and no greeting name you do not know. Say the "
               "message and nothing else; do not send anything.\n<line>%s</line>%s"
-              % (person or "the person it is about", line, "\n<source>%s</source>" % source if source else ""))
+              % (person or "the person it is about", line, "\nA reply of theirs exists: %s." % source if source else ""))
     got = eng.run(ws, "ask", prompt, zone.name, {"id": exchange}, CHASE_RUNNER, cap, level="read")
     draft = str(got.get("say") or "").strip()[:CHASE_DRAFT]
     if not got.get("ok") or not draft:

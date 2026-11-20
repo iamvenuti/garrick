@@ -86,6 +86,14 @@ Its hub says `layout: thread-first`, holds no resume point and has no `Sources/`
 python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Supplier Audit"
 ```
 
+In a project that is one piece of work, a thread is asked one question: does it keep its own papers, or use the project's? The project's is the default: the thread folder holds its note and working notes, and what it makes goes in the project's `Deliverables/`. `--papers own` gives the thread a `Sources/` and a `Deliverables/` of its own, and its own ledger once something is published:
+
+```sh
+python3 System/tools/scaffold.py thread --zone Work --project "Acme" --name "Side Deal" --papers own
+```
+
+A heading asks nothing, because every thread under it keeps its own papers. Its own papers are storage, not a wall: sibling threads can still read and link what it keeps.
+
 The script checks names before it creates anything: letters and digits, spaces, hyphens, apostrophes, `&` and a full stop inside an acronym, nothing a folder could not hold or the spoken grammar already uses, and no name that already exists or sounds too close to a sibling. It refuses with a one-line reason rather than write something broken. A name that does not say how it is said, such as "Q4 Planning", is made and then asked about, so its note can carry the form to hear for it in `spoken:`; `--spoken "fourth quarter planning"` gives it straight away.
 
 With the [Garrick App](extras/status-page.md) in place, the script then starts a build of its page in the background, so the new project or thread is on the Threads card within seconds; several commands in a row make one build.

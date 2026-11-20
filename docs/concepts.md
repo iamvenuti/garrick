@@ -24,7 +24,7 @@ One client, engagement or undertaking inside a zone, in `Zones/<Zone>/<Project>/
 
 ### Thread
 
-One line of work inside a project, in `Threads/<Thread>/`, with a note of the same name. Every piece of work belongs to a thread, even in a project that has only one, so there is one kind of resume point in one kind of place. You name a thread by the shortest name that is unique: "pricing", or "Acme, pricing" when two projects have one.
+One line of work inside a project, in `Threads/<Thread>/`, with a note of the same name. A thread divides a project's work, or, under a heading, is a piece of work of its own. It either uses its project's `Sources/` and `Deliverables/`, or keeps its own: a thread's own papers are storage, not a wall, and the check and the ledger read them whatever the layout. Every thread has one resume point, in its note. You name a thread by the shortest name that is unique: "pricing", or "Acme, pricing" when two projects have one.
 
 ### Piece of work
 

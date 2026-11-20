@@ -110,6 +110,58 @@ class TestMakingAProject(LayoutCase):
         self.assertEqual(1, r.returncode)
 
 
+class TestMakingAThread(LayoutCase):
+    def setUp(self):
+        super().setUp()
+        self.make("project", "--zone", "Work", "--name", "Acme")
+        self.make("project", "--zone", "Work", "--name", "Birch", "--heading")
+
+    def thread_dir(self, project, name):
+        return self.work / project / "Threads" / name
+
+    def test_a_thread_in_a_piece_of_work_uses_the_projects_papers(self):
+        self.make("thread", "--zone", "Work", "--project", "Acme", "--name", "Pricing")
+        folder = self.thread_dir("Acme", "Pricing")
+        self.assertTrue((folder / "Pricing.md").is_file())
+        self.assertFalse((folder / "Sources").exists())
+        self.assertFalse((folder / "Deliverables").exists())
+        self.assertTrue((self.work / "Acme" / "Deliverables").is_dir())
+
+    def test_its_own_papers_make_both_folders(self):
+        r = self.make("thread", "--zone", "Work", "--project", "Acme", "--name", "Side Deal", "--papers", "own")
+        self.assertIn("It keeps its own papers.", r.stdout)
+        folder = self.thread_dir("Acme", "Side Deal")
+        self.assertTrue((folder / "Sources").is_dir())
+        self.assertTrue((folder / "Deliverables").is_dir())
+        self.assertEqual([], [f for f in self.findings() if "Acme" in f.path and f.check in ("projects", "threads")])
+
+    def test_a_heading_asks_nothing_and_gives_every_thread_its_own_papers(self):
+        self.make("thread", "--zone", "Work", "--project", "Birch", "--name", "Pricing")
+        folder = self.thread_dir("Birch", "Pricing")
+        self.assertTrue((folder / "Sources").is_dir())
+        self.assertTrue((folder / "Deliverables").is_dir())
+        self.make("thread", "--zone", "Work", "--project", "Birch", "--name", "Freight", "--papers", "own")
+        self.assertTrue((self.thread_dir("Birch", "Freight") / "Deliverables").is_dir())
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Birch", "--name", "Cargo", "--papers", "project")
+        self.assertEqual(1, r.returncode)
+        self.assertIn("keeps its own papers", r.stderr)
+        self.assertFalse(self.thread_dir("Birch", "Cargo").exists())
+        self.assertEqual([], [f for f in self.findings() if "Birch" in f.path and f.check in ("projects", "threads")])
+
+    def test_check_says_it_and_writes_nothing(self):
+        r = self.make("thread", "--zone", "Work", "--project", "Acme", "--name", "Side Deal", "--papers", "own", "--check")
+        self.assertIn("keeps its own papers", r.stdout)
+        self.assertFalse(self.thread_dir("Acme", "Side Deal").exists())
+
+    def test_a_project_made_with_a_thread_in_a_heading_gives_it_papers(self):
+        self.make("project", "--zone", "Work", "--name", "Maple", "--heading", "--thread", "Pricing")
+        self.assertTrue((self.thread_dir("Maple", "Pricing") / "Sources").is_dir())
+
+    def test_a_papers_word_that_is_neither_is_refused(self):
+        r = self.scaffold("thread", "--zone", "Work", "--project", "Acme", "--name", "Pricing", "--papers", "both")
+        self.assertNotEqual(0, r.returncode)
+
+
 HUB_BLOCK = ("\n## State of play\n\n### Resume here\n\n**Where it stands, 1 March 2026.** The main line goes on here.\n\n"
              "| | |\n|---|---|\n| Next action | send the draft |\n| Waiting on | nobody |\n")
 OUTCOME = "\n## State of play\n\n### Outcome\n\nDelivered and accepted.\n"

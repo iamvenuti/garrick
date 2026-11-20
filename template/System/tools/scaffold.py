@@ -7,6 +7,7 @@
     python3 System/tools/scaffold.py project --zone Work --name "Acme" [--party acme] [--thread "Pricing"] [--heading]
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing"
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Pricing" --check
+    python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "Side Deal" --papers own
     python3 System/tools/scaffold.py thread  --zone Work --project Acme --name "ISO 27001" --spoken "I S O twenty seven thousand one"
     python3 System/tools/scaffold.py park    --zone Work --project Acme [--thread Pricing]
     python3 System/tools/scaffold.py wake    --zone Work --project Acme [--thread Pricing]
@@ -36,7 +37,9 @@ A project need not start with a thread: `--thread` is optional. Without `--headi
 project is one piece of work: its hub holds a `### Resume here` block, and it has `Sources/`
 and `Deliverables/` and no `Threads/` until a thread is added. With `--heading` it is a
 heading over separate pieces of work: the hub says `layout: thread-first`, holds no resume
-point and no `Sources/` or `Deliverables/`, and may stay empty. A thread inherits its
+point and no `Sources/` or `Deliverables/`, and may stay empty. A new thread in one piece of
+work uses the project's papers, and `--papers own` gives it `Sources/` and `Deliverables/` of
+its own; a heading's threads always keep their own, so nothing is asked there. A thread inherits its
 project's party, if it has one: `--party` is optional, an index and never a wall. `--check`
 applies every refusal and makes nothing, so a form can check a name as it is typed.
 
@@ -365,7 +368,29 @@ def link_thread_in_hub(hub, thread, today):
     hub.write_text(text, encoding="utf-8")
 
 
-def make_thread(root, project_dir, name, party, today, spoken=None):
+PAPERS = ("Sources", "Deliverables")
+
+
+def is_heading(project_dir):
+    """Is the project a heading over separate pieces of work: `layout: thread-first` in its hub?"""
+    hub = project_dir / f"{project_dir.name}.md"
+    return hub.is_file() and str(parse_frontmatter(hub).get("layout") or "").strip().lower() == "thread-first"
+
+
+def papers_choice(project_dir, papers):
+    """Whether a new thread keeps its own `Sources/` and `Deliverables/`. In a heading it always does, and
+    the choice is not offered; in one piece of work it uses the project's unless it is told `own`."""
+    if papers not in (None, "", "own", "project"):
+        raise Refusal("--papers is own or project: the thread keeps its own papers, or uses the project's.")
+    if is_heading(project_dir):
+        if papers == "project":
+            raise Refusal(f"{project_dir.name} is a heading over separate pieces of work, so every thread under it "
+                          "keeps its own papers. Leave out --papers.")
+        return True
+    return papers == "own"
+
+
+def make_thread(root, project_dir, name, party, today, spoken=None, papers=False):
     threads = project_dir / "Threads"
     check_name(name, children(threads), "thread", project_dir.name, spoken=spoken, parent=threads)
     target = threads / name
@@ -380,6 +405,10 @@ def make_thread(root, project_dir, name, party, today, spoken=None):
         note.write_text(set_spoken(note.read_text(encoding="utf-8"), spoken), encoding="utf-8")
     if not party:
         drop_empty_party(note)
+    if papers:
+        for folder in PAPERS:
+            (target / folder).mkdir(exist_ok=True)
+            (target / folder / ".gitkeep").touch()
     return target
 
 
@@ -812,7 +841,7 @@ def cmd_project(root, args, today):
         for papers in ("Sources", "Deliverables"):       # just copied from the template: nothing of anyone's in them
             shutil.rmtree(target / papers, ignore_errors=True)
     if thread:
-        make_thread(root, target, thread, party, today, thread_spoken)
+        make_thread(root, target, thread, party, today, thread_spoken, papers=heading)
     if not party:
         drop_empty_party(hub)
     if thread:
@@ -831,15 +860,17 @@ def cmd_thread(root, args, today):
     name = args.name.strip()
     spoken = (args.spoken or "").strip()
     asked = say_how(name, "thread", spoken)
+    own = papers_choice(project_dir, getattr(args, "papers", None))
+    keeps = " It keeps its own papers." if own else ""
     if getattr(args, "check", False):
         threads = project_dir / "Threads"
         check_name(name, children(threads), "thread", project_dir.name, spoken=spoken, parent=threads)
         if (threads / name).exists():
             raise Refusal(f"{(threads / name).relative_to(root)} already exists.")
-        return "\n".join([f"{name} will do as a thread in {project_dir.name}."] + asked)
-    target = make_thread(root, project_dir, name, party, today, spoken)
+        return "\n".join([f"{name} will do as a thread in {project_dir.name}." + keeps] + asked)
+    target = make_thread(root, project_dir, name, party, today, spoken, papers=own)
     link_thread_in_hub(hub, name, today)
-    said = [f"Created thread {name} in {project_dir.name}."] + asked
+    said = [f"Created thread {name} in {project_dir.name}." + keeps] + asked
     if getattr(args, "touched", False):
         # What it wrote, from the zone, for a caller that commits it by name and nothing else (#183).
         said.append("Touched: " + json.dumps([target.relative_to(zone_dir).as_posix(),
@@ -2179,6 +2210,9 @@ def main(argv=None):
     t.add_argument("--project", required=True)
     t.add_argument("--name", required=True)
     t.add_argument("--spoken", help="how the name is said, for a name that does not say it: heard alongside the name itself")
+    t.add_argument("--papers", choices=("own", "project"),
+                   help="in a project that is one piece of work: the thread keeps its own Sources/ and Deliverables/, "
+                        "or uses the project's (the default); a heading's threads always keep their own")
     t.add_argument("--touched", action="store_true",
                    help="end with a line `Touched: [...]`, the paths from the zone it wrote, for a caller that commits them")
     r = sub.add_parser("rename", help="rename a project or a thread, and every link to it in the zone")

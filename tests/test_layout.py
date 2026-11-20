@@ -19,6 +19,7 @@ from test_setup import Installed  # noqa: E402
 
 import check  # noqa: E402
 
+
 REPO = Path(__file__).resolve().parent.parent
 TOOLS = REPO / "template" / "System" / "tools"
 
@@ -36,6 +37,7 @@ def load(name, path):
 
 status = load("garrick_status_layout", REPO / "extras" / "status" / "status.py")
 pa = load("garrick_page_action_layout", REPO / "extras" / "status" / "page_action.py")
+sc = load("garrick_scaffold_layout", TOOLS / "scaffold.py")
 nu = load("garrick_next_up_layout", TOOLS / "next_up.py")
 br = load("garrick_briefing_layout", TOOLS / "briefing.py")
 
@@ -83,6 +85,14 @@ class TestMakingAProject(LayoutCase):
         self.assertFalse((folder / "Deliverables").exists())
         self.assertFalse((folder / "Threads").exists())
         self.assertEqual([], [f for f in self.findings() if "Birch" in f.path and f.check in ("projects", "threads")])
+
+    def test_a_heading_written_in_capitals_is_a_heading_to_check_too(self):
+        self.make("project", "--zone", "Work", "--name", "Cedar")
+        hub = self.work / "Cedar" / "Cedar.md"
+        text = hub.read_text(encoding="utf-8")
+        hub.write_text(text.replace("---\n\n", "layout: Thread-First\n---\n\n", 1).replace("### Resume here", "### Notes"), encoding="utf-8")
+        self.assertIn("layout: Thread-First", hub.read_text(encoding="utf-8"))
+        self.assertEqual([], [f for f in self.findings("projects") if "Cedar" in f.path and "no threads" in f.message])
 
     def test_a_piece_of_work_with_no_resume_point_still_warns(self):
         self.make("project", "--zone", "Work", "--name", "Acme")
@@ -357,6 +367,49 @@ class TestLayout(LayoutCase):
         self.assertEqual(0, r.returncode, r.stderr)
         self.assertTrue((self.work / "Acme" / "Deliverables" / self.DECK).is_file())
 
+    def test_a_bare_name_does_not_match_another_folders_file_of_that_name(self):
+        a = self.work / "Acme"
+        (a / "Sources" / "Terms.docx").write_bytes(b"source terms")
+        (a / "Deliverables" / "Terms.docx").write_bytes(b"deliverable terms")
+        pricing = a / "Threads" / "Pricing" / "Pricing.md"
+        pricing.write_text(pricing.read_text() + "\nThe terms are Deliverables/Terms.docx.\n")
+        self.commit("terms")
+        for args in (("--thread", "Pricing", "--papers", "own"), ("--heading",)):
+            moves, left, _ = sc.plan_layout(self.work, a, "Pricing", "own" if "--papers" in args else None,
+                                                        "--heading" in args)
+            self.assertIn(("Acme/Deliverables/Terms.docx", "Acme/Threads/Pricing/Deliverables/Terms.docx"), moves)
+            self.assertNotIn("Acme/Sources/Terms.docx", [m[0] for m in moves])
+        r = self.layout("--thread", "Pricing", "--papers", "own", "--check")
+        self.assertIn("Sources/Terms.docx", r.stdout)
+        self.assertTrue(sc.names_file("see ../../Deliverables/x.pptx", "Sources/x.pptx", "x.pptx") is False)
+        self.assertTrue(sc.names_file("see x.pptx.", "Sources/x.pptx", "x.pptx"))
+
+    def test_a_target_that_exists_is_left_for_the_owner_not_promised(self):
+        a = self.work / "Acme"
+        for t in ("Pricing", "Freight"):
+            for k in ("Sources", "Deliverables"):
+                (a / "Threads" / t / k).mkdir(exist_ok=True)
+        (a / "Threads" / "Pricing" / "Deliverables" / self.DECK).write_bytes(b"already")
+        self.commit("target exists")
+        for args, kw in ((("--thread", "Pricing", "--papers", "own"), {}), (("--heading",), {})):
+            r = self.layout(*args, "--check")
+            self.assertEqual(0, r.returncode, r.stderr)
+            self.assertIn("the thread has a file of that name already", r.stdout)
+            self.assertNotIn("%s to Threads" % self.DECK, r.stdout)
+        r = self.layout("--thread", "Pricing", "--papers", "own")
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(b"deck", (a / "Deliverables" / self.DECK).read_bytes())
+
+    def test_a_note_that_is_a_symlink_is_never_written_through(self):
+        outside = Path(tempfile.mkdtemp()) / "outside.md"
+        outside.write_text("The deck is Deliverables/%s here.\n" % self.DECK)
+        link = self.work / "Acme" / "Link.md"
+        link.symlink_to(outside)
+        self.commit("a link")
+        self.assertNotIn(link, list(sc.zone_notes(self.work)))
+        self.layout("--thread", "Pricing", "--papers", "own")
+        self.assertEqual("The deck is Deliverables/%s here.\n" % self.DECK, outside.read_text())
+
 
 class TestThePage(LayoutCase):
     """The page's verbs and dialogs (page_action.py, status.py)."""
@@ -581,6 +634,29 @@ class HubBesideThreads(unittest.TestCase):
         for rows in (self.next_up_rows(), self.briefing_rows()):
             self.assertIn(("Acme Review", None), rows)
             self.assertTrue([r for r in rows if r[1]], "its threads are still there")
+
+    def test_two_hashes_is_no_resume_point_in_all_five_readings(self):
+        self.keep(HUB_BLOCK.replace("### Resume here", "## Resume here"))
+        self.assertNotIn(("Acme Review", None), self.next_up_rows())
+        self.assertNotIn(("Acme Review", None), self.briefing_rows())
+        T = status.threads(self.root)
+        self.assertEqual([], [r for r in T["Work"]["hubs"] if r["project"] == "Acme Review"])
+        self.assertFalse(status.hub_keeps_resume(self.hub, None))
+        self.assertFalse(pa.hub_keeps_resume(self.hub))
+        # and the same without the workspace's garrick_lib, which both fall back from
+        (self.root / "System" / "tools" / "garrick_lib.py").unlink()
+        status._LIBS.clear()
+        self.assertFalse(status.hub_keeps_resume(self.hub, None))
+        self.assertFalse(pa.hub_keeps_resume(self.hub))
+        self.hub.write_text(self.hub.read_text(encoding="utf-8").replace("## Resume here", "### Resume here"), encoding="utf-8")
+        self.assertTrue(status.hub_keeps_resume(self.hub, None))
+        self.assertTrue(pa.hub_keeps_resume(self.hub))
+
+    def test_layout_is_read_from_the_front_matter_only(self):
+        self.keep(HUB_BLOCK + "\nlayout: thread-first\n")                      # a body line is not the layout
+        self.assertTrue(pa.hub_keeps_resume(self.hub))
+        self.assertTrue(status.hub_keeps_resume(self.hub, None))
+        self.assertIn(("Acme Review", None), self.next_up_rows())
 
     def test_an_outcome_in_its_place_ends_it(self):
         self.keep(OUTCOME)

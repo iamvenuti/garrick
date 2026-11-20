@@ -954,7 +954,8 @@ def zone_notes(zone_dir):
     repository of its own inside a project, nothing waiting in the inbox."""
     listing = git_value(["ls-files", "-z", "--", "*.md"], zone_dir)
     for name in sorted(n for n in listing.split("\0") if n and not n.startswith(INBOX + "/")):
-        yield zone_dir / name
+        if not (zone_dir / name).is_symlink():          # a link may lead out of the zone: never write through one
+            yield zone_dir / name
 
 
 def preflight(zone_dir, folder, verb):
@@ -1674,10 +1675,14 @@ def tracked_under(zone_dir, folder):
 def names_file(text, rel, name):
     """Does a note name a file: by its path from the project, or by its name (a note also without the extension),
     as a whole word, written plainly or as a URL writes it."""
-    forms = {rel, urllib.parse.quote(rel), name, urllib.parse.quote(name)}
+    forms = {rel, urllib.parse.quote(rel)}
+    bare = {name, urllib.parse.quote(name)}
     if name.endswith(".md"):
-        forms |= {rel[:-3], name[:-3]}
-    return any(re.search(r"(?<![\w.-])%s(?![\w])" % re.escape(f), text) for f in forms if f)
+        forms |= {rel[:-3]}
+        bare |= {name[:-3]}
+    # A bare name is not a path: a "/" before it is another folder's file of the same name.
+    return any(re.search(r"(?<![\w.-])%s(?![\w])" % re.escape(f), text) for f in forms if f) or \
+        any(re.search(r"(?<![\w./-])%s(?![\w])" % re.escape(f), text) for f in bare if f)
 
 
 def ledger_rows_of(ledger, folder):
@@ -1731,8 +1736,11 @@ def plan_layout(zone_dir, project_dir, thread, papers, heading):
         for inside in top_files():
             namers = [t.name for t in threads if names_file(notes[t.name], inside, Path(inside).name)]
             hub_names = names_file(hub_text, inside, Path(inside).name)
-            if len(namers) == 1 and not hub_names:
-                moves.append((f"{rel(project_dir)}/{inside}", f"{rel(project_dir)}/Threads/{namers[0]}/{inside}"))
+            target = f"{rel(project_dir)}/Threads/{namers[0]}/{inside}" if namers else ""
+            if len(namers) == 1 and not hub_names and (zone_dir / target).exists():
+                left.append((f"{rel(project_dir)}/{inside}", "the thread has a file of that name already"))
+            elif len(namers) == 1 and not hub_names:
+                moves.append((f"{rel(project_dir)}/{inside}", target))
             else:
                 left.append((f"{rel(project_dir)}/{inside}", "no thread names it" if not namers else
                              "more than one note names it" if len(namers) > 1 or hub_names else ""))
@@ -1746,7 +1754,9 @@ def plan_layout(zone_dir, project_dir, thread, papers, heading):
                 continue                                              # a thread's own papers are Sources and Deliverables
             namers = [t.name for t in threads if names_file(notes[t.name], inside, Path(inside).name)]
             hub_names = names_file(hub_text, inside, Path(inside).name)
-            if namers == [thread] and not hub_names:
+            if namers == [thread] and not hub_names and (tdir / inside).exists():
+                left.append((f"{rel(project_dir)}/{inside}", "the thread has a file of that name already"))
+            elif namers == [thread] and not hub_names:
                 moves.append((f"{rel(project_dir)}/{inside}", f"{rel(tdir)}/{inside}"))
             elif not namers:
                 left.append((f"{rel(project_dir)}/{inside}", "no thread names it"))

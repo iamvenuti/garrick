@@ -681,9 +681,25 @@ def hub_keeps_resume(hub: Path, pfm: Optional[dict]) -> bool:
         text = hub.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    layout = as_text(pfm.get("layout")).strip().lower() if pfm is not None else \
-        (re.search(r"(?mi)^layout:[ \t]*[\"']?(thread-first)\b", text) or [None, ""])[1].lower()
-    return layout != "thread-first" and any(RESUME.match(l) for l in text.splitlines())
+    # garrick_lib's own reading where the workspace has it, so Your work, next_up and the briefings agree (C6); the
+    # fallback reads the same way: the exact `### Resume here` line, and `layout` from the front matter only.
+    lib = workspace_lib(hub.parent.parent.parent.parent)
+    if lib is not None and callable(getattr(lib, "hub_keeps_resume", None)):
+        try:
+            return bool(lib.hub_keeps_resume(text, lib.parse_frontmatter(hub)))
+        except Exception:
+            pass
+    lines = text.splitlines()
+    front = {}
+    if lines and lines[0].strip() == "---":
+        for l in lines[1:]:
+            if l.strip() == "---":
+                break
+            if l.lower().startswith("layout:"):
+                front["layout"] = l.split(":", 1)[1].strip().strip("\"'")
+    if str(front.get("layout") or "").strip().lower() == "thread-first":
+        return False
+    return any(l.strip().lower() == "### resume here" for l in lines)
 
 
 def threads(ws: Path) -> Dict[str, dict]:

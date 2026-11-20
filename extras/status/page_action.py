@@ -45,9 +45,14 @@ zone's repository, as the skills would:
     run         start a scheduled job now, through launchd, so it keeps its
                 own wrapper, lock and log; it changes no note itself. A job
                 whose lock (job.py's) is held is already running, and refused
-    new-project a project and its first thread, as "new project" by voice:
-                {"zone", "name", "party", "thread"}; committed in the zone
-    new-thread  a thread in a project: {"zone", "project", "name"}
+    new-project a project, as "new project" by voice: {"zone", "name", "party",
+                "thread", "heading"}; one piece of work unless "heading" says a
+                heading over separate pieces, and no thread unless one is
+                named; committed in the zone
+    new-thread  a thread in a project: {"zone", "project", "name", "papers"};
+                "papers" is "own" for a thread that keeps its own Sources and
+                Deliverables, and the project's otherwise (a heading's threads
+                always keep their own)
     check-name  whether a new name would do, making nothing, for the form as
                 it is typed: {"kind": "project", "thread" or "rename", and the
                 fields of that verb}
@@ -340,6 +345,7 @@ except ImportError:             # not on Windows, where the status app does not 
 sys.dont_write_bytecode = True
 VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "run", "settings",
          "new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo",
+         "layout",
          "answer", "later", "question-answer", "question-later",
          "question-close", "question-decide", "question-open-sections", "question-work", "question-done", "continue", "ask-desktop", "example", "fix",
          "discover", "suggestion", "start", "stop-using", "bring-back", "files", "files-stop", "files-progress",
@@ -2104,16 +2110,25 @@ def scaffold(ws: Path, *args) -> str:
     return r.stdout.strip()
 
 
-def first_thread() -> str:
-    """The name of a project's first thread when none is given: ask.py's FIRST_THREAD, the box's own, read from
-    its file beside this one so that the page and the box never name it twice. Refused where ask.py is not there."""
-    try:
-        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', (HERE / "ask.py").read_text(encoding="utf-8"), re.M)
-    except OSError:
-        found = None
-    if not found:
-        raise Refused("no first thread given, and ask.py, which names the default one, is not beside this file")
-    return found.group(1)
+def wants_heading(req: dict) -> bool:
+    """Is the new project a heading over separate pieces of work, rather than one piece of work (the default)?
+    True, or the word yes or true from a command line; anything else but nothing is refused."""
+    value = req.get("heading")
+    if value is None or value is False or (isinstance(value, str) and value.strip().lower() in ("no", "false")):
+        return False
+    if value is True or (isinstance(value, str) and value.strip().lower() in ("yes", "true")):
+        return True
+    raise Refused("not a heading choice: %r" % (value,))
+
+
+def papers_of(req: dict) -> Optional[str]:
+    """A new thread's papers, own or project; none when the request does not say."""
+    value = req.get("papers")
+    if value is None:
+        return None
+    if value in ("own", "project"):
+        return value
+    raise Refused("papers is own or project, not %r" % (value,))
 
 
 def new_party(ws: Path, zone: Path, name: str, what: Optional[str]) -> str:
@@ -2163,14 +2178,16 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
     flag = ["--check"] if check else []
     if verb in ("new-project", "new-project-party"):
         name = field(req, "name")
-        # A first thread left empty is the one the ask box gives (ask.py's FIRST_THREAD, read from there), and a
-        # party left out is none: scaffold.py's --party is optional, an index.
-        thread = field(req, "thread", required=False) or first_thread()
+        # A first thread left out is none: a project need not start with one. A party left out is none too:
+        # scaffold.py's --party is optional, an index.
+        thread = field(req, "thread", required=False)
         party = field(req, "party", required=False)
+        heading = wants_heading(req)
         made = [p for p in (zone / name,) if not p.exists()]
         spoken = [*(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
                   *(["--thread-spoken", field(req, "thread_spoken")] if req.get("thread_spoken") is not None else [])]
-        args = ["project", "--zone", z, "--name", name, *(["--party", party] if party else []), "--thread", thread, *spoken]
+        args = ["project", "--zone", z, "--name", name, *(["--party", party] if party else []),
+                *(["--thread", thread] if thread else []), *(["--heading"] if heading else []), *spoken]
         if verb == "new-project-party":
             if party:
                 raise Refused("pick a party from the list, or add a new one, not both")
@@ -2190,13 +2207,15 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
             if check:
                 return said_party
             party = new_party(ws, zone, pname, what)
-            args = ["project", "--zone", z, "--name", name, "--party", party, "--thread", thread, *spoken]
+            args = ["project", "--zone", z, "--name", name, "--party", party,
+                    *(["--thread", thread] if thread else []), *(["--heading"] if heading else []), *spoken]
         elif not check:
             asks_how(ws, args)
         try:
             said = scaffold(ws, *args, *flag)
             if not check:
-                commit_new(zone, [name], "New project %s%s, first thread %s" % (name, " (%s)" % party if party else "", thread),
+                commit_new(zone, [name], "New project %s%s%s" % (name, " (%s)" % party if party else "",
+                                                                  ", first thread %s" % thread if thread else ""),
                            made, {}, wall=wall_refusal(ws))
                 return first_line(said)
         except Refused as e:
@@ -2214,8 +2233,10 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         # else uncommitted: another session's edit is never filed under this
         # commit's message (#183). Otherwise its new line waits for a wrap.
         held = bool(before) and not check and uncommitted(zone, hub)
+        papers = papers_of(req)
         args = ["thread", "--zone", z, "--project", project, "--name", name,
-                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else [])]
+                *(["--spoken", field(req, "spoken")] if req.get("spoken") is not None else []),
+                *(["--papers", papers] if papers else [])]
         if not check:
             asks_how(ws, args)
         said = scaffold(ws, *args, *flag, *([] if check else ["--touched"]))
@@ -2239,6 +2260,14 @@ def manage_args(ws: Path, zone: Path, req: dict, check: bool) -> str:
         return scaffold(ws, "undo", "--zone", z, "--commit", commit)
     thread = field(req, "thread", required=False)
     which = ["--zone", z, "--project", field(req, "project")] + (["--thread", thread] if thread else [])
+    if verb == "layout":
+        # Where a thread keeps its papers, or a project made a heading (scaffold.py layout): the plan, with `check`,
+        # or the change, in one commit through the zone's wall check. Only what exactly one thread note names moves.
+        papers, heading = papers_of(req), wants_heading(req)
+        want_plan = check or req.get("check") is True
+        said = scaffold(ws, "layout", *which, *(["--papers", papers] if papers else []), *(["--heading"] if heading else []),
+                        *(["--check"] if want_plan else []))
+        return said_all(said)
     if verb == "move":
         project, to = field(req, "project"), field(req, "to")
         if not thread:
@@ -2794,13 +2823,28 @@ def question(ws: Path, req: dict) -> tuple:
     return zone, q, note, parts, work_name(zone, parts)
 
 
+def hub_keeps_resume(hub: Path) -> bool:
+    """Does the hub hold the project's own resume point beside its threads: a `### Resume here` block and no
+    `layout: thread-first`? An `### Outcome` in its place ends it (status.py and garrick_lib read it the same way)."""
+    try:
+        text = hub.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    if re.search(r"(?mi)^layout:[ \t]*[\"']?thread-first\b", text):
+        return False
+    return bool(re.search(r"(?mi)^#{1,6}[ \t]+Resume here\b", text))
+
+
 def work_name(zone: Path, parts: tuple) -> str:
     """A piece of work as the home names it: the project's name for a project
-    that is one thread, "Project, Thread" where it has more than one."""
+    that is one thread, "Project, Thread" where it has more than one, or where
+    the hub keeps its own resume point beside the thread."""
     if len(parts) == 2:
         return parts[0]
     threads = [t for t in (zone / parts[0] / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    return parts[0] if len(threads) <= 1 else "%s, %s" % (parts[0], parts[2])
+    if len(threads) <= 1 and not hub_keeps_resume(zone / parts[0] / (parts[0] + ".md")):
+        return parts[0]
+    return "%s, %s" % (parts[0], parts[2])
 
 
 def say_name(ws: Path, zone: Path, parts: tuple) -> str:
@@ -5720,7 +5764,7 @@ def act(ws: Path, req, today=None, now=None):
         return files_progress(ws, req)
     if req["verb"] == "work-file":
         return work_file(ws, req, today or dt.date.today())
-    if req["verb"] in ("new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo"):
+    if req["verb"] in ("new-project", "new-project-party", "new-thread", "check-name", "rename", "move", "delete", "undo", "layout"):
         return manage(ws, req)
     return todo(ws, req)
 
@@ -5730,6 +5774,7 @@ def act(ws: Path, req, today=None, now=None):
 # rebuild to the app, as it did. A delete asks for it only once confirmed.
 PAGE_BUILDS = ("todo-done", "todo-undo", "todo-date", "todo-add", "note-add", "park", "wake", "new-project", "new-project-party", "new-thread",
                "rename", "move", "delete", "undo",
+               "layout",
                "todo-edit",
                "todo-retire")
 PAGE_SETTLE = 10        # seconds the build waits for another request first, so a burst makes one page
@@ -5846,10 +5891,15 @@ def start_record(ops, req: dict, via: str):
 # (`--line`), and resolved here to the key the page would send.
 CLI_FIELDS = {
     "park": ("zone", "project", "thread"), "wake": ("zone", "project", "thread"),
-    "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken"),
-    "new-thread": ("zone", "project", "name", "spoken"),
+    "new-project": ("zone", "name", "party", "thread", "spoken", "thread_spoken",
+                    "heading",
+                    ),
+    "new-thread": ("zone", "project", "name", "spoken",
+                   "papers",
+                   ),
     "rename": ("zone", "project", "thread", "to"), "move": ("zone", "project", "thread", "to"),
     "delete": ("zone", "project", "thread", "confirm"),
+    "layout": ("zone", "project", "thread", "papers", "heading"),
     "undo": ("zone", "commit"),
     "todo-add": ("zone", "text", "target", "date"),
     "question-answer": ("wiki", "file", "words"), "question-later": ("wiki", "file", "until"),
@@ -5912,7 +5962,9 @@ def command_parser() -> argparse.ArgumentParser:
                                                   "with a verb, page with JSON)")
     ap.add_argument("verb", nargs="?", choices=sorted(CLI_FIELDS), help="the action; leave out to read JSON on stdin")
     for name in ("zone", "project", "thread", "name", "party", "to", "text", "target", "date", "file", "line",
-                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason"):
+                 "confirm", "commit", "spoken", "thread-spoken", "wiki", "words", "until", "pages", "reason",
+                 "heading",
+                 "papers"):
         ap.add_argument("--" + name)
     return ap
 

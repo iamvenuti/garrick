@@ -20,11 +20,11 @@ A side of your life or work, such as Work or Personal, in `Zones/<Zone>/`. Each 
 
 ### Project
 
-One client, engagement or undertaking inside a zone, in `Zones/<Zone>/<Project>/`. It names its party, keeps material received in `Sources/` and what is made for it in `Deliverables/`, and holds its threads in `Threads/`. `scaffold.py project` makes one with its first thread: see [Your first project](commands.md#your-first-project).
+One client, engagement or undertaking inside a zone, in `Zones/<Zone>/<Project>/`. It names its party, keeps material received in `Sources/` and what is made for it in `Deliverables/`, and holds its threads in `Threads/`. A project is one of two kinds. One piece of work keeps its resume point in its hub, and its threads, if any, sit beside it. A heading over separate pieces of work has no resume point and no papers of its own: each thread under it is a piece of work. A project needs no thread to start with. `scaffold.py project` makes either kind: see [Your first project](commands.md#your-first-project).
 
 ### Thread
 
-One line of work inside a project, in `Threads/<Thread>/`, with a note of the same name. Every piece of work belongs to a thread, even in a project that has only one, so there is one kind of resume point in one kind of place. You name a thread by the shortest name that is unique: "pricing", or "Acme, pricing" when two projects have one.
+One line of work inside a project, in `Threads/<Thread>/`, with a note of the same name. A thread divides a project's work, or, under a heading, is a piece of work of its own. It either uses its project's `Sources/` and `Deliverables/`, or keeps its own: a thread's own papers are storage, not a wall, and the check and the ledger read them whatever the layout. Every thread has one resume point, in its note. You name a thread by the shortest name that is unique: "pricing", or "Acme, pricing" when two projects have one.
 
 ### Piece of work
 
@@ -36,7 +36,7 @@ The `spoken:` line in a hub or thread note's frontmatter: how a name that does n
 
 ### Hub note
 
-The project's own note, named after it: `<Project>/<Project>.md`. It says what the project is and whose it is, in `party:`, and links every thread, under `## Threads` while it is live and `## Finished` once it is done. Its frontmatter can also change what the check reads in the project: see [Check settings](commands.md#check-settings).
+The project's own note, named after it: `<Project>/<Project>.md`. It says what the project is and whose it is, in `party:`, and links every thread, under `## Threads` while it is live and `## Finished` once it is done. A project that is one piece of work also keeps its resume point here, in a `### Resume here` block, for as long as the main line goes on, and its threads sit beside it. *Your work* and the briefings read the hub's block next to each thread's. The owner closes it as an `### Outcome` when the main line ends. Its frontmatter can also change what the check reads in the project: see [Check settings](commands.md#check-settings).
 
 ## Picking a thread back up
 

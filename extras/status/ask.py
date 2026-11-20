@@ -336,7 +336,6 @@ NEED_CLAUDE = ("Answers from your records need Claude. With Codex the box does c
                "make a project or a thread, and add a line to a Todo list.")
 # The first thread of a project the request gave none for (#345): a name for the work to start in, and Undo
 # takes the whole project away again.
-FIRST_THREAD = "Getting started"
 MOST_PARTIES = 8                # buttons under "which party?"; past that the question lists none and the user says it
 NOTHING_FOUND = "Nothing in the records answers that."
 NOTHING_OPEN = "Nothing is open there."           # an actions list with nothing in it (#316)
@@ -577,6 +576,8 @@ def scan(ws: Path) -> Dict[str, Dict[str, dict]]:
                 if note.is_file() and status_of(note) not in GONE:
                     threads[t.name] = status_of(note)
             projects[folder.name] = {"status": s, "threads": threads}
+            if re.search(r"(?m)^layout:[ \t]*[\"']?thread-first\b", hub.read_text(encoding="utf-8", errors="replace")[:3000]):
+                projects[folder.name]["heading"] = True      # no resume point of its own: its threads are the work
         out[zone.name] = projects
     return out
 
@@ -587,7 +588,7 @@ def render(names: Dict[str, Dict[str, dict]]) -> str:
         lines.append("%s:" % zone)
         for p, r in projects.items():
             ts = "; ".join(t + ("" if s == "active" else " (%s)" % s) for t, s in r["threads"].items())
-            lines.append("- %s [%s]%s" % (p, r["status"], " threads: " + ts if ts else ""))
+            lines.append("- %s [%s]%s%s" % (p, r["status"], " heading" if r.get("heading") else "", " threads: " + ts if ts else ""))
     return "\n".join(lines)
 
 
@@ -856,9 +857,13 @@ def new_work(a: dict, zone: str, names: Dict[str, Dict[str, dict]], ws: Path, na
         raise Needs("Which zone is the project %s for? Say it, as in \"new project %s in %s\"." % (name, name, zone), [])
     if settled != zone:
         raise Bad("The request is for %s, not %s: say which zone the project %s is for" % (settled, zone, name))
-    first = work_name(a["thread"], "thread") if a.get("thread") is not None else FIRST_THREAD
-    return "act", dict({"verb": "new-project", "zone": zone, "name": name, "party": project_party(a, zone, ws, named),
-                        "thread": first}, **extra)
+    # One piece of work, with no thread, unless the request says so: a heading only when the request holds the word.
+    item = {"verb": "new-project", "zone": zone, "name": name, "party": project_party(a, zone, ws, named)}
+    if a.get("thread") is not None:
+        item["thread"] = work_name(a["thread"], "thread")
+    if a.get("heading") is True and re.search(r"\bheading\b", getattr(named, "text", "") or "", re.I):
+        item["heading"] = True
+    return "act", dict(item, **extra)
 
 
 def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path, named=None) -> Tuple[str, dict]:
@@ -928,6 +933,11 @@ def proposal(a, names: Dict[str, Dict[str, dict]], ws: Path, named=None) -> Tupl
         raise Bad("only cmux is told which assistant to start; %s is not" % (app_said(app) if app else "the default"))
     if agent and not launcher_on(ws, agent):
         raise Bad("%s is switched off in Settings" % app_said(agent))
+    if thread is None and names[zone][project].get("heading") and names[zone][project]["threads"]:
+        # A heading is no piece of work: its name alone does not say which one is meant, so it asks, naming them.
+        many = list(names[zone][project]["threads"])
+        raise Needs("Which thread of %s: %s?" % (project, ", ".join(many[:-1]) + " or " + many[-1] if len(many) > 1 else many[0]),
+                    [{"label": t, "request": "open %s" % spoken(names, zone, project, t)} for t in many[:5]], keep=False)
     folder = ws / "Zones" / zone / project
     if thread is not None:
         folder = folder / "Threads" / thread
@@ -2180,9 +2190,10 @@ class Asker:
             rid = "r%d" % (len(self.passages) + 1)
             self.passages.append({"id": rid, "path": r["path"], "title": r.get("title") or "",
                                   "date": r.get("date") or "", "imported": r.get("imported") or ""})
-            rows.append('<record id="%s" path="%s"%s%s>' % (
+            rows.append('<record id="%s" path="%s"%s%s%s>' % (
                 rid, attr(r["path"]), ' date="%s"' % attr(r["date"]) if r.get("date") else "",
-                ' imported="%s"' % attr(r["imported"]) if r.get("imported") else ""))
+                ' imported="%s"' % attr(r["imported"]) if r.get("imported") else "",
+                ' thread="%s"' % attr(r["thread"]) if r.get("thread") else ""))
             rows += [inert(r["text"]), "</record>"]
         rows.append("</records>")
         return "\n".join(rows)
@@ -2341,7 +2352,8 @@ class Asker:
         """An Undo for the project or thread just made (#345): a button that runs page_action.py's `undo`, as the
         page's toast does. Only while the creation is the zone's last commit, which is what scaffold.py's undo
         requires; None otherwise, and nothing is offered that would be refused."""
-        made = ("New project %s (%s), first thread %s" % (item["name"], item["party"], item["thread"])
+        made = ("New project %s (%s)%s" % (item["name"], item["party"],
+                                            ", first thread %s" % item["thread"] if item.get("thread") else "")
                 if item["verb"] == "new-project" else "%s: new thread %s" % (item["project"], item["name"]))
         try:
             zone = pa.zone_dir(self.ws, item["zone"])

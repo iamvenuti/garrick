@@ -113,7 +113,7 @@ MAP = [
     ("voice: names", "**Names are the names the work already has.** Zones, projects and threads take letters and digits, spaces, hyphens, apostrophes, `&`, and a full stop inside an acronym", "threads"),
     ("voice: spoken form", "**A name that does not say how it is said carries a spoken form.** `spoken:` in the note's frontmatter is what is heard for it", "threads"),
     ("voice: zone has no note", "A zone has no note, so a zone name has to say how it is said.", "threads"),
-    ("voice: shortest name", "**Say the shortest unique name.** A thread name alone, if only one thread has it; otherwise project and thread (\"Acme, pricing\"). The zone only if two projects share a name.", "rules"),
+    ("voice: shortest name", "**Say the shortest unique name.** A project alone, for one piece of work; a thread alone, if only one has it; otherwise project and thread (\"Acme, pricing\"). The zone only if two projects share a name.", "rules"),
     ("voice: more than one match", "**When a name matches more than one thing**, or a heard name is close to two entries", "rules"),
     ("voice: never guess", "ask in one line, naming the candidates. Never guess.", "rules"),
     ("voice: open X", "**\"Open X\"**: read that thread's Resume here block and answer in two sentences: where it stands, and the next action.", "threads"),

@@ -164,8 +164,8 @@ scaffolding script, whose checks are the same, and commits. Run it from the
 workspace root.
 
 ```sh
-python3 System/status/page_action.py new-project --zone <Zone> --name "<Project>" --party <tag> --thread "<Thread>" [--spoken "<how it is said>"] [--thread-spoken "<how the thread is said>"]
-python3 System/status/page_action.py new-thread --zone <Zone> --project "<Project>" --name "<Thread>" [--spoken "<how it is said>"]
+python3 System/status/page_action.py new-project --zone <Zone> --name "<Project>" --party <tag> [--thread "<Thread>"] [--heading yes] [--spoken "<how it is said>"] [--thread-spoken "<how the thread is said>"]
+python3 System/status/page_action.py new-thread --zone <Zone> --project "<Project>" --name "<Thread>" [--papers own] [--spoken "<how it is said>"]
 ```
 
 **Ask how a name is said first.** Run the same line with
@@ -179,16 +179,26 @@ must be one of the zone's own in `System/context.md`; it is refused otherwise.
 scaffolding script directly, as step 4 and step 6 then say:
 
 ```sh
-python3 System/tools/scaffold.py project --zone <Zone> --name "<Project>" --party <tag> --thread "<Thread>"
-python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --name "<Thread>" [--spoken "<how it is said>"]
+python3 System/tools/scaffold.py project --zone <Zone> --name "<Project>" --party <tag> [--thread "<Thread>"] [--heading]
+python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --name "<Thread>" [--papers own] [--spoken "<how it is said>"]
 ```
 
 1. **Resolve the parts.** The zone against the folders under `Zones/`; the
    project against existing projects; the party against Parties and Aliases,
    giving its tag. The zone may be left out when the party's row in Parties
    names it, or the project already exists.
-2. **A new project needs its first thread.** If none was given, ask: "What's
-   the first thread called?" Every piece of work belongs to a thread.
+2. **A new project needs no thread, and one question.** Ask: "Is this project
+   one piece of work, or a heading over separate pieces?" One piece of work is
+   the default: its hub holds the resume point, and it has `Sources/` and
+   `Deliverables/`. A heading has no resume point and no papers of its own, and
+   is made with `--heading yes` (`--heading` with the script). Ask for a first
+   thread only when the user names one. A request that cannot be asked takes
+   the default and moves nothing.
+   **A new thread in a project that is one piece of work** asks one more
+   question: "Does this thread keep its own papers, or use the project's?" The
+   project's is the default; `--papers own` gives the thread a `Sources/` and
+   a `Deliverables/` of its own. A heading asks nothing, because every thread
+   under it keeps its own.
    **Look for the name first**, as *Find* does: a project or thread with the
    same name, or one heard as it, in any project, zone or status. If there is
    one, say so in one line before making anything: "There's already a Freight
@@ -227,7 +237,7 @@ python3 System/tools/scaffold.py thread --zone <Zone> --project "<Project>" --na
    stage it by name and commit it, "Birch: purpose of Launch plan". Without the
    status page, check
    `git -C "Zones/<Zone>" status --porcelain`, stage the new folder by name, and
-   commit "New project Birch (birch), first thread Launch plan". Adding Parties
+   commit "New project Birch (birch)", adding ", first thread Launch plan" when one was made. Adding Parties
    or zone flags is a change outside the zone: commit it separately in the
    workspace root's repository, if it has one.
 

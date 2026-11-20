@@ -43,7 +43,7 @@ Sorting: `intake` skill.
 
 ## Threads
 
-- **Every thread has one resume point**: the `## State of play` section of its thread note, opening with a **Resume here** block. Read it first. A one-thread project may keep it in its hub.
+- **Every thread has one resume point**: the `## State of play` section of its thread note, opening with a **Resume here** block. Read it first. A piece of work keeps it in its hub, beside any threads.
 - **Open actions live in the zone's `Todo.md`**, not copied into thread notes.
 - Wrap, finish, park, checkpoint, hub: `threads` skill.
 
@@ -53,7 +53,7 @@ Spoken commands: the `threads` and `nurture` skills.
 
 Tab commands, where the cmux extra is installed: the `desk` skill.
 
-- **Say the shortest unique name.** A thread name alone, if only one thread has it; otherwise project and thread ("Acme, pricing"). The zone only if two projects share a name.
+- **Say the shortest unique name.** A project alone, for one piece of work; a thread alone, if only one has it; otherwise project and thread ("Acme, pricing"). The zone only if two projects share a name.
 - **When a name matches more than one thing**, or a heard name is close to two entries, ask in one line, naming the candidates. Never guess.
 - **Names arrive mangled.** Match every proper noun against Parties, People and Aliases in `System/context.md` before acting. Ignore noise; never correct the user's spelling.
 - **Learn the aliases.** When you had to ask what a name meant, add the heard form to the Aliases table, with its Learned cell.
@@ -79,7 +79,7 @@ Tab commands, where the cmux extra is installed: the `desk` skill.
 
 ## Talking to me
 
-How the assistant talks to the user in the session. To change one, or add one, write it under this heading in `System/rules.local.md`.
+How the assistant talks. Change or add one under this heading in `System/rules.local.md`.
 
 - No summary at the end of what is already on screen. Do report what the user could not see: files changed, commands run, what failed.
 - When the answer is one lookup away, look it up instead of hedging.

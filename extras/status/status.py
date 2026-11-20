@@ -658,6 +658,34 @@ def checkpoint_chip(r: dict) -> str:
           "only a wrap confirms it" % mark["full"]), E(mark["said"]))
 
 
+def thread_row(ws: Path, zone: Path, project: Path, name: str, note: Path, hub: Path, pfm: dict, fm: dict, state: str) -> dict:
+    """One row of threads(): a thread note's, or a hub's own."""
+    read = resume_read(note)
+    has_block, resumed = read["block"], read["date"]
+    mark = checkpoint_mark(note, ws)
+    updated = as_date(fm.get("updated"))
+    when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
+    return {"zone": zone.name, "project": project.name, "thread": name, "note": note,
+            "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
+            "party": tags(fm.get("party") or pfm.get("party")),
+            "updated": updated, "status": state,
+            "resume": has_block, "resumed": resumed,
+            "checkpoint": mark, "touched": max(when) if when else None,
+            "spoken": as_text(fm.get("spoken")).strip(), "read": read}
+
+
+def hub_keeps_resume(hub: Path, pfm: Optional[dict]) -> bool:
+    """Does a hub hold the project's own resume point beside its threads: a `### Resume here` block, and no
+    `layout: thread-first`? An `### Outcome` in its place ends it. The same reading as garrick_lib's."""
+    try:
+        text = hub.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    layout = as_text(pfm.get("layout")).strip().lower() if pfm is not None else \
+        (re.search(r"(?mi)^layout:[ \t]*[\"']?(thread-first)\b", text) or [None, ""])[1].lower()
+    return layout != "thread-first" and any(RESUME.match(l) for l in text.splitlines())
+
+
 def threads(ws: Path) -> Dict[str, dict]:
     """Per zone: every live thread's project, name, party and the date its
     note was last updated, read from frontmatter like "what's open"; and
@@ -678,7 +706,7 @@ def threads(ws: Path) -> Dict[str, dict]:
     its own single thread (`own`). Nothing of a note's body is read here."""
     out = {}
     for zone in visible_dirs(ws / "Zones"):
-        rows, parked, done, asleep, finished, projects = [], [], 0, [], [], {}
+        rows, parked, done, asleep, finished, projects, hubs = [], [], 0, [], [], {}, []
         for project in visible_dirs(zone):
             if project.name == "Inbox":
                 continue
@@ -690,12 +718,13 @@ def threads(ws: Path) -> Dict[str, dict]:
                 asleep.append(project.name)
             found = [(t.name, t / (t.name + ".md")) for t in visible_dirs(project / "Threads")]
             own = False
-            if not any(n.is_file() for _, n in found) and hub.is_file() and \
+            heading = as_text(pfm.get("layout")).strip().lower() == "thread-first"     # no piece of work of its own
+            if not any(n.is_file() for _, n in found) and hub.is_file() and not heading and \
                     as_text(pfm.get("type")).strip().lower() == "project":
                 found, own = [(project.name, hub)], True
             if hub.is_file() or any(n.is_file() for _, n in found):
                 projects[project.name] = {"status": "done" if hub_state in DONE else "parked" if hub_parked else "live",
-                                          "spoken": as_text(pfm.get("spoken")).strip(), "own": own,
+                                          "spoken": as_text(pfm.get("spoken")).strip(), "own": own, "heading": heading,
                                           "hub": hub if hub.is_file() else None, "party": tags(pfm.get("party"))}
             for name, note in found:
                 fm = pfm if note == hub else frontmatter(note, ws)
@@ -710,28 +739,21 @@ def threads(ws: Path) -> Dict[str, dict]:
                     continue
                 held = hub_parked and note != hub          # parked with its project, whatever its own status
                 state = "parked" if state in PARKED or held else state
-                read = resume_read(note)
-                has_block, resumed = read["block"], read["date"]
-                mark = checkpoint_mark(note, ws)
-                updated = as_date(fm.get("updated"))
-                when = [d for d in (updated, mark["at"].date() if mark and mark["at"] else None) if d]
-                row = {"zone": zone.name, "project": project.name, "thread": name, "note": note,
-                       "rel": note.relative_to(zone).as_posix(), "hub": hub if hub.is_file() else None,
-                       "party": tags(fm.get("party") or pfm.get("party")),
-                       "updated": updated, "status": state,
-                       "resume": has_block, "resumed": resumed,
-                       "checkpoint": mark, "touched": max(when) if when else None,
-                       "spoken": as_text(fm.get("spoken")).strip(), "read": read}
+                row = thread_row(ws, zone, project, name, note, hub, pfm, fm, state)
                 if held:
                     row["held"] = True
                 (parked if state == "parked" else rows).append(row)
+            # The hub's own resume point beside its threads: a row of Your work and no row of the Threads card.
+            if not own and hub.is_file() and not hub_parked and hub_state not in DONE and hub_keeps_resume(hub, pfm) \
+                    and any(n.is_file() for _, n in found):
+                hubs.append(thread_row(ws, zone, project, project.name, hub, hub, pfm, pfm, hub_state))
         # By name, as you would look for one; the freshness bar carries the age.
         by_name = lambda r: (r["thread"].casefold(), r["project"].casefold())  # noqa: E731
         rows.sort(key=by_name)
         parked.sort(key=by_name)
         finished.sort(key=by_name)
         out[zone.name] = {"rows": rows, "parked": parked, "done": done, "folder": zone, "held": asleep,
-                          "finished": finished, "projects": projects}
+                          "finished": finished, "projects": projects, "hubs": hubs}
     return out
 
 
@@ -969,7 +991,7 @@ def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws:
                 folders.setdefault(Path(a["file"]).parent.as_posix(), []).append(a)
             elif a["label"]:
                 labels.setdefault(a["label"].casefold(), []).append(a)
-        for r in data["rows"] + data["parked"]:
+        for r in data["rows"] + data["parked"] + data.get("hubs", []):
             mine, seen = [], set()
             for a in labels.get(r["thread"].casefold(), []) + folders.get(Path(r["rel"]).parent.as_posix(), []):
                 if (a["file"], a["key"]) not in seen:
@@ -981,7 +1003,8 @@ def thread_actions(T: Dict[str, dict], lists: List[dict], C: Optional[dict], ws:
             r["next"] = mine[0] if mine else None
             r["late"] = any(a["late"] for a in mine)
             r["checks"] = []
-            for path in sorted(p for p in flags if p.startswith(here)):
+            hub_own = r["note"] == r.get("hub")           # a hub's own row leaves its threads' files to their rows
+            for path in sorted(p for p in flags if p.startswith(here) and not (hub_own and p[len(here):].startswith("Threads/"))):
                 for x in flags[path]:
                     if "fixed_by" not in x:
                         x["fixed_by"] = nurture_fix(ws, x["finding"])
@@ -1943,20 +1966,25 @@ function watch(d){var i=d.querySelector('#mg-name');i.addEventListener('input',f
 function zoneNames(){return Object.keys(D.zones||{})}
 function zoneOf(){var z=(window.GarrickPrefs&&localStorage.getItem('garrick-graph-place'))||'';return D.zones[z]?z:zoneNames()[0]||''}
 function newThread(mg){var z=mg?mg[0]:zoneOf(),zs=zoneNames();if(!zs.length){say('There is no zone yet.');return}
-var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div>'+field('mg-name','Name, one you can say')+DUP,
+var d=dialog('New thread',select('mg-zone','Zone',zs,z)+'<div id="mg-p"></div><div id="mg-papers"></div>'+field('mg-name','Name, one you can say')+DUP,
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
-function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg&&mg[0]===val(d,'mg-zone')?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>'}
+/* in a piece of work a thread chooses its papers; under a heading every thread keeps its own, so nothing is asked */
+function papers(){var z=val(d,'mg-zone'),p=val(d,'mg-project'),h=((D.zones[z]||{}).headings||[]).indexOf(p)>=0;
+d.querySelector('#mg-papers').innerHTML=p&&!h?select('mg-own','Does this thread keep its own papers, or use the project’s?',[['project','The project’s papers'],['own','Its own papers']],'project'):''}
+function projects(){var p=(D.zones[val(d,'mg-zone')]||{}).projects||[];d.querySelector('#mg-p').innerHTML=p.length?select('mg-project','Project',p,mg&&mg[0]===val(d,'mg-zone')?mg[1]:''):'<p class="mg-msg">No project in this zone yet: make one first.</p>';
+var s=d.querySelector('#mg-project');if(s)s.onchange=papers;papers()}
 d.querySelector('#mg-zone').onchange=projects;projects();watch(d);d.querySelector('#mg-name').focus();
 d.querySelector('[data-go]').onclick=function(){var q={verb:'new-thread',zone:val(d,'mg-zone'),project:val(d,'mg-project'),name:val(d,'mg-name')};
 if(!q.project||!q.name)return bad(d,'Pick a project and give the thread a name.');if(busy(d,q.zone))return;
-d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project,'Copied “new thread '+q.name+' in '+q.project+'”. Paste it to your assistant.')}}
+var own=val(d,'mg-own')==='own';if(own)q.papers='own';
+d.close();if(act)send(q,'Making '+q.name+' in '+q.project+'…');else copy('new thread '+q.name+' in '+q.project+(own?', with its own papers':''),'Copied “new thread '+q.name+' in '+q.project+(own?', with its own papers':'')+'”. Paste it to your assistant.')}}
 function newProject(){var zs=zoneNames(),z=zoneOf(),NEW='__new__';if(!zs.length){say('There is no zone yet.');return}
-/* D.first is the name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, put in the page's data */
-var first=D.first||'',
-d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP+'<div id="mg-pt"></div>'
+/* a project is one piece of work unless it is a heading over separate pieces; it gets no thread unless one is named */
+var d=dialog('New project',select('mg-zone','Zone',zs,z)+field('mg-name','Name, one you can say')+DUP
++select('mg-kind','Is this project one piece of work, or a heading over separate pieces?',[['piece','One piece of work'],['heading','A heading over separate pieces of work']],'piece')
++'<div id="mg-pt"></div>'
 +'<div id="mg-np" hidden>'+field('mg-newparty','The party’s name')+'<p class="mg-msg mg-dup" id="mg-pdup" role="status" hidden></p>'+field('mg-what','What it is')+'</div>'
-+'<label class="tlab" for="mg-thread">Its first thread, if you want one</label><input type="text" id="mg-thread" autocomplete="off" placeholder="'
-+esc(first?'Empty gives '+first:'Empty gives a first thread of its own')+'">',
++'<label class="tlab" for="mg-thread">Its first thread, if you want one</label><input type="text" id="mg-thread" autocomplete="off" placeholder="None to start with">',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Make it':'Copy the phrase')+'</button>');
 function names(){return((D.zones[val(d,'mg-zone')]||{}).parties||[]).map(function(x){return x[1]})}
 /* a party name close to one this zone has, by the test the project names get: it warns, and Make it still makes it */
@@ -1966,14 +1994,14 @@ function pick(){d.querySelector('#mg-np').hidden=val(d,'mg-party')!==NEW;pdup()}
 function parties(){var p=(D.zones[val(d,'mg-zone')]||{}).parties||[];
 d.querySelector('#mg-pt').innerHTML=select('mg-party','For',[['','None']].concat(p,[[NEW,'New party…']]),'');d.querySelector('#mg-party').onchange=pick;pick()}
 d.querySelector('#mg-zone').onchange=parties;parties();watch(d);d.querySelector('#mg-newparty').addEventListener('input',pdup);d.querySelector('#mg-name').focus();
-d.querySelector('[data-go]').onclick=function(){var pt=val(d,'mg-party'),np=pt===NEW,th=val(d,'mg-thread'),w=val(d,'mg-what'),z2=val(d,'mg-zone'),nm=val(d,'mg-name'),q;
+d.querySelector('[data-go]').onclick=function(){var pt=val(d,'mg-party'),np=pt===NEW,th=val(d,'mg-thread'),w=val(d,'mg-what'),z2=val(d,'mg-zone'),nm=val(d,'mg-name'),hd=val(d,'mg-kind')==='heading',q;
 if(!nm)return bad(d,'A project needs a name.');
 /* two shapes, one request each: only the New party… choice sends the verb that adds a party (#522) */
 if(np){var r={verb:'new-project-party',zone:z2,name:nm};r.new_party=val(d,'mg-newparty');if(!r.new_party)return bad(d,'Give the new party a name.');
-if(th)r.thread=th;if(w)r.party_what=w;q=r}
-else{var o={verb:'new-project',zone:z2,name:nm};if(pt)o.party=pt;if(th)o.thread=th;q=o}
+if(th)r.thread=th;if(w)r.party_what=w;if(hd)r.heading=true;q=r}
+else{var o={verb:'new-project',zone:z2,name:nm};if(pt)o.party=pt;if(th)o.thread=th;if(hd)o.heading=true;q=o}
 if(busy(d,q.zone))return;
-d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
+d.close();if(act)send(q,'Making '+q.name+'…');else copy('new project '+q.name+(np?' for new party '+q.new_party+(w?' (what '+w+')':''):pt?' for '+pt:'')+' in '+q.zone+(hd?', as a heading':'')+(th?', first thread '+th:''),'Copied the phrase. Paste it to your assistant.')}}
 function rename(mg){var old=mg[2]||mg[1],kind=mg[2]?'thread':'project';
 var d=dialog('Rename '+old,field('mg-name','New name, one you can say',old)+'<p class="mg-msg">Its folder, its note and every link to it in '+esc(mg[0])+' follow, in one commit. The old name stays a heard name for it.</p>',
 CANCEL+'<button class="act primary" type="button" data-go>'+(act?'Rename':'Copy the phrase')+'</button>');var i=d.querySelector('#mg-name');i.focus();i.select();
@@ -2010,7 +2038,8 @@ var v=b.dataset.manage;if(v==='new-project')newProject();else if(v==='new-thread
 /* the dialogs' project lists follow a rename or a new project at once, as the rows do (#353) */
 function listed(q){var z=D.zones&&D.zones[q.zone];if(!z)return;var l=z.projects||(z.projects=[]);
 if(q.verb==='rename'&&!q.thread){var i=l.indexOf(q.project);if(i>=0&&q.to&&l.indexOf(q.to)<0)l[i]=q.to;l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}
-else if((q.verb==='new-project'||q.verb==='new-project-party')&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1})}}
+else if((q.verb==='new-project'||q.verb==='new-project-party')&&q.name&&l.indexOf(q.name)<0){l.push(q.name);l.sort(function(a,b){return a.toLowerCase()<b.toLowerCase()?-1:1});
+if(q.heading)(z.headings||(z.headings=[])).push(q.name)}}
 /* Undo, for a minute after a deletion or a rename from the page: the app rebuilds the page after
    every request, so the commit to revert is kept in this browser until then */
 var prev=window.GarrickActed;window.GarrickActed=function(q,out){
@@ -2217,8 +2246,10 @@ ACTION_WHY = 10
 ACTION_LOST = 960
 ACTION_POLL = 3
 ACTION_UNKNOWN = 60
-ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-project-party", "new-thread", "undo")
+ACTION_KEEP = ("rename", "move", "delete", "new-project", "new-project-party", "new-thread", "undo",
+               "layout")
 ZONE_VERBS = ("todo-done", "todo-undo", "todo-date", "todo-add", "park", "wake", "new-project", "new-project-party", "new-thread", "rename", "move",
+              "layout",
               "delete", "undo", "answer", "later", "continue", "fix", "suggestion", "start", "stop-using",
               "bring-back", "files")
 
@@ -4276,28 +4307,20 @@ def open_naming(zone: Path, names: set) -> int:
     return n
 
 
-def first_thread() -> str:
-    """The name a project's first thread gets when none is typed: ask.py's FIRST_THREAD, read from its file so that
-    the dialog and the Ask box name it once. "" when ask.py is not beside this file."""
-    src = Path(__file__).with_name("ask.py")
-    try:
-        found = re.search(r'^FIRST_THREAD = "([^"\n]+)"', src.read_text(encoding="utf-8"), re.M)
-    except OSError:
-        return ""
-    return found.group(1) if found else ""
-
-
 def manage_data(T: Dict[str, dict], ctx: dict, acting: bool) -> dict:
     """For the New project and New thread dialogs: each zone's projects and
     the parties a project there can be for; and whether the app acts, or the
     page only copies the phrase to say."""
     zones = {}
     for zone, data in T.items():
-        projects = sorted({r["project"] for r in data["rows"] + data["parked"] if r.get("hub")}, key=str.casefold)
+        P = data.get("projects", {})
+        projects = sorted({r["project"] for r in data["rows"] + data["parked"] if r.get("hub")}
+                          | {n for n, v in P.items() if v.get("heading") and v.get("hub") and v["status"] != "done"}, key=str.casefold)
+        headings = sorted((n for n in projects if P.get(n, {}).get("heading")), key=str.casefold)
         parties = sorted([[tag, p.get("party") or tag] for tag, p in ctx.get("parties", {}).items()
                           if (p.get("zone") or "").strip().lower() in ("", zone.lower())], key=lambda x: x[1].casefold())
-        zones[zone] = {"projects": projects, "parties": parties}
-    return {"zones": zones, "acting": acting, "first": first_thread()}
+        zones[zone] = {"projects": projects, "parties": parties, "headings": headings}
+    return {"zones": zones, "acting": acting}
 
 
 def find_data(T: Dict[str, dict], link: "Links", styles: Dict[str, dict], folders: bool, today: dt.date) -> dict:
@@ -5709,7 +5732,9 @@ def work_name_for(r: dict) -> str:
         return r["project"]
     project = r["note"].parents[2]
     threads = [t for t in (project / "Threads").glob("*/*.md") if t.parent.name + ".md" == t.name]
-    return r["project"] if len(threads) <= 1 else "%s, %s" % (r["project"], r["thread"])
+    if len(threads) <= 1 and not (r["hub"] and hub_keeps_resume(r["hub"], None)):
+        return r["project"]
+    return "%s, %s" % (r["project"], r["thread"])
 
 
 def example_zone(ws: Path) -> Optional[str]:
@@ -5749,7 +5774,7 @@ def works(ws: Path, T: Dict[str, dict], today: dt.date) -> List[dict]:
     owners = known_owners(workspace_context(ws), me)
     out = []
     for zone, data in T.items():
-        for r in data["rows"]:
+        for r in data["rows"] + data.get("hubs", []):
             read = r.get("read") or {}
             rows = read.get("rows") or {}
             nxt = filled(rows.get("Next action"))

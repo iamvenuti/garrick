@@ -2410,6 +2410,16 @@ def resume_lines(text: str) -> List[str]:
     return out
 
 
+def hub_keeps_resume(text: str, fm: Optional[dict] = None) -> bool:
+    """Does a project's hub hold a resume point of its own, the main line of a project that is one
+    piece of work? It does while it has a `### Resume here` block; an `### Outcome` in that place
+    ends it, and a heading (`layout: thread-first`) never has one. It stands beside the project's
+    threads, so every reader of resume points reads it whether the project has threads or not."""
+    if str((fm or {}).get("layout") or "").strip().lower() == "thread-first":
+        return False
+    return any(l.strip().lower() == RESUME_HEADING.lower() for l in text.splitlines())
+
+
 def _short_hash(parts: Iterable[str]) -> str:
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:12]
 

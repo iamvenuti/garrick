@@ -3097,6 +3097,7 @@ def garrick_ignores(zones) -> Dict[str, str]:
     inbox = ("# Mail and files wait in Inbox/ until they are filed where they belong; they never enter this history.\nInbox/*\n!Inbox/.gitkeep\n"
              "# When each Inbox and Waiting on line of Todo.md was first seen, for the todo skill's expiry.\n.todo-seen.json\n"
              "# Changes the todo skill proposes to lines you moved, waiting for your yes; never committed.\n.todo-proposals.json\n"
+             "# What the todo skill found when it looked for the reply to a Waiting on line; never committed.\n.todo-followups.json\n"
              "# Links to shared cloud folders carry the provider's own path, which is this machine's alone.\n.shared/\n")
     transcripts = ("# Transcripts wait in Meetings/raw/inbox/ until they are filed; they never enter this history.\n"
                    "Meetings/raw/inbox/*\n!Meetings/raw/inbox/.gitkeep\n")
